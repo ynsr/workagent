@@ -1,0 +1,15 @@
+[project]
+name = "harness"
+version = "0.1.0"
+description = "Launch AI agent harnesses in git-wt worktrees from issue/PR links"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+harness = "harness.cli:main"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
