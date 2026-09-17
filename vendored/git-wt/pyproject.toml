@@ -1,0 +1,15 @@
+[project]
+name = "git-wt"
+version = "0.1.0"
+description = "Create/finish/cleanup git worktrees for AI agent task isolation"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+git-wt = "git_wt.cli:main"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -26,6 +26,13 @@ cli-hub when present, and self-checks via `harness doctor`. Requires
 ./uninstall.sh
 ```
 
+## Vendored tooling
+
+`vendored/git-wt/` carries the git-wt source snapshot (no nested `.git` — this
+repo has exactly one `.git`, at the root). Canonical git-wt development stays
+in `cli-agents-config/tools/git-wt`; see `vendored/git-wt/VENDORED.md`.
+Install it with `pipx install ./vendored/git-wt`.
+
 ## Usage
 
 ```bash
