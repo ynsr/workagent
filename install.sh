@@ -4,15 +4,22 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if command -v pipx &>/dev/null; then
-  echo "==> Installing harness via pipx..."
-  pipx install --force "$DIR"
-elif command -v uv &>/dev/null; then
-  echo "==> pipx not found; installing via uv..."
-  uv tool install --force "$DIR"
-else
-  echo "error: need pipx or uv (https://pipx.pypa.io)"
-  exit 1
+# Bootstrap git-wt from the vendored snapshot when it's missing from PATH.
+if ! command -v git-wt &>/dev/null; then
+  if [ -d "$DIR/vendored/git-wt" ]; then
+    echo "==> git-wt not found; installing from vendored/git-wt..."
+    if command -v pipx &>/dev/null; then
+      pipx install --force "$DIR/vendored/git-wt"
+    elif command -v uv &>/dev/null; then
+      uv tool install --force "$DIR/vendored/git-wt"
+    else
+      echo "error: need pipx or uv to install vendored/git-wt"
+      exit 1
+    fi
+  else
+    echo "warning: git-wt not on PATH and vendored/git-wt missing."
+    echo "         harness start/review need it: install git-wt first."
+  fi
 fi
 
 # Write install receipt (source hash) so `harness doctor` can detect stale
