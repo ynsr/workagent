@@ -78,7 +78,7 @@ def test_start_dry_run_jira(isolated_config, tmp_path, monkeypatch):
     from argparse import Namespace
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
-    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd: repo_dir)
+    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd, depth=7: repo_dir)
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     monkeypatch.setattr(cli.refs, "fetch_issue",
                         lambda parsed: {"title": "Add changelog", "body": ""})

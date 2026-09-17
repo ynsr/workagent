@@ -24,7 +24,9 @@ def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
         raise HarnessError("`omp` not found on PATH")
     argv = ["omp", *(extra_args or []), prompt]
     if no_tty:
-        argv = ["omp", "-p", *(extra_args or []), prompt]
+        # -p prints-and-exits; --auto-approve skips interactive approval
+        # prompts (otherwise the child blocks forever on tool approval).
+        argv = ["omp", "-p", "--auto-approve", *(extra_args or []), prompt]
         proc = subprocess.run(argv, cwd=workdir)
         return proc.returncode
     os.execvp("omp", argv)

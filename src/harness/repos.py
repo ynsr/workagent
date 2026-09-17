@@ -72,7 +72,7 @@ def current_branch(path: Path) -> str | None:
         return None
 
 
-def resolve_repo(explicit: str | None, cwd: Path) -> Path:
+def resolve_repo(explicit: str | None, cwd: Path, depth: int = 7) -> Path:
     """Resolve which offline repo to use.
 
     --repo accepts a registered name, a local path, or a clone URL.
@@ -91,7 +91,7 @@ def resolve_repo(explicit: str | None, cwd: Path) -> Path:
         if p.is_dir():
             return p
         # Treat as clone URL
-        return clone_url(explicit)
+        return clone_url(explicit, depth)
     root = repo_root(cwd)
     if root is not None:
         return root
@@ -118,17 +118,17 @@ def resolve_repo(explicit: str | None, cwd: Path) -> Path:
         raise HarnessError("no repo selected", exit_code=2)
     if choice.isdigit() and 1 <= int(choice) <= len(names):
         return Path(cfg["repos"][names[int(choice) - 1]]["path"]).expanduser()
-    return resolve_repo(choice or None, cwd)
+    return resolve_repo(choice or None, cwd, depth)
 
 
-def clone_url(url: str) -> Path:
+def clone_url(url: str, depth: int = 7) -> Path:
     """Shallow-clone a repo URL next to other checkouts; remember it."""
     dest_base = Path.home() / "projects" / "harness-clones"
     name = url.rstrip("/").split("/")[-1].removesuffix(".git")
     dest = dest_base / name
     if not dest.is_dir():
         dest_base.mkdir(parents=True, exist_ok=True)
-        run_cmd("git", "clone", "--depth", "7", url, str(dest))
+        run_cmd("git", "clone", "--depth", str(int(depth)), url, str(dest))
     register_repo(name, dest)
     return dest
 

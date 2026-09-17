@@ -156,7 +156,7 @@ def _cmd_start(args: argparse.Namespace) -> dict | None:
     parsed = refs.parse_ref(args.ref)
     if parsed["kind"] in ("pr", "mr"):
         raise HarnessError(f"{args.ref} looks like a PR/MR — use `harness review`", exit_code=2)
-    repo = repos.resolve_repo(args.repo, Path.cwd())
+    repo = repos.resolve_repo(args.repo, Path.cwd(), depth=args.depth)
     base = args.base or repos.default_branch(repo)
     cur = repos.current_branch(repo) if repos.repo_root(Path.cwd()) == repo else None
     if cur and cur != base and not args.yes and not args.dry_run and sys.stdin.isatty():
@@ -209,7 +209,7 @@ def _cmd_review(args: argparse.Namespace) -> dict | None:
     if parsed["kind"] == "issue":
         # Could still be a PR number via shorthand; try PR info, fall back to issue.
         pass
-    repo = repos.resolve_repo(args.repo, Path.cwd())
+    repo = repos.resolve_repo(args.repo, Path.cwd(), depth=args.depth)
     base = repos.default_branch(repo)
     harness_name = args.harness or store.load_config().get("default_harness", "omp")
 

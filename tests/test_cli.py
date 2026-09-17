@@ -29,7 +29,7 @@ def test_repo_add_list_remove(isolated_config, tmp_path):
 def test_start_dry_run(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
-    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd: repo_dir)
+    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd, depth=7: repo_dir)
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     monkeypatch.setattr(cli.refs, "fetch_issue",
                         lambda parsed: {"title": "Add login", "body": "Details here"})
@@ -46,7 +46,7 @@ def test_start_dry_run(isolated_config, tmp_path, monkeypatch):
 def test_review_dry_run(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
-    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd: repo_dir)
+    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd, depth=7: repo_dir)
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     args = _ns(command="review", ref="https://github.com/o/r/pull/33",
                repo=None, depth=7, harness=None, no_tty=True, dry_run=True, yes=True)
