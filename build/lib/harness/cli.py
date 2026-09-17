@@ -36,7 +36,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=False)
 
     sp = sub.add_parser("start", help="Create worktree from issue and launch harness")
-    sp.add_argument("ref", help="Issue URL, OWNER/REPO#NUM, or bare number")
+    sp.add_argument("ref", help="Issue key/URL, OWNER/REPO#NUM, or bare number")
     sp.add_argument("--repo", default=None, help="Registered name, local path, or clone URL")
     sp.add_argument("--depth", type=int, default=7, help="Clone depth for repo URLs (default: 7)")
     sp.add_argument("--base", default=None, help="Base branch (default: repo default)")
@@ -45,6 +45,8 @@ def main() -> None:
                     help="Run harness non-interactively (auto commit/push/MR prompt suffix)")
     sp.add_argument("--dry-run", action="store_true", help="Print plan without acting")
     sp.add_argument("--yes", action="store_true", help="Skip confirmation prompts")
+    # NOTE: extra harness args are collected in main() by splitting argv on
+    # the first bare `--` (argparse.REMAINDER would swallow --repo etc.).
     _stderr_flags(sp)
 
     sp = sub.add_parser("review", help="Create worktree from PR/MR and launch review")
@@ -53,10 +55,7 @@ def main() -> None:
     sp.add_argument("--depth", type=int, default=7, help="Clone depth for repo URLs (default: 7)")
     sp.add_argument("--harness", default=None, help="Harness to run (default: configured; v1: omp)")
     sp.add_argument("--no-tty", action="store_true", help="Run harness non-interactively")
-    sp.add_argument("--dry-run", action="store_true", help="Print plan without acting")
     sp.add_argument("--yes", action="store_true", help="Skip confirmation prompts")
-    _stderr_flags(sp)
-
     sp = sub.add_parser("cleanup", help="Close issue + remove worktree/branch/PR")
     sp.add_argument("ref", help="Issue ID/URL or PR/MR URL")
     sp.add_argument("--force", action="store_true", help="Skip state validation")
@@ -93,8 +92,14 @@ def main() -> None:
     sp.add_argument("--yes", action="store_true")
     _stderr_flags(sp)
 
-    args = parser.parse_args()
-
+    argv = sys.argv[1:]
+    harness_args: list[str] = []
+    if "--" in argv and argv.index("--") > 0:
+        cut = argv.index("--")
+        harness_args = argv[cut + 1:]
+        argv = argv[:cut]
+    args = parser.parse_args(argv)
+    args.harness_args = harness_args
     from . import doctor as _doctor
     warn = _doctor.dev_warning()
     if warn:
@@ -157,18 +162,25 @@ def _cmd_start(args: argparse.Namespace) -> dict | None:
     if cur and cur != base and not args.yes and not args.dry_run and sys.stdin.isatty():
         eprint(f"note: repo is on '{cur}', worktree will branch from '{base}'.")
 
-    issue = refs.fetch_issue(parsed) if parsed["tool"] in ("gh", "glab") else {"title": "", "body": ""}
+    issue = refs.fetch_issue(parsed)
     key = refs.issue_key(parsed)
     harness_name = args.harness or store.load_config().get("default_harness", "omp")
 
-    link_url = parsed["url"] if parsed["repo"] else None
+    # Jira: pass a full browse URL to git-wt --link (it detects the tracker
+    # from the URL path); jira-cli itself takes the bare key.
+    if parsed["tool"] == "jira-cli" and not parsed["url"].startswith("http"):
+        link_url = f"https://tribe.jibit.cloud/browse/{parsed['number']}"
+    else:
+        link_url = parsed["url"] if parsed["tool"] == "jira-cli" or parsed["repo"] else None
+
     issue_id, slug = gitwt.build_branch_for_issue(parsed, issue["title"])
+    if parsed["tool"] == "jira-cli" and not issue_id:
+        issue_id = parsed["number"]
 
     if args.dry_run:
         return {"dry_run": True, "repo": str(repo), "base": base,
                 "issue": {"title": issue["title"]}, "harness": harness_name,
                 "key": key, "link": link_url}
-
     wt = gitwt.start_worktree(repo, issue=issue_id, slug=slug, link=link_url, base=base)
     worktree = wt.get("worktree_path", "")
     branch = wt.get("branch", "")
@@ -184,7 +196,8 @@ def _cmd_start(args: argparse.Namespace) -> dict | None:
     if args.no_tty:
         prompt += "\n\nAfter task done, commit, push and create an MR/PR to the default branch"
     eprint(f"worktree: {worktree}  branch: {branch}")
-    backend.launch(harness_name, prompt, worktree or str(repo), args.no_tty)
+    extra = [a for a in (getattr(args, "harness_args", None) or []) if a != "--"]
+    backend.launch(harness_name, prompt, worktree or str(repo), args.no_tty, extra)
     return {"worktree_path": worktree, "branch": branch, "base": base,
             "key": key, "harness": harness_name}
 
@@ -229,7 +242,8 @@ def _cmd_review(args: argparse.Namespace) -> dict | None:
 
     prompt = backend.prompt_for_review(pr_url)
     eprint(f"worktree: {worktree}  branch: {branch}")
-    backend.launch(harness_name, prompt, worktree or str(repo), args.no_tty)
+    extra = [a for a in (getattr(args, "harness_args", None) or []) if a != "--"]
+    backend.launch(harness_name, prompt, worktree or str(repo), args.no_tty, extra)
     return {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
             "harness": harness_name}
 
@@ -277,7 +291,19 @@ def _cmd_cleanup(args: argparse.Namespace) -> dict:
 
 
 def _close_issue(parsed: dict, force: bool) -> None:
-    if parsed["tool"] == "gh" and parsed["repo"] and parsed["kind"] in ("issue", "issue_or_pr"):
+    if parsed["tool"] == "jira-cli":
+        # Best effort: comment the resolution; transitions vary per project,
+        # so leave status change to the user unless --force.
+        try:
+            from .errors import run_cmd as _run
+            _run("jira-cli", "issue", parsed["number"], "add-comment",
+                 "--body", "Resolved via harness cleanup.")
+            eprint(f"commented on {parsed['number']} (status left unchanged)")
+        except HarnessError as e:
+            if not force:
+                raise
+            eprint(f"warning: {e}")
+    elif parsed["tool"] == "gh" and parsed["repo"] and parsed["kind"] in ("issue", "issue_or_pr"):
         try:
             from .errors import run_cmd as _run
             target = [parsed["number"], "--repo", parsed["repo"]] if parsed["kind"] == "issue_or_pr" \

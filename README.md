@@ -44,16 +44,18 @@ session links). Override with `HARNESS_CONFIG_DIR`.
 
 ## Caveats
 
-- v1 supports GitHub (`gh`) and GitLab (`glab`) issues/PRs only — no Jira
-  (`jira-cli` is deprecated), no Todoist-as-tracker.
+- Issue trackers: GitHub (`gh`), GitLab (`glab`), and Jira (`jira-cli`:
+  `KEY-123` or `https://<host>/browse/KEY-123`). Jira URLs are configured
+  via `jira-cli setup` (`~/.jira-cli.json`, `JIRA_URL`/`JIRA_USER`/`JIRA_PASS`).
 - v1 supports the `omp` harness only; `ccline` comes later.
 - `harness start` execs `omp` in TTY mode (replaces the process); use
-  `--dry-run` to preview without launching.
+  `--dry-run` to preview without launching, or `--no-tty` to run
+  `omp -p <prompt>` non-interactively (extra harness flags after `--`).
 
 ## How it works
 
 1. `start <issue>` → resolve repo (`--repo` or cwd) → fetch title/body via
-   `gh`/`glab` → `git-wt start --link/--issue` → record link → exec `omp`.
+   `gh`/`glab`/`jira-cli` → `git-wt start --link/--issue` → record link → exec `omp`.
 2. `review <PR>` → fetch head ref → worktree on that branch → exec `omp`
    with the pr-reviewer prompt.
 3. `cleanup <ref>` → look up link → `git-wt cleanup --delete-branch` →

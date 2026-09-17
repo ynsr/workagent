@@ -1,6 +1,8 @@
-"""Issue/PR link parsing and fetching via gh/glab.
+"""Issue/PR link parsing and fetching via jira-cli/gh/glab.
 
 Supported inputs:
+  - Jira key:          IPG-980
+  - Jira URL:          https://tribe.jibit.cloud/browse/IPG-980
   - GitHub issue URL:  https://github.com/OWNER/REPO/issues/22
   - GitHub PR URL:     https://github.com/OWNER/REPO/pull/33
   - GitLab issue URL:  https://<host>/GROUP/REPO/-/issues/430
@@ -20,12 +22,19 @@ _GITHUB_ISSUE = re.compile(r"^https?://github\.com/([^/]+/[^/]+)/issues/(\d+)/*$
 _GITHUB_PR = re.compile(r"^https?://github\.com/([^/]+/[^/]+)/pull/(\d+)/*$")
 _GITLAB_ISSUE = re.compile(r"^https?://([^/]+)/(.+)/-/issues/(\d+)/*$")
 _GITLAB_MR = re.compile(r"^https?://([^/]+)/(.+)/-/merge_requests/(\d+)/*$")
+_JIRA_URL = re.compile(r"^https?://[^/]+/browse/([A-Z][A-Z0-9_]*-\d+)/*$")
+_JIRA_KEY = re.compile(r"^([A-Z][A-Z0-9_]*-\d+)$")
 _SHORTHAND = re.compile(r"^([^/\s]+/[^/\s#]+)#(\d+)$")
 
 
 def parse_ref(ref: str) -> dict:
     """Parse an issue/PR ref into {kind, tool, repo, number, url}."""
-    ref = ref.strip()
+    m = _JIRA_URL.match(ref)
+    if m:
+        return {"kind": "issue", "tool": "jira-cli", "repo": "", "number": m.group(1), "url": ref}
+    m = _JIRA_KEY.match(ref)
+    if m:
+        return {"kind": "issue", "tool": "jira-cli", "repo": "", "number": m.group(1), "url": ref}
     m = _GITHUB_ISSUE.match(ref)
     if m:
         return {"kind": "issue", "tool": "gh", "repo": m.group(1), "number": m.group(2), "url": ref}
@@ -46,20 +55,29 @@ def parse_ref(ref: str) -> dict:
         return {"kind": "issue_or_pr", "tool": "gh", "repo": "", "number": ref, "url": ref}
     raise HarnessError(
         f"cannot parse issue/PR ref: {ref}\n"
-        "  Supported: GitHub issue/PR URL, GitLab issue/MR URL, OWNER/REPO#NUM, or a bare number",
+        "  Supported: Jira key/URL, GitHub issue/PR URL, GitLab issue/MR URL, OWNER/REPO#NUM, or a bare number",
         exit_code=2,
     )
 
 
 def issue_key(parsed: dict) -> str:
-    """Stable key for links.json, e.g. 'github:owner/repo#22'."""
+    """Stable key for links.json, e.g. 'jira:IPG-980' or 'github:owner/repo#22'."""
+    if parsed["tool"] == "jira-cli":
+        return f"jira:{parsed['number']}"
     host = "gitlab" if parsed["tool"] == "glab" else "github"
     repo = parsed["repo"] or "local"
     return f"{host}:{repo}#{parsed['number']}"
 
 
 def fetch_issue(parsed: dict) -> dict:
-    """Return {title, body} for an issue ref via gh/glab."""
+    """Return {title, body} for an issue ref via jira-cli/gh/glab."""
+    if parsed["tool"] == "jira-cli":
+        out = run_cmd("jira-cli", "issue", parsed["number"], "--format", "json")
+        try:
+            data = json.loads(out or "{}")
+        except json.JSONDecodeError:
+            raise HarnessError(f"cannot parse jira-cli output for {parsed['number']}")
+        return {"title": data.get("summary", ""), "body": data.get("description", "") or ""}
     if parsed["tool"] == "gh":
         target = parsed["url"] if parsed["repo"] else parsed["number"]
         args = ["gh", "issue", "view", target, "--json", "title,body"]

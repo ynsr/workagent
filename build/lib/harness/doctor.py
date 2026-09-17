@@ -43,12 +43,11 @@ def check(args=None) -> dict:
     """doctor handler: exit 1 when stale/missing."""
     import shutil
     import sys
-    receipt = receipt_path()
+    tools = {t: shutil.which(t) is not None for t in ("git-wt", "omp", "gh", "glab", "jira-cli")}
     live = source_hash()
-    tools = {t: shutil.which(t) is not None for t in ("git-wt", "omp", "gh", "glab")}
+    receipt = receipt_path()
     try:
-        rec = json.loads(receipt.read_text())
-        recorded = rec.get("source_hash", "")
+        recorded = json.loads(receipt.read_text()).get("source_hash", "")
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         recorded = ""
     status = "ok" if recorded == live else ("missing" if not recorded else "stale")
