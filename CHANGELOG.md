@@ -1,4 +1,12 @@
 # Changelog
+## 0.2.1 — 2026-09-18
+
+- Fix Tab completion: typer 0.27 never registers its shell completion
+  classes for the env-var server path, so every completion attempt died
+  with `Shell bash not supported.` — cli.main() now registers them.
+- Silence completion-server stderr inside the sourced eval line; a failing
+  server degrades to no candidates instead of printing into the shell.
+- Add a subprocess regression test covering the real completion protocol.
 
 ## 0.2.0 — 2026-09-18
 

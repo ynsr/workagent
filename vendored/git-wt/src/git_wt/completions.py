@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 __all__ = [
-    "PROG",
+    "ensure_completion_classes",
     "SUPPORTED_SHELLS",
     "RC_FILES",
     "START_MARKER",
@@ -59,10 +59,15 @@ def detect_shell() -> Optional[str]:
 
 
 def eval_line(prog: str, shell: str) -> str:
-    """The rc line the user sources. fish uses | source instead of $()."""
+    """The rc line the user sources. fish uses | source instead of $().
+
+    Server stderr is discarded inside the sourced line: a failing
+    completion server must never print into the shell (ble.sh/zsh fire
+    it on every keystroke). Manual `completions show` still shows errors.
+    """
     if shell == "fish":
-        return f"{prog} completions show fish | source"
-    return f'eval "$({prog} completions show {shell})"'
+        return f"{prog} completions show fish 2>/dev/null | source"
+    return f'eval "$({prog} completions show {shell} 2>/dev/null)"'
 
 
 def install_snippet(prog: str, shell: str) -> str:
@@ -76,6 +81,26 @@ def install_snippet(prog: str, shell: str) -> str:
     lines.append(eval_line(prog, shell))
     lines.append(END_MARKER.format(prog=prog))
     return "\n".join(lines) + "\n"
+
+def ensure_completion_classes():
+    """Register Typer's shell completion classes; return shell_completion.
+
+    typer >= 0.27 vendors click but only registers its bash/zsh/fish
+    completion classes inside ``completion_init()``, which the env-var
+    completion server (``_GIT_WT_COMPLETE=complete_<shell>``) never
+    calls — without this every Tab dies with "Shell bash not
+    supported." (ble.sh fires the server on every keystroke). Idempotent;
+    falls back to a plain click install (classes self-register there).
+    """
+    try:
+        from typer._click import shell_completion
+    except ImportError:  # older typer: plain click
+        import click.shell_completion as shell_completion  # type: ignore[no-redef]
+        return shell_completion
+    if not shell_completion.get_completion_class("bash"):
+        from typer._completion_classes import completion_init
+        completion_init()
+    return shell_completion
 
 
 def install_completion(prog: str, shell: str, rcfile: Optional[Path] = None) -> tuple[Path, bool]:
@@ -177,16 +202,7 @@ def get_completion_script(prog: str, shell: str, click_cmd: Any = None) -> str:
         )
     if click_cmd is None:
         raise ValueError("click_cmd is required (pass typer.main.get_command(app))")
-    try:  # typer >= 0.27 vendors click and ships its completion classes
-        from typer._click import shell_completion
-        from typer._completion_classes import completion_init
-    except ImportError:  # older typer: plain click
-        import click.shell_completion as shell_completion  # type: ignore[no-redef]
-
-        def completion_init() -> None:
-            pass
-
-    completion_init()
+    shell_completion = ensure_completion_classes()
     cls = shell_completion.get_completion_class(shell)
     if cls is None:
         raise ValueError(

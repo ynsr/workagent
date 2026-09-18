@@ -31,7 +31,7 @@ __all__ = [
     "eval_line",
     "install_snippet",
     "install_completion",
-    "complete_names",
+    "ensure_completion_classes",
     "get_completion_script",
     "print_install_hint",
 ]
@@ -47,6 +47,24 @@ RC_FILES = {
 START_MARKER = "# >>> {prog} completions >>>"
 END_MARKER = "# <<< {prog} completions <<<"
 
+def ensure_completion_classes() -> None:
+    """Register Typer's shell completion classes for the runtime server.
+
+    typer >= 0.27 vendors click but only registers its bash/zsh/fish
+    completion classes inside ``completion_init()``, which the env-var
+    completion server (``_HARNESS_COMPLETE=complete_<shell>``) never
+    calls — without this every Tab dies with "Shell bash not
+    supported." (ble.sh fires the server on every keystroke). Idempotent;
+    no-op when typer pairs with a plain click that self-registers.
+    """
+    try:
+        from typer._click import shell_completion
+    except ImportError:  # typer with a real click: classes self-register
+        return
+    if not shell_completion.get_completion_class("bash"):
+        from typer._completion_classes import completion_init
+        completion_init()
+
 
 def detect_shell() -> Optional[str]:
     """Best-effort shell name from $SHELL; None if unknown/unsupported."""
@@ -57,8 +75,8 @@ def detect_shell() -> Optional[str]:
 def eval_line(prog: str, shell: str) -> str:
     """The rc line the user sources. fish uses a pipe instead of $()."""
     if shell == "fish":
-        return f"{prog} completions show fish | source"
-    return f'eval "$({prog} completions show {shell})"'
+        return f"{prog} completions show fish 2>/dev/null | source"
+    return f'eval "$({prog} completions show {shell} 2>/dev/null)"'
 
 
 def install_snippet(prog: str, shell: str) -> str:

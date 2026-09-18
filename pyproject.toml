@@ -1,6 +1,6 @@
 [project]
 name = "harness"
-version = "0.2.0"
+version = "0.2.1"
 description = "Launch AI agent harnesses in git-wt worktrees from issue/PR links"
 requires-python = ">=3.10"
 dependencies = ["typer>=0.12", "rich>=13"]

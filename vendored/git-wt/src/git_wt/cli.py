@@ -635,6 +635,7 @@ def _normalize_bare_resume(argv: list[str]) -> list[str]:
 
 
 def main() -> None:
+    _completions.ensure_completion_classes()  # typer 0.27: runtime server needs registered classes
     if "--resume" in sys.argv[1:]:
         sys.argv[1:] = _normalize_bare_resume(sys.argv[1:])
     try:

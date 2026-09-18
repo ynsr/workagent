@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import builtins
+import os
+import subprocess
 import sys
 
 import pytest
@@ -152,10 +154,10 @@ def test_worktree_callback_never_raises(tmp_path, monkeypatch):
 
 
 def test_eval_line_per_shell():
-    """bash/zsh eval $(); fish pipes to source; both use the new command."""
-    assert completions.eval_line(PROG, "bash") == f'eval "$({PROG} completions show bash)"'
-    assert completions.eval_line(PROG, "zsh") == f'eval "$({PROG} completions show zsh)"'
-    assert completions.eval_line(PROG, "fish") == f"{PROG} completions show fish | source"
+    """bash/zsh eval $(); fish pipes to source; server stderr discarded."""
+    assert completions.eval_line(PROG, "bash") == f'eval "$({PROG} completions show bash 2>/dev/null)"'
+    assert completions.eval_line(PROG, "zsh") == f'eval "$({PROG} completions show zsh 2>/dev/null)"'
+    assert completions.eval_line(PROG, "fish") == f"{PROG} completions show fish 2>/dev/null | source"
 
 
 # ── completions install ──────────────────────────────────────────────
@@ -263,5 +265,36 @@ def test_install_snippet_direct(tmp_path):
         assert completions.START_MARKER.format(prog=PROG) in snippet
         assert completions.END_MARKER.format(prog=PROG) in snippet
         assert completions.eval_line(PROG, shell) in snippet
+
+
+def test_runtime_completion_protocol_lists_subcommands():
+    """Regression: the env-var completion server must work in a fresh process.
+
+    typer >= 0.27 only registers its shell completion classes while
+    building an app with add_completion=True; with add_completion=False
+    the `_GIT_WT_COMPLETE=complete_bash` server died with "Shell bash
+    not supported." on every keystroke (ble.sh fires it constantly).
+    git_wt.cli.main() now registers the classes; this exercises the real
+    subprocess path and asserts stderr stays empty.
+    """
+    env = {
+        **os.environ,
+        "_GIT_WT_COMPLETE": "complete_bash",
+        "COMP_WORDS": "git-wt l",
+        "COMP_CWORD": "1",
+    }
+    r = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.argv = ['git-wt', '']; from git_wt.cli import main; main()"],
+        capture_output=True, text=True, env=env,
+    )
+    assert r.returncode == 0, r.stderr
+    assert "list" in r.stdout.split()
+    assert r.stderr == "", r.stderr
+
+
+def test_show_eval_line_discards_server_stderr():
+    """The sourced eval line must never let the server print into the shell."""
+    assert "2>/dev/null" in completions.eval_line(PROG, "bash")
+    assert "2>/dev/null" in completions.eval_line(PROG, "fish")
     # zsh block includes compinit (required before compdef takes effect)
     assert "compinit" in completions.install_snippet(PROG, "zsh")

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -77,3 +80,34 @@ def test_repo_names_callback_missing_store_returns_empty(tmp_path, monkeypatch):
     assert names == []
     cb = completions.complete_names(cli.repos.repo_names)
     assert cb(None, "pro") == []
+
+
+def test_runtime_completion_protocol_lists_subcommands(isolated_config):
+    """Regression: the env-var completion server must work in a fresh process.
+
+    typer >= 0.27 only registers its shell completion classes while
+    building an app with add_completion=True; with add_completion=False
+    the `_HARNESS_COMPLETE=complete_bash` server died with "Shell bash
+    not supported." on every keystroke (ble.sh fires it constantly).
+    cli.main() now registers the classes; this exercises the real
+    subprocess path and asserts stderr stays empty.
+    """
+    env = {
+        **os.environ,
+        "_HARNESS_COMPLETE": "complete_bash",
+        "COMP_WORDS": "harness s",
+        "COMP_CWORD": "1",
+    }
+    r = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.argv = ['harness', '']; from harness.cli import main; main()"],
+        capture_output=True, text=True, env=env,
+    )
+    assert r.returncode == 0, r.stderr
+    assert "start" in r.stdout.split()
+    assert "not supported" not in r.stderr  # doctor dev-warning allowed; server error forbidden
+
+
+def test_show_eval_line_discards_server_stderr():
+    """The sourced eval line must never let the server print into the shell."""
+    assert "2>/dev/null" in completions.eval_line("harness", "bash")
+    assert "2>/dev/null" in completions.eval_line("harness", "fish")

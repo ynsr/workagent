@@ -1,4 +1,10 @@
 # Changelog
+## 0.1.3 — 2026-09-18
+
+- Fix Tab completion: register typer 0.27's completion classes in main() —
+  the env-var server died with `Shell bash not supported.` otherwise.
+- Silence server stderr in the sourced eval line; add a subprocess
+  regression test covering the real completion protocol.
 
 ## 0.1.2 (2026-09-18)
 
