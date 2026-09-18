@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
-# install.sh — install harness via pipx (or uv if pipx missing)
+# install.sh — install harness via uv (or pipx if uv missing)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Version from pyproject.toml (single source of truth; also passed to cli-hub).
+VERSION="$(python3 -c "import tomllib, pathlib, sys
+try:
+    print(tomllib.loads(pathlib.Path(sys.argv[1]).read_text())['project']['version'])
+except Exception:
+    print('')
+" "$DIR/pyproject.toml")"
+if [ -z "$VERSION" ]; then
+  echo "error: could not read version from pyproject.toml"
+  exit 1
+fi
+echo "==> Installing harness ${VERSION}..."
 
 # Bootstrap git-wt from the vendored snapshot when it's missing from PATH.
 if ! command -v git-wt &>/dev/null; then
   if [ -d "$DIR/vendored/git-wt" ]; then
     echo "==> git-wt not found; installing from vendored/git-wt..."
-    if command -v pipx &>/dev/null; then
-      pipx install --force "$DIR/vendored/git-wt"
-    elif command -v uv &>/dev/null; then
+    if command -v uv &>/dev/null; then
       uv tool install --force "$DIR/vendored/git-wt"
+    elif command -v pipx &>/dev/null; then
+      pipx install --force "$DIR/vendored/git-wt"
     else
       echo "error: need pipx or uv to install vendored/git-wt"
       exit 1
@@ -20,6 +33,18 @@ if ! command -v git-wt &>/dev/null; then
     echo "warning: git-wt not on PATH and vendored/git-wt missing."
     echo "         harness start/review need it: install git-wt first."
   fi
+fi
+
+# Install harness itself (canonical backend: uv preferred, pipx fallback).
+if command -v uv &>/dev/null; then
+  echo "==> Installing via uv..."
+  uv tool install --force "$DIR"
+elif command -v pipx &>/dev/null; then
+  echo "==> uv not found; installing via pipx..."
+  pipx install --force "$DIR"
+else
+  echo "error: need uv (https://docs.astral.sh/uv/) or pipx (https://pipx.pypa.io)"
+  exit 1
 fi
 
 # Write install receipt (source hash) so `harness doctor` can detect stale
@@ -54,7 +79,7 @@ fi
 if command -v cli-hub &>/dev/null; then
   REPO="$(git -C "$DIR" remote get-url origin 2>/dev/null || true)"
   cli-hub register harness \
-    --version "0.1.0" \
+    --version "$VERSION" \
     --description "Launch AI agent harnesses in git-wt worktrees from issue/PR links" \
     --group "git" \
     --source-path "$DIR" \

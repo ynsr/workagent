@@ -17,9 +17,7 @@ from pathlib import Path
 
 TOOL = "git-wt"
 
-_OK = "ok"
-_STALE = "stale"
-_MISSING = "missing"
+OK, STALE, MISSING = "ok", "stale", "missing"
 
 
 def share_dir() -> Path:
@@ -67,20 +65,20 @@ def check() -> tuple[str, str]:
     """
     receipt = load_receipt()
     if receipt is None:
-        return _MISSING, "no install receipt — fix with: ./install.sh"
+        return MISSING, "no install receipt — fix with: ./install.sh"
     tree = _source_tree(Path(receipt.get("source_dir", "")))
     if tree is None:
-        return _MISSING, (
+        return MISSING, (
             f"recorded source dir {receipt.get('source_dir', '?')!r} is gone — "
             "fix with: ./install.sh from a valid checkout"
         )
     live = source_hash(tree)
     if live != receipt.get("source_hash"):
-        return _STALE, (
+        return STALE, (
             f"source changed since install ({receipt.get('source_hash')} → {live}) — "
             "fix with: ./install.sh"
         )
-    return _OK, f"install in sync ({live})"
+    return OK, f"install in sync ({live})"
 
 
 def dev_warning(here: Path | None = None) -> str | None:

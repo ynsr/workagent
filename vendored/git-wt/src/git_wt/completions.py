@@ -1,27 +1,42 @@
-"""Shell completion for git-wt (stdlib only — static scripts).
+"""Shell completion for git-wt: `completions show|install` + value callbacks.
 
-`git-wt completion <bash|zsh|fish>` prints a static completion script for
-`eval "$(git-wt completion bash)"` (fish: `| source`); `git-wt
-completion-install [shell] [--rcfile --yes]` drops that eval line into
-~/.bashrc / ~/.zshrc / ~/.config/fish/config.fish idempotently inside a
-marker block (atomic write, .bak backup, stale block replaced rather than
-duplicated).
+Why this exists instead of Typer's built-in `--install-completion`: the app is
+constructed with ``add_completion=False`` so there is exactly one completion
+system. ``completions show <shell>`` prints a script for
+``eval "$(git-wt completions show bash)"``; ``completions install`` drops that
+eval line into ~/.bashrc / ~/.zshrc / fish config idempotently inside a marker
+block (atomic write, backup kept).
 
-Static scripts instead of a generated parser: git-wt's surface
-(subcommands + flags) is fixed, so nothing needs Python at completion
-time — Tab stays instant. Subcommand names and `-`/`--` flags complete;
-dynamic values (branch names, worktree paths) fall back to the shell's
-file completion.
+Completion order (subcommands -> positional values -> flags) is NOT hand-coded:
+the generated script asks the running ``git-wt`` process to resolve the cursor
+position, so subcommands and ``-``/``--`` flags always complete correctly. The
+only custom code is an ``autocompletion=`` callback per dynamic value (branch
+names, worktree paths). Those callbacks MUST be fast, offline (LOCAL git state
+only — never network), and never raise: return [] on any failure so Tab never
+breaks the shell.
 """
 
 from __future__ import annotations
 
 import os
 import re
-import shutil
-import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+__all__ = [
+    "PROG",
+    "SUPPORTED_SHELLS",
+    "RC_FILES",
+    "START_MARKER",
+    "END_MARKER",
+    "detect_shell",
+    "eval_line",
+    "install_snippet",
+    "install_completion",
+    "complete_branch_names",
+    "complete_worktree_paths",
+    "get_completion_script",
+]
 
 PROG = "git-wt"
 
@@ -36,27 +51,6 @@ RC_FILES = {
 START_MARKER = "# >>> {prog} completions >>>"
 END_MARKER = "# <<< {prog} completions <<<"
 
-# Subcommands git-wt accepts, and the flags each one takes. Keep in sync
-# with src/git_wt/cli.py — these tables drive every completion script.
-COMMANDS = ("start", "finish", "cleanup", "list", "completion", "completion-install", "doctor")
-
-GLOBAL_FLAGS = "-h --help --version -v --verbose -q --quiet --json"
-
-SUBCOMMAND_FLAGS = {
-    "start": ("--branch --type --issue --slug --link --base --repo "
-              "--ephemeral --resume --on-dirty --force --json "
-              "-v --verbose -q --quiet"),
-    "finish": ("--worktree --base --title --skip-tests --yes --json "
-               "-v --verbose -q --quiet"),
-    "cleanup": ("--branch --repo --force --delete-branch --yes --json "
-                "-v --verbose -q --quiet"),
-    "list": "--repo --json -v --verbose -q --quiet",
-    "doctor": "--json -v --verbose -q --quiet",
-    "completion": "bash zsh fish",
-    "completion-install": ("--rcfile --yes bash zsh fish "
-                           "-v --verbose -q --quiet"),
-}
-
 
 def detect_shell() -> Optional[str]:
     """Best-effort shell name from $SHELL; None if unknown/unsupported."""
@@ -67,15 +61,18 @@ def detect_shell() -> Optional[str]:
 def eval_line(prog: str, shell: str) -> str:
     """The rc line the user sources. fish uses | source instead of $()."""
     if shell == "fish":
-        return f"{prog} completion fish | source"
-    return f'eval "$({prog} completion {shell})"'
+        return f"{prog} completions show fish | source"
+    return f'eval "$({prog} completions show {shell})"'
 
 
 def install_snippet(prog: str, shell: str) -> str:
     """Marker block written into the rc file. zsh needs compinit first."""
     lines = [START_MARKER.format(prog=prog)]
     if shell == "zsh":
-        lines.append("autoload -U compinit && compinit  # required for completion (added by %s)" % prog)
+        lines.append(
+            "autoload -U compinit && compinit  # required for completion (added by %s)"
+            % prog
+        )
     lines.append(eval_line(prog, shell))
     lines.append(END_MARKER.format(prog=prog))
     return "\n".join(lines) + "\n"
@@ -84,12 +81,15 @@ def install_snippet(prog: str, shell: str) -> str:
 def install_completion(prog: str, shell: str, rcfile: Optional[Path] = None) -> tuple[Path, bool]:
     """Idempotently ensure the marker block is in the rc file.
 
-    Returns (rc path, changed). Atomic write (tmp + rename); keeps a
-    ``.bak`` copy on first modification. Re-running is a no-op.
+    Returns (rc path, changed). Atomic write (tmp + rename); keeps a ``.bak``
+    copy on first modification. Re-running is a no-op. A stale block from an
+    older version is replaced, not duplicated.
     Raises ValueError on unsupported shell.
     """
     if shell not in SUPPORTED_SHELLS:
-        raise ValueError(f"unsupported shell {shell!r} (choose from: {', '.join(SUPPORTED_SHELLS)})")
+        raise ValueError(
+            f"unsupported shell {shell!r} (choose from: {', '.join(SUPPORTED_SHELLS)})"
+        )
     rc = Path(rcfile).expanduser() if rcfile else Path(RC_FILES[shell]).expanduser()
     snippet = install_snippet(prog, shell)
     existing = rc.read_text(encoding="utf-8") if rc.is_file() else ""
@@ -97,7 +97,10 @@ def install_completion(prog: str, shell: str, rcfile: Optional[Path] = None) -> 
         return rc, False
     # Replace a stale block from an older version rather than duplicating.
     pattern = re.compile(
-        re.escape(START_MARKER.format(prog=prog)) + r".*?" + re.escape(END_MARKER.format(prog=prog)) + r"\n?",
+        re.escape(START_MARKER.format(prog=prog))
+        + r".*?"
+        + re.escape(END_MARKER.format(prog=prog))
+        + r"\n?",
         re.DOTALL,
     )
     if pattern.search(existing):
@@ -107,6 +110,8 @@ def install_completion(prog: str, shell: str, rcfile: Optional[Path] = None) -> 
         updated = existing + (sep + "\n" if existing else "") + snippet
     rc.parent.mkdir(parents=True, exist_ok=True)
     if rc.is_file():
+        import shutil
+
         shutil.copy2(rc, rc.parent / (rc.name + ".bak"))  # backup before overwrite
     tmp = rc.parent / (rc.name + ".tmp")
     tmp.write_text(updated, encoding="utf-8")
@@ -114,266 +119,78 @@ def install_completion(prog: str, shell: str, rcfile: Optional[Path] = None) -> 
     return rc, True
 
 
-# ── static scripts ───────────────────────────────────────────────────
+# ── dynamic value completion (autocompletion= callbacks) ────────────
+#
+# Contract: read LOCAL state only (never network), filter on the `incomplete`
+# prefix, never raise — any failure returns [] so Tab never breaks the shell.
 
 
-def bash_script(prog: str = PROG) -> str:
-    """Static bash completion script (complete -F)."""
-    cmds = " ".join(COMMANDS)
-    flags_by_cmd = "\n".join(
-        f"    flags[{cmd}]=\"{words}\"" for cmd, words in SUBCOMMAND_FLAGS.items()
-    )
-    return f"""# bash completion for {prog} — generated by `{prog} completion bash`
-# shellcheck shell=bash disable=SC2207
-__{prog.replace('-', '_')}() {{
-    local cur cmd
-    cur="${{COMP_WORDS[COMP_CWORD]}}"
-    cmd="${{COMP_WORDS[1]}}"
+def _local_branch_names() -> list[str]:
+    """Local branch names from the repo at cwd (subprocess, local only)."""
+    from .git_utils import _run_git
 
-    # Before the subcommand: offer subcommands and global flags.
-    if [[ $COMP_CWORD -eq 1 || $cmd == -* ]]; then
-        COMPREPLY=($(compgen -W "{cmds} {GLOBAL_FLAGS}" -- "$cur"))
-        return 0
-    fi
-
-    local -A flags
-{flags_by_cmd}
-
-    local words="${{flags[$cmd]:-}}"
-    if [[ -n $words ]]; then
-        COMPREPLY=($(compgen -W "$words" -- "$cur"))
-    fi
-}}
-complete -F __{prog.replace('-', '_')} {prog}
-"""
+    out = _run_git(Path.cwd(), "branch", "--format", "%(refname:short)", check=False)
+    if not out:
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
 
 
-def zsh_script(prog: str = PROG) -> str:
-    """Static zsh completion script (_arguments/_describe)."""
-    fn = f"_{prog.replace('-', '_')}"
-    cmd_descriptions = {
-        "start": "Create or resume a worktree for a task",
-        "finish": "Push branch and create a draft PR/MR",
-        "cleanup": "Remove a worktree and optionally its branch",
-        "list": "List worktrees for a repo",
-        "completion": "Print a shell completion script (bash|zsh|fish)",
-        "completion-install": "Install shell completion into your rc file",
-        "doctor": "Check the installed copy is in sync with the source tree",
-    }
-    cmds = "\n".join(f"        '{cmd}:{desc}'" for cmd, desc in cmd_descriptions.items())
-    sub_args = {
-        "start": """\
-                    _arguments \\
-                        '--branch[explicit branch name]' \\
-                        '--type[branch type prefix]:type:(feat fix chore docs refactor)' \\
-                        '--issue[issue/ticket id]' \\
-                        '--slug[short description]' \\
-                        '--link[issue URL (GitHub/GitLab/Jira/Todoist)]' \\
-                        '--base[base branch]' \\
-                        '--repo[repo path]:path:_directories' \\
-                        '--ephemeral[create worktree in a temp dir]' \\
-                        '--resume[resume existing branch/worktree]' \\
-                        '--on-dirty[how to handle dirty checkout]:choice:(stash commit push ignore)' \\
-                        '--force[re-create branch if it exists locally]' \\
-                        '--json[output as JSON]' \\
-                        '(-v --verbose)'{-v,--verbose}'[verbose output]' \\
-                        '(-q --quiet)'{-q,--quiet}'[quiet output]' \\
-                        '1:branch name'""",
-        "finish": """\
-                    _arguments \\
-                        '--worktree[worktree path]:path:_directories' \\
-                        '--base[PR target branch]' \\
-                        '--title[PR title]' \\
-                        '--skip-tests[skip the test run]' \\
-                        '--yes[skip confirmation prompts]' \\
-                        '--json[output as JSON]' \\
-                        '(-v --verbose)'{-v,--verbose}'[verbose output]' \\
-                        '(-q --quiet)'{-q,--quiet}'[quiet output]'""",
-        "cleanup": """\
-                    _arguments \\
-                        '--branch[branch to clean up]' \\
-                        '--repo[repo path]:path:_directories' \\
-                        '--force[remove even if PR is open]' \\
-                        '--delete-branch[also delete local and remote branch]' \\
-                        '--yes[skip confirmation prompts]' \\
-                        '--json[output as JSON]' \\
-                        '(-v --verbose)'{-v,--verbose}'[verbose output]' \\
-                        '(-q --quiet)'{-q,--quiet}'[quiet output]'""",
-        "list": """\
-                    _arguments \\
-                        '--repo[repo path]:path:_directories' \\
-                        '--json[output as JSON]' \\
-                        '(-v --verbose)'{-v,--verbose}'[verbose output]' \\
-                        '(-q --quiet)'{-q,--quiet}'[quiet output]'""",
-        "completion": """\
-                    _arguments \\
-                        '1:shell:(bash zsh fish)'""",
-        "completion-install": """\
-                    _arguments \\
-                        '--rcfile[rc file to edit (default per shell)]:file:_files' \\
-                        '--yes[skip confirmation prompt]' \\
-                        '(-v --verbose)'{-v,--verbose}'[verbose output]' \\
-                        '(-q --quiet)'{-q,--quiet}'[quiet output]' \\
-                        '1:shell:(bash zsh fish)'""",
-        "doctor": """\
-                    _arguments \\
-                        '--json[output as JSON]' \\
-                        '(-v --verbose)'{-v,--verbose}'[verbose output]' \\
-                        '(-q --quiet)'{-q,--quiet}'[quiet output]'""",
-    }
-    cases = "\n".join(
-        f"                {cmd})\n{body}\n                    ;;"
-        for cmd, body in sub_args.items()
-    )
-    return f"""#compdef {prog}
-# zsh completion for {prog} — generated by `{prog} completion zsh`
-{fn}() {{
-    local curcontext="$curcontext" line state
-    local -a cmds
-    cmds=(
-{cmds}
-    )
-    _arguments -C \\
-        '(-h --help)'{{-h,--help}}'[show help and exit]' \\
-        '--version[show version and exit]' \\
-        '(-v --verbose)'{{-v,--verbose}}'[verbose output]' \\
-        '(-q --quiet)'{{-q,--quiet}}'[quiet output]' \\
-        '--json[output as JSON]' \\
-        '1: :->cmds' \\
-        '*:: :->args'
-    case $state in
-        cmds)
-            _describe -t commands '{prog} command' cmds
-            ;;
-        args)
-            case $line[1] in
-{cases}
-            esac
-            ;;
-    esac
-}}
-compdef {fn} {prog}
-"""
+def _local_worktree_paths() -> list[str]:
+    """Worktree checkout paths from the repo at cwd (local only)."""
+    from .git_utils import GitRepo
+
+    return [w.get("path", "") for w in GitRepo(Path.cwd()).worktree_paths() if w.get("path")]
 
 
-def fish_script(prog: str = PROG) -> str:
-    """Static fish completion script (complete -c)."""
-    seen = " ".join(COMMANDS)
-    cmd_descriptions = {
-        "start": "Create or resume a worktree for a task",
-        "finish": "Push branch and create a draft PR/MR",
-        "cleanup": "Remove a worktree and optionally its branch",
-        "list": "List worktrees for a repo",
-        "completion": "Print a shell completion script (bash|zsh|fish)",
-        "completion-install": "Install shell completion into your rc file",
-        "doctor": "Check the installed copy is in sync with the source tree",
-    }
-    # One -a line per subcommand, offered only while no subcommand is present.
-    cmd_lines = "\n".join(
-        f"complete -c {prog} -n 'not __fish_seen_subcommand_from {seen}' -f -a {cmd} -d '{desc}'"
-        for cmd, desc in cmd_descriptions.items()
-    )
-    # Per-subcommand flags. -f suppresses file fallback; path-taking flags
-    # omit it so the shell offers files/directories.
-    flag_specs = {
-        "start": [
-            ("-l", "branch", "explicit branch name", True),
-            ("-l", "type", "branch type prefix", True),
-            ("-l", "issue", "issue/ticket id", True),
-            ("-l", "repo", "repo path", False),
-            ("-l", "ephemeral", "create worktree in a temp dir", False),
-            ("-l", "resume", "resume existing branch/worktree", True),
-            ("-l", "on-dirty", "handle dirty checkout: stash commit push ignore", True),
-            ("-l", "force", "re-create branch if it exists locally", False),
-            ("-l", "json", "output as JSON", False),
-            ("-s", "v", "verbose output", False),
-            ("-s", "q", "quiet output", False),
-        ],
-        "finish": [
-            ("-l", "worktree", "worktree path", False),
-            ("-l", "base", "PR target branch", True),
-            ("-l", "title", "PR title", True),
-            ("-l", "skip-tests", "skip the test run", False),
-            ("-l", "yes", "skip confirmation prompts", False),
-            ("-l", "json", "output as JSON", False),
-            ("-s", "v", "verbose output", False),
-            ("-s", "q", "quiet output", False),
-        ],
-        "cleanup": [
-            ("-l", "branch", "branch to clean up", True),
-            ("-l", "repo", "repo path", False),
-            ("-l", "force", "remove even if PR is open", False),
-            ("-l", "delete-branch", "also delete local and remote branch", False),
-            ("-l", "yes", "skip confirmation prompts", False),
-            ("-l", "json", "output as JSON", False),
-            ("-s", "v", "verbose output", False),
-            ("-s", "q", "quiet output", False),
-        ],
-        "list": [
-            ("-l", "repo", "repo path", False),
-            ("-l", "json", "output as JSON", False),
-            ("-s", "v", "verbose output", False),
-            ("-s", "q", "quiet output", False),
-        ],
-        "completion": [
-            ("", "bash zsh fish", "", False),
-        ],
-        "completion-install": [
-            ("-l", "rcfile", "rc file to edit", False),
-            ("-l", "yes", "skip confirmation prompt", False),
-            ("-s", "v", "verbose output", False),
-            ("-s", "q", "quiet output", False),
-            ("", "bash zsh fish", "", False),
-        ],
-        "doctor": [
-            ("-l", "json", "output as JSON", False),
-            ("-s", "v", "verbose output", False),
-            ("-s", "q", "quiet output", False),
-        ],
-    }
-    flag_lines = []
-    for cmd, specs in flag_specs.items():
-        cond = f"__fish_seen_subcommand_from {cmd}"
-        for opt, name, desc, takes_value in specs:
-            parts = [f"complete -c {prog}", f"-n '{cond}'"]
-            if opt:
-                parts.append(f"{opt} {name}")
-            else:
-                parts.append(f"-a {name}")
-            parts.append("-f")
-            if takes_value:
-                parts.append("-r")
-            if desc:
-                parts.append(f"-d '{desc}'")
-            flag_lines.append(" ".join(parts))
-    global_cond = f"not __fish_seen_subcommand_from {seen}"
-    global_lines = "\n".join(
-        f"complete -c {prog} -n '{global_cond}' -f -l {name} -d '{desc}'" if not short else
-        f"complete -c {prog} -n '{global_cond}' -f -l {name} -s {short} -d '{desc}'"
-        for name, short, desc in (
-            ("help", "h", "show help"),
-            ("version", "", "show version"),
-            ("verbose", "v", "verbose output"),
-            ("quiet", "q", "quiet output"),
-            ("json", "", "output as JSON"),
-        )
-    )
-    return f"""# fish completion for {prog} — generated by `{prog} completion fish`
-# Subcommands (offered only while none has been typed yet)
-{cmd_lines}
-# Global flags (before the subcommand)
-{global_lines}
-# Per-subcommand flags
-{chr(10).join(flag_lines)}
-"""
+def complete_branch_names(ctx: Any, incomplete: str) -> list[str]:
+    """``autocompletion=`` callback: local branch names (e.g. for --branch/--resume)."""
+    try:
+        names = _local_branch_names()
+    except Exception:
+        return []
+    return sorted(n for n in names if n.startswith(incomplete))
 
 
-def get_completion_script(prog: str, shell: str) -> str:
-    """Render the static completion script for *shell*.
+def complete_worktree_paths(ctx: Any, incomplete: str) -> list[str]:
+    """``autocompletion=`` callback: worktree paths (e.g. for --worktree)."""
+    try:
+        paths = _local_worktree_paths()
+    except Exception:
+        return []
+    return sorted(p for p in paths if p.startswith(incomplete))
 
-    Raises ValueError on unsupported shell.
+
+# ── generated completion script ──────────────────────────────────────
+
+
+def get_completion_script(prog: str, shell: str, click_cmd: Any = None) -> str:
+    """Render the shell init script for *shell*.
+
+    ``click_cmd`` is the resolved click command (``typer.main.get_command(app)``);
+    pass it explicitly so this module never imports your app (no cycles). The
+    script is generated from the shell completion classes shipped with Typer —
+    never hand-coded. Raises ValueError on unsupported shell or missing cmd.
     """
-    builders = {"bash": bash_script, "zsh": zsh_script, "fish": fish_script}
     if shell not in SUPPORTED_SHELLS:
-        raise ValueError(f"unsupported shell {shell!r} (choose from: {', '.join(SUPPORTED_SHELLS)})")
-    return builders[shell](prog)
+        raise ValueError(
+            f"unsupported shell {shell!r} (choose from: {', '.join(SUPPORTED_SHELLS)})"
+        )
+    if click_cmd is None:
+        raise ValueError("click_cmd is required (pass typer.main.get_command(app))")
+    try:  # typer >= 0.27 vendors click and ships its completion classes
+        from typer._click import shell_completion
+        from typer._completion_classes import completion_init
+    except ImportError:  # older typer: plain click
+        import click.shell_completion as shell_completion  # type: ignore[no-redef]
+
+        def completion_init() -> None:
+            pass
+
+    completion_init()
+    cls = shell_completion.get_completion_class(shell)
+    if cls is None:
+        raise ValueError(
+            f"unsupported shell {shell!r} (choose from: {', '.join(SUPPORTED_SHELLS)})"
+        )
+    complete_var = f"_{prog.upper().replace('-', '_')}_COMPLETE"
+    return cls(click_cmd, {}, prog, complete_var).source()

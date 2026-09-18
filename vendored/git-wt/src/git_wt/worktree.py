@@ -6,6 +6,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 from .git_utils import GitRepo, GitWtError, _run_git
 from .link_utils import (
@@ -150,7 +151,8 @@ def start_task(
     branch_name = build_branch_name(branch, type_, issue, slug)
     if not branch_name:
         raise GitWtError(
-            "provide --branch, or --type/--issue/--slug combination, or --resume"
+            "provide --branch, or --type/--issue/--slug combination, or --resume",
+            exit_code=2,
         )
 
     # Resolve base branch
@@ -212,8 +214,14 @@ def cleanup_task(
     branch: str,
     force: bool = False,
     delete_branch: bool = False,
+    confirm: bool | Callable[[str], bool] | None = None,
 ) -> dict:
     """Remove a worktree and optionally delete its branch.
+
+    PR-state gate: when the PR/MR is open and ``force`` is unset,
+    ``confirm`` decides — True: pre-confirmed (bypass), a callable: asked
+    (TTY only), None/False: fail with an actionable message (never blocks
+    a non-TTY run).
 
     Returns a dict with keys: worktree_path, branch, actions (list of strings).
     """
@@ -229,9 +237,15 @@ def cleanup_task(
         if not force:
             state = _check_pr_state(repo.root, branch)
             if state and state not in ("MERGED", "CLOSED", "closed", "merged"):
-                raise GitWtError(
-                    f"PR/MR for '{branch}' is {state} — use --force to remove anyway"
-                )
+                if confirm is True:
+                    pass
+                elif callable(confirm):
+                    if not confirm(f"PR/MR for '{branch}' is {state} — remove the worktree anyway?"):
+                        raise GitWtError("aborted — worktree not removed")
+                else:
+                    raise GitWtError(
+                        f"PR/MR for '{branch}' is {state} — use --force (or --yes) to remove anyway"
+                    )
 
         try:
             _run_git(repo.root, "worktree", "remove", wt_path_str)

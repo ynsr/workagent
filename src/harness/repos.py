@@ -140,6 +140,12 @@ def register_repo(name: str, path: Path) -> None:
     store.save_config(cfg)
 
 
+
+def repo_names() -> list[str]:
+    """Registered repo names (local state only; used for shell completion)."""
+    return list(store.load_config().get("repos", {}))
+
+
 def _detect_host_cli(path: Path) -> str | None:
     for cli in ("gh", "glab"):
         try:

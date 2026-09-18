@@ -15,6 +15,13 @@ def isolated_home(monkeypatch, tmp_path):
     """Isolate ~/dev/worktrees/ per test so worktree tests don't collide."""
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
+@pytest.fixture()
+def runner():
+    """Typer CliRunner: exit_code, separated stdout/stderr."""
+    from typer.testing import CliRunner
+
+    return CliRunner()
+
 
 def _git(*args: str, cwd: str | Path | None = None) -> None:
     """Run a git command, raise on failure."""
@@ -48,6 +55,9 @@ def tmp_repo() -> Path:
     _git("commit", "-m", "initial commit", cwd=clone_dir)
     _git("branch", "-M", "main", cwd=clone_dir)
     _git("push", "-u", "origin", "main", cwd=clone_dir)
+    # Model a real clone: resolve origin/HEAD to the pushed branch (a bare
+    # remote initialized before the branch rename would leave it dangling).
+    _git("remote", "set-head", "origin", "main", cwd=clone_dir)
 
     return clone_dir
 

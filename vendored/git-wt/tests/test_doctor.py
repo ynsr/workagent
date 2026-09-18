@@ -1,16 +1,15 @@
 """Tests for git_wt.doctor — install receipt and sync self-check."""
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import git_wt
 import pytest
 
+from typer.testing import CliRunner
+
 from git_wt import doctor
-from git_wt.cli import main
+from git_wt.cli import app
 
 
 @pytest.fixture()
@@ -75,33 +74,30 @@ def test_check_missing_source_dir(fake_repo):
     assert "./install.sh" in message
 
 
-def test_cli_doctor_ok(fake_repo, capsys):
+def test_cli_doctor_ok(fake_repo, runner: CliRunner):
     """git-wt doctor exits 0 and prints the message when in sync."""
     sync_receipt_for(fake_repo)
-    with patch("sys.argv", ["git-wt", "doctor"]):
-        main()
-    captured = capsys.readouterr()
-    assert "in sync" in captured.out
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert "in sync" in result.stdout
 
 
-def test_cli_doctor_stale_exits_1(fake_repo, capsys):
+def test_cli_doctor_stale_exits_1(fake_repo, runner: CliRunner):
     """git-wt doctor exits 1 and names the fix when stale."""
     sync_receipt_for(fake_repo)
     (fake_repo / "src" / "git_wt" / "ops.py").write_text("x = 3\n")
-    with patch("sys.argv", ["git-wt", "doctor"]), pytest.raises(SystemExit) as exc:
-        main()
-    assert exc.value.code == 1
-    captured = capsys.readouterr()
-
-    assert "source changed since install" in captured.out
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "source changed since install" in result.stdout
+    assert "./install.sh" in result.stdout
 
 
-def test_cli_doctor_json(fake_repo, capsys):
+def test_cli_doctor_json(fake_repo, runner: CliRunner):
     """--json emits a status/message object on stdout."""
     sync_receipt_for(fake_repo)
-    with patch("sys.argv", ["git-wt", "doctor", "--json"]):
-        main()
-    payload = json.loads(capsys.readouterr().out)
+    result = runner.invoke(app, ["doctor", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
     assert "message" in payload
 

@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
-# install.sh — install git-wt via pipx (or uv if pipx missing)
+# install.sh — install git-wt via uv (or pipx if uv missing)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if command -v pipx &>/dev/null; then
-  echo "==> Installing git-wt via pipx..."
-  pipx install --force "$DIR"
-elif command -v uv &>/dev/null; then
-  echo "==> pipx not found; installing via uv..."
+# Version from pyproject.toml (single source of truth; also passed to cli-hub).
+VERSION="$(python3 -c "import tomllib, pathlib, sys
+try:
+    print(tomllib.loads(pathlib.Path(sys.argv[1]).read_text())['project']['version'])
+except Exception:
+    print('')
+" "$DIR/pyproject.toml")"
+if [ -z "$VERSION" ]; then
+  echo "error: could not read version from pyproject.toml"
+  exit 1
+fi
+echo "==> Installing git-wt ${VERSION}..."
+
+if command -v uv &>/dev/null; then
+  echo "==> Installing via uv..."
   uv tool install --force "$DIR"
+elif command -v pipx &>/dev/null; then
+  echo "==> uv not found; installing via pipx..."
+  pipx install --force "$DIR"
 else
-  echo "error: need pipx or uv (https://pipx.pypa.io)"
+  echo "error: need uv (https://docs.astral.sh/uv/) or pipx (https://pipx.pypa.io)"
   exit 1
 fi
 
@@ -48,9 +61,10 @@ fi
 if command -v cli-hub &>/dev/null; then
   REPO="$(git -C "$DIR" remote get-url origin 2>/dev/null || true)"
   cli-hub register git-wt \
-    --version "0.1.0" \
+    --version "$VERSION" \
     --description "Create/finish/cleanup git worktrees for AI agent task isolation" \
     --group "git" \
+    --config-path "${HOME}/.config/git-wt" \
     --source-path "$DIR" \
     ${REPO:+--repo "$REPO"} \
     --uninstall "$DIR/uninstall.sh" \

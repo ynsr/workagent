@@ -2,17 +2,28 @@
 
 Create, finish, and clean up git worktrees for AI agent task isolation.
 
+## Introduction
+
+git-wt is human-first by default and heavily agent-driven when you opt in.
+Interactive output is pretty: `list` renders a Rich table, progress and
+confirmations go to stderr, and stdout carries only command output — so any
+command is pipe-safe. For scripts and agents, `--csv` / `--json` switch
+`list` (and structured commands) to machine-readable output, and every
+interactive prompt has a non-interactive bypass flag. When stdin is not a
+TTY, git-wt never blocks: it fails fast with an actionable message naming
+the flag to pass.
+
 ## Install
 
 ```bash
 ./install.sh
 ```
 
-Uses pipx when available, falls back to `uv tool install`; refreshes the
-install receipt (`~/.local/share/git-wt/install-receipt.json`), registers with
-[cli-hub](https://github.com/ynsr/cli-agents-config/tree/main/tools/cli-hub)
+Installs via `uv tool install` (preferred) or pipx as a fallback; refreshes
+the install receipt (`~/.local/share/git-wt/install-receipt.json`), registers
+with [cli-hub](https://github.com/ynsr/cli-agents-config/tree/main/tools/cli-hub)
 when present, and self-checks via `git-wt doctor`. Requires Python 3.10+.
-Also works via `uv run`:
+Also works without installing:
 
 ```bash
 uv run git-wt --help
@@ -23,6 +34,9 @@ uv run git-wt --help
 ```bash
 ./uninstall.sh
 ```
+
+Removes the tool and the shared data dir (`~/.local/share/git-wt`), and
+unregisters from cli-hub when present.
 
 ## Usage
 
@@ -71,11 +85,16 @@ git-wt finish --worktree ~/dev/worktrees/my-repo/feat/42-add-login --skip-tests
 git-wt cleanup --branch feat/42-add-login --delete-branch
 ```
 
+On a TTY, `cleanup` confirms before removing a worktree whose PR is still
+open. Non-interactively, pass `--force` (or `--yes`) — without a bypass the
+command fails with an actionable message instead of prompting.
+
 ### List worktrees
 
 ```bash
-git-wt list
-git-wt list --json
+git-wt list          # Rich table (human-readable)
+git-wt list --csv    # header row: branch,path
+git-wt list --json | jq '.[].branch'
 ```
 
 ### Shell completion
@@ -83,19 +102,51 @@ git-wt list --json
 Try it in the current shell:
 
 ```bash
-eval "$(git-wt completion bash)"   # or zsh
-git-wt completion fish | source    # fish
+eval "$(git-wt completions show bash)"   # or zsh
+git-wt completions show fish | source    # fish
 ```
 
 Install it permanently (idempotent; edits `~/.bashrc` / `~/.zshrc` /
 `~/.config/fish/config.fish` inside a marker block, keeps a `.bak` backup):
 
 ```bash
-git-wt completion-install            # shell detected from $SHELL
-git-wt completion-install zsh --rcfile ~/.zshrc --yes
+git-wt completions install            # shell detected from $SHELL
+git-wt completions install zsh --rcfile ~/.zshrc --yes
 ```
 
-## How it works
+Branch names and worktree paths complete for `--branch`/`--resume` and
+`--worktree` (local git state only; offline).
+
+### Doctor
+
+```bash
+git-wt doctor
+git-wt doctor --json
+```
+
+### Global flags
+
+- `-v` / `--verbose` — extra detail on stderr (also valid after the subcommand)
+- `-q` / `--quiet` — suppress non-essential stderr output
+- `--json` — structured output on stdout (also valid after the subcommand)
+- `--csv` — CSV output instead of the pretty `list` table
+- `--version` — print version and exit (before or after the subcommand)
+- `-h` / `--help` — Rich help with a `Example:` section per command
+
+## Caveats
+
+- Commands must run inside a git repo; the default branch is detected via
+  `gh`/`glab`, then `origin/HEAD`; supply `--base` when neither works.
+- Bare `--resume` (interactive picker) needs a TTY; non-TTY runs must pass a
+  branch value.
+- `cleanup` refuses to remove a worktree whose PR/MR is still open unless
+  `--force` (or `--yes`) is passed; non-TTY runs without a bypass fail with
+  an actionable message.
+- Running from the source tree while the installed copy is stale prints a
+  warning on stderr (never from the installed copy itself); fix with
+  `./install.sh`.
+
+## How It Works
 
 1. `git-wt start` creates a git worktree at `~/dev/worktrees/<repo>/<branch>` (or a temp dir with `--ephemeral`) and a new branch based off the repo's default branch.
 2. You work in the worktree, making milestone commits.
@@ -109,21 +160,14 @@ git-wt completion-install zsh --rcfile ~/.zshrc --yes
 | `start` | Create (or resume) a worktree + branch |
 | `finish` | Push branch and create draft PR/MR |
 | `cleanup` | Remove worktree and optionally delete branch |
-| `list` | List worktrees for a repo |
+| `list` | List worktrees for a repo (`--csv`/`--json`) |
 | `doctor` | Verify the installed copy is in sync with the source tree (exit 1 = stale/missing receipt) |
-| `completion <bash\|zsh\|fish>` | Print the completion script to stdout |
-| `completion-install [shell]` | Install completion into your rc file (`--rcfile`, `--yes`) |
+| `completions show <bash\|zsh\|fish>` | Print the shell init script to stdout |
+| `completions install [shell]` | Install completion into your rc file (`--rcfile`, `--yes`) |
 
 ## Exit codes
 
 - `0` — success
-- `1` — error (git failure, bad args, etc.)
-- `2` — needs human input / usage error (e.g. unknown shell, missing --base)
+- `1` — error (git failure, open PR, stale/missing install receipt)
+- `2` — usage error (bad flags, missing input, unknown shell)
 - `130` — interrupted (Ctrl-C)
-
-## Global flags
-
-- `-v` / `--verbose` — extra detail on stderr (also valid after the subcommand)
-- `-q` / `--quiet` — suppress non-essential stderr output
-- `--json` — structured output on stdout (also valid after the subcommand)
-- `--version` — print version and exit

@@ -39,8 +39,8 @@ def is_installed_copy() -> bool:
     return "site-packages" in parts or ".local/share" in str(_pkg_dir())
 
 
-def check(args=None) -> dict:
-    """doctor handler: exit 1 when stale/missing."""
+def check(json_output: bool = False) -> dict:
+    """doctor handler: status ok|stale|missing; caller decides the exit code."""
     import shutil
     import sys
     tools = {t: shutil.which(t) is not None for t in ("git-wt", "omp", "gh", "glab", "jira-cli")}
@@ -53,14 +53,14 @@ def check(args=None) -> dict:
     status = "ok" if recorded == live else ("missing" if not recorded else "stale")
     result = {"status": status, "live_hash": live, "recorded_hash": recorded,
               "tools": tools, "receipt": str(receipt)}
-    if getattr(args, "json", False):
+    if json_output:
         return result
     for tool, ok in tools.items():
         print(f"{tool}: {'found' if ok else 'MISSING'}", file=sys.stderr)
     if status != "ok":
         print(f"doctor: {status} — reinstall with ./install.sh", file=sys.stderr)
-        sys.exit(1)
-    print("doctor: ok", file=sys.stderr)
+    else:
+        print("doctor: ok", file=sys.stderr)
     return result
 
 

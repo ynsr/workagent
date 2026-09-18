@@ -1,170 +1,170 @@
-"""harness CLI — launch AI agent harnesses in git-wt worktrees."""
+"""harness CLI — launch AI agent harnesses in git-wt worktrees from issue/PR links.
+
+stdout carries ONLY command output; every log/progress/confirmation line
+goes to stderr.
+"""
 
 from __future__ import annotations
 
-import argparse
+import csv
+import functools
 import json
+import os
 import sys
 from pathlib import Path
+from typing import Callable, Optional
+
+import typer
 
 from . import __version__, backend, gitwt, refs, repos, store
+from . import completions as _completions
+from . import doctor as _doctor
 from .errors import HarnessError
 
+EXIT_OK, EXIT_GENERAL, EXIT_USAGE = 0, 1, 2
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        prog="harness",
-        description="Launch AI agent harnesses in git-wt worktrees from issue/PR links.",
-        epilog=(
-            "Examples:\n"
+# Extra harness args collected in main() by splitting argv on the first
+# bare `--` (argparse.REMAINDER-style flags would swallow --repo etc.).
+_HARNESS_ARGS: list[str] = []
+
+app = typer.Typer(
+    name="harness",
+    help="Launch AI agent harnesses in git-wt worktrees from issue/PR links.",
+    no_args_is_help=True,
+    add_completion=False,  # single completion system: `completions show|install` (see completions.py)
+    context_settings={"help_option_names": ["-h", "--help"]},
+    pretty_exceptions_enable=False,
+    epilog=("Examples:\n"
             "  harness start https://github.com/OWNER/REPO/issues/22\n"
             "  harness start OWNER/REPO#22 --repo my-checkout\n"
             "  harness review https://github.com/OWNER/REPO/pull/33\n"
             "  harness cleanup OWNER/REPO#22 --force --yes\n"
             "  harness repo add --name projectx --path ~/projects/projectx\n"
             "  harness status\n\n"
-            "Exit codes: 0=success, 1=error, 2=needs human input"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("-v", "--verbose", action="store_true", default=False)
-    parser.add_argument("-q", "--quiet", action="store_true", default=False)
-    parser.add_argument("--json", action="store_true", default=False,
-                        help="Output as JSON (stdout; logs go to stderr)")
+            "Exit codes: 0=success, 1=error, 2=needs human input / usage error"),
+)
 
-    sub = parser.add_subparsers(dest="command", required=False)
+_complete_repos = _completions.complete_names(repos.repo_names)
 
-    sp = sub.add_parser("start", help="Create worktree from issue and launch harness")
-    sp.add_argument("ref", help="Issue key/URL, OWNER/REPO#NUM, or bare number")
-    sp.add_argument("--repo", default=None, help="Registered name, local path, or clone URL")
-    sp.add_argument("--depth", type=int, default=7, help="Clone depth for repo URLs (default: 7)")
-    sp.add_argument("--base", default=None, help="Base branch (default: repo default)")
-    sp.add_argument("--harness", default=None, help="Harness to run (default: configured; v1: omp)")
-    sp.add_argument("--no-tty", action="store_true",
-                    help="Run harness non-interactively (auto commit/push/MR prompt suffix)")
-    sp.add_argument("--dry-run", action="store_true", help="Print plan without acting")
-    sp.add_argument("--yes", action="store_true", help="Skip confirmation prompts")
-    # NOTE: extra harness args are collected in main() by splitting argv on
-    # the first bare `--` (argparse.REMAINDER would swallow --repo etc.).
-    _stderr_flags(sp)
 
-    sp = sub.add_parser("review", help="Create worktree from PR/MR and launch review")
-    sp.add_argument("ref", help="PR/MR URL or OWNER/REPO#NUM")
-    sp.add_argument("--repo", default=None, help="Registered name, local path, or clone URL")
-    sp.add_argument("--depth", type=int, default=7, help="Clone depth for repo URLs (default: 7)")
-    sp.add_argument("--harness", default=None, help="Harness to run (default: configured; v1: omp)")
-    sp.add_argument("--no-tty", action="store_true", help="Run harness non-interactively")
-    sp.add_argument("--yes", action="store_true", help="Skip confirmation prompts")
-    sp = sub.add_parser("cleanup", help="Close issue + remove worktree/branch/PR")
-    sp.add_argument("ref", help="Issue ID/URL or PR/MR URL")
-    sp.add_argument("--force", action="store_true", help="Skip state validation")
-    sp.add_argument("--yes", action="store_true", help="Skip confirmation prompts")
-    sp.add_argument("--dry-run", action="store_true", help="Print plan without acting")
-    _stderr_flags(sp)
+def _version_callback(value: bool) -> None:
+    if value:
+        print(f"harness {__version__}")
+        raise typer.Exit(0)
 
-    sp = sub.add_parser("repo", help="Manage registered offline repos")
-    repo_sub = sp.add_subparsers(dest="repo_command", required=True)
-    a = repo_sub.add_parser("add", help="Register an offline repo")
-    a.add_argument("--name", required=True)
-    a.add_argument("--path", required=True, type=Path)
-    a.add_argument("--tracker", default=None, help="Issue tracker project key/URL to map")
-    _stderr_flags(a)
-    li = repo_sub.add_parser("list", help="List registered repos")
-    _stderr_flags(li)
-    rm = repo_sub.add_parser("remove", help="Unregister a repo")
-    rm.add_argument("name")
-    _stderr_flags(rm)
 
-    sp = sub.add_parser("status", help="Show linked issue↔PR↔worktree state")
-    sp.add_argument("ref", nargs="?", default=None, help="Issue/PR ref (omit: all links)")
-    _stderr_flags(sp)
+@app.callback()
+def _main(
+    version: Optional[bool] = typer.Option(None, "--version", callback=_version_callback, is_eager=True, help="Show version and exit."),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output (extra detail on stderr)."),
+    quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress non-essential output on stderr."),
+) -> None:
+    """Global options."""
 
-    sp = sub.add_parser("doctor", help="Check install sync + tool availability")
-    _stderr_flags(sp)
 
-    sp = sub.add_parser("completion", help="Print a shell completion script")
-    sp.add_argument("shell", choices=("bash", "zsh", "fish"))
+def _fail(msg: str, code: int) -> None:
+    print(f"error: {msg}", file=sys.stderr)
+    raise typer.Exit(code)
 
-    sp = sub.add_parser("completion-install", help="Install completion into rc file")
-    sp.add_argument("shell", nargs="?", default=None)
-    sp.add_argument("--rcfile", type=Path, default=None)
-    sp.add_argument("--yes", action="store_true")
-    _stderr_flags(sp)
 
-    argv = sys.argv[1:]
-    harness_args: list[str] = []
+def _catch_harness_errors(fn: Callable) -> Callable:
+    """Translate HarnessError/KeyboardInterrupt into documented exit codes."""
+    @functools.wraps(fn)
+    def wrapper(*a, **kw):
+        try:
+            return fn(*a, **kw)
+        except HarnessError as e:
+            _fail(str(e), e.exit_code)
+        except KeyboardInterrupt:
+            eprint("interrupted")
+            raise typer.Exit(130)
+    return wrapper
+
+
+def eprint(*a, **k):
+    print(*a, file=sys.stderr, **k)
+
+
+def _print_result(result, json_output: bool) -> None:
+    """Command result: key: value lines by default, JSON with --json."""
+    if json_output:
+        print(json.dumps(result, indent=2))
+        return
+    if isinstance(result, dict):
+        for k, v in result.items():
+            print(f"{k}: {v}")
+    else:
+        print(result)
+
+
+def _print_rows(rows: list[dict], json_output: bool, csv_output: bool,
+                columns: list[str], title: str, empty: str) -> None:
+    """Human-first list output: Rich table by default, --csv/--json opt-in."""
+    if json_output:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return
+    if csv_output:
+        w = csv.writer(sys.stdout)
+        w.writerow(columns)
+        for r in rows:
+            w.writerow([r.get(k, "") for k in columns])
+        return
+    if not rows:
+        print(empty)
+        return
+    from rich.console import Console
+    from rich.table import Table
+    table = Table(title=title)
+    for col in columns:
+        table.add_column(col)
+    for r in rows:
+        table.add_row(*[str(r.get(k, "")) for k in columns])
+    Console().print(table)
+
+
+def _split_harness_args(argv: list[str]) -> tuple[list[str], list[str]]:
+    """Split argv on the first bare `--`; everything after feeds the harness."""
     if "--" in argv and argv.index("--") > 0:
         cut = argv.index("--")
-        harness_args = argv[cut + 1:]
-        argv = argv[:cut]
-    args = parser.parse_args(argv)
-    args.harness_args = harness_args
-    from . import doctor as _doctor
-    warn = _doctor.dev_warning()
-    if warn:
-        eprint(warn)
-
-    if not args.command:
-        parser.print_help()
-        sys.exit(0)
-    try:
-        result = _dispatch(args)
-    except HarnessError as e:
-        eprint(f"error: {e}")
-        sys.exit(e.exit_code)
-    except KeyboardInterrupt:
-        eprint("interrupted")
-        sys.exit(130)
-    if result is not None:
-        _output(args, result)
-
-
-def _stderr_flags(sp: argparse.ArgumentParser) -> None:
-    sp.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
-    sp.add_argument("-v", "--verbose", action="store_true", default=argparse.SUPPRESS)
-    sp.add_argument("-q", "--quiet", action="store_true", default=argparse.SUPPRESS)
-
-
-def _dispatch(args: argparse.Namespace):
-    if args.command == "start":
-        return _cmd_start(args)
-    if args.command == "review":
-        return _cmd_review(args)
-    if args.command == "cleanup":
-        return _cmd_cleanup(args)
-    if args.command == "repo":
-        return _cmd_repo(args)
-    if args.command == "status":
-        return _cmd_status(args)
-    if args.command == "doctor":
-        from . import doctor as _doctor
-        return _doctor.check(args)
-    if args.command == "completion":
-        from . import completions as _c
-        sys.stdout.write(_c.script(args.shell))
-        return None
-    if args.command == "completion-install":
-        from . import completions as _c
-        return _c.install(args.shell, args.rcfile, args.yes)
-    raise HarnessError(f"unknown command: {args.command}", exit_code=2)
+        return argv[:cut], [a for a in argv[cut + 1:] if a != "--"]
+    return argv, []
 
 
 # ── start ─────────────────────────────────────────────────────────────
 
-def _cmd_start(args: argparse.Namespace) -> dict | None:
-    parsed = refs.parse_ref(args.ref)
+
+@app.command("start")
+@_catch_harness_errors
+def start(
+    ref: str = typer.Argument(..., help="Issue key/URL, OWNER/REPO#NUM, or bare number."),
+    repo: Optional[str] = typer.Option(None, "--repo", autocompletion=_complete_repos, help="Registered name, local path, or clone URL."),
+    depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
+    base: Optional[str] = typer.Option(None, "--base", help="Base branch (default: repo default)."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
+    no_tty: bool = typer.Option(False, "--no-tty", help="Run harness non-interactively (auto commit/push/MR prompt suffix)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Create worktree from issue and launch harness.
+
+    Example:
+      harness start https://github.com/OWNER/REPO/issues/22
+      harness start OWNER/REPO#22 --repo my-checkout --no-tty
+      harness start OWNER/REPO#22 --dry-run
+    """
+    parsed = refs.parse_ref(ref)
     if parsed["kind"] in ("pr", "mr"):
-        raise HarnessError(f"{args.ref} looks like a PR/MR — use `harness review`", exit_code=2)
-    repo = repos.resolve_repo(args.repo, Path.cwd(), depth=args.depth)
-    base = args.base or repos.default_branch(repo)
-    cur = repos.current_branch(repo) if repos.repo_root(Path.cwd()) == repo else None
-    if cur and cur != base and not args.yes and not args.dry_run and sys.stdin.isatty():
-        eprint(f"note: repo is on '{cur}', worktree will branch from '{base}'.")
+        _fail(f"{ref} looks like a PR/MR — use `harness review`", EXIT_USAGE)
+    r = repos.resolve_repo(repo, Path.cwd(), depth=depth)
+    base_branch = base or repos.default_branch(r)
+    cur = repos.current_branch(r) if repos.repo_root(Path.cwd()) == r else None
+    if cur and cur != base_branch and not yes and not dry_run and sys.stdin.isatty():
+        eprint(f"note: repo is on '{cur}', worktree will branch from '{base_branch}'.")
 
     issue = refs.fetch_issue(parsed)
     key = refs.issue_key(parsed)
-    harness_name = args.harness or store.load_config().get("default_harness", "omp")
+    harness_name = harness or store.load_config().get("default_harness", "omp")
 
     # Jira: pass a full browse URL to git-wt --link (it detects the tracker
     # from the URL path); jira-cli itself takes the bare key.
@@ -177,43 +177,58 @@ def _cmd_start(args: argparse.Namespace) -> dict | None:
     if parsed["tool"] == "jira-cli" and not issue_id:
         issue_id = parsed["number"]
 
-    if args.dry_run:
-        return {"dry_run": True, "repo": str(repo), "base": base,
-                "issue": {"title": issue["title"]}, "harness": harness_name,
-                "key": key, "link": link_url}
-    wt = gitwt.start_worktree(repo, issue=issue_id, slug=slug, link=link_url, base=base)
+    if dry_run:
+        _print_result({"dry_run": True, "repo": str(r), "base": base_branch,
+                       "issue": {"title": issue["title"]}, "harness": harness_name,
+                       "key": key, "link": link_url}, json_output)
+        return
+    wt = gitwt.start_worktree(r, issue=issue_id, slug=slug, link=link_url, base=base_branch)
     worktree = wt.get("worktree_path", "")
     branch = wt.get("branch", "")
-    store.record_link(key, {"issue": args.ref, "worktree": worktree,
-                            "branch": branch, "repo": str(repo)})
+    store.record_link(key, {"issue": ref, "worktree": worktree,
+                            "branch": branch, "repo": str(r)})
     # Remember the repo under a derived name for future --repo picks.
     try:
-        repos.register_repo(repos.repo_name(repo), repo)
+        repos.register_repo(repos.repo_name(r), r)
     except HarnessError:
         pass
 
-    prompt = backend.prompt_for_issue(issue["title"], issue["body"], args.ref)
-    if args.no_tty:
+    prompt = backend.prompt_for_issue(issue["title"], issue["body"], ref)
+    if no_tty:
         prompt += "\n\nAfter task done, commit, push and create an MR/PR to the default branch"
     eprint(f"worktree: {worktree}  branch: {branch}")
-    extra = [a for a in (getattr(args, "harness_args", None) or []) if a != "--"]
-    backend.launch(harness_name, prompt, worktree or str(repo), args.no_tty, extra)
-    return {"worktree_path": worktree, "branch": branch, "base": base,
-            "key": key, "harness": harness_name}
+    backend.launch(harness_name, prompt, worktree or str(r), no_tty, _HARNESS_ARGS)
+    _print_result({"worktree_path": worktree, "branch": branch, "base": base_branch,
+                   "key": key, "harness": harness_name}, json_output)
 
 
 # ── review ────────────────────────────────────────────────────────────
 
-def _cmd_review(args: argparse.Namespace) -> dict | None:
-    parsed = refs.parse_ref(args.ref)
-    if parsed["kind"] == "issue":
-        # Could still be a PR number via shorthand; try PR info, fall back to issue.
-        pass
-    repo = repos.resolve_repo(args.repo, Path.cwd(), depth=args.depth)
-    base = repos.default_branch(repo)
-    harness_name = args.harness or store.load_config().get("default_harness", "omp")
 
-    pr_url = parsed["url"] if parsed["repo"] else args.ref
+@app.command("review")
+@_catch_harness_errors
+def review(
+    ref: str = typer.Argument(..., help="PR/MR URL or OWNER/REPO#NUM."),
+    repo: Optional[str] = typer.Option(None, "--repo", autocompletion=_complete_repos, help="Registered name, local path, or clone URL."),
+    depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
+    no_tty: bool = typer.Option(False, "--no-tty", help="Run harness non-interactively."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Create worktree from PR/MR and launch review.
+
+    Example:
+      harness review https://github.com/OWNER/REPO/pull/33
+      harness review OWNER/REPO#33 --no-tty
+    """
+    parsed = refs.parse_ref(ref)
+    repo_dir = repos.resolve_repo(repo, Path.cwd(), depth=depth)
+    base_branch = repos.default_branch(repo_dir)
+    harness_name = harness or store.load_config().get("default_harness", "omp")
+
+    pr_url = parsed["url"] if parsed["repo"] else ref
     info: dict = {}
     if parsed["repo"] and parsed["kind"] in ("pr", "mr"):
         try:
@@ -222,72 +237,88 @@ def _cmd_review(args: argparse.Namespace) -> dict | None:
             eprint(f"warning: {e}")
     head_ref = info.get("head_ref", "")
 
-    if args.dry_run:
-        return {"dry_run": True, "repo": str(repo), "pr_url": pr_url,
-                "harness": harness_name, "head_ref": head_ref}
+    if dry_run:
+        _print_result({"dry_run": True, "repo": str(repo_dir), "pr_url": pr_url,
+                       "harness": harness_name, "head_ref": head_ref}, json_output)
+        return
 
     if head_ref:
-        wt = gitwt.start_worktree(repo, branch=head_ref, base=base)
+        wt = gitwt.start_worktree(repo_dir, branch=head_ref, base=base_branch)
     else:
         # No head ref known: create a review worktree off the base branch.
-        wt = gitwt.start_worktree(repo, branch=None, issue=None, slug="review", base=base)
+        wt = gitwt.start_worktree(repo_dir, branch=None, issue=None, slug="review", base=base_branch)
     worktree = wt.get("worktree_path", "")
     branch = wt.get("branch", head_ref)
     store.record_link(f"pr:{pr_url}", {"pr_url": pr_url, "worktree": worktree,
-                                       "branch": branch, "repo": str(repo)})
+                                       "branch": branch, "repo": str(repo_dir)})
     try:
-        repos.register_repo(repos.repo_name(repo), repo)
+        repos.register_repo(repos.repo_name(repo_dir), repo_dir)
     except HarnessError:
         pass
 
     prompt = backend.prompt_for_review(pr_url)
     eprint(f"worktree: {worktree}  branch: {branch}")
-    extra = [a for a in (getattr(args, "harness_args", None) or []) if a != "--"]
-    backend.launch(harness_name, prompt, worktree or str(repo), args.no_tty, extra)
-    return {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
-            "harness": harness_name}
+    backend.launch(harness_name, prompt, worktree or str(repo_dir), no_tty, _HARNESS_ARGS)
+    _print_result({"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
+                   "harness": harness_name}, json_output)
 
 
 # ── cleanup ───────────────────────────────────────────────────────────
 
-def _cmd_cleanup(args: argparse.Namespace) -> dict:
-    parsed = refs.parse_ref(args.ref)
+
+@app.command("cleanup")
+@_catch_harness_errors
+def cleanup(
+    ref: str = typer.Argument(..., help="Issue ID/URL or PR/MR URL."),
+    force: bool = typer.Option(False, "--force", help="Skip state validation."),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Close issue + remove worktree/branch/PR.
+
+    Example:
+      harness cleanup OWNER/REPO#22 --force --yes
+      harness cleanup OWNER/REPO#22 --dry-run
+    """
+    parsed = refs.parse_ref(ref)
     key = refs.issue_key(parsed)
     links = store.load_links()
     entry = links.get(key) or links.get(f"pr:{parsed['url']}" if parsed["repo"] else key)
     if entry is None:
-        raise HarnessError(
-            f"no linked state for {args.ref}.\n"
+        _fail(
+            f"no linked state for {ref}.\n"
             "  Pass the worktree repo explicitly or run start/review first.",
-            exit_code=2,
+            EXIT_USAGE,
         )
     repo = Path(entry.get("repo", "")).expanduser()
     branch = entry.get("branch", "")
     pr_url = entry.get("pr_url", "")
     if not branch:
-        raise HarnessError(f"linked entry for {args.ref} has no branch", exit_code=2)
+        _fail(f"linked entry for {ref} has no branch", EXIT_USAGE)
 
-    if args.dry_run:
-        return {"dry_run": True, "repo": str(repo), "branch": branch,
-                "pr_url": pr_url, "force": args.force}
+    if dry_run:
+        _print_result({"dry_run": True, "repo": str(repo), "branch": branch,
+                       "pr_url": pr_url, "force": force}, json_output)
+        return
 
-    if not args.yes and not args.force and sys.stdin.isatty():
+    if not yes and not force and sys.stdin.isatty():
         try:
             answer = input(f"Remove worktree + delete branch '{branch}'? [y/N] ").strip().lower()
         except EOFError:
             answer = ""
         if answer not in ("y", "yes"):
-            raise HarnessError("aborted", exit_code=2)
+            _fail("aborted", EXIT_USAGE)
 
     result = gitwt.cleanup_worktree(repo, branch, delete_branch=True,
-                                    force=args.force, yes=True)
-    _close_issue(parsed, args.force)
-    _close_pr(parsed, pr_url, args.force)
+                                    force=force, yes=True)
+    _close_issue(parsed, force)
+    _close_pr(parsed, pr_url, force)
 
     remaining = {k: v for k, v in store.load_links().items()
                  if k != key and k != f"pr:{parsed['url']}"}
     store.save_links(remaining)
-    return {"branch": branch, "cleanup": result, "closed": args.ref}
+    _print_result({"branch": branch, "cleanup": result, "closed": ref}, json_output)
 
 
 def _close_issue(parsed: dict, force: bool) -> None:
@@ -335,71 +366,198 @@ def _close_pr(parsed: dict, pr_url: str, force: bool) -> None:
         eprint(f"warning: {e}")
 
 
-# ── repo / status ─────────────────────────────────────────────────────
+# ── repo ──────────────────────────────────────────────────────────────
 
-def _cmd_repo(args: argparse.Namespace):
-    if args.repo_command == "add":
-        path = args.path.expanduser()
-        if not (path / ".git").exists() and not path.is_dir():
-            raise HarnessError(f"not a repo path: {path}", exit_code=2)
-        repos.register_repo(args.name, path)
-        if args.tracker:
-            cfg = store.load_config()
-            cfg.setdefault("trackers", {})[args.tracker] = {"repos": [args.name]}
-            store.save_config(cfg)
-        return {"registered": args.name, "path": str(path)}
-    if args.repo_command == "list":
+repo_app = typer.Typer(help="Manage registered offline repos.", no_args_is_help=True)
+app.add_typer(repo_app, name="repo")
+
+
+@repo_app.command("add")
+@_catch_harness_errors
+def repo_add(
+    name: str = typer.Option(..., "--name", help="Name to register the repo under."),
+    path: Path = typer.Option(..., "--path", help="Local path of the repo."),
+    tracker: Optional[str] = typer.Option(None, "--tracker", help="Issue tracker project key/URL to map."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Register an offline repo.
+
+    Example:
+      harness repo add --name projectx --path ~/projects/projectx
+      harness repo add --name projectx --path ~/projects/projectx --tracker IPG
+    """
+    p = path.expanduser()
+    if not (p / ".git").exists() and not p.is_dir():
+        _fail(f"not a repo path: {p}", EXIT_USAGE)
+    repos.register_repo(name, p)
+    if tracker:
         cfg = store.load_config()
-        items = [{"name": n, **v} for n, v in cfg.get("repos", {}).items()]
-        if getattr(args, "json", False):
-            return items
-        return "\n".join(f"{i['name']}: {i.get('path', '?')}" for i in items) or "(no repos registered)"
-    if args.repo_command == "remove":
-        cfg = store.load_config()
-        if args.name not in cfg.get("repos", {}):
-            raise HarnessError(f"unknown repo: {args.name}", exit_code=2)
-        del cfg["repos"][args.name]
+        cfg.setdefault("trackers", {})[tracker] = {"repos": [name]}
         store.save_config(cfg)
-        return {"removed": args.name}
-    raise HarnessError(f"unknown repo subcommand: {args.repo_command}", exit_code=2)
+    _print_result({"registered": name, "path": str(p)}, json_output)
 
 
-def _cmd_status(args: argparse.Namespace):
+@repo_app.command("list")
+def repo_list(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    csv_output: bool = typer.Option(False, "--csv", help="Output as CSV (stdout; logs go to stderr)."),
+) -> None:
+    """List registered repos (Rich table by default).
+
+    Example:
+      harness repo list
+      harness repo list --csv
+      harness repo list --json | jq '.[].name'
+    """
+    cfg = store.load_config()
+    items = [{"name": n, **v} for n, v in cfg.get("repos", {}).items()]
+    _print_rows(items, json_output, csv_output, ["name", "path"],
+                "Registered repos", "(no repos registered)")
+
+
+@repo_app.command("remove")
+@_catch_harness_errors
+def repo_remove(
+    name: str = typer.Argument(..., autocompletion=_complete_repos, help="Registered repo name."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Unregister a repo.
+
+    Example: harness repo remove projectx
+    """
+    cfg = store.load_config()
+    if name not in cfg.get("repos", {}):
+        _fail(f"unknown repo: {name}", EXIT_USAGE)
+    del cfg["repos"][name]
+    store.save_config(cfg)
+    _print_result({"removed": name}, json_output)
+
+
+# ── status ────────────────────────────────────────────────────────────
+
+
+@app.command("status")
+@_catch_harness_errors
+def status(
+    ref: Optional[str] = typer.Argument(None, help="Issue/PR ref (omit: all links)."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    csv_output: bool = typer.Option(False, "--csv", help="Output as CSV (stdout; logs go to stderr)."),
+) -> None:
+    """Show linked issue↔PR↔worktree state (Rich table by default).
+
+    Example:
+      harness status
+      harness status OWNER/REPO#22
+      harness status --json
+    """
     links = store.load_links()
-    if args.ref:
-        parsed = refs.parse_ref(args.ref)
+    if ref:
+        parsed = refs.parse_ref(ref)
         key = refs.issue_key(parsed)
         entry = links.get(key) or links.get(f"pr:{parsed['url']}", {})
-        if getattr(args, "json", False):
-            return {"key": key, **entry}
+        if json_output:
+            print(json.dumps({"key": key, **entry}, indent=2))
+            return
         if not entry:
-            return f"no linked state for {args.ref}"
-        return "\n".join(f"{k}: {v}" for k, v in entry.items())
-    if getattr(args, "json", False):
-        return links
-    if not links:
-        return "(no linked sessions)"
-    return "\n".join(f"{k}: {v.get('worktree', '?')} [{v.get('branch', '?')}]" for k, v in links.items())
-
-
-# ── output ────────────────────────────────────────────────────────────
-
-def _output(args: argparse.Namespace, data) -> None:
-    if getattr(args, "json", False):
-        json.dump(data, sys.stdout, indent=2)
-        sys.stdout.write("\n")
-    elif isinstance(data, dict):
-        for k, v in data.items():
+            print(f"no linked state for {ref}")
+            return
+        for k, v in entry.items():
             print(f"{k}: {v}")
-    elif isinstance(data, list):
-        for row in data:
-            print(row if isinstance(row, str) else json.dumps(row))
+        return
+    if json_output:
+        print(json.dumps(links, indent=2))
+        return
+    items = [{"key": k, "worktree": v.get("worktree", "?"), "branch": v.get("branch", "?")}
+             for k, v in links.items()]
+    _print_rows(items, json_output, csv_output, ["key", "worktree", "branch"],
+                "Linked sessions", "(no linked sessions)")
+
+
+# ── doctor ────────────────────────────────────────────────────────────
+
+
+@app.command("doctor")
+def doctor(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Check install sync + tool availability.
+
+    Example: harness doctor
+
+    Exit codes: 0 in sync · 1 stale/missing receipt (fix: ./install.sh).
+    """
+    result = _doctor.check(json_output=json_output)
+    if json_output:
+        print(json.dumps(result, indent=2))
+    if result["status"] != "ok":
+        raise typer.Exit(EXIT_GENERAL)
+
+
+# ── shell completion --------------------------------------------------
+
+completions_app = typer.Typer(help="Shell completion: print the init script or install it into your rc file.", no_args_is_help=True)
+app.add_typer(completions_app, name="completions")
+
+
+@completions_app.command("show")
+def completions_show(
+    shell: str = typer.Argument(..., help="Shell to print the init script for (bash, zsh, fish)."),
+) -> None:
+    """Print the shell init script — source it via eval in your rc file.
+
+    Example:
+      eval "$(harness completions show bash)"   # ~/.bashrc
+      eval "$(harness completions show zsh)"    # ~/.zshrc
+      harness completions show fish | source    # fish config
+    """
+    import typer.main as _typer_main
+
+    try:
+        script = _completions.get_completion_script("harness", shell, click_cmd=_typer_main.get_command(app))
+    except ValueError as exc:
+        _fail(str(exc), EXIT_USAGE)
+    print(script, end="" if script.endswith("\n") else "\n")
+
+
+@completions_app.command("install")
+def completions_install(
+    shell: Optional[str] = typer.Argument(None, help="Shell to install for (bash, zsh, fish). Omit: detect from $SHELL."),
+    rcfile: Optional[str] = typer.Option(None, "--rcfile", help="Rc file to edit (default: ~/.bashrc, ~/.zshrc, fish config)."),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation (needed for non-interactive/agent use)."),
+) -> None:
+    """Install the eval line into your rc file (idempotent; keeps a .bak backup).
+
+    Example:
+      harness completions install          # detect shell from $SHELL
+      harness completions install bash     # explicit shell
+      harness completions install zsh --rcfile ~/.zshrc --yes
+    """
+    resolved = shell or _completions.detect_shell()
+    if resolved is None:
+        _fail(f"cannot detect shell from $SHELL={os.environ.get('SHELL', '')!r}; pass bash, zsh, or fish explicitly", EXIT_USAGE)
+    if not yes and sys.stdin.isatty() and not typer.confirm(f"Add harness completion to your {resolved} rc file?"):
+        raise typer.Exit(EXIT_USAGE)
+    try:
+        rc, changed = _completions.install_completion("harness", resolved, Path(rcfile) if rcfile else None)
+    except ValueError as exc:
+        _fail(str(exc), EXIT_USAGE)
+    if changed:
+        _completions.print_install_hint("harness", resolved, rc)
     else:
-        print(data)
+        print(f"already installed in {rc}", file=sys.stderr)
 
 
-def eprint(*a, **k):
-    print(*a, file=sys.stderr, **k)
+def main() -> None:
+    argv, harness_args = _split_harness_args(sys.argv[1:])
+    _HARNESS_ARGS[:] = harness_args
+    warn = _doctor.dev_warning()
+    if warn:
+        eprint(warn)
+    try:
+        app(args=argv)
+    except HarnessError as e:
+        eprint(f"error: {e}")
+        sys.exit(e.exit_code)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 """Jira refs, resume fallback, and upstream guard."""
 
+import json
+
 from harness import cli, gitwt, refs
 from harness.errors import HarnessError
 
@@ -75,16 +77,16 @@ def test_upstream_repair_without_network(tmp_path):
 
 
 def test_start_dry_run_jira(isolated_config, tmp_path, monkeypatch):
-    from argparse import Namespace
+    from typer.testing import CliRunner
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd, depth=7: repo_dir)
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.repos, "repo_root", lambda cwd: None)
     monkeypatch.setattr(cli.refs, "fetch_issue",
                         lambda parsed: {"title": "Add changelog", "body": ""})
-    args = Namespace(command="start", ref="IPG-980", repo=None, depth=7, base=None,
-                     harness=None, no_tty=False, dry_run=True, yes=True,
-                     verbose=False, quiet=False, json=True)
-    out = cli._cmd_start(args)
+    r = CliRunner().invoke(cli.app, ["start", "IPG-980", "--dry-run", "--json"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.output)
     assert out["key"] == "jira:IPG-980"
     assert out["dry_run"] is True

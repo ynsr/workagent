@@ -1,439 +1,548 @@
-"""git-wt CLI — create/finish/cleanup git worktrees for task isolation."""
+"""git-wt — create/finish/cleanup git worktrees for task isolation.
+
+Typer + Rich CLI. stdout carries ONLY command output; every progress,
+warning, and confirmation line goes to stderr. Human-first: `list` renders
+a Rich table by default; --csv/--json are opt-in for scripting and agents.
+
+Exit codes: 0=success, 1=general error, 2=usage error, 130=interrupted.
+"""
 
 from __future__ import annotations
 
-import argparse
+import csv
 import json
+import os
 import shutil
 import sys
+from enum import Enum
 from pathlib import Path
+from typing import Callable, Optional
+
+import typer
+from rich.console import Console
+from rich.table import Table
 
 from . import __version__
+from . import completions as _completions
 from . import doctor
-from .completions import (
-    PROG,
-    RC_FILES,
-    SUPPORTED_SHELLS,
-    detect_shell,
-    get_completion_script,
-    install_completion,
-)
 from .git_utils import GitRepo, GitWtError
-from .worktree import (
-    cleanup_task,
-    finish_task,
-    start_task,
+from .worktree import cleanup_task, finish_task, start_task
+
+PROG = _completions.PROG
+
+EXIT_OK, EXIT_GENERAL, EXIT_USAGE = 0, 1, 2
+
+# Sentinel value for a value-less --resume (argparse's nargs="?" behavior;
+# Click/Typer has no optional-value options, see _normalize_bare_resume).
+_RESUME_PICK = "__pick__"
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        print(f"{PROG} {__version__}")
+        raise typer.Exit(EXIT_OK)
+
+
+def _stdin_isatty() -> bool:
+    """TTY check (module-level so tests/agents can reason about prompts)."""
+    return sys.stdin.isatty()
+
+
+class OnDirty(str, Enum):
+    """How to handle a dirty base branch checkout."""
+
+    stash = "stash"
+    commit = "commit"
+    push = "push"
+    ignore = "ignore"
+
+
+# Shared option infos: the same flags are accepted before the subcommand
+# (app callback) and after it (each command); commands merge both.
+VersionOpt = typer.Option(
+    None, "--version", callback=_version_callback, is_eager=True, help="Show version and exit."
+)
+VerboseOpt = typer.Option(False, "-v", "--verbose", help="Verbose output (extra detail on stderr).")
+QuietOpt = typer.Option(False, "-q", "--quiet", help="Suppress non-essential stderr output.")
+JsonOpt = typer.Option(False, "--json", help="Structured JSON output on stdout.")
+CsvOpt = typer.Option(False, "--csv", help="CSV output (header row) instead of the pretty table.")
+
+_complete_branches = _completions.complete_branch_names
+_complete_worktrees = _completions.complete_worktree_paths
+
+app = typer.Typer(
+    name=PROG,
+    no_args_is_help=True,
+    add_completion=False,  # single completion system: `completions show|install`
+    context_settings={"help_option_names": ["-h", "--help"]},
+    pretty_exceptions_enable=False,
 )
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        prog="git-wt",
-        description="Create, finish, and clean up git worktrees for AI agent task isolation.",
-        epilog=(
-            "Examples:\n"
-            "  git-wt start --type feat --issue 123 --slug add-login\n"
-            "  git-wt start --branch feat/123--add-login --ephemeral\n"
-            "  git-wt start --resume feat/123--add-login\n"
-            "  git-wt start --link https://tribe.jibit.cloud/browse/IPG-930\n"
-            "  git-wt start --link https://github.com/owner/repo/issues/22\n"
-            "  git-wt start chor/IPG-806--my-slug\n"
-            "  git-wt finish --worktree ~/dev/worktrees/projectx/feat/123--add-login --skip-tests\n"
-            "  git-wt cleanup --branch feat/123--add-login --delete-branch\n"
-            "  git-wt list\n\n"
-            "Exit codes: 0=success, 1=error, 2=needs human input"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("--version", action="version",
-                        version=f"%(prog)s {__version__}", help="show version and exit")
 
-    # Global flags — accepted before the subcommand. Subcommands define
-    # their own --json/-v (default SUPPRESS) so they also work after it;
-    # the same args attribute is written either way.
-    parser.add_argument("-v", "--verbose", action="store_true", default=False,
-                        help="Verbose output")
-    parser.add_argument("-q", "--quiet", action="store_true", default=False,
-                        help="Suppress non-essential stderr output")
-    parser.add_argument("--json", action="store_true", default=False,
-                        help="Output as JSON (stdout)")
 
-    # Stderr-only flags are parsed before subcommand dispatch
-    subparsers = parser.add_subparsers(dest="command", required=False)
+@app.callback()
+def _main(
+    ctx: typer.Context,
+    version: Optional[bool] = typer.Option(
+        None, "--version", callback=_version_callback, is_eager=True, help="Show version and exit."
+    ),
+    verbose: bool = VerboseOpt,
+    quiet: bool = QuietOpt,
+    json_output: bool = JsonOpt,
+) -> None:
+    """git-wt — create/finish/cleanup git worktrees for AI agent task isolation.
 
-    # ── start ───────────────────────────────────────────────────────
-    sp = subparsers.add_parser("start", help="Create or resume a worktree for a task")
-    sp.add_argument("branch_name", nargs="?", default=None,
-                    help="Full branch name (positional, e.g. chor/IPG-806--slug)")
-    sp.add_argument("--branch", help="Explicit branch name (alternative to positional)")
-    sp.add_argument("--type", choices=["feat", "fix", "chore", "docs", "refactor"],
-                    help="Branch type prefix")
-    sp.add_argument("--issue", help="Issue/ticket id (folded into branch name)")
-    sp.add_argument("--slug", help="Short description (folded into branch name)")
-    sp.add_argument("--link", help="GitHub/GitLab/Jira/Todoist issue URL — auto-detects tool and fetches title")
-    sp.add_argument("--base", help="Base branch (default: repo default)")
-    sp.add_argument("--repo", type=Path, help="Repo path (default: current directory)")
-    sp.add_argument("--ephemeral", action="store_true",
-                    help="Create worktree in a temp dir instead of ~/dev/worktrees/")
-    sp.add_argument("--resume", nargs="?", const=True, default=False,
-                    help="Resume an existing branch/worktree (omit value to pick interactively)")
-    sp.add_argument("--on-dirty", choices=["stash", "commit", "push", "ignore"],
-                    help="How to handle dirty base branch checkout")
-    sp.add_argument("--force", action="store_true",
-                    help="Re-create branch if it already exists locally")
-    sp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Output as JSON (stdout)")
-    sp.add_argument("-v", "--verbose", action="store_true", default=argparse.SUPPRESS, help="Verbose output")
-    sp.add_argument("-q", "--quiet", action="store_true", default=argparse.SUPPRESS, help="Suppress non-essential stderr output")
+    Human-first output: `list` renders a Rich table; --csv/--json are
+    opt-in for scripts and agents. stdout carries ONLY command output —
+    progress, warnings, and confirmations go to stderr. Interactive
+    prompts never block a non-TTY run: missing flags fail with an
+    actionable message, and --yes/--force/--on-dirty bypass them.
 
-    # ── finish ──────────────────────────────────────────────────────
-    sp = subparsers.add_parser("finish", help="Push branch and create a draft PR/MR")
-    sp.add_argument("--worktree", type=Path, default=None,
-                    help="Worktree path (default: interactive picker if omitted)")
-    sp.add_argument("--base", help="PR target branch (default: repo default)")
-    sp.add_argument("--title", help="PR title (default: derived from branch name)")
-    sp.add_argument("--skip-tests", action="store_true", help="Skip the test run")
-    sp.add_argument("--yes", action="store_true", help="Skip confirmation prompts")
-    sp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Output as JSON (stdout)")
-    sp.add_argument("-v", "--verbose", action="store_true", default=argparse.SUPPRESS, help="Verbose output")
-    sp.add_argument("-q", "--quiet", action="store_true", default=argparse.SUPPRESS, help="Suppress non-essential stderr output")
+    Example:
+      git-wt start --type feat --issue 123 --slug add-login
+      git-wt start --resume feat/123--add-login
+      git-wt finish --worktree ~/dev/worktrees/projectx/feat/123--add-login
+      git-wt cleanup --branch feat/123--add-login --delete-branch
+      git-wt list --csv
+      git-wt completions show bash
 
-    # ── cleanup ─────────────────────────────────────────────────────
-    sp = subparsers.add_parser("cleanup", help="Remove a worktree and optionally its branch")
-    sp.add_argument("--branch", default=None,
-                    help="Branch to clean up (omit to pick interactively)")
-    sp.add_argument("--repo", type=Path, help="Repo path (default: current directory)")
-    sp.add_argument("--force", action="store_true",
-                    help="Remove even if PR is open or state unknown")
-    sp.add_argument("--delete-branch", action="store_true",
-                    help="Also delete local and remote branch")
-    sp.add_argument("--yes", action="store_true", help="Skip confirmation prompts")
-    sp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Output as JSON (stdout)")
-    sp.add_argument("-v", "--verbose", action="store_true", default=argparse.SUPPRESS, help="Verbose output")
-    sp.add_argument("-q", "--quiet", action="store_true", default=argparse.SUPPRESS, help="Suppress non-essential stderr output")
-
-    # ── list ────────────────────────────────────────────────────────
-    sp = subparsers.add_parser("list", help="List worktrees for a repo")
-    sp.add_argument("--repo", type=Path, help="Repo path (default: current directory)")
-    sp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Output as JSON (stdout)")
-    sp.add_argument("-v", "--verbose", action="store_true", default=argparse.SUPPRESS, help="Verbose output")
-    sp.add_argument("-q", "--quiet", action="store_true", default=argparse.SUPPRESS, help="Suppress non-essential stderr output")
-
-    # ── completion ──────────────────────────────────────────────────
-    sp = subparsers.add_parser(
-        "completion",
-        help="Print a shell completion script — eval it in your rc file",
-    )
-    sp.add_argument("shell", choices=SUPPORTED_SHELLS,
-                    help="Shell to print the script for (bash, zsh, fish)")
-
-    # ── completion-install ──────────────────────────────────────────
-    sp = subparsers.add_parser(
-        "completion-install",
-        help="Install completion into your rc file (idempotent; keeps a .bak backup)",
-    )
-    sp.add_argument("shell", nargs="?", default=None,
-                    help="Shell (default: detect from $SHELL)")
-    sp.add_argument("--rcfile", type=Path, default=None,
-                    help="Rc file to edit (default: ~/.bashrc, ~/.zshrc, or ~/.config/fish/config.fish)")
-    sp.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
-    sp.add_argument("-v", "--verbose", action="store_true", default=argparse.SUPPRESS, help="Verbose output")
-    sp.add_argument("-q", "--quiet", action="store_true", default=argparse.SUPPRESS, help="Suppress non-essential stderr output")
-
-    # ── doctor ──────────────────────────────────────────────────────
-    sp = subparsers.add_parser(
-        "doctor",
-        help="Check the installed copy is in sync with the source tree",
-    )
-    sp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Output as JSON (stdout)")
-    sp.add_argument("-v", "--verbose", action="store_true", default=argparse.SUPPRESS, help="Verbose output")
-    sp.add_argument("-q", "--quiet", action="store_true", default=argparse.SUPPRESS, help="Suppress non-essential stderr output")
-
-    args = parser.parse_args()
-
+    Exit codes: 0=success, 1=general error (git failure, open PR, stale
+    install), 2=usage error (bad flags, missing input, unknown shell),
+    130=interrupted (Ctrl-C).
+    """
     # Dev-run staleness warning (stderr only; the installed copy never warns).
     warn = doctor.dev_warning()
     if warn:
-        eprint(warn)
+        print(warn, file=sys.stderr)
 
-    # Handle no subcommand
-    if not args.command:
-        parser.print_help()
-        sys.exit(0)
 
-    # Dispatch
+def _fail(msg: str, code: int = EXIT_GENERAL):
+    """Print an error to stderr and exit with the given code."""
+    print(f"error: {msg}", file=sys.stderr)
+    raise typer.Exit(code)
+
+
+def _flags(
+    ctx: typer.Context,
+    *,
+    verbose: bool,
+    quiet: bool,
+    json_output: bool,
+    csv_output: bool = False,
+) -> dict[str, bool]:
+    """Merge global flags given before the subcommand with per-command ones."""
+    parent = ctx.parent.params if ctx.parent is not None else {}
+    return {
+        "verbose": bool(verbose or parent.get("verbose")),
+        "quiet": bool(quiet or parent.get("quiet")),
+        "json": bool(json_output or parent.get("json_output")),
+        "csv": bool(csv_output),
+    }
+
+
+def _confirm_tty(prompt: str) -> bool:
+    """Ask a yes/no question on a TTY. Prompt text goes to stderr."""
+    print(prompt, file=sys.stderr)
     try:
-        result = _dispatch(args)
+        answer = input("[y/N] ")
+    except (EOFError, KeyboardInterrupt):
+        print(file=sys.stderr)
+        return False
+    return answer.strip().lower() in ("y", "yes")
+
+
+def _emit_result(data: dict, *, verbose: bool, json_output: bool) -> None:
+    """Print a command result: JSON on stdout, or message (+ cd line) only."""
+    if json_output:
+        print(json.dumps(data, indent=2, default=str))
+        return
+    msg = data.get("message", "")
+    if msg:
+        print(msg)
+    cd_command = data.get("cd_command")
+    if cd_command:
+        print(cd_command)
+    if verbose:
+        for key, value in data.items():
+            if key not in ("message", "cd_command") and value is not None:
+                print(f"  {key}: {value}", file=sys.stderr)
+
+
+# ── start ────────────────────────────────────────────────────────────
+
+
+@app.command("start")
+def start(
+    ctx: typer.Context,
+    branch_name: Optional[str] = typer.Argument(
+        None, help="Full branch name (positional, e.g. chor/IPG-806--slug)."
+    ),
+    branch: Optional[str] = typer.Option(
+        None, "--branch", autocompletion=_complete_branches,
+        help="Explicit branch name (alternative to positional).",
+    ),
+    type_: Optional[str] = typer.Option(
+        None, "--type", help="Branch type prefix (feat, fix, chore, docs, refactor)."
+    ),
+    issue: Optional[str] = typer.Option(
+        None, "--issue", help="Issue/ticket id (folded into branch name)."
+    ),
+    slug: Optional[str] = typer.Option(
+        None, "--slug", help="Short description (folded into branch name)."
+    ),
+    link: Optional[str] = typer.Option(
+        None, "--link",
+        help="GitHub/GitLab/Jira/Todoist issue URL — auto-detects tool and fetches title.",
+    ),
+    base: Optional[str] = typer.Option(None, "--base", help="Base branch (default: repo default)."),
+    repo: Optional[Path] = typer.Option(None, "--repo", help="Repo path (default: current directory)."),
+    ephemeral: bool = typer.Option(
+        False, "--ephemeral", help="Create worktree in a temp dir instead of ~/dev/worktrees/."
+    ),
+    resume: Optional[str] = typer.Option(
+        None, "--resume", autocompletion=_complete_branches,
+        help="Resume an existing branch/worktree (omit the value to pick interactively).",
+    ),
+    on_dirty: Optional[OnDirty] = typer.Option(
+        None, "--on-dirty", help="How to handle a dirty base branch checkout."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Re-create the branch if it already exists locally."
+    ),
+    version: Optional[bool] = VersionOpt,
+    verbose: bool = VerboseOpt,
+    quiet: bool = QuietOpt,
+    json_output: bool = JsonOpt,
+) -> None:
+    """Create or resume a worktree for a task.
+
+    Example:
+      git-wt start --type feat --issue 123 --slug add-login
+      git-wt start --branch feat/123--add-login --ephemeral
+      git-wt start --resume feat/123--add-login
+      git-wt start --link https://tribe.jibit.cloud/browse/IPG-930
+      git-wt start --link https://github.com/owner/repo/issues/22
+      git-wt start chor/IPG-806--my-slug
+    """
+    flags = _flags(ctx, verbose=verbose, quiet=quiet, json_output=json_output)
+    try:
+        resume_branch: Optional[str]
+        if resume == _RESUME_PICK:
+            # Bare --resume: pick the branch interactively (TTY only).
+            selected = _interactive_select_worktree(repo, hint="--resume <branch>")
+            resume_branch = selected["branch"]
+        else:
+            resume_branch = resume
+        result = start_task(
+            repo_path=repo,
+            branch=branch_name or branch,
+            type_=type_,
+            issue=issue,
+            slug=slug,
+            link=link,
+            base=base,
+            ephemeral=ephemeral,
+            resume=resume_branch,
+            on_dirty=on_dirty.value if on_dirty else None,
+            force=force,
+        )
     except GitWtError as e:
-        eprint(f"error: {e}")
-        sys.exit(e.exit_code)
-    except KeyboardInterrupt:
-        eprint("interrupted")
-        sys.exit(130)
-
-    # Output
-    if isinstance(result, list):
-        _output(args, "\n".join(str(r) for r in result) if not args.json else result)
-    elif isinstance(result, dict):
-        _output(args, result)
-    elif result is not None:
-        _output(args, result)
-
-
-# ── dispatch ─────────────────────────────────────────────────────────
-
-
-def _dispatch(args: argparse.Namespace) -> dict | list | str | None:
-    """Dispatch to the appropriate handler based on args.command."""
-    if args.command == "start":
-        return _cmd_start(args)
-    elif args.command == "finish":
-        return _cmd_finish(args)
-    elif args.command == "cleanup":
-        return _cmd_cleanup(args)
-    elif args.command == "list":
-        return _cmd_list(args)
-    elif args.command == "completion":
-        return _cmd_completion(args)
-    elif args.command == "completion-install":
-        return _cmd_completion_install(args)
-    elif args.command == "doctor":
-        return _cmd_doctor(args)
-    return None
-
-
-_UNSET = object()
-
-
-def _cmd_start(args: argparse.Namespace) -> dict:
-    """Handle `git-wt start`."""
-    # Handle interactive resume: --resume without a value
-    resume_branch: str | None
-    if args.resume is True:
-        # --resume flag given without a value → interactive picker
-        selected = _interactive_select_worktree(args.repo)
-        resume_branch = selected["branch"]
-    elif args.resume:
-        resume_branch = args.resume
-    else:
-        resume_branch = None
-
-    # Resolve branch: positional branch_name overrides --branch
-    branch = args.branch_name or args.branch
-
-    result = start_task(
-        repo_path=args.repo,
-        branch=branch,
-        type_=args.type,
-        issue=args.issue,
-        slug=args.slug,
-        link=args.link,
-        base=args.base,
-        ephemeral=args.ephemeral,
-        resume=resume_branch,
-        on_dirty=args.on_dirty,
-        force=args.force,
-    )
-
+        _fail(str(e), e.exit_code)
     wt = result.get("worktree_path", "")
-    branch = result.get("branch", "")
-    base = result.get("base", "")
-    action = result.get("action", "created")
-
     if not isinstance(wt, str):
         wt = str(wt) if wt else ""
-
+    branch_out = result.get("branch", "")
+    action = result.get("action", "created")
     msg = f"Created worktree at: {wt}"
     if action == "resumed":
         msg = f"Resumed worktree at: {wt}"
     elif action == "recreated":
         msg = f"Recreated worktree at: {wt}"
-
-    return {
-        "message": msg,
-        "worktree_path": wt,
-        "cd_command": f"cd {wt}",
-        "branch": branch,
-        "base": base,
-        "action": action,
-    }
-
-
-def _cmd_finish(args: argparse.Namespace) -> dict:
-    """Handle `git-wt finish`."""
-    worktree = args.worktree
-    if worktree is None:
-        # No --worktree given → interactive picker
-        selected = _interactive_select_worktree(args.repo)
-        worktree = Path(selected["path"])
-
-    result = finish_task(
-        worktree,
-        base=args.base,
-        title=args.title,
-        skip_tests=args.skip_tests,
+    _emit_result(
+        {
+            "message": msg,
+            "worktree_path": wt,
+            "cd_command": f"cd {wt}",
+            "branch": branch_out,
+            "base": result.get("base", ""),
+            "action": action,
+        },
+        verbose=flags["verbose"],
+        json_output=flags["json"],
     )
 
+
+# ── finish ───────────────────────────────────────────────────────────
+
+
+@app.command("finish")
+def finish(
+    ctx: typer.Context,
+    worktree: Optional[Path] = typer.Option(
+        None, "--worktree", autocompletion=_complete_worktrees,
+        help="Worktree path (default: interactive picker if omitted).",
+    ),
+    base: Optional[str] = typer.Option(None, "--base", help="PR target branch (default: repo default)."),
+    title: Optional[str] = typer.Option(None, "--title", help="PR title (default: derived from branch name)."),
+    skip_tests: bool = typer.Option(False, "--skip-tests", help="Skip the test run."),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
+    version: Optional[bool] = VersionOpt,
+    verbose: bool = VerboseOpt,
+    quiet: bool = QuietOpt,
+    json_output: bool = JsonOpt,
+) -> None:
+    """Push branch and create a draft PR/MR.
+
+    Example:
+      git-wt finish --worktree ~/dev/worktrees/projectx/feat/123--add-login --skip-tests
+      git-wt finish
+    """
+    flags = _flags(ctx, verbose=verbose, quiet=quiet, json_output=json_output)
+    try:
+        if worktree is None:
+            selected = _interactive_select_worktree(None, hint="--worktree <path>")
+            worktree = Path(selected["path"])
+        result = finish_task(worktree, base=base, title=title, skip_tests=skip_tests)
+    except GitWtError as e:
+        _fail(str(e), e.exit_code)
     pr_url = result.get("pr_url", "none")
-    branch = result.get("branch", "")
-
-    return {
-        "message": f"Pushed {branch}, PR: {pr_url}",
-        "branch": branch,
-        "pr_url": pr_url,
-        "tests_ran": result.get("tests_ran"),
-    }
-
-
-def _cmd_cleanup(args: argparse.Namespace) -> dict:
-    """Handle `git-wt cleanup`."""
-    branch = args.branch
-    if branch is None:
-        # No --branch given → interactive picker
-        selected = _interactive_select_worktree(args.repo)
-        branch = selected["branch"]
-
-    result = cleanup_task(
-        repo_path=args.repo,
-        branch=branch,
-        force=args.force,
-        delete_branch=args.delete_branch,
+    _emit_result(
+        {
+            "message": f"Pushed {result.get('branch', '')}, PR: {pr_url}",
+            "branch": result.get("branch", ""),
+            "pr_url": pr_url,
+            "tests_ran": result.get("tests_ran"),
+        },
+        verbose=flags["verbose"],
+        json_output=flags["json"],
     )
 
+
+# ── cleanup ──────────────────────────────────────────────────────────
+
+
+@app.command("cleanup")
+def cleanup(
+    ctx: typer.Context,
+    branch: Optional[str] = typer.Option(
+        None, "--branch", autocompletion=_complete_branches,
+        help="Branch to clean up (omit to pick interactively).",
+    ),
+    repo: Optional[Path] = typer.Option(None, "--repo", help="Repo path (default: current directory)."),
+    force: bool = typer.Option(
+        False, "--force", help="Remove even if PR is open or state unknown."
+    ),
+    delete_branch: bool = typer.Option(False, "--delete-branch", help="Also delete local and remote branch."),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
+    version: Optional[bool] = VersionOpt,
+    verbose: bool = VerboseOpt,
+    quiet: bool = QuietOpt,
+    json_output: bool = JsonOpt,
+) -> None:
+    """Remove a worktree and optionally its branch.
+
+    Example:
+      git-wt cleanup --branch feat/123--add-login --delete-branch
+      git-wt cleanup --branch feat/123--add-login --yes --json
+    """
+    flags = _flags(ctx, verbose=verbose, quiet=quiet, json_output=json_output)
+    try:
+        if branch is None:
+            selected = _interactive_select_worktree(repo, hint="--branch <name>")
+            branch = selected["branch"]
+        # PR-state gate: --force/--yes bypass; on a TTY a confirmation is
+        # offered; non-TTY without a bypass fails with an actionable message.
+        if force or yes:
+            confirmed: bool | Callable[[str], bool] | None = True
+        elif _stdin_isatty():
+            confirmed = _confirm_tty
+        else:
+            confirmed = None
+        result = cleanup_task(
+            repo_path=repo,
+            branch=branch,
+            force=force,
+            delete_branch=delete_branch,
+            confirm=confirmed,
+        )
+    except GitWtError as e:
+        _fail(str(e), e.exit_code)
     actions = result.get("actions", [])
-    return {
-        "message": "; ".join(actions) if actions else f"No worktree found for branch '{branch}'",
-        "actions": actions,
-    }
+    _emit_result(
+        {
+            "message": "; ".join(actions) if actions else f"No worktree found for branch '{branch}'",
+            "actions": actions,
+        },
+        verbose=flags["verbose"],
+        json_output=flags["json"],
+    )
 
 
-def _cmd_list(args: argparse.Namespace) -> list[dict] | str:
-    """Handle `git-wt list`."""
-    repo = GitRepo(args.repo)
-    worktrees = repo.worktree_paths()
+# ── list ─────────────────────────────────────────────────────────────
 
+
+@app.command("list")
+def list_cmd(
+    ctx: typer.Context,
+    repo: Optional[Path] = typer.Option(None, "--repo", help="Repo path (default: current directory)."),
+    version: Optional[bool] = VersionOpt,
+    verbose: bool = VerboseOpt,
+    quiet: bool = QuietOpt,
+    json_output: bool = JsonOpt,
+    csv_output: bool = CsvOpt,
+) -> None:
+    """List worktrees for a repo (Rich table; --csv/--json for machines).
+
+    Example:
+      git-wt list
+      git-wt list --csv
+      git-wt list --json | jq '.[].branch'
+    """
+    flags = _flags(ctx, verbose=verbose, quiet=quiet, json_output=json_output, csv_output=csv_output)
+    try:
+        worktrees = GitRepo(repo).worktree_paths()
+    except GitWtError as e:
+        _fail(str(e), e.exit_code)
+
+    if flags["json"]:
+        print(json.dumps(worktrees, indent=2, default=str))
+        return
+    if flags["csv"]:
+        writer = csv.writer(sys.stdout)
+        writer.writerow(["branch", "path"])
+        for wt in worktrees:
+            writer.writerow([wt.get("branch") or "(detached)", wt.get("path", "")])
+        return
     if not worktrees:
-        return "No worktrees found."
-
-    if args.json:
-        return worktrees
-
-    lines = []
+        print("No worktrees found.")
+        return
+    table = Table(box=None, pad_edge=False)
+    table.add_column("Branch", style="cyan", no_wrap=True)
+    table.add_column("Path", style="default")
+    table.add_column("HEAD", style="dim")
     for wt in worktrees:
         branch = wt.get("branch") or "(detached)"
-        path = wt.get("path", "?")
-        lines.append(f"{path:60s} {branch}")
-    return "\n".join(lines)
+        head = (wt.get("head") or "")[:7]
+        table.add_row(branch, wt.get("path", "?"), head)
+    Console().print(table)
 
 
-# ── shell completion handlers ────────────────────────────────────────
+# ── shell completion ─────────────────────────────────────────────────
 
 
-def _cmd_completion(args: argparse.Namespace) -> None:
-    """Handle `git-wt completion` — print the script to stdout."""
+completions_app = typer.Typer(
+    help="Shell completion: print the init script or install it into your rc file.",
+    no_args_is_help=True,
+)
+app.add_typer(completions_app, name="completions")
+
+
+@completions_app.command("show")
+def completions_show(
+    shell: str = typer.Argument(..., help="Shell to print the init script for (bash, zsh, fish)."),
+) -> None:
+    """Print the shell init script — source it via eval in your rc file.
+
+    Example:
+      eval "$(git-wt completions show bash)"   # ~/.bashrc
+      eval "$(git-wt completions show zsh)"    # ~/.zshrc
+      git-wt completions show fish | source    # fish config
+    """
+    import typer.main as typer_main
+
     try:
-        script = get_completion_script(PROG, args.shell)
-    except ValueError as e:
-        raise GitWtError(str(e), exit_code=2)
-    sys.stdout.write(script)
+        script = _completions.get_completion_script(PROG, shell, click_cmd=typer_main.get_command(app))
+    except ValueError as exc:
+        _fail(str(exc), EXIT_USAGE)
+    print(script, end="" if script.endswith("\n") else "\n")
 
 
-def _cmd_completion_install(args: argparse.Namespace) -> dict:
-    """Handle `git-wt completion-install` — idempotent rc edit."""
-    shell = args.shell or detect_shell()
-    if shell not in SUPPORTED_SHELLS:
-        raise GitWtError(
-            "could not detect a supported shell from $SHELL — pass one: "
-            f"{'|'.join(SUPPORTED_SHELLS)}",
-            exit_code=2,
+@completions_app.command("install")
+def completions_install(
+    shell: Optional[str] = typer.Argument(
+        None, help="Shell to install for (bash, zsh, fish). Omit: detect from $SHELL."
+    ),
+    rcfile: Optional[Path] = typer.Option(
+        None, "--rcfile",
+        help="Rc file to edit (default: ~/.bashrc, ~/.zshrc, or ~/.config/fish/config.fish).",
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt (needed for non-interactive/agent use)."),
+    quiet: bool = QuietOpt,
+) -> None:
+    """Install the eval line into your rc file (idempotent; keeps a .bak backup).
+
+    Example:
+      git-wt completions install          # detect shell from $SHELL
+      git-wt completions install bash     # explicit shell
+      git-wt completions install zsh --rcfile ~/.zshrc --yes
+    """
+    resolved = shell or _completions.detect_shell()
+    if resolved is None:
+        _fail(
+            f"could not detect a supported shell from $SHELL={os.environ.get('SHELL', '')!r} "
+            f"— pass one: {'|'.join(_completions.SUPPORTED_SHELLS)}",
+            EXIT_USAGE,
         )
-    default_rc = (
-        Path(args.rcfile).expanduser() if args.rcfile
-        else Path(RC_FILES[shell]).expanduser()
-    )
-    # Confirm on a TTY (rc edit is destructive-ish); --yes bypasses,
+    default_rc = Path(rcfile).expanduser() if rcfile else Path(_completions.RC_FILES[resolved]).expanduser()
+    # Confirm on a TTY (rc edit is destructive-ish); --yes bypasses;
     # non-interactive runs proceed (idempotent + .bak backup).
-    if sys.stdin.isatty() and not args.yes:
-        try:
-            answer = input(f"Install {PROG} completion for {shell} into {default_rc}? [y/N] ")
-        except (EOFError, KeyboardInterrupt):
-            eprint("aborted")
-            sys.exit(130)
-        if answer.strip().lower() not in ("y", "yes"):
-            eprint("aborted — rc file not modified")
-            sys.exit(1)
+    if _stdin_isatty() and not yes:
+        if not _confirm_tty(f"Install {PROG} completion for {resolved} into {default_rc}?"):
+            _fail("aborted — rc file not modified", EXIT_GENERAL)
     try:
-        rc, changed = install_completion(PROG, shell, rcfile=args.rcfile)
-    except ValueError as e:
-        raise GitWtError(str(e), exit_code=2)
-    if changed:
-        if not args.quiet:
+        rc, changed = _completions.install_completion(PROG, resolved, rcfile)
+    except ValueError as exc:
+        _fail(str(exc), EXIT_USAGE)
+    if not quiet:
+        if changed:
+            print(f"installed {PROG} completion for {resolved} in {rc}", file=sys.stderr)
             print(f"restart your shell or run: source {rc}", file=sys.stderr)
-        return {
-            "message": f"installed {PROG} completion for {shell} in {rc}",
-            "rc": str(rc),
-            "changed": True,
-        }
-    if not args.quiet:
-        eprint(f"already installed in {rc}")
-    return {
-        "message": f"{PROG} completion for {shell} already installed in {rc}",
-        "rc": str(rc),
-        "changed": False,
-    }
+        else:
+            print(f"already installed in {rc}", file=sys.stderr)
 
 
-def _cmd_doctor(args: argparse.Namespace) -> None:
-    """Handle `git-wt doctor` — install-sync self-check (0 ok, 1 stale/missing)."""
+# ── doctor ───────────────────────────────────────────────────────────
+
+
+@app.command("doctor")
+def doctor_cmd(
+    ctx: typer.Context,
+    version: Optional[bool] = VersionOpt,
+    verbose: bool = VerboseOpt,
+    quiet: bool = QuietOpt,
+    json_output: bool = JsonOpt,
+) -> None:
+    """Check the installed copy is in sync with the source tree.
+
+    Example:
+      git-wt doctor
+
+    Exit codes: 0 in sync · 1 stale/missing receipt (fix: ./install.sh).
+    """
+    flags = _flags(ctx, verbose=verbose, quiet=quiet, json_output=json_output)
     status, message = doctor.check()
-    _output(args, {"status": status, "message": message})
-    if status != "ok":
-        sys.exit(1)
-
-
-# ── output helpers ───────────────────────────────────────────────────
-
-
-def _output(args: argparse.Namespace, data: dict | list | str) -> None:
-    """Print output: JSON to stdout (with stderr for progress) or plain text."""
-    if args.json:
-        print(json.dumps(data, indent=2, default=str))
-    elif isinstance(data, dict):
-        msg = data.get("message", "")
-        if msg:
-            print(msg)
-        cd_cmd = data.get("cd_command")
-        if cd_cmd:
-            print(cd_cmd)
-        # In verbose mode, show full result
-        if args.verbose and not args.quiet:
-            for k, v in data.items():
-                if k != "message" and v is not None:
-                    eprint(f"  {k}: {v}")
-    elif isinstance(data, list):
-        for item in data:
-            print(item)
+    if flags["json"]:
+        print(json.dumps({"status": status, "message": message}, indent=2))
     else:
-        print(data)
+        print(message)
+    if status != doctor.OK:
+        raise typer.Exit(EXIT_GENERAL)
 
 
-def eprint(*args, **kwargs):
-    """Print to stderr."""
-    print(*args, file=sys.stderr, **kwargs)
-
-
-# ── interactive worktree picker ────────────────────────────────────
+# ── interactive worktree picker ──────────────────────────────────────
 
 
 def _interactive_select_worktree(
     repo_path: str | Path | None = None,
+    *,
+    hint: str = "--worktree <path>",
 ) -> dict:
-    """Prompt user to pick a worktree interactively.
+    """Prompt user to pick a worktree interactively (TTY only).
 
     Uses fzf if available (best UX), otherwise a numbered menu via stdin.
-    Returns the selected worktree dict with 'branch' and 'path'.
+    Non-TTY: raise GitWtError (exit 2) telling the caller which flag to pass.
     """
-    from .git_utils import GitRepo, GitWtError
-
     repo = GitRepo(repo_path)
     wts = repo.worktree_paths()
 
@@ -441,6 +550,13 @@ def _interactive_select_worktree(
     choices = [wt for wt in wts if wt.get("branch") and not wt.get("bare")]
     if not choices:
         raise GitWtError("no worktrees available to select")
+
+    # Non-interactive runs never block: fail with the actionable flag name.
+    if not _stdin_isatty():
+        raise GitWtError(
+            f"no worktree specified and stdin is not a TTY — pass {hint} explicitly",
+            exit_code=2,
+        )
 
     # Build display lines: "branch  (path)"
     lines = [f"{wt['branch']}  ({wt['path']})" for wt in choices]
@@ -463,18 +579,11 @@ def _interactive_select_worktree(
                 if wt["branch"] == branch:
                     return wt
 
-    # Fallback: numbered menu (requires TTY)
-    if not sys.stdin.isatty():
-        raise GitWtError(
-            "no worktree specified and not in interactive terminal — "
-            "provide --worktree / --branch / --resume <name> explicitly",
-            exit_code=2,
-        )
-
-    eprint("\nAvailable worktrees:")
+    # Fallback: numbered menu
+    print("\nAvailable worktrees:", file=sys.stderr)
     for i, wt in enumerate(choices, 1):
-        eprint(f"  {i:3}. {wt['branch']:45s} {wt['path']}")
-    eprint()
+        print(f"  {i:3}. {wt['branch']:45s} {wt['path']}", file=sys.stderr)
+    print(file=sys.stderr)
     try:
         choice = input("Select worktree (number or branch name): ").strip()
     except (EOFError, KeyboardInterrupt):
@@ -497,6 +606,42 @@ def _interactive_select_worktree(
             return wt
 
     raise GitWtError(f"invalid selection: {choice}", exit_code=2)
+
+
+# ── entry point ──────────────────────────────────────────────────────
+
+
+def _normalize_bare_resume(argv: list[str]) -> list[str]:
+    """Rewrite a value-less --resume into the interactive-pick sentinel.
+
+    argparse gave --resume nargs="?" (bare flag = pick interactively).
+    Click/Typer has no optional-value options, so normalize argv before
+    parsing with argparse's exact disambiguation: a following option-like
+    token (starts with '-') is NOT consumed as the value.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "--resume":
+            nxt = argv[i + 1] if i + 1 < len(argv) else None
+            if nxt is None or (nxt.startswith("-") and nxt != "-"):
+                out.append(f"--resume={_RESUME_PICK}")
+                i += 1
+                continue
+        out.append(tok)
+        i += 1
+    return out
+
+
+def main() -> None:
+    if "--resume" in sys.argv[1:]:
+        sys.argv[1:] = _normalize_bare_resume(sys.argv[1:])
+    try:
+        app()
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        raise SystemExit(130)
 
 
 if __name__ == "__main__":
