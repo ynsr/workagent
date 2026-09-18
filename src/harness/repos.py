@@ -72,6 +72,43 @@ def current_branch(path: Path) -> str | None:
         return None
 
 
+def _common_git_dir(root: Path, common: str) -> Path:
+    """Absolute path of git's --git-common-dir (relative output → repo root)."""
+    p = Path(common)
+    return (root / p).resolve() if not p.is_absolute() else p.resolve()
+
+
+def worktree_branch(path: Path) -> str | None:
+    """Branch of *path* only when it sits in a linked git worktree.
+
+    A linked worktree's ``--git-common-dir`` points at the main repo's .git,
+    not the checkout's own ``.git``. The main checkout (even on a feature
+    branch) returns None — starting from it still creates a new branch.
+    """
+    root = repo_root(path)
+    try:
+        common = run_cmd("git", "-C", str(path), "rev-parse", "--git-common-dir")
+    except HarnessError:
+        return None
+    if not common or _common_git_dir(root, common) == (root / ".git").resolve():
+        return None
+    return current_branch(path)
+
+
+def main_repo_root(path: Path) -> Path:
+    """Main checkout for *path*: linked worktrees resolve to their repo.
+
+    A worktree's ``--git-common-dir`` is the main repo's ``.git``; its parent
+    is the main checkout. Everything (repo registry, links, git-wt --repo)
+    should address the main repo, never a worktree inside it.
+    """
+    root = repo_root(path)
+    common = run_cmd("git", "-C", str(path), "rev-parse", "--git-common-dir")
+    if common and _common_git_dir(root, common) != (root / ".git").resolve():
+        return _common_git_dir(root, common).parent
+    return root
+
+
 def resolve_repo(explicit: str | None, cwd: Path, depth: int = 7) -> Path:
     """Resolve which offline repo to use.
 
@@ -94,7 +131,7 @@ def resolve_repo(explicit: str | None, cwd: Path, depth: int = 7) -> Path:
         return clone_url(explicit, depth)
     root = repo_root(cwd)
     if root is not None:
-        return root
+        return main_repo_root(root)
     import sys
     names = list(cfg.get("repos", {}))
     if not names:

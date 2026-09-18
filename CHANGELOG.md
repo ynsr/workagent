@@ -25,6 +25,14 @@
 - Jira support: `KEY-123` / `<host>/browse/KEY-123` refs via `jira-cli`.
 - Resilient `start`: existing branch/worktree resumes instead of failing;
   upstream verified to point at the feature branch, never the base.
+- `start` from inside a linked worktree on a non-protected branch continues
+  on that branch — no new issue-named branch is created (same rule when
+  `--base` names a non-protected branch).
+- AI-harness prompts now pin the push target: exact worktree and
+  `push to origin/<branch>` — never create or push a different branch.
+- Running `start`/`review` from a linked worktree resolves the repo to the
+  main checkout (links and repo registry point at the main repo, not the
+  worktree).
 - `start`/`review` accept extra harness args after `--`; `doctor` checks `jira-cli`.
 - Fix `start` in TTY mode: the harness now runs inside the new worktree
   (cwd changed before `execvp`) instead of staying in the launch directory.

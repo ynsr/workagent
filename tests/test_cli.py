@@ -155,6 +155,36 @@ def test_start_base_existing_branch_reuses_branch(isolated_config, tmp_path, mon
     assert store.load_links()["github:o/r#22"]["branch"] == "chore/IPG-978--cicd"
 
 
+def test_start_from_worktree_continues_on_current_branch(isolated_config, tmp_path, monkeypatch):
+    """Running start from an existing worktree on a non-default branch
+    continues on that branch — no new issue-named branch is created."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.repos, "repo_root", lambda cwd=None: Path(worktree))
+    monkeypatch.setattr(cli.repos, "worktree_branch", lambda path: "feat/IPG-978--auto-versioning")
+    calls = {}
+
+    def fake_start_worktree(repo, **kw):
+        calls.update(kw)
+        return {"worktree_path": str(worktree), "branch": kw["branch"]}
+
+    monkeypatch.setattr(cli.gitwt, "start_worktree", fake_start_worktree)
+    prompts = []
+    monkeypatch.setattr(cli.backend, "prompt_for_issue",
+                        lambda title, body, ref, worktree="", branch="": prompts.append((worktree, branch)))
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--json"])
+    assert r.exit_code == 0, r.output
+    assert calls["branch"] == "feat/IPG-978--auto-versioning"
+    assert "issue" not in calls and "slug" not in calls and "link" not in calls
+    out = json.loads(r.stdout)
+    assert out["branch"] == "feat/IPG-978--auto-versioning"
+    # AI-harness prompt pins the push target to the existing branch.
+    assert prompts[-1] == (str(worktree), "feat/IPG-978--auto-versioning")
+
+
 def test_start_base_default_branch_still_creates_new_branch(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()

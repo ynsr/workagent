@@ -193,12 +193,21 @@ def start(
     # checked out at it, upstream origin/<branch>); no new branch is created.
     branch_mode = base is not None and base != detected_default and base not in _DEFAULT_BRANCH_NAMES
     base_branch = base or detected_default
-    cur = repos.current_branch(r) if repos.repo_root(Path.cwd()) == r else None
-    if cur and cur != base_branch and not yes and not dry_run and sys.stdin.isatty():
+    cwd_root = repos.repo_root(Path.cwd())
+    cur = repos.current_branch(r) if cwd_root == r else None
+    # Running from inside a linked worktree on a non-protected branch
+    # continues on that branch: the worktree exists, no new branch is created.
+    cwd_branch = repos.worktree_branch(Path.cwd()) if cwd_root is not None else None
+    cwd_mode = (cwd_branch is not None
+                and cwd_branch not in _DEFAULT_BRANCH_NAMES
+                and cwd_branch != detected_default)
+    if cur and cur != base_branch and not yes and not dry_run and sys.stdin.isatty() and not cwd_mode:
         if branch_mode:
             eprint(f"note: repo is on '{cur}', worktree will check out existing branch '{base}'.")
         else:
             eprint(f"note: repo is on '{cur}', worktree will branch from '{base_branch}'.")
+    elif cwd_mode and not yes and not dry_run and sys.stdin.isatty():
+        eprint(f"note: continuing on existing branch '{cwd_branch}' (current worktree); no new branch created.")
 
     issue = refs.fetch_issue(parsed)
     key = refs.issue_key(parsed)
@@ -219,13 +228,18 @@ def start(
         result = {"dry_run": True, "repo": str(r),
                   "base": detected_default if branch_mode else base_branch,
                   "issue": {"title": issue["title"]}, "harness": harness_name,
-                  "key": key, "link": None if branch_mode else link_url}
+                  "key": key,
+                  "link": None if (branch_mode or cwd_mode) else link_url}
         if branch_mode:
             result["branch"] = base
+        elif cwd_mode:
+            result["branch"] = cwd_branch
         _print_result(result, json_output)
         return
     if branch_mode:
         wt = gitwt.start_worktree(r, branch=base, base=detected_default)
+    elif cwd_mode:
+        wt = gitwt.start_worktree(r, branch=cwd_branch, base=detected_default)
     else:
         wt = gitwt.start_worktree(r, issue=issue_id, slug=slug, link=link_url, base=base_branch)
     worktree = wt.get("worktree_path", "")
@@ -237,8 +251,8 @@ def start(
         repos.register_repo(repos.repo_name(r), r)
     except HarnessError:
         pass
-
-    prompt = backend.prompt_for_issue(issue["title"], issue["body"], ref)
+    prompt = backend.prompt_for_issue(issue["title"], issue["body"], ref,
+                                      worktree=worktree, branch=branch)
     if no_tty:
         prompt += "\n\nAfter task done, commit, push and create an MR/PR to the default branch"
     result = {"worktree_path": worktree, "branch": branch,
@@ -305,7 +319,7 @@ def review(
     except HarnessError:
         pass
 
-    prompt = backend.prompt_for_review(pr_url)
+    prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
     result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
               "harness": harness_name}
     eprint(f"worktree: {worktree}  branch: {branch}")

@@ -53,9 +53,23 @@ def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
     return 0  # unreachable; keeps type checkers quiet
 
 
-def prompt_for_issue(title: str, body: str, issue_ref: str) -> str:
-    return f"Work on issue {issue_ref}: {title}\n\n{body}".strip()
+def _push_target_lines(worktree: str, branch: str) -> str:
+    """Explicit worktree/branch contract so the AI harness pushes to the
+    existing branch instead of creating a new one."""
+    return (f"\n\nWorktree: {worktree}\nBranch: {branch} — commit here and push "
+            f"to origin/{branch}. Never create or push a different branch.")
 
 
-def prompt_for_review(pr_url: str) -> str:
-    return f"Review this PR/MR using pr-reviewer skill: {pr_url}"
+def prompt_for_issue(title: str, body: str, issue_ref: str,
+                     worktree: str = "", branch: str = "") -> str:
+    prompt = f"Work on issue {issue_ref}: {title}\n\n{body}".strip()
+    if worktree and branch:
+        prompt += _push_target_lines(worktree, branch)
+    return prompt
+
+
+def prompt_for_review(pr_url: str, worktree: str = "", branch: str = "") -> str:
+    prompt = f"Review this PR/MR using pr-reviewer skill: {pr_url}"
+    if worktree and branch:
+        prompt += _push_target_lines(worktree, branch)
+    return prompt

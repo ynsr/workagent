@@ -68,3 +68,18 @@ def test_command_argv_rejects_unknown_harness():
     with pytest.raises(HarnessError) as excinfo:
         backend.command_argv("claude", "p", no_tty=False)
     assert excinfo.value.exit_code == 2
+
+
+
+def test_prompt_includes_push_target():
+    p = backend.prompt_for_issue("T", "B", "o/r#22", worktree="/wt", branch="feat/x")
+    assert "/wt" in p and "feat/x" in p
+    assert "Never create or push a different branch" in p
+    assert backend.prompt_for_issue("T", "B", "o/r#22").endswith("B")  # no target → unchanged
+    r = backend.prompt_for_review("https://x/pull/1", worktree="/wt", branch="pr-1")
+    assert "Never create or push a different branch" in r
+
+
+def test_prompt_push_target_mentions_origin_branch():
+    p = backend.prompt_for_issue("T", "B", "o/r#22", worktree="/w", branch="chore/a--b")
+    assert "origin/chore/a--b" in p
