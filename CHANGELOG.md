@@ -29,8 +29,12 @@
 - Fix `start` in TTY mode: the harness now runs inside the new worktree
   (cwd changed before `execvp`) instead of staying in the launch directory.
 - `-N` shorthand for `--no-harness` on `start` and `review`.
-- `--base` completes local git branches of the current directory (offline,
-  filtered by prefix; empty outside a repo).
+- `--base` completes local and remote-only git branches of the current
+  directory (offline: reads the origin mirror, never the network; filtered
+  by prefix; empty outside a repo).
+- `--base <remote-only branch>` works: `start`/`review` materialize a local
+  branch tracking `origin/<branch>` (fetch-free) before git-wt sees it;
+  a branch missing locally and on the mirror fails with a `git fetch` hint.
 - `start --no-harness`: skip launching the harness — print the exact harness
   command and replace the process with an interactive shell inside the
   worktree (non-TTY: print and exit). Same for `review --no-harness`.

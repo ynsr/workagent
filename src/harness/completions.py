@@ -164,6 +164,26 @@ def _cwd_git_branches() -> list[str]:
     return out.split()
 
 
+def _remote_git_branches() -> list[str]:
+    """Branches on the origin mirror (offline: reads local remote-tracking refs).
+
+    Strips the ``origin/`` prefix so candidates match plain branch names;
+    ``origin/HEAD`` and other remotes are excluded. Raises on failure like
+    the local source.
+    """
+    out = subprocess.run(["git", "branch", "-r", "--format=%(refname:short)"],
+                         capture_output=True, text=True, timeout=2, check=True).stdout
+    return [b[len("origin/"):] for b in out.split()
+            if b.startswith("origin/") and not b.startswith("origin/HEAD")]
+
+
+def _base_branch_candidates() -> list[str]:
+    """Local branches plus remote-only branches (deduped, plain names)."""
+    names = set(_cwd_git_branches())
+    names.update(_remote_git_branches())
+    return sorted(names)
+
+
 def get_completion_script(prog: str, shell: str, click_cmd=None) -> str:
     """Render the Click-generated completion script for *shell*.
 

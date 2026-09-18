@@ -29,6 +29,8 @@ def start_worktree(repo: Path, branch: str | None = None, issue: str | None = No
     """
     require_git_wt()
     _ = depth  # git-wt owns fetch depth today; kept for CLI compatibility
+    if branch:
+        _ensure_local_branch(repo, branch)
     args = _start_args(repo, branch, issue, slug, link, base)
     try:
         result = _run_start(args, repo)
@@ -41,6 +43,26 @@ def start_worktree(repo: Path, branch: str | None = None, issue: str | None = No
         _repair_path_mismatch(repo, result, base)
     _ensure_upstream(result, base)
     return result
+
+
+def _ensure_local_branch(repo: Path, branch: str) -> None:
+    """Make sure ``--branch <branch>`` names a local branch git-wt can check out.
+
+    A remote-only branch (exists only as ``origin/<branch>``) is materialized
+    as a local branch tracking it — fetch-free, via the local remote-tracking
+    mirror. Missing everywhere → actionable error (run ``git fetch``).
+    """
+    if run_cmd("git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}",
+               cwd=repo, check=False) is not None:
+        return
+    if run_cmd("git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}",
+               cwd=repo, check=False) is not None:
+        run_cmd("git", "branch", "--track", branch, f"origin/{branch}", cwd=repo)
+        return
+    raise HarnessError(
+        f"branch {branch!r} not found locally or as origin/{branch} — "
+        f"run `git fetch origin` first (repo: {repo})"
+    )
 
 
 def _resume_existing(repo: Path, branch: str, base: str | None) -> dict:

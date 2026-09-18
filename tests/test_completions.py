@@ -111,3 +111,29 @@ def test_show_eval_line_discards_server_stderr():
     """The sourced eval line must never let the server print into the shell."""
     assert "2>/dev/null" in completions.eval_line("harness", "bash")
     assert "2>/dev/null" in completions.eval_line("harness", "fish")
+
+
+def test_base_branch_candidates_merges_local_and_remote(monkeypatch):
+    """Remote-only branches join local ones, deduped, sorted by plain name."""
+    monkeypatch.setattr(completions, "_cwd_git_branches", lambda: ["main", "feat/login"])
+    monkeypatch.setattr(completions, "_remote_git_branches", lambda: ["main", "chore/cicd"])
+    assert completions._base_branch_candidates() == ["chore/cicd", "feat/login", "main"]
+
+
+def test_remote_branch_source_reads_origin_mirror(tmp_path, monkeypatch):
+    """origin-only branches surface as plain names; origin/HEAD is dropped."""
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    repo = tmp_path / "proj"
+    subprocess.run(["git", "clone", "-q", str(origin), str(repo)], check=True)
+    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "i"],
+                   cwd=str(repo), check=True,
+                   env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+                        **os.environ})
+    subprocess.run(["git", "push", "-q", "origin", "main"], cwd=str(repo), check=True)
+    subprocess.run(["git", "push", "-q", "origin",
+                    "main:refs/heads/feat/remote-only"], cwd=str(repo), check=True)
+    subprocess.run(["git", "fetch", "-q", "origin"], cwd=str(repo), check=True)
+    monkeypatch.chdir(repo)
+    assert completions._remote_git_branches() == ["feat/remote-only", "main"]

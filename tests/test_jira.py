@@ -1,9 +1,23 @@
 """Jira refs, resume fallback, and upstream guard."""
 
 import json
+import os
+import subprocess
 
 from harness import cli, gitwt, refs
 from harness.errors import HarnessError
+
+
+def _repo_with_branch(tmp_path, name: str):
+    repo = tmp_path / "r"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "i"],
+                   cwd=str(repo), check=True,
+                   env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+                        **os.environ})
+    subprocess.run(["git", "branch", name], cwd=str(repo), check=True)
+    return repo
 
 
 def test_jira_key_and_url_parse():
@@ -35,7 +49,8 @@ def test_existing_branch_resumes(monkeypatch, tmp_path):
         raise HarnessError("error: branch 'feat/1--x' already exists locally — use --resume")
     monkeypatch.setattr(gitwt, "_run_start", fake_run)
     monkeypatch.setattr(gitwt, "_ensure_upstream", lambda result, base: None)
-    out = gitwt.start_worktree(tmp_path, branch="feat/1--x", base="main")
+    out = gitwt.start_worktree(_repo_with_branch(tmp_path, "feat/1--x"),
+                               branch="feat/1--x", base="main")
     assert out["resumed"] is True and out["branch"] == "feat/1--x"
     assert any("--resume" in c for c in calls)
 
@@ -45,7 +60,8 @@ def test_unrelated_error_still_raises(monkeypatch, tmp_path):
         raise HarnessError("error: something entirely different broke")
     monkeypatch.setattr(gitwt, "_run_start", fake_run)
     try:
-        gitwt.start_worktree(tmp_path, branch="feat/1--x", base="main")
+        gitwt.start_worktree(_repo_with_branch(tmp_path, "feat/1--x"),
+                             branch="feat/1--x", base="main")
     except HarnessError:
         return
     raise AssertionError("expected HarnessError")

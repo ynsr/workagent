@@ -51,7 +51,7 @@ app = typer.Typer(
 )
 
 _complete_repos = _completions.complete_names(repos.repo_names)
-_complete_branches = _completions.complete_names(_completions._cwd_git_branches)
+_complete_branches = _completions.complete_names(_completions._base_branch_candidates)
 
 
 def _version_callback(value: bool) -> None:
