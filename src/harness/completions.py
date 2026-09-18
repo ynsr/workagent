@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Callable, Optional
@@ -149,8 +150,19 @@ def complete_names(list_fn: Callable[[], object]) -> Callable:
         except Exception:
             return []
         return sorted(n for n in names if n.startswith(incomplete))
-
     return _complete
+
+
+def _cwd_git_branches() -> list[str]:
+    """Local branch names in the current working directory (offline, fast).
+
+    Raises on failure (not a repo, git missing) — ``complete_names`` turns
+    that into [] so Tab never breaks the shell.
+    """
+    out = subprocess.run(["git", "branch", "--format=%(refname:short)"],
+                         capture_output=True, text=True, timeout=2, check=True).stdout
+    return out.split()
+
 
 def get_completion_script(prog: str, shell: str, click_cmd=None) -> str:
     """Render the Click-generated completion script for *shell*.

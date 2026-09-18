@@ -28,6 +28,9 @@
 - `start`/`review` accept extra harness args after `--`; `doctor` checks `jira-cli`.
 - Fix `start` in TTY mode: the harness now runs inside the new worktree
   (cwd changed before `execvp`) instead of staying in the launch directory.
+- `-N` shorthand for `--no-harness` on `start` and `review`.
+- `--base` completes local git branches of the current directory (offline,
+  filtered by prefix; empty outside a repo).
 - `start --no-harness`: skip launching the harness — print the exact harness
   command and replace the process with an interactive shell inside the
   worktree (non-TTY: print and exit). Same for `review --no-harness`.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import types
 from pathlib import Path
 
@@ -276,3 +277,44 @@ def test_review_no_harness_tty_lands_shell_in_worktree(isolated_config, tmp_path
                    no_tty=False, no_harness=True, dry_run=False, yes=False, json_output=False)
     assert excinfo.value.args[0] == "/bin/zsh"
     assert excinfo.value.args[2] == str(worktree)
+
+
+def test_no_harness_shorthand_N_on_start_and_review(isolated_config, tmp_path, monkeypatch):
+    """`-N` is accepted as shorthand for --no-harness on both subcommands."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd, depth=7: repo_dir)
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_issue", lambda ref: {"title": "t", "body": "b"})
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/33"})
+    launched = []
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    r = runner.invoke(cli.app, ["start", "o/r#33", "--no-tty", "-N", "--json"])
+    assert r.exit_code == 0, r.output
+    r2 = runner.invoke(cli.app, ["review", "https://github.com/o/r/pull/33",
+                                 "--no-tty", "-N", "--json"])
+    assert r2.exit_code == 0, r2.output
+    assert launched == []
+    assert json.loads(r.stdout)["harness_command"].startswith("omp ")
+    assert json.loads(r2.stdout)["harness_command"].startswith("omp ")
+
+
+def test_base_completion_lists_cwd_git_branches(isolated_config, tmp_path, monkeypatch):
+    """--base completion: cwd local branches filtered by prefix; [] outside a repo."""
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init"], cwd=repo, check=True)
+    for name in ("feat/login", "chore/cicd"):
+        subprocess.run(["git", "branch", name], cwd=repo, check=True)
+    callback = cli._complete_branches
+    monkeypatch.chdir(repo)
+    assert callback(None, "") == ["chore/cicd", "feat/login", "main"]
+    assert callback(None, "feat/") == ["feat/login"]
+    assert callback(None, "zzz") == []
+    monkeypatch.chdir(tmp_path)  # not a git repo
+    assert callback(None, "") == []

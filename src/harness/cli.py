@@ -51,6 +51,7 @@ app = typer.Typer(
 )
 
 _complete_repos = _completions.complete_names(repos.repo_names)
+_complete_branches = _completions.complete_names(_completions._cwd_git_branches)
 
 
 def _version_callback(value: bool) -> None:
@@ -166,10 +167,10 @@ def start(
     ref: str = typer.Argument(..., help="Issue key/URL, OWNER/REPO#NUM, or bare number."),
     repo: Optional[str] = typer.Option(None, "--repo", autocompletion=_complete_repos, help="Registered name, local path, or clone URL."),
     depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
-    base: Optional[str] = typer.Option(None, "--base", help="Base branch (default: repo default). A non-default branch runs on that branch instead of creating a new one."),
+    base: Optional[str] = typer.Option(None, "--base", autocompletion=_complete_branches, help="Base branch (default: repo default). A non-default branch runs on that branch instead of creating a new one."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
     no_tty: bool = typer.Option(False, "--no-tty", help="Run harness non-interactively (auto commit/push/MR prompt suffix)."),
-    no_harness: bool = typer.Option(False, "--no-harness", help="Skip launching the harness: print the harness command and land in an interactive shell inside the worktree."),
+    no_harness: bool = typer.Option(False, "-N", "--no-harness", help="Skip launching the harness: print the harness command and land in an interactive shell inside the worktree."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
@@ -259,7 +260,7 @@ def review(
     depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
     no_tty: bool = typer.Option(False, "--no-tty", help="Run harness non-interactively."),
-    no_harness: bool = typer.Option(False, "--no-harness", help="Skip launching the harness: print the harness command and land in an interactive shell inside the worktree."),
+    no_harness: bool = typer.Option(False, "-N", "--no-harness", help="Skip launching the harness: print the harness command and land in an interactive shell inside the worktree."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
