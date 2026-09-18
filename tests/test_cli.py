@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import types
 from pathlib import Path
 
 import pytest
@@ -117,3 +119,160 @@ def test_help_shows_examples_and_exit_codes(isolated_config):
     assert r.exit_code == 0
     assert "Exit codes" in r.output
     assert "harness start" in r.output
+def _start_mocks(monkeypatch, repo_dir):
+    """Stub repo/issue lookups for `start` (no subprocesses, no network)."""
+    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd, depth=7: repo_dir)
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.repos, "repo_root", lambda cwd: None)
+    monkeypatch.setattr(cli.refs, "fetch_issue",
+                        lambda parsed: {"title": "Add login", "body": "Details here"})
+
+
+def test_start_base_existing_branch_reuses_branch(isolated_config, tmp_path, monkeypatch):
+    """--base <non-default> runs on that branch: worktree for it, no new branch."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    calls = {}
+
+    def fake_start_worktree(repo, **kw):
+        calls.update(kw)
+        calls["repo"] = repo
+        return {"worktree_path": str(worktree), "branch": kw["branch"]}
+
+    monkeypatch.setattr(cli.gitwt, "start_worktree", fake_start_worktree)
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--base", "chore/IPG-978--cicd", "--json"])
+    assert r.exit_code == 0, r.output
+    assert calls["branch"] == "chore/IPG-978--cicd"
+    assert calls["base"] == "main"
+    assert "link" not in calls and "issue" not in calls and "slug" not in calls
+    out = json.loads(r.stdout)
+    assert out["branch"] == "chore/IPG-978--cicd" and out["base"] == "main"
+    assert store.load_links()["github:o/r#22"]["branch"] == "chore/IPG-978--cicd"
+
+
+def test_start_base_default_branch_still_creates_new_branch(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    calls = {}
+
+    def fake_start_worktree(repo, **kw):
+        calls.update(kw)
+        return {"worktree_path": "/tmp/wt", "branch": "feat/22--add-login"}
+
+    monkeypatch.setattr(cli.gitwt, "start_worktree", fake_start_worktree)
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--base", "main", "--json"])
+    assert r.exit_code == 0, r.output
+    assert calls["base"] == "main"
+    assert calls["issue"] == "22" and calls["slug"] == "add-login"
+    assert "branch" not in calls
+
+
+def test_start_no_harness_prints_command_and_skips_launch(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/22--add-login"})
+    launched = []
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--no-harness", "--json"])
+    assert r.exit_code == 0, r.output
+    assert launched == []  # harness must not run
+    out = json.loads(r.stdout)
+    assert out["worktree_path"] == str(worktree)
+    assert out["harness_command"].startswith("omp ")
+    assert "harness command: omp" in r.stderr
+    assert str(worktree) in r.stderr
+
+
+def test_start_no_harness_tty_lands_shell_in_worktree(isolated_config, tmp_path, monkeypatch, capsys):
+    """TTY --no-harness replaces the process with the user's shell in the worktree."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/22--add-login"})
+    monkeypatch.setattr("sys.stdin", types.SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    monkeypatch.chdir(tmp_path)
+
+    class _Shell(Exception):
+        pass
+
+    def fake_execvp(file, argv):
+        raise _Shell(file, argv, os.getcwd())
+
+    monkeypatch.setattr(cli.os, "execvp", fake_execvp)
+    with pytest.raises(_Shell) as excinfo:
+        cli.start(ref="o/r#22", repo=None, depth=7, base=None, harness=None,
+                  no_tty=False, no_harness=True, dry_run=False, yes=False, json_output=False)
+    assert excinfo.value.args[0] == "/bin/bash"
+    assert excinfo.value.args[2] == str(worktree)
+    captured = capsys.readouterr()
+    assert "harness command: omp" in captured.err
+    assert f"worktree_path: {worktree}" in captured.out
+
+
+def test_review_no_harness_prints_command_and_skips_launch(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd, depth=7: repo_dir)
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed: {"head_ref": "feat/33"})
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/33"})
+    launched = []
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    r = runner.invoke(cli.app, ["review", "https://github.com/o/r/pull/33",
+                                "--no-harness", "--json"])
+    assert r.exit_code == 0, r.output
+    assert launched == []  # harness must not run
+    out = json.loads(r.stdout)
+    assert out["worktree_path"] == str(worktree)
+    assert out["harness_command"].startswith("omp ")
+    assert "harness command: omp" in r.stderr
+    assert str(worktree) in r.stderr
+
+
+def test_review_no_harness_tty_lands_shell_in_worktree(isolated_config, tmp_path, monkeypatch, capsys):
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd, depth=7: repo_dir)
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed: {"head_ref": "feat/33"})
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/33"})
+    monkeypatch.setattr("sys.stdin", types.SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.chdir(tmp_path)
+
+    class _Shell(Exception):
+        pass
+
+    def fake_execvp(file, argv):
+        raise _Shell(file, argv, os.getcwd())
+
+    monkeypatch.setattr(cli.os, "execvp", fake_execvp)
+    with pytest.raises(_Shell) as excinfo:
+        cli.review(ref="https://github.com/o/r/pull/33", repo=None, depth=7, harness=None,
+                   no_tty=False, no_harness=True, dry_run=False, yes=False, json_output=False)
+    assert excinfo.value.args[0] == "/bin/zsh"
+    assert excinfo.value.args[2] == str(worktree)

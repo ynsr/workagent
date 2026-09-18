@@ -10,26 +10,46 @@ import sys
 from .errors import HarnessError
 
 
+def command_argv(harness: str, prompt: str, no_tty: bool,
+                 extra_args: list[str] | None = None) -> list[str]:
+    """Full harness argv — shared by launch() and the --no-harness preview."""
+    if harness != "omp":
+        raise HarnessError(f"unsupported harness: {harness} (v1 supports: omp)", exit_code=2)
+    if no_tty:
+        # -p prints-and-exits; --auto-approve skips interactive approval
+        # prompts (otherwise the child blocks forever on tool approval).
+        return ["omp", "-p", "--auto-approve", *(extra_args or []), prompt]
+    return ["omp", *(extra_args or []), prompt]
+
+
+def cd_worktree(workdir: str) -> None:
+    """chdir into the worktree in-place.
+
+    TTY mode replaces this process (os.execvp), so the harness inherits the
+    cwd only if we change it here — a child-style cwd= argument is impossible.
+    """
+    try:
+        os.chdir(workdir)
+    except OSError as e:
+        raise HarnessError(f"cannot cd into {workdir}: {e}") from e
+
+
 def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
            extra_args: list[str] | None = None) -> int:
     """Exec the harness in the worktree. Returns its exit code.
 
-    TTY mode: replaces this process (os.execvp) so the user gets a real
-    interactive session. Non-TTY (--no-tty): runs `omp -p <prompt>` as a
-    child and waits.
+    TTY mode: chdirs into the worktree and replaces this process (os.execvp)
+    so the user gets a real interactive session rooted in the worktree.
+    Non-TTY (--no-tty): runs `omp -p <prompt>` as a child and waits.
     """
-    if harness != "omp":
-        raise HarnessError(f"unsupported harness: {harness} (v1 supports: omp)", exit_code=2)
-    if shutil.which("omp") is None:
-        raise HarnessError("`omp` not found on PATH")
-    argv = ["omp", *(extra_args or []), prompt]
+    argv = command_argv(harness, prompt, no_tty, extra_args)
+    if shutil.which(argv[0]) is None:
+        raise HarnessError(f"`{argv[0]}` not found on PATH")
     if no_tty:
-        # -p prints-and-exits; --auto-approve skips interactive approval
-        # prompts (otherwise the child blocks forever on tool approval).
-        argv = ["omp", "-p", "--auto-approve", *(extra_args or []), prompt]
         proc = subprocess.run(argv, cwd=workdir)
         return proc.returncode
-    os.execvp("omp", argv)
+    cd_worktree(workdir)
+    os.execvp(argv[0], argv)
     return 0  # unreachable; keeps type checkers quiet
 
 

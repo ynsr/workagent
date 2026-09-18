@@ -26,6 +26,15 @@
 - Resilient `start`: existing branch/worktree resumes instead of failing;
   upstream verified to point at the feature branch, never the base.
 - `start`/`review` accept extra harness args after `--`; `doctor` checks `jira-cli`.
+- Fix `start` in TTY mode: the harness now runs inside the new worktree
+  (cwd changed before `execvp`) instead of staying in the launch directory.
+- `start --no-harness`: skip launching the harness — print the exact harness
+  command and replace the process with an interactive shell inside the
+  worktree (non-TTY: print and exit). Same for `review --no-harness`.
+- `start --base <branch>` naming a non-default branch (not `main`/`master`/
+  `develop`/repo default) runs on that existing branch: worktree created for
+  it via git-wt (naming unchanged), upstream `origin/<branch>`, no new branch.
+  Default-base `--base` still creates a new feature branch as before.
 
 ## 0.1.0 — 2026-09-17
 

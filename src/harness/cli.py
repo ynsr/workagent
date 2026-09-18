@@ -10,6 +10,7 @@ import csv
 import functools
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 from typing import Callable, Optional
@@ -26,6 +27,11 @@ EXIT_OK, EXIT_GENERAL, EXIT_USAGE = 0, 1, 2
 # Extra harness args collected in main() by splitting argv on the first
 # bare `--` (argparse.REMAINDER-style flags would swallow --repo etc.).
 _HARNESS_ARGS: list[str] = []
+
+# --base values treated as "create a new branch off it": the repo's detected
+# default or one of these common defaults. Any other --base names an existing
+# branch to run on directly (no new branch).
+_DEFAULT_BRANCH_NAMES = {"main", "master", "develop"}
 
 app = typer.Typer(
     name="harness",
@@ -122,6 +128,27 @@ def _print_rows(rows: list[dict], json_output: bool, csv_output: bool,
     Console().print(table)
 
 
+def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: str,
+                 no_tty: bool, no_harness: bool, result: dict, json_output: bool) -> None:
+    """Launch the harness in the worktree; with --no-harness print the exact
+    command instead and hand the worktree to the user (shell exec on TTY)."""
+    harness_cmd = " ".join(shlex.quote(a) for a in
+                           backend.command_argv(harness_name, prompt, no_tty, _HARNESS_ARGS))
+    if no_harness:
+        eprint(f"harness command: {harness_cmd}")
+        result["harness_command"] = harness_cmd
+        _print_result(result, json_output)
+        if sys.stdin.isatty():
+            # "cd" for the user: replace this process with their shell in the
+            # worktree; the printed harness command is theirs to run.
+            backend.cd_worktree(worktree or fallback_dir)
+            shell = os.environ.get("SHELL") or "/bin/sh"
+            os.execvp(shell, [shell])
+        return
+    backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty, _HARNESS_ARGS)
+    _print_result(result, json_output)
+
+
 def _split_harness_args(argv: list[str]) -> tuple[list[str], list[str]]:
     """Split argv on the first bare `--`; everything after feeds the harness."""
     if "--" in argv and argv.index("--") > 0:
@@ -139,9 +166,10 @@ def start(
     ref: str = typer.Argument(..., help="Issue key/URL, OWNER/REPO#NUM, or bare number."),
     repo: Optional[str] = typer.Option(None, "--repo", autocompletion=_complete_repos, help="Registered name, local path, or clone URL."),
     depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
-    base: Optional[str] = typer.Option(None, "--base", help="Base branch (default: repo default)."),
+    base: Optional[str] = typer.Option(None, "--base", help="Base branch (default: repo default). A non-default branch runs on that branch instead of creating a new one."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
     no_tty: bool = typer.Option(False, "--no-tty", help="Run harness non-interactively (auto commit/push/MR prompt suffix)."),
+    no_harness: bool = typer.Option(False, "--no-harness", help="Skip launching the harness: print the harness command and land in an interactive shell inside the worktree."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
@@ -152,15 +180,24 @@ def start(
       harness start https://github.com/OWNER/REPO/issues/22
       harness start OWNER/REPO#22 --repo my-checkout --no-tty
       harness start OWNER/REPO#22 --dry-run
+      harness start OWNER/REPO#22 --base feat/22--add-login
+      harness start OWNER/REPO#22 --no-harness
     """
     parsed = refs.parse_ref(ref)
     if parsed["kind"] in ("pr", "mr"):
         _fail(f"{ref} looks like a PR/MR — use `harness review`", EXIT_USAGE)
     r = repos.resolve_repo(repo, Path.cwd(), depth=depth)
-    base_branch = base or repos.default_branch(r)
+    detected_default = repos.default_branch(r)
+    # --base naming a non-default branch: run on that existing branch (worktree
+    # checked out at it, upstream origin/<branch>); no new branch is created.
+    branch_mode = base is not None and base != detected_default and base not in _DEFAULT_BRANCH_NAMES
+    base_branch = base or detected_default
     cur = repos.current_branch(r) if repos.repo_root(Path.cwd()) == r else None
     if cur and cur != base_branch and not yes and not dry_run and sys.stdin.isatty():
-        eprint(f"note: repo is on '{cur}', worktree will branch from '{base_branch}'.")
+        if branch_mode:
+            eprint(f"note: repo is on '{cur}', worktree will check out existing branch '{base}'.")
+        else:
+            eprint(f"note: repo is on '{cur}', worktree will branch from '{base_branch}'.")
 
     issue = refs.fetch_issue(parsed)
     key = refs.issue_key(parsed)
@@ -178,11 +215,18 @@ def start(
         issue_id = parsed["number"]
 
     if dry_run:
-        _print_result({"dry_run": True, "repo": str(r), "base": base_branch,
-                       "issue": {"title": issue["title"]}, "harness": harness_name,
-                       "key": key, "link": link_url}, json_output)
+        result = {"dry_run": True, "repo": str(r),
+                  "base": detected_default if branch_mode else base_branch,
+                  "issue": {"title": issue["title"]}, "harness": harness_name,
+                  "key": key, "link": None if branch_mode else link_url}
+        if branch_mode:
+            result["branch"] = base
+        _print_result(result, json_output)
         return
-    wt = gitwt.start_worktree(r, issue=issue_id, slug=slug, link=link_url, base=base_branch)
+    if branch_mode:
+        wt = gitwt.start_worktree(r, branch=base, base=detected_default)
+    else:
+        wt = gitwt.start_worktree(r, issue=issue_id, slug=slug, link=link_url, base=base_branch)
     worktree = wt.get("worktree_path", "")
     branch = wt.get("branch", "")
     store.record_link(key, {"issue": ref, "worktree": worktree,
@@ -196,10 +240,12 @@ def start(
     prompt = backend.prompt_for_issue(issue["title"], issue["body"], ref)
     if no_tty:
         prompt += "\n\nAfter task done, commit, push and create an MR/PR to the default branch"
+    result = {"worktree_path": worktree, "branch": branch,
+              "base": detected_default if branch_mode else base_branch,
+              "key": key, "harness": harness_name}
     eprint(f"worktree: {worktree}  branch: {branch}")
-    backend.launch(harness_name, prompt, worktree or str(r), no_tty, _HARNESS_ARGS)
-    _print_result({"worktree_path": worktree, "branch": branch, "base": base_branch,
-                   "key": key, "harness": harness_name}, json_output)
+    _run_harness(harness_name, prompt, worktree, str(r), no_tty, no_harness,
+                 result, json_output)
 
 
 # ── review ────────────────────────────────────────────────────────────
@@ -213,6 +259,7 @@ def review(
     depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
     no_tty: bool = typer.Option(False, "--no-tty", help="Run harness non-interactively."),
+    no_harness: bool = typer.Option(False, "--no-harness", help="Skip launching the harness: print the harness command and land in an interactive shell inside the worktree."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
@@ -222,6 +269,7 @@ def review(
     Example:
       harness review https://github.com/OWNER/REPO/pull/33
       harness review OWNER/REPO#33 --no-tty
+      harness review OWNER/REPO#33 --no-harness
     """
     parsed = refs.parse_ref(ref)
     repo_dir = repos.resolve_repo(repo, Path.cwd(), depth=depth)
@@ -257,10 +305,11 @@ def review(
         pass
 
     prompt = backend.prompt_for_review(pr_url)
+    result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
+              "harness": harness_name}
     eprint(f"worktree: {worktree}  branch: {branch}")
-    backend.launch(harness_name, prompt, worktree or str(repo_dir), no_tty, _HARNESS_ARGS)
-    _print_result({"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
-                   "harness": harness_name}, json_output)
+    _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty, no_harness,
+                 result, json_output)
 
 
 # ── cleanup ───────────────────────────────────────────────────────────
