@@ -25,27 +25,29 @@ Install locally:
 
 | Module | Responsibility |
 |--------|---------------|
-| `src/harness/cli.py` | Typer app — `start`/`review`/`cleanup`/`repo add\|list\|remove`/`status`/`doctor`/`completions show\|install`; Rich tables/CSV/JSON output |
-| `src/harness/refs.py` | issue/PR ref parsing (`OWNER/REPO#N`, URLs, bare N) + `gh`/`glab`/`jira-cli` fetching |
-| `src/harness/repos.py` | repo resolution (`--repo` name/path/URL, cwd, interactive pick), default-branch detection, registry, `repo_names()` completion source |
-| `src/harness/gitwt.py` | `git-wt` subprocess wrapper (never imports git-wt) |
-| `src/harness/backend.py` | `omp` launcher (exec in TTY, `-p` in `--no-tty`) + prompt builders |
-| `src/harness/store.py` | `~/.config/harness/` persistence (`config.json`, `links.json`) |
-| `src/harness/doctor.py` | install-sync self-check; keep hashing identical to `install.sh` |
-| `src/harness/completions.py` | Click-generated `completions show` script + idempotent marker-block rc install; `autocompletion=` callbacks for repo names |
-| `src/harness/errors.py` | `HarnessError` + `run_cmd` helper |
+| `src/harness/cli.py` | Typer app — `start`/`review`/`cleanup`/`repo add\|list\|remove`/`link list\|set\|remove`/`status`/`doctor`/`completions show\|install`; Rich tables/CSV/JSON output |
+| `src/harness/refs.py` | issue/PR ref parsing (`OWNER/REPO#N`, Jira `KEY-123`/browse URLs, URLs, bare N) + `gh`/`glab`/`jira-cli` fetching |
+| `src/harness/repos.py` | repo resolution (`--repo` name/path/URL, cwd, interactive pick), worktree→main-checkout resolution, default-branch detection, registry, `repo_names()` completion source |
+| `src/harness/trackers.py` | tracker↔repo relation: canonical ids (`jira:PREFIX`, `github:O/R`, `gitlab:host/g/r`), `check_or_record` guard, `resolve_for_tracker` repo picker, `link` command data |
 
 ### Key flows
 
-**`harness start <issue>`**: parse ref → resolve repo → default branch →
-fetch title/body → `git-wt start` → record link → exec `omp` with prompt
-(`--no-tty` appends the commit/push/MR suffix and uses `omp -p`).
+**`harness start <issue>`**: parse ref → `trackers.resolve_for_tracker`
+(repo picker: `--repo`, cwd-linked silently, unlinked-cwd y/N with
+fallthrough, or linked-repo pick/manual prompt; persists the tracker↔repo
+relation) → default branch → fetch title/body → `git-wt start` → record
+link → exec `omp` with prompt (`--no-tty` appends the commit/push/MR suffix
+and uses `omp -p`).
 
-**`harness review <PR>`**: parse ref → fetch head ref → worktree on that
-branch → record `pr:<url>` link → exec `omp` with pr-reviewer prompt.
+**`harness review <PR>`**: parse ref → same tracker-aware repo picker →
+fetch head ref → worktree on that branch → record `pr:<url>` link → exec
+`omp` with pr-reviewer prompt.
 
-**`harness cleanup <ref>`**: look up link → confirm (unless `--yes`/`--force`)
-→ `git-wt cleanup --delete-branch` → close issue/PR → drop link.
+**`harness cleanup <ref>`**: resolve link key (exact → parsed
+key/URL → substring over keys/worktrees/branches; interactive pick on
+ambiguity; miss = `no linked state` error) → confirm (unless
+`--yes`/`--force`) → `git-wt cleanup --delete-branch` → close issue/PR
+(already-closed PR/MR is not an error) → drop link.
 
 ## Conventions
 
@@ -65,5 +67,6 @@ branch → record `pr:<url>` link → exec `omp` with pr-reviewer prompt.
 - Subcommand flags: `src/harness/cli.py` (Click generates completions; no flag lists to sync)
 - Ref parsing/fetching: `src/harness/refs.py`
 - Repo resolution: `src/harness/repos.py`
+- Tracker↔repo guard/picker + `link` data: `src/harness/trackers.py`
 - Completion internals (rc block, shell detect): `src/harness/completions.py`
 - Tests: `tests/` (mirror module names)

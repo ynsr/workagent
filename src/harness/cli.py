@@ -17,7 +17,7 @@ from typing import Callable, Optional
 
 import typer
 
-from . import __version__, backend, gitwt, refs, repos, store
+from . import __version__, backend, gitwt, refs, repos, store, trackers
 from . import completions as _completions
 from . import doctor as _doctor
 from .errors import HarnessError
@@ -187,7 +187,12 @@ def start(
     parsed = refs.parse_ref(ref)
     if parsed["kind"] in ("pr", "mr"):
         _fail(f"{ref} looks like a PR/MR — use `harness review`", EXIT_USAGE)
-    r = repos.resolve_repo(repo, Path.cwd(), depth=depth)
+    r, outcome = trackers.resolve_for_tracker(
+        trackers.tracker_id(parsed), repo, Path.cwd(), depth=depth,
+        yes=yes, persist=not dry_run)
+    tid = trackers.tracker_id(parsed)
+    if outcome == "recorded" and tid and not dry_run:
+        eprint(f"note: linked tracker {tid} to repo {r}")
     detected_default = repos.default_branch(r)
     # --base naming a non-default branch: run on that existing branch (worktree
     # checked out at it, upstream origin/<branch>); no new branch is created.
@@ -228,7 +233,7 @@ def start(
         result = {"dry_run": True, "repo": str(r),
                   "base": detected_default if branch_mode else base_branch,
                   "issue": {"title": issue["title"]}, "harness": harness_name,
-                  "key": key,
+                  "key": key, "tracker": tid, "tracker_link": outcome,
                   "link": None if (branch_mode or cwd_mode) else link_url}
         if branch_mode:
             result["branch"] = base
@@ -287,7 +292,11 @@ def review(
       harness review OWNER/REPO#33 --no-harness
     """
     parsed = refs.parse_ref(ref)
-    repo_dir = repos.resolve_repo(repo, Path.cwd(), depth=depth)
+    tid = trackers.tracker_id(parsed)
+    repo_dir, outcome = trackers.resolve_for_tracker(
+        tid, repo, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
+    if outcome == "recorded" and tid and not dry_run:
+        eprint(f"note: linked tracker {tid} to repo {repo_dir}")
     base_branch = repos.default_branch(repo_dir)
     harness_name = harness or store.load_config().get("default_harness", "omp")
 
@@ -302,7 +311,8 @@ def review(
 
     if dry_run:
         _print_result({"dry_run": True, "repo": str(repo_dir), "pr_url": pr_url,
-                       "harness": harness_name, "head_ref": head_ref}, json_output)
+                       "harness": harness_name, "head_ref": head_ref,
+                       "tracker": tid, "tracker_link": outcome}, json_output)
         return
 
     if head_ref:
@@ -345,24 +355,41 @@ def cleanup(
       harness cleanup OWNER/REPO#22 --force --yes
       harness cleanup OWNER/REPO#22 --dry-run
     """
-    parsed = refs.parse_ref(ref)
-    key = refs.issue_key(parsed)
     links = store.load_links()
-    entry = links.get(key) or links.get(f"pr:{parsed['url']}" if parsed["repo"] else key)
-    if entry is None:
+    resolved = _resolve_cleanup_key(ref, links)
+    if resolved is None:
         _fail(
             f"no linked state for {ref}.\n"
-            "  Pass the worktree repo explicitly or run start/review first.",
+            "  Run `harness link list` to see linked sessions.",
             EXIT_USAGE,
         )
+    key = _pick_cleanup_key(ref, resolved)
+    entry = links.get(key, {})
+    if entry is None or not entry:
+        _fail(f"no linked state for {ref}.", EXIT_USAGE)
     repo = Path(entry.get("repo", "")).expanduser()
     branch = entry.get("branch", "")
     pr_url = entry.get("pr_url", "")
+    stored_ref = entry.get("issue", "") or entry.get("pr_url", "") or ref
+    try:
+        parsed = refs.parse_ref(key if not key.startswith("pr:") else stored_ref)
+    except HarnessError:
+        try:
+            parsed = refs.parse_ref(stored_ref)
+        except HarnessError:
+            parsed = {"kind": "", "tool": "", "repo": "", "number": "", "url": pr_url or stored_ref}
+    if key != ref and not yes and not dry_run and sys.stdin.isatty():
+        try:
+            answer = input(f"ref {ref!r} matches session {key!r} — use it? [y/N] ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer not in ("y", "yes"):
+            _fail("aborted", EXIT_USAGE)
     if not branch:
         _fail(f"linked entry for {ref} has no branch", EXIT_USAGE)
 
     if dry_run:
-        _print_result({"dry_run": True, "repo": str(repo), "branch": branch,
+        _print_result({"dry_run": True, "key": key, "repo": str(repo), "branch": branch,
                        "pr_url": pr_url, "force": force}, json_output)
         return
 
@@ -379,8 +406,7 @@ def cleanup(
     _close_issue(parsed, force)
     _close_pr(parsed, pr_url, force)
 
-    remaining = {k: v for k, v in store.load_links().items()
-                 if k != key and k != f"pr:{parsed['url']}"}
+    remaining = {k: v for k, v in store.load_links().items() if k != key}
     store.save_links(remaining)
     _print_result({"branch": branch, "cleanup": result, "closed": ref}, json_output)
 
@@ -413,8 +439,70 @@ def _close_issue(parsed: dict, force: bool) -> None:
         eprint("note: glab issue close not automated in v1; close it in the UI.")
 
 
+def _resolve_cleanup_key(ref: str, links: dict) -> str | list[str] | None:
+    """Resolve a cleanup ref to a session key.
+
+    Exact session key first, then parseable issue/PR refs, then substring
+    search over keys, worktrees, and branches. Returns the key, a list of
+    keys on ambiguity, or None.
+    """
+    if ref in links:
+        return ref
+    try:
+        parsed = refs.parse_ref(ref)
+    except HarnessError:
+        parsed = None
+    needle = ref
+    exact: str | None = None
+    if parsed is not None:
+        key = refs.issue_key(parsed)
+        pr_key = f"pr:{parsed['url']}" if parsed.get("repo") else key
+        if key in links:
+            exact = key
+        elif pr_key in links:
+            exact = pr_key
+        needle = parsed.get("number", "") or ref
+    matches = [k for k, v in links.items()
+               if needle in k
+               or needle in (v.get("worktree", "") or "")
+               or needle in (v.get("branch", "") or "")]
+    if not matches:
+        bare = needle.split("/")[-1].split("--")[0].strip()
+        if bare and bare != needle:
+            matches = [k for k, v in links.items()
+                       if bare in k
+                       or bare in (v.get("worktree", "") or "")
+                       or bare in (v.get("branch", "") or "")]
+    if exact is not None and exact not in matches:
+        matches = [exact, *matches]
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return matches[0]
+    return matches
+
+
+def _pick_cleanup_key(ref: str, resolved: str | list[str]) -> str:
+    """Disambiguate multiple fuzzy matches interactively."""
+    if isinstance(resolved, str):
+        return resolved
+    if not sys.stdin.isatty():
+        _fail(f"ambiguous ref {ref!r} matches: {', '.join(resolved)}.\n"
+              "  Re-run with the exact session key.", EXIT_USAGE)
+    eprint(f"multiple sessions match {ref!r}:")
+    for i, k in enumerate(resolved, 1):
+        eprint(f"  {i}. {k}")
+    try:
+        choice = input("select session [number]: ").strip()
+    except EOFError:
+        choice = ""
+    if choice.isdigit() and 1 <= int(choice) <= len(resolved):
+        return resolved[int(choice) - 1]
+    _fail("aborted", EXIT_USAGE)
+
+
 def _close_pr(parsed: dict, pr_url: str, force: bool) -> None:
-    url = pr_url or (parsed["url"] if parsed["kind"] in ("pr", "mr") else "")
+    url = pr_url or (parsed.get("url", "") if parsed.get("kind") in ("pr", "mr") else "")
     if not url:
         return
     try:
@@ -425,6 +513,9 @@ def _close_pr(parsed: dict, pr_url: str, force: bool) -> None:
             _run("glab", "mr", "close", url)
         eprint(f"closed {url}")
     except HarnessError as e:
+        if "already closed" in str(e).lower() or "already been closed" in str(e).lower() or "404" in str(e) or "not found" in str(e).lower():
+            eprint(f"note: {url} already closed; continuing with local cleanup.")
+            return
         if not force:
             raise
         eprint(f"warning: {e}")
@@ -455,8 +546,12 @@ def repo_add(
         _fail(f"not a repo path: {p}", EXIT_USAGE)
     repos.register_repo(name, p)
     if tracker:
+        tid = trackers.normalize_id(tracker)
         cfg = store.load_config()
-        cfg.setdefault("trackers", {})[tracker] = {"repos": [name]}
+        entry = cfg.setdefault("trackers", {}).setdefault(tid, {"repos": []})
+        norm = str(p.expanduser().resolve())
+        if norm not in [str(Path(r).expanduser().resolve()) for r in entry.get("repos", [])]:
+            entry.setdefault("repos", []).append(norm)
         store.save_config(cfg)
     _print_result({"registered": name, "path": str(p)}, json_output)
 
@@ -492,9 +587,106 @@ def repo_remove(
     cfg = store.load_config()
     if name not in cfg.get("repos", {}):
         _fail(f"unknown repo: {name}", EXIT_USAGE)
+
     del cfg["repos"][name]
     store.save_config(cfg)
     _print_result({"removed": name}, json_output)
+
+# ── link ──────────────────────────────────────────────────────────────
+
+link_app = typer.Typer(help="View and manage tracker↔repo relations and session links.", no_args_is_help=True)
+app.add_typer(link_app, name="link")
+
+
+@link_app.command("list")
+def link_list(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    csv_output: bool = typer.Option(False, "--csv", help="Output as CSV (stdout; logs go to stderr)."),
+) -> None:
+    """List tracker↔repo relations and session links.
+
+    Example:
+      harness link list
+      harness link list --json
+    """
+    cfg = store.load_config()
+    links = store.load_links()
+    if json_output:
+        print(json.dumps({"trackers": cfg.get("trackers", {}), "sessions": links}, indent=2))
+        return
+    rows = [{"tracker": t, "repos": ", ".join(v.get("repos", []))}
+            for t, v in cfg.get("trackers", {}).items()]
+    _print_rows(rows, json_output, csv_output, ["tracker", "repos"],
+                "Tracker links", "(no tracker links)")
+    rows = [{"key": k, "worktree": v.get("worktree", "?"), "branch": v.get("branch", "?")}
+            for k, v in links.items()]
+    _print_rows(rows, json_output, csv_output, ["key", "worktree", "branch"],
+                "Session links", "(no session links)")
+
+
+@link_app.command("set")
+@_catch_harness_errors
+def link_set(
+    tracker: str = typer.Argument(..., help="Tracker id (e.g. jira:IPG, github:OWNER/REPO) or bare Jira prefix / OWNER/REPO."),
+    repo: str = typer.Argument(..., help="Repo path or registered name to link."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Link a tracker to a repo (persists the relation).
+
+    Example:
+      harness link set jira:IPG ~/projects/projectx
+      harness link set github:OWNER/REPO my-checkout
+    """
+    tid = trackers.normalize_id(tracker)
+    target = repos.resolve_repo(repo, Path.cwd())
+    cfg = store.load_config()
+    entry = cfg.setdefault("trackers", {}).setdefault(tid, {"repos": []})
+    norm = str(target.expanduser().resolve())
+    if norm not in [str(Path(r).expanduser().resolve()) for r in entry.get("repos", [])]:
+        entry.setdefault("repos", []).append(norm)
+    store.save_config(cfg)
+    _print_result({"tracker": tid, "repos": entry["repos"]}, json_output)
+
+
+@link_app.command("remove")
+@_catch_harness_errors
+def link_remove(
+    ref: str = typer.Argument(..., help="Tracker id or session key (issue/PR ref, branch, or worktree path)."),
+    repo: Optional[str] = typer.Option(None, "--repo", help="Only remove this repo from the tracker mapping."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Remove a tracker mapping or a session link.
+
+    Example:
+      harness link remove jira:IPG
+      harness link remove jira:IPG --repo ~/projects/other
+      harness link remove o/r#22
+    """
+    tid = trackers.normalize_id(ref)
+    cfg = store.load_config()
+    if tid in cfg.get("trackers", {}):
+        if repo:
+            target = str(repos.resolve_repo(repo, Path.cwd()).expanduser().resolve())
+            kept = [r for r in cfg["trackers"][tid].get("repos", [])
+                    if str(Path(r).expanduser().resolve()) != target]
+            if len(kept) == len(cfg["trackers"][tid].get("repos", [])):
+                _fail(f"repo {repo} not linked to tracker {tid}", EXIT_USAGE)
+            if kept:
+                cfg["trackers"][tid]["repos"] = kept
+            else:
+                del cfg["trackers"][tid]
+        else:
+            del cfg["trackers"][tid]
+        store.save_config(cfg)
+        _print_result({"removed": tid}, json_output)
+        return
+    resolved = _resolve_cleanup_key(ref, store.load_links())
+    if resolved is None:
+        _fail(f"no tracker mapping or session link for {ref}", EXIT_USAGE)
+    links = store.load_links()
+    del links[resolved]
+    store.save_links(links)
+    _print_result({"removed": resolved}, json_output)
 
 
 # ── status ────────────────────────────────────────────────────────────

@@ -37,9 +37,9 @@ def test_repo_add_list_remove(isolated_config, tmp_path):
 def test_start_dry_run(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
-    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd, depth=7: repo_dir)
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
-    monkeypatch.setattr(cli.repos, "repo_root", lambda cwd: None)
     monkeypatch.setattr(cli.refs, "fetch_issue",
                         lambda parsed: {"title": "Add login", "body": "Details here"})
     r = _invoke("start", "o/r#22", "--dry-run", "--json")
@@ -51,11 +51,11 @@ def test_start_dry_run(isolated_config, tmp_path, monkeypatch):
     # Dry run must not record links.
     assert store.load_links() == {}
 
-
 def test_review_dry_run(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
-    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd, depth=7: repo_dir)
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed: {"head_ref": ""})
     r = _invoke("review", "https://github.com/o/r/pull/33", "--dry-run", "--json")
@@ -109,6 +109,31 @@ def test_repo_list_csv(isolated_config, tmp_path):
     assert len(lines) == 2 and lines[1].startswith("proj,")
 
 
+def test_link_set_list_remove_roundtrip(isolated_config, tmp_path):
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    r = _invoke("link", "set", "IPG", str(repo_dir), "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.output)["tracker"] == "jira:IPG"
+    r = _invoke("link", "list", "--json")
+    assert r.exit_code == 0
+    assert json.loads(r.output)["trackers"]["jira:IPG"]["repos"] == [str(repo_dir.resolve())]
+    r = _invoke("link", "remove", "jira:IPG", "--json")
+    assert r.exit_code == 0
+    assert json.loads(r.output) == {"removed": "jira:IPG"}
+
+
+def test_cleanup_fuzzy_branch_match(isolated_config, monkeypatch):
+    store.record_link("jira:IPG-981", {"issue": "IPG-981", "worktree": "/tmp/wt",
+                                       "branch": "feat/IPG-981--x", "repo": "/tmp/proj"})
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
+    r = _invoke("cleanup", "IPG-981", "--dry-run", "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.output)["key"] == "jira:IPG-981"
+
+
 def test_version(isolated_config):
     r = _invoke("--version")
     assert r.exit_code == 0
@@ -122,9 +147,9 @@ def test_help_shows_examples_and_exit_codes(isolated_config):
     assert "harness start" in r.output
 def _start_mocks(monkeypatch, repo_dir):
     """Stub repo/issue lookups for `start` (no subprocesses, no network)."""
-    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd, depth=7: repo_dir)
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
-    monkeypatch.setattr(cli.repos, "repo_root", lambda cwd: None)
     monkeypatch.setattr(cli.refs, "fetch_issue",
                         lambda parsed: {"title": "Add login", "body": "Details here"})
 
@@ -261,7 +286,8 @@ def test_review_no_harness_prints_command_and_skips_launch(isolated_config, tmp_
     repo_dir.mkdir()
     worktree = tmp_path / "wt"
     worktree.mkdir()
-    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd, depth=7: repo_dir)
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed: {"head_ref": "feat/33"})
     monkeypatch.setattr(cli.gitwt, "start_worktree",
@@ -285,7 +311,8 @@ def test_review_no_harness_tty_lands_shell_in_worktree(isolated_config, tmp_path
     repo_dir.mkdir()
     worktree = tmp_path / "wt"
     worktree.mkdir()
-    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd, depth=7: repo_dir)
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed: {"head_ref": "feat/33"})
     monkeypatch.setattr(cli.gitwt, "start_worktree",
@@ -314,8 +341,8 @@ def test_no_harness_shorthand_N_on_start_and_review(isolated_config, tmp_path, m
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     worktree = tmp_path / "wt"
-    worktree.mkdir()
-    monkeypatch.setattr(cli.repos, "resolve_repo", lambda explicit, cwd, depth=7: repo_dir)
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     monkeypatch.setattr(cli.refs, "fetch_issue", lambda ref: {"title": "t", "body": "b"})
     monkeypatch.setattr(cli.gitwt, "start_worktree",

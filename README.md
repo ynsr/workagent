@@ -43,12 +43,36 @@ harness review https://github.com/OWNER/REPO/pull/33
 harness cleanup OWNER/REPO#22 --force --yes
 harness repo add --name projectx --path ~/projects/projectx
 harness repo list
+harness link list
+harness link set jira:IPG ~/projects/projectx
 harness status
 harness doctor
 ```
 
 `status` and `repo list` render Rich tables for humans; add `--csv` or
 `--json` for scripting (stdout carries data only — logs go to stderr).
+
+## Tracker↔repo links
+
+Each issue tracker project (`jira:IPG`, `github:OWNER/REPO`,
+`gitlab:host/group/repo`) is linked to one or more checkouts on first use;
+the mapping persists in `config.json` and prevents starting work for one
+project in the wrong repo. `start`/`review` without `--repo` pick the repo
+as follows:
+
+1. cwd inside a linked repo (a linked worktree resolves to its main
+   checkout) → used silently.
+2. cwd inside an unlinked repo → `use cwd anyway? [y/N]`; **No** falls
+   through to the linked-repo flow below.
+3. cwd outside any repo →
+   - one linked repo: used silently (stderr note);
+   - multiple: numbered interactive pick;
+   - none: type a repo name/path/URL (non-interactive runs abort and ask
+     for `--repo`).
+
+The selected repo is linked to the tracker project and used for the
+worktree. Manage mappings with `harness link list|set|remove`; pass `--yes`
+to accept prompts non-interactively.
 
 Tab completion (one system, never goes stale):
 
@@ -86,9 +110,12 @@ Install it with `pipx install ./vendored/git-wt`.
 
 ## How It Works
 
-1. `start <issue>` → resolve repo (`--repo` or cwd) → fetch title/body via
-   `gh`/`glab`/`jira-cli` → `git-wt start --link/--issue` → record link → exec `omp`.
+1. `start <issue>` → resolve repo (picker below, or `--repo`) → fetch
+   title/body via `gh`/`glab`/`jira-cli` → `git-wt start --link/--issue` →
+   record link → exec `omp`.
 2. `review <PR>` → fetch head ref → worktree on that branch → exec `omp`
    with the pr-reviewer prompt.
-3. `cleanup <ref>` → look up link → `git-wt cleanup --delete-branch` →
-   close issue/PR → drop link.
+3. `cleanup <ref>` → look up link (exact key, else substring match over
+   keys/worktrees/branches; interactive pick on ambiguity) →
+   `git-wt cleanup --delete-branch` → close issue/PR (an already-closed
+   PR/MR is not an error) → drop link.

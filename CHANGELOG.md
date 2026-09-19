@@ -50,6 +50,17 @@
   `develop`/repo default) runs on that existing branch: worktree created for
   it via git-wt (naming unchanged), upstream `origin/<branch>`, no new branch.
   Default-base `--base` still creates a new feature branch as before.
+- Tracker↔repo guard: `start`/`review` persist the tracker→repo mapping
+  (`jira:PREFIX`, `github:OWNER/REPO`, `gitlab:host/group/repo`) on first use
+  and require confirmation (`--yes` non-interactive) before using a different
+  repo; manage via `harness link list|set|remove`.
+- `cleanup` accepts fuzzy refs (session key, issue number, branch/worktree
+  substring; interactive pick on ambiguity) and treats an already-closed
+  PR/MR as success, continuing with local cleanup.
+- Repo-picker flow for `start`/`review` (no `--repo`): cwd linked → use it;
+  cwd unlinked → y/N (No falls through); outside any repo → single linked
+  repo wins, multiple → interactive pick, none → type a repo (or abort
+  non-interactively). Selected repo is linked to the tracker project.
 
 ## 0.1.0 — 2026-09-17
 
