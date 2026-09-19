@@ -56,9 +56,13 @@ def test_no_repo_multi_linked_prompts(isolated_config, tmp_path, monkeypatch):
     b.mkdir()
     _seed("jira:IPG", [str(a), str(b)], monkeypatch, tmp_path)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda *a_, **k: "2")
+    chosen = []
+    monkeypatch.setattr(trackers.pick, "pick",
+                        lambda label, options: chosen.append(options) or 1)
     r, outcome = trackers.resolve_for_tracker("jira:IPG", None, tmp_path / "plain", yes=False)
     assert Path(r) == b.resolve()
+    assert chosen == [[str(a), str(b)]]
+
 
 
 def test_explicit_repo_still_guarded(isolated_config, tmp_path, monkeypatch):

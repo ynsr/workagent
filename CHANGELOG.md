@@ -76,6 +76,16 @@
   PR/MR. gh↔glab mis-detection self-heals (the other CLI is tried and the
   working one is remembered). PR titles with `[` no longer crash Rich
   (markup is escaped).
+- `status <ref>` detail panel (and `--json`) reports the full issue URL —
+  `<jira site>/browse/KEY` from jira-cli's config (previously the bare key;
+  also replaces a hardcoded Jira site in `start`'s worktree link), or the
+  GitHub issues URL derived from the session key; a stored URL wins.
+  `start` records the URL as `issue_url` in links.json.
+- Interactive multi-choice prompts (ambiguous session refs, multi-repo
+  tracker pick) now use a shared arrow-key picker (`harness/pick.py`):
+  ↑/↓ selection with a `❯` marker, optional dim description per item,
+  Enter selects, q/Esc/Ctrl-C aborts; non-TTY runs keep the actionable
+  error instead of prompting.
 - New `harness sync [ref]`: default remote rebase (`gh pr update-branch
   --rebase` / `glab mr rebase`); `-m/--merge` merges origin/<default> into
   the session branch locally (push only with `--push`), no PR falls back to

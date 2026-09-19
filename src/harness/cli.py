@@ -18,10 +18,10 @@ from typing import Callable, Optional
 
 import typer
 
-from . import __version__, backend, gitwt, refs, repos, store, trackers
-from . import sync as sync_mod
+from . import __version__, backend, gitwt, pick, refs, repos, store, trackers
 from . import completions as _completions
 from . import doctor as _doctor
+from . import sync as sync_mod
 from .errors import HarnessError, run_cmd
 
 EXIT_OK, EXIT_GENERAL, EXIT_USAGE = 0, 1, 2
@@ -233,11 +233,16 @@ def start(
 
     # Jira: pass a full browse URL to git-wt --link (it detects the tracker
     # from the URL path); jira-cli itself takes the bare key.
-    if parsed["tool"] == "jira-cli" and not parsed["url"].startswith("http"):
-        link_url = f"https://tribe.jibit.cloud/browse/{parsed['number']}"
-    else:
-        link_url = parsed["url"] if parsed["tool"] == "jira-cli" or parsed["repo"] else None
-
+    link_url: str | None = None
+    if parsed["tool"] == "jira-cli":
+        if parsed["url"].startswith("http"):
+            link_url = parsed["url"]
+        else:
+            site = refs.jira_site()
+            if site:
+                link_url = f"{site}/browse/{parsed['number']}"
+    elif parsed["repo"]:
+        link_url = parsed["url"]
     issue_id, slug = gitwt.build_branch_for_issue(parsed, issue["title"])
     if parsed["tool"] == "jira-cli" and not issue_id:
         issue_id = parsed["number"]
@@ -262,8 +267,10 @@ def start(
         wt = gitwt.start_worktree(r, issue=issue_id, slug=slug, link=link_url, base=base_branch)
     worktree = wt.get("worktree_path", "")
     branch = wt.get("branch", "")
-    store.record_link(key, {"issue": ref, "worktree": worktree,
-                            "branch": branch, "repo": str(r)})
+    rec = {"issue": ref, "worktree": worktree, "branch": branch, "repo": str(r)}
+    if link_url and link_url.startswith("http"):
+        rec["issue_url"] = link_url
+    store.record_link(key, rec)
     # Remember the repo under a derived name for future --repo picks.
     try:
         repos.register_repo(repos.repo_name(r), r)
@@ -310,7 +317,7 @@ def review(
         links = store.load_links()
         resolved = _resolve_session_key(ref, links)
         if resolved is not None:
-            key = _pick_session_key(ref, resolved)
+            key = _pick_session_key(ref, resolved, links)
             entry = links.get(key, {})
             pr_url0 = _session_pr_url(key, entry) if entry else None
             if not pr_url0:
@@ -390,7 +397,7 @@ def cleanup(
             "  Run `harness link list` to see linked sessions.",
             EXIT_USAGE,
         )
-    key = _pick_session_key(ref, resolved)
+    key = _pick_session_key(ref, resolved, links)
     entry = links.get(key, {})
     if entry is None or not entry:
         _fail(f"no linked state for {ref}.", EXIT_USAGE)
@@ -509,23 +516,19 @@ def _resolve_session_key(ref: str, links: dict) -> str | list[str] | None:
     return matches
 
 
-def _pick_session_key(ref: str, resolved: str | list[str]) -> str:
+def _pick_session_key(ref: str, resolved: str | list[str],
+                      links: dict | None = None) -> str:
     """Disambiguate multiple fuzzy matches interactively."""
     if isinstance(resolved, str):
         return resolved
     if not sys.stdin.isatty():
         _fail(f"ambiguous ref {ref!r} matches: {', '.join(resolved)}.\n"
               "  Re-run with the exact session key.", EXIT_USAGE)
-    eprint(f"multiple sessions match {ref!r}:")
-    for i, k in enumerate(resolved, 1):
-        eprint(f"  {i}. {k}")
-    try:
-        choice = input("select session [number]: ").strip()
-    except EOFError:
-        choice = ""
-    if choice.isdigit() and 1 <= int(choice) <= len(resolved):
-        return resolved[int(choice) - 1]
-    _fail("aborted", EXIT_USAGE)
+    options = [(k, (links or {}).get(k, {}).get("branch", "")) for k in resolved]
+    idx = pick.pick(f"multiple sessions match {ref!r}:", options)
+    if idx is None:
+        _fail("aborted", EXIT_USAGE)
+    return resolved[idx]
 
 
 def _session_pr_url(key: str, entry: dict) -> str | None:
@@ -913,7 +916,8 @@ def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
     cells = _status_cells(entry, refresh)
     return {"key": key, **entry, "commits": cells["commits"],
             "pr": _fmt_pr(cells["pr_data"]), "commits_detail": cells["ab"],
-            "pr_detail": cells["pr_data"], "base_branch": cells["base_branch"]}
+            "pr_detail": cells["pr_data"], "base_branch": cells["base_branch"],
+            "issue_url": refs.issue_url(key, entry.get("issue"))}
 
 
 def _print_detail(detail: dict) -> None:
@@ -921,9 +925,12 @@ def _print_detail(detail: dict) -> None:
     from rich.markup import escape
     c = Console()
     c.print(f"[bold]{escape(detail['key'])}[/bold]")
-    for k in ("worktree", "branch", "repo", "issue"):
+    for k in ("worktree", "branch", "repo"):
         if detail.get(k):
             c.print(f"  {k}: {escape(str(detail[k]))}")
+    issue = detail.get("issue_url") or detail.get("issue")
+    if issue:
+        c.print(f"  issue: {escape(str(issue))}")
     pd = detail.get("pr_detail")
     if pd:
         style = _PR_STYLES.get(pd.get("state", ""), "white")
@@ -965,7 +972,7 @@ def status(
     if ref:
         resolved = _resolve_session_key(ref, links)
         if resolved is not None:
-            key = _pick_session_key(ref, resolved)
+            key = _pick_session_key(ref, resolved, links)
             entry = links[key]
         else:
             try:
@@ -1026,7 +1033,7 @@ def sync_cmd(
         resolved = _resolve_session_key(ref, links)
         if resolved is None:
             _fail(f"no linked state for {ref}", EXIT_USAGE)
-        key = _pick_session_key(ref, resolved)
+        key = _pick_session_key(ref, resolved, links)
         keys = [key]
     elif all_sessions:
         keys = list(links)
@@ -1036,7 +1043,7 @@ def sync_cmd(
         if not sys.stdin.isatty():
             _fail("no ref given and stdin is not a TTY — pass a ref or --all",
                   EXIT_USAGE)
-        keys = [_pick_session_key("sync", list(links))]
+        keys = [_pick_session_key("sync", list(links), links)]
     results = []
     for k in keys:
         entry = links[k]

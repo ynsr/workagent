@@ -66,7 +66,7 @@ as follows:
    through to the linked-repo flow below.
 3. cwd outside any repo →
    - one linked repo: used silently (stderr note);
-   - multiple: numbered interactive pick;
+   - multiple: arrow-key interactive pick (shared `pick` module);
    - none: type a repo name/path/URL (non-interactive runs abort and ask
      for `--repo`).
 
@@ -119,9 +119,10 @@ every session, confirmed one by one).
 column (`behind|ahead` vs the remote-tracking base branch — no fetch;
 `gone` when the worktree is missing), and the latest PR/MR with a bright
 color for the state (open/merged/closed). `status <ref>` shows a detail
-panel (worktree, PR title/author/URL, behind/ahead counts); both modes
-support `--json`. `--worktree` restores the worktree-path column.
-
+panel (worktree, issue URL, PR title/author/URL, behind/ahead counts); both
+modes support `--json`. `--worktree` restores the worktree-path column.
+The issue URL is built from jira-cli's configured site (`<site>/browse/KEY`)
+or the GitHub repo in the session key; a stored URL wins.
 Status is cached per branch in `~/.config/harness/pr_cache.json` and
 reused while the session-branch tip and the base-branch tip are unchanged
 and the entry is younger than 3h — repeat runs only run two `git

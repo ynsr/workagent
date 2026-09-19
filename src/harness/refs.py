@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from urllib.parse import urlparse
 
 from .errors import HarnessError, run_cmd
@@ -67,6 +68,45 @@ def issue_key(parsed: dict) -> str:
     host = "gitlab" if parsed["tool"] == "glab" else "github"
     repo = parsed["repo"] or "local"
     return f"{host}:{repo}#{parsed['number']}"
+
+
+_JIRA_CONFIGS = (
+    Path.home() / ".config" / "jira-cli" / "config.json",
+    Path.home() / ".jira-cli.json",
+)
+
+
+def jira_site() -> str | None:
+    """Base site URL from jira-cli's config; None when unset/invalid."""
+    for path in _JIRA_CONFIGS:
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+        site = str(data.get("url") or "").strip().rstrip("/")
+        if site:
+            return site
+    return None
+
+
+def issue_url(key: str, stored: str | None = None) -> str | None:
+    """Full issue URL for a session key; a stored http URL wins.
+
+    jira:KEY   → <site>/browse/KEY (site from jira-cli config)
+    github:r#N → https://github.com/r/issues/N
+    gitlab:…#N → None (the key does not carry the host)
+    """
+    if stored and stored.startswith("http"):
+        return stored
+    host, _, ident = key.partition(":")
+    if host == "jira" and ident:
+        site = jira_site()
+        return f"{site}/browse/{ident}" if site else None
+    if host == "github" and "#" in ident:
+        repo, num = ident.rsplit("#", 1)
+        if repo and repo != "local":
+            return f"https://github.com/{repo}/issues/{num}"
+    return None
 
 
 def fetch_issue(parsed: dict) -> dict:

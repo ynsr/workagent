@@ -1,12 +1,6 @@
 """Tracker↔repo relation guards.
 
-A tracker id names the issue source independent of any checkout:
-
-- Jira: ``jira:<PREFIX>`` (``IPG-981`` → ``jira:IPG``)
-- GitHub: ``github:<OWNER/REPO>``
-- GitLab: ``gitlab:<host>/<GROUP/REPO>``
-
-Mappings persist in ``config.json`` under ``trackers`` as
+Persisted in state/tracker_repos.json as
 ``{tracker_id: {"repos": [<repo path>, ...]}}``.
 """
 
@@ -17,8 +11,9 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import refs, repos, store
+from . import pick, refs, repos, store
 from .errors import HarnessError
+
 
 def normalize_id(raw: str) -> str:
     """Normalize user input to a canonical tracker id.
@@ -155,17 +150,11 @@ def _pick_linked(tid: str, known: list[str], cwd: Path, depth: int = 7,
     if yes:
         first = repos.resolve_repo(known[0], cwd, depth=depth)
         return first, check_or_record(tid, str(first), yes=True, persist=persist)
-    print(f"tracker {tid} is linked to multiple repos:", file=sys.stderr)
-    for i, r in enumerate(known, 1):
-        print(f"  {i}. {r}", file=sys.stderr)
-    try:
-        choice = input("select repo [number]: ").strip()
-    except EOFError:
-        choice = ""
-    if choice.isdigit() and 1 <= int(choice) <= len(known):
-        target = repos.resolve_repo(known[int(choice) - 1], cwd, depth=depth)
-        return target, check_or_record(tid, str(target), yes=True, persist=persist)
-    raise HarnessError("aborted", exit_code=2)
+    idx = pick.pick(f"tracker {tid} is linked to multiple repos:", known)
+    if idx is None:
+        raise HarnessError("aborted", exit_code=2)
+    target = repos.resolve_repo(known[idx], cwd, depth=depth)
+    return target, check_or_record(tid, str(target), yes=True, persist=persist)
 
 
 def _ask_manual(tid: str, cwd: Path, depth: int = 7,

@@ -237,6 +237,21 @@ def test_status_ref_detail(isolated_config, tmp_path, monkeypatch):
     assert out["worktree"] == str(wt_dir)
 
 
+
+
+def test_status_detail_issue_url(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
+    monkeypatch.setattr(cli.refs, "jira_site", lambda: "https://jira.example.com")
+    r = _invoke("status", "IPG-929", "--json")
+    out = json.loads(r.stdout)
+    assert out["issue_url"] == "https://jira.example.com/browse/IPG-929"
+    r = _invoke("status", "IPG-929")
+    assert "issue: https://jira.example.com/browse/IPG-929" in r.output
+
+
 def test_link_list_sessions_enriched(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)

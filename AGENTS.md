@@ -28,6 +28,7 @@ Install locally:
 | `src/harness/cli.py` | Typer app — `start`/`review`/`sync`/`cleanup`/`repo add\|list\|remove`/`link list\|set\|remove`/`status`/`doctor`/`completions show\|install`; Rich tables/CSV/JSON output |
 | `src/harness/refs.py` | issue/PR ref parsing (`OWNER/REPO#N`, Jira `KEY-123`/browse URLs, URLs, bare N) + `gh`/`glab`/`jira-cli` fetching |
 | `src/harness/repos.py` | repo resolution (`--repo` name/path/URL, cwd, interactive pick), worktree→main-checkout resolution, default-branch detection, registry, `repo_names()` completion source |
+| `src/harness/pick.py` | shared arrow-key picker for every multi-choice prompt: stderr render, ↑/↓ + Enter, optional dim description per item, q/Esc aborts, `None` on non-TTY; testable via `read`/`stream` seams |
 | `src/harness/trackers.py` | tracker↔repo relation: canonical ids (`jira:PREFIX`, `github:O/R`, `gitlab:host/g/r`), `check_or_record` guard, `resolve_for_tracker` repo picker, `link` command data |
 | `src/harness/sync.py` | sync engine: dirty-file check, local merge (fetch + ff default + merge), sole-conflict `CHANGELOG.md` Unreleased auto-resolve (bullet union), push, remote rebase dispatch (`gh pr update-branch --rebase` / `glab mr rebase`) |
 
@@ -76,6 +77,10 @@ ambiguity; miss = `no linked state` error) → confirm (unless
   reused while both tips match and age < 3h — repeat `status` runs cost two
   `git rev-parse` calls per session; `--refresh-pr` re-queries the PR only.
   User content in Rich output is `rich.markup.escape`d (PR titles contain `[`).
+  Detail panel (`status <ref>`) shows the full issue URL via
+  `refs.issue_url(key, stored)` — jira site from jira-cli's config
+  (`~/.config/jira-cli/config.json`, fallback `~/.jira-cli.json`), GitHub
+  issues URL from the key; a stored `issue_url`/http `issue` wins.
 
 ## Files to edit
 

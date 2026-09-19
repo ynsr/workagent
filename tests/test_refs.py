@@ -80,3 +80,34 @@ def test_latest_pr_picks_newest():
            {"number": 2, "created_at": "2026-09-15"}]
     assert refs.latest_pr(prs)["number"] == 2
     assert refs.latest_pr([]) is None
+
+
+def test_issue_url_stored_http_wins():
+    assert refs.issue_url("jira:IPG-1", "https://x/browse/IPG-1") == "https://x/browse/IPG-1"
+
+
+def test_issue_url_jira_from_site_config(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"url": "https://jira.example.com/"}))
+    monkeypatch.setattr(refs, "_JIRA_CONFIGS", (cfg, tmp_path / "missing.json"))
+    assert refs.issue_url("jira:IPG-959") == "https://jira.example.com/browse/IPG-959"
+
+
+def test_issue_url_jira_site_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(refs, "_JIRA_CONFIGS", (tmp_path / "missing.json",))
+    assert refs.issue_url("jira:IPG-959") is None
+
+
+def test_issue_url_jira_invalid_config_skipped(tmp_path, monkeypatch):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"url": "https://jira.example.com"}))
+    monkeypatch.setattr(refs, "_JIRA_CONFIGS", (bad, good))
+    assert refs.issue_url("jira:IPG-959") == "https://jira.example.com/browse/IPG-959"
+
+
+def test_issue_url_github_and_gitlab():
+    assert refs.issue_url("github:owner/repo#22") == "https://github.com/owner/repo/issues/22"
+    assert refs.issue_url("github:local#22") is None
+    assert refs.issue_url("gitlab:server/projectx#430") is None
