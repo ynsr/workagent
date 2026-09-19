@@ -76,6 +76,14 @@
   PR/MR. gh↔glab mis-detection self-heals (the other CLI is tried and the
   working one is remembered). PR titles with `[` no longer crash Rich
   (markup is escaped).
+- PR/MR lookups pick the host CLI from the repo's origin URL: the remote
+  host is matched against gh's known hosts (`~/.config/gh/hosts.yml`) and
+  glab's (`~/.config/glab-cli/config.yml`) — GitHub hosts query `gh`,
+  everything else `glab`; unknown hosts fall back to the old auth-status
+  probe. The choice is persisted per registered repo (`repos.<name>.tool`,
+  validated against the stored remote URL — a changed remote re-detects),
+  so GitLab repos never trigger a failing `gh pr list` (and its warning
+  spam) and repeated runs skip detection entirely.
 - `status <ref>` detail panel (and `--json`) reports the full issue URL —
   `<jira site>/browse/KEY` from jira-cli's config (previously the bare key;
   also replaces a hardcoded Jira site in `start`'s worktree link), or the

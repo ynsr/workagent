@@ -27,7 +27,7 @@ Install locally:
 |--------|---------------|
 | `src/harness/cli.py` | Typer app — `start`/`review`/`sync`/`cleanup`/`repo add\|list\|remove`/`link list\|set\|remove`/`status`/`doctor`/`completions show\|install`; Rich tables/CSV/JSON output |
 | `src/harness/refs.py` | issue/PR ref parsing (`OWNER/REPO#N`, Jira `KEY-123`/browse URLs, URLs, bare N) + `gh`/`glab`/`jira-cli` fetching |
-| `src/harness/repos.py` | repo resolution (`--repo` name/path/URL, cwd, interactive pick), worktree→main-checkout resolution, default-branch detection, registry, `repo_names()` completion source |
+| `src/harness/repos.py` | repo resolution (`--repo` name/path/URL, cwd, interactive pick), worktree→main-checkout resolution, default-branch detection, registry, `repo_names()` completion source, remote-host-aware gh/glab detection (`repos.<name>.tool` persisted in the registry) |
 | `src/harness/pick.py` | shared arrow-key picker for every multi-choice prompt: stderr render, ↑/↓ + Enter, optional dim description per item, q/Esc aborts, `None` on non-TTY; testable via `read`/`stream` seams |
 | `src/harness/trackers.py` | tracker↔repo relation: canonical ids (`jira:PREFIX`, `github:O/R`, `gitlab:host/g/r`), `check_or_record` guard, `resolve_for_tracker` repo picker, `link` command data |
 | `src/harness/sync.py` | sync engine: dirty-file check, local merge (fetch + ff default + merge), sole-conflict `CHANGELOG.md` Unreleased auto-resolve (bullet union), push, remote rebase dispatch (`gh pr update-branch --rebase` / `glab mr rebase`) |
@@ -72,6 +72,13 @@ ambiguity; miss = `no linked state` error) → confirm (unless
   dynamic values (repo names, refs — session keys/branches/worktree names)
   via `autocompletion=` callbacks that filter on the `incomplete` prefix and
   return `[]` on any failure.
+- Host CLI (gh/glab) for PR/MR ops: `repos._detect_host_cli` matches the
+  repo's origin-URL host against gh's known hosts (`~/.config/gh/hosts.yml`,
+  top-level keys) and glab's (`~/.config/glab-cli/config.yml`, keys under
+  `hosts:` at 4-space indent); unknown hosts fall back to the auth-status
+  probe. Persisted per repo as `repos.<name>.tool` (`register_repo` seeds
+  it; `_repo_tool` in cli.py validates the stored `remote` and re-detects
+  on change).
 - Status caching (`_status_cells` in cli.py): per-branch cache in `pr_cache.json`
   (pr, tool, base_branch, branch/base tips, behind/ahead counts, checked_at);
   reused while both tips match and age < 3h — repeat `status` runs cost two

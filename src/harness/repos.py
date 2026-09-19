@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -189,11 +190,11 @@ def clone_url(url: str, depth: int = 7) -> Path:
     register_repo(name, dest)
     return dest
 
-
 def register_repo(name: str, path: Path) -> None:
     cfg = store.load_config()
     repos = cfg.setdefault("repos", {})
-    repos[name] = {"path": str(path), "remote": remote_url(path)}
+    repos[name] = {"path": str(path), "remote": remote_url(path),
+                   "tool": _detect_host_cli(path)}
     store.save_config(cfg)
 
 
@@ -202,8 +203,61 @@ def repo_names() -> list[str]:
     """Registered repo names (local state only; used for shell completion)."""
     return list(store.load_config().get("repos", {}))
 
+def _remote_host(url: str) -> str | None:
+    """Hostname from an https/ssh git URL (https://h/p, git@h:p, ssh://h/p)."""
+    m = (re.match(r"^[a-z][a-z0-9+.-]*://(?:[^/@]+@)?([^/:?#]+)", url, re.IGNORECASE)
+         or re.match(r"^[^/@]+@([^/:]+):", url))
+    return m.group(1).lower() if m else None
+
+
+_GH_HOSTS_FILE = Path.home() / ".config" / "gh" / "hosts.yml"
+_GLAB_HOSTS_FILE = Path.home() / ".config" / "glab-cli" / "config.yml"
+
+
+def _known_gh_hosts(path: Path | None = None) -> set[str]:
+    """Top-level host keys of gh's hosts.yml (hosts sit at column 0)."""
+    try:
+        return set(re.findall(r"^(\S+):\s*$",
+                              (path or _GH_HOSTS_FILE).read_text(), re.MULTILINE))
+    except OSError:
+        return set()
+
+
+def _known_glab_hosts(path: Path | None = None) -> set[str]:
+    """Host keys under glab config.yml's ``hosts:`` section (4-space indent)."""
+    try:
+        lines = (path or _GLAB_HOSTS_FILE).read_text().splitlines()
+    except OSError:
+        return set()
+    hosts, in_hosts = set(), False
+    for line in lines:
+        if re.match(r"^\S", line):
+            in_hosts = line.rstrip().endswith("hosts:")
+            continue
+        if in_hosts:
+            m = re.match(r"^ {4}([^\s#]+):\s*$", line)
+            if m:
+                hosts.add(m.group(1).lower())
+    return hosts
+
 
 def _detect_host_cli(path: Path) -> str | None:
+    """Host CLI for *path*'s remote: gh only for GitHub hosts, glab otherwise.
+
+    The origin host is matched against each CLI's known hosts (gh
+    hosts.yml, glab config.yml); unknown hosts fall back to the legacy
+    auth-status probe (gh first). Local file reads only — no CLI spawn
+    unless the host is unknown.
+    """
+    host = None
+    url = remote_url(path)
+    if url:
+        host = _remote_host(url)
+    if host:
+        if host in _known_gh_hosts():
+            return "gh"
+        if host in _known_glab_hosts():
+            return "glab"
     for cli in ("gh", "glab"):
         try:
             proc = subprocess.run([cli, "auth", "status"], cwd=str(path),

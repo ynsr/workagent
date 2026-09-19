@@ -539,7 +539,7 @@ def _session_pr_url(key: str, entry: dict) -> str | None:
     branch = entry.get("branch", "")
     if not (repo and branch and Path(repo).exists()):
         return None
-    tool = repos._detect_host_cli(Path(repo))
+    tool = _repo_tool(repo)
     if not tool:
         return None
     try:
@@ -747,7 +747,6 @@ def link_remove(
 
 _PR_STYLES = {"open": "bright_green", "merged": "bright_magenta", "closed": "bright_red"}
 _DB_CACHE: dict[str, str] = {}
-_TOOL_CACHE: dict[str, str | None] = {}
 _STATUS_TTL_SECONDS = 3 * 3600
 
 
@@ -761,10 +760,27 @@ def _repo_default_branch(repo: str) -> str | None:
 
 
 def _repo_tool(repo: str) -> str | None:
-    if repo not in _TOOL_CACHE:
-        _TOOL_CACHE[repo] = (repos._detect_host_cli(Path(repo))
-                             if Path(repo).exists() else None)
-    return _TOOL_CACHE[repo]
+    """Host CLI (gh/glab) for *repo*, persisted in the repo registry.
+
+    A stored tool is reused while the registered remote URL still matches
+    the repo's current origin; a changed/missing remote re-detects and
+    updates the entry. Unregistered repos are detected fresh (no store).
+    """
+    cfg = store.load_config()
+    entry = next((e for e in cfg.get("repos", {}).values()
+                  if e.get("path") == repo), None)
+    remote = repos.remote_url(Path(repo))
+    if (entry and entry.get("tool") in ("gh", "glab")
+            and entry.get("remote") == remote):
+        return entry["tool"]
+    tool = (repos._detect_host_cli(Path(repo))
+            if Path(repo).exists() else None)
+    if entry is not None and (tool != entry.get("tool")
+                              or remote != entry.get("remote")):
+        entry["tool"] = tool
+        entry["remote"] = remote
+        store.save_config(cfg)
+    return tool
 
 
 def _fmt_pr(pr: dict | None) -> str:

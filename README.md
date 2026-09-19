@@ -123,10 +123,13 @@ panel (worktree, issue URL, PR title/author/URL, behind/ahead counts); both
 modes support `--json`. `--worktree` restores the worktree-path column.
 The issue URL is built from jira-cli's configured site (`<site>/browse/KEY`)
 or the GitHub repo in the session key; a stored URL wins.
-Status is cached per branch in `~/.config/harness/pr_cache.json` and
-reused while the session-branch tip and the base-branch tip are unchanged
-and the entry is younger than 3h — repeat runs only run two `git
-rev-parse` calls per session (no host-CLI spawn, no API call).
+The PR/MR lookup CLI (gh/glab) is chosen from the repo's origin URL host
+(gh's known hosts vs glab's) and persisted per registered repo, so GitLab
+repos never query GitHub. Status is cached per branch in
+`~/.config/harness/pr_cache.json` and reused while the session-branch tip
+and the base-branch tip are unchanged and the entry is younger than 3h —
+repeat runs only run two `git rev-parse` calls per session (no host-CLI
+spawn, no API call).
 `--refresh-pr` re-queries the PR/MR.
 
 Refs (`status`, `sync`, `review`, `cleanup`) complete in the shell over
