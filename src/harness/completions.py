@@ -214,3 +214,16 @@ def print_install_hint(prog: str, shell: Optional[str], rc: Path, file=sys.stder
 
 def eprint(*a, **k):
     print(*a, file=sys.stderr, **k)
+
+
+def _ref_candidates() -> list[str]:
+    """Session keys, branch names, and worktree dir basenames (offline)."""
+    from . import store
+
+    links = store.load_links()
+    names: set[str] = set(links.keys())
+    for v in links.values():
+        names.add(v.get("branch", "") or "")
+        names.add((v.get("worktree", "") or "").rstrip("/").rsplit("/", 1)[-1])
+    names.discard("")
+    return sorted(names)

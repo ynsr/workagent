@@ -21,3 +21,22 @@ def test_record_and_lookup_link(isolated_config):
 
 def test_missing_link_is_none(isolated_config):
     assert store.lookup_link("github:nope#1") is None
+
+
+def test_pr_cache_roundtrip(isolated_config):
+    pr = {"number": 123, "state": "open", "title": "T", "author": "a",
+          "created_at": "2026-09-15", "url": "https://x/pr/123"}
+    store.cache_pr_status("feat/x", pr)
+    cached = store.get_cached_pr_status("feat/x")
+    assert cached == pr
+    raw = store.load_pr_cache()
+    assert raw["feat/x"]["pr"] == pr and "checked_at" in raw["feat/x"]
+
+
+def test_pr_cache_none_roundtrip(isolated_config):
+    store.cache_pr_status("feat/y", None)
+    assert store.get_cached_pr_status("feat/y") is None
+
+
+def test_pr_cache_missing_branch(isolated_config):
+    assert store.get_cached_pr_status("feat/nope") is None

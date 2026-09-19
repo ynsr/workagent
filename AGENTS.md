@@ -25,10 +25,11 @@ Install locally:
 
 | Module | Responsibility |
 |--------|---------------|
-| `src/harness/cli.py` | Typer app — `start`/`review`/`cleanup`/`repo add\|list\|remove`/`link list\|set\|remove`/`status`/`doctor`/`completions show\|install`; Rich tables/CSV/JSON output |
+| `src/harness/cli.py` | Typer app — `start`/`review`/`sync`/`cleanup`/`repo add\|list\|remove`/`link list\|set\|remove`/`status`/`doctor`/`completions show\|install`; Rich tables/CSV/JSON output |
 | `src/harness/refs.py` | issue/PR ref parsing (`OWNER/REPO#N`, Jira `KEY-123`/browse URLs, URLs, bare N) + `gh`/`glab`/`jira-cli` fetching |
 | `src/harness/repos.py` | repo resolution (`--repo` name/path/URL, cwd, interactive pick), worktree→main-checkout resolution, default-branch detection, registry, `repo_names()` completion source |
 | `src/harness/trackers.py` | tracker↔repo relation: canonical ids (`jira:PREFIX`, `github:O/R`, `gitlab:host/g/r`), `check_or_record` guard, `resolve_for_tracker` repo picker, `link` command data |
+| `src/harness/sync.py` | sync engine: dirty-file check, local merge (fetch + ff default + merge), sole-conflict `CHANGELOG.md` Unreleased auto-resolve (bullet union), push, remote rebase dispatch (`gh pr update-branch --rebase` / `glab mr rebase`) |
 
 ### Key flows
 
@@ -42,6 +43,14 @@ and uses `omp -p`).
 **`harness review <PR>`**: parse ref → same tracker-aware repo picker →
 fetch head ref → worktree on that branch → record `pr:<url>` link → exec
 `omp` with pr-reviewer prompt.
+
+**`harness sync <ref>`**: resolve session key (fuzzy, shared with cleanup) →
+dirty check (abort exit 1 naming files) → PR lookup (cached; no PR → local
+merge fallback) → default remote rebase via `gh`/`glab` (host-side) or
+`-m/--merge` local merge (push only with `--push`) → conflict handling:
+sole `CHANGELOG.md` inside `## Unreleased` auto-union; else list files,
+TTY prompt, `--harness` launches omp, non-TTY exit 2; `--all`/`--dry-run`/
+`--json`; up-to-date is a no-op (exit 0).
 
 **`harness cleanup <ref>`**: resolve link key (exact → parsed
 key/URL → substring over keys/worktrees/branches; interactive pick on
@@ -59,8 +68,9 @@ ambiguity; miss = `no linked state` error) → confirm (unless
   acts/fails with an actionable message.
 - Completion: ONE system — `completions show <bash|zsh|fish>` (Click-generated,
   never hand-coded order) + `completions install [shell] [--rcfile] [--yes]`;
-  dynamic values (repo names) via `autocompletion=` callbacks that filter on
-  the `incomplete` prefix and return `[]` on any failure.
+  dynamic values (repo names, refs — session keys/branches/worktree names)
+  via `autocompletion=` callbacks that filter on the `incomplete` prefix and
+  return `[]` on any failure.
 
 ## Files to edit
 
@@ -68,5 +78,7 @@ ambiguity; miss = `no linked state` error) → confirm (unless
 - Ref parsing/fetching: `src/harness/refs.py`
 - Repo resolution: `src/harness/repos.py`
 - Tracker↔repo guard/picker + `link` data: `src/harness/trackers.py`
+- Sync engine: `src/harness/sync.py`
+- PR-status cache (`pr_cache.json`): `src/harness/store.py`
 - Completion internals (rc block, shell detect): `src/harness/completions.py`
 - Tests: `tests/` (mirror module names)

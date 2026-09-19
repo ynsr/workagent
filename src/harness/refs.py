@@ -125,3 +125,45 @@ def fetch_pr_info(parsed: dict) -> dict:
 
 def hostname(url: str) -> str:
     return urlparse(url).netloc.lower()
+
+
+def fetch_pr_list_for_branch(tool: str, branch: str, cwd: str | None = None) -> list[dict]:
+    """All PRs/MRs for a head branch (any state), normalized.
+
+    Returns [{number, state, title, author, created_at, url, target_branch}]
+    with state in open|merged|closed. `cwd` should be the repo path so
+    gh/glab find the right host/remote.
+    """
+    if tool == "gh":
+        out = run_cmd("gh", "pr", "list", "--head", branch, "--state", "all",
+                      "--limit", "50", "--json",
+                      "number,state,title,author,createdAt,url,baseRefName",
+                      cwd=cwd)
+        try:
+            data = json.loads(out or "[]")
+        except json.JSONDecodeError:
+            raise HarnessError("cannot parse gh pr list output")
+        state_map = {"OPEN": "open", "MERGED": "merged", "CLOSED": "closed"}
+        return [{"number": p["number"], "state": state_map.get(p["state"], "open"),
+                 "title": p.get("title", ""), "author": (p.get("author") or {}).get("login", ""),
+                 "created_at": p.get("createdAt", ""), "url": p.get("url", ""),
+                 "target_branch": p.get("baseRefName", "")} for p in data]
+    out = run_cmd("glab", "mr", "list", "--source-branch", branch, "-F", "json",
+                  cwd=cwd)
+    try:
+        data = json.loads(out or "[]")
+    except json.JSONDecodeError:
+        raise HarnessError("cannot parse glab mr list output")
+    state_map = {"opened": "open", "merged": "merged", "closed": "closed"}
+    return [{"number": m["iid"], "state": state_map.get(m["state"], "open"),
+             "title": m.get("title", ""), "author": (m.get("author") or {}).get("username", ""),
+             "created_at": m.get("created_at", ""), "url": m.get("web_url", ""),
+             "target_branch": m.get("target_branch", "")} for m in data]
+
+
+def latest_pr(prs: list[dict]) -> dict | None:
+    """Most recent PR by creation date, or None."""
+    if not prs:
+        return None
+    return max(prs, key=lambda p: p.get("created_at", ""))
+

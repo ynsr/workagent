@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .errors import HarnessError
@@ -70,3 +71,30 @@ def record_link(issue_key: str, entry: dict) -> None:
 
 def lookup_link(issue_key: str) -> dict | None:
     return load_links().get(issue_key)
+
+
+def load_pr_cache() -> dict:
+    return _read_json(config_dir() / "pr_cache.json", {})
+
+
+def save_pr_cache(cache: dict) -> None:
+    _write_json(config_dir() / "pr_cache.json", cache)
+
+
+def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None) -> None:
+    cache = load_pr_cache()
+    cache[branch] = {"pr": pr, "tool": tool,
+                     "checked_at": datetime.now(timezone.utc).isoformat()}
+    save_pr_cache(cache)
+
+
+def get_cached_pr_status(branch: str) -> dict | None:
+    return load_pr_cache().get(branch, {}).get("pr")
+
+
+def get_cached_pr_tool(branch: str) -> str | None:
+    return load_pr_cache().get(branch, {}).get("tool")
+
+
+def get_cached_pr_status(branch: str) -> dict | None:
+    return load_pr_cache().get(branch, {}).get("pr")

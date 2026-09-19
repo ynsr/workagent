@@ -1,4 +1,8 @@
-"""Ref parsing: URLs, shorthand, bare numbers, rejects."""
+"""Ref parsing round-trips."""
+
+from __future__ import annotations
+
+import json
 
 from harness import refs
 from harness.errors import HarnessError
@@ -36,3 +40,43 @@ def test_unknown_rejected():
 def test_issue_key_stable():
     p = refs.parse_ref("https://github.com/o/r/issues/22")
     assert refs.issue_key(p) == "github:o/r#22"
+
+
+def test_fetch_pr_list_gh(monkeypatch):
+    gh_json = json.dumps([
+        {"number": 12, "state": "OPEN", "title": "B", "createdAt": "2026-09-02",
+         "author": {"login": "bob"}, "url": "https://github.com/o/r/pull/12",
+         "baseRefName": "main"},
+        {"number": 11, "state": "MERGED", "title": "A", "createdAt": "2026-09-01",
+         "author": {"login": "bob"}, "url": "https://github.com/o/r/pull/11",
+         "baseRefName": "main"},
+    ])
+    monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: gh_json)
+    prs = refs.fetch_pr_list_for_branch("gh", "feat/x")
+    assert prs[0] == {"number": 12, "state": "open", "title": "B",
+                      "author": "bob", "created_at": "2026-09-02",
+                      "url": "https://github.com/o/r/pull/12",
+                      "target_branch": "main"}
+    assert prs[1]["state"] == "merged"
+
+
+def test_fetch_pr_list_glab(monkeypatch):
+    glab_json = json.dumps([
+        {"iid": 1701, "state": "opened", "title": "X",
+         "created_at": "2026-09-15T03:01:59Z", "author": {"username": "younes"},
+         "web_url": "https://git.jibit.cloud/g/r/-/merge_requests/1701",
+         "target_branch": "develop"},
+    ])
+    monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: glab_json)
+    prs = refs.fetch_pr_list_for_branch("glab", "feat/x")
+    assert prs == [{"number": 1701, "state": "open", "title": "X",
+                    "author": "younes", "created_at": "2026-09-15T03:01:59Z",
+                    "url": "https://git.jibit.cloud/g/r/-/merge_requests/1701",
+                    "target_branch": "develop"}]
+
+
+def test_latest_pr_picks_newest():
+    prs = [{"number": 1, "created_at": "2026-09-01"},
+           {"number": 2, "created_at": "2026-09-15"}]
+    assert refs.latest_pr(prs)["number"] == 2
+    assert refs.latest_pr([]) is None

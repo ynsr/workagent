@@ -61,6 +61,21 @@
   cwd unlinked → y/N (No falls through); outside any repo → single linked
   repo wins, multiple → interactive pick, none → type a repo (or abort
   non-interactively). Selected repo is linked to the tracker project.
+- Shared ref resolution: `status`, `sync`, `review`, and `cleanup` accept
+  fuzzy refs (session key, issue number, branch/worktree substring) with
+  shell completion over session keys, branches, and worktree names.
+- `status` and `link list` enrichment: behind|ahead vs the remote-tracking
+  default branch (caption lists short hashes; `gone` for missing worktrees),
+  latest PR/MR per branch with state colors (cache-backed; `--refresh-pr`
+  re-queries), `--worktree` toggles the path column, `status <ref>` shows a
+  detail panel (also as `--json`).
+- New `harness sync [ref]`: default remote rebase (`gh pr update-branch
+  --rebase` / `glab mr rebase`); `-m/--merge` merges origin/<default> into
+  the session branch locally (push only with `--push`), no PR falls back to
+  local merge; sole-conflict `CHANGELOG.md` auto-resolves when every hunk
+  stays inside `## Unreleased` (bullet union); other conflicts prompt on a
+  TTY, `--harness` launches the coding agent to resolve, non-TTY exits 2;
+  dirty worktrees abort; `--all`/`--dry-run`/`--json` supported.
 
 ## 0.1.0 — 2026-09-17
 

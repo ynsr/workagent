@@ -40,12 +40,12 @@ Config is left at `~/.config/harness/` for you to delete if unwanted.
 harness start https://github.com/OWNER/REPO/issues/22
 harness start OWNER/REPO#22 --repo my-checkout --no-tty
 harness review https://github.com/OWNER/REPO/pull/33
-harness cleanup OWNER/REPO#22 --force --yes
+harness sync IPG-929          # or OWNER/REPO#22, or a session key
 harness repo add --name projectx --path ~/projects/projectx
 harness repo list
 harness link list
 harness link set jira:IPG ~/projects/projectx
-harness status
+harness status                # or: status IPG-929 for a detail panel
 harness doctor
 ```
 
@@ -89,7 +89,43 @@ but never goes stale when commands change — the right default for this tier.
 Exit codes: `0` success · `1` general error · `2` usage/needs human input.
 
 State lives in `~/.config/harness/` (`config.json` registry, `links.json`
-session links). Override with `HARNESS_CONFIG_DIR`.
+session links, `pr_cache.json` PR-status cache). Override with
+`HARNESS_CONFIG_DIR`.
+
+## Sync
+
+`harness sync <ref>` brings a session branch up to date with its base
+branch. Refs resolve fuzzily (session key, issue number, branch/worktree
+substring) like `cleanup`; no ref picks interactively (or `--all` for
+every session, confirmed one by one).
+
+- Default: remote rebase — `gh pr update-branch --rebase` or
+  `glab mr rebase`; the host merges server-side, nothing touches your
+  worktree.
+- `-m/--merge`: fetch, fast-forward the local default branch, merge it
+  into the session branch inside the worktree; push only with `--push`.
+- No open PR/MR on the branch → local merge fallback.
+- Sole conflict in `CHANGELOG.md` where every hunk stays inside
+  `## Unreleased` auto-resolves (union of both bullet lists). Any other
+  conflict lists the files and prompts; `--harness` launches the coding
+  agent to resolve, non-interactive runs exit `2` (merge stays in
+  progress; abort with `git merge --abort`).
+- Dirty worktrees abort (exit `1`); `--dry-run` previews; `--json` for
+  scripting.
+
+## Status
+
+`harness status` shows every linked session with the branch, `behind|ahead`
+vs the remote-tracking default branch (no fetch; short hashes in the table
+caption, `gone` when the worktree is missing), and the latest PR/MR with a
+colored state (open=green, merged=magenta, closed=red). PR state is cached
+in `~/.config/harness/pr_cache.json` at first query — `--refresh-pr`
+re-queries. `status <ref>` shows a detail panel (worktree, PR title/author/
+URL, behind/ahead hashes); both modes support `--json`. `--worktree`
+restores the worktree-path column.
+
+Refs (`status`, `sync`, `review`, `cleanup`) complete in the shell over
+session keys, branches, and worktree names.
 
 ## Vendored tooling
 
@@ -112,10 +148,12 @@ Install it with `pipx install ./vendored/git-wt`.
 
 1. `start <issue>` → resolve repo (picker below, or `--repo`) → fetch
    title/body via `gh`/`glab`/`jira-cli` → `git-wt start --link/--issue` →
-   record link → exec `omp`.
 2. `review <PR>` → fetch head ref → worktree on that branch → exec `omp`
-   with the pr-reviewer prompt.
-3. `cleanup <ref>` → look up link (exact key, else substring match over
+   with the pr-reviewer prompt. A session key/issue ref resolves to that
+   session's recorded PR/MR.
+3. `sync <ref>` → rebase the session's PR remotely (default) or merge the
+   default branch locally (`--merge`, push with `--push`); see "Sync".
+4. `cleanup <ref>` → look up link (exact key, else substring match over
    keys/worktrees/branches; interactive pick on ambiguity) →
    `git-wt cleanup --delete-branch` → close issue/PR (an already-closed
    PR/MR is not an error) → drop link.

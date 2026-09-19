@@ -25,13 +25,13 @@ def test_repo_add_list_remove(isolated_config, tmp_path):
     repo_dir.mkdir()
     r = _invoke("repo", "add", "--name", "proj", "--path", str(repo_dir), "--json")
     assert r.exit_code == 0
-    assert json.loads(r.output)["registered"] == "proj"
+    assert json.loads(r.stdout)["registered"] == "proj"
     r = _invoke("repo", "list", "--json")
     assert r.exit_code == 0
-    assert json.loads(r.output)[0]["name"] == "proj"
+    assert json.loads(r.stdout)[0]["name"] == "proj"
     r = _invoke("repo", "remove", "proj", "--json")
     assert r.exit_code == 0
-    assert json.loads(r.output) == {"removed": "proj"}
+    assert json.loads(r.stdout) == {"removed": "proj"}
 
 
 def test_start_dry_run(isolated_config, tmp_path, monkeypatch):
@@ -44,7 +44,7 @@ def test_start_dry_run(isolated_config, tmp_path, monkeypatch):
                         lambda parsed: {"title": "Add login", "body": "Details here"})
     r = _invoke("start", "o/r#22", "--dry-run", "--json")
     assert r.exit_code == 0, r.output
-    out = json.loads(r.output)
+    out = json.loads(r.stdout)
     assert out["dry_run"] is True
     assert out["repo"] == str(repo_dir)
     assert out["issue"] == {"title": "Add login"}
@@ -60,7 +60,7 @@ def test_review_dry_run(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed: {"head_ref": ""})
     r = _invoke("review", "https://github.com/o/r/pull/33", "--dry-run", "--json")
     assert r.exit_code == 0, r.output
-    out = json.loads(r.output)
+    out = json.loads(r.stdout)
     assert out["dry_run"] is True and out["pr_url"].endswith("/pull/33")
 
 def test_cleanup_missing_link_errors(isolated_config):
@@ -74,14 +74,216 @@ def test_cleanup_dry_run(isolated_config):
                                         "worktree": "/tmp/wt"})
     r = _invoke("cleanup", "o/r#22", "--dry-run", "--json")
     assert r.exit_code == 0, r.output
-    out = json.loads(r.output)
+    out = json.loads(r.stdout)
     assert out["dry_run"] is True and out["branch"] == "feat/22-x"
 
 
 def test_status_empty(isolated_config):
     r = _invoke("status", "--json")
     assert r.exit_code == 0
-    assert json.loads(r.output) == {}
+    assert json.loads(r.stdout) == {}
+
+
+def _link_session(repo_dir, wt_dir, monkeypatch):
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    store.record_link("jira:IPG-929", {"issue": "IPG-929", "worktree": str(wt_dir),
+                                       "branch": "feat/IPG-929--x", "repo": str(repo_dir)})
+
+
+def test_status_table_shows_behind_ahead(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli.repos, "ahead_behind",
+                        lambda wt, db: {"behind": 5, "ahead": 8,
+                                        "behind_hashes": ["aaa1111"],
+                                        "ahead_hashes": ["bbb2222", "ccc3333"]})
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
+    r = _invoke("status", "--json")
+    data = json.loads(r.stdout)
+    assert data["jira:IPG-929"]["commits"] == "5|8"
+    assert data["jira:IPG-929"]["pr"] == "-"
+
+
+def test_status_pr_from_cache(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    store.cache_pr_status("feat/IPG-929--x", {"number": 123, "state": "merged",
+                                              "title": "T", "author": "a",
+                                              "created_at": "2026-09-15",
+                                              "url": "https://x/mr/123",
+                                              "target_branch": "main"})
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    r = _invoke("status", "--json")
+    data = json.loads(r.stdout)
+    assert data["jira:IPG-929"]["pr"] == "PR #123 (merged)"
+
+
+
+
+def test_status_pr_live_query_then_cache(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
+    calls = []
+    def fake_list(tool, branch, cwd=None):
+        calls.append((tool, branch))
+        return [{"number": 77, "state": "open", "title": "T", "author": "a",
+                 "created_at": "2026-09-15", "url": "https://x/mr/77",
+                 "target_branch": "main"}]
+    monkeypatch.setattr(cli.refs, "fetch_pr_list_for_branch", fake_list)
+    r = _invoke("status", "--json")
+    assert json.loads(r.stdout)["jira:IPG-929"]["pr"] == "PR #77 (open)"
+    assert calls == [("glab", "feat/IPG-929--x")]
+    assert store.get_cached_pr_status("feat/IPG-929--x")["number"] == 77
+
+
+def test_status_missing_worktree_gone(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"
+    _link_session(repo_dir, tmp_path / "missing", monkeypatch)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
+    r = _invoke("status", "--json")
+    assert json.loads(r.stdout)["jira:IPG-929"]["commits"] == "gone"
+
+
+def test_status_ref_detail(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli.repos, "ahead_behind",
+                        lambda wt, db: {"behind": 1, "ahead": 2,
+                                        "behind_hashes": ["aaa1111"],
+                                        "ahead_hashes": ["bbb2222", "ccc3333"]})
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
+    r = _invoke("status", "IPG-929", "--json")
+    out = json.loads(r.stdout)
+    assert out["commits"] == "1|2"
+    assert out["commits_detail"]["ahead_hashes"] == ["bbb2222", "ccc3333"]
+    assert out["worktree"] == str(wt_dir)
+
+
+def test_link_list_sessions_enriched(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
+    r = _invoke("link", "list", "--json")
+    data = json.loads(r.stdout)
+    assert data["sessions"]["jira:IPG-929"]["pr"] == "-"
+
+
+def _sync_mocks(monkeypatch, local_calls=None, rebase_calls=None):
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    if local_calls is not None:
+        monkeypatch.setattr(cli.sync_mod, "local_merge",
+                            lambda wt, db: (local_calls.append((str(wt), db))
+                                            or {"status": "merged", "conflicts": []}))
+    if rebase_calls is not None:
+        monkeypatch.setattr(cli.sync_mod, "rebase_remote",
+                            lambda tool, pr, wt: rebase_calls.append((tool, pr["number"], str(wt))))
+
+
+def test_sync_unknown_ref(isolated_config):
+    r = _invoke("sync", "nope-1")
+    assert r.exit_code == 2
+
+
+def test_sync_rebase_strategy_with_open_pr(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    store.cache_pr_status("feat/IPG-929--x", {"number": 9, "state": "open",
+                                              "title": "T", "author": "a",
+                                              "created_at": "2026-09-15",
+                                              "url": "https://x/mr/9",
+                                              "target_branch": "main"})
+    rebase, local = [], []
+    _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    r = _invoke("sync", "IPG-929", "--yes", "--json")
+    assert r.exit_code == 0
+    out = json.loads(r.stdout)
+    assert out["strategy"] == "remote-rebase" and out["result"] == "rebased"
+    assert rebase == [("glab", 9, str(wt_dir))] and local == []
+
+
+def test_sync_merge_flag_uses_local_merge(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    store.cache_pr_status("feat/IPG-929--x", {"number": 9, "state": "open",
+                                              "title": "T", "author": "a",
+                                              "created_at": "2026-09-15",
+                                              "url": "https://x/mr/9",
+                                              "target_branch": "main"})
+    rebase, local = [], []
+    _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase)
+    r = _invoke("sync", "IPG-929", "--merge", "--yes", "--json")
+    assert r.exit_code == 0
+    out = json.loads(r.stdout)
+    assert out["strategy"] == "local-merge" and out["result"] == "merged"
+    assert local == [(str(wt_dir), "main")] and rebase == []
+
+
+def test_sync_no_pr_falls_back_to_local(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    local = []
+    monkeypatch.setattr(cli.sync_mod, "local_merge",
+                        lambda wt, db: (local.append((str(wt), db))
+                                        or {"status": "merged", "conflicts": []}))
+    r = _invoke("sync", "IPG-929", "--yes", "--json")
+    assert r.exit_code == 0
+    assert json.loads(r.stdout)["strategy"] == "local-merge"
+    assert local == [(str(wt_dir), "main")]
+
+
+def test_sync_dry_run_touches_nothing(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    store.cache_pr_status("feat/IPG-929--x", {"number": 9, "state": "open",
+                                              "title": "T", "author": "a",
+                                              "created_at": "2026-09-15",
+                                              "url": "https://x/mr/9",
+                                              "target_branch": "main"})
+    rebase, local = [], []
+    _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase)
+    r = _invoke("sync", "IPG-929", "--dry-run", "--json")
+    assert r.exit_code == 0
+    out = json.loads(r.stdout)
+    assert out["strategy"] == "remote-rebase" and "would" in out["result"]
+    assert rebase == [] and local == []
+
+
+def test_sync_dirty_worktree_aborts(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    (wt_dir / "dirty.txt").write_text("x\n")
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli.sync_mod, "dirty_files", lambda p: ["dirty.txt"])
+    r = _invoke("sync", "IPG-929", "--yes")
+    assert r.exit_code == 1
+    assert "dirty.txt" in r.output
+
+
+def test_sync_all_missing_worktree_skipped(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"
+    _link_session(repo_dir, tmp_path / "missing", monkeypatch)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
+    r = _invoke("sync", "--all", "--yes", "--json")
+    assert r.exit_code == 0
+    out = json.loads(r.stdout)
+    assert out[0]["result"] == "missing-worktree"
 
 
 def test_doctor_missing_and_ok(isolated_config, tmp_path, monkeypatch):
@@ -114,13 +316,13 @@ def test_link_set_list_remove_roundtrip(isolated_config, tmp_path):
     repo_dir.mkdir()
     r = _invoke("link", "set", "IPG", str(repo_dir), "--json")
     assert r.exit_code == 0, r.output
-    assert json.loads(r.output)["tracker"] == "jira:IPG"
+    assert json.loads(r.stdout)["tracker"] == "jira:IPG"
     r = _invoke("link", "list", "--json")
     assert r.exit_code == 0
-    assert json.loads(r.output)["trackers"]["jira:IPG"]["repos"] == [str(repo_dir.resolve())]
+    assert json.loads(r.stdout)["trackers"]["jira:IPG"]["repos"] == [str(repo_dir.resolve())]
     r = _invoke("link", "remove", "jira:IPG", "--json")
     assert r.exit_code == 0
-    assert json.loads(r.output) == {"removed": "jira:IPG"}
+    assert json.loads(r.stdout) == {"removed": "jira:IPG"}
 
 
 def test_cleanup_fuzzy_branch_match(isolated_config, monkeypatch):
@@ -131,7 +333,7 @@ def test_cleanup_fuzzy_branch_match(isolated_config, monkeypatch):
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
     r = _invoke("cleanup", "IPG-981", "--dry-run", "--json")
     assert r.exit_code == 0, r.output
-    assert json.loads(r.output)["key"] == "jira:IPG-981"
+    assert json.loads(r.stdout)["key"] == "jira:IPG-981"
 
 
 def test_version(isolated_config):
