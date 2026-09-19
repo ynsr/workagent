@@ -81,10 +81,20 @@ def save_pr_cache(cache: dict) -> None:
     _write_json(config_dir() / "pr_cache.json", cache)
 
 
-def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None) -> None:
+def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
+                    base_branch: str | None = None, branch_tip: str | None = None,
+                    base_tip: str | None = None, behind: int | None = None,
+                    ahead: int | None = None) -> None:
+    entry = {"pr": pr, "tool": tool,
+             "checked_at": datetime.now(timezone.utc).isoformat()}
+    if base_branch:
+        entry["base_branch"] = base_branch
+    for k, v in (("branch_tip", branch_tip), ("base_tip", base_tip),
+                 ("behind", behind), ("ahead", ahead)):
+        if v is not None:
+            entry[k] = v
     cache = load_pr_cache()
-    cache[branch] = {"pr": pr, "tool": tool,
-                     "checked_at": datetime.now(timezone.utc).isoformat()}
+    cache[branch] = entry
     save_pr_cache(cache)
 
 

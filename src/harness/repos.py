@@ -75,8 +75,7 @@ def current_branch(path: Path) -> str | None:
 def ahead_behind(path: Path, default_branch: str) -> dict | None:
     """Behind/ahead counts vs remote-tracking origin/<default> (no fetch).
 
-    Returns {"behind": n, "ahead": n, "behind_hashes": [...],
-    "ahead_hashes": [...]} with short hashes, or None when the branch or
+    Returns {"behind": n, "ahead": n}, or None when the branch or
     remote-tracking ref is missing.
     """
     base = f"origin/{default_branch}"
@@ -87,15 +86,10 @@ def ahead_behind(path: Path, default_branch: str) -> dict | None:
     try:
         counts = run_cmd("git", "-C", str(path), "rev-list", "--left-right",
                          "--count", f"{base}...HEAD")
-        behind_hashes = run_cmd("git", "-C", str(path), "rev-list", "--abbrev=7",
-                                f"HEAD..{base}")
-        ahead_hashes = run_cmd("git", "-C", str(path), "rev-list", "--abbrev=7",
-                               f"{base}..HEAD")
     except HarnessError:
         return None
     behind, _, ahead = counts.partition("\t")
-    return {"behind": int(behind or 0), "ahead": int(ahead or 0),
-            "behind_hashes": behind_hashes.split(), "ahead_hashes": ahead_hashes.split()}
+    return {"behind": int(behind or 0), "ahead": int(ahead or 0)}
 
 
 def _common_git_dir(root: Path, common: str) -> Path:

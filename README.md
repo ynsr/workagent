@@ -115,14 +115,18 @@ every session, confirmed one by one).
 
 ## Status
 
-`harness status` shows every linked session with the branch, `behind|ahead`
-vs the remote-tracking default branch (no fetch; short hashes in the table
-caption, `gone` when the worktree is missing), and the latest PR/MR with a
-colored state (open=green, merged=magenta, closed=red). PR state is cached
-in `~/.config/harness/pr_cache.json` at first query — `--refresh-pr`
-re-queries. `status <ref>` shows a detail panel (worktree, PR title/author/
-URL, behind/ahead hashes); both modes support `--json`. `--worktree`
-restores the worktree-path column.
+`harness status` shows every linked session with the branch, the `commits`
+column (`behind|ahead` vs the remote-tracking base branch — no fetch;
+`gone` when the worktree is missing), and the latest PR/MR with a bright
+color for the state (open/merged/closed). `status <ref>` shows a detail
+panel (worktree, PR title/author/URL, behind/ahead counts); both modes
+support `--json`. `--worktree` restores the worktree-path column.
+
+Status is cached per branch in `~/.config/harness/pr_cache.json` and
+reused while the session-branch tip and the base-branch tip are unchanged
+and the entry is younger than 3h — repeat runs only run two `git
+rev-parse` calls per session (no host-CLI spawn, no API call).
+`--refresh-pr` re-queries the PR/MR.
 
 Refs (`status`, `sync`, `review`, `cleanup`) complete in the shell over
 session keys, branches, and worktree names.

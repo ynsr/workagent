@@ -6,8 +6,8 @@ import json
 import os
 import subprocess
 import types
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
 import pytest
 from typer.testing import CliRunner
 
@@ -96,9 +96,7 @@ def test_status_table_shows_behind_ahead(isolated_config, tmp_path, monkeypatch)
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
     monkeypatch.setattr(cli.repos, "ahead_behind",
-                        lambda wt, db: {"behind": 5, "ahead": 8,
-                                        "behind_hashes": ["aaa1111"],
-                                        "ahead_hashes": ["bbb2222", "ccc3333"]})
+                        lambda wt, db: {"behind": 5, "ahead": 8})
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
     r = _invoke("status", "--json")
     data = json.loads(r.stdout)
@@ -142,6 +140,81 @@ def test_status_pr_live_query_then_cache(isolated_config, tmp_path, monkeypatch)
     assert store.get_cached_pr_status("feat/IPG-929--x")["number"] == 77
 
 
+def test_status_cache_reused_until_tip_or_ttl(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
+    tips = {"HEAD": "a1", "origin/main": "b1"}
+    monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: tips.get(ref))
+    store.cache_pr_status("feat/IPG-929--x", {"number": 9, "state": "open",
+                                              "title": "T", "author": "a",
+                                              "created_at": "2026-09-15",
+                                              "url": "https://x/mr/9",
+                                              "target_branch": "main"},
+                          tool="glab", base_branch="main",
+                          branch_tip="a1", base_tip="b1", behind=5, ahead=1)
+    ab_calls = []
+    monkeypatch.setattr(cli.repos, "ahead_behind",
+                        lambda wt, db: ab_calls.append(db)
+                        or {"behind": 9, "ahead": 9})
+    data = json.loads(_invoke("status", "--json").stdout)
+    assert data["jira:IPG-929"]["commits"] == "5|1"  # served from cache
+    assert ab_calls == []
+    # base branch gained commits → cache invalid → recompute counts
+    tips["origin/main"] = "b2"
+    data = json.loads(_invoke("status", "--json").stdout)
+    assert data["jira:IPG-929"]["commits"] == "9|9"
+    assert ab_calls == ["main"]
+    # PR stays cached even on invalidation (lookup unavailable)
+    assert data["jira:IPG-929"]["pr"] == "PR #9 (open)"
+
+
+def test_status_cache_expired_by_ttl(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
+    monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: "a1" if ref == "HEAD" else None)
+    store.cache_pr_status("feat/IPG-929--x", None, tool=None, base_branch="main",
+                          branch_tip="a1", base_tip=None, behind=5, ahead=1)
+    cache = store.load_pr_cache()
+    cache["feat/IPG-929--x"]["checked_at"] = (
+        datetime.now(timezone.utc) - timedelta(hours=4)).isoformat()
+    store.save_pr_cache(cache)
+    monkeypatch.setattr(cli.repos, "ahead_behind",
+                        lambda wt, db: {"behind": 7, "ahead": 0})
+    data = json.loads(_invoke("status", "--json").stdout)
+    assert data["jira:IPG-929"]["commits"] == "7|0"
+
+
+def test_status_refresh_pr_requeries(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
+    tips = {"HEAD": "a1", "origin/main": "b1"}
+    monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: tips.get(ref))
+    store.cache_pr_status("feat/IPG-929--x", {"number": 9, "state": "open",
+                                              "title": "T", "author": "a",
+                                              "created_at": "2026-09-15",
+                                              "url": "https://x/mr/9",
+                                              "target_branch": "main"},
+                          tool="glab", base_branch="main",
+                          branch_tip="a1", base_tip="b1", behind=5, ahead=1)
+    monkeypatch.setattr(cli.refs, "fetch_pr_list_for_branch",
+                        lambda tool, branch, cwd=None: [
+                            {"number": 44, "state": "merged", "title": "N",
+                             "author": "a", "created_at": "2026-09-16",
+                             "url": "https://x/mr/44", "target_branch": "main"}])
+    data = json.loads(_invoke("status", "--json").stdout)
+    assert data["jira:IPG-929"]["pr"] == "PR #9 (open)"  # valid cache, no re-query
+    data = json.loads(_invoke("status", "--refresh-pr", "--json").stdout)
+    assert data["jira:IPG-929"]["pr"] == "PR #44 (merged)"  # forced re-query
+    assert store.get_cached_pr_status("feat/IPG-929--x")["number"] == 44
+    assert store.get_cached_pr_tool("feat/IPG-929--x") == "glab"
+
+
 def test_status_missing_worktree_gone(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"
     _link_session(repo_dir, tmp_path / "missing", monkeypatch)
@@ -155,14 +228,12 @@ def test_status_ref_detail(isolated_config, tmp_path, monkeypatch):
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
     monkeypatch.setattr(cli.repos, "ahead_behind",
-                        lambda wt, db: {"behind": 1, "ahead": 2,
-                                        "behind_hashes": ["aaa1111"],
-                                        "ahead_hashes": ["bbb2222", "ccc3333"]})
+                        lambda wt, db: {"behind": 1, "ahead": 2})
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
     r = _invoke("status", "IPG-929", "--json")
     out = json.loads(r.stdout)
     assert out["commits"] == "1|2"
-    assert out["commits_detail"]["ahead_hashes"] == ["bbb2222", "ccc3333"]
+    assert out["commits_detail"]["ahead"] == 2
     assert out["worktree"] == str(wt_dir)
 
 

@@ -71,6 +71,11 @@ ambiguity; miss = `no linked state` error) → confirm (unless
   dynamic values (repo names, refs — session keys/branches/worktree names)
   via `autocompletion=` callbacks that filter on the `incomplete` prefix and
   return `[]` on any failure.
+- Status caching (`_status_cells` in cli.py): per-branch cache in `pr_cache.json`
+  (pr, tool, base_branch, branch/base tips, behind/ahead counts, checked_at);
+  reused while both tips match and age < 3h — repeat `status` runs cost two
+  `git rev-parse` calls per session; `--refresh-pr` re-queries the PR only.
+  User content in Rich output is `rich.markup.escape`d (PR titles contain `[`).
 
 ## Files to edit
 

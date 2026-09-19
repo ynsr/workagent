@@ -12,6 +12,7 @@ import json
 import os
 import shlex
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -21,7 +22,7 @@ from . import __version__, backend, gitwt, refs, repos, store, trackers
 from . import sync as sync_mod
 from . import completions as _completions
 from . import doctor as _doctor
-from .errors import HarnessError
+from .errors import HarnessError, run_cmd
 
 EXIT_OK, EXIT_GENERAL, EXIT_USAGE = 0, 1, 2
 
@@ -670,10 +671,10 @@ def link_list(
             for t, v in cfg.get("trackers", {}).items()]
     _print_rows(rows, json_output, csv_output, ["tracker", "repos"],
                 "Tracker links", "(no tracker links)")
-    srows, scolumns, scaptions = _session_rows(links, worktree, refresh_pr)
+    srows, scolumns = _session_rows(links, worktree, refresh_pr)
     _print_rows(srows, json_output, csv_output, scolumns,
                 "Session links", "(no session links)",
-                caption="\n".join(scaptions) or None, colorize=_colorize_session)
+                colorize=_colorize_session)
 
 
 @link_app.command("set")
@@ -741,9 +742,10 @@ def link_remove(
     _print_result({"removed": resolved}, json_output)
 
 
-_PR_STYLES = {"open": "green", "merged": "magenta", "closed": "red"}
+_PR_STYLES = {"open": "bright_green", "merged": "bright_magenta", "closed": "bright_red"}
 _DB_CACHE: dict[str, str] = {}
 _TOOL_CACHE: dict[str, str | None] = {}
+_STATUS_TTL_SECONDS = 3 * 3600
 
 
 def _repo_default_branch(repo: str) -> str | None:
@@ -768,78 +770,128 @@ def _fmt_pr(pr: dict | None) -> str:
     return f"PR #{pr['number']} ({pr['state']})"
 
 
-def _fetch_pr_via(tool: str, branch: str, repo: str) -> dict | None:
+def _fmt_counts(ab: dict | None) -> str:
+    if not ab:
+        return "-"
+    return f"{ab['behind']}|{ab['ahead']}"
+
+
+def _git_tip(wt: str, ref: str) -> str | None:
     try:
-        return refs.latest_pr(refs.fetch_pr_list_for_branch(tool, branch, cwd=repo))
-    except HarnessError as e:
-        eprint(f"warning: {tool} pr lookup failed for {branch}: {e}")
+        return run_cmd("git", "-C", wt, "rev-parse", "--verify", "-q", ref) or None
+    except HarnessError:
         return None
 
 
-def _pr_cell(entry: dict, refresh: bool = False) -> tuple[str, dict | None]:
-    """Latest PR for the session branch: (display, raw) — cache by default."""
-    branch = entry.get("branch", "")
-    repo = entry.get("repo", "")
-    cached = store.load_pr_cache().get(branch)
-    if not refresh and cached is not None:
-        pr = cached["pr"]
-        return _fmt_pr(pr), pr
+def _cache_fresh(cached: dict) -> bool:
+    ts = cached.get("checked_at", "")
+    if not ts:
+        return False
+    try:
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
+    except ValueError:
+        return False
+    return age < timedelta(seconds=_STATUS_TTL_SECONDS)
+
+
+def _query_pr(repo: str, branch: str) -> tuple[dict | None, str | None]:
+    """(pr, tool) via the detected host CLI, falling back to the other one.
+
+    Returns (None, None) when no host CLI is available; raises HarnessError
+    when a CLI exists but every lookup fails (caller keeps cached data).
+    """
     tool = _repo_tool(repo)
     if not tool or not branch:
-        return "-", None
-    pr = _fetch_pr_via(tool, branch, repo)
-    used = tool
-    if pr is None:
-        used = "glab" if tool == "gh" else "gh"
-        pr = _fetch_pr_via(used, branch, repo)
-    store.cache_pr_status(branch, pr, tool=used if pr else None)
-    return _fmt_pr(pr), pr
+        return None, None
+    try:
+        return refs.latest_pr(refs.fetch_pr_list_for_branch(tool, branch, cwd=repo)), tool
+    except HarnessError as e:
+        eprint(f"warning: {tool} pr lookup failed for {branch}: {e}")
+        other = "glab" if tool == "gh" else "gh"
+        try:
+            return refs.latest_pr(refs.fetch_pr_list_for_branch(other, branch, cwd=repo)), other
+        except HarnessError as e2:
+            eprint(f"warning: {other} pr lookup failed for {branch}: {e2}")
+            raise
 
 
-def _commits_cell(entry: dict) -> tuple[str, dict | None]:
-    """'behind|ahead' vs the repo's remote-tracking default branch."""
+def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
+    """Commits + PR cells for one session, backed by pr_cache.json.
+
+    A cache entry (keyed by branch) is reused while the session-branch tip
+    and the remote-tracking base tip are unchanged, the entry is younger
+    than 3h, and --refresh-pr is not given. Valid cache: two `git
+    rev-parse` calls, no host-CLI spawn, no API call. --refresh-pr
+    re-queries only the PR (counts still reuse when tips are unchanged).
+    """
     wt = entry.get("worktree", "")
     branch = entry.get("branch", "")
     repo = entry.get("repo", "")
-    if wt and not Path(wt).exists():
-        return "gone", None
-    db = _repo_default_branch(repo)
-    if not (db and branch and wt and Path(wt).exists()):
-        return "-", None
-    ab = repos.ahead_behind(Path(wt), db)
-    if not ab:
-        return "-", None
-    if not ab["behind"] and not ab["ahead"]:
-        return "0|0", ab
-    return f"{ab['behind']}|{ab['ahead']}", ab
-
-
-def _caption_for(key: str, ab: dict) -> str:
-    parts = []
-    for side in ("behind", "ahead"):
-        if ab[side]:
-            hashes = ab[f"{side}_hashes"][:4]
-            more = "…" if len(ab[f"{side}_hashes"]) > 4 else ""
-            parts.append(f"{side}: {' '.join(hashes)}{more}")
-    return f"{key} " + "  ·  ".join(parts)
+    cells = {"commits": "-", "ab": None, "pr": "-", "pr_data": None,
+             "base_branch": None}
+    cached = store.load_pr_cache().get(branch) if branch else None
+    wt_ok = bool(wt) and Path(wt).exists()
+    if wt and not wt_ok:
+        cells["commits"] = "gone"
+    if wt_ok and branch and cached and _cache_fresh(cached):
+        base_branch = cached.get("base_branch") or ""
+        branch_tip = _git_tip(wt, "HEAD")
+        base_tip = _git_tip(wt, f"origin/{base_branch}") if base_branch else None
+        if (cached.get("branch_tip") == branch_tip
+                and cached.get("base_tip") == base_tip):
+            ab = {"behind": int(cached.get("behind") or 0),
+                  "ahead": int(cached.get("ahead") or 0)}
+            pr = cached.get("pr")
+            cells.update(commits=_fmt_counts(ab), ab=ab, pr=_fmt_pr(pr),
+                         pr_data=pr, base_branch=base_branch or None)
+            if not refresh_pr:
+                return cells
+            try:
+                pr, used = _query_pr(repo, branch)
+            except HarnessError:
+                return cells
+            store.cache_pr_status(branch, pr, tool=used,
+                                  base_branch=base_branch,
+                                  branch_tip=branch_tip, base_tip=base_tip,
+                                  behind=ab["behind"], ahead=ab["ahead"])
+            cells.update(pr=_fmt_pr(pr), pr_data=pr)
+            return cells
+    if branch:
+        db = ((cached or {}).get("base_branch")
+              or _repo_default_branch(repo)) or None
+        ab = repos.ahead_behind(Path(wt), db) if (wt_ok and db) else None
+        try:
+            pr, used = _query_pr(repo, branch)
+        except HarnessError:
+            pr, used = (cached or {}).get("pr"), (cached or {}).get("tool")
+        if pr is None and used is None and cached and cached.get("pr"):
+            pr, used = cached["pr"], cached.get("tool")
+        if wt_ok:
+            store.cache_pr_status(branch, pr, tool=used if pr else None,
+                                  base_branch=db,
+                                  branch_tip=_git_tip(wt, "HEAD"),
+                                  base_tip=_git_tip(wt, f"origin/{db}") if db else None,
+                                  behind=(ab or {}).get("behind", 0),
+                                  ahead=(ab or {}).get("ahead", 0))
+            cells.update(commits=_fmt_counts(ab), ab=ab)
+        cells.update(pr=_fmt_pr(pr), pr_data=pr, base_branch=db)
+    return cells
 
 
 def _session_rows(links: dict, show_worktree: bool, refresh: bool
-                  ) -> tuple[list[dict], list[str], list[str]]:
-    rows, captions = [], []
+                  ) -> tuple[list[dict], list[str]]:
+    rows = []
     for k, v in links.items():
-        commits, ab = _commits_cell(v)
-        pr, pr_data = _pr_cell(v, refresh)
-        row = {"key": k, "branch": v.get("branch", "?"), "commits": commits,
-               "pr": pr, "_pr_state": (pr_data or {}).get("state", "")}
+        cells = _status_cells(v, refresh)
+        row = {"key": k, "branch": v.get("branch", "?"),
+               "commits": cells["commits"], "pr": cells["pr"],
+               "_pr_state": (cells["pr_data"] or {}).get("state", "")}
         if show_worktree:
             row["worktree"] = v.get("worktree", "?")
         rows.append(row)
-        if ab and (ab["behind"] or ab["ahead"]):
-            captions.append(_caption_for(k, ab))
     columns = (["key", "worktree", "branch", "commits", "pr"] if show_worktree
                else ["key", "branch", "commits", "pr"])
-    return rows, columns, captions
+    return rows, columns
 
 
 def _colorize_session(row: dict) -> dict:
@@ -852,40 +904,38 @@ def _colorize_session(row: dict) -> dict:
 
 
 def _enrich_entry(entry: dict, refresh: bool) -> dict:
-    commits, ab = _commits_cell(entry)
-    pr, pr_data = _pr_cell(entry, refresh)
-    return {**entry, "commits": commits, "pr": pr,
-            "commits_detail": ab, "pr_detail": pr_data}
+    cells = _status_cells(entry, refresh)
+    return {**entry, "commits": cells["commits"], "pr": cells["pr"],
+            "commits_detail": cells["ab"], "pr_detail": cells["pr_data"]}
 
 
 def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
-    commits, ab = _commits_cell(entry)
-    pr, pr_data = _pr_cell(entry, refresh)
-    return {"key": key, **entry, "commits": commits, "pr": _fmt_pr(pr_data),
-            "commits_detail": ab, "pr_detail": pr_data}
+    cells = _status_cells(entry, refresh)
+    return {"key": key, **entry, "commits": cells["commits"],
+            "pr": _fmt_pr(cells["pr_data"]), "commits_detail": cells["ab"],
+            "pr_detail": cells["pr_data"], "base_branch": cells["base_branch"]}
 
 
 def _print_detail(detail: dict) -> None:
     from rich.console import Console
+    from rich.markup import escape
     c = Console()
-    c.print(f"[bold]{detail['key']}[/bold]")
+    c.print(f"[bold]{escape(detail['key'])}[/bold]")
     for k in ("worktree", "branch", "repo", "issue"):
         if detail.get(k):
-            c.print(f"  {k}: {detail[k]}")
+            c.print(f"  {k}: {escape(str(detail[k]))}")
     pd = detail.get("pr_detail")
     if pd:
         style = _PR_STYLES.get(pd.get("state", ""), "white")
-        c.print(f"  PR: [#{style}]#{pd['number']} {pd['title']} ({pd['state']})"
-                f"[/{style}] by {pd.get('author', '?')}")
-        c.print(f"  url: {pd.get('url', '')}")
+        c.print(f"  PR: [{style}]#{pd['number']} {escape(pd.get('title', ''))} "
+                f"({pd.get('state', '')})[/{style}] by "
+                f"{escape(pd.get('author', '?'))}")
+        c.print(f"  url: {escape(pd.get('url', ''))}")
     cd = detail.get("commits_detail")
     if cd:
-        c.print(f"  commits: {cd['behind']} behind / {cd['ahead']} ahead"
-                f" of the default branch")
-        if cd["behind_hashes"]:
-            c.print(f"    behind: {' '.join(cd['behind_hashes'])}")
-        if cd["ahead_hashes"]:
-            c.print(f"    ahead: {' '.join(cd['ahead_hashes'])}")
+        base = escape(detail.get("base_branch") or "the base branch")
+        c.print(f"  commits: {cd['behind']} behind / {cd['ahead']} ahead "
+                f"of {base}")
 
 
 # ── status ────────────────────────────────────────────────────────────
@@ -932,14 +982,15 @@ def status(
             return
         _print_detail(detail)
         return
-    rows, columns, captions = _session_rows(links, worktree, refresh_pr)
     if json_output:
         print(json.dumps({k: _enrich_entry(v, refresh_pr)
                           for k, v in links.items()}, indent=2, ensure_ascii=False))
         return
+    rows, columns = _session_rows(links, worktree, refresh_pr)
     _print_rows(rows, json_output, csv_output, columns,
                 "Linked sessions", "(no linked sessions)",
-                caption="\n".join(captions) or None, colorize=_colorize_session)
+                colorize=_colorize_session)
+    eprint("commits: B|A = B commits behind, A commits ahead of the base branch")
 
 
 # ── sync ──────────────────────────────────────────────────────────────
@@ -1015,10 +1066,10 @@ def _sync_one(key: str, entry: dict, merge: bool, do_push: bool, use_harness: bo
     if dirty:
         _fail(f"{key}: worktree has uncommitted changes: {', '.join(dirty)}",
               EXIT_GENERAL)
-    db = _repo_default_branch(repo)
-    _, pr_data = _pr_cell(entry, refresh=False)
-    pr = pr_data
+    cells = _status_cells(entry, refresh_pr=False)
+    pr = cells["pr_data"]
     tool = store.get_cached_pr_tool(branch) or _repo_tool(repo)
+    db = cells["base_branch"] or _repo_default_branch(repo)
     if merge or not pr:
         if not db:
             _fail(f"{key}: cannot determine default branch for {repo}", EXIT_GENERAL)
@@ -1067,11 +1118,11 @@ def _sync_one(key: str, entry: dict, merge: bool, do_push: bool, use_harness: bo
     result["strategy"] = "remote-rebase"
     if dry_run:
         result["result"] = f"would-rebase-via-{tool}"
-        eprint(f"{key}: would run {tool} rebase for PR #{pr_data['number']} ({pr_data['url']})")
+        eprint(f"{key}: would run {tool} rebase for PR #{pr['number']} ({pr['url']})")
         return result
-    sync_mod.rebase_remote(tool, pr_data, Path(wt))
+    sync_mod.rebase_remote(tool, pr, Path(wt))
     result["result"] = "rebased"
-    eprint(f"{key}: rebased PR #{pr_data['number']} via {tool}")
+    eprint(f"{key}: rebased PR #{pr['number']} via {tool}")
     return result
 
 

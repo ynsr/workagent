@@ -64,11 +64,18 @@
 - Shared ref resolution: `status`, `sync`, `review`, and `cleanup` accept
   fuzzy refs (session key, issue number, branch/worktree substring) with
   shell completion over session keys, branches, and worktree names.
-- `status` and `link list` enrichment: behind|ahead vs the remote-tracking
-  default branch (caption lists short hashes; `gone` for missing worktrees),
-  latest PR/MR per branch with state colors (cache-backed; `--refresh-pr`
-  re-queries), `--worktree` toggles the path column, `status <ref>` shows a
-  detail panel (also as `--json`).
+- `status` and `link list` enrichment: `commits` column `B|A` = B commits
+  behind, A ahead of the remote-tracking base branch (`gone` for missing
+  worktrees; legend on stderr), latest PR/MR per branch with bright state
+  colors, `--worktree` toggles the path column, `status <ref>` shows a
+  detail panel (PR title/author/URL, counts; `--json` too).
+- Status cache: per-branch entries in `pr_cache.json` (PR, host tool, base
+  branch, branch/base tips, counts) are reused while both tips are
+  unchanged and the entry is <3h old — repeat `status` runs skip host-CLI
+  detection and PR/MR API calls entirely; `--refresh-pr` re-queries the
+  PR/MR. gh↔glab mis-detection self-heals (the other CLI is tried and the
+  working one is remembered). PR titles with `[` no longer crash Rich
+  (markup is escaped).
 - New `harness sync [ref]`: default remote rebase (`gh pr update-branch
   --rebase` / `glab mr rebase`); `-m/--merge` merges origin/<default> into
   the session branch locally (push only with `--push`), no PR falls back to

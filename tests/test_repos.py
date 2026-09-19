@@ -43,7 +43,7 @@ def _bare_origin(path: Path) -> Path:
     return path
 
 
-def test_ahead_behind_counts_and_hashes(tmp_path):
+def test_ahead_behind_counts(tmp_path):
     origin = _bare_origin(tmp_path / "origin.git")
     work = tmp_path / "work"
     subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True,
@@ -61,8 +61,7 @@ def test_ahead_behind_counts_and_hashes(tmp_path):
     _git("push", "-q", "origin", "main", cwd=other)
     _git("fetch", "-q", "origin", cwd=work)
     ab = repos.ahead_behind(work, "main")
-    assert ab["behind"] == 1 and ab["ahead"] == 1
-    assert len(ab["ahead_hashes"]) == 1 and len(ab["behind_hashes"]) == 1
+    assert ab == {"behind": 1, "ahead": 1}
 
 
 
