@@ -68,7 +68,7 @@ and uses `omp -p`).
 fetch head ref → worktree on that branch → record `pr:<url>` link → exec
 `omp` with pr-reviewer prompt.
 
-**`harness sync <ref>`**: resolve session key (fuzzy, shared with cleanup) →
+**`harness sync <ref>`**: resolve worktree key (fuzzy, shared with cleanup) →
 dirty check (abort exit 1 naming files) → PR lookup (cached; no PR → local
 merge fallback) → default: remote rebase via `gh`/`glab` (host-side), then
 `sync_mod.pull_rebased` fast-forwards or patch-id-guard-resets the
@@ -77,7 +77,7 @@ merge (shared `_sync_local_merge`: auto-push to origin afterwards;
 conflicts: CHANGELOG auto-union, else TTY prompt, `--harness` omp
 interactively, `--yes`/`--force` omp non-interactively
 `omp -p --auto-approve`; non-TTY without either exits 2) → `--all` =
-every session with `--yes` semantics, continuing past failures;
+every worktree with `--yes` semantics, continuing past failures;
 `--dry-run`/`--json`; up-to-date is a no-op (exit 0).
 
 **`harness cleanup <ref>`**: resolve link key (exact → parsed
@@ -96,7 +96,7 @@ ambiguity; miss = `no linked state` error) → confirm (unless
   acts/fails with an actionable message.
 - Completion: ONE system — `completions show <bash|zsh|fish>` (Click-generated,
   never hand-coded order) + `completions install [shell] [--rcfile] [--yes]`;
-  dynamic values (repo names, refs — session keys/branches/worktree names)
+  dynamic values (repo names, refs — worktree keys/branches/worktree paths)
   via `autocompletion=` callbacks that filter on the `incomplete` prefix and
   return `[]` on any failure.
 - `cd <ref>` prints the worktree root (stdout data-only); the shell
@@ -113,7 +113,7 @@ ambiguity; miss = `no linked state` error) → confirm (unless
 - Status caching (`_status_cells` in cli.py): per-branch cache in `pr_cache.json`
   (pr, tool, base_branch, branch/base tips, behind/ahead counts, checked_at);
   reused while both tips match and age < 3h — repeat `status` runs cost two
-  `git rev-parse` calls per session; `--refresh-pr` re-queries the PR only.
+  `git rev-parse` calls per worktree; `--refresh-pr` re-queries the PR only.
   User content in Rich output is `rich.markup.escape`d (PR titles contain `[`).
   Detail panel (`status <ref>`) shows the full issue URL via
   `refs.issue_url(key, stored)` — jira site from jira-cli's config

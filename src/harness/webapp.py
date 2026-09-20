@@ -36,7 +36,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import __version__, store
+from . import __version__, store, worktrees
 
 ANSI_RE = None  # set lazily in _strip_ansi (keeps import cost tiny)
 MAX_LINES = 10_000
@@ -365,8 +365,6 @@ def create_app(static_dir: Path, host: str, port: int,
     # ── read endpoints (reuse in-process core functions) ──────────────
     from .cli import (
         _enrich_entry,
-        _pick_session_key,
-        _resolve_session_key,
         _session_detail,
     )
 
@@ -381,19 +379,19 @@ def create_app(static_dir: Path, host: str, port: int,
         if not ref:
             return {k: _enrich_entry(v, refresh)
                     for k, v in links.items()}
-        resolved = _resolve_session_key(ref, links)
+        resolved = worktrees.resolve_worktree(ref, links)
         if resolved is None:
             raise HTTPException(404, f"no linked state for {ref}")
-        key = _pick_session_key(ref, resolved, links)
+        key = worktrees.pick_worktree(ref, resolved, links)
         return _session_detail(key, links[key], refresh=refresh)
 
     @app.get("/api/path")
     def path(ref: str):
         links = store.load_links()
-        resolved = _resolve_session_key(ref, links)
+        resolved = worktrees.resolve_worktree(ref, links)
         if resolved is None:
             raise HTTPException(404, f"no linked state for {ref}")
-        key = _pick_session_key(ref, resolved, links)
+        key = worktrees.pick_worktree(ref, resolved, links)
         wt = links[key].get("worktree", "")
         if not wt or not Path(wt).exists():
             raise HTTPException(404, f"worktree missing for {key}: {wt}")

@@ -21,6 +21,12 @@
 - Fixed `review` reading `--dry-run` without defining the flag.
 
 ## Unreleased
+- Session→Worktree terminology: prompts, errors, and table titles now say
+  "worktree" ("Linked worktrees", "multiple worktrees match"); `cleanup`,
+  `cd`, `link remove`, `status`, `sync`, and the web `/api/status` +
+  `/api/path` endpoints resolve refs via the shared
+  `worktrees.resolve_worktree`/`pick_worktree`. JSON keys and stored
+  link state are unchanged.
 
 - Web UI: `harness serve` — local FastAPI server + React/Vite/TypeScript
   frontend (`web/`, built to `web/dist`) with CLI feature parity: session

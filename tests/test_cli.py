@@ -78,6 +78,25 @@ def test_cleanup_dry_run(isolated_config):
     assert out["dry_run"] is True and out["branch"] == "feat/22-x"
 
 
+def test_cleanup_resolves_by_branch(isolated_config, tmp_path, monkeypatch):
+    store.record_link("jira:IPG-929", {"branch": "feat/IPG-929--x", "repo": "/tmp/proj",
+                                       "worktree": "/tmp/wt"})
+    r = runner.invoke(cli.app, ["cleanup", "feat/IPG-929--x", "--dry-run", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["branch"] == "feat/IPG-929--x"
+    # Wording gate: resolve/pick errors say "worktree", never "session".
+    store.record_link("pr:https://git.example.com/x/-/merge_requests/929",
+                      {"branch": "feat/IPG-929--pr", "repo": "/tmp/proj",
+                       "worktree": "/tmp/wt-pr"})
+    r2 = runner.invoke(cli.app, ["cleanup", "IPG-929", "--dry-run", "--json"])
+    assert r2.exit_code == 2
+    assert "exact worktree key" in r2.output
+    assert "session" not in r2.output
+    r3 = _invoke("cleanup", "NOPE-404")
+    assert r3.exit_code == 2
+    assert "linked worktrees" in r3.output
+
+
 def test_status_empty(isolated_config):
     r = _invoke("status", "--json")
     assert r.exit_code == 0
