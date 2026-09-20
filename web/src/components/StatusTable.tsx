@@ -1,7 +1,8 @@
-import type { ReactNode } from "react"
-import { FolderOpen, RefreshCw, Rocket, Trash2 } from "lucide-react"
+import { Fragment, useState, type ReactNode } from "react"
+import { FolderOpen, GitPullRequest, Info, RefreshCw, Rocket, Trash2 } from "lucide-react"
 import type { SessionMap } from "@/lib/api"
 import { Button } from "@/components/ui/button"
+import { WorktreeDetail } from "@/components/WorktreeDetail"
 import {
   Table,
   TableBody,
@@ -14,7 +15,10 @@ import { PrBadge } from "@/components/StateBadge"
 import { cn } from "@/lib/utils"
 
 export interface StatusTableActions {
+  /** Navigate to Launch with mode=sync&ref=key (prefill contract). */
   onSync?: (key: string) => void
+  /** Navigate to Launch with mode=review&ref=key (prefill contract). */
+  onReview?: (key: string) => void
   onCleanup?: (key: string) => void
   onCopyPath: (key: string) => void
   onOpenRun: (key: string) => void
@@ -51,15 +55,33 @@ function ActionIcon({
 function RowActions({
   sessionKey,
   actions,
+  detailOpen,
+  onToggleDetail,
 }: {
   sessionKey: string
   actions: StatusTableActions
+  detailOpen: boolean
+  onToggleDetail: () => void
 }) {
   return (
     <div className="flex items-center justify-end gap-0.5">
+      <ActionIcon
+        title={detailOpen ? `Hide details of ${sessionKey}` : `Details of ${sessionKey}`}
+        onClick={onToggleDetail}
+      >
+        <Info aria-hidden />
+      </ActionIcon>
       {actions.onSync ? (
         <ActionIcon title={`Sync ${sessionKey}`} onClick={() => actions.onSync?.(sessionKey)}>
           <RefreshCw aria-hidden />
+        </ActionIcon>
+      ) : null}
+      {actions.onReview ? (
+        <ActionIcon
+          title={`Review ${sessionKey}`}
+          onClick={() => actions.onReview?.(sessionKey)}
+        >
+          <GitPullRequest aria-hidden />
         </ActionIcon>
       ) : null}
       {actions.onCleanup ? (
@@ -128,6 +150,7 @@ export function StatusTable({
   className?: string
 }) {
   const keys = Object.keys(sessions).sort()
+  const [expanded, setExpanded] = useState<string | null>(null)
   return (
     <div className={className}>
       {/* Desktop table */}
@@ -147,34 +170,67 @@ export function StatusTable({
             {keys.map((key) => {
               const entry = sessions[key]
               if (!entry) return null
+              const detailOpen = expanded === key
               return (
-                <TableRow key={key}>
-                  <TableCell className="font-medium">
-                    <SessionKeyLink sessionKey={key} entry={entry} />
-                  </TableCell>
-                  <TableCell className="max-w-52 truncate font-mono text-[13px]" title={entry.branch}>
-                    {entry.branch ?? "—"}
-                  </TableCell>
-                  <TableCell>
-                    <CommitsCell entry={entry} />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex min-w-0 items-center gap-2">
-                      <PrBadge pr={entry.pr_detail ?? null} />
-                      <span className="truncate text-muted-foreground" title={entry.pr}>
-                        {entry.pr_detail ? entry.pr_detail.title : entry.pr ?? "—"}
-                      </span>
-                    </div>
-                  </TableCell>
-                  {showWorktree ? (
-                    <TableCell className="max-w-52 truncate font-mono text-[13px]" title={entry.worktree}>
-                      {entry.worktree ?? "—"}
+                <Fragment key={key}>
+                  <TableRow>
+                    <TableCell className="font-medium">
+                      <SessionKeyLink sessionKey={key} entry={entry} />
                     </TableCell>
+                    <TableCell
+                      className="max-w-52 truncate font-mono text-[13px]"
+                      title={entry.branch}
+                    >
+                      {entry.branch ?? "—"}
+                    </TableCell>
+                    <TableCell>
+                      <CommitsCell entry={entry} />
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <PrBadge pr={entry.pr_detail ?? null} />
+                        <span className="truncate text-muted-foreground" title={entry.pr}>
+                          {entry.pr_detail ? entry.pr_detail.title : entry.pr ?? "—"}
+                        </span>
+                      </div>
+                    </TableCell>
+                    {showWorktree ? (
+                      <TableCell
+                        className="max-w-52 truncate font-mono text-[13px]"
+                        title={entry.worktree}
+                      >
+                        {entry.worktree ?? "—"}
+                      </TableCell>
+                    ) : null}
+                    <TableCell className="pr-1">
+                      <RowActions
+                        sessionKey={key}
+                        actions={actions}
+                        detailOpen={detailOpen}
+                        onToggleDetail={() =>
+                          setExpanded((cur) => (cur === key ? null : key))
+                        }
+                      />
+                    </TableCell>
+                  </TableRow>
+                  {detailOpen ? (
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell
+                        colSpan={showWorktree ? 6 : 5}
+                        className="border-b bg-muted/40 align-top"
+                      >
+                        <div className="mx-auto w-full max-w-2xl py-1">
+                          <WorktreeDetail
+                            entry={entry}
+                            mode="view"
+                            onSave={() => undefined}
+                            onClose={() => setExpanded(null)}
+                          />
+                        </div>
+                      </TableCell>
+                    </TableRow>
                   ) : null}
-                  <TableCell className="pr-1">
-                    <RowActions sessionKey={key} actions={actions} />
-                  </TableCell>
-                </TableRow>
+                </Fragment>
               )
             })}
           </TableBody>
@@ -186,6 +242,7 @@ export function StatusTable({
         {keys.map((key) => {
           const entry = sessions[key]
           if (!entry) return null
+          const detailOpen = expanded === key
           return (
             <div key={key} className="rounded-xl border bg-card p-4">
               <div className="flex items-start justify-between gap-2">
@@ -221,8 +278,23 @@ export function StatusTable({
                 ) : null}
               </dl>
               <div className="mt-3 border-t pt-1">
-                <RowActions sessionKey={key} actions={actions} />
+                <RowActions
+                  sessionKey={key}
+                  actions={actions}
+                  detailOpen={detailOpen}
+                  onToggleDetail={() => setExpanded((cur) => (cur === key ? null : key))}
+                />
               </div>
+              {detailOpen ? (
+                <div className="mt-3">
+                  <WorktreeDetail
+                    entry={entry}
+                    mode="view"
+                    onSave={() => undefined}
+                    onClose={() => setExpanded(null)}
+                  />
+                </div>
+              ) : null}
             </div>
           )
         })}

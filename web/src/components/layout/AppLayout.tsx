@@ -161,7 +161,7 @@ export function AppLayout() {
       <div className="flex min-h-svh flex-col lg:pl-64">
         <MobileHeader />
         <NetworkBanner />
-        <main className="mx-auto w-full max-w-6xl flex-1 px-4 pt-6 pb-28 lg:px-8 lg:pb-8">
+        <main className="w-full max-w-none flex-1 min-w-0 px-4 pt-6 pb-28 lg:px-8 lg:pb-8">
           <Outlet />
         </main>
         <Footer />
