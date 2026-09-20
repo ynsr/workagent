@@ -142,10 +142,15 @@ def fetch_issue(parsed: dict) -> dict:
     return {"title": data.get("title", ""), "body": data.get("description", "") or ""}
 
 
-def fetch_pr_info(parsed: dict) -> dict:
-    """Return {title, head_ref, issue_key} for a PR/MR ref (best effort)."""
+def fetch_pr_info(parsed: dict, cwd: str | None = None) -> dict:
+    """Return {title, head_ref, issue_key} for a PR/MR ref (best effort).
+
+    ``cwd`` must be the repo dir so gh/glab resolve the right host/remote —
+    without it glab fails with "Not a git repository" outside a checkout.
+    """
     if parsed["tool"] == "gh":
-        out = run_cmd("gh", "pr", "view", parsed["url"], "--json", "title,headRefName,body")
+        out = run_cmd("gh", "pr", "view", parsed["url"], "--json", "title,headRefName,body",
+                      cwd=cwd)
         try:
             data = json.loads(out or "{}")
         except json.JSONDecodeError:
@@ -153,7 +158,7 @@ def fetch_pr_info(parsed: dict) -> dict:
         return {"title": data.get("title", ""),
                 "head_ref": data.get("headRefName", ""),
                 "body": data.get("body", "") or ""}
-    out = run_cmd("glab", "mr", "view", parsed["url"], "-F", "json")
+    out = run_cmd("glab", "mr", "view", parsed["url"], "-F", "json", cwd=cwd)
     try:
         data = json.loads(out or "{}")
     except json.JSONDecodeError:

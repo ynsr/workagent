@@ -57,7 +57,7 @@ def test_review_dry_run(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
                         lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
-    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed: {"head_ref": ""})
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed, cwd=None: {"head_ref": ""})
     r = _invoke("review", "https://github.com/o/r/pull/33", "--dry-run", "--json")
     assert r.exit_code == 0, r.output
     out = json.loads(r.stdout)
@@ -585,7 +585,7 @@ def test_review_no_harness_prints_command_and_skips_launch(isolated_config, tmp_
     monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
                         lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
-    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed: {"head_ref": "feat/33"})
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed, cwd=None: {"head_ref": "feat/33"})
     monkeypatch.setattr(cli.gitwt, "start_worktree",
                         lambda repo, **kw: {"worktree_path": str(worktree),
                                             "branch": "feat/33"})
@@ -610,7 +610,7 @@ def test_review_no_harness_tty_lands_shell_in_worktree(isolated_config, tmp_path
     monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
                         lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
-    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed: {"head_ref": "feat/33"})
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed, cwd=None: {"head_ref": "feat/33"})
     monkeypatch.setattr(cli.gitwt, "start_worktree",
                         lambda repo, **kw: {"worktree_path": str(worktree),
                                             "branch": "feat/33"})
@@ -641,6 +641,7 @@ def test_no_harness_shorthand_N_on_start_and_review(isolated_config, tmp_path, m
                         lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     monkeypatch.setattr(cli.refs, "fetch_issue", lambda ref: {"title": "t", "body": "b"})
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed, cwd=None: {"head_ref": "feat/33"})
     monkeypatch.setattr(cli.gitwt, "start_worktree",
                         lambda repo, **kw: {"worktree_path": str(worktree),
                                             "branch": "feat/33"})

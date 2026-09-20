@@ -6,14 +6,12 @@ Layout (~/.config/harness/, override with HARNESS_CONFIG_DIR):
                                    "branch": ..., "repo": ...}}
 """
 
-from __future__ import annotations
-
 import json
 import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .errors import HarnessError
 
 DEFAULT_HARNESS = "omp"
 SUPPORTED_HARNESSES = ("omp",)
@@ -37,9 +35,35 @@ def _read_json(path: Path, default: dict) -> dict:
 
 def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n")
-    tmp.replace(path)
+    # Unique temp name per write: shared "<name>.tmp" collides under
+    # concurrent writers (CLI + serve threads) and loses the loser with ENOENT.
+    with open(path.parent / (path.name + ".lock"), "w") as lock:
+        _locked(lock, lambda: _atomic_replace(path, data))
+
+
+def _locked(lock, fn):
+    import fcntl
+    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    try:
+        return fn()
+    finally:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _atomic_replace(path: Path, data: dict) -> None:
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(data, indent=2) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        Path(tmp_name).replace(path)
+    except BaseException:
+        try:
+            Path(tmp_name).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def load_config() -> dict:
@@ -63,10 +87,17 @@ def save_links(links: dict) -> None:
 
 
 def record_link(issue_key: str, entry: dict) -> None:
-    links = load_links()
+    path = config_dir() / "links.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.parent / (path.name + ".lock"), "w") as lock:
+        _locked(lock, lambda: _record_link_locked(path, issue_key, entry))
+
+
+def _record_link_locked(path: Path, issue_key: str, entry: dict) -> None:
+    links = _read_json(path, {})
     merged = {**links.get(issue_key, {}), **entry}
     links[issue_key] = merged
-    save_links(links)
+    _atomic_replace(path, links)
 
 
 def lookup_link(issue_key: str) -> dict | None:
@@ -93,9 +124,14 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
                  ("behind", behind), ("ahead", ahead)):
         if v is not None:
             entry[k] = v
-    cache = load_pr_cache()
-    cache[branch] = entry
-    save_pr_cache(cache)
+    path = config_dir() / "pr_cache.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.parent / (path.name + ".lock"), "w") as lock:
+        def _update() -> None:
+            cache = _read_json(path, {})
+            cache[branch] = entry
+            _atomic_replace(path, cache)
+        _locked(lock, _update)
 
 
 def get_cached_pr_status(branch: str) -> dict | None:

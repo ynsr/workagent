@@ -338,7 +338,7 @@ def review(
     info: dict = {}
     if parsed["repo"] and parsed["kind"] in ("pr", "mr"):
         try:
-            info = refs.fetch_pr_info(parsed)
+            info = refs.fetch_pr_info(parsed, cwd=str(repo_dir))
         except HarnessError as e:
             eprint(f"warning: {e}")
     head_ref = info.get("head_ref", "")
@@ -349,11 +349,11 @@ def review(
                        "tracker": tid, "tracker_link": outcome}, json_output)
         return
 
-    if head_ref:
-        wt = gitwt.start_worktree(repo_dir, branch=head_ref, base=base_branch)
-    else:
-        # No head ref known: create a review worktree off the base branch.
-        wt = gitwt.start_worktree(repo_dir, branch=None, issue=None, slug="review", base=base_branch)
+    if not head_ref:
+        _fail(f"could not determine the MR head branch for {pr_url}.\n"
+              f"  Run `git fetch origin` in {repo_dir} and check `glab`/`gh` auth for that host.",
+              EXIT_USAGE)
+    wt = gitwt.start_worktree(repo_dir, branch=head_ref, base=base_branch)
     worktree = wt.get("worktree_path", "")
     branch = wt.get("branch", head_ref)
     store.record_link(f"pr:{pr_url}", {"pr_url": pr_url, "worktree": worktree,
