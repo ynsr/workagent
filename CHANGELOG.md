@@ -22,6 +22,16 @@
 
 ## Unreleased
 
+- Web UI: `harness serve` — local FastAPI server + React/Vite/TypeScript
+  frontend (`web/`, built to `web/dist`) with CLI feature parity: session
+  dashboard (branch, commits behind|ahead, PR), launch `start`/`review`,
+  repos, tracker↔repo links, sync, cleanup, register, run logs over SSE
+  with cancel, doctor. Read endpoints reuse the in-process CLI helpers;
+  mutating commands run as `python -m harness` children with per-target
+  concurrency (409), confirm/force gating, and ≤10k-line buffers. New
+  optional dependency group: `web` (fastapi, uvicorn). The server is
+  unauthenticated: loopback-only bind by default, Host/Origin allow-list;
+  existing command help output is unchanged.
 - Jira support: `KEY-123` / `<host>/browse/KEY-123` refs via `jira-cli`.
 - Resilient `start`: existing branch/worktree resumes instead of failing;
   upstream verified to point at the feature branch, never the base.

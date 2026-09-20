@@ -8,8 +8,19 @@ dependencies = ["typer>=0.12", "rich>=13"]
 [project.scripts]
 harness = "harness.cli:main"
 
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.141.1",
+    "pydantic>=2.13.5",
+    "uvicorn[standard]>=0.53.0",
+]
+
 [dependency-groups]
-dev = ["pytest"]
+dev = [
+    "fastapi[standard]>=0.141.1",
+    "pytest",
+    "uvicorn[standard]>=0.53.0",
+]
 
 [build-system]
 requires = ["hatchling"]

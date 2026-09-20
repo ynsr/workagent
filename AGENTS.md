@@ -31,6 +31,7 @@ Install locally:
 | `src/harness/pick.py` | shared arrow-key picker for every multi-choice prompt: stderr render, ↑/↓ + Enter, optional dim description per item, q/Esc aborts, `None` on non-TTY; testable via `read`/`stream` seams |
 | `src/harness/trackers.py` | tracker↔repo relation: canonical ids (`jira:PREFIX`, `github:O/R`, `gitlab:host/g/r`), `check_or_record` guard, `resolve_for_tracker` repo picker, `link` command data |
 | `src/harness/sync.py` | sync engine: dirty-file check, local merge (fetch + ff default + merge), sole-conflict `CHANGELOG.md` Unreleased auto-resolve (bullet union), push, remote rebase dispatch (`gh pr update-branch --rebase` / `glab mr rebase`) |
+| `src/harness/webapp.py` | `serve` web backend (FastAPI; lazy import behind the `web` extra): Host/Origin/Content-Type guard, read endpoints reusing in-process helpers, run registry (`python -m harness` children, 409 per target key, ≤100 runs, ≤10k lines buffered), SSE with `Last-Event-ID` replay, SIGTERM→SIGKILL cancel, SPA catch-all |
 
 ### Key flows
 
@@ -45,6 +46,16 @@ checkout override; default from the worktree's git metadata), `--force`/
 `store.record_link` (status/sync/cd/cleanup all resolve it), persists the
 tracker↔repo relation when `--issue` is given, and registers the repo in
 the registry.
+
+**`harness serve`**: `cli.serve` lazy-imports `webapp.run_server` (needs
+the `web` extra: fastapi/uvicorn) → `create_app` guards Host/Origin/
+Content-Type, read endpoints (`/api/status`, `/api/path`, `/api/repos`,
+`/api/links`, `/api/doctor`) call the same in-process helpers as the CLI,
+and mutating commands run as `sys.executable -m harness` children via
+`backend.command_argv`-shaped argv (`--yes` on confirm, `--force` on
+cleanup/register). Frontend: `web/` (Vite + React + TS), build →
+`web/dist`, served by the SPA catch-all; API contract in
+`web/API_CONTRACT.md`.
 
 **`harness start <issue>`**: parse ref → `trackers.resolve_for_tracker`
 (repo picker: `--repo`, cwd-linked silently, unlinked-cwd y/N with
@@ -118,4 +129,6 @@ ambiguity; miss = `no linked state` error) → confirm (unless
 - Sync engine: `src/harness/sync.py`
 - PR-status cache (`pr_cache.json`): `src/harness/store.py`
 - Completion internals (rc block, shell detect): `src/harness/completions.py`
+- Web backend (`serve`): `src/harness/webapp.py`; frontend: `web/`
+  (npm/tsc build per `web/package.json`)
 - Tests: `tests/` (mirror module names)

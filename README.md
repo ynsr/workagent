@@ -166,6 +166,39 @@ GitHub remotes, otherwise a `glab mr create` command for the branch.
 Refs (`status`, `sync`, `review`, `cleanup`, `cd`) complete in the shell
 over session keys, branches, and worktree names.
 
+
+## Web UI (`harness serve`)
+
+`harness serve` starts a local web server that mirrors the CLI: session
+table with branch/commits/PR state, launch (`start`/`review`),
+repos, tracker↔repo links, sync, cleanup, register, runs with live logs,
+and doctor.
+
+```bash
+pip install 'harness[web]'            # or: uv tool install --force --with fastapi --with uvicorn .
+cd web && npm ci && npm run build     # build the UI (needed once)
+harness serve                         # http://127.0.0.1:3344
+harness serve --port 3345 --allowed-host devbox.local
+```
+
+- Run logs stream over SSE; destructive runs need an explicit
+  confirmation (opt-out per action type is stored in the browser, never
+  for `--force`).
+- The built-in static path is `<repo>/web/dist` (correct for
+  editable/source installs). For non-editable installs pass
+  `--static-dir /path/to/harness/web/dist`.
+- One run per target at a time: a second launch for the same session
+  returns 409; cancel sends SIGTERM, then SIGKILL after 10 s.
+- **No authentication.** The server binds to `127.0.0.1` by default and
+  refuses unexpected `Host` headers plus non-same-origin JSON posts.
+  Binding `--host 0.0.0.0` exposes an unauthenticated agent runner to
+  the network — don't, unless you have another isolation layer.
+- Off-host development: run the Vite dev server (`cd web && npm run
+  dev`) and add your origin host with `--allowed-host`.
+
+Details: `web/API_CONTRACT.md` (HTTP/SSE API), `web/FEATURE_INVENTORY.md`
+
+
 ## Vendored tooling
 
 `vendored/git-wt/` carries the git-wt source snapshot (no nested `.git` — this

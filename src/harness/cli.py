@@ -1378,6 +1378,40 @@ completions_app = typer.Typer(help="Shell completion: print the init script or i
 app.add_typer(completions_app, name="completions")
 
 
+# ── serve (web UI) ────────────────────────────────────────────────────
+
+
+@app.command("serve")
+@_catch_harness_errors
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address (default: loopback only; a non-loopback bind is unauthenticated — see the README security note)."),
+    port: int = typer.Option(None, "--port", help="TCP port (default: $PORT, else 3344)."),
+    static_dir: Path = typer.Option(None, "--static-dir", help="Built web UI directory (default: <repo>/web/dist)."),
+    allowed_host: list[str] = typer.Option(None, "--allowed-host", help="Extra Host header values to accept (repeatable)."),
+) -> None:
+    """Start the local web UI server (feature parity with the CLI).
+
+    Example:
+      harness serve
+      harness serve --port 3345 --allowed-host devbox.local
+
+    Requires the web extra (fastapi, uvicorn) and a built UI:
+      cd web && npm ci && npm run build
+    """
+    try:
+        resolved_port = port or int(os.environ.get("PORT", "3344"))
+    except ValueError:
+        _fail(f"invalid PORT: {os.environ.get('PORT')!r}", EXIT_GENERAL)
+    resolved_static = static_dir or Path(__file__).resolve().parent.parent.parent / "web" / "dist"
+    try:
+        from .webapp import run_server
+    except ImportError:
+        _fail("the web extra is required — install fastapi and uvicorn "
+              "(e.g. pip install 'harness[web]')", EXIT_GENERAL)
+    run_server(host, resolved_port, Path(resolved_static), list(allowed_host or []))
+
+
+
 @completions_app.command("show")
 def completions_show(
     shell: str = typer.Argument(..., help="Shell to print the init script for (bash, zsh, fish)."),
