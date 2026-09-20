@@ -5,11 +5,11 @@ goes to stderr.
 """
 
 from __future__ import annotations
-
 import csv
 import functools
 import json
 import os
+import re
 import shlex
 import sys
 from datetime import datetime, timedelta, timezone
@@ -930,10 +930,13 @@ def _enrich_entry(entry: dict, refresh: bool) -> dict:
 
 def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
     cells = _status_cells(entry, refresh)
-    return {"key": key, **entry, "commits": cells["commits"],
-            "pr": _fmt_pr(cells["pr_data"]), "commits_detail": cells["ab"],
-            "pr_detail": cells["pr_data"], "base_branch": cells["base_branch"],
-            "issue_url": refs.issue_url(key, entry.get("issue"))}
+    detail = {"key": key, **entry, "commits": cells["commits"],
+              "pr": _fmt_pr(cells["pr_data"]), "commits_detail": cells["ab"],
+              "pr_detail": cells["pr_data"], "base_branch": cells["base_branch"],
+              "issue_url": refs.issue_url(key, entry.get("issue"))}
+    if not cells["pr_data"]:
+        detail["create_hint"] = _create_hint(entry)
+    return detail
 
 
 def _print_detail(detail: dict) -> None:
@@ -959,7 +962,39 @@ def _print_detail(detail: dict) -> None:
         base = escape(detail.get("base_branch") or "the base branch")
         c.print(f"  commits: {cd['behind']} behind / {cd['ahead']} ahead "
                 f"of {base}")
+    hint = detail.get("create_hint")
+    if hint:
+        c.print(f"  no PR/MR — create one: {escape(str(hint))}")
 
+
+def _create_hint(entry: dict) -> str | None:
+    """URL or shell command to open a new MR/PR for the session's branch.
+
+    GitHub: web create-PR URL. GitLab: glab CLI command (self-hosted
+    instances have no stable web create URL with a prefilled source
+    branch).
+    """
+    branch = entry.get("branch", "")
+    if not branch:
+        return None
+    remote = repos.remote_url(Path(entry["repo"])) if entry.get("repo") else None
+    if not remote:
+        return None
+    host = repos._remote_host(remote) or ""
+    if "github.com" in host:
+        m = re.search(r"github\.com[:/]([^/]+)/(.+?)(?:\.git)?/?$", remote)
+        if m:
+            return (f"https://github.com/{m.group(1)}/{m.group(2)}/compare/"
+                    f"{branch}?expand=1")
+        return None
+    m = re.search(r"[:/](?P<path>[^/]+/[^/]+?)(?:\.git)?/?$", remote)
+    if not m:
+        return None
+    path = m.group("path")
+    if "gitlab" in host:
+        return f"glab mr create --source-branch {shlex.quote(branch)}"
+    return (f"glab mr create --repo {shlex.quote(host)}/"
+            f"{shlex.quote(path)} --source-branch {shlex.quote(branch)}")
 
 # ── status ────────────────────────────────────────────────────────────
 
@@ -1016,6 +1051,36 @@ def status(
     eprint("commits: B|A = B commits behind, A commits ahead of the base branch")
 
 
+# ── cd ────────────────────────────────────────────────────────────────
+
+
+@app.command("cd")
+@_catch_harness_errors
+def cd_cmd(
+    ref: str = typer.Argument(..., autocompletion=_complete_refs,
+                              help="Issue/PR ref or session key."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Print the worktree root for a ref: cd "$(harness cd <ref>)".
+
+    A child process cannot change the shell's cwd, so the command prints
+    the path; the `completions install` shell wrapper (installed since
+    0.4.0) makes bare `harness cd <ref>` change directory directly.
+    """
+    links = store.load_links()
+    resolved = _resolve_session_key(ref, links)
+    if resolved is None:
+        _fail(f"no linked state for {ref}", EXIT_USAGE)
+    key = _pick_session_key(ref, resolved, links)
+    wt = links[key].get("worktree", "")
+    if not wt or not Path(wt).exists():
+        _fail(f"worktree missing for {key}: {wt or '?'}", EXIT_GENERAL)
+    if json_output:
+        print(json.dumps({"key": key, "worktree": wt}))
+        return
+    print(wt)
+
+
 # ── sync ──────────────────────────────────────────────────────────────
 
 
@@ -1024,8 +1089,7 @@ def status(
 def sync_cmd(
     ref: Optional[str] = typer.Argument(None, autocompletion=_complete_refs,
                                         help="Issue/PR ref or session key (omit: interactive pick, or --all)."),
-    merge: bool = typer.Option(False, "-m", "--merge", help="Merge locally in the worktree instead of the default remote rebase."),
-    push: bool = typer.Option(False, "--push", help="With --merge, push the updated session branch."),
+    merge: bool = typer.Option(False, "-m", "--merge", help="Merge locally in the worktree instead of the default remote rebase. The branch is pushed to origin afterwards."),
     harness: bool = typer.Option(False, "--harness", help="On unresolvable conflicts, launch the coding harness in the worktree."),
     all_sessions: bool = typer.Option(False, "--all", help="Sync every linked session (confirmed one by one)."),
     yes: bool = typer.Option(False, "--yes", "--force", "-y", help="Skip confirmations."),
@@ -1037,11 +1101,12 @@ def sync_cmd(
     Default: remote rebase via `gh pr update-branch --rebase` /
     `glab mr rebase` (host merges server-side). With -m/--merge: fetch,
     fast-forward the local default branch and merge it into the session
-    branch in the worktree; push only with --push.
+    branch in the worktree; the branch is pushed to origin afterwards
+    (including after harness-resolved conflicts).
 
     Example:
       harness sync IPG-929
-      harness sync IPG-929 --merge --push
+      harness sync IPG-929 --merge
       harness sync --all --dry-run
     """
     links = store.load_links()
@@ -1064,18 +1129,27 @@ def sync_cmd(
     for k in keys:
         entry = links[k]
         eprint(f"syncing {k} …")
-        if not yes and not dry_run and sys.stdin.isatty():
+        if not all_sessions and not yes and not dry_run and sys.stdin.isatty():
             if not typer.confirm(f"sync {k} ({entry.get('branch', '?')})?"):
                 _fail("aborted", EXIT_USAGE)
-        results.append(_sync_one(k, entry, merge=merge, do_push=push,
-                                 use_harness=harness, yes=yes,
+        results.append(_sync_one(k, entry, merge=merge,
+                                 use_harness=harness, yes=yes or all_sessions,
                                  dry_run=dry_run, json_output=json_output))
+        if all_sessions and result_failed(results[-1]):
+            eprint(f"{k}: sync failed — continuing with remaining sessions (--all)")
     if json_output:
         out = results[0] if len(results) == 1 and ref else results
         print(json.dumps(out, indent=2, ensure_ascii=False))
 
 
-def _sync_one(key: str, entry: dict, merge: bool, do_push: bool, use_harness: bool,
+def result_failed(result: dict) -> bool:
+    """True when a sync result reports a failure state."""
+    return result.get("result") in ("conflict", "missing-worktree", "error") \
+        or result.get("result", "").startswith("conflict-") \
+        or result.get("result") is None
+
+
+def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
               yes: bool, dry_run: bool, json_output: bool) -> dict:
     wt = entry.get("worktree", "")
     branch = entry.get("branch", "")
@@ -1106,25 +1180,34 @@ def _sync_one(key: str, entry: dict, merge: bool, do_push: bool, use_harness: bo
             handled = sync_mod.auto_resolve_changelog(Path(wt), out["conflicts"])
             if not handled:
                 eprint(f"{key}: conflicts in: {', '.join(out['conflicts'])}")
-                if use_harness:
+                run_harness_now = use_harness or yes
+                if run_harness_now:
                     result["result"] = "conflict-harness"
                     prompt = (f"The branch {branch} has merge conflicts with "
                               f"{db} in files: {', '.join(out['conflicts'])}. "
-                              "Resolve them, complete the merge, and stop.")
-                    _run_harness("omp", prompt, wt, wt, False, False, result, json_output)
-                    return result
-                if sys.stdin.isatty():
+                              "Resolve them, complete the merge, commit, push to "
+                              f"origin/{branch}, and stop.")
+                    _run_harness("omp", prompt, wt, wt,
+                                 no_tty=bool(yes), no_harness=False,
+                                 result=result, json_output=json_output)
+                elif sys.stdin.isatty():
                     if typer.confirm("launch the harness to resolve?"):
                         result["result"] = "conflict-harness"
                         prompt = (f"The branch {branch} has merge conflicts with "
                                   f"{db} in files: {', '.join(out['conflicts'])}. "
-                                  "Resolve them, complete the merge, and stop.")
-                        _run_harness("omp", prompt, wt, wt, False, False, result, json_output)
-                        return result
-                    _fail("aborted (merge left in progress; abort with `git merge --abort`)",
-                          EXIT_USAGE)
-                _fail("conflicts need human resolution — re-run with --harness "
-                      "to launch the coding harness", EXIT_USAGE)
+                                  "Resolve them, complete the merge, commit, push to "
+                                  f"origin/{branch}, and stop.")
+                        _run_harness("omp", prompt, wt, wt,
+                                     no_tty=False, no_harness=False,
+                                     result=result, json_output=json_output)
+                    else:
+                        _fail("aborted (merge left in progress; abort with "
+                              "`git merge --abort`)", EXIT_USAGE)
+                else:
+                    result["result"] = "conflict"
+                    eprint(f"{key}: conflicts need human resolution — re-run "
+                           "with --harness or --yes to auto-launch the harness")
+                return result
             result["result"] = "merged"
         elif out["status"] == "up-to-date":
             result["result"] = "up-to-date"
@@ -1132,7 +1215,7 @@ def _sync_one(key: str, entry: dict, merge: bool, do_push: bool, use_harness: bo
         else:
             result["result"] = "merged"
             eprint(f"{key}: merged {db} into {branch}")
-        if do_push and result["result"] == "merged":
+        if result["result"] == "merged":
             sync_mod.push(Path(wt), branch)
             eprint(f"{key}: pushed {branch}")
             result["pushed"] = True
@@ -1192,7 +1275,8 @@ def completions_show(
         script = _completions.get_completion_script("harness", shell, click_cmd=_typer_main.get_command(app))
     except ValueError as exc:
         _fail(str(exc), EXIT_USAGE)
-    print(script, end="" if script.endswith("\n") else "\n")
+    wrapper = _completions.cd_wrapper(prog="harness", shell=shell)
+    print(wrapper + script, end="" if script.endswith("\n") else "\n")
 
 
 @completions_app.command("install")

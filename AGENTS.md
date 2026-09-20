@@ -48,10 +48,13 @@ fetch head ref → worktree on that branch → record `pr:<url>` link → exec
 **`harness sync <ref>`**: resolve session key (fuzzy, shared with cleanup) →
 dirty check (abort exit 1 naming files) → PR lookup (cached; no PR → local
 merge fallback) → default remote rebase via `gh`/`glab` (host-side) or
-`-m/--merge` local merge (push only with `--push`) → conflict handling:
-sole `CHANGELOG.md` inside `## Unreleased` auto-union; else list files,
-TTY prompt, `--harness` launches omp, non-TTY exit 2; `--all`/`--dry-run`/
-`--json`; up-to-date is a no-op (exit 0).
+`-m/--merge` local merge (auto-push to origin afterwards) → conflict
+handling: sole `CHANGELOG.md` inside `## Unreleased` auto-union; else
+list files, TTY prompt, `--harness` launches omp interactively,
+`--yes`/`--force` launches omp non-interactively (`omp -p --auto-approve`),
+non-TTY without either exits 2; `--all` = every session with `--yes`
+semantics, continuing past failures; `--dry-run`/`--json`; up-to-date is
+a no-op (exit 0).
 
 **`harness cleanup <ref>`**: resolve link key (exact → parsed
 key/URL → substring over keys/worktrees/branches; interactive pick on
@@ -72,6 +75,10 @@ ambiguity; miss = `no linked state` error) → confirm (unless
   dynamic values (repo names, refs — session keys/branches/worktree names)
   via `autocompletion=` callbacks that filter on the `incomplete` prefix and
   return `[]` on any failure.
+- `cd <ref>` prints the worktree root (stdout data-only); the shell
+  functions `harness-cd` (bash/zsh from `cd_wrapper`, fish) shipped with
+  `completions show|install` make it change the caller's directory — a
+  child process cannot chdir its parent.
 - Host CLI (gh/glab) for PR/MR ops: `repos._detect_host_cli` matches the
   repo's origin-URL host against gh's known hosts (`~/.config/gh/hosts.yml`,
   top-level keys) and glab's (`~/.config/glab-cli/config.yml`, keys under

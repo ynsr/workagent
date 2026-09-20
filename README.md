@@ -103,13 +103,13 @@ every session, confirmed one by one).
   `glab mr rebase`; the host merges server-side, nothing touches your
   worktree.
 - `-m/--merge`: fetch, fast-forward the local default branch, merge it
-  into the session branch inside the worktree; push only with `--push`.
-- No open PR/MR on the branch → local merge fallback.
-- Sole conflict in `CHANGELOG.md` where every hunk stays inside
-  `## Unreleased` auto-resolves (union of both bullet lists). Any other
-  conflict lists the files and prompts; `--harness` launches the coding
-  agent to resolve, non-interactive runs exit `2` (merge stays in
-  progress; abort with `git merge --abort`).
+  into the session branch inside the worktree, then push the branch to
+  origin (also after harness-resolved conflicts).
+- Any other conflict lists the files; `--harness` (or `--yes`/`--force`)
+  launches the coding agent to resolve and push — `--yes` runs it
+  non-interactively (`omp -p --auto-approve`). `--all` syncs every
+  session with the same auto-harness behavior and continues with the
+  remaining sessions when one fails.
 - Dirty worktrees abort (exit `1`); `--dry-run` previews; `--json` for
   scripting.
 
@@ -128,12 +128,19 @@ The PR/MR lookup CLI (gh/glab) is chosen from the repo's origin URL host
 repos never query GitHub. Status is cached per branch in
 `~/.config/harness/pr_cache.json` and reused while the session-branch tip
 and the base-branch tip are unchanged and the entry is younger than 3h —
-repeat runs only run two `git rev-parse` calls per session (no host-CLI
-spawn, no API call).
-`--refresh-pr` re-queries the PR/MR.
+`--refresh-pr` re-queries the PR/MR. When a session has no PR/MR, the
+`status <ref>` detail shows a create hint: the web create-PR URL for
+GitHub remotes, otherwise a `glab mr create` command for the branch.
 
-Refs (`status`, `sync`, `review`, `cleanup`) complete in the shell over
-session keys, branches, and worktree names.
+## cd
+
+`harness cd <ref>` prints the session's worktree root — use it as
+`cd "$(harness cd IPG-959)"`. `completions show|install` also provides a
+`harness-cd` shell function, so after installing completions
+`harness-cd IPG-959` changes directory directly.
+
+Refs (`status`, `sync`, `review`, `cleanup`, `cd`) complete in the shell
+over session keys, branches, and worktree names.
 
 ## Vendored tooling
 

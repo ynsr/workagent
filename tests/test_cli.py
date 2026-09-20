@@ -273,6 +273,7 @@ def _sync_mocks(monkeypatch, local_calls=None, rebase_calls=None):
     if rebase_calls is not None:
         monkeypatch.setattr(cli.sync_mod, "rebase_remote",
                             lambda tool, pr, wt: rebase_calls.append((tool, pr["number"], str(wt))))
+    monkeypatch.setattr(cli.sync_mod, "push", lambda wt, br: None)
 
 
 def test_sync_unknown_ref(isolated_config):
@@ -327,6 +328,7 @@ def test_sync_no_pr_falls_back_to_local(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli.sync_mod, "local_merge",
                         lambda wt, db: (local.append((str(wt), db))
                                         or {"status": "merged", "conflicts": []}))
+    monkeypatch.setattr(cli.sync_mod, "push", lambda wt, br: None)
     r = _invoke("sync", "IPG-929", "--yes", "--json")
     assert r.exit_code == 0
     assert json.loads(r.stdout)["strategy"] == "local-merge"
@@ -663,3 +665,88 @@ def test_base_completion_lists_cwd_git_branches(isolated_config, tmp_path, monke
     assert callback(None, "zzz") == []
     monkeypatch.chdir(tmp_path)  # not a git repo
     assert callback(None, "") == []
+
+
+def test_status_detail_create_hint_github(isolated_config, tmp_path,
+                                          monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    subprocess.run(["git", "-C", str(wt_dir), "remote", "add", "origin",
+                    "git@github.com:owner/repo.git"], check=True,
+                   capture_output=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
+    monkeypatch.setattr(cli.repos, "remote_url",
+                        lambda p: "git@github.com:owner/repo.git")
+    r = _invoke("status", "IPG-929", "--json")
+    assert r.exit_code == 0
+    data = json.loads(r.stdout)
+    assert data["create_hint"] == \
+        "https://github.com/owner/repo/compare/feat/IPG-929--x?expand=1"
+
+
+def test_status_detail_create_hint_gitlab(isolated_config, tmp_path,
+                                          monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
+    monkeypatch.setattr(cli.repos, "remote_url", lambda p: None)  # no origin
+    r = _invoke("status", "IPG-929", "--json")
+    data = json.loads(r.stdout)
+    assert not data.get("create_hint")
+    monkeypatch.setattr(cli.repos, "remote_url",
+                        lambda p: "https://git.jibit.cloud/srv/proj.git")
+    r = _invoke("status", "IPG-929", "--json")
+    data = json.loads(r.stdout)
+    assert data["create_hint"] == \
+        "glab mr create --repo git.jibit.cloud/srv/proj --source-branch feat/IPG-929--x"
+
+
+def test_status_detail_no_hint_when_pr_exists(isolated_config, tmp_path,
+                                              monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    store.cache_pr_status("feat/IPG-929--x", {"number": 9, "state": "open",
+                                              "title": "T", "author": "a",
+                                              "created_at": "2026-09-15",
+                                              "url": "https://x/mr/9",
+                                              "target_branch": "main"})
+    r = _invoke("status", "IPG-929", "--json")
+    data = json.loads(r.stdout)
+    assert "create_hint" not in data
+    assert data["pr"] == "PR #9 (open)"
+
+
+def test_cd_prints_worktree(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    r = _invoke("cd", "IPG-929", "--json")
+    assert r.exit_code == 0
+    data = json.loads(r.stdout)
+    assert data == {"key": "jira:IPG-929", "worktree": str(wt_dir)}
+    r = _invoke("cd", "IPG-929")
+    assert r.stdout.strip() == str(wt_dir)
+
+
+def test_cd_missing_worktree_errors(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "gone"
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    r = _invoke("cd", "IPG-929")
+    assert r.exit_code == 1
+
+
+def test_cd_unknown_ref(isolated_config):
+    r = _invoke("cd", "NOPE-1")
+    assert r.exit_code == 2
+
+
+def test_cd_wrapper_snippets():
+    from harness import completions as c
+    w = c.cd_wrapper("harness", "bash")
+    assert w.startswith("harness-cd()") and 'cd "$(command harness cd' in w
+    assert "function harness-cd" in c.cd_wrapper("harness", "fish")
+    snip = c.install_snippet("harness", "bash")
+    assert "harness-cd()" in snip

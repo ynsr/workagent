@@ -212,3 +212,115 @@ def test_rebase_glab(monkeypatch):
                        Path("/tmp/wt"))
     assert calls[0][:3] == ("glab", "mr", "rebase")
     assert calls[0][-1] == "1701"
+
+
+# ── CLI-level sync flow (auto-push, --yes harness, --all continuation) ──
+
+
+def _cli_link(isolated_config, tmp_path, monkeypatch, cli, store, wt_dir):
+    wt_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(wt_dir)], check=True,
+                   capture_output=True)
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
+    store.record_link("jira:IPG-929", {"issue": "IPG-929",
+                                       "worktree": str(wt_dir),
+                                       "branch": "feat/IPG-929--x",
+                                       "repo": str(tmp_path / "proj")})
+
+
+def test_sync_local_merge_pushes_automatically(isolated_config, tmp_path,
+                                               monkeypatch):
+    from harness import cli, store
+    wt_dir = tmp_path / "wt"
+    _cli_link(isolated_config, tmp_path, monkeypatch, cli, store, wt_dir)
+    monkeypatch.setattr(cli.sync_mod, "local_merge",
+                        lambda wt, db: {"status": "merged", "conflicts": []})
+    pushed = []
+    monkeypatch.setattr(cli.sync_mod, "push",
+                        lambda wt, br: pushed.append((str(wt), br)))
+    r = cli_test_invoke("sync", "IPG-929", "--merge", "--yes", "--json")
+    assert r.exit_code == 0
+    import json as _json
+    out = _json.loads(r.stdout)
+    assert out["result"] == "merged" and out.get("pushed") is True
+    assert pushed == [(str(wt_dir), "feat/IPG-929--x")]
+
+
+def cli_test_invoke(*args):
+    from typer.testing import CliRunner
+    from harness import cli
+    return CliRunner().invoke(cli.app, list(args))
+
+
+def test_sync_conflict_with_yes_runs_non_tty_harness(isolated_config,
+                                                     tmp_path, monkeypatch):
+    from harness import cli, store
+    wt_dir = tmp_path / "wt"
+    _cli_link(isolated_config, tmp_path, monkeypatch, cli, store, wt_dir)
+    monkeypatch.setattr(cli.sync_mod, "local_merge",
+                        lambda wt, db: {"status": "conflict",
+                                        "conflicts": ["a.txt"]})
+    monkeypatch.setattr(cli.sync_mod, "auto_resolve_changelog",
+                        lambda wt, c: False)
+    launched = []
+    monkeypatch.setattr(cli, "_run_harness",
+                        lambda name, prompt, wt, fb, no_tty, no_harness,
+                        result, json_output:
+                        launched.append((no_tty, no_harness, prompt)))
+    r = cli_test_invoke("sync", "IPG-929", "--merge", "--yes")
+    assert r.exit_code == 0
+    assert launched and launched[0][0] is True and launched[0][1] is False
+    assert "push" in launched[0][2]
+
+
+def test_sync_conflict_without_harness_flags_reports_conflict(
+        isolated_config, tmp_path, monkeypatch):
+    from harness import cli, store
+    wt_dir = tmp_path / "wt"
+    _cli_link(isolated_config, tmp_path, monkeypatch, cli, store, wt_dir)
+    monkeypatch.setattr(cli.sync_mod, "local_merge",
+                        lambda wt, db: {"status": "conflict",
+                                        "conflicts": ["a.txt"]})
+    monkeypatch.setattr(cli.sync_mod, "auto_resolve_changelog",
+                        lambda wt, c: False)
+    launched = []
+    monkeypatch.setattr(cli, "_run_harness", lambda *a, **k: launched.append(a))
+    r = cli_test_invoke("sync", "IPG-929", "--merge", "--yes", "--json")
+    assert r.exit_code == 0
+    import json as _json
+    out = _json.loads(r.stdout)
+    assert out["result"] == "conflict-harness"
+    assert launched  # --yes auto-launches the harness non-interactively
+
+
+def test_sync_all_continues_after_failure(isolated_config, tmp_path,
+                                          monkeypatch):
+    from harness import cli, store
+    wt1 = tmp_path / "wt1"; wt2 = tmp_path / "wt2"
+    _cli_link(isolated_config, tmp_path, monkeypatch, cli, store, wt1)
+    wt2.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(wt2)], check=True,
+                   capture_output=True)
+    store.record_link("jira:IPG-932", {"issue": "IPG-932",
+                                       "worktree": str(wt2),
+                                       "branch": "feat/IPG-932--y",
+                                       "repo": str(tmp_path / "proj")})
+    calls = []
+    monkeypatch.setattr(cli.sync_mod, "local_merge",
+                        lambda wt, db: calls.append(str(wt))
+                        or ({"status": "conflict", "conflicts": ["x.txt"]}
+                            if "wt1" in str(wt)
+                            else {"status": "merged", "conflicts": []}))
+    monkeypatch.setattr(cli.sync_mod, "auto_resolve_changelog",
+                        lambda wt, c: False)
+    monkeypatch.setattr(cli, "_run_harness", lambda *a, **k: None)
+    monkeypatch.setattr(cli.sync_mod, "push", lambda wt, br: None)
+    r = cli_test_invoke("sync", "--all", "--merge", "--yes", "--json")
+    assert r.exit_code == 0
+    import json as _json
+    out = _json.loads(r.stdout)
+    assert isinstance(out, list) and len(out) == 2
+    assert out[0]["result"] == "conflict-harness"
+    assert out[1]["result"] == "merged"
+    assert wt2.name in calls[-1]  # second session still synced

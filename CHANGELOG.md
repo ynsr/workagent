@@ -76,6 +76,20 @@
   PR/MR. gh↔glab mis-detection self-heals (the other CLI is tried and the
   working one is remembered). PR titles with `[` no longer crash Rich
   (markup is escaped).
+- `sync` pushes the session branch to origin after every successful local
+  merge (`--merge`, including after harness-resolved conflicts) — the old
+  `--push` flag is gone because push is now the default. `--yes`/`--force`
+  also auto-launches the coding harness on unresolvable conflicts in
+  non-interactive mode (`omp -p --auto-approve`), and `--all` continues
+  with the remaining sessions even when one fails.
+- `status <ref>` detail shows how to open a missing PR/MR: a web
+  create-PR URL for GitHub remotes, otherwise a ready-to-run
+  `glab mr create --repo <host>/<path> --source-branch <branch>` command
+  (also present as `create_hint` in `--json`).
+- New `harness cd <ref>` prints the session's worktree root
+  (`cd "$(harness cd IPG-959)"`); `completions show|install` now also
+  provides a `harness-cd` shell function so `harness-cd <ref>` changes
+  directory directly.
 - PR/MR lookups pick the host CLI from the repo's origin URL: the remote
   host is matched against gh's known hosts (`~/.config/gh/hosts.yml`) and
   glab's (`~/.config/glab-cli/config.yml`) — GitHub hosts query `gh`,

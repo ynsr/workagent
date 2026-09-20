@@ -80,11 +80,33 @@ def eval_line(prog: str, shell: str) -> str:
     return f'eval "$({prog} completions show {shell} 2>/dev/null)"'
 
 
+
+
+def cd_wrapper(prog: str, shell: str) -> str:
+    """Shell function making `harness cd <ref>` change the caller's cwd."""
+    if shell == "fish":
+        return (f"function {prog}-cd; cd \"$(command {prog} cd $argv)\"; end\n")
+    return (f"{prog}-cd() {{ cd \"$(command {prog} cd \"$@\")\" || return; }}\n")
+
+
 def install_snippet(prog: str, shell: str) -> str:
-    """Marker block written into the rc file. zsh needs compinit first."""
+    """Marker block written into the rc file. zsh needs compinit first.
+
+    Also installs a `harness cd <ref>` shell function that changes the
+    caller's directory (a child process cannot do that itself).
+    """
     lines = [START_MARKER.format(prog=prog)]
     if shell == "zsh":
         lines.append("autoload -U compinit && compinit  # required for completion (added by %s)" % prog)
+    if shell == "fish":
+        lines.append(f"""function {prog}-cd
+    cd "$(command {prog} cd $argv)"
+end
+funcsave {prog}-cd >/dev/null 2>&1; or true""")
+    else:
+        lines.append(f"""{prog}-cd() {{
+    cd "$(command {prog} cd "$@")" || return
+}}""")
     lines.append(eval_line(prog, shell))
     lines.append(END_MARKER.format(prog=prog))
     return "\n".join(lines) + "\n"
