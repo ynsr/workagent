@@ -18,7 +18,7 @@ from typing import Callable, Optional
 
 import typer
 
-from . import __version__, backend, gitwt, pick, refs, repos, store, trackers
+from . import __version__, backend, gitwt, pick, refs, repos, store, trackers, worktrees
 from . import completions as _completions
 from . import doctor as _doctor
 from . import sync as sync_mod
@@ -311,21 +311,29 @@ def review(
       harness review OWNER/REPO#33 --no-tty
       harness review OWNER/REPO#33 --no-harness
     """
-    parsed = refs.parse_ref(ref)
-    if parsed["kind"] not in ("pr", "mr"):
-        # Session ref: resolve to the recorded (or discovered) PR/MR.
+    session_ref = ref
+    parse_err: HarnessError | None = None
+    try:
+        parsed = refs.parse_ref(ref)
+    except HarnessError as e:
+        parse_err = e
+        parsed = None
+    if parsed is None or parsed["kind"] not in ("pr", "mr"):
+        # Worktree ref (key/branch/path): resolve to the recorded (or discovered) PR/MR.
         links = store.load_links()
-        resolved = _resolve_session_key(ref, links)
+        resolved = worktrees.resolve_worktree(ref, links)
         if resolved is not None:
-            key = _pick_session_key(ref, resolved, links)
+            key = worktrees.pick_worktree(ref, resolved, links)
             entry = links.get(key, {})
-            pr_url0 = _session_pr_url(key, entry) if entry else None
+            pr_url0 = worktrees.worktree_pr_url(key, entry) if entry else None
             if not pr_url0:
-                _fail(f"session {key} has no recorded PR/MR.\n"
+                _fail(f"worktree {key} has no recorded PR/MR.\n"
                       "  Pass a PR/MR URL, or create one first.", EXIT_USAGE)
-            eprint(f"note: session {key} → {pr_url0}")
+            eprint(f"note: worktree {key} → {pr_url0}")
             ref = pr_url0
             parsed = refs.parse_ref(ref)
+        elif parse_err is not None:
+            raise parse_err
     tid = trackers.tracker_id(parsed)
     repo_dir, outcome = trackers.resolve_for_tracker(
         tid, repo, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
@@ -348,6 +356,22 @@ def review(
                        "harness": harness_name, "head_ref": head_ref,
                        "tracker": tid, "tracker_link": outcome}, json_output)
         return
+
+    reuse_key = worktrees.resolve_worktree(head_ref or session_ref, store.load_links())
+    if isinstance(reuse_key, str):
+        reuse_entry = store.load_links().get(reuse_key, {})
+        if reuse_entry.get("worktree") and Path(reuse_entry["worktree"]).is_dir():
+            worktree = reuse_entry["worktree"]
+            branch = reuse_entry.get("branch", head_ref)
+            store.record_link(f"pr:{pr_url}", {"pr_url": pr_url, "worktree": worktree,
+                                               "branch": branch, "repo": str(repo_dir)})
+            prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
+            result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
+                      "harness": harness_name}
+            eprint(f"worktree: {worktree}  branch: {branch}")
+            _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty, no_harness,
+                         result, json_output)
+            return
 
     if not head_ref:
         _fail(f"could not determine the MR head branch for {pr_url}.\n"
@@ -529,27 +553,6 @@ def _pick_session_key(ref: str, resolved: str | list[str],
     if idx is None:
         _fail("aborted", EXIT_USAGE)
     return resolved[idx]
-
-
-def _session_pr_url(key: str, entry: dict) -> str | None:
-    """Recorded PR/MR URL for a session; falls back to a live branch query."""
-    if entry.get("pr_url"):
-        return entry["pr_url"]
-    repo = entry.get("repo", "")
-    branch = entry.get("branch", "")
-    if not (repo and branch and Path(repo).exists()):
-        return None
-    tool = _repo_tool(repo)
-    if not tool:
-        return None
-    try:
-        pr = refs.latest_pr(refs.fetch_pr_list_for_branch(tool, branch, cwd=repo))
-    except HarnessError:
-        return None
-    if pr:
-        store.record_link(key, {"pr_url": pr["url"]})
-        return pr["url"]
-    return None
 
 
 def _close_pr(parsed: dict, pr_url: str, force: bool) -> None:
