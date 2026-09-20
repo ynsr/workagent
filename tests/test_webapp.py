@@ -7,6 +7,7 @@ against an isolated HARNESS_CONFIG_DIR.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 
@@ -389,3 +390,48 @@ def test_error_shape_on_404(client):
     assert r.status_code == 404
     assert r.json() == {"error": {"code": "not_found",
                                   "message": "no such run: nope"}}
+
+
+# ── static-dir resolution ────────────────────────────────────────────
+
+
+def test_default_static_dir_prefers_source_tree(monkeypatch, tmp_path):
+    from harness import cli
+    fake_src = tmp_path / "src"
+    (fake_src / "web" / "dist").mkdir(parents=True)
+    (fake_src / "web" / "dist" / "index.html").write_text("x")
+    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(
+        cli, "__file__", str(fake_src / "src" / "harness" / "cli.py"))
+    assert cli._default_static_dir() == fake_src / "web" / "dist"
+
+
+def test_default_static_dir_falls_back_to_receipt(monkeypatch, tmp_path):
+    from harness import cli
+    installed_src = tmp_path / "installed"
+    (installed_src / "web" / "dist").mkdir(parents=True)
+    (installed_src / "web" / "dist" / "index.html").write_text("x")
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(json.dumps(
+        {"source_dir": str(installed_src), "source_hash": "abc"}))
+    # cli.py lives outside any source tree with a built UI (site-packages),
+    # home has no receipt at the default path -> point home at tmp and
+    # write the receipt there.
+    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    receipt_dir = tmp_path / ".local" / "share" / "harness"
+    receipt_dir.mkdir(parents=True)
+    receipt_dir.joinpath("install-receipt.json").write_text(
+        json.dumps({"source_dir": str(installed_src)}))
+    monkeypatch.setattr(
+        cli, "__file__", str(tmp_path / "site-packages" / "harness" / "cli.py"))
+    assert cli._default_static_dir() == installed_src / "web" / "dist"
+
+
+def test_default_static_dir_no_receipt_returns_source_default(
+        monkeypatch, tmp_path):
+    from harness import cli
+    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(
+        cli, "__file__", str(tmp_path / "site-packages" / "harness" / "cli.py"))
+    assert cli._default_static_dir() == \
+        tmp_path / "web" / "dist"

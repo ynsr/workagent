@@ -32,6 +32,12 @@
   optional dependency group: `web` (fastapi, uvicorn). The server is
   unauthenticated: loopback-only bind by default, Host/Origin allow-list;
   existing command help output is unchanged.
+- `harness serve` default static dir now falls back to the install
+  receipt's `source_dir` when running from a site-packages install, so a
+  built `web/dist` in the source repo is found without `--static-dir`.
+- `install.sh` installs the `web` extra (fastapi, uvicorn) and builds the
+  web UI (`npm ci && npm run build`) automatically; graceful warnings when
+  npm is missing or the build fails.
 - Jira support: `KEY-123` / `<host>/browse/KEY-123` refs via `jira-cli`.
 - Resilient `start`: existing branch/worktree resumes instead of failing;
   upstream verified to point at the feature branch, never the base.

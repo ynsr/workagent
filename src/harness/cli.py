@@ -1381,6 +1381,22 @@ app.add_typer(completions_app, name="completions")
 # ── serve (web UI) ────────────────────────────────────────────────────
 
 
+def _default_static_dir() -> Path:
+    """Built web UI directory: source tree, else the install receipt's source_dir."""
+    source = Path(__file__).resolve().parent.parent.parent
+    if (source / "web" / "dist" / "index.html").exists():
+        return source / "web" / "dist"
+    receipt = Path.home() / ".local" / "share" / "harness" / "install-receipt.json"
+    try:
+        src: Path | None = Path(
+            json.loads(receipt.read_text()).get("source_dir", ""))
+    except (OSError, ValueError):
+        src = None
+    if src is not None and (src / "web" / "dist" / "index.html").exists():
+        return src / "web" / "dist"
+    return source / "web" / "dist"
+
+
 @app.command("serve")
 @_catch_harness_errors
 def serve(
@@ -1402,13 +1418,15 @@ def serve(
         resolved_port = port or int(os.environ.get("PORT", "3344"))
     except ValueError:
         _fail(f"invalid PORT: {os.environ.get('PORT')!r}", EXIT_GENERAL)
-    resolved_static = static_dir or Path(__file__).resolve().parent.parent.parent / "web" / "dist"
+    resolved_static = static_dir or _default_static_dir()
     try:
         from .webapp import run_server
     except ImportError:
         _fail("the web extra is required — install fastapi and uvicorn "
               "(e.g. pip install 'harness[web]')", EXIT_GENERAL)
     run_server(host, resolved_port, Path(resolved_static), list(allowed_host or []))
+
+
 
 
 

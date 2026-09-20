@@ -35,16 +35,30 @@ if ! command -v git-wt &>/dev/null; then
   fi
 fi
 
-# Install harness itself (canonical backend: uv preferred, pipx fallback).
+# Install harness itself (canonical backend: uv preferred, pipx fallback),
+# including the optional `web` extra so `harness serve` works out of the box.
 if command -v uv &>/dev/null; then
-  echo "==> Installing via uv..."
-  uv tool install --force "$DIR"
+  echo "==> Installing via uv (with web extra)..."
+  uv tool install --force --with fastapi --with "uvicorn[standard]" "$DIR"
 elif command -v pipx &>/dev/null; then
-  echo "==> uv not found; installing via pipx..."
-  pipx install --force "$DIR"
+  echo "==> uv not found; installing via pipx (with web extra)..."
+  pipx install --force "$DIR" --system-site-packages 2>/dev/null \
+    || pipx install --force "$DIR"
+  pipx inject harness fastapi "uvicorn[standard]" 2>/dev/null || true
 else
   echo "error: need uv (https://docs.astral.sh/uv/) or pipx (https://pipx.pypa.io)"
   exit 1
+fi
+
+# Build the web UI (served by `harness serve` from <repo>/web/dist).
+if [ -d "$DIR/web" ]; then
+  if command -v npm &>/dev/null; then
+    echo "==> Building web UI..."
+    (cd "$DIR/web" && npm ci --no-fund --no-audit && npm run build) \
+      || echo "warning: web UI build failed — 'harness serve' will refuse to start until 'cd web && npm ci && npm run build' succeeds."
+  else
+    echo "warning: npm not found — web UI not built; install Node.js and run 'cd web && npm ci && npm run build' to enable 'harness serve'."
+  fi
 fi
 
 # Write install receipt (source hash) so `harness doctor` can detect stale
