@@ -97,3 +97,18 @@ def test_list_is_erased_when_done():
     tail = body.rsplit("❯", 1)[-1]
     assert "\x1b[2K" in tail or tail.strip() == ""
     assert out.count("\x1b[2K") >= 4  # 2 initial + 1 redraw + 2 erase
+
+
+def test_navigation_leaves_no_padding():
+    """Up/down redraws must not accumulate leading padding (issue #4)."""
+    options = ["aaa", "bbb", "ccc"]
+    idx, out = _feed("\x1b[B\x1b[A\r", options)  # down, up, enter
+    assert idx == 0
+    # clear-then-draw: each navigation redraw erases the whole option
+    # block (cursor up, one standalone erased line per option, cursor up
+    # again) before drawing; without that pass, redrawn content piles
+    # onto stale rows and the block drifts into leading-space padding
+    up = "\x1b[1A" * len(options)
+    erase_pass = "\x1b[2K\n" * len(options)
+    erased = out.count(up + erase_pass + up)
+    assert erased == 2, f"padding artifact: only {erased} of 2 redraws erase the block"
