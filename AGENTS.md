@@ -25,7 +25,7 @@ Install locally:
 
 | Module | Responsibility |
 |--------|---------------|
-| `src/harness/cli.py` | Typer app — `start`/`review`/`sync`/`cleanup`/`repo add\|list\|remove`/`link list\|set\|remove`/`status`/`doctor`/`completions show\|install`; Rich tables/CSV/JSON output |
+| `src/harness/cli.py` | Typer app — `start`/`review`/`sync`/`cleanup`/`register`/`repo add\|list\|remove`/`link list\|set\|remove`/`status`/`cd`/`doctor`/`completions show\|install`; Rich tables/CSV/JSON output |
 | `src/harness/refs.py` | issue/PR ref parsing (`OWNER/REPO#N`, Jira `KEY-123`/browse URLs, URLs, bare N) + `gh`/`glab`/`jira-cli` fetching |
 | `src/harness/repos.py` | repo resolution (`--repo` name/path/URL, cwd, interactive pick), worktree→main-checkout resolution, default-branch detection, registry, `repo_names()` completion source, remote-host-aware gh/glab detection (`repos.<name>.tool` persisted in the registry) |
 | `src/harness/pick.py` | shared arrow-key picker for every multi-choice prompt: stderr render, ↑/↓ + Enter, optional dim description per item, q/Esc aborts, `None` on non-TTY; testable via `read`/`stream` seams |
@@ -33,6 +33,18 @@ Install locally:
 | `src/harness/sync.py` | sync engine: dirty-file check, local merge (fetch + ff default + merge), sole-conflict `CHANGELOG.md` Unreleased auto-resolve (bullet union), push, remote rebase dispatch (`gh pr update-branch --rebase` / `glab mr rebase`) |
 
 ### Key flows
+
+**`harness register <path>`**: adopt an existing (unregistered) worktree by
+path — must be a linked worktree (`--git-common-dir` ≠ `--absolute-git-dir`),
+main checkouts and non-git dirs rejected (exit 2). Options: `--key`
+(default `jira:<KEY>` derived from an issue-id segment in the branch name,
+else `branch:<branch>`), `--issue REF` (parseable issue/PR ref; sets the
+key when `--key` is omitted, stores `issue`/`issue_url`), `--repo` (main
+checkout override; default from the worktree's git metadata), `--force`/
+`--yes` (overwrite an existing link for the key), `--json`. Records via
+`store.record_link` (status/sync/cd/cleanup all resolve it), persists the
+tracker↔repo relation when `--issue` is given, and registers the repo in
+the registry.
 
 **`harness start <issue>`**: parse ref → `trackers.resolve_for_tracker`
 (repo picker: `--repo`, cwd-linked silently, unlinked-cwd y/N with

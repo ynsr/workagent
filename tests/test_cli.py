@@ -780,3 +780,122 @@ def test_sync_rebase_failure_falls_back_to_local_merge(
     assert out["strategy"] == "local-merge" and out["fallback"] is True
     assert out["result"] == "merged" and out.get("pushed") is True
     assert local == [(str(wt_dir), "main")] and rebase == []
+
+
+# ── register: register an existing worktree by path ────────────────────
+
+
+def _init_repo(path: Path, default: str = "main") -> Path:
+    subprocess.run(["git", "init", "-q", "-b", default, str(path)], check=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.email", "t@t"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.name", "t"],
+                   check=True, capture_output=True)
+    (path / "f.txt").write_text("1\n")
+    subprocess.run(["git", "-C", str(path), "add", "-A"], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-qm", "init"],
+                   check=True, capture_output=True)
+    return path
+
+
+def _add_wt(repo: Path, name: str, branch: str) -> Path:
+    wt = repo.parent / name
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b",
+                    branch, str(wt)], check=True, capture_output=True)
+    return wt
+
+
+def test_register_registers_by_path(isolated_config, tmp_path):
+    repo = _init_repo(tmp_path / "proj")
+    wt = _add_wt(repo, "wt", "feat/IPG-777--jira-linking")
+    r = _invoke("register", str(wt), "--json")
+    assert r.exit_code == 0, r.stdout + r.stderr
+    data = json.loads(r.stdout)
+    assert data["key"] == "jira:IPG-777"
+    assert data["worktree"] == str(wt)
+    assert data["branch"] == "feat/IPG-777--jira-linking"
+    assert data["repo"] == str(repo)
+    entry = store.lookup_link("jira:IPG-777")
+    assert entry is not None and entry["worktree"] == str(wt)
+
+
+def test_register_defaults_to_branch_key(isolated_config, tmp_path):
+    repo = _init_repo(tmp_path / "proj")
+    wt = _add_wt(repo, "wt", "plain-named-branch")
+    r = _invoke("register", str(wt), "--json")
+    assert r.exit_code == 0, r.stdout + r.stderr
+    assert json.loads(r.stdout)["key"] == "branch:plain-named-branch"
+
+
+def test_register_issue_ref_sets_key_and_url(isolated_config, tmp_path, monkeypatch):
+    monkeypatch.setattr(cli.refs, "jira_site", lambda: "https://jira.example.com")
+    repo = _init_repo(tmp_path / "proj")
+    wt = _add_wt(repo, "wt", "some-branch")
+    r = _invoke("register", str(wt), "--issue", "IPG-555", "--json")
+    assert r.exit_code == 0, r.stdout + r.stderr
+    data = json.loads(r.stdout)
+    assert data["key"] == "jira:IPG-555"
+    assert data["issue_url"] == "https://jira.example.com/browse/IPG-555"
+    assert store.lookup_link("jira:IPG-555")["branch"] == "some-branch"
+
+
+def test_register_persists_tracker_repo_relation(isolated_config, tmp_path):
+    repo = _init_repo(tmp_path / "proj")
+    wt = _add_wt(repo, "wt", "b")
+    r = _invoke("register", str(wt), "--issue", "owner/repo#12",
+                "--yes", "--json")
+    assert r.exit_code == 0, r.stdout + r.stderr
+    assert json.loads(r.stdout)["key"] == "github:owner/repo#12"
+    rels = store.load_config().get("trackers", {})
+    assert str(repo) in rels.get("github:owner/repo", {}).get("repos", [])
+
+
+def test_register_idempotent_same_worktree(isolated_config, tmp_path):
+    repo = _init_repo(tmp_path / "proj")
+    wt = _add_wt(repo, "wt", "feat/IPG-777--jira-linking")
+    _invoke("register", str(wt), "--json")
+    r = _invoke("register", str(wt), "--json")
+    assert r.exit_code == 0
+    assert "already registered" in r.stderr
+
+
+def test_register_conflicting_key_needs_force(isolated_config, tmp_path):
+    repo = _init_repo(tmp_path / "proj")
+    wt1 = _add_wt(repo, "wt1", "feat/IPG-777--jira-linking")
+    wt2 = _add_wt(repo, "wt2", "feat/IPG-778--other")
+    assert _invoke("register", str(wt1), "--json").exit_code == 0
+    r = _invoke("register", str(wt2), "--key", "jira:IPG-777", "--json")
+    assert r.exit_code == 1
+    assert "--force" in r.stderr
+    r = _invoke("register", str(wt2), "--key", "jira:IPG-777", "--force",
+                "--json")
+    assert r.exit_code == 0
+    assert store.lookup_link("jira:IPG-777")["worktree"] == str(wt2)
+
+
+def test_register_rejects_main_checkout(isolated_config, tmp_path):
+    repo = _init_repo(tmp_path / "proj")
+    r = _invoke("register", str(repo), "--json")
+    assert r.exit_code == 2
+    assert "main checkout" in r.stderr
+
+
+def test_register_rejects_non_git_dir(isolated_config, tmp_path):
+    d = tmp_path / "plain"
+    d.mkdir()
+    r = _invoke("register", str(d), "--json")
+    assert r.exit_code == 2
+
+
+def test_register_missing_dir(isolated_config, tmp_path):
+    r = _invoke("register", str(tmp_path / "nope"), "--json")
+    assert r.exit_code == 2
+
+
+def test_register_bad_issue_ref(isolated_config, tmp_path):
+    repo = _init_repo(tmp_path / "proj")
+    wt = _add_wt(repo, "wt", "b")
+    r = _invoke("register", str(wt), "--issue", "not a ref", "--json")
+    assert r.exit_code == 2
+    assert "cannot parse" in r.stderr

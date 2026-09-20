@@ -92,6 +92,27 @@ State lives in `~/.config/harness/` (`config.json` registry, `links.json`
 session links, `pr_cache.json` PR-status cache). Override with
 `HARNESS_CONFIG_DIR`.
 
+## Registering existing worktrees
+
+Worktrees created outside `harness start` (plain `git worktree add`,
+`git-wt start` run by hand) can be adopted:
+
+```bash
+harness register ~/dev/worktrees/projectx/feat/IPG-999--fix-thing
+harness register ~/dev/wt/feat/x --issue IPG-999      # attach an issue/PR ref
+harness register ~/dev/wt/feat/x --key jira:IPG-999 --repo ~/dev/projectx
+```
+
+The path must be a linked git worktree (not the main checkout). The
+session key defaults to `jira:<KEY>` derived from the branch name (an
+`IPG-123`-style segment), else `branch:<branch>`; `--issue` overrides
+it and attaches the issue/PR (URL included, so `status` shows it).
+`--key` names the link explicitly; `--repo` overrides the auto-detected
+main checkout; `--force` (`--yes`) overwrites an existing link for the
+same key. Registered worktrees work with `status`, `sync`, `cd`, and
+`cleanup` like any other session.
+`HARNESS_CONFIG_DIR`.
+
 ## Sync
 
 `harness sync <ref>` brings a session branch up to date with its base

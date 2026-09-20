@@ -76,6 +76,12 @@
   PR/MR. gh↔glab mis-detection self-heals (the other CLI is tried and the
   working one is remembered). PR titles with `[` no longer crash Rich
   (markup is escaped).
+- New `register <path>` subcommand: adopt an existing (unregistered)
+  git worktree as a session link. Session key defaults to `jira:<KEY>`
+  derived from the branch name, else `branch:<branch>`; `--issue`/
+  `--key`/`--repo` overrides; `--force` overwrites an existing link for
+  the key. Registered worktrees resolve for `status`/`sync`/`cd`/
+  `cleanup` like `start`-created ones.
 - The default `sync` remote rebase now pulls the rebased branch into the
   local worktree afterwards: fast-forward when possible, otherwise a
   hard reset guarded by `git cherry` (only when every local commit's
