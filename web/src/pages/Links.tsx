@@ -48,18 +48,21 @@ import {
  * Submit a link/register run from a modal form: toasts the outcome (with a
  * View-run action) and refreshes the shared reads the command may change.
  * Resolves to true when the run was created, so the caller can close.
+ * `submitting` guards the dialog buttons while the request is in flight.
  */
 function useLinkSubmit() {
   const navigate = useNavigate()
   const createRun = useCreateRun()
   const qc = useQueryClient()
-  return async (input: {
+  const [submitting, setSubmitting] = useState(false)
+  const run = async (input: {
     command: "link" | "register"
     args: string[]
     confirm?: boolean
     force?: boolean
     label: string
   }): Promise<boolean> => {
+    setSubmitting(true)
     try {
       const { run_id } = await createRun.mutateAsync({
         command: input.command,
@@ -76,8 +79,11 @@ function useLinkSubmit() {
     } catch (err) {
       toast.error(errorText(err))
       return false
+    } finally {
+      setSubmitting(false)
     }
   }
+  return { submitting, run }
 }
 
 /** Modal shell for the link forms (same AlertDialog pattern as useConfirm). */
@@ -87,18 +93,21 @@ function ActionDialog({
   onClose,
   footer,
   children,
+  busy = false,
 }: {
   title: string
   description: string
   onClose: () => void
   footer: ReactNode
   children: ReactNode
+  /** While true, Esc/overlay/Cancel cannot close the dialog mid-submit. */
+  busy?: boolean
 }) {
   return (
     <AlertDialog
       open
       onOpenChange={(open) => {
-        if (!open) onClose()
+        if (!open && !busy) onClose()
       }}
     >
       <AlertDialogContent className="max-w-lg">
@@ -108,7 +117,7 @@ function ActionDialog({
         </AlertDialogHeader>
         <div className="grid gap-4">{children}</div>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
           {footer}
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -220,7 +229,7 @@ function TrackerMappingsCard() {
 
 function LinkSetDialog({ onClose }: { onClose: () => void }) {
   const { data: repos } = useRepos()
-  const runLink = useLinkSubmit()
+  const { submitting, run: runLink } = useLinkSubmit()
   const [tracker, setTracker] = useState("")
   const [repo, setRepo] = useState("")
   const [json, setJson] = useState(false)
@@ -241,12 +250,13 @@ function LinkSetDialog({ onClose }: { onClose: () => void }) {
       title="Link a tracker to a repo"
       description="link set TRACKER REPO — persists the relation."
       onClose={onClose}
+      busy={submitting}
       footer={
         <Button
-          disabled={!tracker.trim() || !repo.trim()}
+          disabled={!tracker.trim() || !repo.trim() || submitting}
           onClick={() => void handleSubmit()}
         >
-          <Plus aria-hidden /> Link
+          <Plus aria-hidden /> {submitting ? "Linking…" : "Link"}
         </Button>
       }
     >
@@ -291,7 +301,7 @@ function LinkSetDialog({ onClose }: { onClose: () => void }) {
 
 function LinkRemoveDialog({ onClose }: { onClose: () => void }) {
   const { data: repos } = useRepos()
-  const runLink = useLinkSubmit()
+  const { submitting, run: runLink } = useLinkSubmit()
   const [ref, setRef] = useState("")
   const [repo, setRepo] = useState("")
   const [json, setJson] = useState(false)
@@ -321,13 +331,14 @@ function LinkRemoveDialog({ onClose }: { onClose: () => void }) {
       title="Remove a link"
       description="link remove REF [--repo REPO] — tracker id, or a session key."
       onClose={onClose}
+      busy={submitting}
       footer={
         <Button
           variant="destructive"
-          disabled={!ref.trim()}
+          disabled={!ref.trim() || submitting}
           onClick={() => void handleSubmit()}
         >
-          <Unlink aria-hidden /> Remove link
+          <Unlink aria-hidden /> {submitting ? "Removing…" : "Remove link"}
         </Button>
       }
     >
@@ -376,7 +387,7 @@ function LinkRemoveDialog({ onClose }: { onClose: () => void }) {
 
 function RegisterDialog({ onClose }: { onClose: () => void }) {
   const { data: repos } = useRepos()
-  const runLink = useLinkSubmit()
+  const { submitting, run: runLink } = useLinkSubmit()
   const [path, setPath] = useState("")
   const [key, setKey] = useState("")
   const [issue, setIssue] = useState("")
@@ -413,9 +424,13 @@ function RegisterDialog({ onClose }: { onClose: () => void }) {
       title="Register an existing worktree"
       description="register PATH [--key] [--issue] [--repo] [--force] — links an existing git worktree as a session."
       onClose={onClose}
+      busy={submitting}
       footer={
-        <Button disabled={!path.trim()} onClick={() => void handleSubmit()}>
-          <UserPlus aria-hidden /> Register worktree
+        <Button
+          disabled={!path.trim() || submitting}
+          onClick={() => void handleSubmit()}
+        >
+          <UserPlus aria-hidden /> {submitting ? "Registering…" : "Register worktree"}
         </Button>
       }
     >
