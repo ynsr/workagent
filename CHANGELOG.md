@@ -76,6 +76,12 @@
   PR/MR. gh↔glab mis-detection self-heals (the other CLI is tried and the
   working one is remembered). PR titles with `[` no longer crash Rich
   (markup is escaped).
+- The default `sync` remote rebase now pulls the rebased branch into the
+  local worktree afterwards: fast-forward when possible, otherwise a
+  hard reset guarded by `git cherry` (only when every local commit's
+  patch-id exists on the rebased branch; genuinely new local commits
+  leave the worktree untouched). If the server rebase fails (e.g.
+  conflicts), sync falls back to the `--merge` flow automatically.
 - `sync` pushes the session branch to origin after every successful local
   merge (`--merge`, including after harness-resolved conflicts) — the old
   `--push` flag is gone because push is now the default. `--yes`/`--force`

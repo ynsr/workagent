@@ -47,14 +47,15 @@ fetch head ref → worktree on that branch → record `pr:<url>` link → exec
 
 **`harness sync <ref>`**: resolve session key (fuzzy, shared with cleanup) →
 dirty check (abort exit 1 naming files) → PR lookup (cached; no PR → local
-merge fallback) → default remote rebase via `gh`/`glab` (host-side) or
-`-m/--merge` local merge (auto-push to origin afterwards) → conflict
-handling: sole `CHANGELOG.md` inside `## Unreleased` auto-union; else
-list files, TTY prompt, `--harness` launches omp interactively,
-`--yes`/`--force` launches omp non-interactively (`omp -p --auto-approve`),
-non-TTY without either exits 2; `--all` = every session with `--yes`
-semantics, continuing past failures; `--dry-run`/`--json`; up-to-date is
-a no-op (exit 0).
+merge fallback) → default: remote rebase via `gh`/`glab` (host-side), then
+`sync_mod.pull_rebased` fast-forwards or patch-id-guard-resets the
+worktree; rebase failure → automatic fallback to the `-m/--merge` local
+merge (shared `_sync_local_merge`: auto-push to origin afterwards;
+conflicts: CHANGELOG auto-union, else TTY prompt, `--harness` omp
+interactively, `--yes`/`--force` omp non-interactively
+`omp -p --auto-approve`; non-TTY without either exits 2) → `--all` =
+every session with `--yes` semantics, continuing past failures;
+`--dry-run`/`--json`; up-to-date is a no-op (exit 0).
 
 **`harness cleanup <ref>`**: resolve link key (exact → parsed
 key/URL → substring over keys/worktrees/branches; interactive pick on

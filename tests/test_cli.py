@@ -263,7 +263,7 @@ def test_link_list_sessions_enriched(isolated_config, tmp_path, monkeypatch):
     assert data["sessions"]["jira:IPG-929"]["pr"] == "-"
 
 
-def _sync_mocks(monkeypatch, local_calls=None, rebase_calls=None):
+def _sync_mocks(monkeypatch, local_calls=None, rebase_calls=None, pulled=None):
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     if local_calls is not None:
@@ -273,6 +273,9 @@ def _sync_mocks(monkeypatch, local_calls=None, rebase_calls=None):
     if rebase_calls is not None:
         monkeypatch.setattr(cli.sync_mod, "rebase_remote",
                             lambda tool, pr, wt: rebase_calls.append((tool, pr["number"], str(wt))))
+    monkeypatch.setattr(cli.sync_mod, "pull_rebased",
+                        lambda wt, br: (pulled.append((str(wt), br))
+                                        if pulled is not None else None) or "reset")
     monkeypatch.setattr(cli.sync_mod, "push", lambda wt, br: None)
 
 
@@ -290,14 +293,17 @@ def test_sync_rebase_strategy_with_open_pr(isolated_config, tmp_path, monkeypatc
                                               "created_at": "2026-09-15",
                                               "url": "https://x/mr/9",
                                               "target_branch": "main"})
-    rebase, local = [], []
-    _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase)
+    rebase, local, pulled = [], [], []
+    _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase,
+                pulled=pulled)
     monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
     r = _invoke("sync", "IPG-929", "--yes", "--json")
     assert r.exit_code == 0
     out = json.loads(r.stdout)
     assert out["strategy"] == "remote-rebase" and out["result"] == "rebased"
+    assert out["pull"] == "reset"
     assert rebase == [("glab", 9, str(wt_dir))] and local == []
+    assert pulled == [(str(wt_dir), "feat/IPG-929--x")]
 
 
 def test_sync_merge_flag_uses_local_merge(isolated_config, tmp_path, monkeypatch):
@@ -750,3 +756,27 @@ def test_cd_wrapper_snippets():
     assert "function harness-cd" in c.cd_wrapper("harness", "fish")
     snip = c.install_snippet("harness", "bash")
     assert "harness-cd()" in snip
+
+
+def test_sync_rebase_failure_falls_back_to_local_merge(
+        isolated_config, tmp_path, monkeypatch):
+    from harness.errors import HarnessError
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    store.cache_pr_status("feat/IPG-929--x", {"number": 9, "state": "open",
+                                              "title": "T", "author": "a",
+                                              "created_at": "2026-09-15",
+                                              "url": "https://x/mr/9",
+                                              "target_branch": "main"})
+    rebase, local = [], []
+    _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase)
+    monkeypatch.setattr(cli.sync_mod, "rebase_remote",
+                        lambda tool, pr, wt: (_ for _ in ()).throw(
+                            HarnessError("glab mr rebase failed: conflict")))
+    r = _invoke("sync", "IPG-929", "--yes", "--json")
+    assert r.exit_code == 0
+    out = json.loads(r.stdout)
+    assert out["strategy"] == "local-merge" and out["fallback"] is True
+    assert out["result"] == "merged" and out.get("pushed") is True
+    assert local == [(str(wt_dir), "main")] and rebase == []

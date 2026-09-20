@@ -1170,69 +1170,90 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
     if merge or not pr:
         if not db:
             _fail(f"{key}: cannot determine default branch for {repo}", EXIT_GENERAL)
-        result["strategy"] = "local-merge"
-        if dry_run:
-            result["result"] = "would-merge"
-            eprint(f"{key}: would merge origin/{db} into {branch} in {wt}")
-            return result
-        out = sync_mod.local_merge(Path(wt), db)
-        if out["status"] == "conflict":
-            handled = sync_mod.auto_resolve_changelog(Path(wt), out["conflicts"])
-            if not handled:
-                eprint(f"{key}: conflicts in: {', '.join(out['conflicts'])}")
-                run_harness_now = use_harness or yes
-                if run_harness_now:
-                    result["result"] = "conflict-harness"
-                    prompt = (f"The branch {branch} has merge conflicts with "
-                              f"{db} in files: {', '.join(out['conflicts'])}. "
-                              "Resolve them, complete the merge, commit, push to "
-                              f"origin/{branch}, and stop.")
-                    _run_harness("omp", prompt, wt, wt,
-                                 no_tty=bool(yes), no_harness=False,
-                                 result=result, json_output=json_output)
-                elif sys.stdin.isatty():
-                    if typer.confirm("launch the harness to resolve?"):
-                        result["result"] = "conflict-harness"
-                        prompt = (f"The branch {branch} has merge conflicts with "
-                                  f"{db} in files: {', '.join(out['conflicts'])}. "
-                                  "Resolve them, complete the merge, commit, push to "
-                                  f"origin/{branch}, and stop.")
-                        _run_harness("omp", prompt, wt, wt,
-                                     no_tty=False, no_harness=False,
-                                     result=result, json_output=json_output)
-                    else:
-                        _fail("aborted (merge left in progress; abort with "
-                              "`git merge --abort`)", EXIT_USAGE)
-                else:
-                    result["result"] = "conflict"
-                    eprint(f"{key}: conflicts need human resolution — re-run "
-                           "with --harness or --yes to auto-launch the harness")
-                return result
-            result["result"] = "merged"
-        elif out["status"] == "up-to-date":
-            result["result"] = "up-to-date"
-            eprint(f"{key}: already up to date")
-        else:
-            result["result"] = "merged"
-            eprint(f"{key}: merged {db} into {branch}")
-        if result["result"] == "merged":
-            sync_mod.push(Path(wt), branch)
-            eprint(f"{key}: pushed {branch}")
-            result["pushed"] = True
-        return result
+        return _sync_local_merge(key, wt, branch, db, result,
+                                 use_harness=use_harness, yes=yes,
+                                 dry_run=dry_run, json_output=json_output)
     # Remote rebase (default): host rebases the branch on its base.
     result["strategy"] = "remote-rebase"
     if dry_run:
         result["result"] = f"would-rebase-via-{tool}"
         eprint(f"{key}: would run {tool} rebase for PR #{pr['number']} ({pr['url']})")
         return result
-    sync_mod.rebase_remote(tool, pr, Path(wt))
+    try:
+        sync_mod.rebase_remote(tool, pr, Path(wt))
+    except HarnessError as e:
+        eprint(f"{key}: {tool} rebase failed ({e}) — falling back to "
+               "local merge")
+        result["strategy"] = "local-merge"
+        result["fallback"] = True
+        if not db:
+            _fail(f"{key}: cannot determine default branch for {repo}", EXIT_GENERAL)
+        return _sync_local_merge(key, wt, branch, db, result,
+                                 use_harness=use_harness, yes=yes,
+                                 dry_run=False, json_output=json_output)
     result["result"] = "rebased"
     eprint(f"{key}: rebased PR #{pr['number']} via {tool}")
+    result["pull"] = sync_mod.pull_rebased(Path(wt), branch)
+    eprint(f"{key}: worktree updated from rebased origin/{branch} "
+           f"({result['pull']})")
     return result
 
 
-# ── doctor ────────────────────────────────────────────────────────────
+def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
+                      use_harness: bool, yes: bool, dry_run: bool,
+                      json_output: bool) -> dict:
+    """Local-merge flow shared by --merge, no-PR fallback, and rebase
+    failure fallback."""
+    result["strategy"] = "local-merge"
+    if dry_run:
+        result["result"] = "would-merge"
+        eprint(f"{key}: would merge origin/{db} into {branch} in {wt}")
+        return result
+    out = sync_mod.local_merge(Path(wt), db)
+    if out["status"] == "conflict":
+        handled = sync_mod.auto_resolve_changelog(Path(wt), out["conflicts"])
+        if not handled:
+            eprint(f"{key}: conflicts in: {', '.join(out['conflicts'])}")
+            run_harness_now = use_harness or yes
+            if run_harness_now:
+                result["result"] = "conflict-harness"
+                prompt = (f"The branch {branch} has merge conflicts with "
+                          f"{db} in files: {', '.join(out['conflicts'])}. "
+                          "Resolve them, complete the merge, commit, push to "
+                          f"origin/{branch}, and stop.")
+                _run_harness("omp", prompt, wt, wt,
+                             no_tty=bool(yes), no_harness=False,
+                             result=result, json_output=json_output)
+            elif sys.stdin.isatty():
+                if typer.confirm("launch the harness to resolve?"):
+                    result["result"] = "conflict-harness"
+                    prompt = (f"The branch {branch} has merge conflicts with "
+                              f"{db} in files: {', '.join(out['conflicts'])}. "
+                              "Resolve them, complete the merge, commit, push to "
+                              f"origin/{branch}, and stop.")
+                    _run_harness("omp", prompt, wt, wt,
+                                 no_tty=False, no_harness=False,
+                                 result=result, json_output=json_output)
+                else:
+                    _fail("aborted (merge left in progress; abort with "
+                          "`git merge --abort`)", EXIT_USAGE)
+            else:
+                result["result"] = "conflict"
+                eprint(f"{key}: conflicts need human resolution — re-run "
+                       "with --harness or --yes to auto-launch the harness")
+            return result
+        result["result"] = "merged"
+    elif out["status"] == "up-to-date":
+        result["result"] = "up-to-date"
+        eprint(f"{key}: already up to date")
+    else:
+        result["result"] = "merged"
+        eprint(f"{key}: merged {db} into {branch}")
+    if result["result"] == "merged":
+        sync_mod.push(Path(wt), branch)
+        eprint(f"{key}: pushed {branch}")
+        result["pushed"] = True
+    return result
 
 
 @app.command("doctor")

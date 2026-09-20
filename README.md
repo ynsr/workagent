@@ -100,8 +100,11 @@ substring) like `cleanup`; no ref picks interactively (or `--all` for
 every session, confirmed one by one).
 
 - Default: remote rebase — `gh pr update-branch --rebase` or
-  `glab mr rebase`; the host merges server-side, nothing touches your
-  worktree.
+  `glab mr rebase`; the host merges server-side, then the worktree is
+  updated: fast-forward, or a `git cherry`-guarded hard reset when the
+  rebase rewrote history (skipped when local commits were never
+  pushed). If the server rebase fails, the local-merge flow below runs
+  automatically.
 - `-m/--merge`: fetch, fast-forward the local default branch, merge it
   into the session branch inside the worktree, then push the branch to
   origin (also after harness-resolved conflicts).

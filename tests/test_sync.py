@@ -324,3 +324,66 @@ def test_sync_all_continues_after_failure(isolated_config, tmp_path,
     assert out[0]["result"] == "conflict-harness"
     assert out[1]["result"] == "merged"
     assert wt2.name in calls[-1]  # second session still synced
+
+
+# ── pull_rebased: local twin of a server-side rebase ──────────────────
+
+
+def test_pull_rebased_fast_forward(tmp_path):
+    origin, wt = _seed_and_clone(tmp_path, {"f.txt": "1\n"})
+    _push_from_sibling(tmp_path, wt, {"f.txt": "1\n", "g.txt": "2\n"})
+    subprocess.run(["git", "-C", str(wt), "fetch", "-q", "origin"],
+                   check=True, capture_output=True)
+    assert sync.pull_rebased(wt, "main") == "fast-forward"
+    assert (wt / "g.txt").read_text() == "2\n"
+
+
+def test_pull_rebased_reset_after_server_rebase(tmp_path):
+    origin, wt = _seed_and_clone(tmp_path, {"f.txt": "1\n"})
+    _git("checkout", "-q", "-b", "b", cwd=wt)
+    _commit(wt, {"b.txt": "p\n"}, "p")
+    _git("push", "-q", "origin", "b", cwd=wt)
+    # sibling clone: advance main, rebase b onto it, force-push
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", str(origin), str(other)],
+                   check=True, capture_output=True)
+    _git("checkout", "-q", "b", cwd=other)
+    _git("checkout", "-q", "main", cwd=other)
+    _commit(other, {"m.txt": "m\n"}, "m")
+    _git("push", "-q", "origin", "main", cwd=other)
+    _git("checkout", "-q", "b", cwd=other)
+    _git("rebase", "-q", "main", cwd=other)
+    _git("push", "-q", "--force", "origin", "b", cwd=other)
+    # local worktree still sits on the pre-rebase commit
+    assert sync.pull_rebased(wt, "b") == "reset"
+    head = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
+                          check=True, capture_output=True, text=True).stdout
+    ob = subprocess.run(["git", "-C", str(wt), "rev-parse", "origin/b"],
+                        check=True, capture_output=True, text=True).stdout
+    assert head == ob
+    assert (wt / "b.txt").read_text() == "p\n"
+    assert (wt / "m.txt").read_text() == "m\n"
+
+
+def test_pull_rebased_skips_genuinely_new_local_commits(tmp_path):
+    origin, wt = _seed_and_clone(tmp_path, {"f.txt": "1\n"})
+    _git("checkout", "-q", "-b", "b", cwd=wt)
+    _commit(wt, {"b.txt": "p\n"}, "p")
+    _git("push", "-q", "origin", "b", cwd=wt)
+    # sibling: rebase b (same patch, new base) and force-push
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", str(origin), str(other)],
+                   check=True, capture_output=True)
+    _git("checkout", "-q", "b", cwd=other)
+    _git("checkout", "-q", "main", cwd=other)
+    _commit(other, {"m.txt": "m\n"}, "m")
+    _git("push", "-q", "origin", "main", cwd=other)
+    _git("checkout", "-q", "b", cwd=other)
+    _git("rebase", "-q", "main", cwd=other)
+    _git("push", "-q", "--force", "origin", "b", cwd=other)
+    # local adds a genuinely new commit the server rebase never saw
+    _commit(wt, {"c.txt": "n\n"}, "n")
+    assert sync.pull_rebased(wt, "b") == "skipped-local-commits"
+    head = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
+                          check=True, capture_output=True, text=True).stdout
+    assert (wt / "c.txt").read_text() == "n\n"  # untouched

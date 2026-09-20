@@ -168,6 +168,36 @@ def push(worktree: Path, branch: str) -> None:
     run_cmd("git", "-C", str(worktree), "push", "origin", branch)
 
 
+def _is_ancestor(worktree: Path, a: str, b: str) -> bool:
+    try:
+        run_cmd("git", "-C", str(worktree), "merge-base", "--is-ancestor", a, b)
+        return True
+    except HarnessError:
+        return False
+
+
+def pull_rebased(worktree: Path, branch: str) -> str:
+    """Bring the local branch in line with its server-rebased remote twin.
+
+    A server-side rebase rewrites history, so a plain pull would try to
+    re-merge the pre-rebase commits. Fetch, fast-forward when the remote
+    branch is a descendant, else hard-reset when every local commit's
+    patch-id exists on the rebased branch (equivalent rebased commits);
+    otherwise leave the worktree untouched and report.
+    """
+    run_cmd("git", "-C", str(worktree), "fetch", "origin", branch)
+    if _is_ancestor(worktree, "HEAD", f"origin/{branch}"):
+        run_cmd("git", "-C", str(worktree), "merge", "--ff-only",
+                f"origin/{branch}")
+        return "fast-forward"
+    fresh = run_cmd("git", "-C", str(worktree), "cherry",
+                    f"origin/{branch}", "HEAD") or ""
+    if any(line.startswith("+") for line in fresh.splitlines()):
+        return "skipped-local-commits"
+    run_cmd("git", "-C", str(worktree), "reset", "--hard", f"origin/{branch}")
+    return "reset"
+
+
 def rebase_remote(tool: str, pr: dict, worktree: Path) -> None:
     """Rebase the PR/MR branch on its base — remotely (host pushes server-side)."""
     if tool == "gh":
