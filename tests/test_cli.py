@@ -242,6 +242,53 @@ def test_status_missing_worktree_gone(isolated_config, tmp_path, monkeypatch):
     assert json.loads(r.stdout)["jira:IPG-929"]["commits"] == "gone"
 
 
+def test_status_cells_recorded_pr_wins(isolated_config, tmp_path):
+    # Cached negative (no PR found) must not hide the recorded pr_url.
+    store.cache_pr_status("feat/x", None, tool=None, base_branch="main",
+                          branch_tip="t", base_tip="b", behind=0, ahead=0)
+    entry = {"worktree": str(tmp_path / "gone"), "branch": "feat/x",
+             "repo": str(tmp_path / "repo"),
+             "pr_url": "https://git.jibit.cloud/g/p/-/merge_requests/1706"}
+    cells = cli._status_cells(entry)
+    assert cells["pr"] == "MR #1706"
+    assert cells["pr_data"]["url"].endswith("/merge_requests/1706")
+
+
+def test_status_cells_cached_pr_beats_recorded(isolated_config, tmp_path):
+    store.cache_pr_status("feat/x", {"number": 5, "state": "open",
+                                     "url": "https://x/mr/5"},
+                          base_branch="main")
+    entry = {"worktree": str(tmp_path / "gone"), "branch": "feat/x",
+             "repo": str(tmp_path / "repo"),
+             "pr_url": "https://git.jibit.cloud/g/p/-/merge_requests/1706"}
+    cells = cli._status_cells(entry)
+    assert cells["pr"] == "PR #5 (open)"
+    assert cells["pr_data"]["number"] == 5
+
+
+def test_recorded_pr_parses_github_and_gitlab():
+    gh = "https://github.com/o/r/pull/1706"
+    gl = "https://git.jibit.cloud/g/p/-/merge_requests/1706"
+    assert cli._recorded_pr(gh) == {"number": 1706, "state": "", "url": gh}
+    assert cli._recorded_pr(gl) == {"number": 1706, "state": "", "url": gl}
+    assert cli._fmt_pr(cli._recorded_pr(gh)) == "PR #1706"
+    assert cli._fmt_pr(cli._recorded_pr(gl)) == "MR #1706"
+    assert cli._recorded_pr("https://example.com/bogus") is None
+
+
+def test_negative_cache_short_ttl():
+    old = (datetime.now(timezone.utc) - timedelta(minutes=45)).isoformat()
+    cached = {"checked_at": old, "pr": None, "branch_tip": "t", "base_tip": "b"}
+    assert cli._cache_fresh(cached) is False          # negative: 30min TTL
+    cached_pos = {**cached, "pr": {"number": 1, "state": "OPEN"}}
+    assert cli._cache_fresh(cached_pos) is True       # positive: 3h TTL
+
+
+def test_status_cells_partial_entry():
+    cells = cli._status_cells({"worktree": "", "branch": "", "repo": ""})
+    assert cells["pr"] == "-" and cells["commits"] == "-"
+
+
 def test_status_ref_detail(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)

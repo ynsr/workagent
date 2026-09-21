@@ -147,10 +147,6 @@ def get_cached_pr_tool(branch: str) -> str | None:
     return load_pr_cache().get(branch, {}).get("tool")
 
 
-def get_cached_pr_status(branch: str) -> dict | None:
-    return load_pr_cache().get(branch, {}).get("pr")
-
-
 def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)

@@ -890,6 +890,7 @@ def link_remove(
 _PR_STYLES = {"open": "bright_green", "merged": "bright_magenta", "closed": "bright_red"}
 _DB_CACHE: dict[str, str] = {}
 _STATUS_TTL_SECONDS = 3 * 3600
+_NEGATIVE_TTL_SECONDS = 30 * 60
 
 
 def _repo_default_branch(repo: str) -> str | None:
@@ -928,7 +929,28 @@ def _repo_tool(repo: str) -> str | None:
 def _fmt_pr(pr: dict | None) -> str:
     if not pr:
         return "-"
-    return f"PR #{pr['number']} ({pr['state']})"
+    kind = "MR" if "merge_requests" in (pr.get("url") or "") else "PR"
+    state = pr.get("state") or ""
+    if state:
+        return f"{kind} #{pr['number']} ({state})"
+    return f"{kind} #{pr['number']}"
+
+
+def _recorded_pr(url: str) -> dict | None:
+    """Parse a recorded PR/MR URL into a minimal pr dict (state unknown)."""
+    for rx, group in ((refs._GITLAB_MR, 3), (refs._GITHUB_PR, 2)):
+        m = rx.match(url or "")
+        if m:
+            return {"number": int(m.group(group)), "state": "", "url": url}
+    return None
+
+
+def _seed_recorded_pr(cells: dict, entry: dict) -> dict:
+    """A recorded pr_url wins when the cache/query produced no PR."""
+    if not cells.get("pr_data") and entry.get("pr_url"):
+        cells["pr_data"] = _recorded_pr(entry["pr_url"])
+        cells["pr"] = _fmt_pr(cells["pr_data"])
+    return cells
 
 
 def _fmt_counts(ab: dict | None) -> str:
@@ -952,7 +974,8 @@ def _cache_fresh(cached: dict) -> bool:
         age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
     except ValueError:
         return False
-    return age < timedelta(seconds=_STATUS_TTL_SECONDS)
+    ttl = _STATUS_TTL_SECONDS if cached.get("pr") else _NEGATIVE_TTL_SECONDS
+    return age < timedelta(seconds=ttl)
 
 
 def _query_pr(repo: str, branch: str) -> tuple[dict | None, str | None]:
@@ -980,10 +1003,13 @@ def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
     """Commits + PR cells for one session, backed by pr_cache.json.
 
     A cache entry (keyed by branch) is reused while the session-branch tip
-    and the remote-tracking base tip are unchanged, the entry is younger
-    than 3h, and --refresh-pr is not given. Valid cache: two `git
-    rev-parse` calls, no host-CLI spawn, no API call. --refresh-pr
-    re-queries only the PR (counts still reuse when tips are unchanged).
+    and the remote-tracking base tip are unchanged and the entry is younger
+    than its TTL (3h for a cached PR, 30min for a cached no-PR result),
+    and --refresh-pr is not given. Valid cache: two `git rev-parse` calls,
+    no host-CLI spawn, no API call. --refresh-pr re-queries only the PR
+    (counts still reuse when tips are unchanged). When the cache or the
+    live query yields no PR but the link records a `pr_url`, the recorded
+    URL fills the PR cell.
     """
     wt = entry.get("worktree", "")
     branch = entry.get("branch", "")
@@ -1006,17 +1032,17 @@ def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
             cells.update(commits=_fmt_counts(ab), ab=ab, pr=_fmt_pr(pr),
                          pr_data=pr, base_branch=base_branch or None)
             if not refresh_pr:
-                return cells
+                return _seed_recorded_pr(cells, entry)
             try:
                 pr, used = _query_pr(repo, branch)
             except HarnessError:
-                return cells
+                return _seed_recorded_pr(cells, entry)
             store.cache_pr_status(branch, pr, tool=used,
                                   base_branch=base_branch,
                                   branch_tip=branch_tip, base_tip=base_tip,
                                   behind=ab["behind"], ahead=ab["ahead"])
             cells.update(pr=_fmt_pr(pr), pr_data=pr)
-            return cells
+            return _seed_recorded_pr(cells, entry)
     if branch:
         db = ((cached or {}).get("base_branch")
               or _repo_default_branch(repo)) or None
@@ -1036,7 +1062,7 @@ def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
                                   ahead=(ab or {}).get("ahead", 0))
             cells.update(commits=_fmt_counts(ab), ab=ab)
         cells.update(pr=_fmt_pr(pr), pr_data=pr, base_branch=db)
-    return cells
+    return _seed_recorded_pr(cells, entry)
 
 
 def _session_rows(links: dict, show_worktree: bool, refresh: bool
