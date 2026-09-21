@@ -25,6 +25,9 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `start --json` | mutating | — | `start` | no | | |
 | `review REF` | mutating | — | `review` | no | parse failure; not a PR/MR ref and no discoverable PR | repo picker (TTY) |
 | `review --repo/--depth/--harness/--no-tty/-N/--dry-run/--yes/--json` | mutating | — | `review` | no | as above | as above |
+| `review --all [--sequential] [--fix]` | mutating | — | `review:all` | no (spawns agent children) | nothing to review → exit 0 note | none — non-TTY parallel/sequential children |
+| `cleanup --merged [--force/--dry-run/--json]` | mutating | — | `cleanup:all` | **yes** (per merged/closed link) | `--merged` w/o `--yes` non-interactive (2); ref given with `--merged` (2) | none — requires `--yes`; skips live-harness/invalid worktrees |
+| `open REF` | read-only-ish (OS opener) | — | `open:<ref>` | no | no linked state (2), invalid/missing worktree (1), no opener (1) | none — prints the worktree path |
 | `cleanup REF` | mutating | — | `cleanup:<ref>` | **yes** (closes tracker issue, removes worktree, branch, PR) | no linked state | none (non-TTY) / y-N (TTY) |
 | `cleanup --force` | mutating | — | `cleanup:<ref>` | **yes** | | skips state validation |
 | `cleanup --yes` | mutating | — | `cleanup:<ref>` | **yes** | | skips confirmation |
@@ -85,9 +88,10 @@ flags, `--force`-required conflicts (register), repo-picker aborts.
 - `start` — one agent launch at a time (also protects git-wt index writes).
 - `review` — same class as start but separate (a review and a start may
   legitimately run in parallel — different worktrees).
-- `cleanup:<normalized ref>` — one cleanup per session ref.
-- `sync:<normalized ref>` / `sync:all` — one sync per session; `--all` keys
-  as `sync:all` and collides with any running `sync:*`.
+- `cleanup:<normalized ref>` — one cleanup per session ref; `--merged`
+  keys as `cleanup:all` (one bulk sweep at a time).
+- `open:<ref>` — one opener spawn per ref (harmless, but keeps the
+  registry consistent).
 - `register`, `repo:add`, `repo:remove`, `link:set`, `link:remove` — config
   writes; single global key `config` to avoid lost updates.
 

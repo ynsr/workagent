@@ -79,7 +79,7 @@ Request:
 {"command": "cleanup", "args": ["IPG-932"],
  "confirm": true, "force": false}
 ```
-- `command`: one of `start | review | cleanup | sync | register |
+- `command`: one of `start | review | cleanup | sync | open | register |
   repo | link` (subcommand goes first in `args`: `["add", "--name", …]`).
 - Global `-v` may be passed as `args[0]`.
 - Values must not start with `-`; unknown options → 400.
@@ -90,7 +90,8 @@ Response 202: `{"run_id": "abc123"}` — `409 {code:"conflict"}` when
 another run holds the same target key.
 
 ### Target keys (409 collisions)
-`start`, `review`, `cleanup:<ref>`, `sync:<ref>` / `sync:all`, `config`
+`start`, `review` / `review:all` (`--all`), `cleanup:<ref>` / `cleanup:all`
+(`--merged`), `open:<ref>`, `sync:<ref>` / `sync:all`, `config`
 (register/repo/link subcommands).
 
 ### `GET /api/runs` → list

@@ -622,6 +622,89 @@ def test_cleanup_fuzzy_branch_match(isolated_config, monkeypatch):
     assert json.loads(r.stdout)["key"] == "jira:IPG-981"
 
 
+def test_cleanup_merged_loop(isolated_config, monkeypatch):
+    store.record_link("jira:IPG-1", {"issue": "IPG-1", "worktree": "/tmp/wt-1",
+                                     "branch": "feat/1", "repo": "/tmp/proj"})
+    store.record_link("jira:IPG-2", {"issue": "IPG-2", "worktree": "/tmp/wt-2",
+                                     "branch": "feat/2", "repo": "/tmp/proj"})
+    monkeypatch.setattr(
+        cli, "_status_cells",
+        lambda entry, refresh_pr=False: {"pr_data": {"state":
+            "MERGED" if entry.get("branch") == "feat/1" else "OPEN"}})
+    cleaned = []
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda repo, branch, **k: cleaned.append(branch) or {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda path: True)
+    r = _invoke("cleanup", "--merged", "--yes", "--json")
+    assert r.exit_code == 0, r.output
+    status = {row["key"]: row["status"] for row in json.loads(r.stdout)["results"]}
+    assert status == {"jira:IPG-1": "cleaned", "jira:IPG-2": "skipped:open"}
+    assert cleaned == ["feat/1"]
+    links = store.load_links()
+    assert "jira:IPG-1" not in links and "jira:IPG-2" in links
+
+
+def test_cleanup_merged_skips_live_harness_and_invalid(isolated_config,
+                                                       tmp_path, monkeypatch):
+    wt_ok = tmp_path / "wt-ok"; wt_ok.mkdir()
+    store.record_link("jira:IPG-3", {"issue": "IPG-3", "worktree": str(wt_ok),
+                                     "branch": "feat/3", "repo": "/tmp/proj"})
+    store.record_link("jira:IPG-4", {"issue": "IPG-4", "worktree": str(tmp_path / "gone"),
+                                     "branch": "feat/4", "repo": "/tmp/proj"})
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
+    monkeypatch.setattr(cli.store, "active_harness",
+                        lambda key: {"harness": "omp", "pid": 1}
+                        if key == "jira:IPG-3" else None)
+    cleaned = []
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda repo, branch, **k: cleaned.append(branch) or {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
+    r = _invoke("cleanup", "--merged", "--yes", "--json")
+    assert r.exit_code == 0, r.output
+    status = {row["key"]: row["status"] for row in json.loads(r.stdout)["results"]}
+    assert status == {"jira:IPG-3": "skipped:live-harness",
+                      "jira:IPG-4": "skipped:invalid"}
+    assert cleaned == []
+    assert set(store.load_links()) == {"jira:IPG-3", "jira:IPG-4"}
+
+
+def test_cleanup_merged_requires_yes_noninteractive(isolated_config, monkeypatch):
+    store.record_link("jira:IPG-1", {"issue": "IPG-1", "worktree": "/tmp/wt-1",
+                                     "branch": "feat/1", "repo": "/tmp/proj"})
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
+    r = _invoke("cleanup", "--merged", "--json")
+    assert r.exit_code == 2
+    assert "--yes" in r.output
+    assert "jira:IPG-1" in store.load_links()
+    # --dry-run previews without --yes and without acting.
+    acted = []
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda *a, **k: acted.append(1) or {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda path: True)
+    r2 = _invoke("cleanup", "--merged", "--dry-run", "--json")
+    assert r2.exit_code == 0, r2.output
+    assert acted == []
+    status = {row["key"]: row["status"] for row in json.loads(r2.stdout)["results"]}
+    assert status == {"jira:IPG-1": "dry-run"}
+    assert "jira:IPG-1" in store.load_links()
+
+
+def test_cleanup_merged_usage_errors(isolated_config):
+    r = _invoke("cleanup", "IPG-1", "--merged", "--yes")
+    assert r.exit_code == 2
+    assert "--merged takes no ref" in r.output
+    r2 = _invoke("cleanup")
+    assert r2.exit_code == 2
+    assert "ref required" in r2.output
+
+
 def test_version(isolated_config):
     r = _invoke("--version")
     assert r.exit_code == 0
@@ -989,6 +1072,57 @@ def test_cd_wrapper_snippets():
     assert "function harness-cd" in c.cd_wrapper("harness", "fish")
     snip = c.install_snippet("harness", "bash")
     assert "harness-cd()" in snip
+
+
+def test_open_resolves_and_opens(isolated_config, tmp_path, monkeypatch):
+    # Popen is faked, which also breaks subprocess.run inside
+    # is_valid_worktree — stub the validity check instead.
+    wt = tmp_path / "wt"
+    store.record_link("jira:IPG-929", {"issue": "IPG-929", "worktree": str(wt),
+                                       "branch": "feat/IPG-929--x", "repo": str(tmp_path)})
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda path: True)
+    opened = []
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            opened.append(argv)
+
+    monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
+    r = _invoke("open", "IPG-929")
+    assert r.exit_code == 0, r.output
+    assert r.stdout.strip() == str(wt)
+    assert opened, "no opener spawned"
+    assert opened[0][0] in ("xdg-open", "open", "explorer")
+    assert opened[0][1] == str(wt)
+
+
+def test_open_refuses_invalid_worktree(isolated_config, tmp_path):
+    store.record_link("jira:IPG-1", {"issue": "IPG-1", "worktree": str(tmp_path / "gone"),
+                                     "branch": "feat/1", "repo": str(tmp_path)})
+    r = _invoke("open", "IPG-1")
+    assert r.exit_code == 1
+    assert "jira:IPG-1" in r.output
+
+
+def test_open_refuses_missing_link(isolated_config):
+    r = _invoke("open", "NOPE-1")
+    assert r.exit_code == 2
+    assert "no linked state" in r.output
+
+
+def test_open_no_opener_available(isolated_config, tmp_path, monkeypatch):
+    wt = tmp_path / "wt"
+    store.record_link("jira:IPG-1", {"issue": "IPG-1", "worktree": str(wt),
+                                     "branch": "feat/1", "repo": str(tmp_path)})
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda path: True)
+
+    def boom(argv, **kw):
+        raise FileNotFoundError("xdg-open")
+
+    monkeypatch.setattr(cli.subprocess, "Popen", boom)
+    r = _invoke("open", "IPG-1")
+    assert r.exit_code == 1
+    assert "no opener available" in r.output
 
 
 def test_sync_rebase_failure_falls_back_to_local_merge(

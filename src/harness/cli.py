@@ -598,19 +598,64 @@ def review(
 @app.command("cleanup")
 @_catch_harness_errors
 def cleanup(
-    ref: str = typer.Argument(..., autocompletion=_complete_refs, help="Issue ID/URL, PR/MR URL, or worktree ref (key/branch/worktree)."),
+    ref: Optional[str] = typer.Argument(None, autocompletion=_complete_refs, help="Issue ID/URL, PR/MR URL, or worktree ref (key/branch/worktree); omit with --merged."),
     force: bool = typer.Option(False, "--force", help="Skip state validation."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    merged: bool = typer.Option(False, "--merged", help="Clean every linked worktree whose PR/MR is merged/closed (requires --yes; skips live-harness and invalid worktrees)."),
 ) -> None:
     """Close issue + remove worktree/branch/PR.
 
     Example:
       harness cleanup OWNER/REPO#22 --force --yes
       harness cleanup OWNER/REPO#22 --dry-run
+      harness cleanup --merged --yes
     """
+    if merged and ref:
+        _fail("--merged takes no ref; it loops every linked worktree.", EXIT_USAGE)
+    if not ref and not merged:
+        _fail("ref required.\n"
+              "  Pass a ref, or use --merged to clean every merged/closed link.",
+              EXIT_USAGE)
+    if merged and not yes and not dry_run:
+        _fail("--merged requires --yes (non-interactive).\n"
+              "  Re-run with --yes, or add --dry-run to preview.", EXIT_USAGE)
+
     links = store.load_links()
+
+    if merged:
+        # _status_cells(refresh_pr=True) is the merged/closed source of truth;
+        # live harnesses and invalid worktrees are skipped, never torn down.
+        rows = []
+        for key, entry in links.items():
+            branch = entry.get("branch", "")
+            state = (_status_cells(dict(entry), refresh_pr=True).get("pr_data")
+                     or {}).get("state", "")
+            if state not in ("MERGED", "CLOSED"):
+                rows.append({"key": key, "branch": branch,
+                             "status": f"skipped:{state.lower() or 'no-pr'}"})
+                continue
+            if store.active_harness(key):
+                rows.append({"key": key, "branch": branch,
+                             "status": "skipped:live-harness"})
+                continue
+            wt = entry.get("worktree", "")
+            if not wt or not worktrees.is_valid_worktree(wt):
+                rows.append({"key": key, "branch": branch,
+                             "status": "skipped:invalid"})
+                continue
+            rows.append(_cleanup_one(key, dict(entry), force, yes, dry_run,
+                                     json_output))
+        if json_output:
+            print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
+        else:
+            _print_rows(rows, json_output=False, csv_output=False,
+                        columns=["key", "branch", "status"],
+                        title="Cleanup (merged/closed)",
+                        empty="no linked worktrees")
+        return
+
     resolved = worktrees.resolve_worktree(ref, links)
     if resolved is None:
         _fail(
@@ -624,15 +669,8 @@ def cleanup(
         _fail(f"no linked state for {ref}.", EXIT_USAGE)
     repo = Path(entry.get("repo", "")).expanduser()
     branch = entry.get("branch", "")
-    pr_url = entry.get("pr_url", "")
-    stored_ref = entry.get("issue", "") or entry.get("pr_url", "") or ref
-    try:
-        parsed = refs.parse_ref(key if not key.startswith("pr:") else stored_ref)
-    except HarnessError:
-        try:
-            parsed = refs.parse_ref(stored_ref)
-        except HarnessError:
-            parsed = {"kind": "", "tool": "", "repo": "", "number": "", "url": pr_url or stored_ref}
+    if not branch:
+        _fail(f"linked entry for {ref} has no branch", EXIT_USAGE)
     if key != ref and not yes and not dry_run and sys.stdin.isatty():
         try:
             answer = input(f"ref {ref!r} matches worktree {key!r} — use it? [y/N] ").strip().lower()
@@ -640,12 +678,10 @@ def cleanup(
             answer = ""
         if answer not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)
-    if not branch:
-        _fail(f"linked entry for {ref} has no branch", EXIT_USAGE)
 
     if dry_run:
         _print_result({"dry_run": True, "key": key, "repo": str(repo), "branch": branch,
-                       "pr_url": pr_url, "force": force}, json_output)
+                       "pr_url": entry.get("pr_url", ""), "force": force}, json_output)
         return
 
     if not yes and not force and sys.stdin.isatty():
@@ -656,14 +692,44 @@ def cleanup(
         if answer not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)
 
-    result = gitwt.cleanup_worktree(repo, branch, delete_branch=True,
-                                    force=force, yes=True)
+    result = _cleanup_one(key, dict(entry), force, True, False, json_output)
+    _print_result({"branch": branch, "cleanup": result["cleanup"], "closed": ref},
+                  json_output)
+
+
+def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
+                 dry_run: bool, json_output: bool) -> dict:
+    """Clean one linked worktree: git-wt cleanup + close issue/PR + drop link.
+
+    Shared by `cleanup <ref>` (after confirmation) and the `cleanup --merged`
+    loop (after the merged/live-harness/validity gates). The caller owns ref
+    resolution and prompts; this only acts. Returns a summary row with
+    "status": "cleaned" or "dry-run".
+    """
+    repo = Path(entry.get("repo", "")).expanduser()
+    branch = entry.get("branch", "")
+    pr_url = entry.get("pr_url", "")
+    stored_ref = entry.get("issue", "") or entry.get("pr_url", "") or key
+    try:
+        parsed = refs.parse_ref(key if not key.startswith("pr:") else stored_ref)
+    except HarnessError:
+        try:
+            parsed = refs.parse_ref(stored_ref)
+        except HarnessError:
+            parsed = {"kind": "", "tool": "", "repo": "", "number": "",
+                      "url": pr_url or stored_ref}
+    if dry_run:
+        return {"key": key, "branch": branch, "repo": str(repo),
+                "pr_url": pr_url, "force": force, "status": "dry-run"}
+    cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=True,
+                                     force=force, yes=yes)
     _close_issue(parsed, force)
     _close_pr(parsed, pr_url, force)
-
     remaining = {k: v for k, v in store.load_links().items() if k != key}
     store.save_links(remaining)
-    _print_result({"branch": branch, "cleanup": result, "closed": ref}, json_output)
+    if not json_output:
+        eprint(f"{key}: cleaned")
+    return {"key": key, "branch": branch, "status": "cleaned", "cleanup": cleanup}
 
 
 def _close_issue(parsed: dict, force: bool) -> None:
@@ -1328,6 +1394,46 @@ def cd_cmd(
     if json_output:
         print(json.dumps({"key": key, "worktree": wt}))
         return
+    print(wt)
+
+
+# ── open ──────────────────────────────────────────────────────────────
+
+
+@app.command("open")
+@_catch_harness_errors
+def open_cmd(
+    ref: str = typer.Argument(..., autocompletion=_complete_refs,
+                              help="Issue/PR ref or worktree key."),
+) -> None:
+    """Open the linked worktree directory with the OS file manager.
+
+    Prints the worktree path on stdout. Launches no harness (nothing to
+    guard — issue #6 covers harness launches only); refuses missing or
+    invalid worktrees.
+
+    Example:
+      harness open IPG-929
+    """
+    links = store.load_links()
+    resolved = worktrees.resolve_worktree(ref, links)
+    if resolved is None:
+        _fail(f"no linked state for {ref}.\n"
+              "  Run `harness link list` to see linked worktrees.", EXIT_USAGE)
+    key = worktrees.pick_worktree(ref, resolved, links)
+    wt = links.get(key, {}).get("worktree", "")
+    if not wt or not worktrees.is_valid_worktree(wt):
+        _fail(f"no valid worktree for {key}: {wt or '?'}", EXIT_GENERAL)
+    opener = {"darwin": "open", "win32": "explorer"}.get(sys.platform,
+                                                         "xdg-open")
+    kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+                    "stderr": subprocess.DEVNULL}
+    if os.name == "posix":
+        kwargs["start_new_session"] = True
+    try:
+        subprocess.Popen([opener, wt], **kwargs)
+    except FileNotFoundError:
+        _fail(f"no opener available ({opener})", EXIT_GENERAL)
     print(wt)
 
 

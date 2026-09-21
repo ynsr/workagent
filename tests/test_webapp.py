@@ -21,6 +21,7 @@ from harness.webapp import (
     Registry,
     Run,
     _build_argv,
+    _target_for,
     _validate_args,
     create_app,
 )
@@ -417,6 +418,23 @@ def test_review_accepts_no_harness_shorthand_N(client, monkeypatch):
 
 def test_validate_args_allows_verbose_global():
     _validate_args("sync", ["-v", "IPG-1"])
+
+
+def test_webapp_review_all_flags_and_target():
+    _validate_args("review", ["--all"])
+    _validate_args("review", ["--all", "--sequential", "--fix"])
+    assert _target_for("review", ["--all"]) == "review:all"
+    assert _target_for("review", ["o/r#33"]) == "review"
+
+
+def test_webapp_open_allowed_and_target():
+    _validate_args("open", ["jira:X-1"])
+    assert _target_for("open", ["jira:X-1"]) == "open:jira:X-1"
+
+
+def test_webapp_cleanup_merged_target():
+    assert _target_for("cleanup", ["--merged"]) == "cleanup:all"
+    assert _target_for("cleanup", ["IPG-1"]) == "cleanup:IPG-1"
 
 
 def test_error_shape_on_404(client):
