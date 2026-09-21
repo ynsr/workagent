@@ -1,8 +1,8 @@
-"""Fuzzy cleanup ref resolution (TDD RED)."""
+"""Worktree ref resolution."""
 
 from __future__ import annotations
 
-from harness import cli
+from harness import worktrees
 
 
 def _links():
@@ -21,24 +21,24 @@ def _links():
 
 
 def test_exact_key_resolves():
-    assert cli._resolve_session_key("jira:IPG-981", _links()) == "jira:IPG-981"
+    assert worktrees.resolve_worktree("jira:IPG-981", _links()) == "jira:IPG-981"
 
 
 def test_bare_number_matches_issue_number():
-    assert cli._resolve_session_key("IPG-978", _links()) == (
+    assert worktrees.resolve_worktree("IPG-978", _links()) == (
         "pr:https://git.jibit.cloud/server/projectx/-/merge_requests/1701"
     )
 
 
 def test_branch_substring_resolves():
-    assert cli._resolve_session_key("chore/IPG-978--cicd-auto-versioning", _links()) == (
+    assert worktrees.resolve_worktree("chore/IPG-978--cicd-auto-versioning", _links()) == (
         "pr:https://git.jibit.cloud/server/projectx/-/merge_requests/1701"
     )
 
 
 def test_worktree_path_resolves():
     assert (
-        cli._resolve_session_key(
+        worktrees.resolve_worktree(
             "/home/bs/dev/worktrees/projectx/chore/IPG-978--cicd-auto-versioning",
             _links(),
         )
@@ -47,7 +47,7 @@ def test_worktree_path_resolves():
 
 
 def test_no_match_returns_none():
-    assert cli._resolve_session_key("NOPE-1", _links()) is None
+    assert worktrees.resolve_worktree("NOPE-1", _links()) is None
 
 
 def test_multiple_matches_returns_list():
@@ -57,5 +57,5 @@ def test_multiple_matches_returns_list():
         "branch": "feat/IPG-978--other",
         "repo": "/r",
     }
-    matches = cli._resolve_session_key("IPG-978", links)
+    matches = worktrees.resolve_worktree("IPG-978", links)
     assert isinstance(matches, list) and len(matches) == 2

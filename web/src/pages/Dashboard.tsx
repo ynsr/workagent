@@ -91,58 +91,6 @@ export function Dashboard() {
     navigate(`/runs/${runId}`)
   }
 
-  async function handleSync(key: string) {
-    setSyncOpts({ merge: false, dryRun: false, json: false })
-    const ok = await confirm({
-      action: "sync",
-      ref: key,
-      title: `Sync ${key}`,
-      description:
-        "Brings the session branch up to date with its base branch: server-side rebase by default, or a local merge with -m. The result is pushed to the remote.",
-      destructive: true,
-      confirmLabel: "Sync",
-      extras: (
-        <div className="grid gap-2.5">
-          <OptRow
-            id="sync-merge"
-            checked={syncOpts.merge}
-            onChange={(v) => setSyncOpts((o) => ({ ...o, merge: v }))}
-            label="-m — merge locally in the worktree instead of the remote rebase"
-          />
-          <OptRow
-            id="sync-dry"
-            checked={syncOpts.dryRun}
-            onChange={(v) => setSyncOpts((o) => ({ ...o, dryRun: v }))}
-            label="--dry-run — show what would run without touching anything"
-          />
-          <OptRow
-            id="sync-json"
-            checked={syncOpts.json}
-            onChange={(v) => setSyncOpts((o) => ({ ...o, json: v }))}
-            label="--json — JSON output in the run log"
-          />
-        </div>
-      ),
-    })
-    if (!ok) return
-    const dry = syncOpts.dryRun
-    try {
-      const { run_id } = await createRun.mutateAsync({
-        command: "sync",
-        args: [
-          key,
-          ...(syncOpts.merge ? ["--merge"] : []),
-          ...(dry ? ["--dry-run"] : []),
-          ...(syncOpts.json ? ["--json"] : []),
-        ],
-        confirm: dry ? undefined : true,
-      })
-      runCreated(run_id, `Sync ${key}`)
-    } catch (err) {
-      toast.error(errorText(err))
-    }
-  }
-
   async function handleSyncAll() {
     setSyncOpts({ merge: false, dryRun: false, json: false })
     const ok = await confirm({
@@ -285,8 +233,13 @@ export function Dashboard() {
     )
   }
 
+  // Row Sync/Review go to Launch, which renders the flow prefilled with this
+  // session key (exact query contract Launch reads back).
   const tableActions = {
-    onSync: handleSync,
+    onSync: (key: string) =>
+      navigate("/launch?mode=sync&ref=" + encodeURIComponent(key)),
+    onReview: (key: string) =>
+      navigate("/launch?mode=review&ref=" + encodeURIComponent(key)),
     onCleanup: handleCleanup,
     onCopyPath: handleCopyPath,
     onOpenRun: handleOpenRun,
@@ -359,7 +312,7 @@ export function Dashboard() {
           />
           <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
             <SquareTerminal className="size-3.5" aria-hidden />
-            Sync and Cleanup run as child processes — follow them under Runs.
+            Sync, Review and Cleanup run as child processes — follow them under Runs.
           </p>
         </>
       )}

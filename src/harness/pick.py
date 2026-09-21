@@ -75,6 +75,15 @@ def _erase(stream, n: int) -> None:
     stream.flush()
 
 
+def _redraw(stream, options: list[str | tuple[str, str | None]], idx: int) -> None:
+    """Erase the whole option block, then draw it again at *idx*."""
+    stream.write(_CURSOR_UP * len(options))
+    for _ in options:
+        stream.write(_ERASE_LINE + "\n")
+    stream.write(_CURSOR_UP * len(options))
+    _draw(stream, options, idx)
+
+
 def _raw_mode(fd: int):
     import termios
     import tty
@@ -129,8 +138,7 @@ def pick_index(label: str, options: list[str | tuple[str, str | None]], *,
                     break
                 if key in ("up", "down"):
                     idx = (idx + (-1 if key == "up" else 1)) % len(options)
-                    stream.write(_CURSOR_UP * len(options))
-                    _draw(stream, options, idx)
+                    _redraw(stream, options, idx)
         finally:
             if raw is not None:
                 raw.__exit__(None, None, None)

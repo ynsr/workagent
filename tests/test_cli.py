@@ -78,6 +78,25 @@ def test_cleanup_dry_run(isolated_config):
     assert out["dry_run"] is True and out["branch"] == "feat/22-x"
 
 
+def test_cleanup_resolves_by_branch(isolated_config, tmp_path, monkeypatch):
+    store.record_link("jira:IPG-929", {"branch": "feat/IPG-929--x", "repo": "/tmp/proj",
+                                       "worktree": "/tmp/wt"})
+    r = runner.invoke(cli.app, ["cleanup", "feat/IPG-929--x", "--dry-run", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["branch"] == "feat/IPG-929--x"
+    # Wording gate: resolve/pick errors say "worktree", never "session".
+    store.record_link("pr:https://git.example.com/x/-/merge_requests/929",
+                      {"branch": "feat/IPG-929--pr", "repo": "/tmp/proj",
+                       "worktree": "/tmp/wt-pr"})
+    r2 = runner.invoke(cli.app, ["cleanup", "IPG-929", "--dry-run", "--json"])
+    assert r2.exit_code == 2
+    assert "exact worktree key" in r2.output
+    assert "session" not in r2.output
+    r3 = _invoke("cleanup", "NOPE-404")
+    assert r3.exit_code == 2
+    assert "linked worktrees" in r3.output
+
+
 def test_status_empty(isolated_config):
     r = _invoke("status", "--json")
     assert r.exit_code == 0
@@ -510,6 +529,10 @@ def test_start_base_default_branch_still_creates_new_branch(isolated_config, tmp
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     _start_mocks(monkeypatch, repo_dir)
+    # Hermetic regardless of where pytest runs: pin the cwd seam so a
+    # feature-branch checkout can't flip start into cwd_mode.
+    monkeypatch.setattr(cli.repos, "repo_root", lambda cwd=None: None)
+    monkeypatch.setattr(cli.repos, "worktree_branch", lambda path: None)
     calls = {}
 
     def fake_start_worktree(repo, **kw):
@@ -900,3 +923,28 @@ def test_register_bad_issue_ref(isolated_config, tmp_path):
     r = _invoke("register", str(wt), "--issue", "not a ref", "--json")
     assert r.exit_code == 2
     assert "cannot parse" in r.stderr
+
+
+def test_review_reuses_existing_worktree_by_branch(isolated_config, tmp_path, monkeypatch):
+    """review with a branch that has a recorded worktree reuses it (issue #2)."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    wt = tmp_path / "wt-existing"
+    wt.mkdir()
+    store.record_link("jira:IPG-929", {"branch": "feat/IPG-929--x",
+                                       "worktree": str(wt),
+                                       "repo": str(repo_dir),
+                                       "pr_url": "https://git.example.com/g/p/-/merge_requests/1699"})
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    started = []
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: started.append(kw) or {"worktree_path": "SHOULD-NOT-HAPPEN",
+                                                                  "branch": kw.get("branch")})
+    launched = []
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    r = runner.invoke(cli.app, ["review", "feat/IPG-929--x", "--no-tty", "--no-harness", "--json"])
+    assert r.exit_code == 0, r.output
+    assert started == []  # no new worktree created
+    assert json.loads(r.stdout)["worktree_path"] == str(wt)

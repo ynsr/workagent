@@ -18,7 +18,7 @@ from typing import Callable, Optional
 
 import typer
 
-from . import __version__, backend, gitwt, pick, refs, repos, store, trackers
+from . import __version__, backend, gitwt, refs, repos, store, trackers, worktrees
 from . import completions as _completions
 from . import doctor as _doctor
 from . import sync as sync_mod
@@ -294,7 +294,7 @@ def start(
 @app.command("review")
 @_catch_harness_errors
 def review(
-    ref: str = typer.Argument(..., autocompletion=_complete_refs, help="PR/MR URL, OWNER/REPO#NUM, or session ref (key/branch/worktree)."),
+    ref: str = typer.Argument(..., autocompletion=_complete_refs, help="PR/MR URL, OWNER/REPO#NUM, or worktree ref (key/branch/worktree)."),
     repo: Optional[str] = typer.Option(None, "--repo", autocompletion=_complete_repos, help="Registered name, local path, or clone URL."),
     depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
@@ -311,21 +311,29 @@ def review(
       harness review OWNER/REPO#33 --no-tty
       harness review OWNER/REPO#33 --no-harness
     """
-    parsed = refs.parse_ref(ref)
-    if parsed["kind"] not in ("pr", "mr"):
-        # Session ref: resolve to the recorded (or discovered) PR/MR.
+    session_ref = ref
+    parse_err: HarnessError | None = None
+    try:
+        parsed = refs.parse_ref(ref)
+    except HarnessError as e:
+        parse_err = e
+        parsed = None
+    if parsed is None or parsed["kind"] not in ("pr", "mr"):
+        # Worktree ref (key/branch/path): resolve to the recorded (or discovered) PR/MR.
         links = store.load_links()
-        resolved = _resolve_session_key(ref, links)
+        resolved = worktrees.resolve_worktree(ref, links)
         if resolved is not None:
-            key = _pick_session_key(ref, resolved, links)
+            key = worktrees.pick_worktree(ref, resolved, links)
             entry = links.get(key, {})
-            pr_url0 = _session_pr_url(key, entry) if entry else None
+            pr_url0 = worktrees.worktree_pr_url(key, entry) if entry else None
             if not pr_url0:
-                _fail(f"session {key} has no recorded PR/MR.\n"
+                _fail(f"worktree {key} has no recorded PR/MR.\n"
                       "  Pass a PR/MR URL, or create one first.", EXIT_USAGE)
-            eprint(f"note: session {key} → {pr_url0}")
+            eprint(f"note: worktree {key} → {pr_url0}")
             ref = pr_url0
             parsed = refs.parse_ref(ref)
+        elif parse_err is not None:
+            raise parse_err
     tid = trackers.tracker_id(parsed)
     repo_dir, outcome = trackers.resolve_for_tracker(
         tid, repo, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
@@ -348,6 +356,22 @@ def review(
                        "harness": harness_name, "head_ref": head_ref,
                        "tracker": tid, "tracker_link": outcome}, json_output)
         return
+
+    reuse_key = worktrees.resolve_worktree(head_ref or session_ref, store.load_links())
+    if isinstance(reuse_key, str):
+        reuse_entry = store.load_links().get(reuse_key, {})
+        if reuse_entry.get("worktree") and Path(reuse_entry["worktree"]).is_dir():
+            worktree = reuse_entry["worktree"]
+            branch = reuse_entry.get("branch", head_ref)
+            store.record_link(f"pr:{pr_url}", {"pr_url": pr_url, "worktree": worktree,
+                                               "branch": branch, "repo": str(repo_dir)})
+            prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
+            result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
+                      "harness": harness_name}
+            eprint(f"worktree: {worktree}  branch: {branch}")
+            _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty, no_harness,
+                         result, json_output)
+            return
 
     if not head_ref:
         _fail(f"could not determine the MR head branch for {pr_url}.\n"
@@ -377,7 +401,7 @@ def review(
 @app.command("cleanup")
 @_catch_harness_errors
 def cleanup(
-    ref: str = typer.Argument(..., autocompletion=_complete_refs, help="Issue ID/URL, PR/MR URL, or session ref (key/branch/worktree)."),
+    ref: str = typer.Argument(..., autocompletion=_complete_refs, help="Issue ID/URL, PR/MR URL, or worktree ref (key/branch/worktree)."),
     force: bool = typer.Option(False, "--force", help="Skip state validation."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
@@ -390,14 +414,14 @@ def cleanup(
       harness cleanup OWNER/REPO#22 --dry-run
     """
     links = store.load_links()
-    resolved = _resolve_session_key(ref, links)
+    resolved = worktrees.resolve_worktree(ref, links)
     if resolved is None:
         _fail(
             f"no linked state for {ref}.\n"
-            "  Run `harness link list` to see linked sessions.",
+            "  Run `harness link list` to see linked worktrees.",
             EXIT_USAGE,
         )
-    key = _pick_session_key(ref, resolved, links)
+    key = worktrees.pick_worktree(ref, resolved, links)
     entry = links.get(key, {})
     if entry is None or not entry:
         _fail(f"no linked state for {ref}.", EXIT_USAGE)
@@ -414,7 +438,7 @@ def cleanup(
             parsed = {"kind": "", "tool": "", "repo": "", "number": "", "url": pr_url or stored_ref}
     if key != ref and not yes and not dry_run and sys.stdin.isatty():
         try:
-            answer = input(f"ref {ref!r} matches session {key!r} — use it? [y/N] ").strip().lower()
+            answer = input(f"ref {ref!r} matches worktree {key!r} — use it? [y/N] ").strip().lower()
         except EOFError:
             answer = ""
         if answer not in ("y", "yes"):
@@ -471,85 +495,6 @@ def _close_issue(parsed: dict, force: bool) -> None:
             eprint(f"warning: {e}")
     elif parsed["tool"] == "glab":
         eprint("note: glab issue close not automated in v1; close it in the UI.")
-
-
-def _resolve_session_key(ref: str, links: dict) -> str | list[str] | None:
-    """Resolve a cleanup ref to a session key.
-
-    Exact session key first, then parseable issue/PR refs, then substring
-    search over keys, worktrees, and branches. Returns the key, a list of
-    keys on ambiguity, or None.
-    """
-    if ref in links:
-        return ref
-    try:
-        parsed = refs.parse_ref(ref)
-    except HarnessError:
-        parsed = None
-    needle = ref
-    exact: str | None = None
-    if parsed is not None:
-        key = refs.issue_key(parsed)
-        pr_key = f"pr:{parsed['url']}" if parsed.get("repo") else key
-        if key in links:
-            exact = key
-        elif pr_key in links:
-            exact = pr_key
-        needle = parsed.get("number", "") or ref
-    matches = [k for k, v in links.items()
-               if needle in k
-               or needle in (v.get("worktree", "") or "")
-               or needle in (v.get("branch", "") or "")]
-    if not matches:
-        bare = needle.split("/")[-1].split("--")[0].strip()
-        if bare and bare != needle:
-            matches = [k for k, v in links.items()
-                       if bare in k
-                       or bare in (v.get("worktree", "") or "")
-                       or bare in (v.get("branch", "") or "")]
-    if exact is not None and exact not in matches:
-        matches = [exact, *matches]
-    if not matches:
-        return None
-    if len(matches) == 1:
-        return matches[0]
-    return matches
-
-
-def _pick_session_key(ref: str, resolved: str | list[str],
-                      links: dict | None = None) -> str:
-    """Disambiguate multiple fuzzy matches interactively."""
-    if isinstance(resolved, str):
-        return resolved
-    if not sys.stdin.isatty():
-        _fail(f"ambiguous ref {ref!r} matches: {', '.join(resolved)}.\n"
-              "  Re-run with the exact session key.", EXIT_USAGE)
-    options = [(k, (links or {}).get(k, {}).get("branch", "")) for k in resolved]
-    idx = pick.pick(f"multiple sessions match {ref!r}:", options)
-    if idx is None:
-        _fail("aborted", EXIT_USAGE)
-    return resolved[idx]
-
-
-def _session_pr_url(key: str, entry: dict) -> str | None:
-    """Recorded PR/MR URL for a session; falls back to a live branch query."""
-    if entry.get("pr_url"):
-        return entry["pr_url"]
-    repo = entry.get("repo", "")
-    branch = entry.get("branch", "")
-    if not (repo and branch and Path(repo).exists()):
-        return None
-    tool = _repo_tool(repo)
-    if not tool:
-        return None
-    try:
-        pr = refs.latest_pr(refs.fetch_pr_list_for_branch(tool, branch, cwd=repo))
-    except HarnessError:
-        return None
-    if pr:
-        store.record_link(key, {"pr_url": pr["url"]})
-        return pr["url"]
-    return None
 
 
 def _close_pr(parsed: dict, pr_url: str, force: bool) -> None:
@@ -645,18 +590,18 @@ def repo_remove(
 
 # ── link ──────────────────────────────────────────────────────────────
 
-link_app = typer.Typer(help="View and manage tracker↔repo relations and session links.", no_args_is_help=True)
+link_app = typer.Typer(help="View and manage tracker↔repo relations and worktree links.", no_args_is_help=True)
 app.add_typer(link_app, name="link")
 
 
 @link_app.command("list")
 def link_list(
-    worktree: bool = typer.Option(False, "--worktree", help="Show the worktree column in session links."),
+    worktree: bool = typer.Option(False, "--worktree", help="Show the worktree column in worktree links."),
     refresh_pr: bool = typer.Option(False, "--refresh-pr", help="Re-query PR status instead of using the cache."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
     csv_output: bool = typer.Option(False, "--csv", help="Output as CSV (stdout; logs go to stderr)."),
 ) -> None:
-    """List tracker↔repo relations and session links.
+    """List tracker↔repo relations and worktree links.
 
     Example:
       harness link list
@@ -676,7 +621,7 @@ def link_list(
                 "Tracker links", "(no tracker links)")
     srows, scolumns = _session_rows(links, worktree, refresh_pr)
     _print_rows(srows, json_output, csv_output, scolumns,
-                "Session links", "(no session links)",
+                "Worktree links", "(no worktree links)",
                 colorize=_colorize_session)
 
 
@@ -707,11 +652,11 @@ def link_set(
 @link_app.command("remove")
 @_catch_harness_errors
 def link_remove(
-    ref: str = typer.Argument(..., help="Tracker id or session key (issue/PR ref, branch, or worktree path)."),
+    ref: str = typer.Argument(..., help="Tracker id or worktree key (issue/PR ref, branch, or worktree path)."),
     repo: Optional[str] = typer.Option(None, "--repo", help="Only remove this repo from the tracker mapping."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
-    """Remove a tracker mapping or a session link.
+    """Remove a tracker mapping or a worktree link.
 
     Example:
       harness link remove jira:IPG
@@ -736,9 +681,9 @@ def link_remove(
         store.save_config(cfg)
         _print_result({"removed": tid}, json_output)
         return
-    resolved = _resolve_session_key(ref, store.load_links())
+    resolved = worktrees.resolve_worktree(ref, store.load_links())
     if resolved is None:
-        _fail(f"no tracker mapping or session link for {ref}", EXIT_USAGE)
+        _fail(f"no tracker mapping or worktree link for {ref}", EXIT_USAGE)
     links = store.load_links()
     del links[resolved]
     store.save_links(links)
@@ -1002,7 +947,7 @@ def _create_hint(entry: dict) -> str | None:
 @app.command("status")
 @_catch_harness_errors
 def status(
-    ref: Optional[str] = typer.Argument(None, autocompletion=_complete_refs, help="Issue/PR ref or session key (omit: all links)."),
+    ref: Optional[str] = typer.Argument(None, autocompletion=_complete_refs, help="Issue/PR ref or worktree key (omit: all links)."),
     worktree: bool = typer.Option(False, "--worktree", help="Show the worktree column."),
     refresh_pr: bool = typer.Option(False, "--refresh-pr", help="Re-query PR status instead of using the cache."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
@@ -1021,9 +966,9 @@ def status(
     """
     links = store.load_links()
     if ref:
-        resolved = _resolve_session_key(ref, links)
+        resolved = worktrees.resolve_worktree(ref, links)
         if resolved is not None:
-            key = _pick_session_key(ref, resolved, links)
+            key = worktrees.pick_worktree(ref, resolved, links)
             entry = links[key]
         else:
             try:
@@ -1046,7 +991,7 @@ def status(
         return
     rows, columns = _session_rows(links, worktree, refresh_pr)
     _print_rows(rows, json_output, csv_output, columns,
-                "Linked sessions", "(no linked sessions)",
+                "Linked worktrees", "(no linked worktrees)",
                 colorize=_colorize_session)
     eprint("commits: B|A = B commits behind, A commits ahead of the base branch")
 
@@ -1058,7 +1003,7 @@ def status(
 @_catch_harness_errors
 def cd_cmd(
     ref: str = typer.Argument(..., autocompletion=_complete_refs,
-                              help="Issue/PR ref or session key."),
+                              help="Issue/PR ref or worktree key."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Print the worktree root for a ref: cd "$(harness cd <ref>)".
@@ -1068,10 +1013,10 @@ def cd_cmd(
     0.4.0) makes bare `harness cd <ref>` change directory directly.
     """
     links = store.load_links()
-    resolved = _resolve_session_key(ref, links)
+    resolved = worktrees.resolve_worktree(ref, links)
     if resolved is None:
         _fail(f"no linked state for {ref}", EXIT_USAGE)
-    key = _pick_session_key(ref, resolved, links)
+    key = worktrees.pick_worktree(ref, resolved, links)
     wt = links[key].get("worktree", "")
     if not wt or not Path(wt).exists():
         _fail(f"worktree missing for {key}: {wt or '?'}", EXIT_GENERAL)
@@ -1085,13 +1030,13 @@ def cd_cmd(
 @_catch_harness_errors
 def register(
     path: str = typer.Argument(..., help="Path to an existing worktree (not the main checkout)."),
-    key: Optional[str] = typer.Option(None, "--key", help="Session key to register under (default: derived from the branch — 'jira:<KEY>' for issue branches, else 'branch:<branch>')."),
+    key: Optional[str] = typer.Option(None, "--key", help="Worktree key to register under (default: derived from the branch — 'jira:<KEY>' for issue branches, else 'branch:<branch>')."),
     issue: Optional[str] = typer.Option(None, "--issue", help="Issue/PR ref to attach (Jira key/URL, OWNER/REPO#NUM, PR/MR URL); sets the default key when --key is omitted."),
     repo_opt: Optional[str] = typer.Option(None, "--repo", help="Main checkout of the repository (default: derived from the worktree's git metadata)."),
     yes: bool = typer.Option(False, "--yes", "-y", "--force", help="Overwrite an existing link for the same key."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
-    """Register an existing (unregistered) worktree as a session link.
+    """Register an existing (unregistered) worktree as a link.
 
     Example: harness link-wt ~/dev/worktrees/projectx/feat/IPG-999--x
 
@@ -1187,20 +1132,20 @@ def register(
 @_catch_harness_errors
 def sync_cmd(
     ref: Optional[str] = typer.Argument(None, autocompletion=_complete_refs,
-                                        help="Issue/PR ref or session key (omit: interactive pick, or --all)."),
+                                        help="Issue/PR ref or worktree key (omit: interactive pick, or --all)."),
     merge: bool = typer.Option(False, "-m", "--merge", help="Merge locally in the worktree instead of the default remote rebase. The branch is pushed to origin afterwards."),
     harness: bool = typer.Option(False, "--harness", help="On unresolvable conflicts, launch the coding harness in the worktree."),
-    all_sessions: bool = typer.Option(False, "--all", help="Sync every linked session (confirmed one by one)."),
+    all_sessions: bool = typer.Option(False, "--all", help="Sync every linked worktree (confirmed one by one)."),
     yes: bool = typer.Option(False, "--yes", "--force", "-y", help="Skip confirmations."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without touching anything."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
-    """Bring a session branch up to date with its base branch.
+    """Bring a worktree branch up to date with its base branch.
 
     Default: remote rebase via `gh pr update-branch --rebase` /
     `glab mr rebase` (host merges server-side). With -m/--merge: fetch,
-    fast-forward the local default branch and merge it into the session
-    branch in the worktree; the branch is pushed to origin afterwards
+    fast-forward the local default branch and merge it into the
+    worktree's branch; the branch is pushed to origin afterwards
     (including after harness-resolved conflicts).
 
     Example:
@@ -1210,20 +1155,20 @@ def sync_cmd(
     """
     links = store.load_links()
     if ref:
-        resolved = _resolve_session_key(ref, links)
+        resolved = worktrees.resolve_worktree(ref, links)
         if resolved is None:
             _fail(f"no linked state for {ref}", EXIT_USAGE)
-        key = _pick_session_key(ref, resolved, links)
+        key = worktrees.pick_worktree(ref, resolved, links)
         keys = [key]
     elif all_sessions:
         keys = list(links)
     else:
         if not links:
-            _fail("no linked sessions", EXIT_USAGE)
+            _fail("no linked worktrees", EXIT_USAGE)
         if not sys.stdin.isatty():
             _fail("no ref given and stdin is not a TTY — pass a ref or --all",
                   EXIT_USAGE)
-        keys = [_pick_session_key("sync", list(links), links)]
+        keys = [worktrees.pick_worktree("sync", list(links), links)]
     results = []
     for k in keys:
         entry = links[k]
@@ -1235,7 +1180,7 @@ def sync_cmd(
                                  use_harness=harness, yes=yes or all_sessions,
                                  dry_run=dry_run, json_output=json_output))
         if all_sessions and result_failed(results[-1]):
-            eprint(f"{k}: sync failed — continuing with remaining sessions (--all)")
+            eprint(f"{k}: sync failed — continuing with remaining worktrees (--all)")
     if json_output:
         out = results[0] if len(results) == 1 and ref else results
         print(json.dumps(out, indent=2, ensure_ascii=False))

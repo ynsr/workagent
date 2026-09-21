@@ -79,7 +79,11 @@ def save_config(cfg: dict) -> None:
 
 
 def load_links() -> dict:
-    return _read_json(config_dir() / "links.json", {})
+    links = _read_json(config_dir() / "links.json", {})
+    for key, entry in links.items():
+        if isinstance(entry, dict):
+            entry.setdefault("ref_key", key)
+    return links
 
 
 def save_links(links: dict) -> None:

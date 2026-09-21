@@ -40,3 +40,9 @@ def test_pr_cache_none_roundtrip(isolated_config):
 
 def test_pr_cache_missing_branch(isolated_config):
     assert store.get_cached_pr_status("feat/nope") is None
+
+
+def test_load_links_backfills_ref_key(isolated_config):
+    store.save_links({"jira:IPG-1": {"branch": "feat/x", "worktree": "/tmp/wt"}})
+    links = store.load_links()
+    assert links["jira:IPG-1"]["ref_key"] == "jira:IPG-1"
