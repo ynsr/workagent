@@ -13,12 +13,19 @@ class HarnessError(Exception):
         self.exit_code = exit_code
 
 
-def run_cmd(*args: str, cwd=None, check: bool = True, timeout: int = 60) -> str | None:
-    """Run a command, return stripped stdout. Raises HarnessError on failure."""
+def run_cmd(*args: str, cwd=None, check: bool = True, timeout: int = 60,
+            echo: bool = True) -> str | None:
+    """Run a command, return stripped stdout. Raises HarnessError on failure.
+
+    The full argv is echoed to stderr first (suppressible via echo=False)
+    so CLI output and web run logs capture exactly what ran.
+    """
+    import sys
+    if echo:
+        print(f"$ {' '.join(args)}", file=sys.stderr, flush=True)
     try:
         proc = subprocess.run(
             list(args),
-            cwd=str(cwd) if cwd is not None else None,
             capture_output=True,
             text=True,
             timeout=timeout,

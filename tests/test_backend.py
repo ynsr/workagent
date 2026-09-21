@@ -83,3 +83,9 @@ def test_prompt_includes_push_target():
 def test_prompt_push_target_mentions_origin_branch():
     p = backend.prompt_for_issue("T", "B", "o/r#22", worktree="/w", branch="chore/a--b")
     assert "origin/chore/a--b" in p
+
+def test_omp_argv_has_no_session_file_flag():
+    from harness.backend import OmpRuntime
+    assert OmpRuntime().session_file_flag("/tmp/x.jsonl") == []
+    argv = OmpRuntime().command_argv("prompt", True, ["--auto-approve"])
+    assert "--session-file" not in argv

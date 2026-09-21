@@ -46,7 +46,9 @@ class OmpRuntime(Runtime):
         return 0  # unreachable; keeps type checkers quiet
 
     def session_file_flag(self, path: str) -> list[str]:
-        return ["--session-file", path]
+        # omp has no per-file session flag (sessions live under the profile
+        # dir / --session-dir); the .jsonl path stays a recorded placeholder.
+        return []
 
 
 RUNTIMES: dict[str, Runtime] = {"omp": OmpRuntime()}
@@ -86,7 +88,10 @@ def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
     TTY mode: chdirs into the worktree and replaces this process (os.execvp)
     so the user gets a real interactive session rooted in the worktree.
     Non-TTY (--no-tty): runs `omp -p <prompt>` as a child and waits.
+    The full argv is echoed to stderr first so run logs capture it.
     """
+    argv = get_runtime(harness).command_argv(prompt, no_tty, extra_args)
+    print(f"$ {' '.join(argv)}", file=sys.stderr, flush=True)
     return get_runtime(harness).launch(prompt, workdir, no_tty, extra_args)
 
 
