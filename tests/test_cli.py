@@ -529,6 +529,10 @@ def test_start_base_default_branch_still_creates_new_branch(isolated_config, tmp
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     _start_mocks(monkeypatch, repo_dir)
+    # Hermetic regardless of where pytest runs: pin the cwd seam so a
+    # feature-branch checkout can't flip start into cwd_mode.
+    monkeypatch.setattr(cli.repos, "repo_root", lambda cwd=None: None)
+    monkeypatch.setattr(cli.repos, "worktree_branch", lambda path: None)
     calls = {}
 
     def fake_start_worktree(repo, **kw):
