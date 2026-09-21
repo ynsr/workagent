@@ -26,6 +26,8 @@ Map of worktree key → entry (same shape as `harness status --json`):
     "repo": "/home/x/projectx", "issue_url": "https://…/browse/IPG-932",
     "commits": "0|1", "pr": "…",
     "ci": "success",
+    "added_at": "2026-09-20T10:00:00+00:00",
+    "wt_valid": true,
     "commits_detail": {"behind": 0, "ahead": 1},
     "pr_detail": {"number": 1706, "state": "open", "title": "…",
                    "author": "…", "url": "https://…", "tool": "glab"}
@@ -43,8 +45,10 @@ pipeline status for the PR — `success` | `failure` | `running` |
 ### `GET /api/status?ref=IPG-932` → single worktree detail
 `_session_detail` shape: the entry fields plus
 `key`, `harness`, `commits`, `pr` (display string), `commits_detail`,
-`pr_detail`, `ci`, `base_branch`, `issue_url`, and `create_hint`
-(only when there is no PR).
+`pr_detail`, `ci`, `base_branch`, `issue_url`, `wt_valid` (false when the
+recorded path is missing or not a live git worktree), and `create_hint`
+(only when there is no PR). `added_at` is present on entries stamped
+after `store.record_link` gained it; older entries may lack it.
 
 ### `GET /api/path?ref=IPG-932`
 ```json

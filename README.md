@@ -40,7 +40,7 @@ Config is left at `~/.config/harness/` for you to delete if unwanted.
 harness start https://github.com/OWNER/REPO/issues/22
 harness start OWNER/REPO#22 --repo my-checkout --no-tty
 harness review https://github.com/OWNER/REPO/pull/33
-harness sync IPG-929          # or OWNER/REPO#22, or a session key
+harness sync IPG-929          # or OWNER/REPO#22, or a worktree key
 harness repo add --name projectx --path ~/projects/projectx
 harness repo list
 harness link list
@@ -89,7 +89,7 @@ but never goes stale when commands change — the right default for this tier.
 Exit codes: `0` success · `1` general error · `2` usage/needs human input.
 
 State lives in `~/.config/harness/` (`config.json` registry, `links.json`
-session links, `pr_cache.json` PR-status cache). Override with
+worktree links, `pr_cache.json` PR-status cache). Override with
 `HARNESS_CONFIG_DIR`.
 
 ## Registering existing worktrees
@@ -104,21 +104,21 @@ harness register ~/dev/wt/feat/x --key jira:IPG-999 --repo ~/dev/projectx
 ```
 
 The path must be a linked git worktree (not the main checkout). The
-session key defaults to `jira:<KEY>` derived from the branch name (an
+worktree key defaults to `jira:<KEY>` derived from the branch name (an
 `IPG-123`-style segment), else `branch:<branch>`; `--issue` overrides
 it and attaches the issue/PR (URL included, so `status` shows it).
 `--key` names the link explicitly; `--repo` overrides the auto-detected
 main checkout; `--force` (`--yes`) overwrites an existing link for the
 same key. Registered worktrees work with `status`, `sync`, `cd`, and
-`cleanup` like any other session.
+`cleanup` like any other worktree.
 `HARNESS_CONFIG_DIR`.
 
 ## Sync
 
-`harness sync <ref>` brings a session branch up to date with its base
-branch. Refs resolve fuzzily (session key, issue number, branch/worktree
+`harness sync <ref>` brings a worktree branch up to date with its base
+branch. Refs resolve fuzzily (worktree key, issue number, branch/worktree
 substring) like `cleanup`; no ref picks interactively (or `--all` for
-every session, confirmed one by one).
+every worktree, confirmed one by one).
 
 - Default: remote rebase — `gh pr update-branch --rebase` or
   `glab mr rebase`; the host merges server-side, then the worktree is
@@ -127,50 +127,50 @@ every session, confirmed one by one).
   pushed). If the server rebase fails, the local-merge flow below runs
   automatically.
 - `-m/--merge`: fetch, fast-forward the local default branch, merge it
-  into the session branch inside the worktree, then push the branch to
+  into the worktree branch inside the worktree, then push the branch to
   origin (also after harness-resolved conflicts).
 - Any other conflict lists the files; `--harness` (or `--yes`/`--force`)
   launches the coding agent to resolve and push — `--yes` runs it
   non-interactively (`omp -p --auto-approve`). `--all` syncs every
-  session with the same auto-harness behavior and continues with the
-  remaining sessions when one fails.
+  worktree with the same auto-harness behavior and continues with the
+  remaining worktrees when one fails.
 - Dirty worktrees abort (exit `1`); `--dry-run` previews; `--json` for
   scripting.
 
 ## Status
 
-`harness status` shows every linked session with the branch, the `commits`
+`harness status` shows every linked worktree with the branch, the `commits`
 column (`behind|ahead` vs the remote-tracking base branch — no fetch;
 `gone` when the worktree is missing), and the latest PR/MR with a bright
 color for the state (open/merged/closed). `status <ref>` shows a detail
 panel (worktree, issue URL, PR title/author/URL, behind/ahead counts); both
 modes support `--json`. `--worktree` restores the worktree-path column.
 The issue URL is built from jira-cli's configured site (`<site>/browse/KEY`)
-or the GitHub repo in the session key; a stored URL wins.
+or the GitHub repo in the worktree key; a stored URL wins.
 The PR/MR lookup CLI (gh/glab) is chosen from the repo's origin URL host
 (gh's known hosts vs glab's) and persisted per registered repo, so GitLab
 repos never query GitHub. Status is cached per branch in
-`~/.config/harness/pr_cache.json` and reused while the session-branch tip
+`~/.config/harness/pr_cache.json` and reused while the worktree-branch tip
 and the base-branch tip are unchanged and the entry is younger than 3h —
-`--refresh-pr` re-queries the PR/MR. When a session has no PR/MR, the
+`--refresh-pr` re-queries the PR/MR. When a worktree has no PR/MR, the
 `status <ref>` detail shows a create hint: the web create-PR URL for
 GitHub remotes, otherwise a `glab mr create` command for the branch.
 
 ## cd
 
-`harness cd <ref>` prints the session's worktree root — use it as
+`harness cd <ref>` prints the linked worktree path — use it as
 `cd "$(harness cd IPG-959)"`. `completions show|install` also provides a
 `harness-cd` shell function, so after installing completions
 `harness-cd IPG-959` changes directory directly.
 
 Refs (`status`, `sync`, `review`, `cleanup`, `cd`) complete in the shell
-over session keys, branches, and worktree names.
+over worktree keys, branches, and worktree names.
 
 
 ## Web UI (`harness serve`)
 
-`harness serve` starts a local web server that mirrors the CLI: session
-table with branch/commits/PR state, launch (`start`/`review`),
+`harness serve` starts a local web server that mirrors the CLI: worktree
+table with branch/commits/PR/CI state, launch (`start`/`review`),
 repos, tracker↔repo links, sync, cleanup, register, runs with live logs,
 and doctor.
 
@@ -187,7 +187,7 @@ harness serve --port 3345 --allowed-host devbox.local
 - The built-in static path is `<repo>/web/dist` (correct for
   editable/source installs). For non-editable installs pass
   `--static-dir /path/to/harness/web/dist`.
-- One run per target at a time: a second launch for the same session
+- One run per target at a time: a second launch for the same worktree
   returns 409; cancel sends SIGTERM, then SIGKILL after 10 s.
 - **No authentication.** The server binds to `127.0.0.1` by default and
   refuses unexpected `Host` headers plus non-same-origin JSON posts.
@@ -221,9 +221,9 @@ Install it with `pipx install ./vendored/git-wt`.
 1. `start <issue>` → resolve repo (picker below, or `--repo`) → fetch
    title/body via `gh`/`glab`/`jira-cli` → `git-wt start --link/--issue` →
 2. `review <PR>` → fetch head ref → worktree on that branch → exec `omp`
-   with the pr-reviewer prompt. A session key/issue ref resolves to that
-   session's recorded PR/MR.
-3. `sync <ref>` → rebase the session's PR remotely (default) or merge the
+   with the pr-reviewer prompt. A worktree key/issue ref resolves to that
+   worktree's recorded PR/MR.
+3. `sync <ref>` → rebase the worktree's PR remotely (default) or merge the
    default branch locally (`--merge`, push with `--push`); see "Sync".
 4. `cleanup <ref>` → look up link (exact key, else substring match over
    keys/worktrees/branches; interactive pick on ambiguity) →
