@@ -342,9 +342,18 @@ def _is_reviewed(key: str, entry: dict) -> bool:
 
 def _reviewable_keys(links: dict) -> list[tuple[str, str]]:
     """(key, pr_url) pairs to review under --all: live worktree, resolvable
-    PR/MR, no live harness, and not already reviewed at the current tip."""
+    PR/MR, no live harness, and not already reviewed at the current tip.
+
+    A non-pr link carrying a pr_url whose pr:<url> entry also exists is an
+    alias: reviewed/tip live on the pr: entry, so the alias is skipped and
+    one worktree/PR yields exactly one child (links for different PRs stay
+    distinct).
+    """
     out = []
     for k, v in links.items():
+        own_pr = v.get("pr_url", "")
+        if own_pr and not k.startswith("pr:") and f"pr:{own_pr}" in links:
+            continue
         if _is_reviewed(k, v):
             continue
         pr = worktrees.worktree_pr_url(k, v)
@@ -368,6 +377,23 @@ def _mark_reviewed(pr_url: str, worktree: str) -> None:
     entry["reviewed"] = True
     entry["reviewed_at"] = repos.branch_tip(worktree)
     store.record_link(f"pr:{pr_url}", entry)
+
+
+def _clear_reviewed(pr_url: str) -> None:
+    """Revert reviewed/reviewed_at after a failed (non-exec) harness launch.
+
+    record_link merges, which cannot drop keys — rewrite the entry without
+    them instead (other fields preserved), same as `link remove`.
+    """
+    key = f"pr:{pr_url}"
+    links = store.load_links()
+    entry = links.get(key)
+    if not entry:
+        return
+    entry.pop("reviewed", None)
+    entry.pop("reviewed_at", None)
+    links[key] = entry
+    store.save_links(links)
 
 
 @app.command("review")
@@ -397,6 +423,8 @@ def review(
     """
     if sequential and not all_wts:
         _fail("--sequential requires --all", EXIT_USAGE)
+    if fix and not all_wts:
+        _fail("--fix requires --all", EXIT_USAGE)
     if ref is None and not all_wts:
         _fail("missing PR/MR ref or worktree key\n"
               "  Pass a ref, or use --all to review every not-reviewed worktree.",
@@ -406,16 +434,37 @@ def review(
         if not reviewable:
             eprint("nothing to review")
             return
-        rows: list[dict] = []
+
+        def _child_argv(pr: str) -> list[str]:
+            return [sys.executable, "-m", "harness", "review", pr,
+                    "--no-tty", "--post-comments"] + (["--fix"] if fix else [])
+
+        def _child_cmd(pr: str) -> str:
+            return " ".join(shlex.quote(a) for a in _child_argv(pr))
 
         def _spawn(key: str, pr: str):
             repo = store.load_links().get(key, {}).get("repo", "")
             cwd = repo if repo and Path(repo).is_dir() else os.getcwd()
-            argv = [sys.executable, "-m", "harness", "review", pr,
-                    "--no-tty", "--post-comments"] + (["--fix"] if fix else [])
             # Child stdout/stderr inherit ours; the --post-comments child
             # appends the auto-comment segment to its review prompt.
-            return subprocess.Popen(argv, cwd=cwd)
+            return subprocess.Popen(_child_argv(pr), cwd=cwd)
+
+        if dry_run:
+            rows = [{"key": k, "pr_url": pr, "command": _child_cmd(pr)}
+                    for k, pr in reviewable]
+            _print_rows(rows, json_output, csv_output=False,
+                        columns=["key", "pr_url", "command"],
+                        title="Review plan (dry-run)",
+                        empty="nothing to review")
+            return
+        if no_harness:
+            rows = [{"key": k, "pr_url": pr, "command": _child_cmd(pr),
+                     "exit_code": ""} for k, pr in reviewable]
+            _print_rows(rows, json_output, csv_output=False,
+                        columns=["key", "pr_url", "command", "exit_code"],
+                        title="Review runs", empty="nothing reviewed")
+            return
+        rows: list[dict] = []
 
         if sequential:
             for key, pr in reviewable:
@@ -498,8 +547,14 @@ def review(
             if not no_harness:
                 _guard_harness(f"pr:{pr_url}", worktree)
                 _mark_reviewed(pr_url, worktree)
-            _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty, no_harness,
-                         result, json_output, run_key=f"pr:{pr_url}")
+            try:
+                _run_harness(harness_name, prompt, worktree, str(repo_dir),
+                             no_tty, no_harness, result, json_output,
+                             run_key=f"pr:{pr_url}")
+            except HarnessError:
+                if not no_harness:
+                    _clear_reviewed(pr_url)
+                raise
             return
 
     if not head_ref:
@@ -528,8 +583,13 @@ def review(
     if not no_harness:
         _guard_harness(f"pr:{pr_url}", worktree)
         _mark_reviewed(pr_url, worktree)
-    _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty, no_harness,
-                 result, json_output, run_key=f"pr:{pr_url}")
+    try:
+        _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
+                     no_harness, result, json_output, run_key=f"pr:{pr_url}")
+    except HarnessError:
+        if not no_harness:
+            _clear_reviewed(pr_url)
+        raise
 
 
 # ── cleanup ───────────────────────────────────────────────────────────
@@ -1036,6 +1096,7 @@ def _print_detail(detail: dict) -> None:
     for k in ("worktree", "branch", "repo"):
         if detail.get(k):
             c.print(f"  {k}: {escape(str(detail[k]))}")
+    c.print(f"  harness: {escape(str(detail.get('harness') or '—'))}")
     issue = detail.get("issue_url") or detail.get("issue")
     if issue:
         c.print(f"  issue: {escape(str(issue))}")
