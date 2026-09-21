@@ -158,6 +158,73 @@ def test_unreleased_union_rejects_missing_section():
     assert sync.unreleased_union(CHANGELOG_OURS, theirs) is None
 
 
+CHANGELOG_BASE = CHANGELOG_OURS
+CHANGELOG_THEIRS_RELEASED = """# Changelog
+
+## Unreleased
+
+- theirs only
+- ours one
+
+## 1.2.0 - 2026-09-20
+
+- new release
+
+## 1.0.0
+
+- old
+"""
+
+CHANGELOG_RELEASED_MERGED = """# Changelog
+
+## Unreleased
+
+- ours one
+- ours two
+- theirs only
+
+## 1.2.0 - 2026-09-20
+
+- new release
+
+## 1.0.0
+
+- old
+"""
+
+
+def test_unreleased_union_with_base_keeps_released_sections():
+    assert sync.unreleased_union(
+        CHANGELOG_OURS, CHANGELOG_THEIRS_RELEASED,
+        base=CHANGELOG_BASE) == CHANGELOG_RELEASED_MERGED
+
+
+def test_unreleased_union_with_base_rejects_released_change():
+    ours_changed = CHANGELOG_OURS.replace("- old", "- old changed")
+    assert sync.unreleased_union(
+        ours_changed, CHANGELOG_THEIRS_RELEASED,
+        base=CHANGELOG_BASE) is None
+
+
+def test_unreleased_union_without_base_still_strict():
+    assert sync.unreleased_union(
+        CHANGELOG_OURS, CHANGELOG_THEIRS_RELEASED) is None
+
+
+def test_auto_resolve_changelog_with_released_addition(tmp_path):
+    _, wt = _seed_and_clone(tmp_path, {"CHANGELOG.md": CHANGELOG_OURS})
+    _git("checkout", "-q", "-b", "feat/x", cwd=wt)
+    _commit(wt, {"CHANGELOG.md": CHANGELOG_OURS.replace("- ours one\n", "- ours one\n- ours two\n")}, "feat")
+    _push_from_sibling(tmp_path, wt, {"CHANGELOG.md": CHANGELOG_THEIRS_RELEASED})
+    out = sync.local_merge(wt, "main")
+    assert out["conflicts"] == ["CHANGELOG.md"]
+    assert sync.auto_resolve_changelog(wt, out["conflicts"]) is True
+    assert (wt / "CHANGELOG.md").read_text() == CHANGELOG_RELEASED_MERGED
+    r = subprocess.run(["git", "diff", "--name-only", "--diff-filter=U"],
+                       cwd=str(wt), capture_output=True, text=True, check=False)
+    assert r.stdout.strip() == ""
+
+
 def test_auto_resolve_changelog(tmp_path):
     _, wt = _seed_and_clone(tmp_path, {"CHANGELOG.md": CHANGELOG_OURS})
     _git("checkout", "-q", "-b", "feat/x", cwd=wt)
