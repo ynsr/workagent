@@ -875,18 +875,31 @@ def repo_add(
       harness repo add --name projectx --path ~/projects/projectx --tracker IPG
     """
     p = path.expanduser()
+    if not tracker:
+        _fail("tracker is required: pass --tracker IPG|github:O/R|GitLab URL", EXIT_USAGE)
     if not (p / ".git").exists() and not p.is_dir():
         _fail(f"not a repo path: {p}", EXIT_USAGE)
     repos.register_repo(name, p)
-    if tracker:
-        tid = trackers.normalize_id(tracker)
-        cfg = store.load_config()
-        entry = cfg.setdefault("trackers", {}).setdefault(tid, {"repos": []})
-        norm = str(p.expanduser().resolve())
-        if norm not in [str(Path(r).expanduser().resolve()) for r in entry.get("repos", [])]:
-            entry.setdefault("repos", []).append(norm)
-        store.save_config(cfg)
+    tid = trackers.normalize_id(tracker)
+    cfg = store.load_config()
+    entry = cfg.setdefault("trackers", {}).setdefault(tid, {"repos": []})
+    norm = str(p.expanduser().resolve())
+    if norm not in [str(Path(r).expanduser().resolve()) for r in entry.get("repos", [])]:
+        entry.setdefault("repos", []).append(norm)
+    store.save_config(cfg)
     _print_result({"registered": name, "path": str(p)}, json_output)
+
+
+def _repo_tracker_map(cfg: dict) -> dict:
+    """Reverse-lookup {resolved repo path: tracker id} from the mapping."""
+    out: dict = {}
+    for tid, entry in (cfg.get("trackers", {}) or {}).items():
+        for r in (entry or {}).get("repos", []):
+            try:
+                out.setdefault(str(Path(r).expanduser().resolve()), tid)
+            except Exception:
+                continue
+    return out
 
 
 @repo_app.command("list")
@@ -902,8 +915,12 @@ def repo_list(
       harness repo list --json | jq '.[].name'
     """
     cfg = store.load_config()
-    items = [{"name": n, **v} for n, v in cfg.get("repos", {}).items()]
-    _print_rows(items, json_output, csv_output, ["name", "path"],
+    tmap = _repo_tracker_map(cfg)
+    items = [{"name": n, "path": v.get("path", ""),
+              "tracker": tmap.get(str(Path(str(v.get("path", ""))).expanduser().resolve())
+                                  if str(v.get("path", "")) else "", "")}
+             for n, v in cfg.get("repos", {}).items()]
+    _print_rows(items, json_output, csv_output, ["name", "path", "tracker"],
                 "Registered repos", "(no repos registered)")
 
 

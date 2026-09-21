@@ -409,8 +409,14 @@ def create_app(static_dir: Path, host: str, port: int,
 
     @app.get("/api/repos")
     def repos_list() -> list[dict]:
-        return [{"name": n, **v}
-                for n, v in store.load_config().get("repos", {}).items()]
+        from .cli import _repo_tracker_map
+        cfg = store.load_config()
+        tmap = _repo_tracker_map(cfg)
+        return [{"name": n, "path": v.get("path", ""),
+                 "tracker": tmap.get(str(Path(str(v.get("path", ""))).expanduser().resolve())
+                                     if str(v.get("path", "")) else "", ""),
+                 **{k: val for k, val in v.items() if k != "path"}}
+                for n, v in cfg.get("repos", {}).items()]
 
     @app.get("/api/links")
     def links_list() -> dict:

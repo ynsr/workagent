@@ -24,7 +24,8 @@ def _invoke(*args):
 def test_repo_add_list_remove(isolated_config, tmp_path):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
-    r = _invoke("repo", "add", "--name", "proj", "--path", str(repo_dir), "--json")
+    r = _invoke("repo", "add", "--name", "proj", "--path", str(repo_dir),
+                "--tracker", "IPG", "--json")
     assert r.exit_code == 0
     assert json.loads(r.stdout)["registered"] == "proj"
     r = _invoke("repo", "list", "--json")
@@ -618,11 +619,12 @@ def test_doctor_missing_and_ok(isolated_config, tmp_path, monkeypatch):
 def test_repo_list_csv(isolated_config, tmp_path):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
-    _invoke("repo", "add", "--name", "proj", "--path", str(repo_dir))
+    _invoke("repo", "add", "--name", "proj", "--path", str(repo_dir),
+            "--tracker", "IPG")
     r = _invoke("repo", "list", "--csv")
     assert r.exit_code == 0
     lines = [l for l in r.output.strip().splitlines() if l]
-    assert lines[0] == "name,path"
+    assert lines[0] == "name,path,tracker"
     assert len(lines) == 2 and lines[1].startswith("proj,")
 
 
@@ -2036,3 +2038,18 @@ def test_candidates_reset_cache_clears(isolated_config, monkeypatch):
     r = _invoke("candidates", "--reset-cache", "--json")
     assert r.exit_code == 0, r.output
     assert sq.get_issue_cache(db, "jira") == ([], None)
+
+
+def test_repo_add_requires_tracker(isolated_config, tmp_path):
+    r = _invoke("repo", "add", "--name", "p", "--path", str(tmp_path))
+    assert r.exit_code == 2
+    assert "--tracker" in r.output
+
+
+def test_repo_list_shows_tracker(isolated_config, tmp_path):
+    _invoke("repo", "add", "--name", "p", "--path", str(tmp_path),
+            "--tracker", "IPG")
+    r = _invoke("repo", "list", "--json")
+    assert r.exit_code == 0, r.output
+    items = json.loads(r.output)
+    assert items[0]["tracker"] == "jira:IPG"

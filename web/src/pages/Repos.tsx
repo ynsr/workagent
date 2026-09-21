@@ -47,8 +47,14 @@ export function Repos() {
   const [removeJson, setRemoveJson] = useState(false)
   const [adding, setAdding] = useState(false)
 
+  const [trackerError, setTrackerError] = useState("")
   async function handleAdd() {
     if (!name.trim() || !path.trim()) return
+    if (!tracker.trim()) {
+      setTrackerError("Tracker is required (e.g. IPG or github:OWNER/REPO).")
+      return
+    }
+    setTrackerError("")
     setAdding(true)
     try {
       const { run_id } = await createRun.mutateAsync({
@@ -59,7 +65,8 @@ export function Repos() {
           name.trim(),
           "--path",
           path.trim(),
-          ...(tracker.trim() ? ["--tracker", tracker.trim()] : []),
+          "--tracker",
+          tracker.trim(),
           ...(addJson ? ["--json"] : []),
         ],
       })
@@ -285,15 +292,17 @@ export function Repos() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="repo-tracker">Tracker project (optional)</Label>
+              <Label htmlFor="repo-tracker">Tracker project (required)</Label>
               <Input
                 id="repo-tracker"
                 value={tracker}
-                onChange={(e) => setTracker(e.target.value)}
+                onChange={(e) => { setTracker(e.target.value); if (trackerError) setTrackerError("") }}
                 placeholder="IPG or github:OWNER/REPO"
                 autoComplete="off"
                 spellCheck={false}
+                aria-invalid={trackerError ? true : undefined}
               />
+              {trackerError ? <p className="text-xs text-destructive">{trackerError}</p> : null}
             </div>
             <div className="flex items-center gap-2">
               <Checkbox
@@ -305,7 +314,7 @@ export function Repos() {
                 <span className="font-mono text-[13px]">--json</span> output
               </Label>
             </div>
-            <Button onClick={() => void handleAdd()} disabled={!name.trim() || !path.trim() || adding}>
+            <Button onClick={() => void handleAdd()} disabled={!name.trim() || !path.trim() || !tracker.trim() || adding}>
               <Plus aria-hidden />
               {adding ? "Adding…" : "Add repo"}
             </Button>

@@ -652,3 +652,14 @@ def test_api_sessions_roundtrip(client, tmp_path, monkeypatch):
     detail = client.get(f"/api/sessions/{sid}").json()
     assert detail["prompt"] == "hello" and detail["runs"] == []
     assert client.get("/api/sessions/nope").status_code == 404
+
+
+def test_api_repos_includes_tracker(client, monkeypatch):
+    import harness.store as store
+    cfg = store.load_config()
+    cfg["repos"] = {"p": {"path": "/tmp/proj"}}
+    cfg["trackers"] = {"jira:IPG": {"repos": ["/tmp/proj"]}}
+    store.save_config(cfg)
+    r = client.get("/api/repos")
+    assert r.status_code == 200
+    assert r.json()[0]["tracker"] == "jira:IPG"
