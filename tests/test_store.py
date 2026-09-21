@@ -113,3 +113,24 @@ def test_record_link_added_at_backfills_missing(isolated_config):
     entry = store.lookup_link("jira:IPG-1")
     assert datetime.fromisoformat(entry["added_at"])
     assert entry["branch"] == "feat/x" and entry["worktree"] == "/tmp/wt"
+
+
+def test_harness_claim_blocks_live_same_key(isolated_config):
+    assert store.record_harness_run("jira:A", "omp", "/tmp/wt-a") is None
+    blocker = store.record_harness_run("jira:A", "omp", "/tmp/wt-a")
+    assert blocker is not None and blocker["pid"] == os.getpid()
+    store.clear_harness_run("jira:A")
+
+
+def test_harness_claim_blocks_live_same_worktree_other_key(isolated_config):
+    assert store.record_harness_run("jira:A", "omp", "/tmp/wt-a") is None
+    blocker = store.record_harness_run("pr:https://x/1", "omp", "/tmp/wt-a")
+    assert blocker is not None and blocker["pid"] == os.getpid()
+    store.clear_harness_run("jira:A")
+
+
+def test_harness_claim_reclaims_dead_pid(isolated_config):
+    store.save_harnesses_raw({"jira:OLD": {"harness": "omp", "pid": _dead_pid(),
+                                           "started_at": 0.0, "worktree": "/tmp/wt-a"}})
+    assert store.record_harness_run("jira:OLD", "omp", "/tmp/wt-a") is None
+    store.clear_harness_run("jira:OLD")

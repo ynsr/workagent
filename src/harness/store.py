@@ -280,9 +280,18 @@ def save_harnesses_raw(data: dict) -> None:
 
 
 def _sweep(data: dict) -> tuple[dict, bool]:
-    alive = {k: v for k, v in data.items()
-             if isinstance(v, dict) and _pid_alive(v.get("pid", -1))}
+    alive = {k: v for k, v in data.items() if _live_rec(v) is not None}
     return alive, len(alive) != len(data)
+
+
+def _live_rec(rec: object) -> dict | None:
+    """Return the record if it describes a live harness, else None."""
+    if not isinstance(rec, dict):
+        return None
+    pid = rec.get("pid", -1)
+    if not isinstance(pid, int) or not _pid_alive(pid):
+        return None
+    return rec
 
 
 def load_harnesses() -> dict:
@@ -293,18 +302,35 @@ def load_harnesses() -> dict:
     return alive
 
 
-def record_harness_run(key: str, harness: str, worktree: str = "") -> None:
+def record_harness_run(key: str, harness: str, worktree: str = "") -> dict | None:
+    """Claim the per-key harness slot; returns the live record that blocks us.
+
+    A stale record whose pid is dead is reclaimed silently (crash-orphan
+    fix); a live record on the same key — or the same worktree path under
+    a different key — blocks the claim and is returned so callers can
+    report it without a second lookup.
+    """
     path = _harness_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path.parent / (path.name + ".lock"), "w") as lock:
-        _locked(lock, lambda: _record_harness_locked(path, key, harness, worktree))
+        return _locked(lock, lambda: _record_harness_locked(path, key, harness, worktree))
 
 
-def _record_harness_locked(path: Path, key: str, harness: str, worktree: str) -> None:
+def _record_harness_locked(path: Path, key: str, harness: str, worktree: str) -> dict | None:
     data, _ = _sweep(_read_json(path, {}))
+    live = _live_rec(data.get(key))
+    if live is None and worktree:
+        for k, v in data.items():
+            if k != key and isinstance(v, dict) and v.get("worktree") == worktree:
+                live = _live_rec(v)
+                if live is not None:
+                    break
+    if live is not None:
+        return live
     data[key] = {"harness": harness, "pid": os.getpid(),
                  "started_at": time.time(), "worktree": worktree}
     _atomic_replace(path, data)
+    return None
 
 
 def clear_harness_run(key: str) -> None:

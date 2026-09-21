@@ -1041,9 +1041,11 @@ def test_status_harness_cell_cross_key_worktree(isolated_config, tmp_path):
     """A harness recorded under another key still shows for this worktree."""
     wt = tmp_path / "wt"; wt.mkdir()
     store.record_link("jira:H-1", {"branch": "feat/h", "worktree": str(wt)})
-    store.record_link("pr:https://x/o/r/-/merge_requests/1",
-                      {"branch": "feat/h", "worktree": str(wt)})
-    store.record_harness_run("pr:https://x/o/r/-/merge_requests/1", "omp", str(wt))
+    # One worktree holds exactly one claim: record under the pr key, and the
+    # jira row for the same checkout shows it via the cross-key fallback.
+    store.save_harnesses_raw({"pr:https://x/o/r/-/merge_requests/1":
+                              {"harness": "omp", "pid": __import__("os").getpid(),
+                               "started_at": 1.0, "worktree": str(wt)}})
     rows, _ = cli._session_rows(store.load_links(), False, False)
     row = next(r for r in rows if r["key"] == "jira:H-1")
     assert row["harness"].startswith("omp ")
@@ -2053,3 +2055,18 @@ def test_repo_list_shows_tracker(isolated_config, tmp_path):
     assert r.exit_code == 0, r.output
     items = json.loads(r.output)
     assert items[0]["tracker"] == "jira:IPG"
+
+
+def test_run_harness_lock_blocked_spawns_nothing(monkeypatch):
+    """A live record on the same worktree refuses the launch, spawn-free."""
+    monkeypatch.setattr(cli.store, "record_harness_run",
+                        lambda k, h, wt="": {"harness": "omp", "pid": 4242,
+                                            "worktree": wt})
+    launched = []
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    result = {"command": "sync"}
+    import typer as _typer
+    with __import__("pytest").raises(_typer.Exit):
+        cli._run_harness("omp", "prompt", "/tmp/wt", "/tmp", True, False,
+                         result, False, run_key="jira:X")
+    assert launched == []

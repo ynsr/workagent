@@ -144,7 +144,12 @@ def _print_rows(rows: list[dict], json_output: bool, csv_output: bool,
 
 
 def _guard_harness(key: str | None, worktree: str) -> None:
-    """Hard guard: one live harness per worktree (issue #6)."""
+    """Advisory pre-check: one live harness per worktree (issue #6).
+
+    The atomic claim inside _run_harness is the real lock; this stays for
+    early exits (review-all skip, --all skip, cleanup refusal) where we
+    never reach a launch and must not claim a slot.
+    """
     if not key:
         return
     rec = store.active_harness(key)
@@ -199,8 +204,15 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     sid: str | None = None
     db = _sq.db_path()
     session_file = ""
-    if run_key:
-        store.record_harness_run(run_key, harness_name, worktree or fallback_dir)
+    if run_key and not no_harness:
+        # Atomic one-harness-per-worktree lock: claim first, inside the same
+        # flock that records it; launch only when we own the slot. A live
+        # record (pid alive) fails here instead of spawning a second run.
+        blocker = store.record_harness_run(run_key, harness_name, worktree or fallback_dir)
+        if blocker is not None:
+            _fail(f"worktree {worktree or fallback_dir} already has a live harness "
+                  f"({blocker['harness']}, pid {blocker['pid']}) — wait for it to "
+                  "finish or kill it", 1)
     # Pre-cutover (no state.db): links live in JSON, so the FK insert would
     # fail — skip session tracking silently, never warn or touch the db.
     if run_key and db.exists():
