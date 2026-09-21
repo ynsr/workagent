@@ -1753,6 +1753,9 @@ def test_candidates_cli_csv_pulls_only(isolated_config, tmp_path, monkeypatch):
     # CSV applies to the PR/MR table; the issues table stays a Rich table.
     assert "Recent issues (reported by me, last 7 days)" in r.stdout
     assert "jira:IPG-981" in r.stdout
+    # Titles stay raw for machine-readable output (no Rich escaping).
+    assert "Add [beta] flag" in r.stdout
+    assert "\\[beta]" not in r.stdout
 
 
 def test_candidates_cli_linked_pr_excluded(isolated_config, tmp_path,

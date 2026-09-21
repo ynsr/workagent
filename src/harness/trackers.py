@@ -294,9 +294,14 @@ def _parse_jira_payload(out: str | None) -> list[dict] | None:
     return rows
 
 
-def _parse_jira_plain(out: str) -> list[dict]:
+def _parse_jira_plain(out: str) -> list[dict] | None:
     """`issue list --plain --no-headers` rows: 2+ space (or tab) column
-    padding, right-anchored columns key|…summary…|status|created."""
+    padding, right-anchored columns key|…summary…|status|created.
+    None when the command produced output but none of it parses (broken
+    seam), so the tier loop falls through and warns instead of silently
+    reporting zero issues."""
+    if not out.strip():
+        return []
     rows = []
     for line in out.splitlines():
         parts = [p for p in re.split(r"\s{2,}|\t", line.strip()) if p]
@@ -304,7 +309,7 @@ def _parse_jira_plain(out: str) -> list[dict]:
             continue
         key, status, created = parts[0], parts[-2], parts[-1]
         rows.append(_jira_row(key, " ".join(parts[1:-2]), status, created))
-    return rows
+    return rows or None
 
 
 def _jira_my_issues(warnings: list[str]) -> list[dict]:

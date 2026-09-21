@@ -136,6 +136,26 @@ def test_list_my_issues_jira_plain_fallback(isolated_config, monkeypatch):
     assert rows[0]["title"] == "Fix login flow" and rows[0]["status"] == "In Progress"
 
 
+def test_list_my_issues_jira_plain_unparseable_warns(isolated_config,
+                                                     monkeypatch):
+    """A plain seam that answers rc 0 with non-empty garbage must fall
+    through to the all-tiers warning, not report zero issues."""
+
+    def fake(*a, **k):
+        if a[:2] == ("jira-cli", "request"):
+            return "Unknown: request"  # rc 0, not JSON
+        if a[:2] == ("jira-cli", "search"):
+            return "Unknown: search"  # rc 0, not JSON
+        if a[:2] == ("jira-cli", "issue"):
+            return "Unknown: issue list"  # rc 0, no parseable rows
+        raise HarnessError("command not found: gh")
+
+    monkeypatch.setattr(trackers, "run_cmd", fake)
+    warnings = []
+    assert trackers.list_my_issues(warnings) == []
+    assert any("jira" in w and "issue list" in w for w in warnings)
+
+
 def test_list_my_issues_gh_search(isolated_config, monkeypatch):
     def fake(*a, **k):
         if a[0] == "gh":

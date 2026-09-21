@@ -1432,10 +1432,14 @@ def candidates_cmd(
         return
     from rich.markup import escape
 
+
+    # Escape user content ONLY for the Rich table path; --csv/--json
+    # carry raw titles (escaping would corrupt machine-readable cells).
     def _esc(rows: list[dict]) -> list[dict]:
         return [{**r, "title": escape(str(r.get("title", "")))} for r in rows]
 
-    _print_rows(_esc(out["prs"]), False, csv_output,
+    _print_rows(_esc(out["prs"]) if not csv_output else out["prs"],
+                False, csv_output,
                 ["url", "title", "repo", "updated"],
                 "Unlinked PR/MRs", "(no unlinked open PR/MRs)")
     _print_rows(_esc(out["issues"]), False, False,
