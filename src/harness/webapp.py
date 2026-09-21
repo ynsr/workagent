@@ -65,8 +65,10 @@ SPECS: dict[str, dict[str, Any]] = {
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
-    "start": ("--no-tty", "--no-harness", "--dry-run", "--yes", "--json"),
-    "review": ("--no-tty", "--no-harness", "--dry-run", "--yes", "--json"),
+    "start": ("-N", "--no-tty", "--no-harness", "--dry-run", "--yes",
+              "--json"),
+    "review": ("-N", "--no-tty", "--no-harness", "--dry-run", "--yes",
+               "--json"),
     "cleanup": ("--force", "--yes", "--dry-run", "--json"),
     "sync": ("-m", "--merge", "--harness", "--all", "--yes", "--dry-run",
              "--json"),

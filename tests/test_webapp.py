@@ -381,6 +381,29 @@ def test_build_argv_uses_same_interpreter():
     assert argv[4:] == ["start", "IPG-1", "--no-tty"]
 
 
+def test_start_accepts_and_forwards_no_harness(client, monkeypatch):
+    """`start --no-harness` passes validation and reaches the child argv."""
+    _stub_spawn(monkeypatch)
+    r = client.post("/api/runs", json={
+        "command": "start", "args": ["IPG-1", "--no-tty", "--no-harness"],
+        "confirm": True,
+    })
+    assert r.status_code == 202, r.text
+    rid = r.json()["run_id"]
+    run = client.app.state.registry.get(rid)
+    assert run.argv[-2:] == ["--no-harness", "--yes"]  # server appends --yes
+    _wait_state(client, rid, {"succeeded"})
+
+
+def test_review_accepts_no_harness_shorthand_N(client, monkeypatch):
+    """-N (CLI shorthand) passes web validation like --no-harness."""
+    _stub_spawn(monkeypatch)
+    r = client.post("/api/runs", json={
+        "command": "review", "args": ["o/r#33", "-N", "--dry-run"],
+    })
+    assert r.status_code == 202, r.text
+
+
 def test_validate_args_allows_verbose_global():
     _validate_args("sync", ["-v", "IPG-1"])
 

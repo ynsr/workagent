@@ -1,29 +1,51 @@
-import { useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useEffect, useMemo, useState } from "react"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { Rocket, ShieldAlert } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
+import { SearchableSelect } from "@/components/SearchableSelect"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { useConfirm } from "@/lib/confirm"
 import { errorText } from "@/components/StatusFeedback"
-import { useCreateRun, useRepos } from "@/lib/queries"
+import { useCreateRun, useLinks, useRepos } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 const AUTO_REPO = "__auto__"
+const AUTO_LABEL = "Registry default (auto)"
 const DEFAULT_HARNESS = "__default__"
+const HARNESS_DEFAULT_LABEL = "Configured default"
 
-type Mode = "start" | "review"
+type Mode = "start" | "review" | "sync"
+
+const MODES: readonly Mode[] = ["start", "review", "sync"]
+
+const COPY: Record<Mode, { label: string; title: string; description: string; refHint: string; refPlaceholder: string }> = {
+  start: {
+    label: "Start",
+    title: "Start from an issue",
+    description: "Issue key, OWNER/REPO#22, or a full issue URL.",
+    refHint: "Issue key, OWNER/REPO#22, or a full issue URL.",
+    refPlaceholder: "IPG-932, OWNER/REPO#22, or https://…/issues/22",
+  },
+  review: {
+    label: "Review",
+    title: "Review a PR/MR",
+    description: "PR/MR URL, OWNER/REPO#33, or a session ref (key/branch/worktree).",
+    refHint: "PR/MR URL, OWNER/REPO#33, or a session ref (key/branch/worktree).",
+    refPlaceholder: "https://…/pull/33, OWNER/REPO#33, or jira:IPG-929",
+  },
+  sync: {
+    label: "Sync",
+    title: "Sync a session",
+    description: "Worktree key, issue/PR ref, or branch — bring its branch up to date with the base.",
+    refHint: "Worktree key, issue/PR ref, or branch.",
+    refPlaceholder: "jira:IPG-1, github:OWNER/REPO#33, or feat/IPG-929--x",
+  },
+}
 
 interface LaunchForm {
   ref: string
@@ -31,6 +53,8 @@ interface LaunchForm {
   depth: string
   base: string
   harness: string
+  noHarness: boolean
+  merge: boolean
   dryRun: boolean
   json: boolean
 }
@@ -41,18 +65,52 @@ const INITIAL: LaunchForm = {
   depth: "7",
   base: "",
   harness: DEFAULT_HARNESS,
+  noHarness: false,
+  merge: false,
   dryRun: false,
   json: false,
 }
 
 export function Launch() {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
   const confirm = useConfirm()
   const createRun = useCreateRun()
   const { data: repos } = useRepos()
-  const [mode, setMode] = useState<Mode>("start")
-  const [form, setForm] = useState<LaunchForm>(INITIAL)
+  const { data: links } = useLinks()
+
+  const modeParam = params.get("mode")
+  const refParam = params.get("ref") ?? ""
+  const modeKnown = modeParam === null || MODES.includes(modeParam as Mode)
+
+  const [mode, setMode] = useState<Mode>(
+    modeKnown && modeParam !== null ? (modeParam as Mode) : "start",
+  )
+  const [form, setForm] = useState<LaunchForm>(() => ({
+    ...INITIAL,
+    ref: modeKnown ? refParam : "",
+  }))
   const [submitting, setSubmitting] = useState(false)
+  const [prefillChecked, setPrefillChecked] = useState(false)
+
+  // Unknown prefill → blank form + warning, never a crash: an unrecognized
+  // mode, or a sync key matching no linked session (stale Dashboard link).
+  useEffect(() => {
+    if (prefillChecked) return
+    if (modeParam !== null && !MODES.includes(modeParam as Mode)) {
+      setPrefillChecked(true)
+      setForm((f) => ({ ...f, ref: "" }))
+      toast.warning(`Unknown launch mode "${modeParam}" — form left blank`)
+      return
+    }
+    if (modeParam === "sync" && refParam && links) {
+      setPrefillChecked(true)
+      if (!(refParam in links.sessions)) {
+        setForm((f) => (f.ref === refParam ? { ...f, ref: "" } : f))
+        toast.warning(`No linked session for "${refParam}" — form left blank`)
+      }
+    }
+  }, [prefillChecked, modeParam, refParam, links])
 
   function update<K extends keyof LaunchForm>(key: K, value: LaunchForm[K]) {
     setForm((f) => ({ ...f, [key]: value }))
@@ -66,39 +124,67 @@ export function Launch() {
   const refValue = form.ref.trim()
   const repoValue = form.repo === AUTO_REPO ? undefined : form.repo
   const harnessValue = form.harness === DEFAULT_HARNESS ? undefined : form.harness
+  const copy = COPY[mode]
+
+  const repoOptions = useMemo(
+    () => [AUTO_LABEL, ...(repos ?? []).map((r) => r.name)],
+    [repos],
+  )
+  const repoDisplay = form.repo === AUTO_REPO ? AUTO_LABEL : form.repo
+  const harnessOptions = useMemo(() => [HARNESS_DEFAULT_LABEL, "omp"], [])
+  const harnessDisplay = form.harness === DEFAULT_HARNESS ? HARNESS_DEFAULT_LABEL : form.harness
 
   function buildArgs(): string[] {
+    if (mode === "sync") {
+      return [
+        refValue,
+        ...(form.merge ? ["--merge"] : []),
+        ...(form.dryRun ? ["--dry-run"] : []),
+        ...(form.json ? ["--json"] : []),
+      ]
+    }
     const args = [refValue, "--no-tty"]
     if (repoValue) args.push("--repo", repoValue)
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
     if (mode === "start" && form.base.trim()) args.push("--base", form.base.trim())
     if (harnessValue) args.push("--harness", harnessValue)
+    if (mode === "start" && form.noHarness) args.push("--no-harness")
     if (form.dryRun) args.push("--dry-run")
     if (form.json) args.push("--json")
     return args
   }
 
-  const flagList = [
-    "headless (--no-tty)",
-    repoValue ? `--repo ${repoValue}` : "repo: registry default",
-    `--depth ${form.depth.trim() || "7"}`,
-    mode === "start" && form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
-    harnessValue ? `--harness ${harnessValue}` : "harness: configured default",
-    form.dryRun ? "--dry-run" : null,
-    form.json ? "--json" : null,
-  ].filter((v): v is string => v !== null)
+  const flagList = mode === "sync"
+    ? [
+        form.merge ? "--merge (local merge)" : "remote rebase (default)",
+        form.dryRun ? "--dry-run" : null,
+        form.json ? "--json" : null,
+      ].filter((v): v is string => v !== null)
+    : [
+        "headless (--no-tty)",
+        repoValue ? `--repo ${repoValue}` : "repo: registry default",
+        `--depth ${form.depth.trim() || "7"}`,
+        mode === "start" && form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
+        harnessValue ? `--harness ${harnessValue}` : "harness: configured default",
+        mode === "start" && form.noHarness ? "--no-harness" : null,
+        form.dryRun ? "--dry-run" : null,
+        form.json ? "--json" : null,
+      ].filter((v): v is string => v !== null)
 
   async function handleSubmit() {
     if (!refValue) return
     const ok = await confirm({
       action: mode,
-      title: mode === "start" ? "Launch start" : "Launch review",
-      description:
-        mode === "start"
+      title: `Launch ${copy.label}`,
+      description: copy.title === "Sync a session"
+        ? "Brings the session's branch up to date with its base branch (remote rebase by default; --merge merges locally)."
+        : mode === "start"
           ? "Creates a worktree from the issue and launches the coding agent."
           : "Creates a worktree from the PR/MR and launches a review agent.",
       warning:
-        "The agent runs headless with auto-approve (--no-tty): it can commit, push and open MRs/PRs without further prompts. The server appends --yes.",
+        mode === "sync"
+          ? "The server appends --yes: sync runs without prompts (AI-assisted conflict resolution if the rebase/merge conflicts)."
+          : "The agent runs headless with auto-approve (--no-tty): it can commit, push and open MRs/PRs without further prompts. The server appends --yes.",
       confirmLabel: "Launch",
       details: [
         { label: "Ref", value: refValue, mono: true },
@@ -114,7 +200,7 @@ export function Launch() {
         args: buildArgs(),
         confirm: true,
       })
-      toast.success(`${mode === "start" ? "Start" : "Review"} launched`, {
+      toast.success(`${copy.label} launched`, {
         action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
       })
       navigate(`/runs/${run_id}`)
@@ -129,14 +215,14 @@ export function Launch() {
     <div>
       <PageHeader
         title="Launch"
-        description="Start an agent from an issue ref/URL, or review a PR/MR ref/URL. Runs headless as a child process of harness serve."
+        description="Start an agent from an issue ref/URL, review a PR/MR ref/URL, or sync a linked session. Runs headless as a child process of harness serve."
         actions={
           <div
             role="tablist"
             aria-label="Launch mode"
             className="inline-flex rounded-lg border p-1"
           >
-            {(["start", "review"] as const).map((m) => (
+            {MODES.map((m) => (
               <button
                 key={m}
                 role="tab"
@@ -149,110 +235,112 @@ export function Launch() {
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                {m === "start" ? "Start" : "Review"}
+                {COPY[m].label}
               </button>
             ))}
-          </div>
-        }
+        </div>
+      }
       />
 
       <Card className="mx-auto max-w-2xl">
         <CardHeader>
-          <CardTitle>
-            {mode === "start" ? "Start from an issue" : "Review a PR/MR"}
-          </CardTitle>
-          <CardDescription>
-            {mode === "start"
-              ? "Issue key, OWNER/REPO#22, or a full issue URL."
-              : "PR/MR URL, OWNER/REPO#33, or a session ref (key/branch/worktree)."}
-          </CardDescription>
+          <CardTitle>{copy.title}</CardTitle>
+          <CardDescription>{copy.refHint}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-5">
           <div className="grid gap-2">
             <Label htmlFor="launch-ref">
-              {mode === "start" ? "Issue ref" : "PR/MR ref"}
+              {mode === "start" ? "Issue ref" : mode === "review" ? "PR/MR ref" : "Session ref"}
             </Label>
             <Input
               id="launch-ref"
               value={form.ref}
               onChange={(e) => update("ref", e.target.value)}
-              placeholder={
-                mode === "start"
-                  ? "IPG-932, OWNER/REPO#22, or https://…/issues/22"
-                  : "https://…/pull/33, OWNER/REPO#33, or jira:IPG-929"
-              }
+              placeholder={copy.refPlaceholder}
               autoComplete="off"
               spellCheck={false}
             />
           </div>
 
-          <div className="grid gap-5 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label htmlFor="launch-repo">Repo</Label>
-              <Select
-                value={form.repo}
-                onValueChange={(v) => update("repo", v)}
-              >
-                <SelectTrigger id="launch-repo" className="w-full" aria-label="Repo">
-                  <SelectValue placeholder="Registry default" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={AUTO_REPO}>Registry default (auto)</SelectItem>
-                  {(repos ?? []).map((r) => (
-                    <SelectItem key={r.name} value={r.name}>
-                      {r.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                --repo accepts a registered name; "auto" lets the harness pick.
-              </p>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="launch-depth">Clone depth</Label>
-              <Input
-                id="launch-depth"
-                type="number"
-                min={1}
-                value={form.depth}
-                onChange={(e) => update("depth", e.target.value)}
-                placeholder="7"
+          {mode === "sync" ? (
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="launch-merge"
+                checked={form.merge}
+                onCheckedChange={(v) => update("merge", v === true)}
               />
+              <Label htmlFor="launch-merge" className="font-normal">
+                <span className="font-mono text-[13px]">--merge</span> — merge locally instead of the remote rebase
+              </Label>
             </div>
-          </div>
+          ) : (
+            <>
+              <div className="grid gap-5 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label htmlFor="launch-repo">Repo</Label>
+                  <SearchableSelect
+                    value={repoDisplay}
+                    options={repoOptions}
+                    onChange={(v) => update("repo", v === AUTO_LABEL ? AUTO_REPO : v)}
+                    placeholder="Filter repos, or type a path/URL…"
+                    allowCustom
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    --repo accepts a registered name, a local path, or a clone URL; "(auto)" lets the harness pick.
+                  </p>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="launch-depth">Clone depth</Label>
+                  <Input
+                    id="launch-depth"
+                    type="number"
+                    min={1}
+                    value={form.depth}
+                    onChange={(e) => update("depth", e.target.value)}
+                    placeholder="7"
+                  />
+                </div>
+              </div>
 
-          {mode === "start" ? (
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="launch-base">Base branch</Label>
-                <Input
-                  id="launch-base"
-                  value={form.base}
-                  onChange={(e) => update("base", e.target.value)}
-                  placeholder="repo default"
-                  spellCheck={false}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="launch-harness">Harness</Label>
-                <Select
-                  value={form.harness}
-                  onValueChange={(v) => update("harness", v)}
-                >
-                  <SelectTrigger id="launch-harness" className="w-full" aria-label="Harness">
-                    <SelectValue placeholder="Configured default" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={DEFAULT_HARNESS}>Configured default</SelectItem>
-                    <SelectItem value="omp">omp</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          ) : null}
+              {mode === "start" ? (
+                <div className="grid gap-5 sm:grid-cols-2">
+                  <div className="grid gap-2">
+                    <Label htmlFor="launch-base">Base branch</Label>
+                    <Input
+                      id="launch-base"
+                      value={form.base}
+                      onChange={(e) => update("base", e.target.value)}
+                      placeholder="repo default"
+                      spellCheck={false}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="launch-harness">Harness</Label>
+                    <SearchableSelect
+                      value={harnessDisplay}
+                      options={harnessOptions}
+                      onChange={(v) => update("harness", v === HARNESS_DEFAULT_LABEL ? DEFAULT_HARNESS : v)}
+                      placeholder="Filter harnesses…"
+                    />
+                  </div>
+                </div>
+              ) : null}
+            </>
+          )}
 
           <div className="flex flex-wrap gap-x-6 gap-y-3">
+            {mode === "start" ? (
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="launch-no-harness"
+                  checked={form.noHarness}
+                  onCheckedChange={(v) => update("noHarness", v === true)}
+                />
+                <Label htmlFor="launch-no-harness" className="font-normal">
+                  <span className="font-mono text-[13px]">--no-harness</span> — skip the agent: print the command and hand over the worktree
+                </Label>
+              </div>
+            ) : null}
             <div className="flex items-center gap-2">
               <Checkbox
                 id="launch-dry"
@@ -279,10 +367,19 @@ export function Launch() {
             <p className="flex items-start gap-2">
               <ShieldAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
               <span>
-                Headless auto-approve: the web server always runs{" "}
-                <span className="font-mono text-[13px]">--no-tty</span> (
-                <span className="font-mono text-[13px]">omp -p --auto-approve</span>
-                ), so the agent can commit, push and open MRs/PRs on its own.
+                {mode === "sync" ? (
+                  <>
+                    The web server appends <span className="font-mono text-[13px]">--yes</span>, so sync runs
+                    without prompts (AI-assisted conflict resolution if the rebase/merge conflicts).
+                  </>
+                ) : (
+                  <>
+                    Headless auto-approve: the web server always runs{" "}
+                    <span className="font-mono text-[13px]">--no-tty</span> (
+                    <span className="font-mono text-[13px]">omp -p --auto-approve</span>
+                    ), so the agent can commit, push and open MRs/PRs on its own.
+                  </>
+                )}
               </span>
             </p>
           </div>
@@ -294,7 +391,7 @@ export function Launch() {
               disabled={!refValue || submitting}
             >
               <Rocket aria-hidden />
-              {submitting ? "Launching…" : `Launch ${mode}`}
+              {submitting ? "Launching…" : `Launch ${copy.label}`}
             </Button>
           </div>
         </CardContent>

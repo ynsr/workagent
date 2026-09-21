@@ -277,7 +277,8 @@ function LinkSetDialog({ onClose }: { onClose: () => void }) {
           value={repo}
           options={repoOptions}
           onChange={setRepo}
-          placeholder="Filter registered repos…"
+          placeholder="Filter registered repos, or type a path…"
+          allowCustom
         />
         {repo ? (
           <p className="truncate text-xs text-muted-foreground">

@@ -312,7 +312,7 @@ export function Dashboard() {
           />
           <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
             <SquareTerminal className="size-3.5" aria-hidden />
-            Sync and Cleanup run as child processes — follow them under Runs.
+            Sync, Review and Cleanup run as child processes — follow them under Runs.
           </p>
         </>
       )}
