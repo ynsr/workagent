@@ -160,6 +160,18 @@ def _guard_harness(key: str | None, worktree: str) -> None:
               "finish or kill it", 1)
 
 
+def _harness_cell(key: str, worktree: str = "") -> str:
+    """Display cell: "<harness> <pid>" while one is live, "" otherwise."""
+    rec = store.active_harness(key)
+    if rec is None and worktree:
+        # The live harness may be recorded under a different key.
+        for v in store.load_harnesses().values():
+            if v.get("worktree") == worktree:
+                rec = v
+                break
+    return f"{rec['harness']} {rec['pid']}" if rec else ""
+
+
 def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: str,
                  no_tty: bool, no_harness: bool, result: dict, json_output: bool,
                  run_key: str | None = None) -> None:
@@ -731,7 +743,7 @@ def link_list(
     links = store.load_links()
     if json_output:
         print(json.dumps({"trackers": cfg.get("trackers", {}),
-                          "sessions": {k: _enrich_entry(v, refresh_pr)
+                          "sessions": {k: _enrich_entry(k, v, refresh_pr)
                                        for k, v in links.items()}},
                          indent=2, ensure_ascii=False))
         return
@@ -968,13 +980,15 @@ def _session_rows(links: dict, show_worktree: bool, refresh: bool
     for k, v in links.items():
         cells = _status_cells(v, refresh)
         row = {"key": k, "branch": v.get("branch", "?"),
+               "harness": _harness_cell(k, v.get("worktree", "")),
                "commits": cells["commits"], "pr": cells["pr"],
                "_pr_state": (cells["pr_data"] or {}).get("state", "")}
         if show_worktree:
             row["worktree"] = v.get("worktree", "?")
         rows.append(row)
-    columns = (["key", "worktree", "branch", "commits", "pr"] if show_worktree
-               else ["key", "branch", "commits", "pr"])
+    columns = (["key", "worktree", "branch", "harness", "commits", "pr"]
+               if show_worktree
+               else ["key", "branch", "harness", "commits", "pr"])
     return rows, columns
 
 
@@ -984,18 +998,23 @@ def _colorize_session(row: dict) -> dict:
     if st in _PR_STYLES:
         c = _PR_STYLES[st]
         out["pr"] = f"[{c}]{row['pr']}[/{c}]"
+    if not out.get("harness"):
+        out["harness"] = "—"
     return out
 
 
-def _enrich_entry(entry: dict, refresh: bool) -> dict:
+def _enrich_entry(key: str, entry: dict, refresh: bool) -> dict:
     cells = _status_cells(entry, refresh)
-    return {**entry, "commits": cells["commits"], "pr": cells["pr"],
+    return {**entry, "harness": _harness_cell(key, entry.get("worktree", "")),
+            "commits": cells["commits"], "pr": cells["pr"],
             "commits_detail": cells["ab"], "pr_detail": cells["pr_data"]}
 
 
 def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
     cells = _status_cells(entry, refresh)
-    detail = {"key": key, **entry, "commits": cells["commits"],
+    detail = {"key": key, **entry,
+              "harness": _harness_cell(key, entry.get("worktree", "")),
+              "commits": cells["commits"],
               "pr": _fmt_pr(cells["pr_data"]), "commits_detail": cells["ab"],
               "pr_detail": cells["pr_data"], "base_branch": cells["base_branch"],
               "issue_url": refs.issue_url(key, entry.get("issue"))}
@@ -1106,7 +1125,7 @@ def status(
         _print_detail(detail)
         return
     if json_output:
-        print(json.dumps({k: _enrich_entry(v, refresh_pr)
+        print(json.dumps({k: _enrich_entry(k, v, refresh_pr)
                           for k, v in links.items()}, indent=2, ensure_ascii=False))
         return
     rows, columns = _session_rows(links, worktree, refresh_pr)

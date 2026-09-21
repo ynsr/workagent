@@ -750,6 +750,41 @@ def test_status_detail_no_hint_when_pr_exists(isolated_config, tmp_path,
     assert data["pr"] == "PR #9 (open)"
 
 
+def test_status_harness_cell_cross_key_worktree(isolated_config, tmp_path):
+    """A harness recorded under another key still shows for this worktree."""
+    wt = tmp_path / "wt"; wt.mkdir()
+    store.record_link("jira:H-1", {"branch": "feat/h", "worktree": str(wt)})
+    store.record_link("pr:https://x/o/r/-/merge_requests/1",
+                      {"branch": "feat/h", "worktree": str(wt)})
+    store.record_harness_run("pr:https://x/o/r/-/merge_requests/1", "omp", str(wt))
+    rows, _ = cli._session_rows(store.load_links(), False, False)
+    row = next(r for r in rows if r["key"] == "jira:H-1")
+    assert row["harness"].startswith("omp ")
+
+
+def test_status_row_shows_live_harness(isolated_config, tmp_path, monkeypatch):
+    wt = tmp_path / "wt"; wt.mkdir()
+    store.record_link("jira:H-1", {"branch": "feat/h", "worktree": str(wt)})
+    store.record_harness_run("jira:H-1", "omp", str(wt))
+    rows, columns = cli._session_rows(store.load_links(), False, False)
+    assert "harness" in columns
+    row = next(r for r in rows if r["key"] == "jira:H-1")
+    assert row["harness"].startswith("omp ")
+    # --json rows and the detail panel gain the live harness too.
+    data = json.loads(_invoke("status", "--json").stdout)
+    assert data["jira:H-1"]["harness"].startswith("omp ")
+    detail = json.loads(_invoke("status", "H-1", "--json").stdout)
+    assert detail["harness"].startswith("omp ")
+    # --csv gains the harness column (third after key, branch).
+    lines = _invoke("status", "--csv").stdout.strip().splitlines()
+    assert lines[0].split(",")[2] == "harness"
+    assert lines[1].split(",")[2].startswith("omp")
+    # After the run clears, the cell is empty again.
+    store.clear_harness_run("jira:H-1")
+    rows, _ = cli._session_rows(store.load_links(), False, False)
+    assert next(r for r in rows if r["key"] == "jira:H-1")["harness"] == ""
+
+
 def test_cd_prints_worktree(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)

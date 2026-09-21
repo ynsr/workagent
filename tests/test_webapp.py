@@ -344,6 +344,17 @@ def test_status_endpoints(client):
     assert missing.status_code == 404
 
 
+def test_api_status_includes_harness(client):
+    store.record_link("jira:IPG-1", {"issue": "IPG-1",
+                                     "worktree": "/tmp/wt", "branch": "b",
+                                     "repo": "/tmp/repo"})
+    store.record_harness_run("jira:IPG-1", "omp", "/tmp/wt")
+    all_sessions = client.get("/api/status").json()
+    assert all_sessions["jira:IPG-1"]["harness"].startswith("omp ")
+    detail = client.get("/api/status", params={"ref": "IPG-1"}).json()
+    assert detail["harness"].startswith("omp ")
+
+
 def test_path_endpoint(client, tmp_path):
     wt = tmp_path / "wt2"
     wt.mkdir()
