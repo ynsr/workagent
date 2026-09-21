@@ -109,6 +109,32 @@ def test_navigation_leaves_no_padding():
     # again) before drawing; without that pass, redrawn content piles
     # onto stale rows and the block drifts into leading-space padding
     up = "\x1b[1A" * len(options)
-    erase_pass = "\x1b[2K\n" * len(options)
+    erase_pass = "\x1b[2K\r\n" * len(options)
     erased = out.count(up + erase_pass + up)
     assert erased == 2, f"padding artifact: only {erased} of 2 redraws erase the block"
+
+
+def test_option_lines_end_crlf():
+    """Raw mode clears OPOST: every line the picker streams ends \r\n (issue #7)."""
+    _, out = _feed("\r", ["a", "b"])
+    lines = [ln for ln in out.splitlines() if "❯" in ln]
+    assert len(lines) == 1  # the selected option line is streamed
+    # a bare \n moves down without returning to column 0, so each redraw
+    # staircases one full list-width right; every \n must be a \r\n
+    assert out.count("\n") == out.count("\r\n")
+    assert out.count("\r\n") >= 2  # and both option lines end in \r\n
+
+
+def test_jk_navigation():
+    idx, _ = _feed("jj\r", ["a", "b", "c"])
+    assert idx == 2
+    idx, _ = _feed("jk\r", ["a", "b", "c"])
+    assert idx == 0
+
+
+def test_picker_zero_and_single_options():
+    idx, _ = _feed("\r", ["only"])
+    assert idx == 0
+    idx, out = _feed("\r", [])
+    assert idx is None
+    assert out == ""  # empty options return before anything is drawn
