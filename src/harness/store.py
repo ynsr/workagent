@@ -9,6 +9,7 @@ Layout (~/.config/harness/, override with HARNESS_CONFIG_DIR):
 import json
 import os
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -148,3 +149,68 @@ def get_cached_pr_tool(branch: str) -> str | None:
 
 def get_cached_pr_status(branch: str) -> dict | None:
     return load_pr_cache().get(branch, {}).get("pr")
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _harness_path() -> Path:
+    return config_dir() / "harnesses.json"
+
+
+def save_harnesses_raw(data: dict) -> None:
+    _write_json(_harness_path(), data)
+
+
+def _sweep(data: dict) -> tuple[dict, bool]:
+    alive = {k: v for k, v in data.items()
+             if isinstance(v, dict) and _pid_alive(v.get("pid", -1))}
+    return alive, len(alive) != len(data)
+
+
+def load_harnesses() -> dict:
+    data = _read_json(_harness_path(), {})
+    alive, changed = _sweep(data)
+    if changed:
+        save_harnesses_raw(alive)
+    return alive
+
+
+def record_harness_run(key: str, harness: str, worktree: str = "") -> None:
+    path = _harness_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.parent / (path.name + ".lock"), "w") as lock:
+        _locked(lock, lambda: _record_harness_locked(path, key, harness, worktree))
+
+
+def _record_harness_locked(path: Path, key: str, harness: str, worktree: str) -> None:
+    data, _ = _sweep(_read_json(path, {}))
+    data[key] = {"harness": harness, "pid": os.getpid(),
+                 "started_at": time.time(), "worktree": worktree}
+    _atomic_replace(path, data)
+
+
+def clear_harness_run(key: str) -> None:
+    path = _harness_path()
+    if not path.exists():
+        return
+    with open(path.parent / (path.name + ".lock"), "w") as lock:
+        _locked(lock, lambda: _clear_harness_locked(path, key))
+
+
+def _clear_harness_locked(path: Path, key: str) -> None:
+    data = _read_json(path, {})
+    if key in data:
+        del data[key]
+        _atomic_replace(path, data)
+
+
+def active_harness(key: str) -> dict | None:
+    return load_harnesses().get(key)
