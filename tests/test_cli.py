@@ -1086,7 +1086,9 @@ def test_open_resolves_and_opens(isolated_config, tmp_path, monkeypatch):
     class FakePopen:
         def __init__(self, argv, **kw):
             opened.append(argv)
+            kwargs.update(kw)
 
+    kwargs = {}
     monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
     r = _invoke("open", "IPG-929")
     assert r.exit_code == 0, r.output
@@ -1094,6 +1096,9 @@ def test_open_resolves_and_opens(isolated_config, tmp_path, monkeypatch):
     assert opened, "no opener spawned"
     assert opened[0][0] in ("xdg-open", "open", "explorer")
     assert opened[0][1] == str(wt)
+    assert kwargs["stdin"] == kwargs["stdout"] == subprocess.DEVNULL
+    assert kwargs["stderr"] == subprocess.DEVNULL
+    assert kwargs["start_new_session"] is True
 
 
 def test_open_refuses_invalid_worktree(isolated_config, tmp_path):
