@@ -176,9 +176,15 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                  no_tty: bool, no_harness: bool, result: dict, json_output: bool,
                  run_key: str | None = None) -> None:
     """Launch the harness in the worktree; with --no-harness print the exact
-    command instead and hand the worktree to the user (shell exec on TTY)."""
+    command instead and hand the worktree to the user (shell exec on TTY).
+
+    Real launches with a run_key record a session row (running → finished /
+    failed); --no-harness and --dry-run (never reaches here) write nothing.
+    """
+    from . import store_sqlite as _sq
+    runtime = backend.get_runtime(harness_name)
     harness_cmd = " ".join(shlex.quote(a) for a in
-                           backend.command_argv(harness_name, prompt, no_tty, _HARNESS_ARGS))
+                           runtime.command_argv(prompt, no_tty, _HARNESS_ARGS))
     if no_harness:
         eprint(f"harness command: {harness_cmd}")
         result["harness_command"] = harness_cmd
@@ -190,10 +196,38 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             shell = os.environ.get("SHELL") or "/bin/sh"
             os.execvp(shell, [shell])
         return
+    sid: str | None = None
+    db = _sq.db_path()
+    session_file = ""
     if run_key:
         store.record_harness_run(run_key, harness_name, worktree or fallback_dir)
+        try:
+            _sq.init_db(db)
+            sid = _sq.gen_session_id()
+            session_file = str(_sq.session_file_path(sid, harness_name))
+            Path(session_file).touch(exist_ok=True)
+            sid = _sq.insert_session(
+                db, worktree_ref=run_key, runtime_name=harness_name,
+                initiator_command=result.get("command", harness_name),
+                prompt=prompt, file_path=session_file)
+        except Exception as e:
+            # Pre-cutover: links still live in JSON, so the FK insert fails.
+            # Session tracking must never break the launch itself.
+            eprint(f"warning: session record failed: {e}")
+            sid = None
     try:
-        backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty, _HARNESS_ARGS)
+        extra = runtime.session_file_flag(session_file) if sid else None
+        backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty,
+                       (_HARNESS_ARGS + extra) if extra else _HARNESS_ARGS)
+        if sid:
+            _sq.finish_session(db, sid, "finished")
+    except Exception:
+        if sid:
+            try:
+                _sq.finish_session(db, sid, "failed")
+            except Exception:
+                pass
+        raise
     finally:
         if run_key:
             store.clear_harness_run(run_key)

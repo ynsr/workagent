@@ -112,8 +112,9 @@ def insert_run(path: Path, session_id: str, command: str,
             (session_id, command, json.dumps(args), exit_code, created))
         return cur.lastrowid
 
-
 def list_sessions(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         return [dict(r) for r in conn.execute(
@@ -122,6 +123,8 @@ def list_sessions(path: Path) -> list[dict]:
 
 def get_session(path: Path, sid: str) -> dict | None:
     import json
+    if not path.exists():
+        return None
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM sessions WHERE id = ?",

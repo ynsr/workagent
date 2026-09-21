@@ -1857,3 +1857,33 @@ def test_scan_worktrees_missing_root(isolated_config, tmp_path):
     cfg["scan_root"] = str(tmp_path / "nope")
     store.save_config(cfg)
     assert cli._scan_worktrees() == []
+
+
+def test_run_harness_writes_session_row(isolated_config, tmp_path, monkeypatch):
+    from harness import store_sqlite as sq
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    # Post-cutover the worktree row exists in SQLite; seed it here.
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO repos (key_ref, path) VALUES ('r', '/r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
+                     " VALUES ('jira:IPG-929', '/wt', 'b', 'r')")
+    result = {"key": "jira:IPG-929"}
+    cli._run_harness("omp", "prompt", str(wt_dir), str(repo_dir), False,
+                     False, result, True, run_key="jira:IPG-929")
+    rows = sq.list_sessions(sq.db_path())
+    assert len(rows) == 1 and rows[0]["state"] == "finished"
+    assert rows[0]["runtime_name"] == "omp"
+    assert rows[0]["file_path"].endswith(".jsonl")
+
+
+def test_run_harness_no_harness_writes_nothing(isolated_config, tmp_path, monkeypatch):
+    from harness import store_sqlite as sq
+    result = {"key": "k"}
+    cli._run_harness("omp", "prompt", "/tmp/wt", "/tmp", False,
+                     True, result, True, run_key="k")
+    assert sq.list_sessions(sq.db_path()) == []

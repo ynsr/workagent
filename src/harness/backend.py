@@ -10,16 +10,61 @@ import sys
 from .errors import HarnessError
 
 
+class Runtime:
+    """AI harness runtime: argv, launch, transcript-file flag."""
+    name: str = ""
+
+    def command_argv(self, prompt: str, no_tty: bool,
+                     extra_args: list[str] | None = None) -> list[str]:
+        raise NotImplementedError
+
+    def launch(self, prompt: str, workdir: str, no_tty: bool,
+               extra_args: list[str] | None = None) -> int:
+        raise NotImplementedError
+
+    def session_file_flag(self, path: str) -> list[str]:
+        return []
+
+
+class OmpRuntime(Runtime):
+    name = "omp"
+
+    def command_argv(self, prompt, no_tty, extra_args=None):
+        if no_tty:
+            return ["omp", "-p", "--auto-approve", *(extra_args or []), prompt]
+        return ["omp", *(extra_args or []), prompt]
+
+    def launch(self, prompt, workdir, no_tty, extra_args=None):
+        argv = self.command_argv(prompt, no_tty, extra_args)
+        if shutil.which(argv[0]) is None:
+            raise HarnessError(f"`{argv[0]}` not found on PATH")
+        if no_tty:
+            proc = subprocess.run(argv, cwd=workdir)
+            return proc.returncode
+        cd_worktree(workdir)
+        os.execvp(argv[0], argv)
+        return 0  # unreachable; keeps type checkers quiet
+
+    def session_file_flag(self, path: str) -> list[str]:
+        return ["--session-file", path]
+
+
+RUNTIMES: dict[str, Runtime] = {"omp": OmpRuntime()}
+
+
+def get_runtime(name: str) -> Runtime:
+    try:
+        return RUNTIMES[name]
+    except KeyError:
+        raise HarnessError(
+            f"unsupported harness: {name} (v1 supports: {', '.join(sorted(RUNTIMES))})",
+            exit_code=2) from None
+
+
 def command_argv(harness: str, prompt: str, no_tty: bool,
                  extra_args: list[str] | None = None) -> list[str]:
     """Full harness argv — shared by launch() and the --no-harness preview."""
-    if harness != "omp":
-        raise HarnessError(f"unsupported harness: {harness} (v1 supports: omp)", exit_code=2)
-    if no_tty:
-        # -p prints-and-exits; --auto-approve skips interactive approval
-        # prompts (otherwise the child blocks forever on tool approval).
-        return ["omp", "-p", "--auto-approve", *(extra_args or []), prompt]
-    return ["omp", *(extra_args or []), prompt]
+    return get_runtime(harness).command_argv(prompt, no_tty, extra_args)
 
 
 def cd_worktree(workdir: str) -> None:
@@ -42,15 +87,7 @@ def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
     so the user gets a real interactive session rooted in the worktree.
     Non-TTY (--no-tty): runs `omp -p <prompt>` as a child and waits.
     """
-    argv = command_argv(harness, prompt, no_tty, extra_args)
-    if shutil.which(argv[0]) is None:
-        raise HarnessError(f"`{argv[0]}` not found on PATH")
-    if no_tty:
-        proc = subprocess.run(argv, cwd=workdir)
-        return proc.returncode
-    cd_worktree(workdir)
-    os.execvp(argv[0], argv)
-    return 0  # unreachable; keeps type checkers quiet
+    return get_runtime(harness).launch(prompt, workdir, no_tty, extra_args)
 
 
 def _push_target_lines(worktree: str, branch: str) -> str:
