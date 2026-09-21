@@ -1887,3 +1887,45 @@ def test_run_harness_no_harness_writes_nothing(isolated_config, tmp_path, monkey
     cli._run_harness("omp", "prompt", "/tmp/wt", "/tmp", False,
                      True, result, True, run_key="k")
     assert sq.list_sessions(sq.db_path()) == []
+
+
+def test_cleanup_merges_open_pr_first(isolated_config, tmp_path, monkeypatch):
+    store.record_link("jira:IPG-9", {"issue": "IPG-9", "worktree": "/tmp/wt",
+                                     "branch": "feat/9", "repo": "/tmp/proj",
+                                     "pr_url": "https://github.com/o/r/pull/9"})
+    calls = []
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda *a, **k: calls.append("cleanup") or {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: calls.append("close"))
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+    from harness.errors import run_cmd as _real  # noqa: F841 (documents the seam)
+    def fake(*a, **k):
+        calls.append(a)
+        return ""
+    monkeypatch.setattr("harness.cli.run_cmd", fake)
+    entry = dict(store.load_links()["jira:IPG-9"])
+    out = cli._cleanup_one("jira:IPG-9", entry, force=True, yes=True,
+                           dry_run=False, json_output=True)
+    assert out["status"] == "cleaned"
+    assert any("merge" in str(c) for c in calls)
+    assert "close" not in calls  # merged, not closed
+
+
+def test_cleanup_merge_failure_keeps_worktree(isolated_config, tmp_path, monkeypatch):
+    store.record_link("jira:IPG-9", {"issue": "IPG-9", "worktree": "/tmp/wt",
+                                     "branch": "feat/9", "repo": "/tmp/proj",
+                                     "pr_url": "https://github.com/o/r/pull/9"})
+    from harness.errors import HarnessError
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+    def boom(*a, **k):
+        raise HarnessError("merge conflict")
+    monkeypatch.setattr("harness.cli.run_cmd", boom)
+    import pytest
+    with pytest.raises(HarnessError):
+        cli._cleanup_one("jira:IPG-9", dict(store.load_links()["jira:IPG-9"]),
+                         force=False, yes=True, dry_run=False,
+                         json_output=True)
+    assert "jira:IPG-9" in store.load_links()  # link kept

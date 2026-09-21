@@ -638,6 +638,7 @@ def cleanup(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
     merged: bool = typer.Option(False, "--merged", help="Clean every linked worktree whose PR/MR is merged/closed (requires --yes; skips live-harness and invalid worktrees)."),
+    no_squash: bool = typer.Option(False, "--no-squash", help="Merge open PRs with a merge commit instead of squash."),
 ) -> None:
     """Close issue + remove worktree/branch/PR.
 
@@ -680,7 +681,8 @@ def cleanup(
                              "status": "skipped:invalid"})
                 continue
             rows.append(_cleanup_one(key, dict(entry), force, yes, dry_run,
-                                     json_output))
+                                     json_output, squash=not no_squash,
+                                     merge=False))
         if json_output:
             print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
         else:
@@ -715,7 +717,8 @@ def cleanup(
 
     if dry_run:
         _print_result({"dry_run": True, "key": key, "repo": str(repo), "branch": branch,
-                       "pr_url": entry.get("pr_url", ""), "force": force}, json_output)
+                       "pr_url": entry.get("pr_url", ""), "force": force,
+                       "merge": entry.get("pr_url", "")}, json_output)
         return
 
     if not yes and not force and sys.stdin.isatty():
@@ -726,14 +729,25 @@ def cleanup(
         if answer not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)
 
-    result = _cleanup_one(key, dict(entry), force, True, False, json_output)
-    _print_result({"branch": branch, "cleanup": result["cleanup"], "closed": ref},
-                  json_output)
+    result = _cleanup_one(key, dict(entry), force, True, False, json_output,
+                          squash=not no_squash)
+
+
+def _merge_pr(pr_url: str, squash: bool) -> None:
+    """Merge an open PR/MR (squash by default); raise HarnessError on failure."""
+    if "github.com" in pr_url:
+        run_cmd("gh", "pr", "merge", pr_url,
+                *([] if squash else ["--no-squash"]))
+    else:
+        run_cmd("glab", "mr", "merge", pr_url,
+                *([] if squash else ["--no-squash"]))
+    eprint(f"merged {pr_url}")
 
 
 def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
-                 dry_run: bool, json_output: bool) -> dict:
-    """Clean one linked worktree: git-wt cleanup + close issue/PR + drop link.
+                 dry_run: bool, json_output: bool, squash: bool = True,
+                 merge: bool | None = None) -> dict:
+    """Clean one linked worktree: merge open PR/MR, git-wt cleanup, close + drop link.
 
     Shared by `cleanup <ref>` (after confirmation) and the `cleanup --merged`
     loop (after the merged/live-harness/validity gates). The caller owns ref
@@ -754,11 +768,31 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
                       "url": pr_url or stored_ref}
     if dry_run:
         return {"key": key, "branch": branch, "repo": str(repo),
-                "pr_url": pr_url, "force": force, "status": "dry-run"}
+                "pr_url": pr_url, "force": force, "status": "dry-run",
+                "merge": pr_url or ""}
+    state = (_status_cells(dict(entry), refresh_pr=False).get("pr_data")
+             or {}).get("state", "")
+    merged_now = False
+    if merge is None:
+        merge = bool(pr_url) and state not in ("MERGED", "CLOSED", "")
+    if merge:
+        # Open PR/MR: merge (squash default) so no work is lost. Any
+        # failure raises BEFORE worktree removal / link drop / branch
+        # delete — nothing is torn down on a failed merge.
+        _merge_pr(pr_url, squash=squash)
+        merged_now = True
     cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=True,
                                      force=force, yes=yes)
-    _close_issue(parsed, force)
-    _close_pr(parsed, pr_url, force)
+    if merged_now:
+        # Remote branch goes LAST: local cleanup already succeeded.
+        try:
+            run_cmd("git", "-C", str(repo), "push", "origin",
+                    "--delete", branch)
+        except HarnessError as e:
+            eprint(f"warning: remote branch delete failed: {e}")
+    else:
+        _close_issue(parsed, force)
+        _close_pr(parsed, pr_url, force)
     remaining = {k: v for k, v in store.load_links().items() if k != key}
     store.save_links(remaining)
     if not json_output:
