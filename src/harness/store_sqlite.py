@@ -41,8 +41,10 @@ CREATE TABLE IF NOT EXISTS runs (
 
 def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(path), timeout=30.0)
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 
@@ -76,13 +78,14 @@ def gen_session_id(now: datetime | None = None) -> str:
 
 def insert_session(path: Path, *, worktree_ref: str, runtime_name: str,
                    initiator_command: str, prompt: str,
-                   file_path: str) -> str:
+                   file_path: str, session_id: str | None = None) -> str:
     """Insert a running session; same-ms id collision retries with a fresh
-    suffix (PK violation → new id, never a crash)."""
+    suffix (PK violation → new id, never a crash). Pass session_id to pin
+    the row id (e.g. to match the transcript filename)."""
     created = datetime.now(timezone.utc).isoformat()
     with connect(path) as conn:
         for _ in range(3):
-            sid = gen_session_id()
+            sid = session_id or gen_session_id()
             try:
                 conn.execute(
                     "INSERT INTO sessions (id, worktree_ref, state, runtime_name,"
@@ -93,6 +96,8 @@ def insert_session(path: Path, *, worktree_ref: str, runtime_name: str,
                 return sid
             except sqlite3.IntegrityError as e:
                 if "FOREIGN KEY" in str(e):
+                    raise
+                if session_id is not None:
                     raise
                 continue
     raise Exception("session id collision — retry the launch")
@@ -167,11 +172,15 @@ def load_links_rows(path: Path) -> dict:
 
 
 def save_links_rows(path: Path, links: dict) -> None:
-    """Replace all worktree rows from a legacy links dict (cutover writes)."""
+    """Merge a legacy links dict into worktree rows (cutover writes).
+
+    Upserts only the given keys and deletes rows absent from the dict —
+    never a blanket DELETE, so session rows (FK → worktrees) survive
+    ordinary link mutations.
+    """
     import json
     init_db(path)
     with connect(path) as conn:
-        conn.execute("DELETE FROM worktrees")
         for key, e in links.items():
             extra = {k: v for k, v in e.items() if k not in (
                 "worktree", "branch", "repo", "issue_url", "pr_url",
@@ -182,11 +191,21 @@ def save_links_rows(path: Path, links: dict) -> None:
             conn.execute(
                 "INSERT INTO worktrees (ref_key, path, branch, repo_key,"
                 " issue_url, pr_url, added_at, payload)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(ref_key) DO UPDATE SET path=excluded.path,"
+                " branch=excluded.branch, repo_key=excluded.repo_key,"
+                " issue_url=excluded.issue_url, pr_url=excluded.pr_url,"
+                " added_at=excluded.added_at, payload=excluded.payload",
                 (key, str(e.get("worktree", "")), str(e.get("branch", "")),
                  str(e.get("repo", "")), str(e.get("issue_url", "")),
                  str(e.get("pr_url", "")), str(e.get("added_at", "")),
                  json.dumps(extra)))
+        if links:
+            conn.execute(
+                "DELETE FROM worktrees WHERE ref_key NOT IN (%s)" %
+                ",".join("?" * len(links)), tuple(links))
+        else:
+            conn.execute("DELETE FROM worktrees")
 
 
 def migrate_json(config_dir: Path, db_path: Path) -> dict:

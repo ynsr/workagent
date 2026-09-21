@@ -208,15 +208,17 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             _sq.init_db(db)
             sid = _sq.gen_session_id()
             session_file = str(_sq.session_file_path(sid, harness_name))
-            Path(session_file).touch(exist_ok=True)
             sid = _sq.insert_session(
                 db, worktree_ref=run_key, runtime_name=harness_name,
                 initiator_command=result.get("command", harness_name),
-                prompt=prompt, file_path=session_file)
+                prompt=prompt, file_path=session_file, session_id=sid)
+            Path(session_file).touch(exist_ok=True)
         except Exception as e:
-            # Post-cutover insert failure: launch continues, warn only.
+            # Post-cutover insert failure: launch continues, warn only;
+            # drop the pre-created filename so no orphan .jsonl remains.
             eprint(f"warning: session record failed: {e}")
             sid = None
+            session_file = ""
     try:
         extra = runtime.session_file_flag(session_file) if sid else None
         backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty,
@@ -776,7 +778,9 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
              or {}).get("state", "")
     merged_now = False
     if merge is None:
-        merge = bool(pr_url) and state not in ("MERGED", "CLOSED", "")
+        # Merge only on explicitly open states; unknown ("") falls back
+        # to close-and-remove so offline/cache-miss cleanup still works.
+        merge = bool(pr_url) and state in ("OPEN", "OPENED")
     if merge:
         # Open PR/MR: merge (squash default) so no work is lost. Any
         # failure raises BEFORE worktree removal / link drop / branch

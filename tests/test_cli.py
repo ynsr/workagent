@@ -1961,3 +1961,66 @@ def test_migrate_roundtrip_uses_sqlite(isolated_config):
                                      "repo": "/r"})
     assert "jira:IPG-8" in store.load_links()
     assert not (d / "links.json").exists()
+
+
+def test_cleanup_unknown_pr_state_closes_without_merge(isolated_config, monkeypatch):
+    store.record_link("jira:IPG-10", {"issue": "IPG-10", "worktree": "/tmp/wt",
+                                      "branch": "feat/10", "repo": "/tmp/proj",
+                                      "pr_url": "https://github.com/o/r/pull/10"})
+    calls = []
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: calls.append("close"))
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": ""}})
+    monkeypatch.setattr("harness.cli.run_cmd",
+                        lambda *a, **k: calls.append("merge") or "")
+    cli._cleanup_one("jira:IPG-10", dict(store.load_links()["jira:IPG-10"]),
+                     force=False, yes=True, dry_run=False, json_output=True)
+    assert "merge" not in calls
+    assert "close" in calls
+
+
+def test_cutover_link_write_preserves_sessions(isolated_config):
+    import json
+    from harness import store_sqlite as sq
+    d = Path(str(isolated_config))
+    (d / "links.json").write_text(json.dumps({
+        "jira:IPG-1": {"worktree": "/wt1", "branch": "feat/1", "repo": "/r"},
+        "jira:IPG-2": {"worktree": "/wt2", "branch": "feat/2", "repo": "/r"}}))
+    r = _invoke("migrate", "--json")
+    assert r.exit_code == 0, r.output
+    db = sq.db_path()
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO repos (key_ref, path) VALUES ('x', '/x')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
+                     " VALUES ('jira:IPG-9', '/wt9', 'b9', 'x')")
+    sid = sq.insert_session(db, worktree_ref="jira:IPG-9",
+                            runtime_name="omp", initiator_command="start",
+                            prompt="p", file_path="/tmp/s.jsonl",
+                            session_id="sid-1")
+    store.record_link("jira:IPG-3", {"worktree": "/wt3", "branch": "feat/3",
+                                     "repo": "/r"})
+    assert sq.get_session(db, sid) is not None
+    assert "jira:IPG-3" in store.load_links()
+
+
+def test_session_id_matches_file(isolated_config, tmp_path, monkeypatch):
+    from harness import store_sqlite as sq
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO repos (key_ref, path) VALUES ('r', '/r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
+                     " VALUES ('jira:IPG-929', '/wt', 'b', 'r')")
+    result = {"key": "jira:IPG-929"}
+    cli._run_harness("omp", "prompt", str(wt_dir), str(repo_dir), False,
+                     False, result, True, run_key="jira:IPG-929")
+    rows = sq.list_sessions(db)
+    assert len(rows) == 1
+    assert rows[0]["file_path"].endswith(rows[0]["id"] + ".jsonl")
