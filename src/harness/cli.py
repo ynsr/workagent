@@ -380,6 +380,10 @@ def review(
     """
     if sequential and not all_wts:
         _fail("--sequential requires --all", EXIT_USAGE)
+    if ref is None and not all_wts:
+        _fail("missing PR/MR ref or worktree key\n"
+              "  Pass a ref, or use --all to review every not-reviewed worktree.",
+              EXIT_USAGE)
     if all_wts:
         reviewable = _reviewable_keys(store.load_links())
         if not reviewable:

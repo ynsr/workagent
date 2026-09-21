@@ -1054,6 +1054,14 @@ def test_review_sequential_without_all_fails():
     assert r.exit_code == 2
 
 
+def test_review_without_ref_is_usage_error(isolated_config):
+    """Bare `harness review` (no ref, no --all) is a usage error, not a crash."""
+    r = runner.invoke(cli.app, ["review"])
+    assert r.exit_code == 2, r.output
+    assert "missing PR/MR ref" in r.stderr
+    assert "use --all" in r.stderr
+
+
 def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
