@@ -372,9 +372,11 @@ def create_app(static_dir: Path, host: str, port: int,
 
     # ── read endpoints (reuse in-process core functions) ──────────────
     from .cli import (
+        _candidates,
         _enrich_entry,
         _session_detail,
     )
+    from . import trackers as trackers_mod
 
     @app.get("/api/info")
     def info() -> dict:
@@ -420,6 +422,22 @@ def create_app(static_dir: Path, host: str, port: int,
     def doctor() -> dict:
         from . import doctor as doctor_mod
         return doctor_mod.check(json_output=True)
+
+    @app.get("/api/issues")
+    def my_issues() -> dict:
+        """My open issues; 200 + warning even when the tracker CLIs are
+        missing (read-only, never raises)."""
+        warnings: list[str] = []
+        return {"issues": trackers_mod.list_my_issues(warnings),
+                "warning": "; ".join(warnings) or None}
+
+    @app.get("/api/candidates")
+    def candidates() -> dict:
+        """Unlinked open PR/MRs + my recent issues (server-side 7-day
+        filter; read-only)."""
+        out = _candidates()
+        return {"prs": out["prs"], "issues": out["issues"],
+                "warnings": out["warnings"]}
 
     # ── runs ──────────────────────────────────────────────────────────
     @app.post("/api/runs", status_code=202)

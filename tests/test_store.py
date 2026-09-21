@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+from datetime import datetime
 from unittest import mock
 
 from harness import store
@@ -77,3 +78,26 @@ def _dead_pid() -> int:
     p = subprocess.Popen(["sleep", "0"])
     p.wait()
     return p.pid
+
+
+def test_record_link_added_at(isolated_config, monkeypatch):
+    stamps = iter(["2026-09-21T10:00:00+00:00", "2026-09-21T11:00:00+00:00"])
+    monkeypatch.setattr(store, "_now_iso", lambda: next(stamps))
+    store.record_link("github:o/r#22", {"branch": "feat/22-x"})
+    entry = store.lookup_link("github:o/r#22")
+    assert entry["added_at"] == "2026-09-21T10:00:00+00:00"
+    # Update merges but must not bump added_at.
+    store.record_link("github:o/r#22", {"pr_url": "https://example.com/pr/1"})
+    entry = store.lookup_link("github:o/r#22")
+    assert entry["added_at"] == "2026-09-21T10:00:00+00:00"
+    assert entry["pr_url"].endswith("/pr/1")
+    assert entry["branch"] == "feat/22-x"
+
+
+def test_record_link_added_at_backfills_missing(isolated_config):
+    """Pre-existing entries without added_at get stamped on the next write."""
+    store.save_links({"jira:IPG-1": {"branch": "feat/x"}})
+    store.record_link("jira:IPG-1", {"worktree": "/tmp/wt"})
+    entry = store.lookup_link("jira:IPG-1")
+    assert datetime.fromisoformat(entry["added_at"])
+    assert entry["branch"] == "feat/x" and entry["worktree"] == "/tmp/wt"

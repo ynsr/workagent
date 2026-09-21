@@ -1697,3 +1697,88 @@ def test_status_detail_shows_harness_line(isolated_config, tmp_path,
     r = _invoke("status", "IPG-929")
     assert r.exit_code == 0, r.output
     assert "harness: —" in r.output
+
+
+# ── candidates ────────────────────────────────────────────────────────
+
+
+def _candidates_env(monkeypatch, tmp_path, issues=None, prs=None):
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    cfg = store.load_config()
+    cfg["repos"] = {"proj": {"path": str(repo)}}
+    store.save_config(cfg)
+    monkeypatch.setattr(cli, "_repo_tool", lambda path: "gh")
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", lambda tool, cwd: prs or [
+        {"number": 1, "title": "Add [beta] flag", "branch": "feat/1",
+         "updated": "2026-09-20T10:00:00Z",
+         "url": "https://github.com/o/r/pull/1", "state": "OPEN"}])
+    monkeypatch.setattr(cli.trackers, "list_my_issues",
+                        lambda warnings=None: issues or [])
+
+
+def test_candidates_cli_json(isolated_config, tmp_path, monkeypatch):
+    _candidates_env(monkeypatch, tmp_path, issues=[
+        {"key": "jira:IPG-981", "title": "T", "url": "u",
+         "status": "To Do", "created": "2026-09-20T10:00:00+00:00"}])
+    r = _invoke("candidates", "--json")
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert set(out) == {"prs", "issues"}
+    assert out["prs"][0]["key"] == "github:o/r#1"
+    assert out["prs"][0]["repo"] == "o/r"
+    assert out["issues"][0]["key"] == "jira:IPG-981"
+
+
+def test_candidates_cli_tables(isolated_config, tmp_path, monkeypatch):
+    _candidates_env(monkeypatch, tmp_path, issues=[
+        {"key": "jira:IPG-981", "title": "T", "url": "u",
+         "status": "To Do", "created": "2026-09-20T10:00:00+00:00"}])
+    r = _invoke("candidates")
+    assert r.exit_code == 0, r.output
+    assert "Unlinked PR/MRs" in r.stdout
+    assert "Recent issues (reported by me, last 7 days)" in r.stdout
+    # Title user content is Rich-escaped in the table path: the literal
+    # "[beta]" must survive rendering (unescaped markup would be eaten).
+    assert "Add [beta] flag" in r.stdout
+
+
+def test_candidates_cli_csv_pulls_only(isolated_config, tmp_path, monkeypatch):
+    _candidates_env(monkeypatch, tmp_path, issues=[
+        {"key": "jira:IPG-981", "title": "T", "url": "u",
+         "status": "To Do", "created": "2026-09-20T10:00:00+00:00"}])
+    r = _invoke("candidates", "--csv")
+    assert r.exit_code == 0, r.output
+    assert r.stdout.splitlines()[0] == "url,title,repo,updated"
+    # CSV applies to the PR/MR table; the issues table stays a Rich table.
+    assert "Recent issues (reported by me, last 7 days)" in r.stdout
+    assert "jira:IPG-981" in r.stdout
+
+
+def test_candidates_cli_linked_pr_excluded(isolated_config, tmp_path,
+                                           monkeypatch):
+    _candidates_env(monkeypatch, tmp_path)
+    store.record_link("github:o/r#1",
+                      {"pr_url": "https://github.com/o/r/pull/1"})
+    r = _invoke("candidates", "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["prs"] == []
+
+
+def test_candidates_cli_warning_to_stderr(isolated_config, tmp_path,
+                                          monkeypatch):
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    cfg = store.load_config()
+    cfg["repos"] = {"proj": {"path": str(repo)}}
+    store.save_config(cfg)
+    monkeypatch.setattr(cli, "_repo_tool", lambda path: "gh")
+
+    def boom(tool, cwd):
+        raise HarnessError("gh pr list failed: no auth")
+
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", boom)
+    monkeypatch.setattr(cli.trackers, "list_my_issues", lambda warnings=None: [])
+    r = _invoke("candidates")
+    assert r.exit_code == 0, r.output
+    assert "warning:" in r.stderr and "proj" in r.stderr

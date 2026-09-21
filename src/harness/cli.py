@@ -1367,6 +1367,83 @@ def status(
     eprint("commits: B|A = B commits behind, A commits ahead of the base branch")
 
 
+# ── candidates ────────────────────────────────────────────────────────
+
+
+def _candidates() -> dict:
+    """Unlinked open PR/MRs + my recent issues; shared by the `candidates`
+    command and the webapp /api/candidates endpoint.
+
+    PRs are collected from every registered repo (per-repo failures →
+    warning) minus any URL already linked in links.json; issues are
+    `trackers.list_my_issues` filtered to created within the last 7 days.
+    """
+    warnings: list[str] = []
+    linked = {str(v["pr_url"]).rstrip("/")
+              for v in store.load_links().values() if v.get("pr_url")}
+    prs: list[dict] = []
+    for name, entry in store.load_config().get("repos", {}).items():
+        path = str(entry.get("path", ""))
+        if not path or not Path(path).exists():
+            continue
+        try:
+            tool = _repo_tool(path)
+            if tool not in ("gh", "glab"):
+                continue
+            for p in refs.fetch_open_prs(tool, path):
+                url = str(p.get("url", ""))
+                if url.rstrip("/") in linked:
+                    continue
+                key = refs.pr_key(url)
+                prs.append({**p, "url": url, "key": key,
+                            "repo": key.split(":", 1)[-1].rsplit("#", 1)[0]})
+        except HarnessError as e:
+            warnings.append(f"{name}: {e}")
+        except Exception as e:  # one bad repo must not kill the listing
+            warnings.append(f"{name}: {e}")
+    prs.sort(key=lambda p: p.get("updated", ""), reverse=True)
+    issues = trackers.list_my_issues(warnings)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    recent = [i for i in issues
+              if (dt := trackers.parse_created(str(i.get("created", ""))))
+              is not None and dt >= cutoff]
+    recent.sort(key=lambda i: str(i.get("created", "")), reverse=True)
+    return {"prs": prs, "issues": recent, "warnings": warnings}
+
+
+@app.command("candidates")
+@_catch_harness_errors
+def candidates_cmd(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    csv_output: bool = typer.Option(False, "--csv", help="Output the PR/MR table as CSV (stdout; logs go to stderr)."),
+) -> None:
+    """List unlinked open PR/MRs and my recent issues (last 7 days).
+
+    Example:
+      harness candidates
+      harness candidates --json
+    """
+    out = _candidates()
+    for w in out["warnings"]:
+        eprint(f"warning: {w}")
+    if json_output:
+        print(json.dumps({"prs": out["prs"], "issues": out["issues"]},
+                         indent=2, ensure_ascii=False))
+        return
+    from rich.markup import escape
+
+    def _esc(rows: list[dict]) -> list[dict]:
+        return [{**r, "title": escape(str(r.get("title", "")))} for r in rows]
+
+    _print_rows(_esc(out["prs"]), False, csv_output,
+                ["url", "title", "repo", "updated"],
+                "Unlinked PR/MRs", "(no unlinked open PR/MRs)")
+    _print_rows(_esc(out["issues"]), False, False,
+                ["key", "title", "status", "created"],
+                "Recent issues (reported by me, last 7 days)",
+                "(no recent issues)")
+
+
 # ── cd ────────────────────────────────────────────────────────────────
 
 

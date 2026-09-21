@@ -218,3 +218,73 @@ def test_fetch_ci_glab_empty_list(monkeypatch):
     assert refs.fetch_ci_status(
         "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo"
     ) == "not_started"
+
+
+# ── fetch_open_prs / pr_key ───────────────────────────────────────────
+
+
+def test_fetch_open_prs_gh(monkeypatch):
+    calls = []
+
+    def fake(*a, **k):
+        calls.append((a, k))
+        return json.dumps([
+            {"number": 33, "title": "T1", "headRefName": "feat/x",
+             "updatedAt": "2026-09-20T10:00:00Z",
+             "url": "https://github.com/o/r/pull/33"}])
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    prs = refs.fetch_open_prs("gh", "/repo")
+    assert prs == [{"number": 33, "title": "T1", "branch": "feat/x",
+                    "updated": "2026-09-20T10:00:00Z",
+                    "url": "https://github.com/o/r/pull/33", "state": "OPEN"}]
+    assert calls[0][0][:5] == ("gh", "pr", "list", "--state", "open")
+    assert calls[0][1].get("cwd") == "/repo"
+
+
+def test_fetch_open_prs_glab_state_flag(monkeypatch):
+    calls = []
+
+    def fake(*a, **k):
+        calls.append(a)
+        return json.dumps([{"iid": 1706, "title": "T2",
+                            "source_branch": "feat/y",
+                            "updated_at": "2026-09-21T00:06:18.549Z",
+                            "state": "opened",
+                            "web_url": "https://git.x/g/r/-/merge_requests/1706"}])
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    prs = refs.fetch_open_prs("glab", "/repo")
+    assert prs[0]["number"] == 1706 and prs[0]["branch"] == "feat/y"
+    assert prs[0]["state"] == "OPEN" and prs[0]["updated"].endswith("Z")
+    assert prs[0]["url"].endswith("/-/merge_requests/1706")
+    assert calls[0][:4] == ("glab", "mr", "list", "--state")
+
+
+def test_fetch_open_prs_glab_falls_back_without_state(monkeypatch):
+    """glab ≥1.x `mr list` rejects --state and defaults to open MRs."""
+    calls = []
+
+    def fake(*a, **k):
+        calls.append(a)
+        if "--state" in a:
+            raise HarnessError("Unknown flag: --state")
+        return json.dumps([])
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    assert refs.fetch_open_prs("glab", "/repo") == []
+    assert len(calls) == 2 and "--state" not in calls[1]
+
+
+def test_fetch_open_prs_unknown_tool(monkeypatch):
+    with pytest.raises(HarnessError):
+        refs.fetch_open_prs("bzr", "/repo")
+
+
+def test_pr_key():
+    assert refs.pr_key("https://github.com/o/r/pull/33") == "github:o/r#33"
+    assert refs.pr_key(
+        "https://git.jibit.cloud/server/projectx/-/merge_requests/1706"
+    ) == "gitlab:git.jibit.cloud/server/projectx#1706"
+    assert refs.pr_key("https://example.com/whatever") == ""
+    assert refs.pr_key("") == ""

@@ -14,7 +14,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from harness import store
+from harness import cli, refs, store, trackers
+from harness.errors import HarnessError
 from harness.webapp import (
     MAX_LINES,
     MAX_RUNS,
@@ -487,3 +488,104 @@ def test_default_static_dir_no_receipt_returns_source_default(
         cli, "__file__", str(tmp_path / "site-packages" / "harness" / "cli.py"))
     assert cli._default_static_dir() == \
         tmp_path / "web" / "dist"
+
+
+# ── /api/issues + /api/candidates (candidates listing) ────────────────
+
+
+def test_api_issues_missing_cli(client, monkeypatch):
+    """200 + warning field even when the tracker CLIs are missing."""
+
+    def boom(*a, **k):
+        raise HarnessError("command not found")
+
+    monkeypatch.setattr(trackers, "run_cmd", boom)
+    r = client.get("/api/issues")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["issues"] == []
+    assert body["warning"]
+
+
+def test_api_issues_jira_ok(client, monkeypatch, tmp_path):
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"url": "https://jira.example.com"}))
+    monkeypatch.setattr(refs, "_JIRA_CONFIGS", (cfg,))
+
+    def fake(*a, **k):
+        if a[0] == "gh":
+            raise HarnessError("command not found: gh")
+        return json.dumps({"issues": [
+            {"key": "IPG-981", "fields": {"summary": "T",
+                                          "status": {"name": "In Progress"},
+                                          "created": "2026-09-20T10:00:00.000+0000"}}]})
+
+    monkeypatch.setattr(trackers, "run_cmd", fake)
+    body = client.get("/api/issues").json()
+    assert body["issues"][0]["key"] == "jira:IPG-981"
+    assert body["issues"][0]["url"] == "https://jira.example.com/browse/IPG-981"
+    assert "gh" in body["warning"]
+
+
+def _register_repo(tmp_path, name="proj"):
+    repo = tmp_path / name
+    repo.mkdir()
+    cfg = store.load_config()
+    cfg["repos"] = {name: {"path": str(repo)}}
+    store.save_config(cfg)
+    return str(repo)
+
+
+def _issue_row(days_ago, key="jira:IPG-1"):
+    from datetime import datetime, timedelta, timezone
+
+    created = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    return {"key": key, "title": "T", "url": "u", "status": "To Do",
+            "created": created.isoformat()}
+
+
+def test_candidates_exclude_linked(client, monkeypatch, tmp_path):
+    _register_repo(tmp_path)
+    store.record_link("github:o/r#1",
+                      {"pr_url": "https://github.com/o/r/pull/1"})
+    monkeypatch.setattr(cli, "_repo_tool", lambda path: "gh")
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", lambda tool, cwd: [
+        {"number": 1, "title": "linked", "branch": "feat/1",
+         "updated": "2026-09-20T10:00:00Z",
+         "url": "https://github.com/o/r/pull/1", "state": "OPEN"},
+        {"number": 2, "title": "open", "branch": "feat/2",
+         "updated": "2026-09-21T10:00:00Z",
+         "url": "https://github.com/o/r/pull/2", "state": "OPEN"},
+    ])
+    monkeypatch.setattr(trackers, "list_my_issues", lambda warnings=None: [])
+    body = client.get("/api/candidates").json()
+    assert [p["url"] for p in body["prs"]] == ["https://github.com/o/r/pull/2"]
+    assert body["prs"][0]["key"] == "github:o/r#2"
+    assert body["prs"][0]["repo"] == "o/r"
+
+
+def test_candidates_issue_window(client, monkeypatch, tmp_path):
+    _register_repo(tmp_path)
+    monkeypatch.setattr(cli, "_repo_tool", lambda path: None)
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", lambda tool, cwd: [])
+    monkeypatch.setattr(trackers, "list_my_issues", lambda warnings=None: [
+        _issue_row(10, "jira:IPG-OLD"),
+        _issue_row(2, "jira:IPG-NEW"),
+    ])
+    body = client.get("/api/candidates").json()
+    assert [i["key"] for i in body["issues"]] == ["jira:IPG-NEW"]
+
+
+def test_candidates_shape_and_warnings(client, monkeypatch, tmp_path):
+    _register_repo(tmp_path)
+    monkeypatch.setattr(cli, "_repo_tool", lambda path: "gh")
+
+    def boom(tool, cwd):
+        raise HarnessError("gh pr list failed: auth")
+
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", boom)
+    monkeypatch.setattr(trackers, "list_my_issues", lambda warnings=None: [])
+    body = client.get("/api/candidates").json()
+    assert set(body) == {"prs", "issues", "warnings"}
+    assert body["prs"] == [] and body["issues"] == []
+    assert any("proj" in w for w in body["warnings"])

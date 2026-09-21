@@ -21,6 +21,16 @@
 - Fixed `review` reading `--dry-run` without defining the flag.
 
 ## Unreleased
+- `candidates`: lists unlinked open PR/MRs across registered repos
+  ("Unlinked PR/MRs" table; linked URLs excluded) and my recent issues
+  ("Recent issues (reported by me, last 7 days)" — jira To Do/In
+  Progress reported by me in the last two months + GitHub issues
+  authored by me). `--json` prints `{"prs": […], "issues": […]}`;
+  `--csv` renders the PR/MR table as CSV; CLI failures become stderr
+  warnings, never a non-zero exit. Read-only web endpoints
+  `GET /api/issues` (my issues + `warning`) and `GET /api/candidates`
+  (same data server-side). `store.record_link` stamps `added_at` on
+  first link (never bumped by updates).
 - One live AI harness per worktree: `start`/`review` (and `sync`'s
   conflict-harness runs) record the running harness in a locked
   `harnesses.json` (pid-liveness sweep; dead entries self-heal on the

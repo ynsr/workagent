@@ -25,7 +25,7 @@ Install locally:
 
 | Module | Responsibility |
 |--------|---------------|
-| `src/harness/cli.py` | Typer app — `start`/`review`/`sync`/`cleanup`/`register`/`repo add\|list\|remove`/`link list\|set\|remove`/`status`/`cd`/`doctor`/`completions show\|install`; Rich tables/CSV/JSON output |
+| `src/harness/cli.py` | Typer app — `start`/`review`/`sync`/`cleanup`/`register`/`repo add\|list\|remove`/`link list\|set\|remove`/`status`/`candidates`/`cd`/`doctor`/`completions show\|install`; Rich tables/CSV/JSON output |
 | `src/harness/refs.py` | issue/PR ref parsing (`OWNER/REPO#N`, Jira `KEY-123`/browse URLs, URLs, bare N) + `gh`/`glab`/`jira-cli` fetching |
 | `src/harness/repos.py` | repo resolution (`--repo` name/path/URL, cwd, interactive pick), worktree→main-checkout resolution, default-branch detection, registry, `repo_names()` completion source, remote-host-aware gh/glab detection (`repos.<name>.tool` persisted in the registry) |
 | `src/harness/pick.py` | shared arrow-key picker for every multi-choice prompt: stderr render, ↑/↓ + Enter, optional dim description per item, q/Esc aborts, `None` on non-TTY; testable via `read`/`stream` seams |
@@ -50,12 +50,29 @@ the registry.
 **`harness serve`**: `cli.serve` lazy-imports `webapp.run_server` (needs
 the `web` extra: fastapi/uvicorn) → `create_app` guards Host/Origin/
 Content-Type, read endpoints (`/api/status`, `/api/path`, `/api/repos`,
-`/api/links`, `/api/doctor`) call the same in-process helpers as the CLI,
+`/api/links`, `/api/doctor`, `/api/issues`, `/api/candidates`) call the
+same in-process helpers as the CLI,
 and mutating commands run as `sys.executable -m harness` children via
 `backend.command_argv`-shaped argv (`--yes` on confirm, `--force` on
 cleanup/register). Frontend: `web/` (Vite + React + TS), build →
 `web/dist`, served by the SPA catch-all; API contract in
 `web/API_CONTRACT.md`.
+
+**`harness candidates`**: two Rich tables — "Unlinked PR/MRs" (open
+PR/MRs of every registered repo, minus URLs already linked in
+`links.json`; per-repo CLI failures → stderr warning) and "Recent
+issues (reported by me, last 7 days)" (jira `list_my_issues`: reporter
+= me, To Do/In Progress, last 2 months — plus GitHub issues authored by
+me; server-side 7-day filter). `--json` prints `{"prs": […],
+"issues": […]}` (stdout-only); `--csv` renders the PR/MR table as CSV.
+The web endpoints `/api/issues` (all my issues + `warning`) and
+`/api/candidates` (same data as the CLI) share `_candidates()` /
+`trackers.list_my_issues()` and are read-only GETs that always return
+200. `refs.fetch_open_prs(tool, cwd)` raises (caller decides);
+`trackers.list_my_issues()` never raises. glab issues are intentionally
+omitted (Jira covers work tracking). `store.record_link` stamps
+`added_at` on first sight and never bumps it (Task 7's sort).
+
 
 **`harness start <issue>`**: parse ref → `trackers.resolve_for_tracker`
 (repo picker: `--repo`, cwd-linked silently, unlinked-cwd y/N with

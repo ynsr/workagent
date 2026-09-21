@@ -98,12 +98,17 @@ def record_link(issue_key: str, entry: dict) -> None:
         _locked(lock, lambda: _record_link_locked(path, issue_key, entry))
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _record_link_locked(path: Path, issue_key: str, entry: dict) -> None:
     links = _read_json(path, {})
     merged = {**links.get(issue_key, {}), **entry}
+    # First-seen stamp; never bumped by later updates (Task 7 sorts by it).
+    merged.setdefault("added_at", _now_iso())
     links[issue_key] = merged
     _atomic_replace(path, links)
-
 
 def lookup_link(issue_key: str) -> dict | None:
     return load_links().get(issue_key)

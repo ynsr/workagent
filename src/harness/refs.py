@@ -173,6 +173,55 @@ def hostname(url: str) -> str:
     return urlparse(url).netloc.lower()
 
 
+def pr_key(url: str) -> str:
+    """Canonical PR/MR key for *url*: github:o/r#N or gitlab:host/g/r#N;
+    "" when the URL is not a PR/MR."""
+    m = _GITHUB_PR.match(url or "")
+    if m:
+        return f"github:{m.group(1)}#{m.group(2)}"
+    m = _GITLAB_MR.match(url or "")
+    if m:
+        return f"gitlab:{m.group(1)}/{m.group(2)}#{m.group(3)}"
+    return ""
+
+
+def fetch_open_prs(tool: str, cwd: str | None = None) -> list[dict]:
+    """All open PRs/MRs of the repo at *cwd*, normalized.
+
+    Returns [{number, title, branch, updated, url, state:"OPEN"}].
+    Raises HarnessError when the host CLI fails (caller decides).
+    """
+    if tool == "gh":
+        out = run_cmd("gh", "pr", "list", "--state", "open", "--limit", "100",
+                      "--json", "number,title,headRefName,updatedAt,url",
+                      cwd=cwd)
+        try:
+            data = json.loads(out or "[]")
+        except json.JSONDecodeError:
+            raise HarnessError("cannot parse gh pr list output")
+        return [{"number": p["number"], "title": p.get("title", ""),
+                 "branch": p.get("headRefName", ""),
+                 "updated": p.get("updatedAt", ""), "url": p.get("url", ""),
+                 "state": "OPEN"} for p in data]
+    if tool == "glab":
+        try:
+            out = run_cmd("glab", "mr", "list", "--state", "opened", "-F", "json",
+                          "--per-page", "100", cwd=cwd)
+        except HarnessError:
+            # glab ≥1.x mr list has no --state flag; it defaults to open MRs.
+            out = run_cmd("glab", "mr", "list", "-F", "json",
+                          "--per-page", "100", cwd=cwd)
+        try:
+            data = json.loads(out or "[]")
+        except json.JSONDecodeError:
+            raise HarnessError("cannot parse glab mr list output")
+        return [{"number": m["iid"], "title": m.get("title", ""),
+                 "branch": m.get("source_branch", ""),
+                 "updated": m.get("updated_at", ""),
+                 "url": m.get("web_url", ""), "state": "OPEN"} for m in data]
+    raise HarnessError(f"unsupported host CLI: {tool}")
+
+
 def fetch_pr_list_for_branch(tool: str, branch: str, cwd: str | None = None) -> list[dict]:
     """All PRs/MRs for a head branch (any state), normalized.
 

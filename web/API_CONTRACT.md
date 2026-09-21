@@ -71,6 +71,31 @@ pipeline status for the PR — `success` | `failure` | `running` |
             "jira-cli": true}, "receipt": "/home/x/.local/share/…"}
 ```
 
+### `GET /api/issues`
+My open issues (jira To Do/In Progress reported by me in the last two
+months + GitHub issues authored by me, state=open). Always 200 — a
+missing/failing host CLI yields `[]` plus a `warning`:
+```json
+{"issues": [{"key": "jira:IPG-981", "title": "…",
+             "url": "https://…/browse/IPG-981", "status": "To Do",
+             "created": "2026-09-20T10:00:00.000+0000"}],
+ "warning": "github: command not found: gh"}
+```
+
+### `GET /api/candidates`
+Unlinked open PR/MRs across every registered repo (PR/MR URLs already
+present in `links.json` are excluded server-side) plus my issues created
+within the last 7 days (server-side filter). Read-only:
+```json
+{"prs": [{"key": "github:o/r#33", "number": 33, "title": "…",
+          "url": "https://github.com/o/r/pull/33", "branch": "feat/x",
+          "updated": "2026-09-20T10:00:00Z", "state": "OPEN",
+          "repo": "o/r"}],
+ "issues": [{"key": "jira:IPG-981", "title": "…", "url": "…",
+             "status": "To Do", "created": "2026-09-20T10:00:00.000+0000"}],
+ "warnings": ["proj: gh pr list failed: …"]}
+```
+
 ## Runs (mutating CLI commands as child processes)
 
 ### `POST /api/runs` → 202
