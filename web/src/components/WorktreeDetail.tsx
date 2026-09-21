@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { CiBadge } from "@/components/StateBadge"
 
 /**
  * `SessionMap` (session key → entry) is still session-keyed in the backend;
@@ -160,6 +161,12 @@ export function WorktreeDetail({
               ) : (
                 <span className="text-muted-foreground">—</span>
               )}
+            </dd>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <dt className="w-16 shrink-0 text-xs text-muted-foreground">CI</dt>
+            <dd>
+              <CiBadge ci={entry.ci} />
             </dd>
           </div>
         </dl>

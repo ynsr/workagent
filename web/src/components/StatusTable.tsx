@@ -11,7 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { PrBadge } from "@/components/StateBadge"
+import { CiBadge, PrBadge } from "@/components/StateBadge"
 import { cn } from "@/lib/utils"
 
 export interface StatusTableActions {
@@ -163,6 +163,7 @@ export function StatusTable({
               <TableHead>Harness</TableHead>
               <TableHead className="w-20">Behind|Ahead</TableHead>
               <TableHead>PR / MR</TableHead>
+              <TableHead className="w-14 text-center">CI</TableHead>
               {showWorktree ? <TableHead>Worktree</TableHead> : null}
               <TableHead className="text-right pr-2">Actions</TableHead>
             </TableRow>
@@ -207,6 +208,9 @@ export function StatusTable({
                         </span>
                       </div>
                     </TableCell>
+                    <TableCell className="text-center">
+                      <CiBadge ci={entry.ci} />
+                    </TableCell>
                     {showWorktree ? (
                       <TableCell
                         className="max-w-52 truncate font-mono text-[13px]"
@@ -229,8 +233,7 @@ export function StatusTable({
                   {detailOpen ? (
                     <TableRow className="hover:bg-transparent">
                       <TableCell
-                        colSpan={showWorktree ? 7 : 6}
-                        className="border-b bg-muted/40 align-top"
+                        colSpan={showWorktree ? 8 : 7}
                       >
                         <div className="mx-auto w-full max-w-2xl py-1">
                           <WorktreeDetail
@@ -300,6 +303,12 @@ export function StatusTable({
                     <dd className="min-w-0 truncate">{entry.pr}</dd>
                   </div>
                 ) : null}
+                <div className="flex items-baseline gap-2">
+                  <dt className="w-16 shrink-0 text-xs text-muted-foreground">CI</dt>
+                  <dd>
+                    <CiBadge ci={entry.ci} />
+                  </dd>
+                </div>
               </dl>
               <div className="mt-3 border-t pt-1">
                 <RowActions

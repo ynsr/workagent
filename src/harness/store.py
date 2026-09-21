@@ -147,6 +147,29 @@ def get_cached_pr_tool(branch: str) -> str | None:
     return load_pr_cache().get(branch, {}).get("tool")
 
 
+def cache_ci_status(branch: str, ci: str | None, sha: str | None = None) -> None:
+    """Record CI pipeline status on a branch's pr_cache entry, in place.
+
+    Reads-modifies the branch entry under the cache lock so the PR fields
+    written by ``cache_pr_status`` survive. A ``None`` ci (lookup failed)
+    writes nothing, so the next run retries the lookup.
+    """
+    if ci is None:
+        return
+    path = config_dir() / "pr_cache.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.parent / (path.name + ".lock"), "w") as lock:
+        def _update() -> None:
+            cache = _read_json(path, {})
+            entry = cache.setdefault(branch, {})
+            entry["ci"] = ci
+            entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
+            if sha:
+                entry["ci_sha"] = sha
+            _atomic_replace(path, cache)
+        _locked(lock, _update)
+
+
 def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)

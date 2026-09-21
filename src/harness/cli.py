@@ -888,6 +888,9 @@ def link_remove(
 
 
 _PR_STYLES = {"open": "bright_green", "merged": "bright_magenta", "closed": "bright_red"}
+_CI_TTL_SECONDS = 600
+_CI_SYMBOLS = {"success": "✓", "failure": "✗", "running": "●"}
+_CI_STYLES = {"success": "bright_green", "failure": "bright_red", "running": "cyan"}
 _DB_CACHE: dict[str, str] = {}
 _STATUS_TTL_SECONDS = 3 * 3600
 _NEGATIVE_TTL_SECONDS = 30 * 60
@@ -978,6 +981,18 @@ def _cache_fresh(cached: dict) -> bool:
     return age < timedelta(seconds=ttl)
 
 
+def _ci_fresh(cached: dict) -> bool:
+    """Cached CI still valid: checked within _CI_TTL_SECONDS."""
+    ts = cached.get("ci_checked_at", "")
+    if not ts:
+        return False
+    try:
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
+    except ValueError:
+        return False
+    return age < timedelta(seconds=_CI_TTL_SECONDS)
+
+
 def _query_pr(repo: str, branch: str) -> tuple[dict | None, str | None]:
     """(pr, tool) via the detected host CLI, falling back to the other one.
 
@@ -999,7 +1014,7 @@ def _query_pr(repo: str, branch: str) -> tuple[dict | None, str | None]:
             raise
 
 
-def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
+def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
     """Commits + PR cells for one session, backed by pr_cache.json.
 
     A cache entry (keyed by branch) is reused while the session-branch tip
@@ -1009,13 +1024,14 @@ def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
     no host-CLI spawn, no API call. --refresh-pr re-queries only the PR
     (counts still reuse when tips are unchanged). When the cache or the
     live query yields no PR but the link records a `pr_url`, the recorded
-    URL fills the PR cell.
+    URL fills the PR cell. ``_tip``/``_tool`` are internal, consumed by the
+    CI cell resolution in :func:`_status_cells`.
     """
     wt = entry.get("worktree", "")
     branch = entry.get("branch", "")
     repo = entry.get("repo", "")
     cells = {"commits": "-", "ab": None, "pr": "-", "pr_data": None,
-             "base_branch": None}
+             "base_branch": None, "_tip": None, "_tool": None}
     cached = store.load_pr_cache().get(branch) if branch else None
     wt_ok = bool(wt) and Path(wt).exists()
     if wt and not wt_ok:
@@ -1029,6 +1045,7 @@ def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
             ab = {"behind": int(cached.get("behind") or 0),
                   "ahead": int(cached.get("ahead") or 0)}
             pr = cached.get("pr")
+            cells["_tip"], cells["_tool"] = branch_tip, cached.get("tool")
             cells.update(commits=_fmt_counts(ab), ab=ab, pr=_fmt_pr(pr),
                          pr_data=pr, base_branch=base_branch or None)
             if not refresh_pr:
@@ -1041,6 +1058,7 @@ def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
                                   base_branch=base_branch,
                                   branch_tip=branch_tip, base_tip=base_tip,
                                   behind=ab["behind"], ahead=ab["ahead"])
+            cells["_tip"], cells["_tool"] = branch_tip, used
             cells.update(pr=_fmt_pr(pr), pr_data=pr)
             return _seed_recorded_pr(cells, entry)
     if branch:
@@ -1054,15 +1072,58 @@ def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
         if pr is None and used is None and cached and cached.get("pr"):
             pr, used = cached["pr"], cached.get("tool")
         if wt_ok:
+            branch_tip = _git_tip(wt, "HEAD")
             store.cache_pr_status(branch, pr, tool=used if pr else None,
                                   base_branch=db,
-                                  branch_tip=_git_tip(wt, "HEAD"),
+                                  branch_tip=branch_tip,
                                   base_tip=_git_tip(wt, f"origin/{db}") if db else None,
                                   behind=(ab or {}).get("behind", 0),
                                   ahead=(ab or {}).get("ahead", 0))
+            cells["_tip"], cells["_tool"] = branch_tip, used if pr else None
             cells.update(commits=_fmt_counts(ab), ab=ab)
         cells.update(pr=_fmt_pr(pr), pr_data=pr, base_branch=db)
     return _seed_recorded_pr(cells, entry)
+
+
+def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
+    """_pr_cells plus the CI pipeline cell.
+
+    CI resolves after the PR: no PR -> no CI cell. A cached ``ci`` is
+    reused while the branch tip is unchanged, the check is younger than
+    _CI_TTL_SECONDS (10 min) and --refresh-pr is not given; otherwise the
+    pipeline is fetched once and persisted via store.cache_ci_status.
+    """
+    cells = _pr_cells(entry, refresh_pr)
+    cells["ci"] = _ci_cell(entry, cells, refresh_pr)
+    return cells
+
+
+def _ci_cell(entry: dict, cells: dict, refresh_pr: bool) -> str | None:
+    """CI pipeline status for the resolved PR: success|failure|running|not_started.
+
+    None when there is no PR (no url) or the lookup failed (soft failure —
+    fetch_ci_status warns on stderr and returns None; nothing is cached so
+    the next run retries).
+    """
+    pr = cells.get("pr_data")
+    if not pr or not pr.get("url"):
+        return None
+    branch = entry.get("branch", "")
+    cached = store.load_pr_cache().get(branch) if branch else None
+    branch_tip = cells.get("_tip")
+    if branch_tip is None and entry.get("worktree") \
+            and Path(entry["worktree"]).exists():
+        branch_tip = _git_tip(entry["worktree"], "HEAD")
+    if not refresh_pr and cached and _ci_fresh(cached) \
+            and cached.get("ci_sha") == branch_tip:
+        return cached.get("ci")
+    url = pr["url"]
+    tool = ((cached or {}).get("tool")
+            or ("gh" if "github.com" in url else "glab"))
+    ci = refs.fetch_ci_status(tool, url, entry.get("repo", ""))
+    if branch:
+        store.cache_ci_status(branch, ci, sha=branch_tip or "")
+    return ci
 
 
 def _session_rows(links: dict, show_worktree: bool, refresh: bool
@@ -1073,13 +1134,14 @@ def _session_rows(links: dict, show_worktree: bool, refresh: bool
         row = {"key": k, "branch": v.get("branch", "?"),
                "harness": _harness_cell(k, v.get("worktree", "")),
                "commits": cells["commits"], "pr": cells["pr"],
+               "ci": cells["ci"] or "",
                "_pr_state": (cells["pr_data"] or {}).get("state", "")}
         if show_worktree:
             row["worktree"] = v.get("worktree", "?")
         rows.append(row)
-    columns = (["key", "worktree", "branch", "harness", "commits", "pr"]
+    columns = (["key", "worktree", "branch", "harness", "commits", "pr", "ci"]
                if show_worktree
-               else ["key", "branch", "harness", "commits", "pr"])
+               else ["key", "branch", "harness", "commits", "pr", "ci"])
     return rows, columns
 
 
@@ -1089,6 +1151,12 @@ def _colorize_session(row: dict) -> dict:
     if st in _PR_STYLES:
         c = _PR_STYLES[st]
         out["pr"] = f"[{c}]{row['pr']}[/{c}]"
+    ci = row.get("ci") or ""
+    if ci in _CI_STYLES:
+        s = _CI_STYLES[ci]
+        out["ci"] = f"[{s}]{_CI_SYMBOLS[ci]}[/{s}]"
+    else:
+        out["ci"] = "-"
     if not out.get("harness"):
         out["harness"] = "—"
     return out
@@ -1098,6 +1166,7 @@ def _enrich_entry(key: str, entry: dict, refresh: bool) -> dict:
     cells = _status_cells(entry, refresh)
     return {**entry, "harness": _harness_cell(key, entry.get("worktree", "")),
             "commits": cells["commits"], "pr": cells["pr"],
+            "ci": cells["ci"],
             "commits_detail": cells["ab"], "pr_detail": cells["pr_data"]}
 
 
@@ -1108,6 +1177,7 @@ def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
               "commits": cells["commits"],
               "pr": _fmt_pr(cells["pr_data"]), "commits_detail": cells["ab"],
               "pr_detail": cells["pr_data"], "base_branch": cells["base_branch"],
+              "ci": cells["ci"],
               "issue_url": refs.issue_url(key, entry.get("issue"))}
     if not cells["pr_data"]:
         detail["create_hint"] = _create_hint(entry)
@@ -1133,6 +1203,10 @@ def _print_detail(detail: dict) -> None:
                 f"({pd.get('state', '')})[/{style}] by "
                 f"{escape(pd.get('author', '?'))}")
         c.print(f"  url: {escape(pd.get('url', ''))}")
+    ci = detail.get("ci")
+    if ci:
+        style = _CI_STYLES.get(ci, "white")
+        c.print(f"  ci: [{style}]{_CI_SYMBOLS.get(ci, ci)} {escape(ci)}[/{style}]")
     cd = detail.get("commits_detail")
     if cd:
         base = escape(detail.get("base_branch") or "the base branch")

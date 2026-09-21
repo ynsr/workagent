@@ -63,3 +63,40 @@ export function PrBadge({ pr }: { pr: PrDetail | null | undefined }) {
     </Badge>
   )
 }
+
+
+type CiState = "success" | "failure" | "running" | "not_started"
+
+const CI_BADGES: Record<CiState, { symbol: string; className: string }> = {
+  success: {
+    symbol: "✓",
+    className:
+      "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  },
+  failure: {
+    symbol: "✗",
+    className:
+      "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300",
+  },
+  running: {
+    symbol: "●",
+    className:
+      "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  },
+  not_started: {
+    symbol: "–",
+    className: "border-border bg-muted text-muted-foreground",
+  },
+}
+
+/** CI pipeline badge; missing/unknown status renders as a gray dash. */
+export function CiBadge({ ci }: { ci?: string | null }) {
+  const state: CiState =
+    ci === "success" || ci === "failure" || ci === "running" ? ci : "not_started"
+  const badge = CI_BADGES[state]
+  return (
+    <Badge variant="outline" className={badge.className} title={`CI: ${ci ?? "unknown"}`}>
+      {badge.symbol}
+    </Badge>
+  )
+}

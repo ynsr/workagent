@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 import subprocess
@@ -287,6 +288,131 @@ def test_negative_cache_short_ttl():
 def test_status_cells_partial_entry():
     cells = cli._status_cells({"worktree": "", "branch": "", "repo": ""})
     assert cells["pr"] == "-" and cells["commits"] == "-"
+
+
+def test_status_cells_ci_cache_reuse(isolated_config, tmp_path, monkeypatch):
+    wt_dir = tmp_path / "wt"; wt_dir.mkdir()
+    entry = {"worktree": str(wt_dir), "branch": "feat/x", "repo": "/repo"}
+    store.cache_pr_status("feat/x", {"number": 9, "state": "open",
+                                     "url": "https://x/mr/9"},
+                          tool="glab", base_branch="main",
+                          branch_tip="a1", base_tip="b1", behind=0, ahead=0)
+    tips = {"HEAD": "a1", "origin/main": "b1"}
+    monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: tips.get(ref))
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    fetches = []
+    monkeypatch.setattr(cli.refs, "fetch_ci_status",
+                        lambda tool, url, cwd=None: fetches.append(url)
+                        or "success")
+    c1 = cli._status_cells(entry)
+    assert c1["ci"] == "success"
+    assert fetches == ["https://x/mr/9"]
+    # same tip, fresh checked_at -> served from cache, no second fetch
+    c2 = cli._status_cells(entry)
+    assert c2["ci"] == "success"
+    assert len(fetches) == 1
+    cached = store.load_pr_cache()["feat/x"]
+    assert cached["ci"] == "success" and cached["ci_sha"] == "a1"
+    assert "ci_checked_at" in cached
+    # branch tip moved -> refetch
+    tips["HEAD"] = "a2"
+    c3 = cli._status_cells(entry)
+    assert c3["ci"] == "success"
+    assert len(fetches) == 2
+    assert store.load_pr_cache()["feat/x"]["ci_sha"] == "a2"
+    # --refresh-pr forces a refetch even on an unchanged tip
+    tips["HEAD"] = "a1"
+    cli._status_cells(entry, refresh_pr=True)
+    assert len(fetches) == 3
+
+
+def test_status_cells_ci_reuse_stale_ttl(isolated_config, tmp_path,
+                                         monkeypatch):
+    wt_dir = tmp_path / "wt"; wt_dir.mkdir()
+    entry = {"worktree": str(wt_dir), "branch": "feat/x", "repo": "/repo"}
+    store.cache_pr_status("feat/x", {"number": 9, "state": "open",
+                                     "url": "https://x/mr/9"},
+                          tool="glab", base_branch="main",
+                          branch_tip="a1", base_tip="b1", behind=0, ahead=0)
+    store.cache_ci_status("feat/x", "success", "a1")
+    cache = store.load_pr_cache()
+    cache["feat/x"]["ci_checked_at"] = (
+        datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat()
+    store.save_pr_cache(cache)
+    monkeypatch.setattr(cli, "_git_tip",
+                        lambda wt, ref: "a1" if ref == "HEAD" else None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    fetches = []
+    monkeypatch.setattr(cli.refs, "fetch_ci_status",
+                        lambda tool, url, cwd=None: fetches.append(url)
+                        or "failure")
+    assert cli._status_cells(entry)["ci"] == "failure"
+    assert len(fetches) == 1  # stale (11 min > 10 min TTL) -> refetched
+
+
+def test_status_cells_ci_none_without_pr(isolated_config):
+    cells = cli._status_cells({"worktree": "", "branch": "feat/x",
+                               "repo": "/repo"})
+    assert cells["ci"] is None
+
+
+def test_status_ci_column_symbols_json_csv(isolated_config, tmp_path,
+                                           monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
+    tips = {"HEAD": "a1", "origin/main": "b1"}
+    monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: tips.get(ref))
+    pr9 = [{"number": 9, "state": "open", "title": "T", "author": "a",
+            "created_at": "2026-09-15", "url": "https://x/mr/9",
+            "target_branch": "main"}]
+    monkeypatch.setattr(cli.refs, "fetch_pr_list_for_branch",
+                        lambda tool, branch, cwd=None:
+                        [] if branch == "no-pr" else pr9)
+    monkeypatch.setattr(cli.refs, "fetch_ci_status",
+                        lambda tool, url, cwd=None: "failure")
+    rows, columns = cli._session_rows(store.load_links(), False, False)
+    assert columns.index("ci") == columns.index("pr") + 1
+    assert rows[0]["ci"] == "failure"  # raw, machine-readable
+    colored = cli._colorize_session(rows[0])
+    assert "✗" in colored["ci"] and "bright_red" in colored["ci"]
+    assert "failure" not in colored["ci"]
+    # cache now has ci; JSON map carries it
+    data = json.loads(_invoke("status", "--json").stdout)
+    assert data["jira:IPG-929"]["ci"] == "failure"
+    r = _invoke("status", "--csv")
+    rows_csv = list(csv.reader(r.stdout.splitlines()))
+    assert rows_csv[0][columns.index("ci")] == "ci"
+    assert rows_csv[1][columns.index("ci")] == "failure"
+    # no PR -> ci cell renders '-' in the table, empty in CSV
+    links = {"other:x": {"branch": "no-pr", "repo": str(repo_dir),
+                         "worktree": str(wt_dir)}}
+    rows2, _ = cli._session_rows(links, False, False)
+    assert cli._colorize_session(rows2[0])["ci"] == "-"
+    assert rows2[0]["ci"] == ""
+
+
+def test_status_json_detail_carries_ci(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
+    monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: None)
+    monkeypatch.setattr(cli.refs, "fetch_pr_list_for_branch",
+                        lambda tool, branch, cwd=None: [
+                            {"number": 9, "state": "open", "title": "T",
+                             "author": "a", "created_at": "2026-09-15",
+                             "url": "https://x/mr/9",
+                             "target_branch": "main"}])
+    monkeypatch.setattr(cli.refs, "fetch_ci_status",
+                        lambda tool, url, cwd=None: "running")
+    data = json.loads(_invoke("status", "IPG-929", "--json").stdout)
+    assert data["ci"] == "running"
+    enriched = json.loads(_invoke("status", "--json").stdout)
+    assert enriched["jira:IPG-929"]["ci"] == "running"
 
 
 def test_status_ref_detail(isolated_config, tmp_path, monkeypatch):

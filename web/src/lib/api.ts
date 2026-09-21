@@ -35,6 +35,8 @@ export interface SessionEntry {
   issue_url?: string
   commits?: string
   pr?: string
+  /** CI pipeline status: success | failure | running | not_started; absent when unknown. */
+  ci?: string
   commits_detail?: CommitsDetail | null
   pr_detail?: PrDetail | null
 }

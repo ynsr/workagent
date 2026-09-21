@@ -25,22 +25,25 @@ Map of session key → entry (same shape as `harness status --json`):
     "harness": "omp 4242",
     "repo": "/home/x/projectx", "issue_url": "https://…/browse/IPG-932",
     "commits": "0|1", "pr": "…",
+    "ci": "success",
     "commits_detail": {"behind": 0, "ahead": 1},
     "pr_detail": {"number": 1706, "state": "open", "title": "…",
                    "author": "…", "url": "https://…", "tool": "glab"}
-  }
 }
 ```
 `harness` is `"<name> <pid>"` while a harness is live on the worktree,
 `""` otherwise. `commits` is the display string `"B|A"`; prefer
 `commits_detail`.
-`pr_detail` is `null` when no open/known PR. Optional query:
+`pr_detail` is `null` when no open/known PR. `ci` is the latest CI
+pipeline status for the PR — `success` | `failure` | `running` |
+`not_started` — or `null` when there is no PR or the lookup failed
+(cached 10 min while the branch tip is unchanged). Optional query:
 `?refresh=true` re-queries PR status (slow, hits the tracker CLI).
 
 ### `GET /api/status?ref=IPG-932` → single session detail
 `_session_detail` shape: the entry fields plus
 `key`, `harness`, `commits`, `pr` (display string), `commits_detail`,
-`pr_detail`, `base_branch`, `issue_url`, and `create_hint`
+`pr_detail`, `ci`, `base_branch`, `issue_url`, and `create_hint`
 (only when there is no PR).
 
 ### `GET /api/path?ref=IPG-932`
