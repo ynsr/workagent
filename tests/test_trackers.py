@@ -228,3 +228,16 @@ def test_my_issues_force_skips_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(trackers, "_gh_my_issues", lambda warn: [])
     got = trackers.list_my_issues([], force=True)
     assert got == []
+
+
+def test_my_issues_fetch_exception_never_raises(monkeypatch, tmp_path):
+    from harness import trackers
+    import harness.store as store
+    monkeypatch.setattr(store, "config_dir", lambda: tmp_path)
+    def _boom(warn):
+        raise OSError("no such binary")
+    monkeypatch.setattr(trackers, "_jira_my_issues", _boom)
+    monkeypatch.setattr(trackers, "_gh_my_issues", lambda warn: [])
+    warn: list = []
+    assert trackers.list_my_issues(warn) == []
+    assert any("jira" in w for w in warn)

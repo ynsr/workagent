@@ -389,7 +389,11 @@ def _cached_source(source: str, fetch, warn: list,
                     return rows
         except Exception:
             pass
-    rows = fetch(warn)
+    try:
+        rows = fetch(warn)
+    except Exception as e:
+        warn.append(f"{source}: {e}")
+        return []
     try:
         if db.exists():
             sq.set_issue_cache(db, source, rows)

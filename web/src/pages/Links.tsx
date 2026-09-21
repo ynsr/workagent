@@ -259,7 +259,9 @@ function LinkSetDialog({ onClose }: { onClose: () => void }) {
   const trackerOptions = useMemo(() => Object.keys(links?.trackers ?? {}).sort(), [links])
 
   function handleTrackerChange(v: string) {
-    const derived = v.includes("://") || v.includes("/") ? deriveTrackerId(v) : null
+    // Only derive for URL-looking input; canonical ids from the dropdown
+    // (github:o/r, gitlab:host/g, jira:PREFIX) pass through untouched.
+    const derived = v.includes("://") ? deriveTrackerId(v) : null
     setTracker(derived ?? v)
   }
 
