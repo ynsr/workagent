@@ -59,12 +59,17 @@
   ("Unlinked PR/MRs" table; linked URLs excluded) and my recent issues
   ("Recent issues (reported by me, last 7 days)" — jira To Do/In
   Progress reported by me in the last two months + GitHub issues
-  authored by me). `--json` prints `{"prs": […], "issues": […]}`;
-  `--csv` renders the PR/MR table as CSV; CLI failures become stderr
-  warnings, never a non-zero exit. Read-only web endpoints
-  `GET /api/issues` (my issues + `warning`) and `GET /api/candidates`
-  (same data server-side). `store.record_link` stamps `added_at` on
-  first link (never bumped by updates).
+  `--json` prints `{"prs": […], "issues": […]}`;
+  `--csv` renders the PR/MR table as CSV with raw (unescaped) titles;
+  CSV/JSON carry raw user content either way, Rich tables escape it.
+  CLI failures become stderr warnings, never a non-zero exit. My-issues
+  JQL is `status in ("To Do", "In Progress") AND created >= -60d`
+  (Jira has no month unit; "To-Do" with a hyphen does not exist). glab
+  installs lacking `--state` on `mr list` fall back to its stateless
+  open-MR listing. Read-only web endpoints `GET /api/issues` (my issues
+  + `warning`) and `GET /api/candidates` (same data server-side).
+  `store.record_link` stamps `added_at` on first link (never bumped by
+  updates).
 - One live AI harness per worktree: `start`/`review` (and `sync`'s
   conflict-harness runs) record the running harness in a locked
   `harnesses.json` (pid-liveness sweep; dead entries self-heal on the
