@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -1176,6 +1177,8 @@ def _query_pr(repo: str, branch: str) -> tuple[dict | None, str | None]:
     except HarnessError as e:
         eprint(f"warning: {tool} pr lookup failed for {branch}: {e}")
         other = "glab" if tool == "gh" else "gh"
+        if shutil.which(other) is None:
+            raise
         try:
             return refs.latest_pr(refs.fetch_pr_list_for_branch(other, branch, cwd=repo)), other
         except HarnessError as e2:

@@ -26,6 +26,7 @@ def run_cmd(*args: str, cwd=None, check: bool = True, timeout: int = 60,
     try:
         proc = subprocess.run(
             list(args),
+            cwd=str(cwd) if cwd is not None else None,
             capture_output=True,
             text=True,
             timeout=timeout,

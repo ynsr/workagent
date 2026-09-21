@@ -248,14 +248,21 @@ def _known_glab_hosts(path: Path | None = None) -> set[str]:
     return hosts
 
 
+_NO_TOOL_DIRS: set[str] = set()
+
+
 def _detect_host_cli(path: Path) -> str | None:
     """Host CLI for *path*'s remote: gh only for GitHub hosts, glab otherwise.
 
     The origin host is matched against each CLI's known hosts (gh
     hosts.yml, glab config.yml); unknown hosts fall back to the legacy
     auth-status probe (gh first). Local file reads only — no CLI spawn
-    unless the host is unknown.
+    unless the host is unknown. Probe misses (~12s: gh 1.7s + glab 10s)
+    are memoized per directory for the process lifetime so repeated
+    status/sync calls in one run pay it once.
     """
+    if str(path) in _NO_TOOL_DIRS:
+        return None
     host = None
     url = remote_url(path)
     if url:
@@ -273,4 +280,5 @@ def _detect_host_cli(path: Path) -> str | None:
                 return cli
         except (FileNotFoundError, subprocess.TimeoutExpired):
             continue
+    _NO_TOOL_DIRS.add(str(path))
     return None
