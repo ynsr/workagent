@@ -252,14 +252,14 @@ def test_409_on_concurrent_target(client, monkeypatch):
     client.post("/api/runs", json={"command": "register",
                                         "args": ["/tmp/a"]}
                      ).json()["run_id"]
-    # registry entry exists and target 'config' is held while running;
-    # simulate a long-running run by creating one directly
-    client.app.state.registry.targets["config"] = "held"
+    # registry entry exists and target 'register:/tmp/b' is held while
+    # running; simulate a long-running run by creating one directly
+    client.app.state.registry.targets["register:/tmp/b"] = "held"
     r2 = client.post("/api/runs", json={"command": "register",
                                         "args": ["/tmp/b"]})
     assert r2.status_code == 409
     assert r2.json()["error"]["code"] == "conflict"
-    client.app.state.registry.targets.pop("config", None)
+    client.app.state.registry.targets.pop("register:/tmp/b", None)
 
 
 def test_buffer_truncation(tmp_path, isolated_config):

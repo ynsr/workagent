@@ -140,6 +140,10 @@ become `skipped:<reason>` rows — never torn down. Requires `--yes`
   functions `harness-cd` (bash/zsh from `cd_wrapper`, fish) shipped with
   `completions show|install` make it change the caller's directory — a
   child process cannot chdir its parent.
+- Tracker canonical ids are host-scoped: `gitlab:<host>/<group>/<repo>`
+  (e.g. `gitlab:git.jibit.cloud/server/projectx`). A bare
+  `server/projectx` is not portable across hosts — always persist the
+  full host-scoped id via `trackers.normalize_id`.
 - Host CLI (gh/glab) for PR/MR ops: `repos._detect_host_cli` matches the
   repo's origin-URL host against gh's known hosts (`~/.config/gh/hosts.yml`,
   top-level keys) and glab's (`~/.config/glab-cli/config.yml`, keys under

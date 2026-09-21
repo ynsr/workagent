@@ -21,6 +21,14 @@
 - Fixed `review` reading `--dry-run` without defining the flag.
 
 ## Unreleased
+- Issue cache + mandatory repo tracker + candidate actions: `issue_cache`
+  table (per-source rows, 1h TTL) behind `trackers.list_my_issues(force)`;
+  `candidates --reset-cache` clears and re-fetches; `GET /api/issues` and
+  `GET /api/candidates` accept `?force=true`. `repo add` requires
+  `--tracker` (exit 2) and `repo list`/`GET /api/repos` show a resolved
+  `tracker` column. LinkSet tracker dropdown with URL auto-ref. Candidate
+  rows gain Start/Review/Register actions via the run pipeline; `register`
+  runs are keyed per path (`register:<path>`).
 - SQLite sessions + cutover: `harness migrate` one-shots
   `links.json`/`pr_cache.json`/`harnesses.json` into `state.db`
   (counts verified, files deleted, `config.json` kept; idempotent re-run
