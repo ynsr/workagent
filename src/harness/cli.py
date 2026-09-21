@@ -348,7 +348,12 @@ def _reviewable_keys(links: dict) -> list[tuple[str, str]]:
         if _is_reviewed(k, v):
             continue
         pr = worktrees.worktree_pr_url(k, v)
-        if not pr or not worktrees.is_valid_worktree(v.get("worktree", "")):
+        if pr and not worktrees.is_valid_worktree(v.get("worktree", "")):
+            continue
+        if not pr:
+            wt = v.get("worktree", "")
+            if wt and Path(wt).is_dir():
+                eprint(f"{k}: no PR/MR — skipping")
             continue
         if store.active_harness(k):
             eprint(f"{k}: harness already live — skipping")

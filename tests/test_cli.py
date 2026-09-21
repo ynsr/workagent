@@ -1089,6 +1089,30 @@ def test_review_sequential_without_all_fails():
     assert r.exit_code == 2
 
 
+def test_review_all_notes_no_pr_skips(isolated_config, tmp_path, monkeypatch):
+    """--all must note worktrees with no resolvable PR/MR, not skip silently."""
+    wt = tmp_path / "a"
+    wt.mkdir()
+    store.record_link("jira:A-1", {"branch": "feat/a", "worktree": str(wt)})
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda p: True)
+    monkeypatch.setattr(cli.worktrees, "worktree_pr_url", lambda k, v: None)
+    monkeypatch.setattr(cli.store, "active_harness", lambda key: None)
+    spawned = []
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            spawned.append(argv)
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
+    r = runner.invoke(cli.app, ["review", "--all", "--json"])
+    assert r.exit_code == 0, r.output
+    assert spawned == []
+    assert "jira:A-1: no PR/MR — skipping" in r.stderr
+    assert "nothing to review" in r.stderr
+
+
 def test_review_without_ref_is_usage_error(isolated_config):
     """Bare `harness review` (no ref, no --all) is a usage error, not a crash."""
     r = runner.invoke(cli.app, ["review"])
