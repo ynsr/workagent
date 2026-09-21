@@ -308,7 +308,8 @@ def start(
               "base": detected_default if branch_mode else base_branch,
               "key": key, "harness": harness_name}
     eprint(f"worktree: {worktree}  branch: {branch}")
-    _guard_harness(key, worktree)
+    if not no_harness:
+        _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, str(r), no_tty, no_harness,
                  result, json_output, run_key=key)
 
@@ -394,7 +395,8 @@ def review(
             result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
                       "harness": harness_name}
             eprint(f"worktree: {worktree}  branch: {branch}")
-            _guard_harness(f"pr:{pr_url}", worktree)
+            if not no_harness:
+                _guard_harness(f"pr:{pr_url}", worktree)
             _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty, no_harness,
                          result, json_output, run_key=f"pr:{pr_url}")
             return
@@ -417,7 +419,8 @@ def review(
     result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
               "harness": harness_name}
     eprint(f"worktree: {worktree}  branch: {branch}")
-    _guard_harness(f"pr:{pr_url}", worktree)
+    if not no_harness:
+        _guard_harness(f"pr:{pr_url}", worktree)
     _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty, no_harness,
                  result, json_output, run_key=f"pr:{pr_url}")
 

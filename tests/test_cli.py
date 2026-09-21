@@ -981,3 +981,22 @@ def test_run_harness_records_and_clears(monkeypatch):
     cli._run_harness("omp", "prompt", "/tmp/wt", "/tmp", True, False,
                      {"k": "v"}, False, run_key="jira:X")
     assert ("rec", "jira:X", "omp") in rec and ("clr", "jira:X") in rec
+
+
+def test_start_no_harness_not_guarded_when_busy(isolated_config, tmp_path, monkeypatch):
+    """--no-harness starts nothing: never guarded, never refused."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.repos, "repo_root", lambda cwd=None: None)
+    monkeypatch.setattr(cli.repos, "worktree_branch", lambda path: None)
+    monkeypatch.setattr(cli.store, "active_harness",
+                        lambda key: {"harness": "omp", "pid": 99999, "started_at": 1.0})
+    launched = []
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": "/tmp/wt", "branch": "feat/22--add-login"})
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--no-harness", "--json"])
+    assert r.exit_code == 0, r.output
+    assert "already has a live harness" not in r.stderr
+    assert launched == []
