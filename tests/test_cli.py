@@ -444,7 +444,7 @@ def test_status_detail_issue_url(isolated_config, tmp_path, monkeypatch):
     assert "issue: https://jira.example.com/browse/IPG-929" in r.output
 
 
-def test_link_list_sessions_enriched(isolated_config, tmp_path, monkeypatch):
+def test_link_list_worktrees_enriched(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
@@ -452,7 +452,8 @@ def test_link_list_sessions_enriched(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
     r = _invoke("link", "list", "--json")
     data = json.loads(r.stdout)
-    assert data["sessions"]["jira:IPG-929"]["pr"] == "-"
+    assert "sessions" not in data
+    assert data["worktrees"]["jira:IPG-929"]["pr"] == "-"
 
 
 def _sync_mocks(monkeypatch, local_calls=None, rebase_calls=None, pulled=None):

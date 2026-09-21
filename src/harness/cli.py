@@ -874,8 +874,8 @@ def link_list(
     links = store.load_links()
     if json_output:
         print(json.dumps({"trackers": cfg.get("trackers", {}),
-                          "sessions": {k: _enrich_entry(k, v, refresh_pr)
-                                       for k, v in links.items()}},
+                          "worktrees": {k: _enrich_entry(k, v, refresh_pr)
+                                        for k, v in links.items()}},
                          indent=2, ensure_ascii=False))
         return
     rows = [{"tracker": t, "repos": ", ".join(v.get("repos", []))}
