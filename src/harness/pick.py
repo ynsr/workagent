@@ -42,6 +42,10 @@ def _read_key(read: Callable[[int], str]) -> str:
         return "enter"
     if ch in ("q", "Q", "\x03", "\x04"):
         return "abort"
+    if ch == "j":
+        return "down"
+    if ch == "k":
+        return "up"
     if ch == "\x1b":
         nxt = read(1)
         if nxt != "[":
@@ -58,7 +62,7 @@ def _option_line(opt: str | tuple[str, str | None], selected: bool) -> str:
     name, *rest = opt if isinstance(opt, tuple) else (opt,)
     marker = f"{_BOLD_CYAN}❯{_RESET}" if selected else " "
     desc = f"  {_DIM}{rest[0]}{_RESET}" if rest and rest[0] else ""
-    return f"{_ERASE_LINE}{marker} {name}{desc}\n"
+    return f"{_ERASE_LINE}{marker} {name}{desc}\r\n"
 
 
 def _draw(stream, options: list[str | tuple[str, str | None]], idx: int) -> None:
@@ -72,6 +76,7 @@ def _erase(stream, n: int) -> None:
     stream.write(_CURSOR_UP * n)
     for _ in range(n):
         stream.write(_ERASE_LINE + _CURSOR_DOWN)
+    stream.write("\r")  # raw mode: \n does not return to column 0
     stream.flush()
 
 
@@ -79,7 +84,7 @@ def _redraw(stream, options: list[str | tuple[str, str | None]], idx: int) -> No
     """Erase the whole option block, then draw it again at *idx*."""
     stream.write(_CURSOR_UP * len(options))
     for _ in options:
-        stream.write(_ERASE_LINE + "\n")
+        stream.write(_ERASE_LINE + "\r\n")
     stream.write(_CURSOR_UP * len(options))
     _draw(stream, options, idx)
 
@@ -123,7 +128,7 @@ def pick_index(label: str, options: list[str | tuple[str, str | None]], *,
         read = stdin.read
 
     idx = 0
-    stream.write(f"{label}\n")
+    stream.write(f"{label}\r\n")
     _draw(stream, options, 0)
     chosen: int | None = None
     try:

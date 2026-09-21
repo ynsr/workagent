@@ -98,12 +98,17 @@ def record_link(issue_key: str, entry: dict) -> None:
         _locked(lock, lambda: _record_link_locked(path, issue_key, entry))
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _record_link_locked(path: Path, issue_key: str, entry: dict) -> None:
     links = _read_json(path, {})
     merged = {**links.get(issue_key, {}), **entry}
+    # First-seen stamp; never bumped by later updates (Task 7 sorts by it).
+    merged.setdefault("added_at", _now_iso())
     links[issue_key] = merged
     _atomic_replace(path, links)
-
 
 def lookup_link(issue_key: str) -> dict | None:
     return load_links().get(issue_key)
@@ -134,7 +139,12 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
     with open(path.parent / (path.name + ".lock"), "w") as lock:
         def _update() -> None:
             cache = _read_json(path, {})
-            cache[branch] = entry
+            prev = cache.get(branch) or {}
+            merged = dict(entry)
+            for k in ("ci", "ci_checked_at", "ci_sha"):
+                if k in prev and k not in merged:
+                    merged[k] = prev[k]
+            cache[branch] = merged
             _atomic_replace(path, cache)
         _locked(lock, _update)
 
@@ -147,8 +157,27 @@ def get_cached_pr_tool(branch: str) -> str | None:
     return load_pr_cache().get(branch, {}).get("tool")
 
 
-def get_cached_pr_status(branch: str) -> dict | None:
-    return load_pr_cache().get(branch, {}).get("pr")
+def cache_ci_status(branch: str, ci: str | None, sha: str | None = None) -> None:
+    """Record CI pipeline status on a branch's pr_cache entry, in place.
+
+    Reads-modifies the branch entry under the cache lock so the PR fields
+    written by ``cache_pr_status`` survive. A ``None`` ci (lookup failed)
+    writes nothing, so the next run retries the lookup.
+    """
+    if ci is None:
+        return
+    path = config_dir() / "pr_cache.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.parent / (path.name + ".lock"), "w") as lock:
+        def _update() -> None:
+            cache = _read_json(path, {})
+            entry = cache.setdefault(branch, {})
+            entry["ci"] = ci
+            entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
+            if sha:
+                entry["ci_sha"] = sha
+            _atomic_replace(path, cache)
+        _locked(lock, _update)
 
 
 def _pid_alive(pid: int) -> bool:

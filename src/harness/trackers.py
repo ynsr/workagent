@@ -6,13 +6,15 @@ Persisted in state/tracker_repos.json as
 
 from __future__ import annotations
 
+import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from . import pick, refs, repos, store
-from .errors import HarnessError
+from .errors import HarnessError, run_cmd
 
 
 def normalize_id(raw: str) -> str:
@@ -235,3 +237,149 @@ def _confirm_use_cwd(tid: str, known: list[str], repo: str, yes: bool = False) -
     except EOFError:
         answer = ""
     return answer in ("y", "yes")
+
+
+# ── my issues / candidates listing (issue #7 task 5) ──────────────────
+
+# Corrected from the task brief against the live Jira (tribe.jibit.cloud):
+# its status is "To Do" (not "To-Do"), and JQL "-2m" means 2 minutes
+# (no month unit) — the intended window is two months.
+_MY_ISSUES_JQL = ('reporter = currentUser() AND status in ("To Do", "In Progress") '
+                  'AND created >= -60d ORDER BY created DESC')
+
+
+def parse_created(value: str) -> datetime | None:
+    """Parse an ISO-8601 `created` stamp (jira `+0000`, gh/glab `Z`) to an
+    aware UTC datetime; None when unparseable."""
+    if not value:
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    if re.search(r"[+-]\d{4}$", text):
+        text = text[:-2] + ":" + text[-2:]
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _jira_row(key: str, title: str, status: str, created: str) -> dict:
+    return {"key": f"jira:{key}", "title": title, "status": status,
+            "created": created,
+            "url": refs.issue_url(f"jira:{key}") or ""}
+
+
+def _parse_jira_payload(out: str | None) -> list[dict] | None:
+    """Raw-API JSON (dict `{"issues":[…]}` or bare list) → rows; None when
+    the output is not a usable payload (treated as seam unavailable)."""
+    try:
+        data = json.loads(out or "")
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if isinstance(data, dict):
+        data = data.get("issues", [])
+    if not isinstance(data, list):
+        return None
+    rows = []
+    for it in data:
+        fields = it.get("fields") or {}
+        key = str(it.get("key") or "")
+        if not key:
+            continue
+        rows.append(_jira_row(key, str(fields.get("summary") or ""),
+                              str((fields.get("status") or {}).get("name") or ""),
+                              str(fields.get("created") or "")))
+    return rows
+
+
+def _parse_jira_plain(out: str) -> list[dict] | None:
+    """`issue list --plain --no-headers` rows: 2+ space (or tab) column
+    padding, right-anchored columns key|…summary…|status|created.
+    None when the command produced output but none of it parses (broken
+    seam), so the tier loop falls through and warns instead of silently
+    reporting zero issues."""
+    if not out.strip():
+        return []
+    rows = []
+    for line in out.splitlines():
+        parts = [p for p in re.split(r"\s{2,}|\t", line.strip()) if p]
+        if len(parts) < 4 or not re.fullmatch(r"[A-Z][A-Z0-9_]*-\d+", parts[0]):
+            continue
+        key, status, created = parts[0], parts[-2], parts[-1]
+        rows.append(_jira_row(key, " ".join(parts[1:-2]), status, created))
+    return rows or None
+
+
+def _jira_my_issues(warnings: list[str]) -> list[dict]:
+    """Jira rows via the first working seam: raw `request GET`, then
+    jira-cli's `search --format json` (shim installs), then stock
+    `issue list --plain`. All failing → [] + one collected warning."""
+    attempts = (
+        ("request", ("jira-cli", "request", "GET",
+                     f"search?jql={quote(_MY_ISSUES_JQL)}"
+                     "&maxResults=100&fields=key,summary,status,created")),
+        ("search", ("jira-cli", "search", _MY_ISSUES_JQL,
+                    "--limit", "100", "--format", "json")),
+        ("issue list", ("jira-cli", "issue", "list", "--plain", "--no-headers",
+                        "--no-truncate", "--columns", "key,summary,status,created",
+                        "--jql", _MY_ISSUES_JQL)),
+    )
+    errors = []
+    for kind, args in attempts:
+        try:
+            out = run_cmd(*args)
+        except HarnessError as e:
+            errors.append(f"{kind}: {e}")
+            continue
+        rows = _parse_jira_payload(out) if kind != "issue list" \
+            else _parse_jira_plain(out or "")
+        if rows is not None:
+            return rows
+        errors.append(f"{kind}: unavailable/invalid output")
+    warnings.append("jira: " + "; ".join(errors))
+    return []
+
+
+def _gh_my_issues(warnings: list[str]) -> list[dict]:
+    try:
+        out = run_cmd("gh", "search", "issues", "--author=@me", "--state=open",
+                      "--limit", "100", "--json",
+                      "repository,number,title,updatedAt,url,createdAt")
+    except HarnessError as e:
+        warnings.append(f"github: {e}")
+        return []
+    try:
+        data = json.loads(out or "[]")
+    except json.JSONDecodeError:
+        warnings.append("github: cannot parse gh search output")
+        return []
+    rows = []
+    for it in data if isinstance(data, list) else []:
+        repo = (it.get("repository") or {}).get("nameWithOwner") or ""
+        num = it.get("number")
+        if not repo or num is None:
+            continue
+        rows.append({"key": f"github:{repo}#{num}", "title": it.get("title", ""),
+                     "url": it.get("url", ""), "status": "open",
+                     "created": it.get("createdAt", "")})
+    return rows
+
+
+def list_my_issues(warnings: list[str] | None = None) -> list[dict]:
+    """My open issues across sources as {key, title, url, status, created}.
+
+    jira (reporter=me, To Do/In Progress, last 2 months) + GitHub issues
+    authored by me (state=open). GitLab issues are intentionally omitted
+    (Jira covers work tracking; GitLab surfaces via PR/MR candidates).
+    Per-source failure contributes [] plus a warning — to stderr when
+    *warnings* is None, else appended to the caller's list; never raises.
+    """
+    warn = warnings if warnings is not None else []
+    rows = _jira_my_issues(warn) + _gh_my_issues(warn)
+    rows.sort(key=lambda r: r["created"], reverse=True)
+    if warnings is None:
+        for w in warn:
+            print(f"warning: {w}", file=sys.stderr)
+    return rows

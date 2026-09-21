@@ -24,8 +24,8 @@ export interface CommitsDetail {
   ahead: number
 }
 
-/** One session entry, as in `harness status --json`. */
-export interface SessionEntry {
+/** One worktree entry, as in `harness status --json`. */
+export interface WorktreeEntry {
   issue?: string
   worktree?: string
   branch?: string
@@ -35,15 +35,21 @@ export interface SessionEntry {
   issue_url?: string
   commits?: string
   pr?: string
+  /** CI pipeline status: success | failure | running | not_started; absent when unknown. */
+  ci?: string
+  /** First-seen stamp (ISO-8601); older entries may lack it. */
+  added_at?: string
+  /** False when the recorded path is missing or not a live git worktree. */
+  wt_valid?: boolean
   commits_detail?: CommitsDetail | null
   pr_detail?: PrDetail | null
 }
 
-/** GET /api/status — map of session key → entry. */
-export type SessionMap = Record<string, SessionEntry>
+/** GET /api/status — map of worktree key → entry. */
+export type WorktreeMap = Record<string, WorktreeEntry>
 
-/** GET /api/status?ref=… — single-session detail (entry fields plus key/base_branch/create_hint). */
-export interface SessionDetail extends SessionEntry {
+/** GET /api/status?ref=… — single-worktree detail (entry fields plus key/base_branch/create_hint). */
+export interface WorktreeDetail extends WorktreeEntry {
   key: string
   commits: string
   pr: string
@@ -68,7 +74,39 @@ export interface Repo {
 
 export interface Links {
   trackers: Record<string, { repos: string[] }>
-  sessions: SessionMap
+  worktrees: WorktreeMap
+}
+
+/** One row of GET /api/issues. */
+export interface IssueRow {
+  key: string
+  title: string
+  url: string
+  status: string
+  created: string
+}
+
+export interface IssuesResponse {
+  issues: IssueRow[]
+  warning?: string | null
+}
+
+/** One unlinked open PR/MR of GET /api/candidates. */
+export interface CandidatePr {
+  key: string
+  number: number
+  title: string
+  url: string
+  branch: string
+  updated: string
+  state: string
+  repo: string
+}
+
+export interface CandidatesResponse {
+  prs: CandidatePr[]
+  issues: IssueRow[]
+  warnings: string[]
 }
 
 export interface DoctorInfo {
@@ -112,9 +150,18 @@ export type RunCommand =
   | "review"
   | "cleanup"
   | "sync"
+  | "open"
   | "register"
   | "repo"
   | "link"
+
+/** Display label for a PR/MR URL: "PR #33" (GitHub) or "MR #42" (GitLab);
+ * falls back to the raw URL when the kind cannot be determined. */
+export function prLabel(prUrl: string | undefined): string {
+  if (!prUrl) return ""
+  const m = /\/(pull|merge_requests)\/(\d+)/.exec(prUrl)
+  return m ? `${m[1] === "pull" ? "PR" : "MR"} #${m[2]}` : prUrl
+}
 
 export interface CreateRunInput {
   command: RunCommand
@@ -183,15 +230,15 @@ function qs(params: Record<string, string | undefined>): string {
 export const api = {
   info: () => request<Info>("/api/info"),
 
-  /** GET /api/status — all sessions. `refresh` re-queries PR status (slow). */
+  /** GET /api/status — all worktrees. `refresh` re-queries PR status (slow). */
   statusAll: (opts?: { refresh?: boolean }) =>
-    request<SessionMap>(
+    request<WorktreeMap>(
       `/api/status${qs({ refresh: opts?.refresh ? "true" : undefined })}`,
     ),
 
-  /** GET /api/status?ref=… — single session detail. */
+  /** GET /api/status?ref=… — single worktree detail. */
   statusDetail: (ref: string) =>
-    request<SessionDetail>(`/api/status${qs({ ref })}`),
+    request<WorktreeDetail>(`/api/status${qs({ ref })}`),
 
   /** GET /api/path?ref=… — resolved worktree path. */
   path: (ref: string) => request<PathInfo>(`/api/path${qs({ ref })}`),
@@ -199,6 +246,11 @@ export const api = {
   repos: () => request<Repo[]>("/api/repos"),
   links: () => request<Links>("/api/links"),
   doctor: () => request<DoctorInfo>("/api/doctor"),
+
+  /** GET /api/issues — my open issues; always 200 with an optional warning. */
+  issues: () => request<IssuesResponse>("/api/issues"),
+  /** GET /api/candidates — unlinked PR/MRs + recent issues. */
+  candidates: () => request<CandidatesResponse>("/api/candidates"),
 
   runs: () => request<Run[]>("/api/runs"),
   run: (id: string) => request<RunDetail>(`/api/runs/${encodeURIComponent(id)}`),

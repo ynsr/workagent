@@ -24,7 +24,7 @@ export const OPTOUT_ACTIONS: OptOutAction[] = [
 ]
 
 export const OPTOUT_LABELS: Record<OptOutAction, string> = {
-  cleanup: "Session cleanup",
+  cleanup: "Worktree cleanup",
   sync: "Sync",
   start: "Start",
   review: "Review",

@@ -25,13 +25,13 @@ Install locally:
 
 | Module | Responsibility |
 |--------|---------------|
-| `src/harness/cli.py` | Typer app — `start`/`review`/`sync`/`cleanup`/`register`/`repo add\|list\|remove`/`link list\|set\|remove`/`status`/`cd`/`doctor`/`completions show\|install`; Rich tables/CSV/JSON output |
-| `src/harness/refs.py` | issue/PR ref parsing (`OWNER/REPO#N`, Jira `KEY-123`/browse URLs, URLs, bare N) + `gh`/`glab`/`jira-cli` fetching |
+| `src/harness/cli.py` | Typer app — `start`/`review`(+`--all`/`--sequential`/`--fix`)/`sync`/`cleanup`(+`--merged`)/`register`/`repo add\|list\|remove`/`link list\|set\|remove`/`status`/`candidates`/`cd`/`open`/`doctor`/`serve`/`completions show\|install`; Rich tables/CSV/JSON output; `status`/`link list` tables carry branch/commits/PR/`ci` (success\|failure\|running\|not_started; ✓/✗/● rendered, `-` when none) + `wt_valid` in `--json` |
+| `src/harness/refs.py` | issue/PR ref parsing (`OWNER/REPO#N`, Jira `KEY-123`/browse URLs, URLs, bare N) + `gh`/`glab`/`jira-cli` fetching; `fetch_open_prs` (open PR/MR rows) + `fetch_ci_status` (soft-fail CI lookup, None + stderr warning); recorded `pr_url` seeds the PR cell when cache/query find none; GitLab matches render `MR #N` |
 | `src/harness/repos.py` | repo resolution (`--repo` name/path/URL, cwd, interactive pick), worktree→main-checkout resolution, default-branch detection, registry, `repo_names()` completion source, remote-host-aware gh/glab detection (`repos.<name>.tool` persisted in the registry) |
-| `src/harness/pick.py` | shared arrow-key picker for every multi-choice prompt: stderr render, ↑/↓ + Enter, optional dim description per item, q/Esc aborts, `None` on non-TTY; testable via `read`/`stream` seams |
-| `src/harness/trackers.py` | tracker↔repo relation: canonical ids (`jira:PREFIX`, `github:O/R`, `gitlab:host/g/r`), `check_or_record` guard, `resolve_for_tracker` repo picker, `link` command data |
+| `src/harness/pick.py` | shared arrow-key picker for every multi-choice prompt: stderr render, ↑/↓ + j/k + Enter, optional dim description per item, q/Esc aborts, `None` on non-TTY; raw-mode-safe `\r\n` terminators (no staircase); testable via `read`/`stream` seams |
+| `src/harness/trackers.py` | tracker↔repo relation: canonical ids (`jira:PREFIX`, `github:O/R`, `gitlab:host/g/r`), `check_or_record` guard, `resolve_for_tracker` repo picker, `link` command data; `list_my_issues` (jira `_MY_ISSUES_JQL` reporter=me To Do/In Progress last 2 months + gh authored-by-me; never raises, appends warnings) |
 | `src/harness/sync.py` | sync engine: dirty-file check, local merge (fetch + ff default + merge), sole-conflict `CHANGELOG.md` Unreleased auto-resolve (bullet union), push, remote rebase dispatch (`gh pr update-branch --rebase` / `glab mr rebase`) |
-| `src/harness/webapp.py` | `serve` web backend (FastAPI; lazy import behind the `web` extra): Host/Origin/Content-Type guard, read endpoints reusing in-process helpers, run registry (`python -m harness` children, 409 per target key, ≤100 runs, ≤10k lines buffered), SSE with `Last-Event-ID` replay, SIGTERM→SIGKILL cancel, SPA catch-all |
+| `src/harness/webapp.py` | `serve` web backend (FastAPI; lazy import behind the `web` extra): Host/Origin/Content-Type guard, read endpoints reusing in-process helpers (`/api/status`, `/api/path`, `/api/repos`, `/api/links` with `worktrees` key, `/api/doctor`, `/api/issues`, `/api/candidates`), run registry (`python -m harness` children, 409 per target key — `open:<ref>`, `review:all`, `cleanup:all`, `sync:all` included — ≤100 runs, ≤10k lines buffered), SSE with `Last-Event-ID` replay, SIGTERM→SIGKILL cancel, SPA catch-all |
 
 ### Key flows
 
@@ -50,12 +50,29 @@ the registry.
 **`harness serve`**: `cli.serve` lazy-imports `webapp.run_server` (needs
 the `web` extra: fastapi/uvicorn) → `create_app` guards Host/Origin/
 Content-Type, read endpoints (`/api/status`, `/api/path`, `/api/repos`,
-`/api/links`, `/api/doctor`) call the same in-process helpers as the CLI,
+`/api/links`, `/api/doctor`, `/api/issues`, `/api/candidates`) call the
+same in-process helpers as the CLI,
 and mutating commands run as `sys.executable -m harness` children via
 `backend.command_argv`-shaped argv (`--yes` on confirm, `--force` on
 cleanup/register). Frontend: `web/` (Vite + React + TS), build →
 `web/dist`, served by the SPA catch-all; API contract in
 `web/API_CONTRACT.md`.
+
+**`harness candidates`**: two Rich tables — "Unlinked PR/MRs" (open
+PR/MRs of every registered repo, minus URLs already linked in
+`links.json`; per-repo CLI failures → stderr warning) and "Recent
+issues (reported by me, last 7 days)" (jira `list_my_issues`: reporter
+= me, To Do/In Progress, last 2 months — plus GitHub issues authored by
+me; server-side 7-day filter). `--json` prints `{"prs": […],
+"issues": […]}` (stdout-only); `--csv` renders the PR/MR table as CSV.
+The web endpoints `/api/issues` (all my issues + `warning`) and
+`/api/candidates` (same data as the CLI) share `_candidates()` /
+`trackers.list_my_issues()` and are read-only GETs that always return
+200. `refs.fetch_open_prs(tool, cwd)` raises (caller decides);
+`trackers.list_my_issues()` never raises. glab issues are intentionally
+omitted (Jira covers work tracking). `store.record_link` stamps
+`added_at` on first sight and never bumps it (Task 7's sort).
+
 
 **`harness start <issue>`**: parse ref → `trackers.resolve_for_tracker`
 (repo picker: `--repo`, cwd-linked silently, unlinked-cwd y/N with
@@ -94,6 +111,18 @@ ambiguity; miss = `no linked state` error) → confirm (unless
 `--yes`/`--force`) → `git-wt cleanup --delete-branch` → close issue/PR
 (already-closed PR/MR is not an error) → drop link.
 
+**`harness open <ref>`**: resolve link key (same fuzzy resolver as
+cleanup) → refuse missing/invalid worktrees (exit 1) → detached
+`xdg-open`/`open`/`explorer` (`Popen` stdio→DEVNULL, `start_new_session`
+on posix) → print the path on stdout. Non-destructive run: no confirm
+needed in `webapp.SPECS` (`open:<ref>` target key).
+
+**`harness cleanup --merged --yes`**: loop every link; the merged/closed
+source of truth is `_status_cells(refresh_pr=True)` per link (recorded
+`pr_url` seed included); non-merged, live-harness, and invalid entries
+become `skipped:<reason>` rows — never torn down. Requires `--yes`
+(or `--dry-run` preview); `--json` prints `{"results": [...]}`.
+
 ## Conventions
 
 - Exit codes: `0` success, `1` general error, `2` usage/needs-human-input.
@@ -119,14 +148,25 @@ ambiguity; miss = `no linked state` error) → confirm (unless
   it; `_repo_tool` in cli.py validates the stored `remote` and re-detects
   on change).
 - Status caching (`_status_cells` in cli.py): per-branch cache in `pr_cache.json`
-  (pr, tool, base_branch, branch/base tips, behind/ahead counts, checked_at);
-  reused while both tips match and age < 3h — repeat `status` runs cost two
-  `git rev-parse` calls per worktree; `--refresh-pr` re-queries the PR only.
-  User content in Rich output is `rich.markup.escape`d (PR titles contain `[`).
-  Detail panel (`status <ref>`) shows the full issue URL via
-  `refs.issue_url(key, stored)` — jira site from jira-cli's config
+  (pr, tool, base_branch, branch/base tips, behind/ahead counts, checked_at;
+  CI in `ci`/`ci_checked_at`/`ci_sha` via `store.cache_ci_status`); a cached
+  PR is reused while both tips match and age < 3h, a cached no-PR result
+  while age < 30min — repeat `status` runs cost two `git rev-parse` calls
+  per worktree; `--refresh-pr` re-queries the PR and re-fetches CI (CI is
+  otherwise reused while the branch tip is unchanged and `ci_checked_at`
+  < 10min). A recorded `pr_url` seeds the PR cell when cache/query find
+  none (display only — never drives sync strategy). User content in Rich
+  output is `rich.markup.escape`d (PR titles contain `[`). Detail panel
+  (`status <ref>`) shows the full issue URL via `refs.issue_url(key,
+  stored)` — jira site from jira-cli's config
   (`~/.config/jira-cli/config.json`, fallback `~/.jira-cli.json`), GitHub
-  issues URL from the key; a stored `issue_url`/http `issue` wins.
+  issues URL from the key; a stored `issue_url`/http `issue` wins. A
+  missing PR/MR yields a `create_hint` (GitHub web URL, else a
+  `glab mr create` command).
+- Status `ci` column (tables, `status <ref>` detail, `/api/status`, web
+  table/detail): `success | failure | running | not_started` via
+  `refs.fetch_ci_status` (soft-fail: `None` + stderr warning, nothing
+  cached); Rich tables render ✓/✗/●, `-` otherwise.
 - Status `harness` column (tables, `status <ref>` detail, `/api/status`,
   web table/detail): `"<name> <pid>"` while a harness is live on the
   worktree, `""` (`—` in Rich tables) otherwise — `_harness_cell` in

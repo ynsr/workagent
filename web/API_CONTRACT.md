@@ -16,8 +16,8 @@ same-origin check passes).
  "network_exposed": false}
 ```
 
-### `GET /api/status` → all sessions
-Map of session key → entry (same shape as `harness status --json`):
+### `GET /api/status` → all worktrees
+Map of worktree key → entry (same shape as `harness status --json`):
 ```json
 {
   "jira:IPG-932": {
@@ -25,23 +25,30 @@ Map of session key → entry (same shape as `harness status --json`):
     "harness": "omp 4242",
     "repo": "/home/x/projectx", "issue_url": "https://…/browse/IPG-932",
     "commits": "0|1", "pr": "…",
+    "ci": "success",
+    "added_at": "2026-09-20T10:00:00+00:00",
+    "wt_valid": true,
     "commits_detail": {"behind": 0, "ahead": 1},
     "pr_detail": {"number": 1706, "state": "open", "title": "…",
                    "author": "…", "url": "https://…", "tool": "glab"}
-  }
 }
 ```
 `harness` is `"<name> <pid>"` while a harness is live on the worktree,
 `""` otherwise. `commits` is the display string `"B|A"`; prefer
 `commits_detail`.
-`pr_detail` is `null` when no open/known PR. Optional query:
+`pr_detail` is `null` when no open/known PR. `ci` is the latest CI
+pipeline status for the PR — `success` | `failure` | `running` |
+`not_started` — or `null` when there is no PR or the lookup failed
+(cached 10 min while the branch tip is unchanged). Optional query:
 `?refresh=true` re-queries PR status (slow, hits the tracker CLI).
 
-### `GET /api/status?ref=IPG-932` → single session detail
+### `GET /api/status?ref=IPG-932` → single worktree detail
 `_session_detail` shape: the entry fields plus
 `key`, `harness`, `commits`, `pr` (display string), `commits_detail`,
-`pr_detail`, `base_branch`, `issue_url`, and `create_hint`
-(only when there is no PR).
+`pr_detail`, `ci`, `base_branch`, `issue_url`, `wt_valid` (false when the
+recorded path is missing or not a live git worktree), and `create_hint`
+(only when there is no PR). `added_at` is present on entries stamped
+after `store.record_link` gained it; older entries may lack it.
 
 ### `GET /api/path?ref=IPG-932`
 ```json
@@ -58,7 +65,7 @@ Map of session key → entry (same shape as `harness status --json`):
 ### `GET /api/links`
 ```json
 {"trackers": {"jira:IPG": {"repos": ["/home/x/projects/projectx"]}},
- "sessions": { …same shape as GET /api/status… }}
+ "worktrees": { …same shape as GET /api/status… }}
 ```
 
 ### `GET /api/doctor`
@@ -66,6 +73,31 @@ Map of session key → entry (same shape as `harness status --json`):
 {"status": "ok", "live_hash": "…", "recorded_hash": "…",
  "tools": {"git-wt": true, "omp": true, "gh": true, "glab": true,
             "jira-cli": true}, "receipt": "/home/x/.local/share/…"}
+```
+
+### `GET /api/issues`
+My open issues (jira To Do/In Progress reported by me in the last two
+months + GitHub issues authored by me, state=open). Always 200 — a
+missing/failing host CLI yields `[]` plus a `warning`:
+```json
+{"issues": [{"key": "jira:IPG-981", "title": "…",
+             "url": "https://…/browse/IPG-981", "status": "To Do",
+             "created": "2026-09-20T10:00:00.000+0000"}],
+ "warning": "github: command not found: gh"}
+```
+
+### `GET /api/candidates`
+Unlinked open PR/MRs across every registered repo (PR/MR URLs already
+present in `links.json` are excluded server-side) plus my issues created
+within the last 7 days (server-side filter). Read-only:
+```json
+{"prs": [{"key": "github:o/r#33", "number": 33, "title": "…",
+          "url": "https://github.com/o/r/pull/33", "branch": "feat/x",
+          "updated": "2026-09-20T10:00:00Z", "state": "OPEN",
+          "repo": "o/r"}],
+ "issues": [{"key": "jira:IPG-981", "title": "…", "url": "…",
+             "status": "To Do", "created": "2026-09-20T10:00:00.000+0000"}],
+ "warnings": ["proj: gh pr list failed: …"]}
 ```
 
 ## Runs (mutating CLI commands as child processes)
@@ -76,7 +108,7 @@ Request:
 {"command": "cleanup", "args": ["IPG-932"],
  "confirm": true, "force": false}
 ```
-- `command`: one of `start | review | cleanup | sync | register |
+- `command`: one of `start | review | cleanup | sync | open | register |
   repo | link` (subcommand goes first in `args`: `["add", "--name", …]`).
 - Global `-v` may be passed as `args[0]`.
 - Values must not start with `-`; unknown options → 400.
@@ -87,7 +119,8 @@ Response 202: `{"run_id": "abc123"}` — `409 {code:"conflict"}` when
 another run holds the same target key.
 
 ### Target keys (409 collisions)
-`start`, `review`, `cleanup:<ref>`, `sync:<ref>` / `sync:all`, `config`
+`start`, `review` / `review:all` (`--all`), `cleanup:<ref>` / `cleanup:all`
+(`--merged`), `open:<ref>`, `sync:<ref>` / `sync:all`, `config`
 (register/repo/link subcommands).
 
 ### `GET /api/runs` → list

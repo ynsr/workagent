@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 import subprocess
@@ -242,6 +243,178 @@ def test_status_missing_worktree_gone(isolated_config, tmp_path, monkeypatch):
     assert json.loads(r.stdout)["jira:IPG-929"]["commits"] == "gone"
 
 
+def test_status_cells_recorded_pr_wins(isolated_config, tmp_path):
+    # Cached negative (no PR found) must not hide the recorded pr_url.
+    store.cache_pr_status("feat/x", None, tool=None, base_branch="main",
+                          branch_tip="t", base_tip="b", behind=0, ahead=0)
+    entry = {"worktree": str(tmp_path / "gone"), "branch": "feat/x",
+             "repo": str(tmp_path / "repo"),
+             "pr_url": "https://git.jibit.cloud/g/p/-/merge_requests/1706"}
+    cells = cli._status_cells(entry)
+    assert cells["pr"] == "MR #1706"
+    assert cells["pr_data"]["url"].endswith("/merge_requests/1706")
+
+
+def test_status_cells_cached_pr_beats_recorded(isolated_config, tmp_path):
+    store.cache_pr_status("feat/x", {"number": 5, "state": "open",
+                                     "url": "https://x/mr/5"},
+                          base_branch="main")
+    entry = {"worktree": str(tmp_path / "gone"), "branch": "feat/x",
+             "repo": str(tmp_path / "repo"),
+             "pr_url": "https://git.jibit.cloud/g/p/-/merge_requests/1706"}
+    cells = cli._status_cells(entry)
+    assert cells["pr"] == "PR #5 (open)"
+    assert cells["pr_data"]["number"] == 5
+
+
+def test_recorded_pr_parses_github_and_gitlab():
+    gh = "https://github.com/o/r/pull/1706"
+    gl = "https://git.jibit.cloud/g/p/-/merge_requests/1706"
+    assert cli._recorded_pr(gh) == {"number": 1706, "state": "", "url": gh}
+    assert cli._recorded_pr(gl) == {"number": 1706, "state": "", "url": gl}
+    assert cli._fmt_pr(cli._recorded_pr(gh)) == "PR #1706"
+    assert cli._fmt_pr(cli._recorded_pr(gl)) == "MR #1706"
+    assert cli._recorded_pr("https://example.com/bogus") is None
+
+
+def test_negative_cache_short_ttl():
+    old = (datetime.now(timezone.utc) - timedelta(minutes=45)).isoformat()
+    cached = {"checked_at": old, "pr": None, "branch_tip": "t", "base_tip": "b"}
+    assert cli._cache_fresh(cached) is False          # negative: 30min TTL
+    cached_pos = {**cached, "pr": {"number": 1, "state": "OPEN"}}
+    assert cli._cache_fresh(cached_pos) is True       # positive: 3h TTL
+
+
+def test_status_cells_partial_entry():
+    cells = cli._status_cells({"worktree": "", "branch": "", "repo": ""})
+    assert cells["pr"] == "-" and cells["commits"] == "-"
+
+
+def test_status_cells_ci_cache_reuse(isolated_config, tmp_path, monkeypatch):
+    wt_dir = tmp_path / "wt"; wt_dir.mkdir()
+    entry = {"worktree": str(wt_dir), "branch": "feat/x", "repo": "/repo"}
+    store.cache_pr_status("feat/x", {"number": 9, "state": "open",
+                                     "url": "https://x/mr/9"},
+                          tool="glab", base_branch="main",
+                          branch_tip="a1", base_tip="b1", behind=0, ahead=0)
+    tips = {"HEAD": "a1", "origin/main": "b1"}
+    monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: tips.get(ref))
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    fetches = []
+    monkeypatch.setattr(cli.refs, "fetch_ci_status",
+                        lambda tool, url, cwd=None: fetches.append(url)
+                        or "success")
+    c1 = cli._status_cells(entry)
+    assert c1["ci"] == "success"
+    assert fetches == ["https://x/mr/9"]
+    # same tip, fresh checked_at -> served from cache, no second fetch
+    c2 = cli._status_cells(entry)
+    assert c2["ci"] == "success"
+    assert len(fetches) == 1
+    cached = store.load_pr_cache()["feat/x"]
+    assert cached["ci"] == "success" and cached["ci_sha"] == "a1"
+    assert "ci_checked_at" in cached
+    # branch tip moved -> refetch
+    tips["HEAD"] = "a2"
+    c3 = cli._status_cells(entry)
+    assert c3["ci"] == "success"
+    assert len(fetches) == 2
+    assert store.load_pr_cache()["feat/x"]["ci_sha"] == "a2"
+    # --refresh-pr forces a refetch even on an unchanged tip
+    tips["HEAD"] = "a1"
+    cli._status_cells(entry, refresh_pr=True)
+    assert len(fetches) == 3
+
+
+def test_status_cells_ci_reuse_stale_ttl(isolated_config, tmp_path,
+                                         monkeypatch):
+    wt_dir = tmp_path / "wt"; wt_dir.mkdir()
+    entry = {"worktree": str(wt_dir), "branch": "feat/x", "repo": "/repo"}
+    store.cache_pr_status("feat/x", {"number": 9, "state": "open",
+                                     "url": "https://x/mr/9"},
+                          tool="glab", base_branch="main",
+                          branch_tip="a1", base_tip="b1", behind=0, ahead=0)
+    store.cache_ci_status("feat/x", "success", "a1")
+    cache = store.load_pr_cache()
+    cache["feat/x"]["ci_checked_at"] = (
+        datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat()
+    store.save_pr_cache(cache)
+    monkeypatch.setattr(cli, "_git_tip",
+                        lambda wt, ref: "a1" if ref == "HEAD" else None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    fetches = []
+    monkeypatch.setattr(cli.refs, "fetch_ci_status",
+                        lambda tool, url, cwd=None: fetches.append(url)
+                        or "failure")
+    assert cli._status_cells(entry)["ci"] == "failure"
+    assert len(fetches) == 1  # stale (11 min > 10 min TTL) -> refetched
+
+
+def test_status_cells_ci_none_without_pr(isolated_config):
+    cells = cli._status_cells({"worktree": "", "branch": "feat/x",
+                               "repo": "/repo"})
+    assert cells["ci"] is None
+
+
+def test_status_ci_column_symbols_json_csv(isolated_config, tmp_path,
+                                           monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
+    tips = {"HEAD": "a1", "origin/main": "b1"}
+    monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: tips.get(ref))
+    pr9 = [{"number": 9, "state": "open", "title": "T", "author": "a",
+            "created_at": "2026-09-15", "url": "https://x/mr/9",
+            "target_branch": "main"}]
+    monkeypatch.setattr(cli.refs, "fetch_pr_list_for_branch",
+                        lambda tool, branch, cwd=None:
+                        [] if branch == "no-pr" else pr9)
+    monkeypatch.setattr(cli.refs, "fetch_ci_status",
+                        lambda tool, url, cwd=None: "failure")
+    rows, columns = cli._session_rows(store.load_links(), False, False)
+    assert columns.index("ci") == columns.index("pr") + 1
+    assert rows[0]["ci"] == "failure"  # raw, machine-readable
+    colored = cli._colorize_session(rows[0])
+    assert "✗" in colored["ci"] and "bright_red" in colored["ci"]
+    assert "failure" not in colored["ci"]
+    # cache now has ci; JSON map carries it
+    data = json.loads(_invoke("status", "--json").stdout)
+    assert data["jira:IPG-929"]["ci"] == "failure"
+    r = _invoke("status", "--csv")
+    rows_csv = list(csv.reader(r.stdout.splitlines()))
+    assert rows_csv[0][columns.index("ci")] == "ci"
+    assert rows_csv[1][columns.index("ci")] == "failure"
+    # no PR -> ci cell renders '-' in the table, empty in CSV
+    links = {"other:x": {"branch": "no-pr", "repo": str(repo_dir),
+                         "worktree": str(wt_dir)}}
+    rows2, _ = cli._session_rows(links, False, False)
+    assert cli._colorize_session(rows2[0])["ci"] == "-"
+    assert rows2[0]["ci"] == ""
+
+
+def test_status_json_detail_carries_ci(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
+    monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: None)
+    monkeypatch.setattr(cli.refs, "fetch_pr_list_for_branch",
+                        lambda tool, branch, cwd=None: [
+                            {"number": 9, "state": "open", "title": "T",
+                             "author": "a", "created_at": "2026-09-15",
+                             "url": "https://x/mr/9",
+                             "target_branch": "main"}])
+    monkeypatch.setattr(cli.refs, "fetch_ci_status",
+                        lambda tool, url, cwd=None: "running")
+    data = json.loads(_invoke("status", "IPG-929", "--json").stdout)
+    assert data["ci"] == "running"
+    enriched = json.loads(_invoke("status", "--json").stdout)
+    assert enriched["jira:IPG-929"]["ci"] == "running"
+
+
 def test_status_ref_detail(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
@@ -271,7 +444,7 @@ def test_status_detail_issue_url(isolated_config, tmp_path, monkeypatch):
     assert "issue: https://jira.example.com/browse/IPG-929" in r.output
 
 
-def test_link_list_sessions_enriched(isolated_config, tmp_path, monkeypatch):
+def test_link_list_worktrees_enriched(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
@@ -279,7 +452,8 @@ def test_link_list_sessions_enriched(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
     r = _invoke("link", "list", "--json")
     data = json.loads(r.stdout)
-    assert data["sessions"]["jira:IPG-929"]["pr"] == "-"
+    assert "sessions" not in data
+    assert data["worktrees"]["jira:IPG-929"]["pr"] == "-"
 
 
 def _sync_mocks(monkeypatch, local_calls=None, rebase_calls=None, pulled=None):
@@ -358,6 +532,34 @@ def test_sync_no_pr_falls_back_to_local(isolated_config, tmp_path, monkeypatch):
     assert r.exit_code == 0
     assert json.loads(r.stdout)["strategy"] == "local-merge"
     assert local == [(str(wt_dir), "main")]
+
+
+def test_sync_recorded_pr_seed_uses_local_merge(isolated_config, tmp_path,
+                                                monkeypatch):
+    """A recorded pr_url seed (state unknown) is display-only: sync must
+    take the local-merge fallback, never remote-rebase an unverified URL."""
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    links = store.load_links()
+    links["jira:IPG-929"]["pr_url"] = \
+        "https://git.jibit.cloud/server/projectx/-/merge_requests/1699"
+    store.save_links(links)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    rebase, local = [], []
+    monkeypatch.setattr(cli.sync_mod, "local_merge",
+                        lambda wt, db: (local.append((str(wt), db))
+                                        or {"status": "merged", "conflicts": []}))
+    monkeypatch.setattr(cli.sync_mod, "push", lambda wt, br: None)
+    monkeypatch.setattr(cli.sync_mod, "rebase_remote",
+                        lambda *a, **k: rebase.append(a) or {"status": "rebased"})
+    monkeypatch.setattr(cli.sync_mod, "pull_rebased",
+                        lambda *a, **k: {"status": "reset"})
+    r = _invoke("sync", "IPG-929", "--yes", "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["strategy"] == "local-merge"
+    assert local == [(str(wt_dir), "main")] and rebase == []
 
 
 def test_sync_dry_run_touches_nothing(isolated_config, tmp_path, monkeypatch):
@@ -447,6 +649,89 @@ def test_cleanup_fuzzy_branch_match(isolated_config, monkeypatch):
     r = _invoke("cleanup", "IPG-981", "--dry-run", "--json")
     assert r.exit_code == 0, r.output
     assert json.loads(r.stdout)["key"] == "jira:IPG-981"
+
+
+def test_cleanup_merged_loop(isolated_config, monkeypatch):
+    store.record_link("jira:IPG-1", {"issue": "IPG-1", "worktree": "/tmp/wt-1",
+                                     "branch": "feat/1", "repo": "/tmp/proj"})
+    store.record_link("jira:IPG-2", {"issue": "IPG-2", "worktree": "/tmp/wt-2",
+                                     "branch": "feat/2", "repo": "/tmp/proj"})
+    monkeypatch.setattr(
+        cli, "_status_cells",
+        lambda entry, refresh_pr=False: {"pr_data": {"state":
+            "MERGED" if entry.get("branch") == "feat/1" else "OPEN"}})
+    cleaned = []
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda repo, branch, **k: cleaned.append(branch) or {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda path: True)
+    r = _invoke("cleanup", "--merged", "--yes", "--json")
+    assert r.exit_code == 0, r.output
+    status = {row["key"]: row["status"] for row in json.loads(r.stdout)["results"]}
+    assert status == {"jira:IPG-1": "cleaned", "jira:IPG-2": "skipped:open"}
+    assert cleaned == ["feat/1"]
+    links = store.load_links()
+    assert "jira:IPG-1" not in links and "jira:IPG-2" in links
+
+
+def test_cleanup_merged_skips_live_harness_and_invalid(isolated_config,
+                                                       tmp_path, monkeypatch):
+    wt_ok = tmp_path / "wt-ok"; wt_ok.mkdir()
+    store.record_link("jira:IPG-3", {"issue": "IPG-3", "worktree": str(wt_ok),
+                                     "branch": "feat/3", "repo": "/tmp/proj"})
+    store.record_link("jira:IPG-4", {"issue": "IPG-4", "worktree": str(tmp_path / "gone"),
+                                     "branch": "feat/4", "repo": "/tmp/proj"})
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
+    monkeypatch.setattr(cli.store, "active_harness",
+                        lambda key: {"harness": "omp", "pid": 1}
+                        if key == "jira:IPG-3" else None)
+    cleaned = []
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda repo, branch, **k: cleaned.append(branch) or {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
+    r = _invoke("cleanup", "--merged", "--yes", "--json")
+    assert r.exit_code == 0, r.output
+    status = {row["key"]: row["status"] for row in json.loads(r.stdout)["results"]}
+    assert status == {"jira:IPG-3": "skipped:live-harness",
+                      "jira:IPG-4": "skipped:invalid"}
+    assert cleaned == []
+    assert set(store.load_links()) == {"jira:IPG-3", "jira:IPG-4"}
+
+
+def test_cleanup_merged_requires_yes_noninteractive(isolated_config, monkeypatch):
+    store.record_link("jira:IPG-1", {"issue": "IPG-1", "worktree": "/tmp/wt-1",
+                                     "branch": "feat/1", "repo": "/tmp/proj"})
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
+    r = _invoke("cleanup", "--merged", "--json")
+    assert r.exit_code == 2
+    assert "--yes" in r.output
+    assert "jira:IPG-1" in store.load_links()
+    # --dry-run previews without --yes and without acting.
+    acted = []
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda *a, **k: acted.append(1) or {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda path: True)
+    r2 = _invoke("cleanup", "--merged", "--dry-run", "--json")
+    assert r2.exit_code == 0, r2.output
+    assert acted == []
+    status = {row["key"]: row["status"] for row in json.loads(r2.stdout)["results"]}
+    assert status == {"jira:IPG-1": "dry-run"}
+    assert "jira:IPG-1" in store.load_links()
+
+
+def test_cleanup_merged_usage_errors(isolated_config):
+    r = _invoke("cleanup", "IPG-1", "--merged", "--yes")
+    assert r.exit_code == 2
+    assert "--merged takes no ref" in r.output
+    r2 = _invoke("cleanup")
+    assert r2.exit_code == 2
+    assert "ref required" in r2.output
 
 
 def test_version(isolated_config):
@@ -816,6 +1101,62 @@ def test_cd_wrapper_snippets():
     assert "function harness-cd" in c.cd_wrapper("harness", "fish")
     snip = c.install_snippet("harness", "bash")
     assert "harness-cd()" in snip
+
+
+def test_open_resolves_and_opens(isolated_config, tmp_path, monkeypatch):
+    # Popen is faked, which also breaks subprocess.run inside
+    # is_valid_worktree — stub the validity check instead.
+    wt = tmp_path / "wt"
+    store.record_link("jira:IPG-929", {"issue": "IPG-929", "worktree": str(wt),
+                                       "branch": "feat/IPG-929--x", "repo": str(tmp_path)})
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda path: True)
+    opened = []
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            opened.append(argv)
+            kwargs.update(kw)
+
+    kwargs = {}
+    monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
+    r = _invoke("open", "IPG-929")
+    assert r.exit_code == 0, r.output
+    assert r.stdout.strip() == str(wt)
+    assert opened, "no opener spawned"
+    assert opened[0][0] in ("xdg-open", "open", "explorer")
+    assert opened[0][1] == str(wt)
+    assert kwargs["stdin"] == kwargs["stdout"] == subprocess.DEVNULL
+    assert kwargs["stderr"] == subprocess.DEVNULL
+    assert kwargs["start_new_session"] is True
+
+
+def test_open_refuses_invalid_worktree(isolated_config, tmp_path):
+    store.record_link("jira:IPG-1", {"issue": "IPG-1", "worktree": str(tmp_path / "gone"),
+                                     "branch": "feat/1", "repo": str(tmp_path)})
+    r = _invoke("open", "IPG-1")
+    assert r.exit_code == 1
+    assert "jira:IPG-1" in r.output
+
+
+def test_open_refuses_missing_link(isolated_config):
+    r = _invoke("open", "NOPE-1")
+    assert r.exit_code == 2
+    assert "no linked state" in r.output
+
+
+def test_open_no_opener_available(isolated_config, tmp_path, monkeypatch):
+    wt = tmp_path / "wt"
+    store.record_link("jira:IPG-1", {"issue": "IPG-1", "worktree": str(wt),
+                                     "branch": "feat/1", "repo": str(tmp_path)})
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda path: True)
+
+    def boom(argv, **kw):
+        raise FileNotFoundError("xdg-open")
+
+    monkeypatch.setattr(cli.subprocess, "Popen", boom)
+    r = _invoke("open", "IPG-1")
+    assert r.exit_code == 1
+    assert "no opener available" in r.output
 
 
 def test_sync_rebase_failure_falls_back_to_local_merge(
@@ -1385,3 +1726,91 @@ def test_status_detail_shows_harness_line(isolated_config, tmp_path,
     r = _invoke("status", "IPG-929")
     assert r.exit_code == 0, r.output
     assert "harness: —" in r.output
+
+
+# ── candidates ────────────────────────────────────────────────────────
+
+
+def _candidates_env(monkeypatch, tmp_path, issues=None, prs=None):
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    cfg = store.load_config()
+    cfg["repos"] = {"proj": {"path": str(repo)}}
+    store.save_config(cfg)
+    monkeypatch.setattr(cli, "_repo_tool", lambda path: "gh")
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", lambda tool, cwd: prs or [
+        {"number": 1, "title": "Add [beta] flag", "branch": "feat/1",
+         "updated": "2026-09-20T10:00:00Z",
+         "url": "https://github.com/o/r/pull/1", "state": "OPEN"}])
+    monkeypatch.setattr(cli.trackers, "list_my_issues",
+                        lambda warnings=None: issues or [])
+
+
+def test_candidates_cli_json(isolated_config, tmp_path, monkeypatch):
+    _candidates_env(monkeypatch, tmp_path, issues=[
+        {"key": "jira:IPG-981", "title": "T", "url": "u",
+         "status": "To Do", "created": "2026-09-20T10:00:00+00:00"}])
+    r = _invoke("candidates", "--json")
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert set(out) == {"prs", "issues"}
+    assert out["prs"][0]["key"] == "github:o/r#1"
+    assert out["prs"][0]["repo"] == "o/r"
+    assert out["issues"][0]["key"] == "jira:IPG-981"
+
+
+def test_candidates_cli_tables(isolated_config, tmp_path, monkeypatch):
+    _candidates_env(monkeypatch, tmp_path, issues=[
+        {"key": "jira:IPG-981", "title": "T", "url": "u",
+         "status": "To Do", "created": "2026-09-20T10:00:00+00:00"}])
+    r = _invoke("candidates")
+    assert r.exit_code == 0, r.output
+    assert "Unlinked PR/MRs" in r.stdout
+    assert "Recent issues (reported by me, last 7 days)" in r.stdout
+    # Title user content is Rich-escaped in the table path: the literal
+    # "[beta]" must survive rendering (unescaped markup would be eaten).
+    assert "Add [beta] flag" in r.stdout
+
+
+def test_candidates_cli_csv_pulls_only(isolated_config, tmp_path, monkeypatch):
+    _candidates_env(monkeypatch, tmp_path, issues=[
+        {"key": "jira:IPG-981", "title": "T", "url": "u",
+         "status": "To Do", "created": "2026-09-20T10:00:00+00:00"}])
+    r = _invoke("candidates", "--csv")
+    assert r.exit_code == 0, r.output
+    assert r.stdout.splitlines()[0] == "url,title,repo,updated"
+    # CSV applies to the PR/MR table; the issues table stays a Rich table.
+    assert "Recent issues (reported by me, last 7 days)" in r.stdout
+    assert "jira:IPG-981" in r.stdout
+    # Titles stay raw for machine-readable output (no Rich escaping).
+    assert "Add [beta] flag" in r.stdout
+    assert "\\[beta]" not in r.stdout
+
+
+def test_candidates_cli_linked_pr_excluded(isolated_config, tmp_path,
+                                           monkeypatch):
+    _candidates_env(monkeypatch, tmp_path)
+    store.record_link("github:o/r#1",
+                      {"pr_url": "https://github.com/o/r/pull/1"})
+    r = _invoke("candidates", "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["prs"] == []
+
+
+def test_candidates_cli_warning_to_stderr(isolated_config, tmp_path,
+                                          monkeypatch):
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    cfg = store.load_config()
+    cfg["repos"] = {"proj": {"path": str(repo)}}
+    store.save_config(cfg)
+    monkeypatch.setattr(cli, "_repo_tool", lambda path: "gh")
+
+    def boom(tool, cwd):
+        raise HarnessError("gh pr list failed: no auth")
+
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", boom)
+    monkeypatch.setattr(cli.trackers, "list_my_issues", lambda warnings=None: [])
+    r = _invoke("candidates")
+    assert r.exit_code == 0, r.output
+    assert "warning:" in r.stderr and "proj" in r.stderr

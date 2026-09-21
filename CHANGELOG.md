@@ -21,6 +21,55 @@
 - Fixed `review` reading `--dry-run` without defining the flag.
 
 ## Unreleased
+- Picker raw-mode fix: option/label lines now end `\r\n` (plus `\r`
+  before erase cycles), so arrow-key prompts render without the staircase
+  effect on real ptys; `j`/`k` also move the selection.
+- Recorded-PR fallback: when the cache and the live query yield no PR but
+  the link records a `pr_url`, the recorded URL fills the PR cell (state
+  unknown). Negative (no-PR) cache entries expire after 30 min instead of
+  3 h; GitLab MRs render `MR #N`.
+- CI status: `status`/`link list` tables, the `status <ref>` detail panel
+  (`--json` included), and the web table/detail gain a `ci` column —
+  `success`/`failure`/`running`/`not_started` via `gh`/`glab`
+  (`refs.fetch_ci_status`; soft-fails to null with a stderr warning),
+  cached 10 min per branch tip (`store.cache_ci_status` in
+  `pr_cache.json`); Rich tables render ✓/✗/●, `-` otherwise.
+- New `harness open <ref>`: open the linked worktree in the OS file
+  manager (`xdg-open`/`open`/`explorer`, detached); prints the path on
+  stdout, refuses missing/invalid worktrees. Also runnable from the web
+  UI (Status table row action) via `POST /api/runs`.
+- `cleanup --merged --yes`: clean every linked worktree whose PR/MR is
+  merged/closed (anything else, live-harness, and invalid entries become
+  `skipped:<reason>` rows — never torn down; `--dry-run` previews;
+  `--json` prints `{"results": [...]}`). The web UI offers it as a
+  "Cleanup merged" bulk button next to "Review all" (`review --all`) and
+  "Sync all".
+- **BREAKING**: `GET /api/links` renames the `sessions` key to
+  `worktrees`, and `harness link list --json` renames its `sessions` key
+  to `worktrees` — same shape, new key. Stored link state is unchanged.
+- Web UX wave: `?q=` search over the status table (URL-synced), first-seen
+  `added_at` column (stamped by `store.record_link`, never bumped; default
+  sort newest-first), CI badge, per-row `open` action, bulk
+  Review-all/Sync-all/Cleanup-merged buttons with confirm dialogs,
+  dropdown selects for repo/launch pickers, a Candidates card backed by
+  `GET /api/candidates`, and an invalid-worktree banner + row highlight
+  (`wt_valid: false` from `/api/status` — missing path or not a live git
+  worktree; remove via the Delete action).
+- `candidates`: lists unlinked open PR/MRs across registered repos
+  ("Unlinked PR/MRs" table; linked URLs excluded) and my recent issues
+  ("Recent issues (reported by me, last 7 days)" — jira To Do/In
+  Progress reported by me in the last two months + GitHub issues
+  `--json` prints `{"prs": […], "issues": […]}`;
+  `--csv` renders the PR/MR table as CSV with raw (unescaped) titles;
+  CSV/JSON carry raw user content either way, Rich tables escape it.
+  CLI failures become stderr warnings, never a non-zero exit. My-issues
+  JQL is `status in ("To Do", "In Progress") AND created >= -60d`
+  (Jira has no month unit; "To-Do" with a hyphen does not exist). glab
+  installs lacking `--state` on `mr list` fall back to its stateless
+  open-MR listing. Read-only web endpoints `GET /api/issues` (my issues
+  + `warning`) and `GET /api/candidates` (same data server-side).
+  `store.record_link` stamps `added_at` on first link (never bumped by
+  updates).
 - One live AI harness per worktree: `start`/`review` (and `sync`'s
   conflict-harness runs) record the running harness in a locked
   `harnesses.json` (pid-liveness sweep; dead entries self-heal on the

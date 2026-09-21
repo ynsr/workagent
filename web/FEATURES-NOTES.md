@@ -7,7 +7,7 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-harness`.
 
 | Command / option | UI surface |
 | --- | --- |
-| `status` | Dashboard, Links → "Linked sessions" table (GET /api/status, polled 15 s while visible) |
+| `status` | Dashboard, Links → "Linked worktrees" table (GET /api/status, polled 15 s while visible) |
 | `status --refresh-pr` | Dashboard + Links → "Refresh PR" button (GET /api/status?refresh=true) |
 | `status --worktree` | "Worktree paths" switch on Dashboard + Links (adds worktree column / card line) |
 | `status --json` / `--csv` | Dashboard + Repos + Runs → JSON copy button and CSV download (client-side from the same data) |
@@ -30,7 +30,7 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-harness`.
 | `repo list` | Repos page table/cards (GET /api/repos) |
 | `repo add --name --path [--tracker]` | Repos page "Add a repo" form (runs as a child process; log visible under Runs) |
 | `repo remove` | Repos page per-row trash action → confirm dialog (action type "repo remove") |
-| `link list` | Links page "Tracker mappings" card + "Linked sessions" table (GET /api/links) |
+| `link list` | Links page "Tracker mappings" card + "Linked worktrees" table (GET /api/links) |
 | `link set TRACKER REPO` | Links page "Link a tracker to a repo" form (runs as a child process) |
 | `link remove REF [--repo]` | Links page "Remove a link" form → confirm dialog (action type "link remove") |
 | `register PATH [--key --issue --repo --force]` | Links page "Register an existing worktree" form; force runs always confirm |

@@ -8,7 +8,7 @@ export function NotFound() {
       <Compass aria-hidden className="size-10 text-muted-foreground" />
       <h1 className="text-2xl font-semibold">Page not found</h1>
       <p className="max-w-sm text-sm text-muted-foreground">
-        The page you are looking for does not exist. Sessions live on the
+        The page you are looking for does not exist. Worktrees live on the
         Dashboard, runs under Runs.
       </p>
       <Button asChild size="sm">

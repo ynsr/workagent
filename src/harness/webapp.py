@@ -53,12 +53,17 @@ def _strip_ansi(text: str) -> str:
 # subcommand → {confirm: destructive?, force flag?, target key builder}
 SPECS: dict[str, dict[str, Any]] = {
     "start": {"confirm": True, "force": False, "key": "start"},
-    "review": {"confirm": True, "force": False, "key": "review"},
+    "review": {"confirm": True, "force": False,
+               "key": lambda args: "review:all" if "--all" in args
+               else "review"},
     "cleanup": {"confirm": True, "force": True,
-                "key": lambda args: f"cleanup:{_first_positional(args)}"},
+                "key": lambda args: "cleanup:all" if "--merged" in args
+                else f"cleanup:{_first_positional(args)}"},
     "sync": {"confirm": True, "force": False,
              "key": lambda args: "sync:all" if "--all" in args
              else f"sync:{_first_positional(args)}"},
+    "open": {"confirm": False, "force": False,
+             "key": lambda args: f"open:{_first_positional(args)}"},
     "register": {"confirm": False, "force": True, "key": "config"},
     "repo": {"confirm": False, "force": False, "key": "config"},
     "link": {"confirm": False, "force": False, "key": "config"},
@@ -68,8 +73,9 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "start": ("-N", "--no-tty", "--no-harness", "--dry-run", "--yes",
               "--json"),
     "review": ("-N", "--no-tty", "--no-harness", "--dry-run", "--yes",
-               "--json"),
-    "cleanup": ("--force", "--yes", "--dry-run", "--json"),
+               "--json", "--all", "--sequential", "--fix"),
+    "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged"),
+    "open": (),
     "sync": ("-m", "--merge", "--harness", "--all", "--yes", "--dry-run",
              "--json"),
     "register": ("--yes", "--force", "--json"),
@@ -366,9 +372,11 @@ def create_app(static_dir: Path, host: str, port: int,
 
     # ── read endpoints (reuse in-process core functions) ──────────────
     from .cli import (
+        _candidates,
         _enrich_entry,
         _session_detail,
     )
+    from . import trackers as trackers_mod
 
     @app.get("/api/info")
     def info() -> dict:
@@ -407,13 +415,29 @@ def create_app(static_dir: Path, host: str, port: int,
     @app.get("/api/links")
     def links_list() -> dict:
         return {"trackers": store.load_config().get("trackers", {}),
-                "sessions": {k: _enrich_entry(k, v, False)
+                "worktrees": {k: _enrich_entry(k, v, False)
                              for k, v in store.load_links().items()}}
 
     @app.get("/api/doctor")
     def doctor() -> dict:
         from . import doctor as doctor_mod
         return doctor_mod.check(json_output=True)
+
+    @app.get("/api/issues")
+    def my_issues() -> dict:
+        """My open issues; 200 + warning even when the tracker CLIs are
+        missing (read-only, never raises)."""
+        warnings: list[str] = []
+        return {"issues": trackers_mod.list_my_issues(warnings),
+                "warning": "; ".join(warnings) or None}
+
+    @app.get("/api/candidates")
+    def candidates() -> dict:
+        """Unlinked open PR/MRs + my recent issues (server-side 7-day
+        filter; read-only)."""
+        out = _candidates()
+        return {"prs": out["prs"], "issues": out["issues"],
+                "warnings": out["warnings"]}
 
     # ── runs ──────────────────────────────────────────────────────────
     @app.post("/api/runs", status_code=202)

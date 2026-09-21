@@ -137,7 +137,7 @@ function NetworkBanner() {
       <ShieldAlert aria-hidden className="size-4 shrink-0" />
       <span>
         This server is exposed to the network ({info.host}:{info.port}) — anyone
-        who can reach it can launch commands and read your sessions.
+        who can reach it can launch commands and read your worktrees.
       </span>
     </div>
   )

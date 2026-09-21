@@ -14,13 +14,15 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from harness import store
+from harness import cli, refs, store, trackers
+from harness.errors import HarnessError
 from harness.webapp import (
     MAX_LINES,
     MAX_RUNS,
     Registry,
     Run,
     _build_argv,
+    _target_for,
     _validate_args,
     create_app,
 )
@@ -355,6 +357,25 @@ def test_api_status_includes_harness(client):
     assert detail["harness"].startswith("omp ")
 
 
+def test_api_status_includes_wt_valid(client, tmp_path):
+    """Task 7 invalid-row seam: enriched entries carry wt_valid."""
+    wt = tmp_path / "wt-valid"
+    wt.mkdir()
+    store.record_link("jira:IPG-1", {"issue": "IPG-1",
+                                     "worktree": "/nonexistent/wt",
+                                     "branch": "b", "repo": "/tmp/repo"})
+    store.record_link("jira:IPG-2", {"issue": "IPG-2",
+                                     "worktree": str(wt),
+                                     "branch": "b", "repo": "/tmp/repo"})
+    body = client.get("/api/status").json()
+    assert body["jira:IPG-1"]["wt_valid"] is False
+    assert body["jira:IPG-2"]["wt_valid"] in (True, False)
+    detail = client.get("/api/status", params={"ref": "IPG-1"}).json()
+    assert detail["wt_valid"] is False
+    links = client.get("/api/links").json()
+    assert links["worktrees"]["jira:IPG-1"]["wt_valid"] is False
+
+
 def test_path_endpoint(client, tmp_path):
     wt = tmp_path / "wt2"
     wt.mkdir()
@@ -373,7 +394,22 @@ def test_repos_and_links_endpoints(client):
     assert repos[0]["name"] == "projectx"
     links = client.get("/api/links").json()
     assert links["trackers"]["jira:IPG"]["repos"] == ["/tmp/px"]
-    assert "sessions" in links
+    assert "worktrees" in links
+
+
+def test_links_worktrees_key_launch_prefill(client):
+    """Launch-page prefill validates refs against links.worktrees.
+
+    Breaking rename (issue #7): the old "sessions" key is gone; the response
+    must expose exactly {"trackers", "worktrees"} and the worktree mapping
+    must contain recorded keys.
+    """
+    store.record_link("jira:IPG-1", {"issue": "IPG-1",
+                                     "worktree": "/tmp/wt", "branch": "b",
+                                     "repo": "/tmp/repo"})
+    links = client.get("/api/links").json()
+    assert set(links) == {"trackers", "worktrees"}
+    assert "jira:IPG-1" in links["worktrees"]
 
 
 def test_doctor_endpoint(client):
@@ -417,6 +453,23 @@ def test_review_accepts_no_harness_shorthand_N(client, monkeypatch):
 
 def test_validate_args_allows_verbose_global():
     _validate_args("sync", ["-v", "IPG-1"])
+
+
+def test_webapp_review_all_flags_and_target():
+    _validate_args("review", ["--all"])
+    _validate_args("review", ["--all", "--sequential", "--fix"])
+    assert _target_for("review", ["--all"]) == "review:all"
+    assert _target_for("review", ["o/r#33"]) == "review"
+
+
+def test_webapp_open_allowed_and_target():
+    _validate_args("open", ["jira:X-1"])
+    assert _target_for("open", ["jira:X-1"]) == "open:jira:X-1"
+
+
+def test_webapp_cleanup_merged_target():
+    assert _target_for("cleanup", ["--merged"]) == "cleanup:all"
+    assert _target_for("cleanup", ["IPG-1"]) == "cleanup:IPG-1"
 
 
 def test_error_shape_on_404(client):
@@ -469,3 +522,104 @@ def test_default_static_dir_no_receipt_returns_source_default(
         cli, "__file__", str(tmp_path / "site-packages" / "harness" / "cli.py"))
     assert cli._default_static_dir() == \
         tmp_path / "web" / "dist"
+
+
+# ── /api/issues + /api/candidates (candidates listing) ────────────────
+
+
+def test_api_issues_missing_cli(client, monkeypatch):
+    """200 + warning field even when the tracker CLIs are missing."""
+
+    def boom(*a, **k):
+        raise HarnessError("command not found")
+
+    monkeypatch.setattr(trackers, "run_cmd", boom)
+    r = client.get("/api/issues")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["issues"] == []
+    assert body["warning"]
+
+
+def test_api_issues_jira_ok(client, monkeypatch, tmp_path):
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"url": "https://jira.example.com"}))
+    monkeypatch.setattr(refs, "_JIRA_CONFIGS", (cfg,))
+
+    def fake(*a, **k):
+        if a[0] == "gh":
+            raise HarnessError("command not found: gh")
+        return json.dumps({"issues": [
+            {"key": "IPG-981", "fields": {"summary": "T",
+                                          "status": {"name": "In Progress"},
+                                          "created": "2026-09-20T10:00:00.000+0000"}}]})
+
+    monkeypatch.setattr(trackers, "run_cmd", fake)
+    body = client.get("/api/issues").json()
+    assert body["issues"][0]["key"] == "jira:IPG-981"
+    assert body["issues"][0]["url"] == "https://jira.example.com/browse/IPG-981"
+    assert "gh" in body["warning"]
+
+
+def _register_repo(tmp_path, name="proj"):
+    repo = tmp_path / name
+    repo.mkdir()
+    cfg = store.load_config()
+    cfg["repos"] = {name: {"path": str(repo)}}
+    store.save_config(cfg)
+    return str(repo)
+
+
+def _issue_row(days_ago, key="jira:IPG-1"):
+    from datetime import datetime, timedelta, timezone
+
+    created = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    return {"key": key, "title": "T", "url": "u", "status": "To Do",
+            "created": created.isoformat()}
+
+
+def test_candidates_exclude_linked(client, monkeypatch, tmp_path):
+    _register_repo(tmp_path)
+    store.record_link("github:o/r#1",
+                      {"pr_url": "https://github.com/o/r/pull/1"})
+    monkeypatch.setattr(cli, "_repo_tool", lambda path: "gh")
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", lambda tool, cwd: [
+        {"number": 1, "title": "linked", "branch": "feat/1",
+         "updated": "2026-09-20T10:00:00Z",
+         "url": "https://github.com/o/r/pull/1", "state": "OPEN"},
+        {"number": 2, "title": "open", "branch": "feat/2",
+         "updated": "2026-09-21T10:00:00Z",
+         "url": "https://github.com/o/r/pull/2", "state": "OPEN"},
+    ])
+    monkeypatch.setattr(trackers, "list_my_issues", lambda warnings=None: [])
+    body = client.get("/api/candidates").json()
+    assert [p["url"] for p in body["prs"]] == ["https://github.com/o/r/pull/2"]
+    assert body["prs"][0]["key"] == "github:o/r#2"
+    assert body["prs"][0]["repo"] == "o/r"
+
+
+def test_candidates_issue_window(client, monkeypatch, tmp_path):
+    _register_repo(tmp_path)
+    monkeypatch.setattr(cli, "_repo_tool", lambda path: None)
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", lambda tool, cwd: [])
+    monkeypatch.setattr(trackers, "list_my_issues", lambda warnings=None: [
+        _issue_row(10, "jira:IPG-OLD"),
+        _issue_row(2, "jira:IPG-NEW"),
+    ])
+    body = client.get("/api/candidates").json()
+    assert [i["key"] for i in body["issues"]] == ["jira:IPG-NEW"]
+
+
+def test_candidates_shape_and_warnings(client, monkeypatch, tmp_path):
+    _register_repo(tmp_path)
+    monkeypatch.setattr(cli, "_repo_tool", lambda path: "gh")
+
+    def boom(tool, cwd):
+        raise HarnessError("gh pr list failed: auth")
+
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", boom)
+    monkeypatch.setattr(trackers, "list_my_issues", lambda warnings=None: [])
+    body = client.get("/api/candidates").json()
+    assert set(body) == {"prs", "issues", "warnings"}
+    assert body["prs"] == [] and body["issues"] == []
+    assert any("proj" in w for w in body["warnings"])

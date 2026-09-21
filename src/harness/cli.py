@@ -598,19 +598,64 @@ def review(
 @app.command("cleanup")
 @_catch_harness_errors
 def cleanup(
-    ref: str = typer.Argument(..., autocompletion=_complete_refs, help="Issue ID/URL, PR/MR URL, or worktree ref (key/branch/worktree)."),
+    ref: Optional[str] = typer.Argument(None, autocompletion=_complete_refs, help="Issue ID/URL, PR/MR URL, or worktree ref (key/branch/worktree); omit with --merged."),
     force: bool = typer.Option(False, "--force", help="Skip state validation."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    merged: bool = typer.Option(False, "--merged", help="Clean every linked worktree whose PR/MR is merged/closed (requires --yes; skips live-harness and invalid worktrees)."),
 ) -> None:
     """Close issue + remove worktree/branch/PR.
 
     Example:
       harness cleanup OWNER/REPO#22 --force --yes
       harness cleanup OWNER/REPO#22 --dry-run
+      harness cleanup --merged --yes
     """
+    if merged and ref:
+        _fail("--merged takes no ref; it loops every linked worktree.", EXIT_USAGE)
+    if not ref and not merged:
+        _fail("ref required.\n"
+              "  Pass a ref, or use --merged to clean every merged/closed link.",
+              EXIT_USAGE)
+    if merged and not yes and not dry_run:
+        _fail("--merged requires --yes (non-interactive).\n"
+              "  Re-run with --yes, or add --dry-run to preview.", EXIT_USAGE)
+
     links = store.load_links()
+
+    if merged:
+        # _status_cells(refresh_pr=True) is the merged/closed source of truth;
+        # live harnesses and invalid worktrees are skipped, never torn down.
+        rows = []
+        for key, entry in links.items():
+            branch = entry.get("branch", "")
+            state = (_status_cells(dict(entry), refresh_pr=True).get("pr_data")
+                     or {}).get("state", "")
+            if state not in ("MERGED", "CLOSED"):
+                rows.append({"key": key, "branch": branch,
+                             "status": f"skipped:{state.lower() or 'no-pr'}"})
+                continue
+            if store.active_harness(key):
+                rows.append({"key": key, "branch": branch,
+                             "status": "skipped:live-harness"})
+                continue
+            wt = entry.get("worktree", "")
+            if not wt or not worktrees.is_valid_worktree(wt):
+                rows.append({"key": key, "branch": branch,
+                             "status": "skipped:invalid"})
+                continue
+            rows.append(_cleanup_one(key, dict(entry), force, yes, dry_run,
+                                     json_output))
+        if json_output:
+            print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
+        else:
+            _print_rows(rows, json_output=False, csv_output=False,
+                        columns=["key", "branch", "status"],
+                        title="Cleanup (merged/closed)",
+                        empty="no linked worktrees")
+        return
+
     resolved = worktrees.resolve_worktree(ref, links)
     if resolved is None:
         _fail(
@@ -624,15 +669,8 @@ def cleanup(
         _fail(f"no linked state for {ref}.", EXIT_USAGE)
     repo = Path(entry.get("repo", "")).expanduser()
     branch = entry.get("branch", "")
-    pr_url = entry.get("pr_url", "")
-    stored_ref = entry.get("issue", "") or entry.get("pr_url", "") or ref
-    try:
-        parsed = refs.parse_ref(key if not key.startswith("pr:") else stored_ref)
-    except HarnessError:
-        try:
-            parsed = refs.parse_ref(stored_ref)
-        except HarnessError:
-            parsed = {"kind": "", "tool": "", "repo": "", "number": "", "url": pr_url or stored_ref}
+    if not branch:
+        _fail(f"linked entry for {ref} has no branch", EXIT_USAGE)
     if key != ref and not yes and not dry_run and sys.stdin.isatty():
         try:
             answer = input(f"ref {ref!r} matches worktree {key!r} — use it? [y/N] ").strip().lower()
@@ -640,12 +678,10 @@ def cleanup(
             answer = ""
         if answer not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)
-    if not branch:
-        _fail(f"linked entry for {ref} has no branch", EXIT_USAGE)
 
     if dry_run:
         _print_result({"dry_run": True, "key": key, "repo": str(repo), "branch": branch,
-                       "pr_url": pr_url, "force": force}, json_output)
+                       "pr_url": entry.get("pr_url", ""), "force": force}, json_output)
         return
 
     if not yes and not force and sys.stdin.isatty():
@@ -656,14 +692,44 @@ def cleanup(
         if answer not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)
 
-    result = gitwt.cleanup_worktree(repo, branch, delete_branch=True,
-                                    force=force, yes=True)
+    result = _cleanup_one(key, dict(entry), force, True, False, json_output)
+    _print_result({"branch": branch, "cleanup": result["cleanup"], "closed": ref},
+                  json_output)
+
+
+def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
+                 dry_run: bool, json_output: bool) -> dict:
+    """Clean one linked worktree: git-wt cleanup + close issue/PR + drop link.
+
+    Shared by `cleanup <ref>` (after confirmation) and the `cleanup --merged`
+    loop (after the merged/live-harness/validity gates). The caller owns ref
+    resolution and prompts; this only acts. Returns a summary row with
+    "status": "cleaned" or "dry-run".
+    """
+    repo = Path(entry.get("repo", "")).expanduser()
+    branch = entry.get("branch", "")
+    pr_url = entry.get("pr_url", "")
+    stored_ref = entry.get("issue", "") or entry.get("pr_url", "") or key
+    try:
+        parsed = refs.parse_ref(key if not key.startswith("pr:") else stored_ref)
+    except HarnessError:
+        try:
+            parsed = refs.parse_ref(stored_ref)
+        except HarnessError:
+            parsed = {"kind": "", "tool": "", "repo": "", "number": "",
+                      "url": pr_url or stored_ref}
+    if dry_run:
+        return {"key": key, "branch": branch, "repo": str(repo),
+                "pr_url": pr_url, "force": force, "status": "dry-run"}
+    cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=True,
+                                     force=force, yes=yes)
     _close_issue(parsed, force)
     _close_pr(parsed, pr_url, force)
-
     remaining = {k: v for k, v in store.load_links().items() if k != key}
     store.save_links(remaining)
-    _print_result({"branch": branch, "cleanup": result, "closed": ref}, json_output)
+    if not json_output:
+        eprint(f"{key}: cleaned")
+    return {"key": key, "branch": branch, "status": "cleaned", "cleanup": cleanup}
 
 
 def _close_issue(parsed: dict, force: bool) -> None:
@@ -808,8 +874,8 @@ def link_list(
     links = store.load_links()
     if json_output:
         print(json.dumps({"trackers": cfg.get("trackers", {}),
-                          "sessions": {k: _enrich_entry(k, v, refresh_pr)
-                                       for k, v in links.items()}},
+                          "worktrees": {k: _enrich_entry(k, v, refresh_pr)
+                                        for k, v in links.items()}},
                          indent=2, ensure_ascii=False))
         return
     rows = [{"tracker": t, "repos": ", ".join(v.get("repos", []))}
@@ -888,8 +954,12 @@ def link_remove(
 
 
 _PR_STYLES = {"open": "bright_green", "merged": "bright_magenta", "closed": "bright_red"}
+_CI_TTL_SECONDS = 600
+_CI_SYMBOLS = {"success": "✓", "failure": "✗", "running": "●"}
+_CI_STYLES = {"success": "bright_green", "failure": "bright_red", "running": "cyan"}
 _DB_CACHE: dict[str, str] = {}
 _STATUS_TTL_SECONDS = 3 * 3600
+_NEGATIVE_TTL_SECONDS = 30 * 60
 
 
 def _repo_default_branch(repo: str) -> str | None:
@@ -928,7 +998,28 @@ def _repo_tool(repo: str) -> str | None:
 def _fmt_pr(pr: dict | None) -> str:
     if not pr:
         return "-"
-    return f"PR #{pr['number']} ({pr['state']})"
+    kind = "MR" if "merge_requests" in (pr.get("url") or "") else "PR"
+    state = pr.get("state") or ""
+    if state:
+        return f"{kind} #{pr['number']} ({state})"
+    return f"{kind} #{pr['number']}"
+
+
+def _recorded_pr(url: str) -> dict | None:
+    """Parse a recorded PR/MR URL into a minimal pr dict (state unknown)."""
+    for rx, group in ((refs._GITLAB_MR, 3), (refs._GITHUB_PR, 2)):
+        m = rx.match(url or "")
+        if m:
+            return {"number": int(m.group(group)), "state": "", "url": url}
+    return None
+
+
+def _seed_recorded_pr(cells: dict, entry: dict) -> dict:
+    """A recorded pr_url wins when the cache/query produced no PR."""
+    if not cells.get("pr_data") and entry.get("pr_url"):
+        cells["pr_data"] = _recorded_pr(entry["pr_url"])
+        cells["pr"] = _fmt_pr(cells["pr_data"])
+    return cells
 
 
 def _fmt_counts(ab: dict | None) -> str:
@@ -952,7 +1043,20 @@ def _cache_fresh(cached: dict) -> bool:
         age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
     except ValueError:
         return False
-    return age < timedelta(seconds=_STATUS_TTL_SECONDS)
+    ttl = _STATUS_TTL_SECONDS if cached.get("pr") else _NEGATIVE_TTL_SECONDS
+    return age < timedelta(seconds=ttl)
+
+
+def _ci_fresh(cached: dict) -> bool:
+    """Cached CI still valid: checked within _CI_TTL_SECONDS."""
+    ts = cached.get("ci_checked_at", "")
+    if not ts:
+        return False
+    try:
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
+    except ValueError:
+        return False
+    return age < timedelta(seconds=_CI_TTL_SECONDS)
 
 
 def _query_pr(repo: str, branch: str) -> tuple[dict | None, str | None]:
@@ -976,20 +1080,24 @@ def _query_pr(repo: str, branch: str) -> tuple[dict | None, str | None]:
             raise
 
 
-def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
+def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
     """Commits + PR cells for one session, backed by pr_cache.json.
 
     A cache entry (keyed by branch) is reused while the session-branch tip
-    and the remote-tracking base tip are unchanged, the entry is younger
-    than 3h, and --refresh-pr is not given. Valid cache: two `git
-    rev-parse` calls, no host-CLI spawn, no API call. --refresh-pr
-    re-queries only the PR (counts still reuse when tips are unchanged).
+    and the remote-tracking base tip are unchanged and the entry is younger
+    than its TTL (3h for a cached PR, 30min for a cached no-PR result),
+    and --refresh-pr is not given. Valid cache: two `git rev-parse` calls,
+    no host-CLI spawn, no API call. --refresh-pr re-queries only the PR
+    (counts still reuse when tips are unchanged). When the cache or the
+    live query yields no PR but the link records a `pr_url`, the recorded
+    URL fills the PR cell. ``_tip``/``_tool`` are internal, consumed by the
+    CI cell resolution in :func:`_status_cells`.
     """
     wt = entry.get("worktree", "")
     branch = entry.get("branch", "")
     repo = entry.get("repo", "")
     cells = {"commits": "-", "ab": None, "pr": "-", "pr_data": None,
-             "base_branch": None}
+             "base_branch": None, "_tip": None, "_tool": None}
     cached = store.load_pr_cache().get(branch) if branch else None
     wt_ok = bool(wt) and Path(wt).exists()
     if wt and not wt_ok:
@@ -1003,20 +1111,22 @@ def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
             ab = {"behind": int(cached.get("behind") or 0),
                   "ahead": int(cached.get("ahead") or 0)}
             pr = cached.get("pr")
+            cells["_tip"], cells["_tool"] = branch_tip, cached.get("tool")
             cells.update(commits=_fmt_counts(ab), ab=ab, pr=_fmt_pr(pr),
                          pr_data=pr, base_branch=base_branch or None)
             if not refresh_pr:
-                return cells
+                return _seed_recorded_pr(cells, entry)
             try:
                 pr, used = _query_pr(repo, branch)
             except HarnessError:
-                return cells
+                return _seed_recorded_pr(cells, entry)
             store.cache_pr_status(branch, pr, tool=used,
                                   base_branch=base_branch,
                                   branch_tip=branch_tip, base_tip=base_tip,
                                   behind=ab["behind"], ahead=ab["ahead"])
+            cells["_tip"], cells["_tool"] = branch_tip, used
             cells.update(pr=_fmt_pr(pr), pr_data=pr)
-            return cells
+            return _seed_recorded_pr(cells, entry)
     if branch:
         db = ((cached or {}).get("base_branch")
               or _repo_default_branch(repo)) or None
@@ -1028,15 +1138,58 @@ def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
         if pr is None and used is None and cached and cached.get("pr"):
             pr, used = cached["pr"], cached.get("tool")
         if wt_ok:
+            branch_tip = _git_tip(wt, "HEAD")
             store.cache_pr_status(branch, pr, tool=used if pr else None,
                                   base_branch=db,
-                                  branch_tip=_git_tip(wt, "HEAD"),
+                                  branch_tip=branch_tip,
                                   base_tip=_git_tip(wt, f"origin/{db}") if db else None,
                                   behind=(ab or {}).get("behind", 0),
                                   ahead=(ab or {}).get("ahead", 0))
+            cells["_tip"], cells["_tool"] = branch_tip, used if pr else None
             cells.update(commits=_fmt_counts(ab), ab=ab)
         cells.update(pr=_fmt_pr(pr), pr_data=pr, base_branch=db)
+    return _seed_recorded_pr(cells, entry)
+
+
+def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
+    """_pr_cells plus the CI pipeline cell.
+
+    CI resolves after the PR: no PR -> no CI cell. A cached ``ci`` is
+    reused while the branch tip is unchanged, the check is younger than
+    _CI_TTL_SECONDS (10 min) and --refresh-pr is not given; otherwise the
+    pipeline is fetched once and persisted via store.cache_ci_status.
+    """
+    cells = _pr_cells(entry, refresh_pr)
+    cells["ci"] = _ci_cell(entry, cells, refresh_pr)
     return cells
+
+
+def _ci_cell(entry: dict, cells: dict, refresh_pr: bool) -> str | None:
+    """CI pipeline status for the resolved PR: success|failure|running|not_started.
+
+    None when there is no PR (no url) or the lookup failed (soft failure —
+    fetch_ci_status warns on stderr and returns None; nothing is cached so
+    the next run retries).
+    """
+    pr = cells.get("pr_data")
+    if not pr or not pr.get("url"):
+        return None
+    branch = entry.get("branch", "")
+    cached = store.load_pr_cache().get(branch) if branch else None
+    branch_tip = cells.get("_tip")
+    if branch_tip is None and entry.get("worktree") \
+            and Path(entry["worktree"]).exists():
+        branch_tip = _git_tip(entry["worktree"], "HEAD")
+    if not refresh_pr and cached and _ci_fresh(cached) \
+            and cached.get("ci_sha") == branch_tip:
+        return cached.get("ci")
+    url = pr["url"]
+    tool = ((cached or {}).get("tool")
+            or ("gh" if "github.com" in url else "glab"))
+    ci = refs.fetch_ci_status(tool, url, entry.get("repo", ""))
+    if branch:
+        store.cache_ci_status(branch, ci, sha=branch_tip or "")
+    return ci
 
 
 def _session_rows(links: dict, show_worktree: bool, refresh: bool
@@ -1047,13 +1200,14 @@ def _session_rows(links: dict, show_worktree: bool, refresh: bool
         row = {"key": k, "branch": v.get("branch", "?"),
                "harness": _harness_cell(k, v.get("worktree", "")),
                "commits": cells["commits"], "pr": cells["pr"],
+               "ci": cells["ci"] or "",
                "_pr_state": (cells["pr_data"] or {}).get("state", "")}
         if show_worktree:
             row["worktree"] = v.get("worktree", "?")
         rows.append(row)
-    columns = (["key", "worktree", "branch", "harness", "commits", "pr"]
+    columns = (["key", "worktree", "branch", "harness", "commits", "pr", "ci"]
                if show_worktree
-               else ["key", "branch", "harness", "commits", "pr"])
+               else ["key", "branch", "harness", "commits", "pr", "ci"])
     return rows, columns
 
 
@@ -1063,6 +1217,12 @@ def _colorize_session(row: dict) -> dict:
     if st in _PR_STYLES:
         c = _PR_STYLES[st]
         out["pr"] = f"[{c}]{row['pr']}[/{c}]"
+    ci = row.get("ci") or ""
+    if ci in _CI_STYLES:
+        s = _CI_STYLES[ci]
+        out["ci"] = f"[{s}]{_CI_SYMBOLS[ci]}[/{s}]"
+    else:
+        out["ci"] = "-"
     if not out.get("harness"):
         out["harness"] = "—"
     return out
@@ -1072,6 +1232,8 @@ def _enrich_entry(key: str, entry: dict, refresh: bool) -> dict:
     cells = _status_cells(entry, refresh)
     return {**entry, "harness": _harness_cell(key, entry.get("worktree", "")),
             "commits": cells["commits"], "pr": cells["pr"],
+            "ci": cells["ci"],
+            "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),
             "commits_detail": cells["ab"], "pr_detail": cells["pr_data"]}
 
 
@@ -1082,6 +1244,8 @@ def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
               "commits": cells["commits"],
               "pr": _fmt_pr(cells["pr_data"]), "commits_detail": cells["ab"],
               "pr_detail": cells["pr_data"], "base_branch": cells["base_branch"],
+              "ci": cells["ci"],
+              "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),
               "issue_url": refs.issue_url(key, entry.get("issue"))}
     if not cells["pr_data"]:
         detail["create_hint"] = _create_hint(entry)
@@ -1107,6 +1271,10 @@ def _print_detail(detail: dict) -> None:
                 f"({pd.get('state', '')})[/{style}] by "
                 f"{escape(pd.get('author', '?'))}")
         c.print(f"  url: {escape(pd.get('url', ''))}")
+    ci = detail.get("ci")
+    if ci:
+        style = _CI_STYLES.get(ci, "white")
+        c.print(f"  ci: [{style}]{_CI_SYMBOLS.get(ci, ci)} {escape(ci)}[/{style}]")
     cd = detail.get("commits_detail")
     if cd:
         base = escape(detail.get("base_branch") or "the base branch")
@@ -1201,6 +1369,87 @@ def status(
     eprint("commits: B|A = B commits behind, A commits ahead of the base branch")
 
 
+# ── candidates ────────────────────────────────────────────────────────
+
+
+def _candidates() -> dict:
+    """Unlinked open PR/MRs + my recent issues; shared by the `candidates`
+    command and the webapp /api/candidates endpoint.
+
+    PRs are collected from every registered repo (per-repo failures →
+    warning) minus any URL already linked in links.json; issues are
+    `trackers.list_my_issues` filtered to created within the last 7 days.
+    """
+    warnings: list[str] = []
+    linked = {str(v["pr_url"]).rstrip("/")
+              for v in store.load_links().values() if v.get("pr_url")}
+    prs: list[dict] = []
+    for name, entry in store.load_config().get("repos", {}).items():
+        path = str(entry.get("path", ""))
+        if not path or not Path(path).exists():
+            continue
+        try:
+            tool = _repo_tool(path)
+            if tool not in ("gh", "glab"):
+                continue
+            for p in refs.fetch_open_prs(tool, path):
+                url = str(p.get("url", ""))
+                if url.rstrip("/") in linked:
+                    continue
+                key = refs.pr_key(url)
+                prs.append({**p, "url": url, "key": key,
+                            "repo": key.split(":", 1)[-1].rsplit("#", 1)[0]})
+        except HarnessError as e:
+            warnings.append(f"{name}: {e}")
+        except Exception as e:  # one bad repo must not kill the listing
+            warnings.append(f"{name}: {e}")
+    prs.sort(key=lambda p: p.get("updated", ""), reverse=True)
+    issues = trackers.list_my_issues(warnings)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    recent = [i for i in issues
+              if (dt := trackers.parse_created(str(i.get("created", ""))))
+              is not None and dt >= cutoff]
+    recent.sort(key=lambda i: str(i.get("created", "")), reverse=True)
+    return {"prs": prs, "issues": recent, "warnings": warnings}
+
+
+@app.command("candidates")
+@_catch_harness_errors
+def candidates_cmd(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    csv_output: bool = typer.Option(False, "--csv", help="Output the PR/MR table as CSV (stdout; logs go to stderr)."),
+) -> None:
+    """List unlinked open PR/MRs and my recent issues (last 7 days).
+
+    Example:
+      harness candidates
+      harness candidates --json
+    """
+    out = _candidates()
+    for w in out["warnings"]:
+        eprint(f"warning: {w}")
+    if json_output:
+        print(json.dumps({"prs": out["prs"], "issues": out["issues"]},
+                         indent=2, ensure_ascii=False))
+        return
+    from rich.markup import escape
+
+
+    # Escape user content ONLY for the Rich table path; --csv/--json
+    # carry raw titles (escaping would corrupt machine-readable cells).
+    def _esc(rows: list[dict]) -> list[dict]:
+        return [{**r, "title": escape(str(r.get("title", "")))} for r in rows]
+
+    _print_rows(_esc(out["prs"]) if not csv_output else out["prs"],
+                False, csv_output,
+                ["url", "title", "repo", "updated"],
+                "Unlinked PR/MRs", "(no unlinked open PR/MRs)")
+    _print_rows(_esc(out["issues"]), False, False,
+                ["key", "title", "status", "created"],
+                "Recent issues (reported by me, last 7 days)",
+                "(no recent issues)")
+
+
 # ── cd ────────────────────────────────────────────────────────────────
 
 
@@ -1228,6 +1477,46 @@ def cd_cmd(
     if json_output:
         print(json.dumps({"key": key, "worktree": wt}))
         return
+    print(wt)
+
+
+# ── open ──────────────────────────────────────────────────────────────
+
+
+@app.command("open")
+@_catch_harness_errors
+def open_cmd(
+    ref: str = typer.Argument(..., autocompletion=_complete_refs,
+                              help="Issue/PR ref or worktree key."),
+) -> None:
+    """Open the linked worktree directory with the OS file manager.
+
+    Prints the worktree path on stdout. Launches no harness (nothing to
+    guard — issue #6 covers harness launches only); refuses missing or
+    invalid worktrees.
+
+    Example:
+      harness open IPG-929
+    """
+    links = store.load_links()
+    resolved = worktrees.resolve_worktree(ref, links)
+    if resolved is None:
+        _fail(f"no linked state for {ref}.\n"
+              "  Run `harness link list` to see linked worktrees.", EXIT_USAGE)
+    key = worktrees.pick_worktree(ref, resolved, links)
+    wt = links.get(key, {}).get("worktree", "")
+    if not wt or not worktrees.is_valid_worktree(wt):
+        _fail(f"no valid worktree for {key}: {wt or '?'}", EXIT_GENERAL)
+    opener = {"darwin": "open", "win32": "explorer"}.get(sys.platform,
+                                                         "xdg-open")
+    kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+                    "stderr": subprocess.DEVNULL}
+    if os.name == "posix":
+        kwargs["start_new_session"] = True
+    try:
+        subprocess.Popen([opener, wt], **kwargs)
+    except FileNotFoundError:
+        _fail(f"no opener available ({opener})", EXIT_GENERAL)
     print(wt)
 
 
@@ -1416,7 +1705,9 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
     pr = cells["pr_data"]
     tool = store.get_cached_pr_tool(branch) or _repo_tool(repo)
     db = cells["base_branch"] or _repo_default_branch(repo)
-    if merge or not pr:
+    # A recorded pr_url seed (state "") is display-only: it never reached a
+    # live host query, so it must not drive the remote-rebase strategy.
+    if merge or not pr or not pr.get("state"):
         if not db:
             _fail(f"{key}: cannot determine default branch for {repo}", EXIT_GENERAL)
         return _sync_local_merge(key, wt, branch, db, result,
