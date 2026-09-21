@@ -109,32 +109,47 @@ def _split_changelog(text: str) -> tuple[list[str], dict[str, list[str]], list[s
     return "\n".join(prefix), sections, order
 
 
-def unreleased_union(ours: str, theirs: str) -> str | None:
+def unreleased_union(ours: str, theirs: str, base: str | None = None) -> str | None:
     """Union CHANGELOGs keeping only-Unreleased differences.
 
     Returns ours with the Unreleased bullet list replaced by the union of
-    both sides (ours order first, deduped) when the files are identical
-    outside that section; None otherwise.
+    both sides (ours order first, deduped). With base=None (default) the
+    files must be identical outside that section; with base, changes in
+    released sections are allowed as long as OURS didn't make them.
     """
     ours_prefix, ours_sections, ours_order = _split_changelog(ours)
     t_prefix, t_sections, t_order = _split_changelog(theirs)
-    if ours_prefix != t_prefix or ours_order != t_order:
-        return None
-    if set(ours_sections) != set(t_sections):
-        return None
-    for name in ours_sections:
-        if name == "## Unreleased":
-            continue
-        if ours_sections[name] != t_sections.get(name):
+    if base is None:
+        if ours_prefix != t_prefix or ours_order != t_order:
             return None
-    if "## Unreleased" not in ours_sections:
+        if set(ours_sections) != set(t_sections):
+            return None
+        for name in ours_sections:
+            if name == "## Unreleased":
+                continue
+            if ours_sections[name] != t_sections.get(name):
+                return None
+        template = ours
+    else:
+        b_prefix, b_sections, b_order = _split_changelog(base)
+        if ours_prefix != b_prefix or ours_order != b_order:
+            return None
+        if set(ours_sections) != set(b_sections):
+            return None
+        for name in ours_sections:
+            if name == "## Unreleased":
+                continue
+            if ours_sections[name] != b_sections.get(name):
+                return None
+        template = theirs
+    if "## Unreleased" not in ours_sections or "## Unreleased" not in t_sections:
         return ours if ours == theirs else None
     bullets: list[str] = []
     for b in ours_sections["## Unreleased"] + t_sections["## Unreleased"]:
         if b not in bullets:
             bullets.append(b)
-    # Splice the union into OURS, preserving its formatting elsewhere.
-    lines = ours.splitlines()
+    # Splice the union into the template, preserving its formatting elsewhere.
+    lines = template.splitlines()
     start = next(i for i, l in enumerate(lines) if l.strip() == "## Unreleased")
     i = start + 1
     while i < len(lines) and not lines[i].strip():
@@ -143,7 +158,7 @@ def unreleased_union(ours: str, theirs: str) -> str | None:
     while end < len(lines) and lines[end].startswith("- "):
         end += 1
     return "\n".join(lines[:i] + bullets + lines[end:]) + (
-        "\n" if ours.endswith("\n") else "")
+        "\n" if template.endswith("\n") else "")
 
 
 def auto_resolve_changelog(worktree: Path, conflicts: list[str]) -> bool:
@@ -155,7 +170,13 @@ def auto_resolve_changelog(worktree: Path, conflicts: list[str]) -> bool:
         theirs = run_cmd("git", "-C", str(worktree), "show", ":3:CHANGELOG.md")
     except HarnessError:
         return False
-    merged = unreleased_union(ours, theirs)
+    try:
+        base = run_cmd("git", "-C", str(worktree), "show", ":1:CHANGELOG.md")
+    except HarnessError:
+        base = None
+    merged = unreleased_union(ours, theirs, base=base)
+    if merged is not None and not merged.endswith("\n"):
+        merged += "\n"
     if merged is None:
         return False
     (worktree / "CHANGELOG.md").write_text(merged, encoding="utf-8")
