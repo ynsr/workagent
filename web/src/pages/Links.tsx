@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { Link2, Plus, RefreshCw, Unlink, UserPlus, X } from "lucide-react"
+import { CandidatesCard } from "@/components/CandidatesCard"
 import { PageHeader } from "@/components/PageHeader"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { StatusTable } from "@/components/StatusTable"
@@ -33,12 +34,11 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { api } from "@/lib/api"
 import { useConfirm } from "@/lib/confirm"
-import { copyToClipboard } from "@/lib/format"
 import {
   queryKeys,
   useCreateRun,
+  useInfo,
   useLinks,
   useRepos,
   useStatusAll,
@@ -516,7 +516,10 @@ function RegisterDialog({ onClose }: { onClose: () => void }) {
 
 export function Links() {
   const navigate = useNavigate()
+  const confirm = useConfirm()
+  const createRun = useCreateRun()
   const { data: worktrees, isPending, isError, error, refetch } = useStatusAll()
+  const { data: info } = useInfo()
   const [showWorktree, setShowWorktree] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [activeForm, setActiveForm] = useState<null | "set" | "remove" | "register">(
@@ -535,16 +538,107 @@ export function Links() {
     }
   }
 
+  async function handleReviewAll() {
+    const ok = await confirm({
+      action: "review",
+      title: "Review all worktrees",
+      description:
+        "Reviews every not-reviewed linked worktree in parallel (non-TTY). Reviewed worktrees whose tip moved are reviewed again.",
+      destructive: true,
+      confirmLabel: "Review all",
+      details: [{ label: "Scope", value: "Every linked worktree" }],
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "review",
+        args: ["--all"],
+        confirm: true,
+      })
+      toast.success("Review all started", {
+        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+      navigate(`/runs/${run_id}`)
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  async function handleCleanupMerged() {
+    const ok = await confirm({
+      action: "cleanup",
+      title: "Cleanup merged worktrees",
+      description:
+        "Removes every linked worktree whose PR/MR is merged or closed. Cleanup closes the tracker issue, removes the worktree, deletes the branch and closes the PR. Live harnesses and invalid worktrees are skipped, never torn down.",
+      destructive: true,
+      confirmLabel: "Cleanup merged",
+      details: [{ label: "Scope", value: "Merged/closed PRs only" }],
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "cleanup",
+        args: ["--merged"],
+        confirm: true,
+      })
+      toast.success("Cleanup merged started", {
+        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+      navigate(`/runs/${run_id}`)
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  async function handleCleanup(key: string) {
+    const invalid = worktrees?.[key]?.wt_valid === false
+    const ok = await confirm({
+      action: "cleanup",
+      ref: key,
+      title: invalid ? `Delete invalid worktree ${key}` : `Remove worktree ${key}`,
+      description: invalid
+        ? "The recorded path is missing or not a live git worktree. --force skips state validation; the entry is removed either way. This cannot be undone."
+        : "Closes the tracker issue, removes the worktree, deletes the branch and closes the PR. This cannot be undone.",
+      destructive: true,
+      confirmLabel: invalid ? "Delete worktree" : "Remove worktree",
+      force: invalid || undefined,
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "cleanup",
+        args: invalid ? [key, "--force"] : [key],
+        confirm: true,
+        force: invalid || undefined,
+      })
+      toast.success(`Cleanup ${key} started`, {
+        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+      navigate(`/runs/${run_id}`)
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  async function handleOpenWorktree(key: string) {
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "open",
+        args: [key],
+        confirm: false,
+      })
+      toast.success(`Opening ${key}`, {
+        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+      navigate(`/runs/${run_id}`)
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
   const tableActions = {
-    onCopyPath: async (key: string) => {
-      try {
-        const p = await api.path(key)
-        await copyToClipboard(p.worktree)
-        toast.success(`Copied ${p.worktree}`)
-      } catch (err) {
-        toast.error(errorText(err))
-      }
-    },
+    onCleanup: handleCleanup,
+    onOpenWorktree: handleOpenWorktree,
     onOpenRun: (key: string) => navigate(`/runs?target=${encodeURIComponent(key)}`),
   }
 
@@ -563,6 +657,12 @@ export function Links() {
             </Button>
             <Button variant="outline" size="sm" onClick={() => setActiveForm("register")}>
               <UserPlus aria-hidden /> Register
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleReviewAll}>
+              Review all
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleCleanupMerged}>
+              Cleanup merged
             </Button>
             <label className="flex min-h-9 items-center gap-2 rounded-md border px-3 text-sm">
               <Switch
@@ -618,10 +718,13 @@ export function Links() {
               worktrees={worktrees}
               actions={tableActions}
               showWorktree={showWorktree}
+              networkExposed={info?.network_exposed ?? false}
             />
           )}
         </CardContent>
       </Card>
+
+      <CandidatesCard />
     </div>
   )
 }

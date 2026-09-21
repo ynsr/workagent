@@ -13,6 +13,8 @@ export const queryKeys = {
   doctor: ["doctor"] as const,
   runs: ["runs"] as const,
   run: (id: string) => ["runs", "detail", id] as const,
+  issues: ["issues"] as const,
+  candidates: ["candidates"] as const,
 }
 
 /** Poll /api/status every 15 s while the tab is visible (contract). */
@@ -40,6 +42,14 @@ export function useLinks() {
 
 export function useDoctor() {
   return useQuery({ queryKey: queryKeys.doctor, queryFn: api.doctor })
+}
+
+export function useIssues() {
+  return useQuery({ queryKey: queryKeys.issues, queryFn: api.issues })
+}
+
+export function useCandidates() {
+  return useQuery({ queryKey: queryKeys.candidates, queryFn: api.candidates })
 }
 
 export function useRuns() {

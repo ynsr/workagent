@@ -37,6 +37,10 @@ export interface WorktreeEntry {
   pr?: string
   /** CI pipeline status: success | failure | running | not_started; absent when unknown. */
   ci?: string
+  /** First-seen stamp (ISO-8601); older entries may lack it. */
+  added_at?: string
+  /** False when the recorded path is missing or not a live git worktree. */
+  wt_valid?: boolean
   commits_detail?: CommitsDetail | null
   pr_detail?: PrDetail | null
 }
@@ -71,6 +75,38 @@ export interface Repo {
 export interface Links {
   trackers: Record<string, { repos: string[] }>
   worktrees: WorktreeMap
+}
+
+/** One row of GET /api/issues. */
+export interface IssueRow {
+  key: string
+  title: string
+  url: string
+  status: string
+  created: string
+}
+
+export interface IssuesResponse {
+  issues: IssueRow[]
+  warning?: string | null
+}
+
+/** One unlinked open PR/MR of GET /api/candidates. */
+export interface CandidatePr {
+  key: string
+  number: number
+  title: string
+  url: string
+  branch: string
+  updated: string
+  state: string
+  repo: string
+}
+
+export interface CandidatesResponse {
+  prs: CandidatePr[]
+  issues: IssueRow[]
+  warnings: string[]
 }
 
 export interface DoctorInfo {
@@ -210,6 +246,11 @@ export const api = {
   repos: () => request<Repo[]>("/api/repos"),
   links: () => request<Links>("/api/links"),
   doctor: () => request<DoctorInfo>("/api/doctor"),
+
+  /** GET /api/issues — my open issues; always 200 with an optional warning. */
+  issues: () => request<IssuesResponse>("/api/issues"),
+  /** GET /api/candidates — unlinked PR/MRs + recent issues. */
+  candidates: () => request<CandidatesResponse>("/api/candidates"),
 
   runs: () => request<Run[]>("/api/runs"),
   run: (id: string) => request<RunDetail>(`/api/runs/${encodeURIComponent(id)}`),

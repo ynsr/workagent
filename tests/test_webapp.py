@@ -357,6 +357,25 @@ def test_api_status_includes_harness(client):
     assert detail["harness"].startswith("omp ")
 
 
+def test_api_status_includes_wt_valid(client, tmp_path):
+    """Task 7 invalid-row seam: enriched entries carry wt_valid."""
+    wt = tmp_path / "wt-valid"
+    wt.mkdir()
+    store.record_link("jira:IPG-1", {"issue": "IPG-1",
+                                     "worktree": "/nonexistent/wt",
+                                     "branch": "b", "repo": "/tmp/repo"})
+    store.record_link("jira:IPG-2", {"issue": "IPG-2",
+                                     "worktree": str(wt),
+                                     "branch": "b", "repo": "/tmp/repo"})
+    body = client.get("/api/status").json()
+    assert body["jira:IPG-1"]["wt_valid"] is False
+    assert body["jira:IPG-2"]["wt_valid"] in (True, False)
+    detail = client.get("/api/status", params={"ref": "IPG-1"}).json()
+    assert detail["wt_valid"] is False
+    links = client.get("/api/links").json()
+    assert links["worktrees"]["jira:IPG-1"]["wt_valid"] is False
+
+
 def test_path_endpoint(client, tmp_path):
     wt = tmp_path / "wt2"
     wt.mkdir()

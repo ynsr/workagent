@@ -1233,6 +1233,7 @@ def _enrich_entry(key: str, entry: dict, refresh: bool) -> dict:
     return {**entry, "harness": _harness_cell(key, entry.get("worktree", "")),
             "commits": cells["commits"], "pr": cells["pr"],
             "ci": cells["ci"],
+            "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),
             "commits_detail": cells["ab"], "pr_detail": cells["pr_data"]}
 
 
@@ -1244,6 +1245,7 @@ def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
               "pr": _fmt_pr(cells["pr_data"]), "commits_detail": cells["ab"],
               "pr_detail": cells["pr_data"], "base_branch": cells["base_branch"],
               "ci": cells["ci"],
+              "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),
               "issue_url": refs.issue_url(key, entry.get("issue"))}
     if not cells["pr_data"]:
         detail["create_hint"] = _create_hint(entry)

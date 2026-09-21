@@ -8,6 +8,7 @@ import {
   FolderGit2,
   RefreshCw,
   Rocket,
+  SearchX,
   SquareTerminal,
 } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
@@ -25,7 +26,7 @@ import { Switch } from "@/components/ui/switch"
 import { api, type WorktreeMap } from "@/lib/api"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
-import { queryKeys, useCreateRun, useStatusAll } from "@/lib/queries"
+import { queryKeys, useCreateRun, useInfo, useStatusAll } from "@/lib/queries"
 
 const CSV_HEADERS = [
   "key",
@@ -61,6 +62,7 @@ export function Dashboard() {
   const confirm = useConfirm()
   const createRun = useCreateRun()
   const { data: worktrees, isPending, isError, error, refetch } = useStatusAll()
+  const { data: info } = useInfo()
 
   const [showWorktree, setShowWorktree] = useState(false)
   const [refreshingPr, setRefreshingPr] = useState(false)
@@ -143,22 +145,71 @@ export function Dashboard() {
     }
   }
 
+  async function handleReviewAll() {
+    const ok = await confirm({
+      action: "review",
+      title: "Review all worktrees",
+      description:
+        "Reviews every not-reviewed linked worktree in parallel (non-TTY). Reviewed worktrees whose tip moved are reviewed again.",
+      destructive: true,
+      confirmLabel: "Review all",
+      details: [{ label: "Scope", value: "Every linked worktree" }],
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "review",
+        args: ["--all"],
+        confirm: true,
+      })
+      runCreated(run_id, "Review all")
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  async function handleCleanupMerged() {
+    const ok = await confirm({
+      action: "cleanup",
+      title: "Cleanup merged worktrees",
+      description:
+        "Removes every linked worktree whose PR/MR is merged or closed. Cleanup closes the tracker issue, removes the worktree, deletes the branch and closes the PR. Live harnesses and invalid worktrees are skipped, never torn down.",
+      destructive: true,
+      confirmLabel: "Cleanup merged",
+      details: [{ label: "Scope", value: "Merged/closed PRs only" }],
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "cleanup",
+        args: ["--merged"],
+        confirm: true,
+      })
+      runCreated(run_id, "Cleanup merged")
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
   async function handleCleanup(key: string) {
     setCleanupOpts({ force: false, dryRun: false, json: false })
+    const invalid = worktrees?.[key]?.wt_valid === false
     const ok = await confirm({
       action: "cleanup",
       ref: key,
-      title: `Remove worktree ${key}`,
-      description:
-        "Closes the tracker issue, removes the worktree, deletes the branch and closes the PR. This cannot be undone.",
+      title: invalid ? `Delete invalid worktree ${key}` : `Remove worktree ${key}`,
+      description: invalid
+        ? "The recorded path is missing or not a live git worktree. --force skips state validation; the entry is removed either way. This cannot be undone."
+        : "Closes the tracker issue, removes the worktree, deletes the branch and closes the PR. This cannot be undone.",
       destructive: true,
-      confirmLabel: "Remove worktree",
+      confirmLabel: invalid ? "Delete worktree" : "Remove worktree",
+      force: invalid || undefined,
       extras: (
         <div className="grid gap-2.5">
           <OptRow
             id="cleanup-force"
-            checked={cleanupOpts.force && !cleanupOpts.dryRun}
-            disabled={cleanupOpts.dryRun}
+            checked={invalid || (cleanupOpts.force && !cleanupOpts.dryRun)}
+            disabled={invalid || cleanupOpts.dryRun}
             onChange={(v) => setCleanupOpts((o) => ({ ...o, force: v }))}
             label="--force — skip state validation (always requires this confirmation)"
           />
@@ -181,7 +232,7 @@ export function Dashboard() {
     })
     if (!ok) return
     const dry = cleanupOpts.dryRun
-    const force = cleanupOpts.force && !dry
+    const force = (invalid || cleanupOpts.force) && !dry
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "cleanup",
@@ -200,11 +251,15 @@ export function Dashboard() {
     }
   }
 
-  async function handleCopyPath(key: string) {
+  async function handleOpenWorktree(key: string) {
     try {
-      const p = await api.path(key)
-      await copyToClipboard(p.worktree)
-      toast.success(`Copied ${p.worktree}`)
+      const { run_id } = await createRun.mutateAsync({
+        command: "open",
+        args: [key],
+        confirm: false,
+      })
+      toast.success(`Opening ${key}`)
+      navigate(`/runs/${run_id}`)
     } catch (err) {
       toast.error(errorText(err))
     }
@@ -241,9 +296,13 @@ export function Dashboard() {
     onReview: (key: string) =>
       navigate("/launch?mode=review&ref=" + encodeURIComponent(key)),
     onCleanup: handleCleanup,
-    onCopyPath: handleCopyPath,
+    onOpenWorktree: handleOpenWorktree,
     onOpenRun: handleOpenRun,
   }
+
+  const invalidCount = worktrees
+    ? Object.values(worktrees).filter((e) => e.wt_valid === false).length
+    : 0
 
   return (
     <div>
@@ -263,6 +322,12 @@ export function Dashboard() {
             </Button>
             <Button variant="secondary" size="sm" onClick={handleSyncAll}>
               Sync all
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleReviewAll}>
+              Review all
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleCleanupMerged}>
+              Cleanup merged
             </Button>
             <Button variant="outline" size="sm" onClick={handleCopyJson}>
               <Copy aria-hidden /> JSON
@@ -305,10 +370,25 @@ export function Dashboard() {
         </EmptyState>
       ) : (
         <>
+          {invalidCount > 0 ? (
+            <p
+              role="alert"
+              className="mb-3 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2.5 text-sm text-destructive"
+            >
+              <SearchX aria-hidden className="mt-0.5 size-4 shrink-0" />
+              <span>
+                {invalidCount === 1
+                  ? "1 worktree is invalid (path missing or not a live git worktree)."
+                  : `${invalidCount} worktrees are invalid (path missing or not a live git worktree).`}{" "}
+                Use the Delete action to remove them.
+              </span>
+            </p>
+          ) : null}
           <StatusTable
             worktrees={worktrees}
             actions={tableActions}
             showWorktree={showWorktree}
+            networkExposed={info?.network_exposed ?? false}
           />
           <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
             <SquareTerminal className="size-3.5" aria-hidden />

@@ -1,8 +1,11 @@
-import { Fragment, useState, type ReactNode } from "react"
-import { FolderOpen, GitPullRequest, Info, RefreshCw, Rocket, Trash2 } from "lucide-react"
+import { Fragment, useMemo, useState, type ReactNode } from "react"
+import { useSearchParams } from "react-router-dom"
+import { FolderOpen, GitPullRequest, Info, RefreshCw, Rocket, Search, Trash2, XCircle } from "lucide-react"
 import type { WorktreeMap } from "@/lib/api"
 import { prLabel } from "@/lib/api"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import { WorktreeDetail } from "@/components/WorktreeDetail"
 import {
   Table,
@@ -13,6 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { CiBadge, PrBadge } from "@/components/StateBadge"
+import { EmptyState } from "@/components/StatusFeedback"
 import { cn } from "@/lib/utils"
 
 export interface StatusTableActions {
@@ -21,7 +25,8 @@ export interface StatusTableActions {
   /** Navigate to Launch with mode=review&ref=key (prefill contract). */
   onReview?: (key: string) => void
   onCleanup?: (key: string) => void
-  onCopyPath: (key: string) => void
+  /** Open the worktree folder locally (`open` RunCommand; disabled when network-exposed). */
+  onOpenWorktree: (key: string) => void
   onOpenRun: (key: string) => void
 }
 
@@ -30,11 +35,13 @@ function ActionIcon({
   onClick,
   children,
   destructive,
+  disabled,
 }: {
   title: string
   onClick: () => void
   children: ReactNode
   destructive?: boolean
+  disabled?: boolean
 }) {
   return (
     <Button
@@ -42,6 +49,7 @@ function ActionIcon({
       size="icon"
       aria-label={title}
       title={title}
+      disabled={disabled}
       onClick={(e) => {
         e.stopPropagation()
         onClick()
@@ -55,15 +63,20 @@ function ActionIcon({
 
 function RowActions({
   worktreeKey,
+  entry,
   actions,
   detailOpen,
   onToggleDetail,
+  networkExposed,
 }: {
   worktreeKey: string
+  entry: WorktreeMap[string]
   actions: StatusTableActions
   detailOpen: boolean
   onToggleDetail: () => void
+  networkExposed: boolean
 }) {
+  const invalid = entry.wt_valid === false
   return (
     <div className="flex items-center justify-end gap-0.5">
       <ActionIcon
@@ -87,7 +100,7 @@ function RowActions({
       ) : null}
       {actions.onCleanup ? (
         <ActionIcon
-          title={`Cleanup ${worktreeKey}`}
+          title={invalid ? `Delete invalid worktree ${worktreeKey}` : `Cleanup ${worktreeKey}`}
           onClick={() => actions.onCleanup?.(worktreeKey)}
           destructive
         >
@@ -95,8 +108,13 @@ function RowActions({
         </ActionIcon>
       ) : null}
       <ActionIcon
-        title={`Copy worktree path of ${worktreeKey}`}
-        onClick={() => actions.onCopyPath(worktreeKey)}
+        title={
+          networkExposed
+            ? `Cannot open ${worktreeKey}: disabled while the server is network-exposed`
+            : `Open worktree folder of ${worktreeKey}`
+        }
+        onClick={() => actions.onOpenWorktree(worktreeKey)}
+        disabled={networkExposed}
       >
         <FolderOpen aria-hidden />
       </ActionIcon>
@@ -135,204 +153,330 @@ function CommitsCell({ entry }: { entry: WorktreeMap[string] }) {
   )
 }
 
+/** First-seen stamp → locale date; missing/unparseable → "—". */
+function formatAdded(addedAt: string | undefined): string {
+  if (!addedAt) return "—"
+  const d = new Date(addedAt)
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString()
+}
+
+function matchesQuery(key: string, entry: WorktreeMap[string], q: string): boolean {
+  const hay = [
+    key,
+    entry.branch ?? "",
+    entry.pr ?? "",
+    entry.pr_detail?.title ?? "",
+    entry.worktree ?? "",
+  ]
+    .join("\n")
+    .toLowerCase()
+  return hay.includes(q)
+}
+
 /**
  * Worktrees table (GET /api/status or /api/links worktrees).
- * Table at ≥640px, cards below.
+ * Table at ≥640px, cards below. Search is `?q=`-backed (Runs pattern);
+ * default sort is added_at desc, entries without a stamp last.
  */
 export function StatusTable({
   worktrees,
   actions,
   showWorktree = false,
+  networkExposed = false,
   className,
 }: {
   worktrees: WorktreeMap
   actions: StatusTableActions
   showWorktree?: boolean
+  networkExposed?: boolean
   className?: string
 }) {
-  const keys = Object.keys(worktrees).sort()
+  const [params, setParams] = useSearchParams()
+  const q = (params.get("q") ?? "").trim()
   const [expanded, setExpanded] = useState<string | null>(null)
+
+  const keys = useMemo(() => {
+    const needle = q.toLowerCase()
+    return Object.keys(worktrees)
+      .filter((key) => {
+        const entry = worktrees[key]
+        return entry && (!needle || matchesQuery(key, entry, needle))
+      })
+      .sort((a, b) =>
+        (worktrees[b]?.added_at ?? "").localeCompare(worktrees[a]?.added_at ?? ""),
+      )
+  }, [worktrees, q])
+
+  function setQuery(next: string) {
+    const p = new URLSearchParams(params)
+    if (next.trim()) p.set("q", next.trim())
+    else p.delete("q")
+    setParams(p, { replace: true })
+  }
+
+  function clearQuery() {
+    const p = new URLSearchParams(params)
+    p.delete("q")
+    setParams(p, { replace: true })
+  }
+
   return (
     <div className={className}>
-      {/* Desktop table */}
-      <div className="hidden sm:block">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Worktree</TableHead>
-              <TableHead>Branch</TableHead>
-              <TableHead>Harness</TableHead>
-              <TableHead className="w-20">Behind|Ahead</TableHead>
-              <TableHead>PR / MR</TableHead>
-              <TableHead className="w-14 text-center">CI</TableHead>
-              {showWorktree ? <TableHead>Path</TableHead> : null}
-              <TableHead className="text-right pr-2">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="relative min-w-52 flex-1 sm:max-w-xs">
+          <Search aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={params.get("q") ?? ""}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter by key, branch, PR, path…"
+            aria-label="Filter worktrees"
+            className="pl-8"
+          />
+        </div>
+        {q ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border bg-muted px-3 py-1 text-sm">
+            <span className="font-mono text-[13px]">{q}</span>
+            <button
+              aria-label={`Clear worktree filter ${q}`}
+              onClick={clearQuery}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <XCircle aria-hidden className="size-4" />
+            </button>
+          </span>
+        ) : null}
+      </div>
+
+      {keys.length === 0 && q ? (
+        <EmptyState
+          title="No worktrees match this filter"
+          description={`Nothing matches "${q}".`}
+        >
+          <Button variant="outline" size="sm" onClick={clearQuery}>
+            Clear filter
+          </Button>
+        </EmptyState>
+      ) : (
+        <>
+          {/* Desktop table */}
+          <div className="hidden sm:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Worktree</TableHead>
+                  <TableHead>Branch</TableHead>
+                  <TableHead>Harness</TableHead>
+                  <TableHead className="w-20">Behind|Ahead</TableHead>
+                  <TableHead>PR / MR</TableHead>
+                  <TableHead className="w-14 text-center">CI</TableHead>
+                  <TableHead>Added</TableHead>
+                  {showWorktree ? <TableHead>Path</TableHead> : null}
+                  <TableHead className="text-right pr-2">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {keys.map((key) => {
+                  const entry = worktrees[key]
+                  if (!entry) return null
+                  const detailOpen = expanded === key
+                  const invalid = entry.wt_valid === false
+                  return (
+                    <Fragment key={key}>
+                      <TableRow className={invalid ? "bg-destructive/5" : undefined}>
+                        <TableCell className="font-medium">
+                          <span className="flex items-center gap-2">
+                            <WorktreeKeyLink worktreeKey={key} entry={entry} />
+                            {invalid ? (
+                              <Badge variant="destructive" title="Recorded path is missing or not a live git worktree">
+                                invalid
+                              </Badge>
+                            ) : null}
+                          </span>
+                        </TableCell>
+                        <TableCell
+                          className="max-w-52 truncate font-mono text-[13px]"
+                          title={entry.branch}
+                        >
+                          {entry.branch ?? "—"}
+                        </TableCell>
+                        <TableCell className="font-mono text-[13px]">
+                          {entry.harness ? (
+                            <span
+                              className="text-muted-foreground"
+                              title="live harness (name, pid)"
+                            >
+                              {entry.harness}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <CommitsCell entry={entry} />
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <PrBadge pr={entry.pr_detail ?? null} />
+                            <span className="truncate text-muted-foreground" title={entry.pr}>
+                              {entry.pr_detail ? entry.pr_detail.title : prLabel(entry.pr) || "—"}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <CiBadge ci={entry.ci} />
+                        </TableCell>
+                        <TableCell
+                          className="whitespace-nowrap text-[13px] text-muted-foreground"
+                          title={entry.added_at ?? "first-seen stamp missing"}
+                        >
+                          {formatAdded(entry.added_at)}
+                        </TableCell>
+                        {showWorktree ? (
+                          <TableCell
+                            className="max-w-52 truncate font-mono text-[13px]"
+                            title={entry.worktree}
+                          >
+                            {entry.worktree ?? "—"}
+                          </TableCell>
+                        ) : null}
+                        <TableCell className="pr-1">
+                          <RowActions
+                            worktreeKey={key}
+                            entry={entry}
+                            actions={actions}
+                            detailOpen={detailOpen}
+                            onToggleDetail={() =>
+                              setExpanded((cur) => (cur === key ? null : key))
+                            }
+                            networkExposed={networkExposed}
+                          />
+                        </TableCell>
+                      </TableRow>
+                      {detailOpen ? (
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell
+                            colSpan={showWorktree ? 9 : 8}
+                          >
+                            <div className="mx-auto w-full max-w-2xl py-1">
+                              <WorktreeDetail
+                                entry={entry}
+                                mode="view"
+                                onSave={() => undefined}
+                                onClose={() => setExpanded(null)}
+                              />
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ) : null}
+                    </Fragment>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
+
+          {/* Mobile cards */}
+          <div className="space-y-3 sm:hidden">
             {keys.map((key) => {
               const entry = worktrees[key]
               if (!entry) return null
               const detailOpen = expanded === key
+              const invalid = entry.wt_valid === false
               return (
-                <Fragment key={key}>
-                  <TableRow>
-                    <TableCell className="font-medium">
+                <div
+                  key={key}
+                  className={cn(
+                    "rounded-xl border bg-card p-4",
+                    invalid && "border-destructive/40 bg-destructive/5",
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="flex min-w-0 flex-wrap items-center gap-2">
                       <WorktreeKeyLink worktreeKey={key} entry={entry} />
-                    </TableCell>
-                    <TableCell
-                      className="max-w-52 truncate font-mono text-[13px]"
-                      title={entry.branch}
-                    >
-                      {entry.branch ?? "—"}
-                    </TableCell>
-                    <TableCell className="font-mono text-[13px]">
-                      {entry.harness ? (
-                        <span
-                          className="text-muted-foreground"
+                      {invalid ? <Badge variant="destructive">invalid</Badge> : null}
+                    </span>
+                    <PrBadge pr={entry.pr_detail ?? null} />
+                  </div>
+                  <dl className="mt-3 space-y-1.5 text-sm">
+                    <div className="flex items-baseline gap-2">
+                      <dt className="w-16 shrink-0 text-xs text-muted-foreground">Branch</dt>
+                      <dd className="min-w-0 truncate font-mono text-[13px]" title={entry.branch}>
+                        {entry.branch ?? "—"}
+                      </dd>
+                    </div>
+                    {entry.harness ? (
+                      <div className="flex items-baseline gap-2">
+                        <dt className="w-16 shrink-0 text-xs text-muted-foreground">Harness</dt>
+                        <dd
+                          className="min-w-0 truncate font-mono text-[13px] text-muted-foreground"
                           title="live harness (name, pid)"
                         >
                           {entry.harness}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <CommitsCell entry={entry} />
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex min-w-0 items-center gap-2">
-                        <PrBadge pr={entry.pr_detail ?? null} />
-                        <span className="truncate text-muted-foreground" title={entry.pr}>
-                          {entry.pr_detail ? entry.pr_detail.title : prLabel(entry.pr) || "—"}
-                        </span>
+                        </dd>
                       </div>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <CiBadge ci={entry.ci} />
-                    </TableCell>
-                    {showWorktree ? (
-                      <TableCell
-                        className="max-w-52 truncate font-mono text-[13px]"
-                        title={entry.worktree}
-                      >
-                        {entry.worktree ?? "—"}
-                      </TableCell>
                     ) : null}
-                    <TableCell className="pr-1">
-                      <RowActions
-                        worktreeKey={key}
-                        actions={actions}
-                        detailOpen={detailOpen}
-                        onToggleDetail={() =>
-                          setExpanded((cur) => (cur === key ? null : key))
-                        }
-                      />
-                    </TableCell>
-                  </TableRow>
-                  {detailOpen ? (
-                    <TableRow className="hover:bg-transparent">
-                      <TableCell
-                        colSpan={showWorktree ? 8 : 7}
+                    <div className="flex items-baseline gap-2">
+                      <dt className="w-16 shrink-0 text-xs text-muted-foreground">Commits</dt>
+                      <dd>
+                        <CommitsCell entry={entry} />
+                      </dd>
+                    </div>
+                    {showWorktree && entry.worktree ? (
+                      <div className="flex items-baseline gap-2">
+                        <dt className="w-16 shrink-0 text-xs text-muted-foreground">Path</dt>
+                        <dd className="min-w-0 truncate font-mono text-[13px]" title={entry.worktree}>
+                          {entry.worktree}
+                        </dd>
+                      </div>
+                    ) : null}
+                    {entry.pr && !entry.pr_detail ? (
+                      <div className="flex items-baseline gap-2">
+                        <dt className="w-16 shrink-0 text-xs text-muted-foreground">PR</dt>
+                        <dd className="min-w-0 truncate" title={entry.pr}>{prLabel(entry.pr)}</dd>
+                      </div>
+                    ) : null}
+                    <div className="flex items-baseline gap-2">
+                      <dt className="w-16 shrink-0 text-xs text-muted-foreground">CI</dt>
+                      <dd>
+                        <CiBadge ci={entry.ci} />
+                      </dd>
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <dt className="w-16 shrink-0 text-xs text-muted-foreground">Added</dt>
+                      <dd
+                        className="text-[13px] text-muted-foreground"
+                        title={entry.added_at ?? "first-seen stamp missing"}
                       >
-                        <div className="mx-auto w-full max-w-2xl py-1">
-                          <WorktreeDetail
-                            entry={entry}
-                            mode="view"
-                            onSave={() => undefined}
-                            onClose={() => setExpanded(null)}
-                          />
-                        </div>
-                      </TableCell>
-                    </TableRow>
+                        {formatAdded(entry.added_at)}
+                      </dd>
+                    </div>
+                  </dl>
+                  <div className="mt-3 border-t pt-1">
+                    <RowActions
+                      worktreeKey={key}
+                      entry={entry}
+                      actions={actions}
+                      detailOpen={detailOpen}
+                      onToggleDetail={() => setExpanded((cur) => (cur === key ? null : key))}
+                      networkExposed={networkExposed}
+                    />
+                  </div>
+                  {detailOpen ? (
+                    <div className="mt-3">
+                      <WorktreeDetail
+                        entry={entry}
+                        mode="view"
+                        onSave={() => undefined}
+                        onClose={() => setExpanded(null)}
+                      />
+                    </div>
                   ) : null}
-                </Fragment>
+                </div>
               )
             })}
-          </TableBody>
-        </Table>
-      </div>
-
-      {/* Mobile cards */}
-      <div className="space-y-3 sm:hidden">
-        {keys.map((key) => {
-          const entry = worktrees[key]
-          if (!entry) return null
-          const detailOpen = expanded === key
-          return (
-            <div key={key} className="rounded-xl border bg-card p-4">
-              <div className="flex items-start justify-between gap-2">
-                <WorktreeKeyLink worktreeKey={key} entry={entry} />
-                <PrBadge pr={entry.pr_detail ?? null} />
-              </div>
-              <dl className="mt-3 space-y-1.5 text-sm">
-                <div className="flex items-baseline gap-2">
-                  <dt className="w-16 shrink-0 text-xs text-muted-foreground">Branch</dt>
-                  <dd className="min-w-0 truncate font-mono text-[13px]" title={entry.branch}>
-                    {entry.branch ?? "—"}
-                  </dd>
-                </div>
-                {entry.harness ? (
-                  <div className="flex items-baseline gap-2">
-                    <dt className="w-16 shrink-0 text-xs text-muted-foreground">Harness</dt>
-                    <dd
-                      className="min-w-0 truncate font-mono text-[13px] text-muted-foreground"
-                      title="live harness (name, pid)"
-                    >
-                      {entry.harness}
-                    </dd>
-                  </div>
-                ) : null}
-                <div className="flex items-baseline gap-2">
-                  <dt className="w-16 shrink-0 text-xs text-muted-foreground">Commits</dt>
-                  <dd>
-                    <CommitsCell entry={entry} />
-                  </dd>
-                </div>
-                {showWorktree && entry.worktree ? (
-                  <div className="flex items-baseline gap-2">
-                    <dt className="w-16 shrink-0 text-xs text-muted-foreground">Path</dt>
-                    <dd className="min-w-0 truncate font-mono text-[13px]" title={entry.worktree}>
-                      {entry.worktree}
-                    </dd>
-                  </div>
-                ) : null}
-                {entry.pr && !entry.pr_detail ? (
-                  <div className="flex items-baseline gap-2">
-                    <dt className="w-16 shrink-0 text-xs text-muted-foreground">PR</dt>
-                    <dd className="min-w-0 truncate" title={entry.pr}>{prLabel(entry.pr)}</dd>
-                  </div>
-                ) : null}
-                <div className="flex items-baseline gap-2">
-                  <dt className="w-16 shrink-0 text-xs text-muted-foreground">CI</dt>
-                  <dd>
-                    <CiBadge ci={entry.ci} />
-                  </dd>
-                </div>
-              </dl>
-              <div className="mt-3 border-t pt-1">
-                <RowActions
-                  worktreeKey={key}
-                  actions={actions}
-                  detailOpen={detailOpen}
-                  onToggleDetail={() => setExpanded((cur) => (cur === key ? null : key))}
-                />
-              </div>
-              {detailOpen ? (
-                <div className="mt-3">
-                  <WorktreeDetail
-                    entry={entry}
-                    mode="view"
-                    onSave={() => undefined}
-                    onClose={() => setExpanded(null)}
-                  />
-                </div>
-              ) : null}
-            </div>
-          )
-        })}
-      </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -360,4 +504,3 @@ function WorktreeKeyLink({
     </a>
   )
 }
-

@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label"
 import { useConfirm } from "@/lib/confirm"
 import { errorText } from "@/components/StatusFeedback"
 import { useCreateRun, useLinks, useRepos } from "@/lib/queries"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 const AUTO_REPO = "__auto__"
@@ -262,14 +263,38 @@ export function Launch() {
             <Label htmlFor="launch-ref">
               {mode === "start" ? "Issue ref" : mode === "review" ? "PR/MR ref" : "Worktree ref"}
             </Label>
-            <Input
-              id="launch-ref"
-              value={form.ref}
-              onChange={(e) => update("ref", e.target.value)}
-              placeholder={copy.refPlaceholder}
-              autoComplete="off"
-              spellCheck={false}
-            />
+            {mode === "start" && !refParam ? (
+              <>
+                <SearchableSelect
+                  value={form.ref}
+                  options={[]}
+                  onChange={(v) => update("ref", (v.split(" — ")[0] ?? v).trim())}
+                  placeholder={copy.refPlaceholder}
+                  allowCustom
+                  fetchOptions={async () => {
+                    const res = await api.issues()
+                    return {
+                      options: res.issues.map((i) =>
+                        i.title ? `${i.key} — ${i.title}` : i.key,
+                      ),
+                      warning: res.warning ?? undefined,
+                    }
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Pick a recent issue or type any ref; free text is kept.
+                </p>
+              </>
+            ) : (
+              <Input
+                id="launch-ref"
+                value={form.ref}
+                onChange={(e) => update("ref", e.target.value)}
+                placeholder={copy.refPlaceholder}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            )}
           </div>
 
           {mode === "sync" ? (
