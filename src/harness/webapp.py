@@ -64,7 +64,8 @@ SPECS: dict[str, dict[str, Any]] = {
              else f"sync:{_first_positional(args)}"},
     "open": {"confirm": False, "force": False,
              "key": lambda args: f"open:{_first_positional(args)}"},
-    "register": {"confirm": False, "force": True, "key": "config"},
+    "register": {"confirm": False, "force": True,
+                 "key": lambda args: f"register:{_first_positional(args)}"},
     "repo": {"confirm": False, "force": False, "key": "config"},
     "link": {"confirm": False, "force": False, "key": "config"},
 }

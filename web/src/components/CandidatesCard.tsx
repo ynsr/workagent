@@ -1,5 +1,7 @@
 import { useState } from "react"
-import { Copy, GitPullRequest, RefreshCw, Ticket } from "lucide-react"
+import { useNavigate } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
+import { Copy, GitPullRequest, Play, RefreshCw, Ticket, UserPlus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,8 +11,9 @@ import {
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
+import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard } from "@/lib/format"
-import { useCandidates } from "@/lib/queries"
+import { queryKeys, useCandidates, useCreateRun } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 
@@ -25,9 +28,14 @@ const TABS: readonly { value: Tab; label: (n: number) => string }[] = [
 /**
  * Unlinked PR/MRs + recent issues + unregistered worktrees from
  * GET /api/candidates.
- * Read-only: per-row copy-ref, refresh button. Never auto-starts or links.
+ * Per-row copy-ref plus explicit Start/Review/Register actions through the
+ * run pipeline (confirm modal for start/review). Never auto-starts or links.
  */
 export function CandidatesCard() {
+  const navigate = useNavigate()
+  const confirm = useConfirm()
+  const createRun = useCreateRun()
+  const qc = useQueryClient()
   const { data, isPending, isError, error, refetch, isFetching } = useCandidates()
   const [tab, setTab] = useState<Tab>("prs")
   const [copied, setCopied] = useState<string | null>(null)
@@ -38,6 +46,36 @@ export function CandidatesCard() {
       setCopied(ref)
       window.setTimeout(() => setCopied((c) => (c === ref ? null : c)), 1200)
       toast.success(`Copied ${ref}`)
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  async function handleAction(input: {
+    command: "start" | "review" | "register"
+    args: string[]
+    label: string
+    confirmText: string
+  }) {
+    const ok = await confirm({
+      action: input.command === "register" ? null : input.command,
+      title: input.label,
+      description: input.confirmText,
+      confirmLabel: input.label,
+      details: input.args.map((a, i) => ({ label: i === 0 ? "Ref" : `Arg ${i}`, value: a, mono: true })),
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: input.command,
+        args: input.args,
+        confirm: true,
+      })
+      toast.success(`${input.label} started`, {
+        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+      void qc.invalidateQueries({ queryKey: queryKeys.links })
+      void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
     } catch (err) {
       toast.error(errorText(err))
     }
@@ -125,10 +163,14 @@ export function CandidatesCard() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => void handleCopyRef(pr.url)}
-                    title={`Copy ref ${pr.url}`}
+                    onClick={() => void handleAction({
+                      command: "review", args: [pr.url],
+                      label: `Review ${pr.key}`,
+                      confirmText: `Run review for ${pr.url} in a worktree.`,
+                    })}
+                    title={`Review ${pr.url}`}
                   >
-                    <Copy aria-hidden /> {copied === pr.url ? "Copied" : "Copy ref"}
+                    <Play aria-hidden /> Review
                   </Button>
                 </li>
               ))}
@@ -153,6 +195,18 @@ export function CandidatesCard() {
                       {issue.key} · {issue.status}
                     </p>
                   </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void handleAction({
+                      command: "start", args: [issue.key],
+                      label: `Start ${issue.key}`,
+                      confirmText: `Start a worktree for ${issue.key}.`,
+                    })}
+                    title={`Start ${issue.key}`}
+                  >
+                    <Play aria-hidden /> Start
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -183,6 +237,18 @@ export function CandidatesCard() {
                     {wt.key_guess} · {wt.repo} · {wt.path}
                   </p>
                 </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleAction({
+                    command: "register", args: [wt.path],
+                    label: `Register ${wt.branch}`,
+                    confirmText: `Register worktree ${wt.path} (key ${wt.key_guess}).`,
+                  })}
+                  title={`Register ${wt.path}`}
+                >
+                  <UserPlus aria-hidden /> Register
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"

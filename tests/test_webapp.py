@@ -663,3 +663,13 @@ def test_api_repos_includes_tracker(client, monkeypatch):
     r = client.get("/api/repos")
     assert r.status_code == 200
     assert r.json()[0]["tracker"] == "jira:IPG"
+
+
+def test_register_run_key_unique_per_path(client):
+    r1 = client.post("/api/runs", json={"command": "register",
+                                        "args": ["/tmp/wt-a"]})
+    r2 = client.post("/api/runs", json={"command": "register",
+                                        "args": ["/tmp/wt-b"]})
+    assert r1.status_code == 202, r1.text
+    assert r2.status_code == 202, r2.text
+    assert r1.json()["run_id"] != r2.json()["run_id"]

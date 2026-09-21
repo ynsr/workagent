@@ -230,11 +230,12 @@ function TrackerMappingsCard() {
 function deriveTrackerId(raw: string): string | null {
   const v = raw.trim()
   if (!v) return null
-  const jira = v.match(/^([A-Z][A-Z0-9_]*)(-\d+)?$/)
+  const jira = /^([A-Z][A-Z0-9_]*)(-\d+)?$/.exec(v)
   if (jira) return `jira:${jira[1]}`
-  const gh = v.match(/^github\.com\/([^/]+\/[^/]+?)(?:[#/].*)?$/) ?? v.match(/^([^/]+\/[^/]+?)(#\d+)?$/)
-  if (v.includes("github.com") && gh) return `github:${gh[1]}`
-  if (!v.includes("://") && gh && !v.includes(" ")) return `github:${gh[1]}`
+  const ghPath = /^github\.com\/([^/]+\/[^/]+?)(?:[#/].*)?$/.exec(v)
+    ?? /^([^/]+\/[^/]+?)(#\d+)?$/.exec(v)
+  if (v.includes("github.com") && ghPath) return `github:${ghPath[1]}`
+  if (!v.includes("://") && ghPath && !v.includes(" ")) return `github:${ghPath[1]}`
   try {
     const u = new URL(v)
     const path = u.pathname.replace(/^\/+|\/+$/g, "").replace(/\/-(\/|$)/g, "/")
