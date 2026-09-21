@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -142,8 +143,38 @@ def _print_rows(rows: list[dict], json_output: bool, csv_output: bool,
     Console().print(table)
 
 
+def _guard_harness(key: str | None, worktree: str) -> None:
+    """Hard guard: one live harness per worktree (issue #6)."""
+    if not key:
+        return
+    rec = store.active_harness(key)
+    if rec is None:
+        # Same worktree may be recorded under a different key.
+        for k, v in store.load_harnesses().items():
+            if k != key and v.get("worktree") == worktree:
+                rec = v
+                break
+    if rec is not None:
+        _fail(f"worktree {worktree} already has a live harness "
+              f"({rec['harness']}, pid {rec['pid']}) — wait for it to "
+              "finish or kill it", 1)
+
+
+def _harness_cell(key: str, worktree: str = "") -> str:
+    """Display cell: "<harness> <pid>" while one is live, "" otherwise."""
+    rec = store.active_harness(key)
+    if rec is None and worktree:
+        # The live harness may be recorded under a different key.
+        for v in store.load_harnesses().values():
+            if v.get("worktree") == worktree:
+                rec = v
+                break
+    return f"{rec['harness']} {rec['pid']}" if rec else ""
+
+
 def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: str,
-                 no_tty: bool, no_harness: bool, result: dict, json_output: bool) -> None:
+                 no_tty: bool, no_harness: bool, result: dict, json_output: bool,
+                 run_key: str | None = None) -> None:
     """Launch the harness in the worktree; with --no-harness print the exact
     command instead and hand the worktree to the user (shell exec on TTY)."""
     harness_cmd = " ".join(shlex.quote(a) for a in
@@ -159,7 +190,13 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             shell = os.environ.get("SHELL") or "/bin/sh"
             os.execvp(shell, [shell])
         return
-    backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty, _HARNESS_ARGS)
+    if run_key:
+        store.record_harness_run(run_key, harness_name, worktree or fallback_dir)
+    try:
+        backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty, _HARNESS_ARGS)
+    finally:
+        if run_key:
+            store.clear_harness_run(run_key)
     _print_result(result, json_output)
 
 
@@ -284,17 +321,85 @@ def start(
               "base": detected_default if branch_mode else base_branch,
               "key": key, "harness": harness_name}
     eprint(f"worktree: {worktree}  branch: {branch}")
+    if not no_harness:
+        _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, str(r), no_tty, no_harness,
-                 result, json_output)
+                 result, json_output, run_key=key)
 
 
 # ── review ────────────────────────────────────────────────────────────
 
 
+def _is_reviewed(key: str, entry: dict) -> bool:
+    """Reviewed AND the worktree tip still matches the recorded tip sha;
+    new commits on the worktree invalidate the reviewed state."""
+    if not entry.get("reviewed"):
+        return False
+    wt = entry.get("worktree", "")
+    tip = repos.branch_tip(wt) if wt and Path(wt).is_dir() else ""
+    return bool(tip) and tip == entry.get("reviewed_at", "")
+
+
+def _reviewable_keys(links: dict) -> list[tuple[str, str]]:
+    """(key, pr_url) pairs to review under --all: live worktree, resolvable
+    PR/MR, no live harness, and not already reviewed at the current tip.
+
+    A non-pr link carrying a pr_url whose pr:<url> entry also exists is an
+    alias: reviewed/tip live on the pr: entry, so the alias is skipped and
+    one worktree/PR yields exactly one child (links for different PRs stay
+    distinct).
+    """
+    out = []
+    for k, v in links.items():
+        own_pr = v.get("pr_url", "")
+        if own_pr and not k.startswith("pr:") and f"pr:{own_pr}" in links:
+            continue
+        if _is_reviewed(k, v):
+            continue
+        pr = worktrees.worktree_pr_url(k, v)
+        if pr and not worktrees.is_valid_worktree(v.get("worktree", "")):
+            continue
+        if not pr:
+            wt = v.get("worktree", "")
+            if wt and Path(wt).is_dir():
+                eprint(f"{k}: no PR/MR — skipping")
+            continue
+        if store.active_harness(k):
+            eprint(f"{k}: harness already live — skipping")
+            continue
+        out.append((k, pr))
+    return out
+
+
+def _mark_reviewed(pr_url: str, worktree: str) -> None:
+    """Persist reviewed=True + the current worktree tip on the pr:<url> link."""
+    entry = store.load_links().get(f"pr:{pr_url}", {})
+    entry["reviewed"] = True
+    entry["reviewed_at"] = repos.branch_tip(worktree)
+    store.record_link(f"pr:{pr_url}", entry)
+
+
+def _clear_reviewed(pr_url: str) -> None:
+    """Revert reviewed/reviewed_at after a failed (non-exec) harness launch.
+
+    record_link merges, which cannot drop keys — rewrite the entry without
+    them instead (other fields preserved), same as `link remove`.
+    """
+    key = f"pr:{pr_url}"
+    links = store.load_links()
+    entry = links.get(key)
+    if not entry:
+        return
+    entry.pop("reviewed", None)
+    entry.pop("reviewed_at", None)
+    links[key] = entry
+    store.save_links(links)
+
+
 @app.command("review")
 @_catch_harness_errors
 def review(
-    ref: str = typer.Argument(..., autocompletion=_complete_refs, help="PR/MR URL, OWNER/REPO#NUM, or worktree ref (key/branch/worktree)."),
+    ref: Optional[str] = typer.Argument(None, autocompletion=_complete_refs, help="PR/MR URL, OWNER/REPO#NUM, or worktree ref (key/branch/worktree); optional with --all."),
     repo: Optional[str] = typer.Option(None, "--repo", autocompletion=_complete_repos, help="Registered name, local path, or clone URL."),
     depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
@@ -303,6 +408,10 @@ def review(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    all_wts: bool = typer.Option(False, "--all", help="Review every not-reviewed linked worktree in parallel (non-TTY)."),
+    sequential: bool = typer.Option(False, "--sequential", help="With --all: review one-by-one instead of in parallel."),
+    fix: bool = typer.Option(False, "--fix", help="With --all: children auto-fix identified issues after yielding."),
+    post_comments: bool = typer.Option(False, "--post-comments", hidden=True, help="Append the auto-comment prompt segment (set by --all)."),
 ) -> None:
     """Create worktree from PR/MR and launch review.
 
@@ -310,7 +419,68 @@ def review(
       harness review https://github.com/OWNER/REPO/pull/33
       harness review OWNER/REPO#33 --no-tty
       harness review OWNER/REPO#33 --no-harness
+      harness review --all [--sequential] [--fix]
     """
+    if sequential and not all_wts:
+        _fail("--sequential requires --all", EXIT_USAGE)
+    if fix and not all_wts:
+        _fail("--fix requires --all", EXIT_USAGE)
+    if ref is None and not all_wts:
+        _fail("missing PR/MR ref or worktree key\n"
+              "  Pass a ref, or use --all to review every not-reviewed worktree.",
+              EXIT_USAGE)
+    if all_wts:
+        reviewable = _reviewable_keys(store.load_links())
+        if not reviewable:
+            eprint("nothing to review")
+            return
+
+        def _child_argv(pr: str) -> list[str]:
+            return [sys.executable, "-m", "harness", "review", pr,
+                    "--no-tty", "--post-comments"] + (["--fix"] if fix else [])
+
+        def _child_cmd(pr: str) -> str:
+            return " ".join(shlex.quote(a) for a in _child_argv(pr))
+
+        def _spawn(key: str, pr: str):
+            repo = store.load_links().get(key, {}).get("repo", "")
+            cwd = repo if repo and Path(repo).is_dir() else os.getcwd()
+            # Child stdout/stderr inherit ours; the --post-comments child
+            # appends the auto-comment segment to its review prompt.
+            return subprocess.Popen(_child_argv(pr), cwd=cwd)
+
+        if dry_run:
+            rows = [{"key": k, "pr_url": pr, "command": _child_cmd(pr)}
+                    for k, pr in reviewable]
+            _print_rows(rows, json_output, csv_output=False,
+                        columns=["key", "pr_url", "command"],
+                        title="Review plan (dry-run)",
+                        empty="nothing to review")
+            return
+        if no_harness:
+            rows = [{"key": k, "pr_url": pr, "command": _child_cmd(pr),
+                     "exit_code": ""} for k, pr in reviewable]
+            _print_rows(rows, json_output, csv_output=False,
+                        columns=["key", "pr_url", "command", "exit_code"],
+                        title="Review runs", empty="nothing reviewed")
+            return
+        rows: list[dict] = []
+
+        if sequential:
+            for key, pr in reviewable:
+                proc = _spawn(key, pr)
+                rows.append({"key": key, "pr_url": pr, "exit_code": proc.wait()})
+        else:
+            procs = [(key, pr, _spawn(key, pr)) for key, pr in reviewable]
+            for key, pr, proc in procs:
+                rows.append({"key": key, "pr_url": pr, "exit_code": proc.wait()})
+        if not json_output:
+            for row in rows:
+                eprint(f"{row['key']}: review child exit {row['exit_code']}")
+        _print_rows(rows, json_output, csv_output=False,
+                    columns=["key", "pr_url", "exit_code"],
+                    title="Review runs", empty="nothing reviewed")
+        return
     session_ref = ref
     parse_err: HarnessError | None = None
     try:
@@ -366,11 +536,25 @@ def review(
             store.record_link(f"pr:{pr_url}", {"pr_url": pr_url, "worktree": worktree,
                                                "branch": branch, "repo": str(repo_dir)})
             prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
+
+            if post_comments:
+                prompt += "\n\nAuto add all comments to the PR/MR at yielding and don't wait for user approval"
+            if fix:
+                prompt += "\n\nAuto-fix all identified issues after yielding and don't wait for user approval."
             result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
                       "harness": harness_name}
             eprint(f"worktree: {worktree}  branch: {branch}")
-            _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty, no_harness,
-                         result, json_output)
+            if not no_harness:
+                _guard_harness(f"pr:{pr_url}", worktree)
+                _mark_reviewed(pr_url, worktree)
+            try:
+                _run_harness(harness_name, prompt, worktree, str(repo_dir),
+                             no_tty, no_harness, result, json_output,
+                             run_key=f"pr:{pr_url}")
+            except HarnessError:
+                if not no_harness:
+                    _clear_reviewed(pr_url)
+                raise
             return
 
     if not head_ref:
@@ -388,11 +572,24 @@ def review(
         pass
 
     prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
+
+    if post_comments:
+        prompt += "\n\nAuto add all comments to the PR/MR at yielding and don't wait for user approval"
+    if fix:
+        prompt += "\n\nAuto-fix all identified issues after yielding and don't wait for user approval."
     result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
               "harness": harness_name}
     eprint(f"worktree: {worktree}  branch: {branch}")
-    _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty, no_harness,
-                 result, json_output)
+    if not no_harness:
+        _guard_harness(f"pr:{pr_url}", worktree)
+        _mark_reviewed(pr_url, worktree)
+    try:
+        _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
+                     no_harness, result, json_output, run_key=f"pr:{pr_url}")
+    except HarnessError:
+        if not no_harness:
+            _clear_reviewed(pr_url)
+        raise
 
 
 # ── cleanup ───────────────────────────────────────────────────────────
@@ -611,7 +808,7 @@ def link_list(
     links = store.load_links()
     if json_output:
         print(json.dumps({"trackers": cfg.get("trackers", {}),
-                          "sessions": {k: _enrich_entry(v, refresh_pr)
+                          "sessions": {k: _enrich_entry(k, v, refresh_pr)
                                        for k, v in links.items()}},
                          indent=2, ensure_ascii=False))
         return
@@ -848,13 +1045,15 @@ def _session_rows(links: dict, show_worktree: bool, refresh: bool
     for k, v in links.items():
         cells = _status_cells(v, refresh)
         row = {"key": k, "branch": v.get("branch", "?"),
+               "harness": _harness_cell(k, v.get("worktree", "")),
                "commits": cells["commits"], "pr": cells["pr"],
                "_pr_state": (cells["pr_data"] or {}).get("state", "")}
         if show_worktree:
             row["worktree"] = v.get("worktree", "?")
         rows.append(row)
-    columns = (["key", "worktree", "branch", "commits", "pr"] if show_worktree
-               else ["key", "branch", "commits", "pr"])
+    columns = (["key", "worktree", "branch", "harness", "commits", "pr"]
+               if show_worktree
+               else ["key", "branch", "harness", "commits", "pr"])
     return rows, columns
 
 
@@ -864,18 +1063,23 @@ def _colorize_session(row: dict) -> dict:
     if st in _PR_STYLES:
         c = _PR_STYLES[st]
         out["pr"] = f"[{c}]{row['pr']}[/{c}]"
+    if not out.get("harness"):
+        out["harness"] = "—"
     return out
 
 
-def _enrich_entry(entry: dict, refresh: bool) -> dict:
+def _enrich_entry(key: str, entry: dict, refresh: bool) -> dict:
     cells = _status_cells(entry, refresh)
-    return {**entry, "commits": cells["commits"], "pr": cells["pr"],
+    return {**entry, "harness": _harness_cell(key, entry.get("worktree", "")),
+            "commits": cells["commits"], "pr": cells["pr"],
             "commits_detail": cells["ab"], "pr_detail": cells["pr_data"]}
 
 
 def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
     cells = _status_cells(entry, refresh)
-    detail = {"key": key, **entry, "commits": cells["commits"],
+    detail = {"key": key, **entry,
+              "harness": _harness_cell(key, entry.get("worktree", "")),
+              "commits": cells["commits"],
               "pr": _fmt_pr(cells["pr_data"]), "commits_detail": cells["ab"],
               "pr_detail": cells["pr_data"], "base_branch": cells["base_branch"],
               "issue_url": refs.issue_url(key, entry.get("issue"))}
@@ -892,6 +1096,7 @@ def _print_detail(detail: dict) -> None:
     for k in ("worktree", "branch", "repo"):
         if detail.get(k):
             c.print(f"  {k}: {escape(str(detail[k]))}")
+    c.print(f"  harness: {escape(str(detail.get('harness') or '—'))}")
     issue = detail.get("issue_url") or detail.get("issue")
     if issue:
         c.print(f"  issue: {escape(str(issue))}")
@@ -986,7 +1191,7 @@ def status(
         _print_detail(detail)
         return
     if json_output:
-        print(json.dumps({k: _enrich_entry(v, refresh_pr)
+        print(json.dumps({k: _enrich_entry(k, v, refresh_pr)
                           for k, v in links.items()}, indent=2, ensure_ascii=False))
         return
     rows, columns = _session_rows(links, worktree, refresh_pr)
@@ -1265,9 +1470,10 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
                           f"{db} in files: {', '.join(out['conflicts'])}. "
                           "Resolve them, complete the merge, commit, push to "
                           f"origin/{branch}, and stop.")
+                _guard_harness(key, wt)
                 _run_harness("omp", prompt, wt, wt,
                              no_tty=bool(yes), no_harness=False,
-                             result=result, json_output=json_output)
+                             result=result, json_output=json_output, run_key=key)
             elif sys.stdin.isatty():
                 if typer.confirm("launch the harness to resolve?"):
                     result["result"] = "conflict-harness"
@@ -1275,9 +1481,10 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
                               f"{db} in files: {', '.join(out['conflicts'])}. "
                               "Resolve them, complete the merge, commit, push to "
                               f"origin/{branch}, and stop.")
+                    _guard_harness(key, wt)
                     _run_harness("omp", prompt, wt, wt,
                                  no_tty=False, no_harness=False,
-                                 result=result, json_output=json_output)
+                                 result=result, json_output=json_output, run_key=key)
                 else:
                     _fail("aborted (merge left in progress; abort with "
                           "`git merge --abort`)", EXIT_USAGE)

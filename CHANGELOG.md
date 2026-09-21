@@ -21,6 +21,29 @@
 - Fixed `review` reading `--dry-run` without defining the flag.
 
 ## Unreleased
+- One live AI harness per worktree: `start`/`review` (and `sync`'s
+  conflict-harness runs) record the running harness in a locked
+  `harnesses.json` (pid-liveness sweep; dead entries self-heal on the
+  next read) and refuse a second launch on the same worktree with
+  exit 1 — `worktree <path> already has a live harness (<name>, pid
+  <pid>) — wait for it to finish or kill it`. `--no-harness` is never
+  guarded and never records.
+- `status`/`link list` tables, the `status <ref>` detail panel
+  (`--json` included), and the web table/detail gain a `harness`
+  column: `<name> <pid>` while a harness is live on the worktree,
+  `—`/empty otherwise (present in `--csv`, `--json`, and `/api/status`).
+- `review --all`: reviews the PR/MR of every not-reviewed worktree in
+  parallel `python -m harness review` children (`--sequential` spawns
+  and waits one at a time; `--fix` appends an auto-fix prompt segment;
+  `--post-comments` appends an auto-comment segment). Skips
+  reviewed-at-tip, no-PR, missing-worktree, and live-harness entries
+  with a stderr note; prints a key/PR/exit-code summary and exits 0
+  with "nothing to review" when nothing is reviewable. Bare `review`
+  without a ref is now a usage error (exit 2) suggesting `--all`.
+- Reviewed flag: a successfully launched review records `reviewed`/
+  `reviewed_at` (the worktree's branch tip) on the PR link; `review
+  --all` skips it until the tip moves — a new commit resets the flag
+  automatically so the worktree becomes reviewable again.
 - Session→Worktree terminology: prompts, errors, and table titles now say
   "worktree" ("Linked worktrees", "multiple worktrees match"); `cleanup`,
   `cd`, `link remove`, `status`, `sync`, and the web `/api/status` +

@@ -64,9 +64,17 @@ relation) → default branch → fetch title/body → `git-wt start` → record
 link → exec `omp` with prompt (`--no-tty` appends the commit/push/MR suffix
 and uses `omp -p`).
 
-**`harness review <PR>`**: parse ref → same tracker-aware repo picker →
-fetch head ref → worktree on that branch → record `pr:<url>` link → exec
-`omp` with pr-reviewer prompt.
+**`harness review [PR]`**: parse ref → same tracker-aware repo picker →
+fetch head ref → worktree on that branch → record `pr:<url>` link →
+one-live-harness guard + record → exec `omp` with pr-reviewer prompt
+(`--post-comments`/`--fix` append auto-comment/auto-fix prompt segments).
+`review --all` (optional `--sequential`, `--fix`) reviews every
+not-reviewed worktree's PR/MR in non-TTY `python -m harness review`
+children — parallel by default, `--sequential` waits one at a time —
+skipping reviewed-at-tip, no-PR, invalid-worktree, and live-harness
+entries (stderr note each; zero reviewable → exit 0). A launched review
+persists `reviewed`/`reviewed_at` (branch tip) on the PR link; the flag
+auto-resets when the tip moves (new commit → reviewable again).
 
 **`harness sync <ref>`**: resolve worktree key (fuzzy, shared with cleanup) →
 dirty check (abort exit 1 naming files) → PR lookup (cached; no PR → local
@@ -119,6 +127,11 @@ ambiguity; miss = `no linked state` error) → confirm (unless
   `refs.issue_url(key, stored)` — jira site from jira-cli's config
   (`~/.config/jira-cli/config.json`, fallback `~/.jira-cli.json`), GitHub
   issues URL from the key; a stored `issue_url`/http `issue` wins.
+- Status `harness` column (tables, `status <ref>` detail, `/api/status`,
+  web table/detail): `"<name> <pid>"` while a harness is live on the
+  worktree, `""` (`—` in Rich tables) otherwise — `_harness_cell` in
+  cli.py over `store.active_harness` (cross-key worktree fallback
+  mirrors `_guard_harness`).
 
 ## Files to edit
 

@@ -73,6 +73,13 @@ def current_branch(path: Path) -> str | None:
         return None
 
 
+def branch_tip(worktree: str) -> str:
+    """HEAD sha of *worktree*; "" when it cannot be determined."""
+    try:
+        return run_cmd("git", "-C", str(worktree), "rev-parse", "HEAD") or ""
+    except HarnessError:
+        return ""
+
 def ahead_behind(path: Path, default_branch: str) -> dict | None:
     """Behind/ahead counts vs remote-tracking origin/<default> (no fetch).
 

@@ -29,6 +29,8 @@ export interface SessionEntry {
   issue?: string
   worktree?: string
   branch?: string
+  /** Live AI harness on the worktree, e.g. "omp 4242"; absent when none. */
+  harness?: string
   repo?: string
   issue_url?: string
   commits?: string

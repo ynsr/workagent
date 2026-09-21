@@ -22,6 +22,7 @@ Map of session key → entry (same shape as `harness status --json`):
 {
   "jira:IPG-932": {
     "issue": "IPG-932", "worktree": "/home/x/wt", "branch": "feat/…",
+    "harness": "omp 4242",
     "repo": "/home/x/projectx", "issue_url": "https://…/browse/IPG-932",
     "commits": "0|1", "pr": "…",
     "commits_detail": {"behind": 0, "ahead": 1},
@@ -30,13 +31,15 @@ Map of session key → entry (same shape as `harness status --json`):
   }
 }
 ```
-`commits` is the display string `"B|A"`; prefer `commits_detail`.
+`harness` is `"<name> <pid>"` while a harness is live on the worktree,
+`""` otherwise. `commits` is the display string `"B|A"`; prefer
+`commits_detail`.
 `pr_detail` is `null` when no open/known PR. Optional query:
 `?refresh=true` re-queries PR status (slow, hits the tracker CLI).
 
 ### `GET /api/status?ref=IPG-932` → single session detail
 `_session_detail` shape: the entry fields plus
-`key`, `commits`, `pr` (display string), `commits_detail`,
+`key`, `harness`, `commits`, `pr` (display string), `commits_detail`,
 `pr_detail`, `base_branch`, `issue_url`, and `create_hint`
 (only when there is no PR).
 

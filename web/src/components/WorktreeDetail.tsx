@@ -122,6 +122,17 @@ export function WorktreeDetail({
               {entry.branch ?? "—"}
             </dd>
           </div>
+          {entry.harness ? (
+            <div className="flex items-baseline gap-2">
+              <dt className="w-16 shrink-0 text-xs text-muted-foreground">Harness</dt>
+              <dd
+                className="min-w-0 truncate font-mono text-[13px] text-muted-foreground"
+                title="live harness (name, pid)"
+              >
+                {entry.harness}
+              </dd>
+            </div>
+          ) : null}
           <div className="flex items-baseline gap-2">
             <dt className="w-16 shrink-0 text-xs text-muted-foreground">Worktree</dt>
             <dd className="min-w-0 truncate font-mono text-[13px]" title={entry.worktree}>

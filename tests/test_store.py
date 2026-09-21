@@ -1,5 +1,9 @@
 """Store round-trips under an isolated config dir."""
 
+import os
+import subprocess
+from unittest import mock
+
 from harness import store
 
 
@@ -46,3 +50,30 @@ def test_load_links_backfills_ref_key(isolated_config):
     store.save_links({"jira:IPG-1": {"branch": "feat/x", "worktree": "/tmp/wt"}})
     links = store.load_links()
     assert links["jira:IPG-1"]["ref_key"] == "jira:IPG-1"
+
+
+def test_harness_run_roundtrip(isolated_config):
+    store.record_harness_run("jira:IPG-1", "omp", "/tmp/wt-a")
+    rec = store.active_harness("jira:IPG-1")
+    assert rec is not None and rec["harness"] == "omp" and rec["pid"] == os.getpid()
+    store.clear_harness_run("jira:IPG-1")
+    assert store.active_harness("jira:IPG-1") is None
+
+
+def test_harness_run_dead_pid_swept(isolated_config):
+    store.save_harnesses_raw({"jira:OLD": {"harness": "omp", "pid": _dead_pid(), "started_at": 0.0}})
+    assert store.active_harness("jira:OLD") is None
+    assert store.load_harnesses() == {}
+
+
+def test_harness_run_live_foreign_pid(isolated_config):
+    # A pid we cannot signal counts as alive (PermissionError branch).
+    with mock.patch.object(store.os, "kill", side_effect=PermissionError):
+        store.record_harness_run("jira:P", "omp", "")
+        assert store.active_harness("jira:P") is not None
+
+
+def _dead_pid() -> int:
+    p = subprocess.Popen(["sleep", "0"])
+    p.wait()
+    return p.pid

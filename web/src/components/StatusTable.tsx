@@ -160,6 +160,7 @@ export function StatusTable({
             <TableRow>
               <TableHead>Session</TableHead>
               <TableHead>Branch</TableHead>
+              <TableHead>Harness</TableHead>
               <TableHead className="w-20">Behind|Ahead</TableHead>
               <TableHead>PR / MR</TableHead>
               {showWorktree ? <TableHead>Worktree</TableHead> : null}
@@ -182,6 +183,18 @@ export function StatusTable({
                       title={entry.branch}
                     >
                       {entry.branch ?? "—"}
+                    </TableCell>
+                    <TableCell className="font-mono text-[13px]">
+                      {entry.harness ? (
+                        <span
+                          className="text-muted-foreground"
+                          title="live harness (name, pid)"
+                        >
+                          {entry.harness}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <CommitsCell entry={entry} />
@@ -216,7 +229,7 @@ export function StatusTable({
                   {detailOpen ? (
                     <TableRow className="hover:bg-transparent">
                       <TableCell
-                        colSpan={showWorktree ? 6 : 5}
+                        colSpan={showWorktree ? 7 : 6}
                         className="border-b bg-muted/40 align-top"
                       >
                         <div className="mx-auto w-full max-w-2xl py-1">
@@ -256,6 +269,17 @@ export function StatusTable({
                     {entry.branch ?? "—"}
                   </dd>
                 </div>
+                {entry.harness ? (
+                  <div className="flex items-baseline gap-2">
+                    <dt className="w-16 shrink-0 text-xs text-muted-foreground">Harness</dt>
+                    <dd
+                      className="min-w-0 truncate font-mono text-[13px] text-muted-foreground"
+                      title="live harness (name, pid)"
+                    >
+                      {entry.harness}
+                    </dd>
+                  </div>
+                ) : null}
                 <div className="flex items-baseline gap-2">
                   <dt className="w-16 shrink-0 text-xs text-muted-foreground">Commits</dt>
                   <dd>
