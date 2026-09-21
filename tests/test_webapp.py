@@ -596,7 +596,7 @@ def test_candidates_exclude_linked(client, monkeypatch, tmp_path):
          "updated": "2026-09-21T10:00:00Z",
          "url": "https://github.com/o/r/pull/2", "state": "OPEN"},
     ])
-    monkeypatch.setattr(trackers, "list_my_issues", lambda warnings=None: [])
+    monkeypatch.setattr(trackers, "list_my_issues", lambda *a, **k: [])
     body = client.get("/api/candidates").json()
     assert [p["url"] for p in body["prs"]] == ["https://github.com/o/r/pull/2"]
     assert body["prs"][0]["key"] == "github:o/r#2"
@@ -607,7 +607,7 @@ def test_candidates_issue_window(client, monkeypatch, tmp_path):
     _register_repo(tmp_path)
     monkeypatch.setattr(cli, "_repo_tool", lambda path: None)
     monkeypatch.setattr(cli.refs, "fetch_open_prs", lambda tool, cwd: [])
-    monkeypatch.setattr(trackers, "list_my_issues", lambda warnings=None: [
+    monkeypatch.setattr(trackers, "list_my_issues", lambda *a, **k: [
         _issue_row(10, "jira:IPG-OLD"),
         _issue_row(2, "jira:IPG-NEW"),
     ])
@@ -623,7 +623,7 @@ def test_candidates_shape_and_warnings(client, monkeypatch, tmp_path):
         raise HarnessError("gh pr list failed: auth")
 
     monkeypatch.setattr(cli.refs, "fetch_open_prs", boom)
-    monkeypatch.setattr(trackers, "list_my_issues", lambda warnings=None: [])
+    monkeypatch.setattr(trackers, "list_my_issues", lambda *a, **k: [])
     body = client.get("/api/candidates").json()
     assert set(body) == {"prs", "issues", "worktrees", "warnings"}
     assert body["prs"] == [] and body["issues"] == []

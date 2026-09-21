@@ -47,11 +47,11 @@ export function useDoctor() {
 }
 
 export function useIssues() {
-  return useQuery({ queryKey: queryKeys.issues, queryFn: api.issues })
+  return useQuery({ queryKey: queryKeys.issues, queryFn: api.issues, staleTime: 3600_000 })
 }
 
 export function useCandidates() {
-  return useQuery({ queryKey: queryKeys.candidates, queryFn: api.candidates })
+  return useQuery({ queryKey: queryKeys.candidates, queryFn: api.candidates, staleTime: 3600_000 })
 }
 
 export function useSessions() {

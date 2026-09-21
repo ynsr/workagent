@@ -200,3 +200,31 @@ def test_parse_created_offsets():
     assert trackers.parse_created("2026-09-20T10:00:00Z") == dt
     assert trackers.parse_created("garbage") is None
     assert trackers.parse_created("") is None
+
+
+def test_my_issues_uses_cache_within_ttl(monkeypatch, tmp_path):
+    from harness import trackers
+    from harness import store_sqlite as sq
+    import harness.store as store
+    monkeypatch.setattr(store, "config_dir", lambda: tmp_path)
+    rows = [{"key": "IPG-1", "title": "t", "url": "u", "status": "To Do",
+             "created": "2026-09-01"}]
+    sq.set_issue_cache(sq.db_path(), "jira", rows)
+    def _boom(warn):
+        raise AssertionError("must use cache")
+    monkeypatch.setattr(trackers, "_jira_my_issues", _boom)
+    monkeypatch.setattr(trackers, "_gh_my_issues", lambda warn: [])
+    got = trackers.list_my_issues([])
+    assert [r["key"] for r in got] == ["IPG-1"]
+
+
+def test_my_issues_force_skips_cache(monkeypatch, tmp_path):
+    from harness import trackers
+    from harness import store_sqlite as sq
+    import harness.store as store
+    monkeypatch.setattr(store, "config_dir", lambda: tmp_path)
+    sq.set_issue_cache(sq.db_path(), "jira", [{"key": "STALE"}])
+    monkeypatch.setattr(trackers, "_jira_my_issues", lambda warn: [])
+    monkeypatch.setattr(trackers, "_gh_my_issues", lambda warn: [])
+    got = trackers.list_my_issues([], force=True)
+    assert got == []

@@ -367,7 +367,39 @@ def _gh_my_issues(warnings: list[str]) -> list[dict]:
     return rows
 
 
-def list_my_issues(warnings: list[str] | None = None) -> list[dict]:
+_CACHE_TTL_SECONDS = 3600
+
+
+def _cached_source(source: str, fetch, warn: list,
+                   force: bool) -> list[dict]:
+    """Per-source issue rows: fresh cache hit wins, else live fetch + store.
+
+    Pre-cutover (no state.db) or any cache failure → live fetch, never raise.
+    """
+    from datetime import datetime, timezone
+    from . import store_sqlite as sq
+    db = sq.db_path()
+    if not force and db.exists():
+        try:
+            rows, fetched_at = sq.get_issue_cache(db, source)
+            if rows and fetched_at:
+                age = (datetime.now(timezone.utc)
+                       - datetime.fromisoformat(fetched_at)).total_seconds()
+                if age < _CACHE_TTL_SECONDS:
+                    return rows
+        except Exception:
+            pass
+    rows = fetch(warn)
+    try:
+        if db.exists():
+            sq.set_issue_cache(db, source, rows)
+    except Exception:
+        pass
+    return rows
+
+
+def list_my_issues(warnings: list[str] | None = None,
+                   force: bool = False) -> list[dict]:
     """My open issues across sources as {key, title, url, status, created}.
 
     jira (reporter=me, To Do/In Progress, last 2 months) + GitHub issues
@@ -375,9 +407,11 @@ def list_my_issues(warnings: list[str] | None = None) -> list[dict]:
     (Jira covers work tracking; GitLab surfaces via PR/MR candidates).
     Per-source failure contributes [] plus a warning — to stderr when
     *warnings* is None, else appended to the caller's list; never raises.
+    Fresh per-source cache rows (<1h) win unless *force* is set.
     """
     warn = warnings if warnings is not None else []
-    rows = _jira_my_issues(warn) + _gh_my_issues(warn)
+    rows = (_cached_source("jira", _jira_my_issues, warn, force)
+            + _cached_source("github", _gh_my_issues, warn, force))
     rows.sort(key=lambda r: r["created"], reverse=True)
     if warnings is None:
         for w in warn:

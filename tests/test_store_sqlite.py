@@ -73,3 +73,16 @@ def test_migrate_corrupt_aborts(tmp_path):
     with pytest.raises(HarnessError):
         sq.migrate_json(cfg, cfg / "state.db")
     assert (cfg / "links.json").exists()  # left in place
+
+
+def test_issue_cache_roundtrip(tmp_path):
+    from harness import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    assert sq.get_issue_cache(db, "jira") == ([], None)
+    rows = [{"key": "IPG-1", "title": "t", "url": "u", "status": "To Do",
+             "created": "2026-09-01"}]
+    sq.set_issue_cache(db, "jira", rows)
+    got, fetched_at = sq.get_issue_cache(db, "jira")
+    assert got == rows
+    assert fetched_at is not None

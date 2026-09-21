@@ -1748,7 +1748,7 @@ def _candidates_env(monkeypatch, tmp_path, issues=None, prs=None):
          "updated": "2026-09-20T10:00:00Z",
          "url": "https://github.com/o/r/pull/1", "state": "OPEN"}])
     monkeypatch.setattr(cli.trackers, "list_my_issues",
-                        lambda warnings=None: issues or [])
+                        lambda *a, **k: issues or [])
 
 
 def test_candidates_cli_json(isolated_config, tmp_path, monkeypatch):
@@ -1819,7 +1819,7 @@ def test_candidates_cli_warning_to_stderr(isolated_config, tmp_path,
         raise HarnessError("gh pr list failed: no auth")
 
     monkeypatch.setattr(cli.refs, "fetch_open_prs", boom)
-    monkeypatch.setattr(cli.trackers, "list_my_issues", lambda warnings=None: [])
+    monkeypatch.setattr(cli.trackers, "list_my_issues", lambda *a, **k: [])
     r = _invoke("candidates")
     assert r.exit_code == 0, r.output
     assert "warning:" in r.stderr and "proj" in r.stderr
@@ -2024,3 +2024,15 @@ def test_session_id_matches_file(isolated_config, tmp_path, monkeypatch):
     rows = sq.list_sessions(db)
     assert len(rows) == 1
     assert rows[0]["file_path"].endswith(rows[0]["id"] + ".jsonl")
+
+
+def test_candidates_reset_cache_clears(isolated_config, monkeypatch):
+    from harness import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    sq.set_issue_cache(db, "jira", [{"key": "IPG-1"}])
+    monkeypatch.setattr(cli.trackers, "list_my_issues", lambda *a, **k: [])
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", lambda *a, **k: [])
+    r = _invoke("candidates", "--reset-cache", "--json")
+    assert r.exit_code == 0, r.output
+    assert sq.get_issue_cache(db, "jira") == ([], None)

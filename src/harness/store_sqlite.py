@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   command TEXT NOT NULL DEFAULT '', args TEXT NOT NULL DEFAULT '[]',
   exit_code INTEGER, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS issue_cache (
+  source TEXT PRIMARY KEY, payload TEXT NOT NULL DEFAULT '[]',
+  fetched_at TEXT NOT NULL DEFAULT '');
 """
 
 
@@ -272,3 +275,37 @@ def migrate_json(config_dir: Path, db_path: Path) -> dict:
         if p.exists():
             p.unlink()
     return counts
+
+def get_issue_cache(path: Path, source: str) -> tuple[list, str | None]:
+    """Cached issue rows for *source* + fetched_at ISO, or ([], None)."""
+    import json
+    init_db(path)
+    with connect(path) as conn:
+        row = conn.execute(
+            "SELECT payload, fetched_at FROM issue_cache WHERE source = ?",
+            (source,)).fetchone()
+    if row is None:
+        return [], None
+    return json.loads(row[0]), row[1]
+
+
+def set_issue_cache(path: Path, source: str, rows: list[dict]) -> None:
+    """Upsert cached issue rows for *source* with a fresh fetched_at."""
+    import json
+    from datetime import datetime, timezone
+    init_db(path)
+    with connect(path) as conn:
+        conn.execute(
+            "INSERT INTO issue_cache (source, payload, fetched_at)"
+            " VALUES (?, ?, ?)"
+            " ON CONFLICT(source) DO UPDATE SET payload=excluded.payload,"
+            " fetched_at=excluded.fetched_at",
+            (source, json.dumps(rows),
+             datetime.now(timezone.utc).isoformat()))
+
+
+def clear_issue_cache(path: Path) -> None:
+    """Drop all cached issue rows (reset-cache path)."""
+    init_db(path)
+    with connect(path) as conn:
+        conn.execute("DELETE FROM issue_cache")

@@ -1446,7 +1446,7 @@ def status(
 # ── candidates ────────────────────────────────────────────────────────
 
 
-def _candidates() -> dict:
+def _candidates(force: bool = False) -> dict:
     """Unlinked open PR/MRs + my recent issues; shared by the `candidates`
     command and the webapp /api/candidates endpoint.
 
@@ -1478,7 +1478,7 @@ def _candidates() -> dict:
         except Exception as e:  # one bad repo must not kill the listing
             warnings.append(f"{name}: {e}")
     prs.sort(key=lambda p: p.get("updated", ""), reverse=True)
-    issues = trackers.list_my_issues(warnings)
+    issues = trackers.list_my_issues(warnings, force=force)
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     recent = [i for i in issues
               if (dt := trackers.parse_created(str(i.get("created", ""))))
@@ -1564,6 +1564,7 @@ def _scan_worktrees() -> list[dict]:
 def candidates_cmd(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
     csv_output: bool = typer.Option(False, "--csv", help="Output the PR/MR table as CSV (stdout; logs go to stderr)."),
+    reset_cache: bool = typer.Option(False, "--reset-cache", help="Clear the cached issue rows and re-fetch live."),
 ) -> None:
     """List unlinked open PR/MRs and my recent issues (last 7 days).
 
@@ -1571,7 +1572,10 @@ def candidates_cmd(
       harness candidates
       harness candidates --json
     """
-    out = _candidates()
+    if reset_cache:
+        from . import store_sqlite as _sq
+        _sq.clear_issue_cache(_sq.db_path())
+    out = _candidates(force=reset_cache)
     for w in out["warnings"]:
         eprint(f"warning: {w}")
     if json_output:

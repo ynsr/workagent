@@ -424,18 +424,18 @@ def create_app(static_dir: Path, host: str, port: int,
         return doctor_mod.check(json_output=True)
 
     @app.get("/api/issues")
-    def my_issues() -> dict:
+    def my_issues(force: bool = False) -> dict:
         """My open issues; 200 + warning even when the tracker CLIs are
         missing (read-only, never raises)."""
         warnings: list[str] = []
-        return {"issues": trackers_mod.list_my_issues(warnings),
+        return {"issues": trackers_mod.list_my_issues(warnings, force=force),
                 "warning": "; ".join(warnings) or None}
 
     @app.get("/api/candidates")
-    def candidates() -> dict:
+    def candidates(force: bool = False) -> dict:
         """Unlinked open PR/MRs + my recent issues (server-side 7-day
         filter) + unregistered on-disk worktrees; read-only."""
-        out = _candidates()
+        out = _candidates(force=force)
         return {"prs": out["prs"], "issues": out["issues"],
                 "worktrees": out["worktrees"], "warnings": out["warnings"]}
 
