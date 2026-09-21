@@ -330,7 +330,7 @@ function LinkRemoveDialog({ onClose }: { onClose: () => void }) {
   return (
     <ActionDialog
       title="Remove a link"
-      description="link remove REF [--repo REPO] — tracker id, or a session key."
+      description="link remove REF [--repo REPO] — tracker id, or a worktree key."
       onClose={onClose}
       busy={submitting}
       footer={
@@ -423,7 +423,7 @@ function RegisterDialog({ onClose }: { onClose: () => void }) {
   return (
     <ActionDialog
       title="Register an existing worktree"
-      description="register PATH [--key] [--issue] [--repo] [--force] — links an existing git worktree as a session."
+      description="register PATH [--key] [--issue] [--repo] [--force] — adds an existing git worktree to the links registry."
       onClose={onClose}
       busy={submitting}
       footer={
@@ -516,7 +516,7 @@ function RegisterDialog({ onClose }: { onClose: () => void }) {
 
 export function Links() {
   const navigate = useNavigate()
-  const { data: sessions, isPending, isError, error, refetch } = useStatusAll()
+  const { data: worktrees, isPending, isError, error, refetch } = useStatusAll()
   const [showWorktree, setShowWorktree] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [activeForm, setActiveForm] = useState<null | "set" | "remove" | "register">(
@@ -527,7 +527,7 @@ export function Links() {
     setRefreshing(true)
     try {
       await refetch()
-      toast.success("Sessions refreshed")
+      toast.success("Worktrees refreshed")
     } catch (err) {
       toast.error(errorText(err))
     } finally {
@@ -552,7 +552,7 @@ export function Links() {
     <div className="grid gap-6">
       <PageHeader
         title="Links"
-        description="Tracker ↔ repo mappings, linked sessions, and registering existing worktrees."
+        description="Tracker ↔ repo mappings, linked worktrees, and registering existing worktrees."
         actions={
           <>
             <Button size="sm" onClick={() => setActiveForm("set")}>
@@ -597,7 +597,7 @@ export function Links() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Linked sessions</CardTitle>
+          <CardTitle>Linked worktrees</CardTitle>
           <CardDescription>
             Same table as the Dashboard, from GET /api/status (link list shape).
           </CardDescription>
@@ -607,15 +607,15 @@ export function Links() {
             <TableSkeleton rows={4} />
           ) : isError ? (
             <ErrorState error={error} onRetry={() => void refetch()} />
-          ) : !sessions || Object.keys(sessions).length === 0 ? (
+          ) : !worktrees || Object.keys(worktrees).length === 0 ? (
             <EmptyState
               icon={<Link2 className="size-10" aria-hidden />}
-              title="No linked sessions"
-              description="Sessions appear once a worktree is linked to a tracker."
+              title="No linked worktrees"
+              description="Worktrees appear once linked to a tracker."
             />
           ) : (
             <StatusTable
-              sessions={sessions}
+              worktrees={worktrees}
               actions={tableActions}
               showWorktree={showWorktree}
             />

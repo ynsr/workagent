@@ -375,7 +375,22 @@ def test_repos_and_links_endpoints(client):
     assert repos[0]["name"] == "projectx"
     links = client.get("/api/links").json()
     assert links["trackers"]["jira:IPG"]["repos"] == ["/tmp/px"]
-    assert "sessions" in links
+    assert "worktrees" in links
+
+
+def test_links_worktrees_key_launch_prefill(client):
+    """Launch-page prefill validates refs against links.worktrees.
+
+    Breaking rename (issue #7): the old "sessions" key is gone; the response
+    must expose exactly {"trackers", "worktrees"} and the worktree mapping
+    must contain recorded keys.
+    """
+    store.record_link("jira:IPG-1", {"issue": "IPG-1",
+                                     "worktree": "/tmp/wt", "branch": "b",
+                                     "repo": "/tmp/repo"})
+    links = client.get("/api/links").json()
+    assert set(links) == {"trackers", "worktrees"}
+    assert "jira:IPG-1" in links["worktrees"]
 
 
 def test_doctor_endpoint(client):

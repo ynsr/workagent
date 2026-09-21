@@ -22,7 +22,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
-import { api, type SessionDetail } from "./api"
+import { api, type WorktreeDetail } from "./api"
 import { isOptedOut, setOptOut, type OptOutAction } from "./settings"
 
 export interface ConfirmDetailRow {
@@ -43,7 +43,7 @@ export interface ConfirmOptions {
   force?: boolean
   /** Extra rows shown from caller-provided data. */
   details?: ConfirmDetailRow[]
-  /** Session ref — the dialog fetches /api/status?ref= and shows its fields. */
+  /** Worktree ref — the dialog fetches /api/status?ref= and shows its fields. */
   ref?: string
   /** Prominent warning line (e.g. headless auto-approve). */
   warning?: string
@@ -61,10 +61,10 @@ interface ConfirmContextValue {
 
 const ConfirmContext = createContext<ConfirmContextValue | null>(null)
 
-function rowsFromDetail(detail: SessionDetail | undefined): ConfirmDetailRow[] {
+function rowsFromDetail(detail: WorktreeDetail | undefined): ConfirmDetailRow[] {
   if (!detail) return []
   const pr = detail.pr_detail
-  const rows: ConfirmDetailRow[] = [{ label: "Session", value: detail.key }]
+  const rows: ConfirmDetailRow[] = [{ label: "Worktree", value: detail.key }]
   if (detail.issue_url) {
     rows.push({ label: "Issue", value: detail.issue_url, href: detail.issue_url })
   }

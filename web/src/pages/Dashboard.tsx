@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { api, type SessionMap } from "@/lib/api"
+import { api, type WorktreeMap } from "@/lib/api"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
 import { queryKeys, useCreateRun, useStatusAll } from "@/lib/queries"
@@ -39,8 +39,8 @@ const CSV_HEADERS = [
   "pr_state",
 ]
 
-function sessionRows(sessions: SessionMap): string[][] {
-  return Object.entries(sessions).map(([key, e]) => [
+function worktreeRows(worktrees: WorktreeMap): string[][] {
+  return Object.entries(worktrees).map(([key, e]) => [
     key,
     e.issue ?? "",
     e.repo ?? "",
@@ -60,7 +60,7 @@ export function Dashboard() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const createRun = useCreateRun()
-  const { data: sessions, isPending, isError, error, refetch } = useStatusAll()
+  const { data: worktrees, isPending, isError, error, refetch } = useStatusAll()
 
   const [showWorktree, setShowWorktree] = useState(false)
   const [refreshingPr, setRefreshingPr] = useState(false)
@@ -95,12 +95,12 @@ export function Dashboard() {
     setSyncOpts({ merge: false, dryRun: false, json: false })
     const ok = await confirm({
       action: "sync",
-      title: "Sync all sessions",
+      title: "Sync all worktrees",
       description:
-        "Runs sync for every linked session (implies --yes). Same strategy as a single sync: remote rebase by default, local merge with -m.",
+        "Runs sync for every linked worktree (implies --yes). Same strategy as a single sync: remote rebase by default, local merge with -m.",
       destructive: true,
       confirmLabel: "Sync all",
-      details: [{ label: "Scope", value: "Every linked session" }],
+      details: [{ label: "Scope", value: "Every linked worktree" }],
       extras: (
         <div className="grid gap-2.5">
           <OptRow
@@ -148,11 +148,11 @@ export function Dashboard() {
     const ok = await confirm({
       action: "cleanup",
       ref: key,
-      title: `Remove session ${key}`,
+      title: `Remove worktree ${key}`,
       description:
         "Closes the tracker issue, removes the worktree, deletes the branch and closes the PR. This cannot be undone.",
       destructive: true,
-      confirmLabel: "Remove session",
+      confirmLabel: "Remove worktree",
       extras: (
         <div className="grid gap-2.5">
           <OptRow
@@ -215,9 +215,9 @@ export function Dashboard() {
   }
 
   async function handleCopyJson() {
-    if (!sessions) return
+    if (!worktrees) return
     try {
-      await copyToClipboard(JSON.stringify(sessions, null, 2))
+      await copyToClipboard(JSON.stringify(worktrees, null, 2))
       toast.success("Status JSON copied")
     } catch (err) {
       toast.error(errorText(err))
@@ -225,16 +225,16 @@ export function Dashboard() {
   }
 
   function handleDownloadCsv() {
-    if (!sessions) return
+    if (!worktrees) return
     downloadText(
       "harness-status.csv",
-      toCsv(CSV_HEADERS, sessionRows(sessions)),
+      toCsv(CSV_HEADERS, worktreeRows(worktrees)),
       "text/csv",
     )
   }
 
   // Row Sync/Review go to Launch, which renders the flow prefilled with this
-  // session key (exact query contract Launch reads back).
+  // worktree key (exact query contract Launch reads back).
   const tableActions = {
     onSync: (key: string) =>
       navigate("/launch?mode=sync&ref=" + encodeURIComponent(key)),
@@ -249,7 +249,7 @@ export function Dashboard() {
     <div>
       <PageHeader
         title="Dashboard"
-        description="Linked issue ↔ PR ↔ worktree sessions. Refreshes every 15 s while the tab is visible."
+        description="Linked issue ↔ PR ↔ worktrees. Refreshes every 15 s while the tab is visible."
         actions={
           <>
             <Button
@@ -286,11 +286,11 @@ export function Dashboard() {
         <TableSkeleton rows={6} />
       ) : isError ? (
         <ErrorState error={error} onRetry={() => void refetch()} />
-      ) : !sessions || Object.keys(sessions).length === 0 ? (
+      ) : !worktrees || Object.keys(worktrees).length === 0 ? (
         <EmptyState
           icon={<FolderGit2 className="size-10" aria-hidden />}
-          title="No linked sessions yet"
-          description="Register a repo, link a tracker, then launch start from an issue ref — sessions appear here."
+          title="No linked worktrees yet"
+          description="Register a repo, link a tracker, then launch start from an issue ref — worktrees appear here."
         >
           <Button asChild size="sm">
             <Link to="/launch">
@@ -306,7 +306,7 @@ export function Dashboard() {
       ) : (
         <>
           <StatusTable
-            sessions={sessions}
+            worktrees={worktrees}
             actions={tableActions}
             showWorktree={showWorktree}
           />

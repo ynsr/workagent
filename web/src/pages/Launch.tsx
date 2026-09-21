@@ -23,27 +23,42 @@ type Mode = "start" | "review" | "sync"
 
 const MODES: readonly Mode[] = ["start", "review", "sync"]
 
-const COPY: Record<Mode, { label: string; title: string; description: string; refHint: string; refPlaceholder: string }> = {
+const COPY: Record<
+  Mode,
+  {
+    label: string
+    title: string
+    description: string
+    refHint: string
+    refPlaceholder: string
+    /** Confirm-dialog description, kept per mode so label edits can never
+     * silently change the confirm text (replaces title string matching). */
+    confirmDesc: string
+  }
+> = {
   start: {
     label: "Start",
     title: "Start from an issue",
     description: "Issue key, OWNER/REPO#22, or a full issue URL.",
     refHint: "Issue key, OWNER/REPO#22, or a full issue URL.",
     refPlaceholder: "IPG-932, OWNER/REPO#22, or https://…/issues/22",
+    confirmDesc: "Creates a worktree from the issue and launches the coding agent.",
   },
   review: {
     label: "Review",
     title: "Review a PR/MR",
-    description: "PR/MR URL, OWNER/REPO#33, or a session ref (key/branch/worktree).",
-    refHint: "PR/MR URL, OWNER/REPO#33, or a session ref (key/branch/worktree).",
+    description: "PR/MR URL, OWNER/REPO#33, or a worktree ref (key/branch/path).",
+    refHint: "PR/MR URL, OWNER/REPO#33, or a worktree ref (key/branch/path).",
     refPlaceholder: "https://…/pull/33, OWNER/REPO#33, or jira:IPG-929",
+    confirmDesc: "Creates a worktree from the PR/MR and launches a review agent.",
   },
   sync: {
     label: "Sync",
-    title: "Sync a session",
+    title: "Sync a worktree",
     description: "Worktree key, issue/PR ref, or branch — bring its branch up to date with the base.",
     refHint: "Worktree key, issue/PR ref, or branch.",
     refPlaceholder: "jira:IPG-1, github:OWNER/REPO#33, or feat/IPG-929--x",
+    confirmDesc: "Brings the worktree's branch up to date with its base branch (remote rebase by default; --merge merges locally).",
   },
 }
 
@@ -92,9 +107,8 @@ export function Launch() {
   }))
   const [submitting, setSubmitting] = useState(false)
   const [prefillChecked, setPrefillChecked] = useState(false)
-
   // Unknown prefill → blank form + warning, never a crash: an unrecognized
-  // mode, or a sync key matching no linked session (stale Dashboard link).
+  // mode, or a sync key matching no linked worktree (stale Dashboard link).
   useEffect(() => {
     if (prefillChecked) return
     if (modeParam !== null && !MODES.includes(modeParam as Mode)) {
@@ -105,9 +119,9 @@ export function Launch() {
     }
     if (modeParam === "sync" && refParam && links) {
       setPrefillChecked(true)
-      if (!(refParam in links.sessions)) {
+      if (!(refParam in links.worktrees)) {
         setForm((f) => (f.ref === refParam ? { ...f, ref: "" } : f))
-        toast.warning(`No linked session for "${refParam}" — form left blank`)
+        toast.warning(`No linked worktree for "${refParam}" — form left blank`)
       }
     }
   }, [prefillChecked, modeParam, refParam, links])
@@ -176,11 +190,7 @@ export function Launch() {
     const ok = await confirm({
       action: mode,
       title: `Launch ${copy.label}`,
-      description: copy.title === "Sync a session"
-        ? "Brings the session's branch up to date with its base branch (remote rebase by default; --merge merges locally)."
-        : mode === "start"
-          ? "Creates a worktree from the issue and launches the coding agent."
-          : "Creates a worktree from the PR/MR and launches a review agent.",
+      description: copy.confirmDesc,
       warning:
         mode === "sync"
           ? "The server appends --yes: sync runs without prompts (AI-assisted conflict resolution if the rebase/merge conflicts)."
@@ -215,7 +225,7 @@ export function Launch() {
     <div>
       <PageHeader
         title="Launch"
-        description="Start an agent from an issue ref/URL, review a PR/MR ref/URL, or sync a linked session. Runs headless as a child process of harness serve."
+        description="Start an agent from an issue ref/URL, review a PR/MR ref/URL, or sync a linked worktree. Runs headless as a child process of harness serve."
         actions={
           <div
             role="tablist"
@@ -250,7 +260,7 @@ export function Launch() {
         <CardContent className="grid gap-5">
           <div className="grid gap-2">
             <Label htmlFor="launch-ref">
-              {mode === "start" ? "Issue ref" : mode === "review" ? "PR/MR ref" : "Session ref"}
+              {mode === "start" ? "Issue ref" : mode === "review" ? "PR/MR ref" : "Worktree ref"}
             </Label>
             <Input
               id="launch-ref"

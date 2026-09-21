@@ -415,7 +415,7 @@ def create_app(static_dir: Path, host: str, port: int,
     @app.get("/api/links")
     def links_list() -> dict:
         return {"trackers": store.load_config().get("trackers", {}),
-                "sessions": {k: _enrich_entry(k, v, False)
+                "worktrees": {k: _enrich_entry(k, v, False)
                              for k, v in store.load_links().items()}}
 
     @app.get("/api/doctor")

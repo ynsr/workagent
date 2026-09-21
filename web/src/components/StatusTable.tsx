@@ -1,6 +1,7 @@
 import { Fragment, useState, type ReactNode } from "react"
 import { FolderOpen, GitPullRequest, Info, RefreshCw, Rocket, Trash2 } from "lucide-react"
-import type { SessionMap } from "@/lib/api"
+import type { WorktreeMap } from "@/lib/api"
+import { prLabel } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { WorktreeDetail } from "@/components/WorktreeDetail"
 import {
@@ -53,12 +54,12 @@ function ActionIcon({
 }
 
 function RowActions({
-  sessionKey,
+  worktreeKey,
   actions,
   detailOpen,
   onToggleDetail,
 }: {
-  sessionKey: string
+  worktreeKey: string
   actions: StatusTableActions
   detailOpen: boolean
   onToggleDetail: () => void
@@ -66,42 +67,42 @@ function RowActions({
   return (
     <div className="flex items-center justify-end gap-0.5">
       <ActionIcon
-        title={detailOpen ? `Hide details of ${sessionKey}` : `Details of ${sessionKey}`}
+        title={detailOpen ? `Hide details of ${worktreeKey}` : `Details of ${worktreeKey}`}
         onClick={onToggleDetail}
       >
         <Info aria-hidden />
       </ActionIcon>
       {actions.onSync ? (
-        <ActionIcon title={`Sync ${sessionKey}`} onClick={() => actions.onSync?.(sessionKey)}>
+        <ActionIcon title={`Sync ${worktreeKey}`} onClick={() => actions.onSync?.(worktreeKey)}>
           <RefreshCw aria-hidden />
         </ActionIcon>
       ) : null}
       {actions.onReview ? (
         <ActionIcon
-          title={`Review ${sessionKey}`}
-          onClick={() => actions.onReview?.(sessionKey)}
+          title={`Review ${worktreeKey}`}
+          onClick={() => actions.onReview?.(worktreeKey)}
         >
           <GitPullRequest aria-hidden />
         </ActionIcon>
       ) : null}
       {actions.onCleanup ? (
         <ActionIcon
-          title={`Cleanup ${sessionKey}`}
-          onClick={() => actions.onCleanup?.(sessionKey)}
+          title={`Cleanup ${worktreeKey}`}
+          onClick={() => actions.onCleanup?.(worktreeKey)}
           destructive
         >
           <Trash2 aria-hidden />
         </ActionIcon>
       ) : null}
       <ActionIcon
-        title={`Copy worktree path of ${sessionKey}`}
-        onClick={() => actions.onCopyPath(sessionKey)}
+        title={`Copy worktree path of ${worktreeKey}`}
+        onClick={() => actions.onCopyPath(worktreeKey)}
       >
         <FolderOpen aria-hidden />
       </ActionIcon>
       <ActionIcon
-        title={`Open runs for ${sessionKey}`}
-        onClick={() => actions.onOpenRun(sessionKey)}
+        title={`Open runs for ${worktreeKey}`}
+        onClick={() => actions.onOpenRun(worktreeKey)}
       >
         <Rocket aria-hidden />
       </ActionIcon>
@@ -109,7 +110,7 @@ function RowActions({
   )
 }
 
-function CommitsCell({ entry }: { entry: SessionMap[string] }) {
+function CommitsCell({ entry }: { entry: WorktreeMap[string] }) {
   const behind = entry.commits_detail?.behind
   const ahead = entry.commits_detail?.ahead
   return (
@@ -135,21 +136,21 @@ function CommitsCell({ entry }: { entry: SessionMap[string] }) {
 }
 
 /**
- * Sessions table (GET /api/status or /api/links sessions).
+ * Worktrees table (GET /api/status or /api/links worktrees).
  * Table at ≥640px, cards below.
  */
 export function StatusTable({
-  sessions,
+  worktrees,
   actions,
   showWorktree = false,
   className,
 }: {
-  sessions: SessionMap
+  worktrees: WorktreeMap
   actions: StatusTableActions
   showWorktree?: boolean
   className?: string
 }) {
-  const keys = Object.keys(sessions).sort()
+  const keys = Object.keys(worktrees).sort()
   const [expanded, setExpanded] = useState<string | null>(null)
   return (
     <div className={className}>
@@ -158,26 +159,26 @@ export function StatusTable({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Session</TableHead>
+              <TableHead>Worktree</TableHead>
               <TableHead>Branch</TableHead>
               <TableHead>Harness</TableHead>
               <TableHead className="w-20">Behind|Ahead</TableHead>
               <TableHead>PR / MR</TableHead>
               <TableHead className="w-14 text-center">CI</TableHead>
-              {showWorktree ? <TableHead>Worktree</TableHead> : null}
+              {showWorktree ? <TableHead>Path</TableHead> : null}
               <TableHead className="text-right pr-2">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {keys.map((key) => {
-              const entry = sessions[key]
+              const entry = worktrees[key]
               if (!entry) return null
               const detailOpen = expanded === key
               return (
                 <Fragment key={key}>
                   <TableRow>
                     <TableCell className="font-medium">
-                      <SessionKeyLink sessionKey={key} entry={entry} />
+                      <WorktreeKeyLink worktreeKey={key} entry={entry} />
                     </TableCell>
                     <TableCell
                       className="max-w-52 truncate font-mono text-[13px]"
@@ -204,7 +205,7 @@ export function StatusTable({
                       <div className="flex min-w-0 items-center gap-2">
                         <PrBadge pr={entry.pr_detail ?? null} />
                         <span className="truncate text-muted-foreground" title={entry.pr}>
-                          {entry.pr_detail ? entry.pr_detail.title : entry.pr ?? "—"}
+                          {entry.pr_detail ? entry.pr_detail.title : prLabel(entry.pr) || "—"}
                         </span>
                       </div>
                     </TableCell>
@@ -221,7 +222,7 @@ export function StatusTable({
                     ) : null}
                     <TableCell className="pr-1">
                       <RowActions
-                        sessionKey={key}
+                        worktreeKey={key}
                         actions={actions}
                         detailOpen={detailOpen}
                         onToggleDetail={() =>
@@ -256,13 +257,13 @@ export function StatusTable({
       {/* Mobile cards */}
       <div className="space-y-3 sm:hidden">
         {keys.map((key) => {
-          const entry = sessions[key]
+          const entry = worktrees[key]
           if (!entry) return null
           const detailOpen = expanded === key
           return (
             <div key={key} className="rounded-xl border bg-card p-4">
               <div className="flex items-start justify-between gap-2">
-                <SessionKeyLink sessionKey={key} entry={entry} />
+                <WorktreeKeyLink worktreeKey={key} entry={entry} />
                 <PrBadge pr={entry.pr_detail ?? null} />
               </div>
               <dl className="mt-3 space-y-1.5 text-sm">
@@ -291,7 +292,7 @@ export function StatusTable({
                 </div>
                 {showWorktree && entry.worktree ? (
                   <div className="flex items-baseline gap-2">
-                    <dt className="w-16 shrink-0 text-xs text-muted-foreground">Worktree</dt>
+                    <dt className="w-16 shrink-0 text-xs text-muted-foreground">Path</dt>
                     <dd className="min-w-0 truncate font-mono text-[13px]" title={entry.worktree}>
                       {entry.worktree}
                     </dd>
@@ -300,7 +301,7 @@ export function StatusTable({
                 {entry.pr && !entry.pr_detail ? (
                   <div className="flex items-baseline gap-2">
                     <dt className="w-16 shrink-0 text-xs text-muted-foreground">PR</dt>
-                    <dd className="min-w-0 truncate">{entry.pr}</dd>
+                    <dd className="min-w-0 truncate" title={entry.pr}>{prLabel(entry.pr)}</dd>
                   </div>
                 ) : null}
                 <div className="flex items-baseline gap-2">
@@ -312,7 +313,7 @@ export function StatusTable({
               </dl>
               <div className="mt-3 border-t pt-1">
                 <RowActions
-                  sessionKey={key}
+                  worktreeKey={key}
                   actions={actions}
                   detailOpen={detailOpen}
                   onToggleDetail={() => setExpanded((cur) => (cur === key ? null : key))}
@@ -336,15 +337,15 @@ export function StatusTable({
   )
 }
 
-function SessionKeyLink({
-  sessionKey,
+function WorktreeKeyLink({
+  worktreeKey,
   entry,
 }: {
-  sessionKey: string
-  entry: SessionMap[string]
+  worktreeKey: string
+  entry: WorktreeMap[string]
 }) {
   const inner = (
-    <span className="font-mono text-[13px] font-semibold">{sessionKey}</span>
+    <span className="font-mono text-[13px] font-semibold">{worktreeKey}</span>
   )
   if (!entry.issue_url) return inner
   return (

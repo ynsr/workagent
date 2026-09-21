@@ -16,8 +16,8 @@ same-origin check passes).
  "network_exposed": false}
 ```
 
-### `GET /api/status` → all sessions
-Map of session key → entry (same shape as `harness status --json`):
+### `GET /api/status` → all worktrees
+Map of worktree key → entry (same shape as `harness status --json`):
 ```json
 {
   "jira:IPG-932": {
@@ -40,7 +40,7 @@ pipeline status for the PR — `success` | `failure` | `running` |
 (cached 10 min while the branch tip is unchanged). Optional query:
 `?refresh=true` re-queries PR status (slow, hits the tracker CLI).
 
-### `GET /api/status?ref=IPG-932` → single session detail
+### `GET /api/status?ref=IPG-932` → single worktree detail
 `_session_detail` shape: the entry fields plus
 `key`, `harness`, `commits`, `pr` (display string), `commits_detail`,
 `pr_detail`, `ci`, `base_branch`, `issue_url`, and `create_hint`
@@ -61,7 +61,7 @@ pipeline status for the PR — `success` | `failure` | `running` |
 ### `GET /api/links`
 ```json
 {"trackers": {"jira:IPG": {"repos": ["/home/x/projects/projectx"]}},
- "sessions": { …same shape as GET /api/status… }}
+ "worktrees": { …same shape as GET /api/status… }}
 ```
 
 ### `GET /api/doctor`

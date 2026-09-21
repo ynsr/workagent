@@ -1,5 +1,6 @@
 import { useState } from "react"
-import type { SessionMap } from "@/lib/api"
+import type { WorktreeEntry } from "@/lib/api"
+import { prLabel } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -11,12 +12,6 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { CiBadge } from "@/components/StateBadge"
-
-/**
- * `SessionMap` (session key → entry) is still session-keyed in the backend;
- * alias the entry type locally instead of renaming the API type.
- */
-export type WorktreeEntry = SessionMap[string]
 
 /** Editable subset rendered in edit mode; strings are trimmed by the caller. */
 export interface WorktreeDetailDraft {
@@ -31,7 +26,7 @@ export type WorktreeDetailMode = "view" | "edit"
 /**
  * Detail card for one worktree entry. View mode shows text; edit mode binds
  * Inputs to a local draft and calls `onSave(draft)` (Save) / `onClose()`
- * (Cancel). Field names follow `StatusTable.tsx` / `SessionEntry`.
+ * (Cancel). Field names follow `StatusTable.tsx` / `WorktreeEntry`.
  */
 export function WorktreeDetail({
   entry,
@@ -135,7 +130,7 @@ export function WorktreeDetail({
             </div>
           ) : null}
           <div className="flex items-baseline gap-2">
-            <dt className="w-16 shrink-0 text-xs text-muted-foreground">Worktree</dt>
+            <dt className="w-16 shrink-0 text-xs text-muted-foreground">Path</dt>
             <dd className="min-w-0 truncate font-mono text-[13px]" title={entry.worktree}>
               {entry.worktree ?? "—"}
             </dd>
@@ -155,8 +150,9 @@ export function WorktreeDetail({
                   target="_blank"
                   rel="noreferrer"
                   className="underline-offset-2 hover:underline"
+                  title={entry.pr}
                 >
-                  {entry.pr}
+                  {prLabel(entry.pr)}
                 </a>
               ) : (
                 <span className="text-muted-foreground">—</span>
