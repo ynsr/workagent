@@ -227,14 +227,40 @@ function TrackerMappingsCard() {
   )
 }
 
+function deriveTrackerId(raw: string): string | null {
+  const v = raw.trim()
+  if (!v) return null
+  const jira = v.match(/^([A-Z][A-Z0-9_]*)(-\d+)?$/)
+  if (jira) return `jira:${jira[1]}`
+  const gh = v.match(/^github\.com\/([^/]+\/[^/]+?)(?:[#/].*)?$/) ?? v.match(/^([^/]+\/[^/]+?)(#\d+)?$/)
+  if (v.includes("github.com") && gh) return `github:${gh[1]}`
+  if (!v.includes("://") && gh && !v.includes(" ")) return `github:${gh[1]}`
+  try {
+    const u = new URL(v)
+    const path = u.pathname.replace(/^\/+|\/+$/g, "").replace(/\/-(\/|$)/g, "/")
+    if (!path) return null
+    if (u.hostname === "github.com") return `github:${path.split("/").slice(0, 2).join("/")}`
+    return `gitlab:${u.hostname.toLowerCase()}/${path}`
+  } catch {
+    return null
+  }
+}
+
 function LinkSetDialog({ onClose }: { onClose: () => void }) {
   const { data: repos } = useRepos()
+  const { data: links } = useLinks()
   const { submitting, run: runLink } = useLinkSubmit()
   const [tracker, setTracker] = useState("")
   const [repo, setRepo] = useState("")
   const [json, setJson] = useState(false)
 
   const repoOptions = useMemo(() => (repos ?? []).map((r) => r.name), [repos])
+  const trackerOptions = useMemo(() => Object.keys(links?.trackers ?? {}).sort(), [links])
+
+  function handleTrackerChange(v: string) {
+    const derived = v.includes("://") || v.includes("/") ? deriveTrackerId(v) : null
+    setTracker(derived ?? v)
+  }
 
   async function handleSubmit() {
     const ok = await runLink({
@@ -261,14 +287,13 @@ function LinkSetDialog({ onClose }: { onClose: () => void }) {
       }
     >
       <div className="grid gap-2">
-        <Label htmlFor="linkset-tracker">Tracker</Label>
-        <Input
-          id="linkset-tracker"
+        <Label>Tracker</Label>
+        <SearchableSelect
           value={tracker}
-          onChange={(e) => setTracker(e.target.value)}
-          placeholder="jira:IPG or github:OWNER/REPO"
-          autoComplete="off"
-          spellCheck={false}
+          options={trackerOptions}
+          onChange={handleTrackerChange}
+          placeholder="jira:IPG, github:OWNER/REPO, or paste an issue URL…"
+          allowCustom
         />
       </div>
       <div className="grid gap-2">
