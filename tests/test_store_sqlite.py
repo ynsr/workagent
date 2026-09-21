@@ -46,3 +46,30 @@ def test_session_id_shape():
     sid = sq.gen_session_id()
     assert re.fullmatch(
         r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-\d{4}", sid)
+def test_migrate_copies_and_deletes(tmp_path):
+    import json
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "links.json").write_text(json.dumps({
+        "jira:IPG-1": {"worktree": "/wt", "branch": "feat/1",
+                       "repo": "/r", "issue_url": "http://j/1"}}))
+    (cfg / "pr_cache.json").write_text(json.dumps({
+        "feat/1": {"pr": {"number": 1}, "checked_at": "2026-09-20"}}))
+    (cfg / "harnesses.json").write_text(json.dumps({}))
+    (cfg / "config.json").write_text(json.dumps(
+        {"repos": {"r": {"path": "/r"}}}))
+    out = sq.migrate_json(cfg, cfg / "state.db")
+    assert out["worktrees"] == 1 and out["pr_cache"] == 1
+    assert not (cfg / "links.json").exists()
+    assert (cfg / "config.json").exists()
+
+
+def test_migrate_corrupt_aborts(tmp_path):
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "links.json").write_text("{broken")
+    import pytest
+    from harness.errors import HarnessError
+    with pytest.raises(HarnessError):
+        sq.migrate_json(cfg, cfg / "state.db")
+    assert (cfg / "links.json").exists()  # left in place
