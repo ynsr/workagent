@@ -142,8 +142,26 @@ def _print_rows(rows: list[dict], json_output: bool, csv_output: bool,
     Console().print(table)
 
 
+def _guard_harness(key: str | None, worktree: str) -> None:
+    """Hard guard: one live harness per worktree (issue #6)."""
+    if not key:
+        return
+    rec = store.active_harness(key)
+    if rec is None:
+        # Same worktree may be recorded under a different key.
+        for k, v in store.load_harnesses().items():
+            if k != key and v.get("worktree") == worktree:
+                rec = v
+                break
+    if rec is not None:
+        _fail(f"worktree {worktree} already has a live harness "
+              f"({rec['harness']}, pid {rec['pid']}) — wait for it to "
+              "finish or kill it", 1)
+
+
 def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: str,
-                 no_tty: bool, no_harness: bool, result: dict, json_output: bool) -> None:
+                 no_tty: bool, no_harness: bool, result: dict, json_output: bool,
+                 run_key: str | None = None) -> None:
     """Launch the harness in the worktree; with --no-harness print the exact
     command instead and hand the worktree to the user (shell exec on TTY)."""
     harness_cmd = " ".join(shlex.quote(a) for a in
@@ -159,7 +177,13 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             shell = os.environ.get("SHELL") or "/bin/sh"
             os.execvp(shell, [shell])
         return
-    backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty, _HARNESS_ARGS)
+    if run_key:
+        store.record_harness_run(run_key, harness_name, worktree or fallback_dir)
+    try:
+        backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty, _HARNESS_ARGS)
+    finally:
+        if run_key:
+            store.clear_harness_run(run_key)
     _print_result(result, json_output)
 
 
@@ -284,8 +308,9 @@ def start(
               "base": detected_default if branch_mode else base_branch,
               "key": key, "harness": harness_name}
     eprint(f"worktree: {worktree}  branch: {branch}")
+    _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, str(r), no_tty, no_harness,
-                 result, json_output)
+                 result, json_output, run_key=key)
 
 
 # ── review ────────────────────────────────────────────────────────────
@@ -369,8 +394,9 @@ def review(
             result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
                       "harness": harness_name}
             eprint(f"worktree: {worktree}  branch: {branch}")
+            _guard_harness(f"pr:{pr_url}", worktree)
             _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty, no_harness,
-                         result, json_output)
+                         result, json_output, run_key=f"pr:{pr_url}")
             return
 
     if not head_ref:
@@ -391,8 +417,9 @@ def review(
     result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
               "harness": harness_name}
     eprint(f"worktree: {worktree}  branch: {branch}")
+    _guard_harness(f"pr:{pr_url}", worktree)
     _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty, no_harness,
-                 result, json_output)
+                 result, json_output, run_key=f"pr:{pr_url}")
 
 
 # ── cleanup ───────────────────────────────────────────────────────────
@@ -1265,9 +1292,10 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
                           f"{db} in files: {', '.join(out['conflicts'])}. "
                           "Resolve them, complete the merge, commit, push to "
                           f"origin/{branch}, and stop.")
+                _guard_harness(key, wt)
                 _run_harness("omp", prompt, wt, wt,
                              no_tty=bool(yes), no_harness=False,
-                             result=result, json_output=json_output)
+                             result=result, json_output=json_output, run_key=key)
             elif sys.stdin.isatty():
                 if typer.confirm("launch the harness to resolve?"):
                     result["result"] = "conflict-harness"
@@ -1275,9 +1303,10 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
                               f"{db} in files: {', '.join(out['conflicts'])}. "
                               "Resolve them, complete the merge, commit, push to "
                               f"origin/{branch}, and stop.")
+                    _guard_harness(key, wt)
                     _run_harness("omp", prompt, wt, wt,
                                  no_tty=False, no_harness=False,
-                                 result=result, json_output=json_output)
+                                 result=result, json_output=json_output, run_key=key)
                 else:
                     _fail("aborted (merge left in progress; abort with "
                           "`git merge --abort`)", EXIT_USAGE)

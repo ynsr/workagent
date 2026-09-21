@@ -948,3 +948,36 @@ def test_review_reuses_existing_worktree_by_branch(isolated_config, tmp_path, mo
     assert r.exit_code == 0, r.output
     assert started == []  # no new worktree created
     assert json.loads(r.stdout)["worktree_path"] == str(wt)
+
+
+def test_start_refused_while_harness_live(isolated_config, tmp_path, monkeypatch):
+    """Hard guard: a worktree with a live harness refuses a second launch."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.repos, "repo_root", lambda cwd=None: None)
+    monkeypatch.setattr(cli.repos, "worktree_branch", lambda path: None)
+    monkeypatch.setattr(cli.store, "active_harness",
+                        lambda key: {"harness": "omp", "pid": 99999, "started_at": 1.0})
+    launched = []
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": "/tmp/wt", "branch": "feat/22--add-login"})
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--json"])
+    assert r.exit_code == 1
+    assert "already has a live harness" in r.stderr
+    assert launched == []
+
+
+def test_run_harness_records_and_clears(monkeypatch):
+    """_run_harness records the run before launch and clears it after."""
+    rec = []
+    monkeypatch.setattr(cli.store, "record_harness_run",
+                        lambda k, h, wt="": rec.append(("rec", k, h)))
+    monkeypatch.setattr(cli.store, "clear_harness_run",
+                        lambda k: rec.append(("clr", k)))
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    cli._run_harness("omp", "prompt", "/tmp/wt", "/tmp", True, False,
+                     {"k": "v"}, False, run_key="jira:X")
+    assert ("rec", "jira:X", "omp") in rec and ("clr", "jira:X") in rec
