@@ -14,10 +14,17 @@ import { useCandidates } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 
-type Tab = "prs" | "issues"
+type Tab = "prs" | "issues" | "worktrees"
+
+const TABS: readonly { value: Tab; label: (n: number) => string }[] = [
+  { value: "prs", label: (n) => `Unlinked PR/MRs (${n})` },
+  { value: "issues", label: (n) => `Recent issues (${n})` },
+  { value: "worktrees", label: (n) => `Worktrees (${n})` },
+]
 
 /**
- * Unlinked PR/MRs + recent issues from GET /api/candidates.
+ * Unlinked PR/MRs + recent issues + unregistered worktrees from
+ * GET /api/candidates.
  * Read-only: per-row copy-ref, refresh button. Never auto-starts or links.
  */
 export function CandidatesCard() {
@@ -38,8 +45,13 @@ export function CandidatesCard() {
 
   const prs = data?.prs ?? []
   const issues = data?.issues ?? []
+  const scanned = data?.worktrees ?? []
   const warnings = data?.warnings ?? []
-
+  const counts: Record<Tab, number> = {
+    prs: prs.length,
+    issues: issues.length,
+    worktrees: scanned.length,
+  }
   return (
     <Card>
       <CardHeader>
@@ -62,20 +74,20 @@ export function CandidatesCard() {
           </Button>
         </div>
         <div role="tablist" aria-label="Candidates" className="flex gap-1.5 pt-1">
-          {(["prs", "issues"] as const).map((t) => (
+          {TABS.map((t) => (
             <button
-              key={t}
+              key={t.value}
               role="tab"
-              aria-selected={tab === t}
-              onClick={() => setTab(t)}
+              aria-selected={tab === t.value}
+              onClick={() => setTab(t.value)}
               className={cn(
                 "min-h-9 rounded-full px-3.5 text-sm font-medium",
-                tab === t
+                tab === t.value
                   ? "bg-primary text-primary-foreground"
                   : "border text-muted-foreground hover:text-foreground",
               )}
             >
-              {t === "prs" ? `Unlinked PR/MRs (${prs.length})` : `Recent issues (${issues.length})`}
+              {t.label(counts[t.value])}
             </button>
           ))}
         </div>
@@ -122,36 +134,67 @@ export function CandidatesCard() {
               ))}
             </ul>
           )
-        ) : issues.length === 0 ? (
+        ) : tab === "issues" ? (
+          issues.length === 0 ? (
+            <EmptyState
+              icon={<Ticket className="size-10" aria-hidden />}
+              title="No recent issues"
+              description="No issues created in the last 7 days."
+            />
+          ) : (
+            <ul className="divide-y rounded-md border">
+              {issues.map((issue) => (
+                <li key={issue.key} className="flex items-center gap-2 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium" title={issue.title}>
+                      {issue.title || issue.key}
+                    </p>
+                    <p className="truncate font-mono text-xs text-muted-foreground" title={issue.url}>
+                      {issue.key} · {issue.status}
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void handleCopyRef(issue.key)}
+                    title={`Copy ref ${issue.key}`}
+                  >
+                    <Copy aria-hidden /> {copied === issue.key ? "Copied" : "Copy ref"}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )
+        ) : scanned.length === 0 ? (
           <EmptyState
-            icon={<Ticket className="size-10" aria-hidden />}
-            title="No recent issues"
-            description="No issues created in the last 7 days."
+            icon={<GitPullRequest className="size-10" aria-hidden />}
+            title="No unregistered worktrees"
+            description="Every worktree under the scan root is already linked."
           />
         ) : (
           <ul className="divide-y rounded-md border">
-            {issues.map((issue) => (
-              <li key={issue.key} className="flex items-center gap-2 px-3 py-2">
+            {scanned.map((wt) => (
+              <li key={wt.path} className="flex items-center gap-2 px-3 py-2">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium" title={issue.title}>
-                    {issue.title || issue.key}
+                  <p className="truncate text-sm font-medium" title={wt.branch}>
+                    {wt.branch}
                   </p>
-                  <p className="truncate font-mono text-xs text-muted-foreground" title={issue.url}>
-                    {issue.key} · {issue.status}
+                  <p className="truncate font-mono text-xs text-muted-foreground" title={wt.path}>
+                    {wt.key_guess} · {wt.repo} · {wt.path}
                   </p>
                 </div>
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => void handleCopyRef(issue.key)}
-                  title={`Copy ref ${issue.key}`}
+                  onClick={() => void handleCopyRef(wt.path)}
+                  title={`Copy path ${wt.path}`}
                 >
-                  <Copy aria-hidden /> {copied === issue.key ? "Copied" : "Copy ref"}
+                  <Copy aria-hidden /> {copied === wt.path ? "Copied" : "Copy path"}
                 </Button>
               </li>
             ))}
           </ul>
-        )}
+         )}
       </CardContent>
     </Card>
   )

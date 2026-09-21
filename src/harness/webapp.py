@@ -434,10 +434,10 @@ def create_app(static_dir: Path, host: str, port: int,
     @app.get("/api/candidates")
     def candidates() -> dict:
         """Unlinked open PR/MRs + my recent issues (server-side 7-day
-        filter; read-only)."""
+        filter) + unregistered on-disk worktrees; read-only."""
         out = _candidates()
         return {"prs": out["prs"], "issues": out["issues"],
-                "warnings": out["warnings"]}
+                "worktrees": out["worktrees"], "warnings": out["warnings"]}
 
     # ── runs ──────────────────────────────────────────────────────────
     @app.post("/api/runs", status_code=202)

@@ -21,6 +21,13 @@
 - Fixed `review` reading `--dry-run` without defining the flag.
 
 ## Unreleased
+- `candidates` now also lists unregistered on-disk worktrees under the
+  scan root (default `~/dev/worktrees`, overridable via the `scan_root`
+  config key): both `<repo>/<branch>` and `<repo>/<issue-type>/<branch>`
+  shapes, validated via `git worktree list`, linked paths excluded. Third
+  Rich table, `worktrees` key in `--json` and `GET /api/candidates`, and a
+  "Worktrees" tab in the web Candidates card (copy-path per row,
+  read-only — no auto-register).
 - Picker raw-mode fix: option/label lines now end `\r\n` (plus `\r`
   before erase cycles), so arrow-key prompts render without the staircase
   effect on real ptys; `j`/`k` also move the selection.

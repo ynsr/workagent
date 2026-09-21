@@ -103,9 +103,17 @@ export interface CandidatePr {
   repo: string
 }
 
+export interface CandidateWorktree {
+  path: string
+  repo: string
+  branch: string
+  key_guess: string
+}
+
 export interface CandidatesResponse {
   prs: CandidatePr[]
   issues: IssueRow[]
+  worktrees: CandidateWorktree[]
   warnings: string[]
 }
 

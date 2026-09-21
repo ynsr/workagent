@@ -566,6 +566,11 @@ def _register_repo(tmp_path, name="proj"):
     repo.mkdir()
     cfg = store.load_config()
     cfg["repos"] = {name: {"path": str(repo)}}
+    # Same leak guard as test_cli._candidates_env: keep the real
+    # ~/dev/worktrees out of candidates endpoint tests.
+    empty = tmp_path / "empty-scan"
+    empty.mkdir(exist_ok=True)
+    cfg["scan_root"] = str(empty)
     store.save_config(cfg)
     return str(repo)
 
@@ -620,6 +625,7 @@ def test_candidates_shape_and_warnings(client, monkeypatch, tmp_path):
     monkeypatch.setattr(cli.refs, "fetch_open_prs", boom)
     monkeypatch.setattr(trackers, "list_my_issues", lambda warnings=None: [])
     body = client.get("/api/candidates").json()
-    assert set(body) == {"prs", "issues", "warnings"}
+    assert set(body) == {"prs", "issues", "worktrees", "warnings"}
     assert body["prs"] == [] and body["issues"] == []
+    assert body["worktrees"] == []
     assert any("proj" in w for w in body["warnings"])

@@ -89,7 +89,8 @@ missing/failing host CLI yields `[]` plus a `warning`:
 ### `GET /api/candidates`
 Unlinked open PR/MRs across every registered repo (PR/MR URLs already
 present in `links.json` are excluded server-side) plus my issues created
-within the last 7 days (server-side filter). Read-only:
+within the last 7 days (server-side filter) plus unregistered on-disk
+worktrees under the scan root. Read-only:
 ```json
 {"prs": [{"key": "github:o/r#33", "number": 33, "title": "…",
           "url": "https://github.com/o/r/pull/33", "branch": "feat/x",
@@ -97,8 +98,13 @@ within the last 7 days (server-side filter). Read-only:
           "repo": "o/r"}],
  "issues": [{"key": "jira:IPG-981", "title": "…", "url": "…",
              "status": "To Do", "created": "2026-09-20T10:00:00.000+0000"}],
+ "worktrees": [{"path": "/home/x/dev/worktrees/proj/feat/x",
+               "repo": "proj", "branch": "feat/x",
+               "key_guess": "branch:feat/x"}],
  "warnings": ["proj: gh pr list failed: …"]}
 ```
+Scan root defaults to `~/dev/worktrees`, overridable via the `scan_root`
+config key. Paths already linked are excluded server-side.
 
 ## Runs (mutating CLI commands as child processes)
 

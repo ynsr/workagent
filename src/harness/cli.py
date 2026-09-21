@@ -1410,7 +1410,79 @@ def _candidates() -> dict:
               if (dt := trackers.parse_created(str(i.get("created", ""))))
               is not None and dt >= cutoff]
     recent.sort(key=lambda i: str(i.get("created", "")), reverse=True)
-    return {"prs": prs, "issues": recent, "warnings": warnings}
+    return {"prs": prs, "issues": recent, "worktrees": _scan_worktrees(),
+            "warnings": warnings}
+
+
+def _scan_root() -> Path:
+    """Scan root for unregistered worktrees; configurable, defaults to
+    ~/dev/worktrees (issue #8 names ~/dev/worktress, which is a typo —
+    that spelling does not exist on disk)."""
+    raw = str(store.load_config().get("scan_root", "") or "")
+    return Path(raw).expanduser() if raw else Path.home() / "dev" / "worktrees"
+
+
+def _scan_worktrees() -> list[dict]:
+    """Unregistered on-disk worktrees under <scan_root>/<repo>/: two shapes —
+    `<branch>` and `<issue-type>/<branch>` (recombined with a `/`). Paths
+    already linked in links.json are excluded; non-worktree dirs are
+    skipped via worktrees.is_valid_worktree. Read-only."""
+    links = store.load_links()
+    known = set()
+    for v in links.values():
+        p = v.get("worktree", "")
+        if p:
+            try:
+                known.add(str(Path(p).expanduser().resolve()))
+            except OSError:
+                continue
+    root = _scan_root()
+    found: list[dict] = []
+    if not root.is_dir():
+        return found
+    try:
+        repos = sorted(p for p in root.iterdir() if p.is_dir())
+    except OSError:
+        return found
+    for repo_dir in repos:
+        try:
+            children = sorted(p for p in repo_dir.iterdir() if p.is_dir())
+        except OSError:
+            continue
+        for child in children:
+            # A leaf dir holding a worktree is pattern 1; a dir whose
+            # children are worktrees is the pattern-2 issue-type prefix.
+            try:
+                grandchildren = sorted(
+                    p for p in child.iterdir() if p.is_dir())
+            except OSError:
+                grandchildren = []
+            if grandchildren and not worktrees.is_valid_worktree(str(child)):
+                cands = grandchildren
+            else:
+                cands = [child]
+            for wt in cands:
+                branch = ""
+                if worktrees.is_valid_worktree(str(wt)):
+                    try:
+                        branch = (run_cmd("git", "-C", str(wt), "branch",
+                                         "--show-current") or "").strip()
+                    except HarnessError:
+                        continue
+                if not branch:
+                    continue
+                try:
+                    resolved = str(wt.resolve())
+                except OSError:
+                    continue
+                if resolved in known:
+                    continue
+                m = re.match(r"(?:.*/)?([A-Z][A-Z0-9]+-\d+.*)", branch)
+                key = f"jira:{m.group(1)}" if m else f"branch:{branch}"
+                found.append({"path": str(wt), "repo": repo_dir.name,
+                              "branch": branch, "key_guess": key})
+    found.sort(key=lambda r: r["path"])
+    return found
 
 
 @app.command("candidates")
@@ -1429,7 +1501,8 @@ def candidates_cmd(
     for w in out["warnings"]:
         eprint(f"warning: {w}")
     if json_output:
-        print(json.dumps({"prs": out["prs"], "issues": out["issues"]},
+        print(json.dumps({"prs": out["prs"], "issues": out["issues"],
+                          "worktrees": out["worktrees"]},
                          indent=2, ensure_ascii=False))
         return
     from rich.markup import escape
@@ -1448,6 +1521,10 @@ def candidates_cmd(
                 ["key", "title", "status", "created"],
                 "Recent issues (reported by me, last 7 days)",
                 "(no recent issues)")
+    _print_rows(out["worktrees"], False, False,
+                ["path", "repo", "branch", "key_guess"],
+                "Unregistered worktrees (scan root)",
+                "(no unregistered worktrees)")
 
 
 # ── cd ────────────────────────────────────────────────────────────────
