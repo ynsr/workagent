@@ -8,7 +8,7 @@ export interface AsyncOptions {
   warning?: string
 }
 
-export function SearchableSelect({ value, options, onChange, placeholder, allowCustom, fetchOptions }: {
+export function SearchableSelect({ value, options, onChange, placeholder, allowCustom, fetchOptions, mapOption, id }: {
   value: string
   options: string[]
   onChange: (v: string) => void
@@ -18,6 +18,11 @@ export function SearchableSelect({ value, options, onChange, placeholder, allowC
   /** Async mode: extra options loaded once on mount (client-side filtered
    * with the sync `options`). Loading/error/warning states included. */
   fetchOptions?: () => Promise<AsyncOptions>
+  /** Transform option-list selections before onChange (e.g. strip a display
+   * suffix). Free-text commits pass through untouched. */
+  mapOption?: (o: string) => string
+  /** Forwarded to the inner filter input (label association). */
+  id?: string
 }) {
   const [q, setQ] = useState("")
   const [fetched, setFetched] = useState<string[] | null>(null)
@@ -80,6 +85,13 @@ export function SearchableSelect({ value, options, onChange, placeholder, allowC
     () => all.filter((o) => o.toLowerCase().includes(q.toLowerCase())),
     [all, q],
   )
+  // Show the selected value when the filter is empty so a picked option
+  // stays visible; typing always takes precedence over the shown value.
+  const shown = q || value
+  function pick(o: string) {
+    onChange(mapOption ? mapOption(o) : o)
+    setQ("")
+  }
   function commitCustom() {
     onChange(custom)
     setQ("")
@@ -87,7 +99,8 @@ export function SearchableSelect({ value, options, onChange, placeholder, allowC
   return (
     <div>
       <Input
-        value={q}
+        id={id}
+        value={shown}
         onChange={(e) => setQ(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && allowCustom && custom && !known) {
@@ -128,7 +141,7 @@ export function SearchableSelect({ value, options, onChange, placeholder, allowC
           </button>
         ) : null}
         {filtered.map((o) => (
-          <button key={o} type="button" onClick={() => { onChange(o); setQ("") }}
+          <button key={o} type="button" onClick={() => pick(o)}
             className={cn("block w-full text-left", o === value && "font-bold")}>
             {o}
           </button>

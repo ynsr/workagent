@@ -266,11 +266,13 @@ export function Launch() {
             {mode === "start" && !refParam ? (
               <>
                 <SearchableSelect
+                  id="launch-ref"
                   value={form.ref}
                   options={[]}
-                  onChange={(v) => update("ref", (v.split(" — ")[0] ?? v).trim())}
+                  onChange={(v) => update("ref", v.trim())}
                   placeholder={copy.refPlaceholder}
                   allowCustom
+                  mapOption={(o) => (o.split(" — ")[0] ?? o).trim()}
                   fetchOptions={async () => {
                     const res = await api.issues()
                     return {
