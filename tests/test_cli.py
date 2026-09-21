@@ -534,6 +534,34 @@ def test_sync_no_pr_falls_back_to_local(isolated_config, tmp_path, monkeypatch):
     assert local == [(str(wt_dir), "main")]
 
 
+def test_sync_recorded_pr_seed_uses_local_merge(isolated_config, tmp_path,
+                                                monkeypatch):
+    """A recorded pr_url seed (state unknown) is display-only: sync must
+    take the local-merge fallback, never remote-rebase an unverified URL."""
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    links = store.load_links()
+    links["jira:IPG-929"]["pr_url"] = \
+        "https://git.jibit.cloud/server/projectx/-/merge_requests/1699"
+    store.save_links(links)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    rebase, local = [], []
+    monkeypatch.setattr(cli.sync_mod, "local_merge",
+                        lambda wt, db: (local.append((str(wt), db))
+                                        or {"status": "merged", "conflicts": []}))
+    monkeypatch.setattr(cli.sync_mod, "push", lambda wt, br: None)
+    monkeypatch.setattr(cli.sync_mod, "rebase_remote",
+                        lambda *a, **k: rebase.append(a) or {"status": "rebased"})
+    monkeypatch.setattr(cli.sync_mod, "pull_rebased",
+                        lambda *a, **k: {"status": "reset"})
+    r = _invoke("sync", "IPG-929", "--yes", "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["strategy"] == "local-merge"
+    assert local == [(str(wt_dir), "main")] and rebase == []
+
+
 def test_sync_dry_run_touches_nothing(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)

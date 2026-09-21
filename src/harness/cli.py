@@ -1705,7 +1705,9 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
     pr = cells["pr_data"]
     tool = store.get_cached_pr_tool(branch) or _repo_tool(repo)
     db = cells["base_branch"] or _repo_default_branch(repo)
-    if merge or not pr:
+    # A recorded pr_url seed (state "") is display-only: it never reached a
+    # live host query, so it must not drive the remote-rebase strategy.
+    if merge or not pr or not pr.get("state"):
         if not db:
             _fail(f"{key}: cannot determine default branch for {repo}", EXIT_GENERAL)
         return _sync_local_merge(key, wt, branch, db, result,

@@ -47,6 +47,18 @@ def test_pr_cache_missing_branch(isolated_config):
     assert store.get_cached_pr_status("feat/nope") is None
 
 
+def test_pr_cache_rewrite_preserves_ci(isolated_config):
+    """A PR re-query must not wipe still-fresh CI fields (P3 finding)."""
+    pr = {"number": 1, "state": "open", "title": "T",
+          "url": "https://github.com/o/r/pull/1"}
+    store.cache_pr_status("feat/x", pr)
+    store.cache_ci_status("feat/x", "success", sha="abc")
+    store.cache_pr_status("feat/x", pr)
+    raw = store.load_pr_cache()["feat/x"]
+    assert raw["ci"] == "success" and raw["ci_sha"] == "abc"
+    assert raw["pr"] == pr
+
+
 def test_load_links_backfills_ref_key(isolated_config):
     store.save_links({"jira:IPG-1": {"branch": "feat/x", "worktree": "/tmp/wt"}})
     links = store.load_links()

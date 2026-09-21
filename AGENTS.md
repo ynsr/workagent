@@ -152,10 +152,11 @@ become `skipped:<reason>` rows — never torn down. Requires `--yes`
   CI in `ci`/`ci_checked_at`/`ci_sha` via `store.cache_ci_status`); a cached
   PR is reused while both tips match and age < 3h, a cached no-PR result
   while age < 30min — repeat `status` runs cost two `git rev-parse` calls
-  per worktree; `--refresh-pr` re-queries the PR only (CI: reused while the
-  branch tip is unchanged and `ci_checked_at` < 10min). A recorded `pr_url`
-  seeds the PR cell when cache/query find none. User content in Rich output
-  is `rich.markup.escape`d (PR titles contain `[`). Detail panel
+  per worktree; `--refresh-pr` re-queries the PR and re-fetches CI (CI is
+  otherwise reused while the branch tip is unchanged and `ci_checked_at`
+  < 10min). A recorded `pr_url` seeds the PR cell when cache/query find
+  none (display only — never drives sync strategy). User content in Rich
+  output is `rich.markup.escape`d (PR titles contain `[`). Detail panel
   (`status <ref>`) shows the full issue URL via `refs.issue_url(key,
   stored)` — jira site from jira-cli's config
   (`~/.config/jira-cli/config.json`, fallback `~/.jira-cli.json`), GitHub

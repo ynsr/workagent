@@ -139,7 +139,12 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
     with open(path.parent / (path.name + ".lock"), "w") as lock:
         def _update() -> None:
             cache = _read_json(path, {})
-            cache[branch] = entry
+            prev = cache.get(branch) or {}
+            merged = dict(entry)
+            for k in ("ci", "ci_checked_at", "ci_sha"):
+                if k in prev and k not in merged:
+                    merged[k] = prev[k]
+            cache[branch] = merged
             _atomic_replace(path, cache)
         _locked(lock, _update)
 
