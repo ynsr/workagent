@@ -650,7 +650,8 @@ def test_review_no_harness_tty_lands_shell_in_worktree(isolated_config, tmp_path
     monkeypatch.setattr(cli.os, "execvp", fake_execvp)
     with pytest.raises(_Shell) as excinfo:
         cli.review(ref="https://github.com/o/r/pull/33", repo=None, depth=7, harness=None,
-                   no_tty=False, no_harness=True, dry_run=False, yes=False, json_output=False)
+                   no_tty=False, no_harness=True, dry_run=False, yes=False, json_output=False,
+                   all_wts=False, sequential=False, fix=False, post_comments=False)
     assert excinfo.value.args[0] == "/bin/zsh"
     assert excinfo.value.args[2] == str(worktree)
 
@@ -949,6 +950,163 @@ def test_review_reuses_existing_worktree_by_branch(isolated_config, tmp_path, mo
     assert started == []  # no new worktree created
     assert json.loads(r.stdout)["worktree_path"] == str(wt)
 
+
+def test_review_all_spawns_parallel_children(isolated_config, tmp_path, monkeypatch):
+    links = {
+        "jira:A-1": {"branch": "feat/a", "worktree": str(tmp_path / "a"),
+                     "pr_url": "https://github.com/o/r/pull/1"},
+        "jira:B-2": {"branch": "feat/b", "worktree": str(tmp_path / "b"),
+                     "pr_url": "https://github.com/o/r/pull/2"},
+    }
+    for k, v in links.items():
+        Path(v["worktree"]).mkdir()
+        store.record_link(k, v)
+    for d in ("a", "b"):
+        (tmp_path / d / ".git").mkdir()  # cheap validity stand-in
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda p: True)
+    real_load_links = store.load_links
+    monkeypatch.setattr(cli.store, "load_links", lambda: real_load_links())
+    spawns = []
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            self.argv = argv
+            self.pid = 4242
+            spawns.append(argv)
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(cli.store, "active_harness", lambda key: None)
+    r = runner.invoke(cli.app, ["review", "--all", "--json"])
+    assert r.exit_code == 0, r.output
+    assert len(spawns) == 2
+    for argv in spawns:
+        assert argv[:3] == [cli.sys.executable, "-m", "harness"]
+        assert "--no-tty" in argv and "--post-comments" in argv
+    out = json.loads(r.stdout)
+    assert sorted(e["key"] for e in out) == ["jira:A-1", "jira:B-2"]
+    assert all(e["exit_code"] == 0 for e in out)
+
+
+def test_review_all_sequential_waits_one_by_one(isolated_config, tmp_path, monkeypatch):
+    """--sequential spawns and waits per worktree; --fix reaches the child argv."""
+    links = {
+        "jira:A-1": {"branch": "feat/a", "worktree": str(tmp_path / "a"),
+                     "pr_url": "https://github.com/o/r/pull/1"},
+        "jira:B-2": {"branch": "feat/b", "worktree": str(tmp_path / "b"),
+                     "pr_url": "https://github.com/o/r/pull/2"},
+    }
+    for k, v in links.items():
+        Path(v["worktree"]).mkdir()
+        store.record_link(k, v)
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda p: True)
+    monkeypatch.setattr(cli.store, "active_harness", lambda key: None)
+    events = []
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            self.argv = argv
+            events.append(("spawn", argv))
+        def wait(self, timeout=None):
+            events.append(("wait", self.argv))
+            return 3
+
+    monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
+    r = runner.invoke(cli.app, ["review", "--all", "--sequential", "--fix", "--json"])
+    assert r.exit_code == 0, r.output
+    assert [e[0] for e in events] == ["spawn", "wait", "spawn", "wait"]
+    for kind, argv in events:
+        if kind == "spawn":
+            assert "--fix" in argv and "--post-comments" in argv and "--no-tty" in argv
+    out = json.loads(r.stdout)
+    assert all(e["exit_code"] == 3 for e in out)  # child rc surfaced in summary
+
+
+def test_review_all_skips_live_harness_and_empty(isolated_config, tmp_path, monkeypatch):
+    """A live-harness worktree is skipped with a note; zero reviewable → exit 0."""
+    wt = tmp_path / "a"
+    wt.mkdir()
+    store.record_link("jira:A-1", {"branch": "feat/a", "worktree": str(wt),
+                                   "pr_url": "https://github.com/o/r/pull/1"})
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda p: True)
+    monkeypatch.setattr(cli.store, "active_harness",
+                        lambda key: {"harness": "omp", "pid": 99999, "started_at": 1.0})
+    spawned = []
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            spawned.append(argv)
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
+    r = runner.invoke(cli.app, ["review", "--all", "--json"])
+    assert r.exit_code == 0, r.output
+    assert spawned == []  # live harness worktree skipped, nothing else to do
+    assert "harness already live" in r.stderr
+    assert "nothing to review" in r.stderr
+    assert r.stdout.strip() == ""
+
+
+def test_review_sequential_without_all_fails():
+    r = runner.invoke(cli.app, ["review", "--sequential"])
+    assert r.exit_code == 2
+
+
+def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.repos, "branch_tip", lambda wt: "abc123")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed, cwd=None: {"head_ref": "feat/33"})
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/33"})
+    launched = []
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    url = "https://github.com/o/r/pull/33"
+    key = f"pr:{url}"
+
+    # --no-harness starts nothing: must not mark reviewed (Task 2 precedent).
+    r0 = runner.invoke(cli.app, ["review", url, "--no-tty", "--no-harness", "--json"])
+    assert r0.exit_code == 0, r0.output
+    assert launched == []
+    assert store.load_links()[key].get("reviewed") is None
+
+    # Fresh-worktree launch path: marks reviewed with the worktree tip.
+    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
+    assert r.exit_code == 0, r.output
+    assert launched != []
+    entry = store.load_links()[key]
+    assert entry["reviewed"] is True
+    assert entry["reviewed_at"] == "abc123"
+
+    # Reuse-worktree launch path: marks reviewed as well (idempotent re-mark).
+    r2 = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
+    assert r2.exit_code == 0, r2.output
+    entry2 = store.load_links()[key]
+    assert entry2["reviewed"] is True
+    assert entry2["reviewed_at"] == "abc123"
+
+
+def test_is_reviewed_resets_when_tip_changes(isolated_config, tmp_path, monkeypatch):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    key = "pr:https://github.com/o/r/pull/9"
+    store.record_link(key, {"reviewed": True, "reviewed_at": "cafe",
+                            "worktree": str(wt)})
+    entry = store.load_links()[key]
+    monkeypatch.setattr(cli.repos, "branch_tip", lambda p: "cafe")
+    assert cli._is_reviewed(key, entry) is True
+    monkeypatch.setattr(cli.repos, "branch_tip", lambda p: "beef")
+    assert cli._is_reviewed(key, entry) is False  # tip moved → reviewed again
+    assert cli._is_reviewed(key, {"worktree": str(wt)}) is False  # never marked
+    assert cli._is_reviewed(key, {"reviewed": True}) is False  # no worktree/tip
 
 def test_start_refused_while_harness_live(isolated_config, tmp_path, monkeypatch):
     """Hard guard: a worktree with a live harness refuses a second launch."""

@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -317,10 +318,45 @@ def start(
 # ── review ────────────────────────────────────────────────────────────
 
 
+def _is_reviewed(key: str, entry: dict) -> bool:
+    """Reviewed AND the worktree tip still matches the recorded tip sha;
+    new commits on the worktree invalidate the reviewed state."""
+    if not entry.get("reviewed"):
+        return False
+    wt = entry.get("worktree", "")
+    tip = repos.branch_tip(wt) if wt and Path(wt).is_dir() else ""
+    return bool(tip) and tip == entry.get("reviewed_at", "")
+
+
+def _reviewable_keys(links: dict) -> list[tuple[str, str]]:
+    """(key, pr_url) pairs to review under --all: live worktree, resolvable
+    PR/MR, no live harness, and not already reviewed at the current tip."""
+    out = []
+    for k, v in links.items():
+        if _is_reviewed(k, v):
+            continue
+        pr = worktrees.worktree_pr_url(k, v)
+        if not pr or not worktrees.is_valid_worktree(v.get("worktree", "")):
+            continue
+        if store.active_harness(k):
+            eprint(f"{k}: harness already live — skipping")
+            continue
+        out.append((k, pr))
+    return out
+
+
+def _mark_reviewed(pr_url: str, worktree: str) -> None:
+    """Persist reviewed=True + the current worktree tip on the pr:<url> link."""
+    entry = store.load_links().get(f"pr:{pr_url}", {})
+    entry["reviewed"] = True
+    entry["reviewed_at"] = repos.branch_tip(worktree)
+    store.record_link(f"pr:{pr_url}", entry)
+
+
 @app.command("review")
 @_catch_harness_errors
 def review(
-    ref: str = typer.Argument(..., autocompletion=_complete_refs, help="PR/MR URL, OWNER/REPO#NUM, or worktree ref (key/branch/worktree)."),
+    ref: Optional[str] = typer.Argument(None, autocompletion=_complete_refs, help="PR/MR URL, OWNER/REPO#NUM, or worktree ref (key/branch/worktree); optional with --all."),
     repo: Optional[str] = typer.Option(None, "--repo", autocompletion=_complete_repos, help="Registered name, local path, or clone URL."),
     depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
@@ -329,6 +365,10 @@ def review(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    all_wts: bool = typer.Option(False, "--all", help="Review every not-reviewed linked worktree in parallel (non-TTY)."),
+    sequential: bool = typer.Option(False, "--sequential", help="With --all: review one-by-one instead of in parallel."),
+    fix: bool = typer.Option(False, "--fix", help="With --all: children auto-fix identified issues after yielding."),
+    post_comments: bool = typer.Option(False, "--post-comments", hidden=True, help="Append the auto-comment prompt segment (set by --all)."),
 ) -> None:
     """Create worktree from PR/MR and launch review.
 
@@ -336,7 +376,41 @@ def review(
       harness review https://github.com/OWNER/REPO/pull/33
       harness review OWNER/REPO#33 --no-tty
       harness review OWNER/REPO#33 --no-harness
+      harness review --all [--sequential] [--fix]
     """
+    if sequential and not all_wts:
+        _fail("--sequential requires --all", EXIT_USAGE)
+    if all_wts:
+        reviewable = _reviewable_keys(store.load_links())
+        if not reviewable:
+            eprint("nothing to review")
+            return
+        rows: list[dict] = []
+
+        def _spawn(key: str, pr: str):
+            repo = store.load_links().get(key, {}).get("repo", "")
+            cwd = repo if repo and Path(repo).is_dir() else os.getcwd()
+            argv = [sys.executable, "-m", "harness", "review", pr,
+                    "--no-tty", "--post-comments"] + (["--fix"] if fix else [])
+            # Child stdout/stderr inherit ours; the --post-comments child
+            # appends the auto-comment segment to its review prompt.
+            return subprocess.Popen(argv, cwd=cwd)
+
+        if sequential:
+            for key, pr in reviewable:
+                proc = _spawn(key, pr)
+                rows.append({"key": key, "pr_url": pr, "exit_code": proc.wait()})
+        else:
+            procs = [(key, pr, _spawn(key, pr)) for key, pr in reviewable]
+            for key, pr, proc in procs:
+                rows.append({"key": key, "pr_url": pr, "exit_code": proc.wait()})
+        if not json_output:
+            for row in rows:
+                eprint(f"{row['key']}: review child exit {row['exit_code']}")
+        _print_rows(rows, json_output, csv_output=False,
+                    columns=["key", "pr_url", "exit_code"],
+                    title="Review runs", empty="nothing reviewed")
+        return
     session_ref = ref
     parse_err: HarnessError | None = None
     try:
@@ -392,11 +466,17 @@ def review(
             store.record_link(f"pr:{pr_url}", {"pr_url": pr_url, "worktree": worktree,
                                                "branch": branch, "repo": str(repo_dir)})
             prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
+
+            if post_comments:
+                prompt += "\n\nAuto add all comments to the PR/MR at yielding and don't wait for user approval"
+            if fix:
+                prompt += "\n\nAuto-fix all identified issues after yielding and don't wait for user approval."
             result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
                       "harness": harness_name}
             eprint(f"worktree: {worktree}  branch: {branch}")
             if not no_harness:
                 _guard_harness(f"pr:{pr_url}", worktree)
+                _mark_reviewed(pr_url, worktree)
             _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty, no_harness,
                          result, json_output, run_key=f"pr:{pr_url}")
             return
@@ -416,11 +496,17 @@ def review(
         pass
 
     prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
+
+    if post_comments:
+        prompt += "\n\nAuto add all comments to the PR/MR at yielding and don't wait for user approval"
+    if fix:
+        prompt += "\n\nAuto-fix all identified issues after yielding and don't wait for user approval."
     result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
               "harness": harness_name}
     eprint(f"worktree: {worktree}  branch: {branch}")
     if not no_harness:
         _guard_harness(f"pr:{pr_url}", worktree)
+        _mark_reviewed(pr_url, worktree)
     _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty, no_harness,
                  result, json_output, run_key=f"pr:{pr_url}")
 
