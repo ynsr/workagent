@@ -7,6 +7,7 @@ import { Links } from "@/pages/Links"
 import { Doctor } from "@/pages/Doctor"
 import { Runs } from "@/pages/Runs"
 import { RunDetail } from "@/pages/RunDetail"
+import { Sessions, SessionDetailPage } from "@/pages/Sessions"
 import { Settings } from "@/pages/Settings"
 import { NotFound } from "@/pages/NotFound"
 
@@ -21,6 +22,8 @@ export default function App() {
         <Route path="doctor" element={<Doctor />} />
         <Route path="runs" element={<Runs />} />
         <Route path="runs/:runId" element={<RunDetail />} />
+        <Route path="sessions" element={<Sessions />} />
+        <Route path="sessions/:sessionId" element={<SessionDetailPage />} />
         <Route path="settings" element={<Settings />} />
         <Route path="*" element={<NotFound />} />
       </Route>

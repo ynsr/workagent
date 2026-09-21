@@ -15,6 +15,8 @@ export const queryKeys = {
   run: (id: string) => ["runs", "detail", id] as const,
   issues: ["issues"] as const,
   candidates: ["candidates"] as const,
+  sessions: ["sessions"] as const,
+  session: (id: string) => ["sessions", "detail", id] as const,
 }
 
 /** Poll /api/status every 15 s while the tab is visible (contract). */
@@ -50,6 +52,14 @@ export function useIssues() {
 
 export function useCandidates() {
   return useQuery({ queryKey: queryKeys.candidates, queryFn: api.candidates })
+}
+
+export function useSessions() {
+  return useQuery({ queryKey: queryKeys.sessions, queryFn: api.sessions })
+}
+
+export function useSession(id: string) {
+  return useQuery({ queryKey: queryKeys.session(id), queryFn: () => api.session(id) })
 }
 
 export function useRuns() {

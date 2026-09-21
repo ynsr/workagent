@@ -21,6 +21,7 @@ const NAV_ITEMS = [
   { to: "/links", label: "Links", icon: Link2 },
   { to: "/doctor", label: "Doctor", icon: Stethoscope },
   { to: "/runs", label: "Runs", icon: SquareTerminal },
+  { to: "/sessions", label: "Sessions", icon: SquareTerminal },
   { to: "/settings", label: "Settings", icon: Settings2 },
 ] as const
 

@@ -201,6 +201,9 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     session_file = ""
     if run_key:
         store.record_harness_run(run_key, harness_name, worktree or fallback_dir)
+    # Pre-cutover (no state.db): links live in JSON, so the FK insert would
+    # fail — skip session tracking silently, never warn or touch the db.
+    if run_key and db.exists():
         try:
             _sq.init_db(db)
             sid = _sq.gen_session_id()
@@ -211,8 +214,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                 initiator_command=result.get("command", harness_name),
                 prompt=prompt, file_path=session_file)
         except Exception as e:
-            # Pre-cutover: links still live in JSON, so the FK insert fails.
-            # Session tracking must never break the launch itself.
+            # Post-cutover insert failure: launch continues, warn only.
             eprint(f"warning: session record failed: {e}")
             sid = None
     try:
@@ -1958,6 +1960,23 @@ def doctor(
         print(json.dumps(result, indent=2))
     if result["status"] != "ok":
         raise typer.Exit(EXIT_GENERAL)
+
+
+@app.command("migrate")
+@_catch_harness_errors
+def migrate_cmd(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """One-shot migration: links/pr_cache/harnesses JSON → state.db (issue #9).
+
+    Verifies row counts, then deletes the JSON files (config.json kept).
+    Idempotent: re-run is a no-op.
+
+    Example: harness migrate --json
+    """
+    from . import store_sqlite as sq
+    out = sq.migrate_json(store.config_dir(), sq.db_path())
+    _print_result({"migrated": out}, json_output)
 
 
 # ── shell completion --------------------------------------------------

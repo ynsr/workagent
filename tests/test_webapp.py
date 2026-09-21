@@ -629,3 +629,26 @@ def test_candidates_shape_and_warnings(client, monkeypatch, tmp_path):
     assert body["prs"] == [] and body["issues"] == []
     assert body["worktrees"] == []
     assert any("proj" in w for w in body["warnings"])
+
+
+def test_api_sessions_empty(client):
+    body = client.get("/api/sessions").json()
+    assert body == {"sessions": []}
+
+
+def test_api_sessions_roundtrip(client, tmp_path, monkeypatch):
+    from harness import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO repos (key_ref, path) VALUES ('r', '/r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
+                     " VALUES ('k', '/wt', 'b', 'r')")
+    sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
+                            initiator_command="start", prompt="hello",
+                            file_path="/tmp/x.jsonl")
+    body = client.get("/api/sessions").json()
+    assert body["sessions"][0]["id"] == sid
+    detail = client.get(f"/api/sessions/{sid}").json()
+    assert detail["prompt"] == "hello" and detail["runs"] == []
+    assert client.get("/api/sessions/nope").status_code == 404

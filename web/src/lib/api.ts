@@ -117,6 +117,24 @@ export interface CandidatesResponse {
   warnings: string[]
 }
 
+/** One persisted harness session (prompt excluded from the list; see SessionDetail). */
+export interface SessionRow {
+  id: string; worktree_ref: string; state: string; runtime_name: string;
+  initiator_command: string; file_path: string; created_at: string;
+}
+
+export interface SessionRun {
+  id: number; command: string; args: string[]; exit_code: number | null; created_at: string;
+}
+
+export interface SessionDetail extends SessionRow {
+  prompt: string; runs: SessionRun[]; transcript?: string;
+}
+
+export interface SessionsResponse {
+  sessions: SessionRow[];
+}
+
 export interface DoctorInfo {
   status: string
   live_hash?: string
@@ -259,6 +277,11 @@ export const api = {
   issues: () => request<IssuesResponse>("/api/issues"),
   /** GET /api/candidates — unlinked PR/MRs + recent issues. */
   candidates: () => request<CandidatesResponse>("/api/candidates"),
+
+  /** GET /api/sessions — persisted harness sessions (newest first). */
+  sessions: () => request<SessionsResponse>("/api/sessions"),
+  session: (id: string) =>
+    request<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`),
 
   runs: () => request<Run[]>("/api/runs"),
   run: (id: string) => request<RunDetail>(`/api/runs/${encodeURIComponent(id)}`),

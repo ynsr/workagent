@@ -147,7 +147,9 @@ become `skipped:<reason>` rows — never torn down. Requires `--yes`
   probe. Persisted per repo as `repos.<name>.tool` (`register_repo` seeds
   it; `_repo_tool` in cli.py validates the stored `remote` and re-detects
   on change).
-- Status caching (`_status_cells` in cli.py): per-branch cache in `pr_cache.json`
+- Status caching (`_status_cells` in cli.py): per-branch cache in the
+  `pr_cache` table of `state.db` (post-`harness migrate`; legacy
+  `pr_cache.json` before) via `store.cache_pr_status`
   (pr, tool, base_branch, branch/base tips, behind/ahead counts, checked_at;
   CI in `ci`/`ci_checked_at`/`ci_sha` via `store.cache_ci_status`); a cached
   PR is reused while both tips match and age < 3h, a cached no-PR result
@@ -180,8 +182,8 @@ become `skipped:<reason>` rows — never torn down. Requires `--yes`
 - Repo resolution: `src/harness/repos.py`
 - Tracker↔repo guard/picker + `link` data: `src/harness/trackers.py`
 - Sync engine: `src/harness/sync.py`
-- PR-status cache (`pr_cache.json`): `src/harness/store.py`
+- PR-status cache (`pr_cache` table in `state.db`): `src/harness/store.py`
+  (delegates to `src/harness/store_sqlite.py` once `harness migrate` ran)
 - Completion internals (rc block, shell detect): `src/harness/completions.py`
 - Web backend (`serve`): `src/harness/webapp.py`; frontend: `web/`
-  (npm/tsc build per `web/package.json`)
 - Tests: `tests/` (mirror module names)

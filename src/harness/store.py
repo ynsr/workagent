@@ -79,7 +79,20 @@ def save_config(cfg: dict) -> None:
     _write_json(config_dir() / "config.json", cfg)
 
 
+def _sqlite_path():
+    try:
+        from . import store_sqlite as sq
+        p = sq.db_path()
+        return p if p.exists() else None
+    except Exception:
+        return None
+
+
 def load_links() -> dict:
+    db = _sqlite_path()
+    if db is not None:
+        from . import store_sqlite as sq
+        return sq.load_links_rows(db)
     links = _read_json(config_dir() / "links.json", {})
     for key, entry in links.items():
         if isinstance(entry, dict):
@@ -88,10 +101,21 @@ def load_links() -> dict:
 
 
 def save_links(links: dict) -> None:
+    db = _sqlite_path()
+    if db is not None:
+        from . import store_sqlite as sq
+        sq.save_links_rows(db, links)
+        return
     _write_json(config_dir() / "links.json", links)
 
-
 def record_link(issue_key: str, entry: dict) -> None:
+    if _sqlite_path() is not None:
+        links = load_links()
+        merged = {**links.get(issue_key, {}), **entry}
+        merged.setdefault("added_at", _now_iso())
+        links[issue_key] = merged
+        save_links(links)
+        return
     path = config_dir() / "links.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path.parent / (path.name + ".lock"), "w") as lock:
@@ -115,10 +139,49 @@ def lookup_link(issue_key: str) -> dict | None:
 
 
 def load_pr_cache() -> dict:
+    db = _sqlite_path()
+    if db is not None:
+        import json as _json
+        import sqlite3 as _sqlite3
+        with _sqlite3.connect(str(db)) as conn:
+            conn.row_factory = _sqlite3.Row
+            out = {}
+            for row in conn.execute("SELECT * FROM pr_cache"):
+                r = dict(row)
+                try:
+                    payload = _json.loads(r.get("payload") or "{}")
+                except ValueError:
+                    payload = {}
+                entry = payload if isinstance(payload, dict) else {"pr": payload}
+                entry.setdefault("pr", None)
+                entry.setdefault("checked_at", r.get("checked_at", ""))
+                out[r["branch"]] = entry
+            return out
     return _read_json(config_dir() / "pr_cache.json", {})
 
 
+def _write_pr_cache(cache: dict) -> None:
+    import json as _json
+    import sqlite3 as _sqlite3
+    from . import store_sqlite as sq
+    db = _sqlite_path()
+    assert db is not None
+    sq.init_db(db)
+    with _sqlite3.connect(str(db)) as conn:
+        conn.execute("DELETE FROM pr_cache")
+        for branch, entry in cache.items():
+            payload = dict(entry) if isinstance(entry, dict) else {"pr": entry}
+            checked = str(payload.pop("checked_at", ""))
+            conn.execute(
+                "INSERT INTO pr_cache (branch, payload, checked_at)"
+                " VALUES (?, ?, ?)",
+                (branch, _json.dumps(payload), checked))
+
+
 def save_pr_cache(cache: dict) -> None:
+    if _sqlite_path() is not None:
+        _write_pr_cache(cache)
+        return
     _write_json(config_dir() / "pr_cache.json", cache)
 
 
@@ -134,6 +197,16 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
                  ("behind", behind), ("ahead", ahead)):
         if v is not None:
             entry[k] = v
+    if _sqlite_path() is not None:
+        cache = load_pr_cache()
+        prev = cache.get(branch) or {}
+        merged = dict(entry)
+        for k in ("ci", "ci_checked_at", "ci_sha"):
+            if k in prev and k not in merged:
+                merged[k] = prev[k]
+        cache[branch] = merged
+        _write_pr_cache(cache)
+        return
     path = config_dir() / "pr_cache.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path.parent / (path.name + ".lock"), "w") as lock:
@@ -156,7 +229,6 @@ def get_cached_pr_status(branch: str) -> dict | None:
 def get_cached_pr_tool(branch: str) -> str | None:
     return load_pr_cache().get(branch, {}).get("tool")
 
-
 def cache_ci_status(branch: str, ci: str | None, sha: str | None = None) -> None:
     """Record CI pipeline status on a branch's pr_cache entry, in place.
 
@@ -165,6 +237,15 @@ def cache_ci_status(branch: str, ci: str | None, sha: str | None = None) -> None
     writes nothing, so the next run retries the lookup.
     """
     if ci is None:
+        return
+    if _sqlite_path() is not None:
+        cache = load_pr_cache()
+        entry = cache.setdefault(branch, {})
+        entry["ci"] = ci
+        entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
+        if sha:
+            entry["ci_sha"] = sha
+        _write_pr_cache(cache)
         return
     path = config_dir() / "pr_cache.json"
     path.parent.mkdir(parents=True, exist_ok=True)

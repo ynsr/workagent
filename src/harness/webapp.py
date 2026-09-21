@@ -439,6 +439,29 @@ def create_app(static_dir: Path, host: str, port: int,
         return {"prs": out["prs"], "issues": out["issues"],
                 "worktrees": out["worktrees"], "warnings": out["warnings"]}
 
+    @app.get("/api/sessions")
+    def sessions_list() -> dict:
+        """Persisted harness sessions (newest first); [] pre-migration."""
+        from . import store_sqlite as sq
+        db = sq.db_path()
+        if not db.exists():
+            return {"sessions": []}
+        rows = [{k: v for k, v in r.items() if k != "prompt"}
+                for r in sq.list_sessions(db)]
+        return {"sessions": rows}
+
+    @app.get("/api/sessions/{sid}")
+    def session_detail(sid: str) -> dict:
+        from . import store_sqlite as sq
+        from pathlib import Path
+        db = sq.db_path()
+        row = sq.get_session(db, sid) if db.exists() else None
+        if row is None:
+            raise HTTPException(404, f"no session {sid}")
+        if row.get("file_path") and not Path(row["file_path"]).exists():
+            row["transcript"] = "missing"
+        return row
+
     # ── runs ──────────────────────────────────────────────────────────
     @app.post("/api/runs", status_code=202)
     async def create_run(body: RunIn) -> dict:

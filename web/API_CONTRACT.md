@@ -106,6 +106,27 @@ worktrees under the scan root. Read-only:
 Scan root defaults to `~/dev/worktrees`, overridable via the `scan_root`
 config key. Paths already linked are excluded server-side.
 
+### `GET /api/sessions` → list (newest first, no prompts)
+```json
+{"sessions": [{"id": "2026-09-22T10-00-00-123Z-4567",
+  "worktree_ref": "jira:IPG-932", "runtime_name": "omp",
+  "initiator_command": "start", "state": "finished",
+  "created_at": "2026-09-22T10:00:00.123Z",
+  "file_path": "/home/x/.config/harness/sessions/omp/2026-09-22T10-00-00-123Z-4567.jsonl"}]}
+```
+
+### `GET /api/sessions/{id}` → detail (prompt + session runs)
+```json
+{"id": "…", "worktree_ref": "jira:IPG-932", "runtime_name": "omp",
+ "initiator_command": "start", "state": "finished", "prompt": "…",
+ "created_at": "…", "file_path": "…",
+ "transcript": "missing",
+ "runs": [{"id": 1, "command": "omp", "args": ["…"], "exit_code": 0,
+           "created_at": "…"}]}
+```
+Unknown id → 404. `transcript` is `"missing"` when the per-session
+`.jsonl` file is absent.
+
 ## Runs (mutating CLI commands as child processes)
 
 ### `POST /api/runs` → 202

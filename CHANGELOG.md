@@ -21,6 +21,16 @@
 - Fixed `review` reading `--dry-run` without defining the flag.
 
 ## Unreleased
+- SQLite sessions + cutover: `harness migrate` one-shots
+  `links.json`/`pr_cache.json`/`harnesses.json` into `state.db`
+  (counts verified, files deleted, `config.json` kept; idempotent re-run
+  is a no-op) and all link/PR-cache reads+writes delegate to SQLite
+  afterwards. Every real harness launch records a session row (timestamp
+  id `…Z-<4-digit>`, runtime, initiator command, prompt, `.jsonl` path;
+  `finished`/`failed` on completion) with `GET /api/sessions` +
+  `GET /api/sessions/{id}` and a web Sessions page. `cleanup`
+  squash-merges open PR/MRs first (`--no-squash` opts out; remote branch
+  harness-name conditionals for launch argv.
 - `candidates` now also lists unregistered on-disk worktrees under the
   scan root (default `~/dev/worktrees`, overridable via the `scan_root`
   config key): both `<repo>/<branch>` and `<repo>/<issue-type>/<branch>`

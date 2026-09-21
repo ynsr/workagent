@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS worktrees (
   ref_key TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL,
   branch TEXT UNIQUE NOT NULL, repo_key TEXT REFERENCES repos(key_ref) ON DELETE CASCADE,
   issue_url TEXT NOT NULL DEFAULT '', pr_url TEXT NOT NULL DEFAULT '',
-  added_at TEXT NOT NULL DEFAULT '');
+  added_at TEXT NOT NULL DEFAULT '', payload TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS pr_cache (
   branch TEXT PRIMARY KEY, payload TEXT NOT NULL DEFAULT '{}',
   checked_at TEXT NOT NULL DEFAULT '');
@@ -49,8 +49,10 @@ def connect(path: Path) -> sqlite3.Connection:
 def init_db(path: Path) -> Path:
     with connect(path) as conn:
         conn.executescript(SCHEMA)
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(worktrees)")]
+        if "payload" not in cols:
+            conn.execute("ALTER TABLE worktrees ADD COLUMN payload TEXT NOT NULL DEFAULT '{}'")
     return path
-
 
 def db_path(config_dir: Path | None = None) -> Path:
     from . import store as _store
@@ -89,7 +91,9 @@ def insert_session(path: Path, *, worktree_ref: str, runtime_name: str,
                     (sid, worktree_ref, runtime_name, initiator_command,
                      prompt, file_path, created))
                 return sid
-            except sqlite3.IntegrityError:
+            except sqlite3.IntegrityError as e:
+                if "FOREIGN KEY" in str(e):
+                    raise
                 continue
     raise Exception("session id collision — retry the launch")
 
@@ -139,6 +143,52 @@ def get_session(path: Path, sid: str) -> dict | None:
         return out
 
 
+def load_links_rows(path: Path) -> dict:
+    """Reconstruct the legacy links.json dict from worktree rows + payloads."""
+    import json
+    if not path.exists():
+        return {}
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        out = {}
+        for row in conn.execute("SELECT * FROM worktrees"):
+            r = dict(row)
+            entry = json.loads(r.pop("payload", "{}") or "{}")
+            entry.update({
+                "worktree": r["path"], "branch": r["branch"],
+                "repo": r["repo_key"], "issue_url": r["issue_url"],
+                "pr_url": r["pr_url"], "added_at": r["added_at"],
+                "ref_key": r["ref_key"],
+            })
+            if "issue" not in entry and r["ref_key"].startswith("jira:"):
+                entry["issue"] = r["ref_key"].split(":", 1)[1]
+            out[r["ref_key"]] = entry
+        return out
+
+
+def save_links_rows(path: Path, links: dict) -> None:
+    """Replace all worktree rows from a legacy links dict (cutover writes)."""
+    import json
+    init_db(path)
+    with connect(path) as conn:
+        conn.execute("DELETE FROM worktrees")
+        for key, e in links.items():
+            extra = {k: v for k, v in e.items() if k not in (
+                "worktree", "branch", "repo", "issue_url", "pr_url",
+                "added_at", "ref_key", "issue")}
+            conn.execute(
+                "INSERT OR IGNORE INTO repos (key_ref, path) VALUES (?, ?)",
+                (str(e.get("repo", "")), str(e.get("repo", ""))))
+            conn.execute(
+                "INSERT INTO worktrees (ref_key, path, branch, repo_key,"
+                " issue_url, pr_url, added_at, payload)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (key, str(e.get("worktree", "")), str(e.get("branch", "")),
+                 str(e.get("repo", "")), str(e.get("issue_url", "")),
+                 str(e.get("pr_url", "")), str(e.get("added_at", "")),
+                 json.dumps(extra)))
+
+
 def migrate_json(config_dir: Path, db_path: Path) -> dict:
     """One-shot migration: links/pr_cache/harnesses JSON → state.db.
 
@@ -171,22 +221,29 @@ def migrate_json(config_dir: Path, db_path: Path) -> dict:
     counts = {"worktrees": 0, "pr_cache": 0, "harnesses": 0}
     with connect(db_path) as conn:
         for key, e in links.items():
+            extra = {k: v for k, v in e.items() if k not in (
+                "worktree", "branch", "repo", "issue_url", "pr_url",
+                "added_at", "ref_key", "issue")}
             conn.execute(
                 "INSERT OR IGNORE INTO repos (key_ref, path) VALUES (?, ?)",
                 (str(e.get("repo", "")), str(e.get("repo", ""))))
             conn.execute(
                 "INSERT INTO worktrees (ref_key, path, branch, repo_key,"
-                " issue_url, pr_url, added_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " issue_url, pr_url, added_at, payload)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (key, str(e.get("worktree", "")), str(e.get("branch", "")),
                  str(e.get("repo", "")), str(e.get("issue_url", "")),
-                 str(e.get("pr_url", "")), str(e.get("added_at", ""))))
+                 str(e.get("pr_url", "")), str(e.get("added_at", "")),
+                 json.dumps(extra)))
             counts["worktrees"] += 1
         for branch, entry in pr_cache.items():
+            full = dict(entry)
+            full.setdefault("pr", None)
+            checked = str(full.get("checked_at", ""))
             conn.execute(
                 "INSERT INTO pr_cache (branch, payload, checked_at)"
                 " VALUES (?, ?, ?)",
-                (branch, json.dumps(entry.get("pr")),
-                 str(entry.get("checked_at", ""))))
+                (branch, json.dumps(full), checked))
             counts["pr_cache"] += 1
     if counts["worktrees"] != len(links) or counts["pr_cache"] != len(pr_cache):
         raise HarnessError("migration count mismatch — files left in place",

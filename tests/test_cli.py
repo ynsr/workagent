@@ -1929,3 +1929,35 @@ def test_cleanup_merge_failure_keeps_worktree(isolated_config, tmp_path, monkeyp
                          force=False, yes=True, dry_run=False,
                          json_output=True)
     assert "jira:IPG-9" in store.load_links()  # link kept
+
+
+def test_migrate_command(isolated_config, tmp_path):
+    import json
+    d = Path(str(isolated_config))
+    (d / "links.json").write_text(json.dumps({
+        "jira:IPG-1": {"worktree": "/wt", "branch": "feat/1",
+                       "repo": "/r"}}))
+    r = _invoke("migrate", "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["migrated"]["worktrees"] == 1
+    assert not (d / "links.json").exists()
+
+
+def test_migrate_roundtrip_uses_sqlite(isolated_config):
+    import json
+    d = Path(str(isolated_config))
+    store.record_link("jira:IPG-7", {"worktree": "/wt7", "branch": "feat/7",
+                                     "repo": "/r", "reviewed": True})
+    store.cache_pr_status("feat/7", {"number": 7}, tool="gh")
+    r = _invoke("migrate", "--json")
+    assert r.exit_code == 0, r.output
+    # Legacy files gone; reads now served from SQLite with extras preserved.
+    assert not (d / "links.json").exists()
+    assert not (d / "pr_cache.json").exists()
+    assert store.load_links()["jira:IPG-7"]["reviewed"] is True
+    assert store.load_pr_cache()["feat/7"]["tool"] == "gh"
+    # Writes after cutover persist in SQLite, not JSON.
+    store.record_link("jira:IPG-8", {"worktree": "/wt8", "branch": "feat/8",
+                                     "repo": "/r"})
+    assert "jira:IPG-8" in store.load_links()
+    assert not (d / "links.json").exists()
