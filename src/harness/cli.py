@@ -422,21 +422,38 @@ def _reviewable_keys(links: dict) -> list[tuple[str, str]]:
     return out
 
 
-def _mark_reviewed(pr_url: str, worktree: str) -> None:
-    """Persist reviewed=True + the current worktree tip on the pr:<url> link."""
-    entry = store.load_links().get(f"pr:{pr_url}", {})
+def _review_key_for(pr_url: str, worktree: str, branch: str) -> str:
+    """Link key review state lives under: the existing row for this
+    worktree/branch when one is already recorded, else the pr:<url> key.
+
+    Reviewing an already-tracked worktree must reuse its row (stamping
+    pr_url on it) — never insert a second row for the same path/branch.
+    """
+    links = store.load_links()
+    for k, v in links.items():
+        if not isinstance(v, dict):
+            continue
+        if v.get("pr_url", "") == pr_url and k.startswith("pr:"):
+            return k
+        if v.get("worktree", "") == worktree and v.get("branch", "") == branch:
+            return k
+    return f"pr:{pr_url}"
+
+
+def _mark_reviewed(key: str, worktree: str) -> None:
+    """Persist reviewed=True + the current worktree tip on the review row."""
+    entry = store.load_links().get(key, {})
     entry["reviewed"] = True
     entry["reviewed_at"] = repos.branch_tip(worktree)
-    store.record_link(f"pr:{pr_url}", entry)
+    store.record_link(key, entry)
 
 
-def _clear_reviewed(pr_url: str) -> None:
+def _clear_reviewed(key: str) -> None:
     """Revert reviewed/reviewed_at after a failed (non-exec) harness launch.
 
     record_link merges, which cannot drop keys — rewrite the entry without
     them instead (other fields preserved), same as `link remove`.
     """
-    key = f"pr:{pr_url}"
     links = store.load_links()
     entry = links.get(key)
     if not entry:
@@ -584,8 +601,9 @@ def review(
         if reuse_entry.get("worktree") and Path(reuse_entry["worktree"]).is_dir():
             worktree = reuse_entry["worktree"]
             branch = reuse_entry.get("branch", head_ref)
-            store.record_link(f"pr:{pr_url}", {"pr_url": pr_url, "worktree": worktree,
-                                               "branch": branch, "repo": str(repo_dir)})
+            review_key = _review_key_for(pr_url, worktree, branch)
+            store.record_link(review_key, {"pr_url": pr_url, "worktree": worktree,
+                                           "branch": branch, "repo": str(repo_dir)})
             prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
 
             if post_comments:
@@ -596,15 +614,15 @@ def review(
                       "harness": harness_name}
             eprint(f"worktree: {worktree}  branch: {branch}")
             if not no_harness:
-                _guard_harness(f"pr:{pr_url}", worktree)
-                _mark_reviewed(pr_url, worktree)
+                _guard_harness(review_key, worktree)
+                _mark_reviewed(review_key, worktree)
             try:
                 _run_harness(harness_name, prompt, worktree, str(repo_dir),
                              no_tty, no_harness, result, json_output,
-                             run_key=f"pr:{pr_url}")
+                             run_key=review_key)
             except HarnessError:
                 if not no_harness:
-                    _clear_reviewed(pr_url)
+                    _clear_reviewed(review_key)
                 raise
             return
 
@@ -615,8 +633,9 @@ def review(
     wt = gitwt.start_worktree(repo_dir, branch=head_ref, base=base_branch)
     worktree = wt.get("worktree_path", "")
     branch = wt.get("branch", head_ref)
-    store.record_link(f"pr:{pr_url}", {"pr_url": pr_url, "worktree": worktree,
-                                       "branch": branch, "repo": str(repo_dir)})
+    review_key = _review_key_for(pr_url, worktree, branch)
+    store.record_link(review_key, {"pr_url": pr_url, "worktree": worktree,
+                                   "branch": branch, "repo": str(repo_dir)})
     try:
         repos.register_repo(repos.repo_name(repo_dir), repo_dir)
     except HarnessError:
@@ -632,14 +651,14 @@ def review(
               "harness": harness_name}
     eprint(f"worktree: {worktree}  branch: {branch}")
     if not no_harness:
-        _guard_harness(f"pr:{pr_url}", worktree)
-        _mark_reviewed(pr_url, worktree)
+        _guard_harness(review_key, worktree)
+        _mark_reviewed(review_key, worktree)
     try:
         _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
-                     no_harness, result, json_output, run_key=f"pr:{pr_url}")
+                     no_harness, result, json_output, run_key=review_key)
     except HarnessError:
         if not no_harness:
-            _clear_reviewed(pr_url)
+            _clear_reviewed(review_key)
         raise
 
 

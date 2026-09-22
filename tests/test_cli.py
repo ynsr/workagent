@@ -1506,6 +1506,35 @@ def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
     assert entry2["reviewed_at"] == "abc123"
 
 
+def test_review_reuses_existing_worktree_row(isolated_config, tmp_path, monkeypatch):
+    """Reviewing an already-tracked worktree stamps pr_url on its own row —
+    no second pr:<url> row for the same path/branch (UNIQUE regression)."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.repos, "branch_tip", lambda wt: "abc123")
+    url = "https://git.jibit.cloud/server/projectx/-/merge_requests/1694"
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/IPG-953--x"})
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/IPG-953--x"})
+    launched = []
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    store.record_link("jira:IPG-953", {"worktree": str(worktree),
+                                       "branch": "feat/IPG-953--x",
+                                       "repo": str(repo_dir)})
+    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
+    assert r.exit_code == 0, r.output
+    links = store.load_links()
+    assert sorted(links) == ["jira:IPG-953"]
+    assert links["jira:IPG-953"]["pr_url"] == url
+    assert links["jira:IPG-953"]["reviewed"] is True
+
 def test_is_reviewed_resets_when_tip_changes(isolated_config, tmp_path, monkeypatch):
     wt = tmp_path / "wt"
     wt.mkdir()
