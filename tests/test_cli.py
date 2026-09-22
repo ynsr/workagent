@@ -887,6 +887,43 @@ def test_start_no_harness_tty_lands_shell_in_worktree(isolated_config, tmp_path,
     assert f"worktree_path: {worktree}" in captured.out
 
 
+def test_review_reuses_existing_worktree_no_new_row(isolated_config, tmp_path, monkeypatch):
+    """Reviewing a worktree already recorded reuses its row — never a second one.
+
+    worktrees.branch/path are UNIQUE, so review's old pr:<url> alias insert raised
+    IntegrityError on SQLite when the checkout was already linked under jira:.
+    """
+    from harness import store_sqlite as sq
+    repo_dir = tmp_path / "proj"; repo_dir.mkdir()
+    wt = tmp_path / "wt"; wt.mkdir()
+    db = sq.db_path()
+    sq.init_db(db)  # real db so the UNIQUE(branch) constraint applies
+    store.record_link("jira:IPG-953", {
+        "issue": "IPG-953", "worktree": str(wt), "branch": "feat/IPG-953--x",
+        "repo": str(repo_dir),
+        "pr_url": "https://git.jibit.cloud/server/projectx/-/merge_requests/1694"})
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/IPG-953--x"})
+    monkeypatch.setattr(cli.backend, "prompt_for_review", lambda *a, **k: "REVIEW")
+    monkeypatch.setattr(cli.repos, "branch_tip", lambda wt: "tip1")
+    monkeypatch.setattr(cli, "_guard_harness", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_run_harness", lambda *a, **k: None)
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda *a, **k: pytest.fail("review must reuse the existing worktree, not create one"))
+    r = _invoke("review", "jira:IPG-953", "--no-tty")
+    assert r.exit_code == 0, r.output
+    links = store.load_links()
+    assert set(links) == {"jira:IPG-953"}  # reuse: no pr:<url> alias row
+    with sq.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM worktrees").fetchone()[0] == 1
+    row = links["jira:IPG-953"]
+    assert row["pr_url"].endswith("1694")   # stamped on the existing row
+    assert row["reviewed"] is True          # review state lands on it too
+
+
 def test_review_no_harness_prints_command_and_skips_launch(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()

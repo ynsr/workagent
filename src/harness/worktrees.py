@@ -79,6 +79,25 @@ def pick_worktree(ref: str, resolved: str | list[str], links: dict | None = None
     return resolved[idx]
 
 
+def recorded_key(worktree: str, branch: str, links: dict) -> str | None:
+    """Exact-match the link key already recorded for a physical worktree.
+
+    Identity is the UNIQUE branch, falling back to the resolved path — never
+    the fuzzy ref matching of resolve_worktree. Review keys its link by the
+    concrete worktree/branch so one checkout never gets a second row
+    (worktrees.branch/path are UNIQUE).
+    """
+    for k, v in links.items():
+        if branch and (v.get("branch", "") or "") == branch:
+            return k
+    want = _norm_path(worktree)
+    if want:
+        for k, v in links.items():
+            if want == _norm_path(v.get("worktree", "") or ""):
+                return k
+    return None
+
+
 def is_valid_worktree(path: str) -> bool:
     """True when path exists and is a live git worktree."""
     from .errors import run_cmd

@@ -21,6 +21,15 @@
 - Fixed `review` reading `--dry-run` without defining the flag.
 
 ## Unreleased
+- Fix `review` crashing on an already-recorded worktree with
+  `UNIQUE constraint failed: worktrees.branch`: review recorded its
+  state under a fresh `pr:<url>` row sharing the same `branch`/`path`
+  as the existing row (`worktrees.branch/path` are UNIQUE). Review now
+  keys its link by the row already on disk (`worktrees.recorded_key`,
+  exact match on the UNIQUE branch then path) and stamps `pr_url`/
+  `reviewed` there — a genuinely new worktree is still keyed
+  `pr:<url>`; this also fixes the session FK (`sessions.worktree_ref`)
+  to reference the real row.
 - Issue cache + mandatory repo tracker + candidate actions: `issue_cache`
   table (per-source rows, 1h TTL) behind `trackers.list_my_issues(force)`;
   `candidates --reset-cache` clears and re-fetches; `GET /api/issues` and
