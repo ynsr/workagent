@@ -12,6 +12,25 @@ def _norm_path(p: str) -> str:
     return str(Path(p).expanduser().resolve()) if p else ""
 
 
+def recorded_key(worktree: str, branch: str, links: dict) -> str | None:
+    """Link key already recording this worktree/branch, else None.
+
+    Branch is the unique worktree identity (exact match first); the
+    normalized path is the fallback. Reusing the recorded row keeps
+    review from inserting a second row for the same path/branch (which
+    collides on the worktrees.branch UNIQUE key).
+    """
+    for k, v in links.items():
+        if isinstance(v, dict) and branch and branch == (v.get("branch", "") or ""):
+            return k
+    want = _norm_path(worktree)
+    if want:
+        for k, v in links.items():
+            if isinstance(v, dict) and want == _norm_path(v.get("worktree", "") or ""):
+                return k
+    return None
+
+
 def resolve_worktree(ref: str, links: dict) -> str | list[str] | None:
     """Resolve ref to a worktree key via key, branch, or path.
 

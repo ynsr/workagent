@@ -423,21 +423,15 @@ def _reviewable_keys(links: dict) -> list[tuple[str, str]]:
 
 
 def _review_key_for(pr_url: str, worktree: str, branch: str) -> str:
-    """Link key review state lives under: the existing row for this
-    worktree/branch when one is already recorded, else the pr:<url> key.
+    """Link key review state lives under: the recorded row for this
+    worktree/branch when one exists, else the pr:<url> key.
 
     Reviewing an already-tracked worktree must reuse its row (stamping
-    pr_url on it) — never insert a second row for the same path/branch.
+    pr_url on it) — never insert a second row for the same path/branch
+    (which collides on the worktrees.branch UNIQUE key).
     """
-    links = store.load_links()
-    for k, v in links.items():
-        if not isinstance(v, dict):
-            continue
-        if v.get("pr_url", "") == pr_url and k.startswith("pr:"):
-            return k
-        if v.get("worktree", "") == worktree and v.get("branch", "") == branch:
-            return k
-    return f"pr:{pr_url}"
+    return (worktrees.recorded_key(worktree, branch, store.load_links())
+            or f"pr:{pr_url}")
 
 
 def _mark_reviewed(key: str, worktree: str) -> None:
