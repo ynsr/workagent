@@ -2023,6 +2023,45 @@ def test_cleanup_unknown_pr_state_closes_without_merge(isolated_config, monkeypa
     assert "close" in calls
 
 
+def test_cleanup_repairs_stale_repo_from_live_worktree(isolated_config, tmp_path, monkeypatch):
+    """Stale recorded repo (wrong checkout) is repaired from the live
+    worktree, and the MR close runs with cwd inside the real repo."""
+    import subprocess
+    main = tmp_path / "main"
+    main.mkdir()
+    subprocess.run(["git", "-C", str(main), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(main), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(main), "config", "user.name", "t"], check=True)
+    (main / "f").write_text("x")
+    subprocess.run(["git", "-C", str(main), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(main), "commit", "-qm", "init"], check=True)
+    subprocess.run(["git", "-C", str(main), "checkout", "-qb", "feat/x"], check=True)
+    wt = tmp_path / "wt"
+    subprocess.run(["git", "-C", str(main), "worktree", "add", str(wt)], check=True)
+    store.record_link("jira:X-1", {"issue": "X-1", "worktree": str(wt),
+                                   "branch": "feat/x", "repo": "/stale/checkout",
+                                   "pr_url": "https://git.example.com/g/r/-/merge_requests/1"})
+    seen = {}
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda repo, branch, **k: seen.setdefault("repo", str(repo)) or {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    def close(parsed, url, force, cwd=None):
+        seen["cwd"] = cwd
+        # Worktree must still exist at close time: the close runs BEFORE
+        # git-wt teardown (IPG-953: close-after-teardown ran glab from a
+        # deleted cwd and failed with "no git remote points to a known host").
+        seen["wt_alive_at_close"] = Path(cwd).is_dir()
+    monkeypatch.setattr(cli, "_close_pr", close)
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": ""}})
+    cli._cleanup_one("jira:X-1", dict(store.load_links()["jira:X-1"]),
+                     force=False, yes=True, dry_run=False, json_output=True)
+    assert seen["repo"] == str(main)
+    assert seen["cwd"] == str(wt)
+    assert seen["wt_alive_at_close"] is True
+    assert "jira:X-1" not in store.load_links()
+
+
 def test_cutover_link_write_preserves_sessions(isolated_config):
     import json
     from harness import store_sqlite as sq

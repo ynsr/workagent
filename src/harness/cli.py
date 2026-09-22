@@ -787,14 +787,20 @@ def cleanup(
                           squash=not no_squash)
 
 
-def _merge_pr(pr_url: str, squash: bool) -> None:
-    """Merge an open PR/MR (squash by default); raise HarnessError on failure."""
+def _merge_pr(pr_url: str, squash: bool, cwd: str | None = None) -> None:
+    """Merge an open PR/MR (squash default); raise HarnessError on failure.
+
+    ``cwd`` must be inside the MR/PR's repo so gh/glab bind the right
+    host/remote — without it they probe the server's cwd (often an
+    unrelated checkout) and fail with "no git remote points to a known
+    host" or act on the wrong repo.
+    """
     if "github.com" in pr_url:
         run_cmd("gh", "pr", "merge", pr_url,
-                *([] if squash else ["--no-squash"]))
+                *([] if squash else ["--no-squash"]), cwd=cwd)
     else:
         run_cmd("glab", "mr", "merge", pr_url,
-                *([] if squash else ["--no-squash"]))
+                *([] if squash else ["--no-squash"]), cwd=cwd)
     eprint(f"merged {pr_url}")
 
 
@@ -811,7 +817,21 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
     repo = Path(entry.get("repo", "")).expanduser()
     branch = entry.get("branch", "")
     pr_url = entry.get("pr_url", "")
+    worktree = entry.get("worktree", "")
     stored_ref = entry.get("issue", "") or entry.get("pr_url", "") or key
+    # Host CLIs (gh/glab) bind host+remote from the process cwd. The
+    # recorded repo can be stale (e.g. a link created while cwd was an
+    # unrelated checkout), so prefer the live worktree — it resolves to
+    # the real repo via --git-common-dir — and repair the stored repo.
+    effective = worktrees.effective_repo_for_entry(dict(entry), default=repo) or repo
+    if effective != repo:
+        entry["repo"] = str(effective)
+        if not dry_run:
+            store.record_link(key, {"repo": str(effective)})
+    repo = effective
+    # cwd for host-CLI calls: the worktree when it still exists (its
+    # origin remote is authoritative), else the effective repo root.
+    host_cwd = worktree if worktree and Path(worktree).is_dir() else str(repo)
     try:
         parsed = refs.parse_ref(key if not key.startswith("pr:") else stored_ref)
     except HarnessError:
@@ -831,12 +851,18 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
         # Merge only on explicitly open states; unknown ("") falls back
         # to close-and-remove so offline/cache-miss cleanup still works.
         merge = bool(pr_url) and state in ("OPEN", "OPENED")
+    # Remote close BEFORE local teardown: host-CLI calls run with cwd
+    # inside the live worktree (its origin remote is authoritative). After
+    # git-wt removes the worktree the cwd no longer exists and glab falls
+    # back to the server cwd — an unrelated checkout — failing with
+    # "no git remote points to a known host" (IPG-953). Merge failures
+    # raise BEFORE teardown — nothing is torn down on a failed merge.
     if merge:
-        # Open PR/MR: merge (squash default) so no work is lost. Any
-        # failure raises BEFORE worktree removal / link drop / branch
-        # delete — nothing is torn down on a failed merge.
-        _merge_pr(pr_url, squash=squash)
+        _merge_pr(pr_url, squash=squash, cwd=host_cwd)
         merged_now = True
+    else:
+        _close_issue(parsed, force)
+        _close_pr(parsed, pr_url, force, cwd=host_cwd)
     cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=True,
                                      force=force, yes=yes)
     if merged_now:
@@ -846,9 +872,6 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
                     "--delete", branch)
         except HarnessError as e:
             eprint(f"warning: remote branch delete failed: {e}")
-    else:
-        _close_issue(parsed, force)
-        _close_pr(parsed, pr_url, force)
     remaining = {k: v for k, v in store.load_links().items() if k != key}
     store.save_links(remaining)
     if not json_output:
@@ -884,16 +907,16 @@ def _close_issue(parsed: dict, force: bool) -> None:
         eprint("note: glab issue close not automated in v1; close it in the UI.")
 
 
-def _close_pr(parsed: dict, pr_url: str, force: bool) -> None:
+def _close_pr(parsed: dict, pr_url: str, force: bool, cwd: str | None = None) -> None:
     url = pr_url or (parsed.get("url", "") if parsed.get("kind") in ("pr", "mr") else "")
     if not url:
         return
     try:
         from .errors import run_cmd as _run
         if "github.com" in url:
-            _run("gh", "pr", "close", url)
+            _run("gh", "pr", "close", url, cwd=cwd)
         else:
-            _run("glab", "mr", "close", url)
+            _run("glab", "mr", "close", url, cwd=cwd)
         eprint(f"closed {url}")
     except HarnessError as e:
         if "already closed" in str(e).lower() or "already been closed" in str(e).lower() or "404" in str(e) or "not found" in str(e).lower():

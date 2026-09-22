@@ -98,6 +98,27 @@ def pick_worktree(ref: str, resolved: str | list[str], links: dict | None = None
     return resolved[idx]
 
 
+def effective_repo_for_entry(entry: dict, default: Path | None = None) -> Path | None:
+    """Authoritative main repo for a link entry.
+
+    A live worktree resolves via ``--git-common-dir`` to its real main
+    checkout, which wins over the recorded ``repo`` (links created while
+    the server cwd was an unrelated checkout record the wrong repo).
+    Falls back to *default* (or the recorded repo) when no worktree.
+    """
+    from . import repos
+    wt = (entry.get("worktree", "") or "")
+    if wt and Path(wt).expanduser().is_dir():
+        try:
+            return repos.main_repo_root(Path(wt).expanduser())
+        except HarnessError:
+            pass
+    rec = (entry.get("repo", "") or "")
+    if rec:
+        return Path(rec).expanduser()
+    return default
+
+
 def is_valid_worktree(path: str) -> bool:
     """True when path exists and is a live git worktree."""
     from .errors import run_cmd
