@@ -835,7 +835,7 @@ def test_start_base_default_branch_still_creates_new_branch(isolated_config, tmp
     assert "branch" not in calls
 
 
-def test_start_no_harness_prints_command_and_skips_launch(isolated_config, tmp_path, monkeypatch):
+def test_start_no_runtime_prints_command_and_skips_launch(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     worktree = tmp_path / "wt"
@@ -846,18 +846,18 @@ def test_start_no_harness_prints_command_and_skips_launch(isolated_config, tmp_p
                                             "branch": "feat/22--add-login"})
     launched = []
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
-    r = runner.invoke(cli.app, ["start", "o/r#22", "--no-harness", "--json"])
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--no-runtime", "--json"])
     assert r.exit_code == 0, r.output
-    assert launched == []  # harness must not run
+    assert launched == []  # runtime must not run
     out = json.loads(r.stdout)
     assert out["worktree_path"] == str(worktree)
-    assert out["harness_command"].startswith("omp ")
-    assert "harness command: omp" in r.stderr
+    assert out["runtime_command"].startswith("omp ")
+    assert "runtime command: omp" in r.stderr
     assert str(worktree) in r.stderr
 
 
-def test_start_no_harness_tty_lands_shell_in_worktree(isolated_config, tmp_path, monkeypatch, capsys):
-    """TTY --no-harness replaces the process with the user's shell in the worktree."""
+def test_start_no_runtime_tty_lands_shell_in_worktree(isolated_config, tmp_path, monkeypatch, capsys):
+    """TTY --no-runtime replaces the process with the user's shell in the worktree."""
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     worktree = tmp_path / "wt"
@@ -879,15 +879,15 @@ def test_start_no_harness_tty_lands_shell_in_worktree(isolated_config, tmp_path,
     monkeypatch.setattr(cli.os, "execvp", fake_execvp)
     with pytest.raises(_Shell) as excinfo:
         cli.start(ref="o/r#22", repo=None, depth=7, base=None, harness=None,
-                  no_tty=False, no_harness=True, dry_run=False, yes=False, json_output=False)
+                  no_tty=False, no_runtime=True, dry_run=False, yes=False, json_output=False)
     assert excinfo.value.args[0] == "/bin/bash"
     assert excinfo.value.args[2] == str(worktree)
     captured = capsys.readouterr()
-    assert "harness command: omp" in captured.err
+    assert "runtime command: omp" in captured.err
     assert f"worktree_path: {worktree}" in captured.out
 
 
-def test_review_no_harness_prints_command_and_skips_launch(isolated_config, tmp_path, monkeypatch):
+def test_review_no_runtime_prints_command_and_skips_launch(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     worktree = tmp_path / "wt"
@@ -902,17 +902,17 @@ def test_review_no_harness_prints_command_and_skips_launch(isolated_config, tmp_
     launched = []
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
     r = runner.invoke(cli.app, ["review", "https://github.com/o/r/pull/33",
-                                "--no-harness", "--json"])
+                                "--no-runtime", "--json"])
     assert r.exit_code == 0, r.output
-    assert launched == []  # harness must not run
+    assert launched == []  # runtime must not run
     out = json.loads(r.stdout)
     assert out["worktree_path"] == str(worktree)
-    assert out["harness_command"].startswith("omp ")
-    assert "harness command: omp" in r.stderr
+    assert out["runtime_command"].startswith("omp ")
+    assert "runtime command: omp" in r.stderr
     assert str(worktree) in r.stderr
 
 
-def test_review_no_harness_tty_lands_shell_in_worktree(isolated_config, tmp_path, monkeypatch, capsys):
+def test_review_no_runtime_tty_lands_shell_in_worktree(isolated_config, tmp_path, monkeypatch, capsys):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     worktree = tmp_path / "wt"
@@ -937,14 +937,14 @@ def test_review_no_harness_tty_lands_shell_in_worktree(isolated_config, tmp_path
     monkeypatch.setattr(cli.os, "execvp", fake_execvp)
     with pytest.raises(_Shell) as excinfo:
         cli.review(ref="https://github.com/o/r/pull/33", repo=None, depth=7, harness=None,
-                   no_tty=False, no_harness=True, dry_run=False, yes=False, json_output=False,
+                   no_tty=False, no_runtime=True, dry_run=False, yes=False, json_output=False,
                    all_wts=False, sequential=False, fix=False, post_comments=False)
     assert excinfo.value.args[0] == "/bin/zsh"
     assert excinfo.value.args[2] == str(worktree)
 
 
-def test_no_harness_shorthand_N_on_start_and_review(isolated_config, tmp_path, monkeypatch):
-    """`-N` is accepted as shorthand for --no-harness on both subcommands."""
+def test_no_runtime_shorthand_N_on_start_and_review(isolated_config, tmp_path, monkeypatch):
+    """`-N` is accepted as shorthand for --no-runtime on both subcommands."""
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     worktree = tmp_path / "wt"
@@ -964,8 +964,8 @@ def test_no_harness_shorthand_N_on_start_and_review(isolated_config, tmp_path, m
                                  "--no-tty", "-N", "--json"])
     assert r2.exit_code == 0, r2.output
     assert launched == []
-    assert json.loads(r.stdout)["harness_command"].startswith("omp ")
-    assert json.loads(r2.stdout)["harness_command"].startswith("omp ")
+    assert json.loads(r.stdout)["runtime_command"].startswith("omp ")
+    assert json.loads(r2.stdout)["runtime_command"].startswith("omp ")
 
 
 def test_base_completion_lists_cwd_git_branches(isolated_config, tmp_path, monkeypatch):
@@ -1325,7 +1325,7 @@ def test_review_reuses_existing_worktree_by_branch(isolated_config, tmp_path, mo
                                                                   "branch": kw.get("branch")})
     launched = []
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
-    r = runner.invoke(cli.app, ["review", "feat/IPG-929--x", "--no-tty", "--no-harness", "--json"])
+    r = runner.invoke(cli.app, ["review", "feat/IPG-929--x", "--no-tty", "--no-runtime", "--json"])
     assert r.exit_code == 0, r.output
     assert started == []  # no new worktree created
     assert json.loads(r.stdout)["worktree_path"] == str(wt)
@@ -1484,8 +1484,8 @@ def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
     url = "https://github.com/o/r/pull/33"
     key = f"pr:{url}"
 
-    # --no-harness starts nothing: must not mark reviewed (Task 2 precedent).
-    r0 = runner.invoke(cli.app, ["review", url, "--no-tty", "--no-harness", "--json"])
+    # --no-runtime starts nothing: must not mark reviewed (Task 2 precedent).
+    r0 = runner.invoke(cli.app, ["review", url, "--no-tty", "--no-runtime", "--json"])
     assert r0.exit_code == 0, r0.output
     assert launched == []
     assert store.load_links()[key].get("reviewed") is None
@@ -1590,8 +1590,8 @@ def test_run_harness_records_and_clears(monkeypatch):
     assert ("rec", "jira:X", "omp") in rec and ("clr", "jira:X") in rec
 
 
-def test_start_no_harness_not_guarded_when_busy(isolated_config, tmp_path, monkeypatch):
-    """--no-harness starts nothing: never guarded, never refused."""
+def test_start_no_runtime_not_guarded_when_busy(isolated_config, tmp_path, monkeypatch):
+    """--no-runtime starts nothing: never guarded, never refused."""
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     _start_mocks(monkeypatch, repo_dir)
@@ -1603,7 +1603,7 @@ def test_start_no_harness_not_guarded_when_busy(isolated_config, tmp_path, monke
     monkeypatch.setattr(cli.gitwt, "start_worktree",
                         lambda repo, **kw: {"worktree_path": "/tmp/wt", "branch": "feat/22--add-login"})
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
-    r = runner.invoke(cli.app, ["start", "o/r#22", "--no-harness", "--json"])
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--no-runtime", "--json"])
     assert r.exit_code == 0, r.output
     assert "already has a live harness" not in r.stderr
     assert launched == []
@@ -1645,7 +1645,7 @@ def test_review_all_dry_run_prints_plan_without_spawning(isolated_config,
         assert "--no-tty" in row["command"] and "--post-comments" in row["command"]
 
 
-def test_review_all_no_harness_prints_commands_without_spawning(isolated_config,
+def test_review_all_no_runtime_prints_commands_without_spawning(isolated_config,
                                                                 tmp_path,
                                                                 monkeypatch):
     """--all -N prints each child command as summary rows without spawning."""
@@ -1666,7 +1666,7 @@ def test_review_all_no_harness_prints_commands_without_spawning(isolated_config,
             spawned.append(argv)
 
     monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
-    r = runner.invoke(cli.app, ["review", "--all", "--no-harness", "--json"])
+    r = runner.invoke(cli.app, ["review", "--all", "--no-runtime", "--json"])
     assert r.exit_code == 0, r.output
     assert spawned == []
     out = json.loads(r.stdout)
@@ -1922,7 +1922,7 @@ def test_run_harness_writes_session_row(isolated_config, tmp_path, monkeypatch):
     assert rows[0]["file_path"].endswith(".jsonl")
 
 
-def test_run_harness_no_harness_writes_nothing(isolated_config, tmp_path, monkeypatch):
+def test_run_harness_no_runtime_writes_nothing(isolated_config, tmp_path, monkeypatch):
     from harness import store_sqlite as sq
     result = {"key": "k"}
     cli._run_harness("omp", "prompt", "/tmp/wt", "/tmp", False,

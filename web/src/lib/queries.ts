@@ -114,6 +114,20 @@ export function useCancelRun() {
   })
 }
 
+/** Resume a run's runtime session in the OS terminal (fire-and-forget). */
+export function useResumeRun() {
+  return useMutation({
+    mutationFn: (id: string) => api.resumeRun(id),
+  })
+}
+
+/** Resume a persisted session in the OS terminal (fire-and-forget). */
+export function useResumeSession() {
+  return useMutation({
+    mutationFn: (id: string) => api.resumeSession(id),
+  })
+}
+
 /** Invalidate shared queries after any run finishes (config-changing commands). */
 export function invalidateAfterRun(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: queryKeys.runs })

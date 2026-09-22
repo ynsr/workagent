@@ -69,7 +69,7 @@ interface LaunchForm {
   depth: string
   base: string
   harness: string
-  noHarness: boolean
+  noRuntime: boolean
   merge: boolean
   dryRun: boolean
   json: boolean
@@ -81,7 +81,7 @@ const INITIAL: LaunchForm = {
   depth: "7",
   base: "",
   harness: DEFAULT_HARNESS,
-  noHarness: false,
+  noRuntime: false,
   merge: false,
   dryRun: false,
   json: false,
@@ -163,7 +163,7 @@ export function Launch() {
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
     if (mode === "start" && form.base.trim()) args.push("--base", form.base.trim())
     if (harnessValue) args.push("--harness", harnessValue)
-    if (mode === "start" && form.noHarness) args.push("--no-harness")
+    if (mode === "start" && form.noRuntime) args.push("--no-runtime")
     if (form.dryRun) args.push("--dry-run")
     if (form.json) args.push("--json")
     return args
@@ -181,7 +181,7 @@ export function Launch() {
         `--depth ${form.depth.trim() || "7"}`,
         mode === "start" && form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
         harnessValue ? `--harness ${harnessValue}` : "harness: configured default",
-        mode === "start" && form.noHarness ? "--no-harness" : null,
+        mode === "start" && form.noRuntime ? "--no-runtime" : null,
         form.dryRun ? "--dry-run" : null,
         form.json ? "--json" : null,
       ].filter((v): v is string => v !== null)
@@ -369,12 +369,12 @@ export function Launch() {
             {mode === "start" ? (
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="launch-no-harness"
-                  checked={form.noHarness}
-                  onCheckedChange={(v) => update("noHarness", v === true)}
+                  id="launch-no-runtime"
+                  checked={form.noRuntime}
+                  onCheckedChange={(v) => update("noRuntime", v === true)}
                 />
-                <Label htmlFor="launch-no-harness" className="font-normal">
-                  <span className="font-mono text-[13px]">--no-harness</span> — skip the agent: print the command and hand over the worktree
+                <Label htmlFor="launch-no-runtime" className="font-normal">
+                  <span className="font-mono text-[13px]">--no-runtime</span> — skip the agent: print the command and hand over the worktree
                 </Label>
               </div>
             ) : null}

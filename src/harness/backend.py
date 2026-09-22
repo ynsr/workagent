@@ -65,7 +65,7 @@ def get_runtime(name: str) -> Runtime:
 
 def command_argv(harness: str, prompt: str, no_tty: bool,
                  extra_args: list[str] | None = None) -> list[str]:
-    """Full harness argv — shared by launch() and the --no-harness preview."""
+    """Full harness argv — shared by launch() and the --no-runtime preview."""
     return get_runtime(harness).command_argv(prompt, no_tty, extra_args)
 
 

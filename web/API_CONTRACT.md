@@ -155,8 +155,14 @@ another run holds the same target key.
 [{"id": "abc123", "command": "sync", "args": ["IPG-932"],
   "state": "running", "exit_code": null, "truncated": false,
   "created": 1730000000.0, "target": "sync:jira:IPG-932",
-  "last_seq": 42}]
+  "session_file": "/home/x/.config/harness/sessions/omp/….jsonl",
+  "worktree": "/home/x/wt", "last_seq": 42}]
 ```
+`session_file`/`worktree` are non-empty only for runs that executed a
+runtime session (`start`/`review`, or `sync` with an explicit
+`--session-file`); the web server injects `--session-file` for
+`start`/`review` launches. Clients show resume buttons iff
+`session_file` is present.
 
 ### `GET /api/runs/{id}` → detail (adds `lines`)
 `lines`: `[{"seq": 1, "text": "syncing jira:IPG-932 …"}, …]`
@@ -164,15 +170,23 @@ another run holds the same target key.
 
 ### `GET /api/runs/{id}/events` — SSE
 - `event: log`, `data: {"seq": N, "text": "…"}`, `id: N`.
-- `event: state`, `data: {"state": "succeeded", "exit_code": 0}` — final;
-  the stream closes after it.
-- `Last-Event-ID: N` resumes after seq N (replays log lines with
-  `seq > N`; the final state event is always emitted again).
-- Keepalive comment lines (`: keepalive`) may appear.
-
 ### `POST /api/runs/{id}/cancel` → `{"id": …, "state": "cancelled"}`
 409 when the run already finished. Server sends SIGTERM to the process
 group, SIGKILL after 10 s.
+
+### `POST /api/runs/{id}/resume` → `{"id": …, "session_file": …, "worktree": …}`
+Non-destructive (same class as `open`): no confirm needed. Detached-spawns
+the OS default terminal running
+`cd <worktree> && omp --resume <session_file>` (`$TERMINAL` →
+`xdg-terminal-exec` → gnome-terminal/konsole/xfce4-terminal/xterm;
+macOS `open -a Terminal`; Windows `cmd /k`). 404 `no_session` when the run
+executed no runtime session, `missing_session` when the transcript is
+absent, `no_worktree` when the target has no recorded worktree.
+
+### `POST /api/sessions/{id}/resume` → same shape
+Same terminal spawn for a persisted session row (`worktree` resolved from
+the row, else the recorded worktree ref via `/api/path`); 404
+`not_found`/`missing_session`/`no_worktree` as applicable.
 
 ## Run states
 `running` → `succeeded` (exit 0) | `failed` (exit 1 or other non-zero)

@@ -159,6 +159,8 @@ export interface Run {
   truncated: boolean
   created: number
   target: string
+  session_file: string
+  worktree: string
   last_seq: number
 }
 
@@ -298,6 +300,20 @@ export const api = {
   cancelRun: (id: string) =>
     request<{ id: string; state: string }>(
       `/api/runs/${encodeURIComponent(id)}/cancel`,
+      { method: "POST" },
+    ),
+
+  /** POST /api/runs/{id}/resume — open OS terminal resumed on the run session. */
+  resumeRun: (id: string) =>
+    request<{ id: string; session_file: string; worktree: string }>(
+      `/api/runs/${encodeURIComponent(id)}/resume`,
+      { method: "POST" },
+    ),
+
+  /** POST /api/sessions/{id}/resume — open OS terminal resumed on the session. */
+  resumeSession: (id: string) =>
+    request<{ id: string; session_file: string; worktree: string }>(
+      `/api/sessions/${encodeURIComponent(id)}/resume`,
       { method: "POST" },
     ),
 }

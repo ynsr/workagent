@@ -428,22 +428,22 @@ def test_build_argv_uses_same_interpreter():
     assert argv[4:] == ["start", "IPG-1", "--no-tty"]
 
 
-def test_start_accepts_and_forwards_no_harness(client, monkeypatch):
-    """`start --no-harness` passes validation and reaches the child argv."""
+def test_start_accepts_and_forwards_no_runtime(client, monkeypatch):
+    """`start --no-runtime` passes validation and reaches the child argv."""
     _stub_spawn(monkeypatch)
     r = client.post("/api/runs", json={
-        "command": "start", "args": ["IPG-1", "--no-tty", "--no-harness"],
+        "command": "start", "args": ["IPG-1", "--no-tty", "--no-runtime"],
         "confirm": True,
     })
     assert r.status_code == 202, r.text
     rid = r.json()["run_id"]
     run = client.app.state.registry.get(rid)
-    assert run.argv[-2:] == ["--no-harness", "--yes"]  # server appends --yes
+    assert run.argv[-2:] == ["--no-runtime", "--yes"]  # server appends --yes
     _wait_state(client, rid, {"succeeded"})
 
 
-def test_review_accepts_no_harness_shorthand_N(client, monkeypatch):
-    """-N (CLI shorthand) passes web validation like --no-harness."""
+def test_review_accepts_no_runtime_shorthand_N(client, monkeypatch):
+    """-N (CLI shorthand) passes web validation like --no-runtime."""
     _stub_spawn(monkeypatch)
     r = client.post("/api/runs", json={
         "command": "review", "args": ["o/r#33", "-N", "--dry-run"],
@@ -673,3 +673,89 @@ def test_register_run_key_unique_per_path(client):
     assert r1.status_code == 202, r1.text
     assert r2.status_code == 202, r2.text
     assert r1.json()["run_id"] != r2.json()["run_id"]
+
+
+def test_start_run_injects_session_file(client, monkeypatch):
+    seen: dict = {}
+
+    def fake_spawn(run, registry):
+        seen["argv"] = run.argv
+        seen["session_file"] = run.session_file
+        with run.lock:
+            run.exit_code = 0
+            run.state = "succeeded"
+        registry.release_target(run)
+
+    monkeypatch.setattr("harness.webapp._spawn", fake_spawn)
+    r = client.post("/api/runs", json={"command": "start",
+                                       "args": ["IPG-1"],
+                                       "confirm": True})
+    assert r.status_code == 202, r.text
+    assert seen["session_file"].endswith(".jsonl")
+    assert "--session-file" in seen["argv"]
+    detail = client.get(f"/api/runs/{r.json()['run_id']}").json()
+    assert detail["session_file"] == seen["session_file"]
+
+
+def test_sync_explicit_session_file_recorded(client, monkeypatch):
+    seen: dict = {}
+
+    def fake_spawn(run, registry):
+        seen["argv"] = run.argv
+        with run.lock:
+            run.exit_code = 0
+            run.state = "succeeded"
+        registry.release_target(run)
+
+    monkeypatch.setattr("harness.webapp._spawn", fake_spawn)
+    body = {"command": "sync", "args": ["k", "--session-file", "/tmp/s.jsonl"],
+            "confirm": True}
+    r = client.post("/api/runs", json=body)
+    assert r.status_code == 202, r.text
+    assert seen["argv"].count("--session-file") == 1
+    detail = client.get(f"/api/runs/{r.json()['run_id']}").json()
+    assert detail["session_file"] == "/tmp/s.jsonl"
+
+
+def test_resume_run_needs_session(client):
+    run = client.app.state.registry.create("register", ["/tmp/x"],
+                                           "register:/tmp/x")
+    r = client.post(f"/api/runs/{run.id}/resume")
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "no_session"
+
+
+def test_resume_run_opens_terminal(client, monkeypatch, tmp_path):
+    session = tmp_path / "s.jsonl"
+    session.write_text("{}\n")
+    opened: dict = {}
+    monkeypatch.setattr("harness.webapp._open_terminal",
+                        lambda wt, sf: opened.update(wt=wt, sf=sf))
+    run = client.app.state.registry.create("review", ["o/r#1"],
+                                           "review:o/r#1")
+    run.session_file = str(session)
+    run.worktree = "/tmp/wt"
+    r = client.post(f"/api/runs/{run.id}/resume")
+    assert r.status_code == 200, r.text
+    assert opened == {"wt": "/tmp/wt", "sf": str(session)}
+
+
+def test_resume_session_opens_terminal(client, monkeypatch, tmp_path):
+    from harness import store_sqlite as sq
+    session = tmp_path / "s.jsonl"
+    session.write_text("{}\n")
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO repos (key_ref, path) VALUES ('r', '/r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
+                     " VALUES ('k', '/wt', 'b', 'r')")
+    sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
+                            initiator_command="start", prompt="hello",
+                            file_path=str(session))
+    opened: dict = {}
+    monkeypatch.setattr("harness.webapp._open_terminal",
+                        lambda wt, sf: opened.update(wt=wt, sf=sf))
+    r = client.post(f"/api/sessions/{sid}/resume")
+    assert r.status_code == 200, r.text
+    assert opened == {"wt": "/wt", "sf": str(session)}

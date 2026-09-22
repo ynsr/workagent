@@ -21,8 +21,57 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { type Run } from "@/lib/api"
-import { useCancelRun, useRuns } from "@/lib/queries"
-import { argsText, copyToClipboard, relativeTime, shortId } from "@/lib/format"
+import { useCancelRun, useResumeRun, useRuns } from "@/lib/queries"
+import {
+  argsText,
+  copyToClipboard,
+  relativeTime,
+  resumeCommand,
+  shortId,
+} from "@/lib/format"
+
+/** Resume-in-terminal + copy-resume-command buttons; only runs that
+ * executed a runtime session carry a session_file. */
+export function SessionActions({ run }: { run: Run }) {
+  const resume = useResumeRun()
+  if (!run.session_file) return null
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label={`Resume session for run ${run.id} in terminal`}
+        title="Resume session in terminal"
+        disabled={resume.isPending}
+        onClick={(e) => {
+          e.preventDefault()
+          resume
+            .mutateAsync(run.id)
+            .then(() => toast.success("Terminal opened on the session"))
+            .catch((err: unknown) => toast.error(errorText(err)))
+        }}
+        className="size-9 text-muted-foreground hover:text-foreground"
+      >
+        <SquareTerminal aria-hidden />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label={`Copy resume command for run ${run.id}`}
+        title="Copy resume command"
+        onClick={(e) => {
+          e.preventDefault()
+          copyToClipboard(resumeCommand(run.worktree, run.session_file))
+            .then(() => toast.success("Resume command copied"))
+            .catch((err: unknown) => toast.error(errorText(err)))
+        }}
+        className="size-9 text-muted-foreground hover:text-foreground"
+      >
+        <Copy aria-hidden />
+      </Button>
+    </>
+  )
+}
 
 const FILTERS = [
   { value: "all", label: "All" },
@@ -214,7 +263,10 @@ export function Runs() {
                       {relativeTime(run.created)}
                     </TableCell>
                     <TableCell>
-                      {run.state === "running" ? <CancelButton run={run} /> : null}
+                      <div className="flex items-center">
+                        <SessionActions run={run} />
+                        {run.state === "running" ? <CancelButton run={run} /> : null}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -248,7 +300,10 @@ export function Runs() {
                     <span>
                       exit {run.exit_code ?? "—"} · {relativeTime(run.created)}
                     </span>
-                    {run.state === "running" ? <CancelButton run={run} /> : null}
+                    <div className="flex items-center">
+                      <SessionActions run={run} />
+                      {run.state === "running" ? <CancelButton run={run} /> : null}
+                    </div>
                   </div>
                 </CardContent>
               </Card>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { ArrowLeft, Ban, Redo, SquareTerminal } from "lucide-react"
+import { ArrowLeft, Ban, Copy, Redo, SquareTerminal } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
 import { RunStateBadge } from "@/components/StateBadge"
 import { ErrorState, errorText } from "@/components/StatusFeedback"
@@ -18,8 +18,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { mergeLines, useRunEvents } from "@/hooks/useRunEvents"
 import { api, type CreateRunInput, type RunDetail as RunDetailData, type RunLine } from "@/lib/api"
 import { useConfirm } from "@/lib/confirm"
-import { relativeTime, shortId } from "@/lib/format"
-import { queryKeys, useCancelRun, useRun } from "@/lib/queries"
+import { queryKeys, useCancelRun, usePath, useResumeRun, useRun } from "@/lib/queries"
+import { copyToClipboard, relativeTime, resumeCommand, shortId } from "@/lib/format"
 import { DESTRUCTIVE_COMMANDS, commandAction, commandLabel } from "@/lib/runs"
 
 function LogViewer({
@@ -100,6 +100,52 @@ function LogViewer({
     </div>
   )
 }
+/** Resume/copy buttons for a run that executed a runtime session. */
+function RunSessionActions({
+  runId,
+  target,
+  worktree,
+  sessionFile,
+}: {
+  runId: string
+  target: string
+  worktree: string
+  sessionFile: string
+}) {
+  const resume = useResumeRun()
+  const pathQ = usePath(target)
+  const wt = worktree || pathQ.data?.worktree || ""
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={resume.isPending}
+        onClick={() => {
+          resume
+            .mutateAsync(runId)
+            .then(() => toast.success("Terminal opened on the session"))
+            .catch((err: unknown) => toast.error(errorText(err)))
+        }}
+      >
+        <SquareTerminal aria-hidden /> Resume in terminal
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={!wt}
+        onClick={() => {
+          copyToClipboard(resumeCommand(wt, sessionFile))
+            .then(() => toast.success("Resume command copied"))
+            .catch((err: unknown) => toast.error(errorText(err)))
+        }}
+      >
+        <Copy aria-hidden /> Copy resume command
+      </Button>
+    </>
+  )
+}
+
 
 export function RunDetail() {
   const { runId = "" } = useParams()
@@ -216,10 +262,23 @@ export function RunDetail() {
         actions={
           <>
             <Button variant="ghost" size="sm" asChild>
+              <Link to={`/runs?target=${encodeURIComponent(run.target)}`}>
+                <ArrowLeft aria-hidden /> Same worktree runs
+              </Link>
+            </Button>
+            <Button variant="ghost" size="sm" asChild>
               <Link to="/runs">
                 <ArrowLeft aria-hidden /> All runs
               </Link>
             </Button>
+            {run.session_file ? (
+              <RunSessionActions
+                runId={run.id}
+                target={run.target}
+                worktree={run.worktree}
+                sessionFile={run.session_file}
+              />
+            ) : null}
             {isRunning ? (
               <Button
                 variant="destructive"

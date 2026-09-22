@@ -21,6 +21,17 @@
 - Fixed `review` reading `--dry-run` without defining the flag.
 
 ## Unreleased
+- Runtime session resume: every real `start`/`review` launch carries a
+  transcript path (`--session-file`, routed to omp as `--resume`; the web
+  server injects one per run). Runs expose `session_file`/`worktree` and
+  resume buttons (terminal + copy `cd <worktree> && omp --resume <file>`)
+  appear on Sessions rows/detail always and on run rows/Run log page only
+  when the run executed a runtime session. New `POST
+  /api/runs/{id}/resume` and `POST /api/sessions/{id}/resume` spawn the OS
+  default terminal detached (`$TERMINAL` → `xdg-terminal-exec` →
+  gnome-terminal/konsole/xfce4-terminal/xterm). Rename `--no-harness`
+  (`-N`) → `--no-runtime` everywhere (flag, `runtime_command` result key,
+  messages, docs).
 - `review` reuses a tracked worktree's row instead of inserting a
   `pr:<url>` alias that collides on the `worktrees.branch` UNIQUE key
   (crashed re-reviewing tracked worktrees); the row matcher keys on

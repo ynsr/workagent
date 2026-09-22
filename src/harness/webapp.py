@@ -71,9 +71,9 @@ SPECS: dict[str, dict[str, Any]] = {
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
-    "start": ("-N", "--no-tty", "--no-harness", "--dry-run", "--yes",
+    "start": ("-N", "--no-tty", "--no-runtime", "--dry-run", "--yes",
               "--json"),
-    "review": ("-N", "--no-tty", "--no-harness", "--dry-run", "--yes",
+    "review": ("-N", "--no-tty", "--no-runtime", "--dry-run", "--yes",
                "--json", "--all", "--sequential", "--fix"),
     "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--no-squash"),
     "open": (),
@@ -189,6 +189,60 @@ def _target_for(command: str, args: list[str]) -> str:
     return key(rest) if callable(key) else key
 
 
+def _has_session_file(command: str, args: list[str]) -> bool:
+    return _session_file_arg(command, args) != ""
+
+
+def _session_file_arg(command: str, args: list[str]) -> str:
+    for i, a in enumerate(args):
+        if a == "--session-file" and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith("--session-file="):
+            return a.split("=", 1)[1]
+    return ""
+
+
+def _session_file_for(sid: str) -> str:
+    from . import store_sqlite as _sq
+    try:
+        return str(_sq.session_file_path(sid, "omp"))
+    except Exception:
+        from . import store as _store
+        base = _store.config_dir() / "sessions" / "omp"
+        base.mkdir(parents=True, exist_ok=True)
+        return str(base / f"{sid}.jsonl")
+
+
+def _worktree_for_target(target: str) -> str:
+    """Best-effort worktree path for a run target (review:/sync: keys strip
+    to the recorded worktree ref)."""
+    from . import store as _store
+    try:
+        links = _store.load_links()
+    except Exception:
+        return ""
+    if target in links and isinstance(links[target], dict):
+        wt = links[target].get("worktree", "")
+        if wt:
+            return wt
+    for prefix in ("review:", "sync:", "cleanup:", "open:"):
+        if target.startswith(prefix):
+            ref = target[len(prefix):]
+            if ref in links and isinstance(links[ref], dict):
+                wt = links[ref].get("worktree", "")
+                if wt:
+                    return wt
+            for key, entry in links.items():
+                if not isinstance(entry, dict):
+                    continue
+                if key == ref or entry.get("branch") == ref \
+                        or entry.get("worktree") == ref:
+                    wt = entry.get("worktree", "")
+                    if wt:
+                        return wt
+    return ""
+
+
 @dataclass
 class Run:
     id: str
@@ -204,6 +258,8 @@ class Run:
     proc: subprocess.Popen | None = None
     created: float = field(default_factory=time.time)
     lock: threading.RLock = field(default_factory=threading.RLock)
+    session_file: str = ""
+    worktree: str = ""
 
     def append(self, text: str) -> None:
         with self.lock:
@@ -265,6 +321,8 @@ def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
                            "exit_code": run.exit_code,
                            "truncated": run.truncated,
                            "created": run.created, "target": run.target,
+                           "session_file": run.session_file,
+                           "worktree": run.worktree,
                            "last_seq": run.last_seq}
     if lines is not None:
         out["lines"] = [{"seq": s, "text": t} for s, t in lines]
@@ -338,6 +396,56 @@ def _port_free(host: str, port: int) -> bool:
             return True
         except OSError:
             return False
+
+
+def _worktree_for_session(row: dict) -> str:
+    wt = row.get("worktree", "")
+    if wt:
+        return wt
+    return _worktree_for_target(row.get("worktree_ref", ""))
+
+
+def _resume_shell_command(worktree: str, session_file: str) -> str:
+    return f"cd {shlex.quote(worktree)} && omp --resume {shlex.quote(session_file)}"
+
+
+def _open_terminal(worktree: str, session_file: str) -> None:
+    """Detached-spawn the OS default terminal resumed on the session
+    (mirrors `harness open` detachment)."""
+    cmd = _resume_shell_command(worktree, session_file)
+    kwargs: dict = {"stdin": subprocess.DEVNULL,
+                    "stdout": subprocess.DEVNULL,
+                    "stderr": subprocess.DEVNULL}
+    if os.name == "posix":
+        kwargs["start_new_session"] = True
+    if sys.platform == "darwin":
+        argv = ["open", "-a", "Terminal", worktree, "--args",
+                "bash", "-lc", cmd]
+    elif os.name == "nt":
+        argv = ["cmd", "/c", "start", "", "cmd", "/k", cmd]
+    else:
+        term = os.environ.get("TERMINAL", "")
+        candidates = ([term] if term else []) + [
+            "xdg-terminal-exec", "gnome-terminal", "konsole",
+            "xfce4-terminal", "xterm"]
+        for t in candidates:
+            if t and shutil.which(t):
+                if t == "xdg-terminal-exec":
+                    argv = [t, "bash", "-lc", cmd]
+                elif t == "gnome-terminal":
+                    argv = [t, "--", "bash", "-lc", cmd]
+                elif t == "konsole":
+                    argv = [t, "-e", "bash", "-lc", cmd]
+                else:
+                    argv = [t, "-e", f"bash -lc {shlex.quote(cmd)}"]
+                break
+        else:
+            raise ApiError("no_terminal",
+                           "no terminal emulator found (set $TERMINAL)", 500)
+    try:
+        subprocess.Popen(argv, **kwargs)
+    except FileNotFoundError as e:
+        raise ApiError("no_terminal", f"terminal spawn failed: {e}", 500)
 
 
 def create_app(static_dir: Path, host: str, port: int,
@@ -500,6 +608,18 @@ def create_app(static_dir: Path, host: str, port: int,
             tail.append("--yes")
         if body.force and spec["force"]:
             tail.append("--force")
+        if body.command in ("start", "review") \
+                and "--dry-run" not in body.args \
+                and not _has_session_file(body.command, body.args) \
+                and "--no-runtime" not in body.args:
+            from . import store_sqlite as _sq
+            session_file = _session_file_for(_sq.gen_session_id())
+            tail += ["--session-file", session_file]
+            run.session_file = session_file
+        else:
+            run.session_file = _session_file_arg(body.command, body.args) or ""
+        if body.command in ("start", "review", "sync"):
+            run.worktree = _worktree_for_target(target) or ""
         run.argv = argv + tail
         _spawn(run, registry)
         return {"run_id": run.id}
@@ -554,6 +674,50 @@ def create_app(static_dir: Path, host: str, port: int,
             raise ApiError("conflict", f"run {run_id} is not running", 409)
         _cancel(run)
         return {"id": run.id, "state": run.state}
+
+    @app.post("/api/runs/{run_id}/resume")
+    async def resume_run(run_id: str) -> dict:
+        """Open the OS default terminal resumed on this run's session.
+
+        Non-destructive (same class as `open`): no confirm needed. 404 when
+        the run executed no runtime session or the transcript is missing.
+        """
+        run = registry.get(run_id)
+        session_file = run.session_file \
+            or _session_file_arg(run.command, run.args)
+        if not session_file:
+            raise ApiError("no_session",
+                           f"run {run_id} executed no runtime session", 404)
+        if not Path(session_file).exists():
+            raise ApiError("missing_session",
+                           f"session transcript missing: {session_file}", 404)
+        worktree = run.worktree or _worktree_for_target(run.target)
+        if not worktree:
+            raise ApiError("no_worktree",
+                           f"no worktree for target {run.target!r}", 404)
+        _open_terminal(worktree, session_file)
+        return {"id": run.id, "session_file": session_file,
+                "worktree": worktree}
+
+    @app.post("/api/sessions/{sid}/resume")
+    async def resume_session(sid: str) -> dict:
+        """Open the OS default terminal resumed on a persisted session."""
+        from . import store_sqlite as _sq
+        db = _sq.db_path()
+        row = _sq.get_session(db, sid) if db.exists() else None
+        if row is None:
+            raise ApiError("not_found", f"no session {sid}", 404)
+        session_file = row.get("file_path", "")
+        if not session_file or not Path(session_file).exists():
+            raise ApiError("missing_session",
+                           f"session transcript missing: {session_file}", 404)
+        worktree = _worktree_for_session(row) or ""
+        if not worktree:
+            raise ApiError("no_worktree",
+                           f"no worktree for session {sid}", 404)
+        _open_terminal(worktree, session_file)
+        return {"id": sid, "session_file": session_file,
+                "worktree": worktree}
 
     @app.exception_handler(ApiError)
     async def api_error(request: Request, exc: ApiError) -> JSONResponse:
