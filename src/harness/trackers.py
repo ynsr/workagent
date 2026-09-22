@@ -17,6 +17,34 @@ from . import pick, refs, repos, store
 from .errors import HarnessError, run_cmd
 
 
+def default_tracker_for_repo(path: str | Path, tool: str | None = None) -> str:
+    """Best-effort tracker id from a local repo's origin remote.
+
+    GitHub remotes → ``github:OWNER/REPO``; GitLab remotes →
+    ``gitlab:<host>/<group>/<repo>``. ``""`` when the remote is missing
+    or matches neither host CLI.
+    """
+    from . import repos as _repos
+    p = Path(path).expanduser()
+    url = _repos.remote_url(p)
+    if not url:
+        return ""
+    host = _repos._remote_host(url) or ""
+    cli = tool or _repos._detect_host_cli(p)
+    if host == "github.com" or cli == "gh":
+        m = re.match(r"^(?:https?://github\.com/|ssh://(?:[^/@]+@)?github\.com[:/]|[^@]+@github\.com:)([^/]+/[^/]+?)(?:\.git)?/?$", url, re.IGNORECASE)
+        if m:
+            return f"github:{m.group(1)}"
+        return ""
+    if cli == "glab" or host in _repos._known_glab_hosts():
+        m = re.match(r"^(?:[a-z][a-z0-9+.-]*://(?:[^/@]+@)?([^/:?#]+)[:/]|[^/@]+@([^/:]+):)(.+?)(?:\.git)?/?$", url, re.IGNORECASE)
+        if m:
+            repo = re.sub(r"/-/.*$", "", m.group(3)).strip("/")
+            return f"gitlab:{host}/{repo}" if host and repo else ""
+        return ""
+    return ""
+
+
 def normalize_id(raw: str) -> str:
     """Normalize user input to a canonical tracker id.
 
@@ -38,7 +66,6 @@ def normalize_id(raw: str) -> str:
     except Exception:
         return s
     return tid or s
-
 
 def tracker_id(parsed: dict) -> str:
     """Derive the tracker id for a parsed ref; ``""`` when unknowable."""

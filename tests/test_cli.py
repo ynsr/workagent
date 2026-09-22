@@ -2079,10 +2079,28 @@ def test_candidates_reset_cache_clears(isolated_config, monkeypatch):
     assert sq.get_issue_cache(db, "jira") == ([], None)
 
 
-def test_repo_add_requires_tracker(isolated_config, tmp_path):
+def test_repo_add_derives_tracker_from_github_remote(isolated_config, tmp_path, monkeypatch):
+    """--tracker omitted: GitHub origin → github:O/R mapping (issue #19)."""
+    import subprocess
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    subprocess.run(["git", "-C", str(repo_dir), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(repo_dir), "remote", "add", "origin",
+                    "https://github.com/owner/repo.git"], check=True)
+    monkeypatch.setattr(cli.repos, "_detect_host_cli", lambda path: "gh")
+    r = _invoke("repo", "add", "--name", "p", "--path", str(repo_dir), "--json")
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert out["tracker"] == "github:owner/repo"
+    assert store.load_config()["trackers"]["github:owner/repo"]["repos"] == [str(repo_dir.resolve())]
+
+
+def test_repo_add_no_remote_still_needs_tracker(isolated_config, tmp_path):
     r = _invoke("repo", "add", "--name", "p", "--path", str(tmp_path))
     assert r.exit_code == 2
     assert "--tracker" in r.output
+    # Failure path leaves no half-registered repo (review catch).
+    assert store.load_config().get("repos", {}) == {}
 
 
 def test_repo_list_shows_tracker(isolated_config, tmp_path):

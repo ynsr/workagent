@@ -21,6 +21,16 @@
 - Fixed `review` reading `--dry-run` without defining the flag.
 
 ## Unreleased
+- Fix #16: `parse_ref` accepts the `jira:KEY` form `issue_key()` emits, so
+  web Start runs launched from issue dropdown keys (`jira:IPG-984`) parse.
+- Fix #15: stale `--no-harness` (renamed to `--no-runtime` in #14) is
+  rejected by `/api/runs` validation with a hint naming `--no-runtime`;
+  current `--no-runtime`/`-N` already validated (reporter's serve predated
+  the rename — reinstall/rebuild after pulling).
+- Fix #19: `repo add` no longer requires `--tracker` when the origin remote
+  reveals it — GitHub remotes map to `github:OWNER/REPO`, GitLab remotes to
+  `gitlab:<host>/<group>/<repo>`; unknowable remotes still exit 2 with no
+  half-registered repo left behind.
 - Runtime session resume: every real `start`/`review` launch carries a
   transcript path (`--session-file`, routed to omp as `--resume`; the web
   server injects one per run). Runs expose `session_file`/`worktree` and

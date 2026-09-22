@@ -32,6 +32,13 @@ def test_shorthand_and_bare_number():
     assert refs.parse_ref("22")["kind"] == "issue_or_pr"
 
 
+def test_jira_prefixed_key_round_trip():
+    """issue_key() emits jira:KEY; parse_ref must accept it back (issue #16)."""
+    p = refs.parse_ref("jira:IPG-984")
+    assert p["tool"] == "jira-cli" and p["number"] == "IPG-984"
+    assert refs.issue_key(p) == "jira:IPG-984"
+
+
 def test_unknown_rejected():
     with pytest.raises(HarnessError):
         refs.parse_ref("not a ref at all !!!")

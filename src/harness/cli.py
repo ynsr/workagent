@@ -925,19 +925,22 @@ def repo_add(
       harness repo add --name projectx --path ~/projects/projectx --tracker IPG
     """
     p = path.expanduser()
-    if not tracker:
-        _fail("tracker is required: pass --tracker IPG|github:O/R|GitLab URL", EXIT_USAGE)
     if not (p / ".git").exists() and not p.is_dir():
         _fail(f"not a repo path: {p}", EXIT_USAGE)
+    # --tracker omitted: derive it from the repo's origin remote (GitHub
+    # O/R, GitLab host/group/repo). Unknowable remote → no mapping, exit 2
+    # (before register_repo: no half-registered repo on the failure path).
+    tid = trackers.normalize_id(tracker) if tracker else trackers.default_tracker_for_repo(p)
+    if not tid:
+        _fail("cannot derive tracker from origin remote: pass --tracker IPG|github:O/R|GitLab URL", EXIT_USAGE)
     repos.register_repo(name, p)
-    tid = trackers.normalize_id(tracker)
     cfg = store.load_config()
     entry = cfg.setdefault("trackers", {}).setdefault(tid, {"repos": []})
     norm = str(p.expanduser().resolve())
     if norm not in [str(Path(r).expanduser().resolve()) for r in entry.get("repos", [])]:
         entry.setdefault("repos", []).append(norm)
     store.save_config(cfg)
-    _print_result({"registered": name, "path": str(p)}, json_output)
+    _print_result({"registered": name, "path": str(p), "tracker": tid}, json_output)
 
 
 def _repo_tracker_map(cfg: dict) -> dict:

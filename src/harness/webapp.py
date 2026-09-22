@@ -164,7 +164,8 @@ def _validate_args(command: str, args: list[str]) -> None:
                     f"value for {a} must not start with '-': {value!r}", 400)
             i += 2
         elif a.startswith("-"):
-            raise ApiError("bad_arg", f"unknown option for {sub}: {a!r}", 400)
+            hint = " (renamed to '--no-runtime' in #14)" if a == "--no-harness" else ""
+            raise ApiError("bad_arg", f"unknown option for {sub}: {a!r}{hint}", 400)
         else:
             i += 1
     if "--all" in rest and "--session-file" in rest:

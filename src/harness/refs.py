@@ -1,7 +1,7 @@
 """Issue/PR link parsing and fetching via jira-cli/gh/glab.
 
 Supported inputs:
-  - Jira key:          IPG-980
+  - Jira key:          IPG-980 or jira:IPG-980 (issue_key() emits the prefixed form)
   - Jira URL:          https://tribe.jibit.cloud/browse/IPG-980
   - GitHub issue URL:  https://github.com/OWNER/REPO/issues/22
   - GitHub PR URL:     https://github.com/OWNER/REPO/pull/33
@@ -25,7 +25,7 @@ _GITHUB_PR = re.compile(r"^https?://github\.com/([^/]+/[^/]+)/pull/(\d+)/*$")
 _GITLAB_ISSUE = re.compile(r"^https?://([^/]+)/(.+)/-/issues/(\d+)/*$")
 _GITLAB_MR = re.compile(r"^https?://([^/]+)/(.+)/-/merge_requests/(\d+)/*$")
 _JIRA_URL = re.compile(r"^https?://[^/]+/browse/([A-Z][A-Z0-9_]*-\d+)/*$")
-_JIRA_KEY = re.compile(r"^([A-Z][A-Z0-9_]*-\d+)$")
+_JIRA_KEY = re.compile(r"^(?:jira:)?([A-Z][A-Z0-9_]*-\d+)$")
 _SHORTHAND = re.compile(r"^([^/\s]+/[^/\s#]+)#(\d+)$")
 
 

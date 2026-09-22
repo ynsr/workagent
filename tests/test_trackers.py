@@ -23,6 +23,49 @@ def test_tracker_id_gitlab_mr(isolated_config):
     assert trackers.tracker_id(p) == "gitlab:git.jibit.cloud/server/projectx"
 
 
+def test_default_tracker_github_remote(tmp_path, monkeypatch):
+    """GitHub origin → github:O/R without spawning a host-CLI probe (issue #19)."""
+    import subprocess
+    d = tmp_path / "proj"
+    d.mkdir()
+    subprocess.run(["git", "-C", str(d), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(d), "remote", "add", "origin",
+                    "https://github.com/owner/repo.git"], check=True)
+    monkeypatch.setattr(trackers.repos, "_detect_host_cli", lambda path: "gh")
+    assert trackers.default_tracker_for_repo(d) == "github:owner/repo"
+
+
+def test_default_tracker_gitlab_remote(tmp_path, monkeypatch):
+    import subprocess
+    d = tmp_path / "proj"
+    d.mkdir()
+    subprocess.run(["git", "-C", str(d), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(d), "remote", "add", "origin",
+                    "https://git.jibit.cloud/server/projectx.git"], check=True)
+    monkeypatch.setattr(trackers.repos, "_detect_host_cli", lambda path: "glab")
+    assert trackers.default_tracker_for_repo(d) == "gitlab:git.jibit.cloud/server/projectx"
+
+
+def test_default_tracker_no_remote_empty(tmp_path, monkeypatch):
+    import subprocess
+    d = tmp_path / "proj"
+    d.mkdir()
+    subprocess.run(["git", "-C", str(d), "init", "-q"], check=True)
+    monkeypatch.setattr(trackers.repos, "_detect_host_cli", lambda path: "gh")
+    assert trackers.default_tracker_for_repo(d) == ""
+
+
+def test_default_tracker_github_ssh_url(tmp_path, monkeypatch):
+    """ssh:// GitHub remote derives like https/scp (review catch)."""
+    import subprocess
+    d = tmp_path / "proj"
+    d.mkdir()
+    subprocess.run(["git", "-C", str(d), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(d), "remote", "add", "origin",
+                    "ssh://git@github.com/owner/repo.git"], check=True)
+    monkeypatch.setattr(trackers.repos, "_detect_host_cli", lambda path: "gh")
+    assert trackers.default_tracker_for_repo(d) == "github:owner/repo"
+
 def test_first_use_records_mapping(isolated_config, tmp_path):
     repo = tmp_path / "projectx"
     repo.mkdir()

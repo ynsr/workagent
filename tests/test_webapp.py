@@ -451,6 +451,16 @@ def test_review_accepts_no_runtime_shorthand_N(client, monkeypatch):
     assert r.status_code == 202, r.text
 
 
+def test_start_rejects_stale_no_harness_alias(client):
+    """Old `--no-harness` (pre-#14 rename) is rejected with a bad_arg hint (issue #15)."""
+    r = client.post("/api/runs", json={
+        "command": "start", "args": ["IPG-1", "--no-tty", "--no-harness"],
+        "confirm": True,
+    })
+    assert r.status_code == 400, r.text
+    body = r.json()["error"]
+    assert body["code"] == "bad_arg" and "--no-runtime" in body["message"]
+
 def test_validate_args_allows_verbose_global():
     _validate_args("sync", ["-v", "IPG-1"])
 
