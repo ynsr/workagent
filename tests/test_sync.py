@@ -333,7 +333,7 @@ def test_sync_conflict_with_yes_runs_non_tty_harness(isolated_config,
     launched = []
     monkeypatch.setattr(cli, "_run_harness",
                         lambda name, prompt, wt, fb, no_tty, no_harness,
-                        result, json_output, run_key=None:
+                        result, json_output, run_key=None, session_file=None:
                         launched.append((no_tty, no_harness, prompt)))
     r = cli_test_invoke("sync", "IPG-929", "--merge", "--yes")
     assert r.exit_code == 0

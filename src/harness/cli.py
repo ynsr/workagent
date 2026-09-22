@@ -180,17 +180,25 @@ def _harness_cell(key: str, worktree: str = "") -> str:
 
 def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: str,
                  no_tty: bool, no_harness: bool, result: dict, json_output: bool,
-                 run_key: str | None = None) -> None:
+                 run_key: str | None = None, session_file: str | None = None) -> None:
     """Launch the harness in the worktree; with --no-harness print the exact
     command instead and hand the worktree to the user (shell exec on TTY).
 
     Real launches with a run_key record a session row (running → finished /
     failed); --no-harness and --dry-run (never reaches here) write nothing.
+    An explicit session_file (CLI --session-file) overrides the generated
+    transcript path and is passed to the runtime (--resume for omp).
     """
     from . import store_sqlite as _sq
+    # Direct python-level calls (tests) bypass Typer/Click: the OptionInfo
+    # default object leaks through instead of None. Normalize to None.
+    if not isinstance(session_file, str):
+        session_file = None
     runtime = backend.get_runtime(harness_name)
+    preview_extra = runtime.session_file_flag(session_file) if session_file else []
+    preview_args = _HARNESS_ARGS + preview_extra if preview_extra else _HARNESS_ARGS
     harness_cmd = " ".join(shlex.quote(a) for a in
-                           runtime.command_argv(prompt, no_tty, _HARNESS_ARGS))
+                           runtime.command_argv(prompt, no_tty, preview_args))
     if no_harness:
         eprint(f"harness command: {harness_cmd}")
         result["harness_command"] = harness_cmd
@@ -204,7 +212,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         return
     sid: str | None = None
     db = _sq.db_path()
-    session_file = ""
+    session_path = session_file or ""
     if run_key and not no_harness:
         # Atomic one-harness-per-worktree lock: claim first, inside the same
         # flock that records it; launch only when we own the slot. A live
@@ -218,22 +226,33 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # fail — skip session tracking silently, never warn or touch the db.
     if run_key and db.exists():
         try:
-            _sq.init_db(db)
             sid = _sq.gen_session_id()
-            session_file = str(_sq.session_file_path(sid, harness_name))
+            if not session_path:
+                session_path = str(_sq.session_file_path(sid, harness_name))
+            else:
+                Path(session_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(session_path).touch(exist_ok=True)
             sid = _sq.insert_session(
                 db, worktree_ref=run_key, runtime_name=harness_name,
                 initiator_command=result.get("command", harness_name),
-                prompt=prompt, file_path=session_file, session_id=sid)
-            Path(session_file).touch(exist_ok=True)
+                prompt=prompt, file_path=session_path, session_id=sid)
+            if not session_file:
+                Path(session_path).touch(exist_ok=True)
         except Exception as e:
             # Post-cutover insert failure: launch continues, warn only;
             # drop the pre-created filename so no orphan .jsonl remains.
             eprint(f"warning: session record failed: {e}")
             sid = None
-            session_file = ""
+            session_path = session_file or ""
+    # Explicit --session-file without a session row (pre-cutover, no
+    # state.db): the runtime must still write to the given path.
+    explicit_path = session_path if session_file and not sid else ""
+    if explicit_path:
+        Path(explicit_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(explicit_path).touch(exist_ok=True)
     try:
-        extra = runtime.session_file_flag(session_file) if sid else None
+        flag_path = session_path if (sid or explicit_path) else ""
+        extra = runtime.session_file_flag(flag_path) if flag_path else None
         backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty,
                        (_HARNESS_ARGS + extra) if extra else _HARNESS_ARGS)
         if sid:
@@ -259,9 +278,6 @@ def _split_harness_args(argv: list[str]) -> tuple[list[str], list[str]]:
     return argv, []
 
 
-# ── start ─────────────────────────────────────────────────────────────
-
-
 @app.command("start")
 @_catch_harness_errors
 def start(
@@ -275,6 +291,7 @@ def start(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the runtime (omp --resume)."),
 ) -> None:
     """Create worktree from issue and launch harness.
 
@@ -285,6 +302,8 @@ def start(
       harness start OWNER/REPO#22 --base feat/22--add-login
       harness start OWNER/REPO#22 --no-harness
     """
+    if not isinstance(session_file, str):
+        session_file = None
     parsed = refs.parse_ref(ref)
     if parsed["kind"] in ("pr", "mr"):
         _fail(f"{ref} looks like a PR/MR — use `harness review`", EXIT_USAGE)
@@ -375,7 +394,7 @@ def start(
     if not no_harness:
         _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, str(r), no_tty, no_harness,
-                 result, json_output, run_key=key)
+                 result, json_output, run_key=key, session_file=session_file)
 
 
 # ── review ────────────────────────────────────────────────────────────
@@ -474,6 +493,7 @@ def review(
     sequential: bool = typer.Option(False, "--sequential", help="With --all: review one-by-one instead of in parallel."),
     fix: bool = typer.Option(False, "--fix", help="With --all: children auto-fix identified issues after yielding."),
     post_comments: bool = typer.Option(False, "--post-comments", hidden=True, help="Append the auto-comment prompt segment (set by --all)."),
+    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the runtime (omp --resume)."),
 ) -> None:
     """Create worktree from PR/MR and launch review.
 
@@ -483,10 +503,14 @@ def review(
       harness review OWNER/REPO#33 --no-harness
       harness review --all [--sequential] [--fix]
     """
+    if not isinstance(session_file, str):
+        session_file = None
     if sequential and not all_wts:
         _fail("--sequential requires --all", EXIT_USAGE)
     if fix and not all_wts:
         _fail("--fix requires --all", EXIT_USAGE)
+    if session_file and all_wts:
+        _fail("--session-file cannot be used with --all", EXIT_USAGE)
     if ref is None and not all_wts:
         _fail("missing PR/MR ref or worktree key\n"
               "  Pass a ref, or use --all to review every not-reviewed worktree.",
@@ -613,7 +637,7 @@ def review(
             try:
                 _run_harness(harness_name, prompt, worktree, str(repo_dir),
                              no_tty, no_harness, result, json_output,
-                             run_key=review_key)
+                             run_key=review_key, session_file=session_file)
             except HarnessError:
                 if not no_harness:
                     _clear_reviewed(review_key)
@@ -649,7 +673,8 @@ def review(
         _mark_reviewed(review_key, worktree)
     try:
         _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
-                     no_harness, result, json_output, run_key=review_key)
+                     no_harness, result, json_output, run_key=review_key,
+                     session_file=session_file)
     except HarnessError:
         if not no_harness:
             _clear_reviewed(review_key)
@@ -1833,6 +1858,7 @@ def sync_cmd(
     yes: bool = typer.Option(False, "--yes", "--force", "-y", help="Skip confirmations."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without touching anything."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the runtime on conflict resolution (omp --resume)."),
 ) -> None:
     """Bring a worktree branch up to date with its base branch.
 
@@ -1847,7 +1873,11 @@ def sync_cmd(
       harness sync IPG-929 --merge
       harness sync --all --dry-run
     """
+    if not isinstance(session_file, str):
+        session_file = None
     links = store.load_links()
+    if session_file and all_sessions:
+        _fail("--session-file cannot be used with --all", EXIT_USAGE)
     if ref:
         resolved = worktrees.resolve_worktree(ref, links)
         if resolved is None:
@@ -1872,7 +1902,8 @@ def sync_cmd(
                 _fail("aborted", EXIT_USAGE)
         results.append(_sync_one(k, entry, merge=merge,
                                  use_harness=harness, yes=yes or all_sessions,
-                                 dry_run=dry_run, json_output=json_output))
+                                 dry_run=dry_run, json_output=json_output,
+                                 session_file=session_file))
         if all_sessions and result_failed(results[-1]):
             eprint(f"{k}: sync failed — continuing with remaining worktrees (--all)")
     if json_output:
@@ -1888,7 +1919,10 @@ def result_failed(result: dict) -> bool:
 
 
 def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
-              yes: bool, dry_run: bool, json_output: bool) -> dict:
+              yes: bool, dry_run: bool, json_output: bool,
+              session_file: str | None = None) -> dict:
+    if not isinstance(session_file, str):
+        session_file = None
     wt = entry.get("worktree", "")
     branch = entry.get("branch", "")
     repo = entry.get("repo", "")
@@ -1912,7 +1946,8 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
             _fail(f"{key}: cannot determine default branch for {repo}", EXIT_GENERAL)
         return _sync_local_merge(key, wt, branch, db, result,
                                  use_harness=use_harness, yes=yes,
-                                 dry_run=dry_run, json_output=json_output)
+                                 dry_run=dry_run, json_output=json_output,
+                                 session_file=session_file)
     # Remote rebase (default): host rebases the branch on its base.
     result["strategy"] = "remote-rebase"
     if dry_run:
@@ -1930,7 +1965,8 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
             _fail(f"{key}: cannot determine default branch for {repo}", EXIT_GENERAL)
         return _sync_local_merge(key, wt, branch, db, result,
                                  use_harness=use_harness, yes=yes,
-                                 dry_run=False, json_output=json_output)
+                                 dry_run=False, json_output=json_output,
+                                 session_file=session_file)
     result["result"] = "rebased"
     eprint(f"{key}: rebased PR #{pr['number']} via {tool}")
     result["pull"] = sync_mod.pull_rebased(Path(wt), branch)
@@ -1941,9 +1977,11 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
 
 def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
                       use_harness: bool, yes: bool, dry_run: bool,
-                      json_output: bool) -> dict:
+                      json_output: bool, session_file: str | None = None) -> dict:
     """Local-merge flow shared by --merge, no-PR fallback, and rebase
     failure fallback."""
+    if not isinstance(session_file, str):
+        session_file = None
     result["strategy"] = "local-merge"
     if dry_run:
         result["result"] = "would-merge"
@@ -1964,7 +2002,8 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
                 _guard_harness(key, wt)
                 _run_harness("omp", prompt, wt, wt,
                              no_tty=bool(yes), no_harness=False,
-                             result=result, json_output=json_output, run_key=key)
+                             result=result, json_output=json_output, run_key=key,
+                             session_file=session_file)
             elif sys.stdin.isatty():
                 if typer.confirm("launch the harness to resolve?"):
                     result["result"] = "conflict-harness"
@@ -1975,7 +2014,8 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
                     _guard_harness(key, wt)
                     _run_harness("omp", prompt, wt, wt,
                                  no_tty=False, no_harness=False,
-                                 result=result, json_output=json_output, run_key=key)
+                                 result=result, json_output=json_output, run_key=key,
+                                 session_file=session_file)
                 else:
                     _fail("aborted (merge left in progress; abort with "
                           "`git merge --abort`)", EXIT_USAGE)

@@ -46,9 +46,9 @@ class OmpRuntime(Runtime):
         return 0  # unreachable; keeps type checkers quiet
 
     def session_file_flag(self, path: str) -> list[str]:
-        # omp has no per-file session flag (sessions live under the profile
-        # dir / --session-dir); the .jsonl path stays a recorded placeholder.
-        return []
+        # omp resumes/writes the given transcript path: --resume <path>
+        # creates it when missing, appends when present (verified).
+        return ["--resume", path] if path else []
 
 
 RUNTIMES: dict[str, Runtime] = {"omp": OmpRuntime()}

@@ -459,7 +459,7 @@ def test_webapp_review_all_flags_and_target():
     _validate_args("review", ["--all"])
     _validate_args("review", ["--all", "--sequential", "--fix"])
     assert _target_for("review", ["--all"]) == "review:all"
-    assert _target_for("review", ["o/r#33"]) == "review"
+    assert _target_for("review", ["o/r#33"]) == "review:o/r#33"
 
 
 def test_webapp_open_allowed_and_target():

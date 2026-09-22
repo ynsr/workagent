@@ -55,17 +55,17 @@ SPECS: dict[str, dict[str, Any]] = {
     "start": {"confirm": True, "force": False, "key": "start"},
     "review": {"confirm": True, "force": False,
                "key": lambda args: "review:all" if "--all" in args
-               else "review"},
+               else f"review:{_first_positional(args, VAL_FLAGS['review'])}"},
     "cleanup": {"confirm": True, "force": True,
                 "key": lambda args: "cleanup:all" if "--merged" in args
                 else f"cleanup:{_first_positional(args)}"},
     "sync": {"confirm": True, "force": False,
              "key": lambda args: "sync:all" if "--all" in args
-             else f"sync:{_first_positional(args)}"},
+             else f"sync:{_first_positional(args, VAL_FLAGS['sync'])}"},
     "open": {"confirm": False, "force": False,
              "key": lambda args: f"open:{_first_positional(args)}"},
     "register": {"confirm": False, "force": True,
-                 "key": lambda args: f"register:{_first_positional(args)}"},
+                 "key": lambda args: f"register:{_first_positional(args, VAL_FLAGS['register'])}"},
     "repo": {"confirm": False, "force": False, "key": "config"},
     "link": {"confirm": False, "force": False, "key": "config"},
 }
@@ -88,9 +88,9 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "link list": ("--worktree", "--refresh-pr", "--json", "--csv"),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
-    "start": ("--repo", "--depth", "--base", "--harness"),
-    "review": ("--repo", "--depth", "--harness"),
-    "sync": ("--harness",),
+    "start": ("--repo", "--depth", "--base", "--harness", "--session-file"),
+    "review": ("--repo", "--depth", "--harness", "--session-file"),
+    "sync": ("--harness", "--session-file"),
     "register": ("--key", "--issue", "--repo"),
     "repo add": ("--name", "--path", "--tracker"),
     "link remove": ("--repo",),
@@ -99,12 +99,21 @@ SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove"},
                                     "link": {"list", "set", "remove"}}
 
 
-def _first_positional(args: list[str]) -> str:
+def _first_positional(args: list[str], vals: tuple[str, ...] = ()) -> str:
+    skip_next = False
     for a in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if a in vals:
+            skip_next = True
+            continue
+        if a.startswith("--") and "=" in a:
+            name = a.split("=", 1)[0]
+            if name in vals:
+                continue
         if not a.startswith("-"):
             return a
-        if a in VAL_FLAGS.get("", ()) :  # pragma: no cover
-            continue
     return ""
 
 
