@@ -1508,7 +1508,9 @@ def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
 
 def test_review_reuses_existing_worktree_row(isolated_config, tmp_path, monkeypatch):
     """Reviewing an already-tracked worktree stamps pr_url on its own row —
-    no second pr:<url> row for the same path/branch (UNIQUE regression)."""
+    no second pr:<url> row for the same path/branch (UNIQUE regression on a
+    real state.db)."""
+    from harness import store_sqlite as sq
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     worktree = tmp_path / "wt"
@@ -1520,20 +1522,26 @@ def test_review_reuses_existing_worktree_row(isolated_config, tmp_path, monkeypa
     url = "https://git.jibit.cloud/server/projectx/-/merge_requests/1694"
     monkeypatch.setattr(cli.refs, "fetch_pr_info",
                         lambda parsed, cwd=None: {"head_ref": "feat/IPG-953--x"})
-    monkeypatch.setattr(cli.gitwt, "start_worktree",
-                        lambda repo, **kw: {"worktree_path": str(worktree),
-                                            "branch": "feat/IPG-953--x"})
-    launched = []
-    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
-    store.record_link("jira:IPG-953", {"worktree": str(worktree),
-                                       "branch": "feat/IPG-953--x",
-                                       "repo": str(repo_dir)})
+
+    def _no_start(repo, **kw):
+        raise AssertionError("must reuse the recorded worktree, not start one")
+    monkeypatch.setattr(cli.gitwt, "start_worktree", _no_start)
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    db = sq.db_path()
+    sq.init_db(db)  # real state.db → worktrees.branch UNIQUE is live
+    store.record_link("jira:IPG-953", {
+        "worktree": str(worktree),
+        "branch": "feat/IPG-953--x",
+        "repo": str(repo_dir),
+    })
     r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
     assert r.exit_code == 0, r.output
     links = store.load_links()
-    assert sorted(links) == ["jira:IPG-953"]
+    assert set(links) == {"jira:IPG-953"}  # no pr:<url> alias row
     assert links["jira:IPG-953"]["pr_url"] == url
     assert links["jira:IPG-953"]["reviewed"] is True
+    with sq.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM worktrees").fetchone()[0] == 1
 
 def test_is_reviewed_resets_when_tip_changes(isolated_config, tmp_path, monkeypatch):
     wt = tmp_path / "wt"

@@ -21,6 +21,11 @@
 - Fixed `review` reading `--dry-run` without defining the flag.
 
 ## Unreleased
+- `review` reuses a tracked worktree's row instead of inserting a
+  `pr:<url>` alias that collides on the `worktrees.branch` UNIQUE key
+  (crashed re-reviewing tracked worktrees); the row matcher keys on
+  branch identity + normalized path (`worktrees.recorded_key`). The
+  regression test now runs on a real `state.db`.
 - Issue cache + mandatory repo tracker + candidate actions: `issue_cache`
   table (per-source rows, 1h TTL) behind `trackers.list_my_issues(force)`;
   `candidates --reset-cache` clears and re-fetches; `GET /api/issues` and
