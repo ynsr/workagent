@@ -716,6 +716,15 @@ def test_sync_explicit_session_file_recorded(client, monkeypatch):
     detail = client.get(f"/api/runs/{r.json()['run_id']}").json()
     assert detail["session_file"] == "/tmp/s.jsonl"
 
+def test_all_with_session_file_rejected(client):
+    for command in ("review", "sync"):
+        r = client.post("/api/runs", json={
+            "command": command,
+            "args": ["--all", "--session-file", "/tmp/s.jsonl"],
+            "confirm": True})
+        assert r.status_code == 400, r.text
+        assert r.json()["error"]["code"] == "bad_arg"
+
 
 def test_resume_run_needs_session(client):
     run = client.app.state.registry.create("register", ["/tmp/x"],

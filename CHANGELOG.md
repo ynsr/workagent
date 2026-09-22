@@ -29,7 +29,9 @@
   when the run executed a runtime session. New `POST
   /api/runs/{id}/resume` and `POST /api/sessions/{id}/resume` spawn the OS
   default terminal detached (`$TERMINAL` → `xdg-terminal-exec` →
-  gnome-terminal/konsole/xfce4-terminal/xterm). Rename `--no-harness`
+  gnome-terminal/konsole/xfce4-terminal/xterm). `--session-file` is
+  rejected with `--all` (one transcript per worktree — omit it and each
+  launch gets its own file). Rename `--no-harness`
   (`-N`) → `--no-runtime` everywhere (flag, `runtime_command` result key,
   messages, docs).
 - `review` reuses a tracked worktree's row instead of inserting a

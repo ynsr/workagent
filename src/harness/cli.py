@@ -509,7 +509,7 @@ def review(
     if fix and not all_wts:
         _fail("--fix requires --all", EXIT_USAGE)
     if session_file and all_wts:
-        _fail("--session-file cannot be used with --all", EXIT_USAGE)
+        _fail("--session-file cannot be used with --all (one transcript per worktree — omit it and each launch gets its own file)", EXIT_USAGE)
     if ref is None and not all_wts:
         _fail("missing PR/MR ref or worktree key\n"
               "  Pass a ref, or use --all to review every not-reviewed worktree.",
@@ -1876,7 +1876,7 @@ def sync_cmd(
         session_file = None
     links = store.load_links()
     if session_file and all_sessions:
-        _fail("--session-file cannot be used with --all", EXIT_USAGE)
+        _fail("--session-file cannot be used with --all (one transcript per worktree — omit it and each conflict launch gets its own file)", EXIT_USAGE)
     if ref:
         resolved = worktrees.resolve_worktree(ref, links)
         if resolved is None:

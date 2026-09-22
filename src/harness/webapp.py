@@ -167,7 +167,11 @@ def _validate_args(command: str, args: list[str]) -> None:
             raise ApiError("bad_arg", f"unknown option for {sub}: {a!r}", 400)
         else:
             i += 1
-
+    if "--all" in rest and "--session-file" in rest:
+        raise ApiError("bad_arg",
+                       "--session-file cannot be used with --all "
+                       "(one transcript per worktree — omit it and each "
+                       "launch gets its own file)", 400)
 
 def _build_argv(command: str, args: list[str]) -> list[str]:
     """Same-code child invocation: this interpreter, `python -m harness`.
