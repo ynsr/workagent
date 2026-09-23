@@ -774,6 +774,17 @@ def test_start_passes_github_issue_url_to_git_wt(isolated_config, tmp_path, monk
         assert calls["link"] == "https://github.com/o/r/issues/22"
         assert calls["issue"] == "22"
 
+def test_review_rejects_shorthand_issue_ref(isolated_config, tmp_path, monkeypatch):
+    """`review` needs a PR/MR URL — a shorthand issue ref must fail loudly (exit 2)."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    r = runner.invoke(cli.app, ["review", "o/r#22", "--dry-run", "--json"])
+    assert r.exit_code == 2
+    assert "needs a PR/MR URL" in r.output
+
 def test_start_base_existing_branch_reuses_branch(isolated_config, tmp_path, monkeypatch):
     """--base <non-default> runs on that branch: worktree for it, no new branch."""
     repo_dir = tmp_path / "proj"

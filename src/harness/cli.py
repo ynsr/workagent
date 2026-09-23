@@ -349,6 +349,10 @@ def start(
                 link_url = f"{site}/browse/{parsed['number']}"
     elif parsed["tool"] == "gh" and parsed["repo"]:
         link_url = refs.issue_url(key) or None
+    elif parsed["tool"] == "glab" and parsed["repo"]:
+        # parse_ref only yields full GitLab issue URLs today; keep the guard
+        # explicit so a future shorthand still can't leak a non-URL --link.
+        link_url = parsed["url"] if parsed["url"].startswith("http") else None
     elif parsed["repo"]:
         link_url = parsed["url"] if parsed["url"].startswith("http") else None
     issue_id, slug = gitwt.build_branch_for_issue(parsed, issue["title"])
@@ -591,6 +595,10 @@ def review(
             parsed = refs.parse_ref(ref)
         elif parse_err is not None:
             raise parse_err
+    if parsed is not None and parsed["kind"] == "issue_or_pr":
+        repo_hint = f"github.com/{parsed['repo']}/pull/NUM" if parsed["repo"] else "github.com/OWNER/REPO/pull/NUM"
+        _fail(f"{ref} is ambiguous — `review` needs a PR/MR URL (e.g. "
+              f"https://{repo_hint}).", EXIT_USAGE)
     tid = trackers.tracker_id(parsed)
     repo_dir, outcome = trackers.resolve_for_tracker(
         tid, repo, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
@@ -598,10 +606,9 @@ def review(
         eprint(f"note: linked tracker {tid} to repo {repo_dir}")
     base_branch = repos.default_branch(repo_dir)
     harness_name = harness or store.load_config().get("default_harness", "omp")
-
-    pr_url = parsed["url"] if parsed["repo"] else ref
+    pr_url = parsed["url"]
     info: dict = {}
-    if parsed["repo"] and parsed["kind"] in ("pr", "mr"):
+    if parsed["kind"] in ("pr", "mr"):
         try:
             info = refs.fetch_pr_info(parsed, cwd=str(repo_dir))
         except HarnessError as e:
