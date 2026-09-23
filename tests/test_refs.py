@@ -32,6 +32,13 @@ def test_shorthand_and_bare_number():
     assert refs.parse_ref("22")["kind"] == "issue_or_pr"
 
 
+def test_shorthand_accepts_tracker_prefixed_repo():
+    """Launch sends tracker-qualified refs like github:o/r#22; the repo
+    field must not keep the tracker prefix (doubled github:github:o/r)."""
+    p = refs.parse_ref("github:ynsr/harness#20")
+    assert p["repo"] == "ynsr/harness" and p["number"] == "20"
+
+
 def test_jira_prefixed_key_round_trip():
     """issue_key() emits jira:KEY; parse_ref must accept it back (issue #16)."""
     p = refs.parse_ref("jira:IPG-984")
