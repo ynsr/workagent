@@ -755,6 +755,24 @@ def _start_mocks(monkeypatch, repo_dir):
     monkeypatch.setattr(cli.refs, "fetch_issue",
                         lambda parsed: {"title": "Add login", "body": "Details here"})
 
+def test_start_passes_github_issue_url_to_git_wt(isolated_config, tmp_path, monkeypatch):
+    """Shorthand refs must reach git-wt --link as full issue URLs (issue #22)."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    calls = {}
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: calls.update(kw) or {"worktree_path": str(worktree),
+                                                              "branch": "feat/22--add-login"})
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    for ref in ("o/r#22", "github:o/r#22", "https://github.com/o/r/issues/22"):
+        calls.clear()
+        r = runner.invoke(cli.app, ["start", ref, "--json"])
+        assert r.exit_code == 0, r.output
+        assert calls["link"] == "https://github.com/o/r/issues/22"
+        assert calls["issue"] == "22"
 
 def test_start_base_existing_branch_reuses_branch(isolated_config, tmp_path, monkeypatch):
     """--base <non-default> runs on that branch: worktree for it, no new branch."""

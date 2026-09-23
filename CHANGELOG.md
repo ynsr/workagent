@@ -21,6 +21,9 @@
 - Fixed `review` reading `--dry-run` without defining the flag.
 
 ## Unreleased
+- Fix #22: `start` passes full GitHub issue URLs to `git-wt --link`
+  (shorthand `OWNER/REPO#N` built `github:OWNER/REPO#N`, which git-wt
+  rejects); `register --issue` records the full URL likewise.
 - Fix #16: `parse_ref` accepts the `jira:KEY` form `issue_key()` emits, so
   web Start runs launched from issue dropdown keys (`jira:IPG-984`) parse.
 - Fix #15: stale `--no-harness` (renamed to `--no-runtime` in #14) is

@@ -337,8 +337,8 @@ def start(
     key = refs.issue_key(parsed)
     harness_name = harness or store.load_config().get("default_harness", "omp")
 
-    # Jira: pass a full browse URL to git-wt --link (it detects the tracker
-    # from the URL path); jira-cli itself takes the bare key.
+    # git-wt detects the tracker from a URL (--link must be a URL, never a
+    # shorthand like `OWNER/REPO#N`); build full issue URLs from parsed refs.
     link_url: str | None = None
     if parsed["tool"] == "jira-cli":
         if parsed["url"].startswith("http"):
@@ -347,8 +347,10 @@ def start(
             site = refs.jira_site()
             if site:
                 link_url = f"{site}/browse/{parsed['number']}"
+    elif parsed["tool"] == "gh" and parsed["repo"]:
+        link_url = refs.issue_url(key) or None
     elif parsed["repo"]:
-        link_url = parsed["url"]
+        link_url = parsed["url"] if parsed["url"].startswith("http") else None
     issue_id, slug = gitwt.build_branch_for_issue(parsed, issue["title"])
     if parsed["tool"] == "jira-cli" and not issue_id:
         issue_id = parsed["number"]
@@ -1830,7 +1832,10 @@ def register(
             parsed = refs.parse_ref(issue_ref)
         except HarnessError as e:
             _fail(str(e), EXIT_USAGE)
-        if parsed["url"].startswith("http"):
+        if parsed["tool"] == "gh" and parsed["repo"] and parsed["kind"] != "pr":
+            key_for_url = refs.issue_key(parsed)
+            issue_url = refs.issue_url(key_for_url) or None
+        elif parsed["url"].startswith("http"):
             issue_url = parsed["url"]
         elif parsed["tool"] == "jira-cli" and (site := refs.jira_site()):
             issue_url = f"{site}/browse/{parsed['number']}"
