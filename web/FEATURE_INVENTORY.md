@@ -86,8 +86,7 @@ flags, `--force`-required conflicts (register), repo-picker aborts.
 ## Concurrency target keys (409 on collision)
 
 - `start` — one agent launch at a time (also protects git-wt index writes).
-- `review` — same class as start but separate (a review and a start may
-  legitimately run in parallel — different worktrees).
+- `review:<ref>` — one review per PR ref; `review:all` for bulk.
 - `cleanup:<normalized ref>` — one cleanup per session ref; `--merged`
   keys as `cleanup:all` (one bulk sweep at a time).
 - `open:<ref>` — one opener spawn per ref (harmless, but keeps the

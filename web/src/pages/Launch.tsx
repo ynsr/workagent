@@ -81,7 +81,9 @@ const INITIAL: LaunchForm = {
   depth: "7",
   base: "",
   harness: DEFAULT_HARNESS,
-  noRuntime: false,
+  // Issue #24: Start/Review launches should default to printing the
+  // runtime command for manual execution instead of auto-running.
+  noRuntime: true,
   merge: false,
   dryRun: false,
   json: false,
@@ -163,7 +165,7 @@ export function Launch() {
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
     if (mode === "start" && form.base.trim()) args.push("--base", form.base.trim())
     if (harnessValue) args.push("--harness", harnessValue)
-    if (mode === "start" && form.noRuntime) args.push("--no-runtime")
+    if (form.noRuntime) args.push("--no-runtime")
     if (form.dryRun) args.push("--dry-run")
     if (form.json) args.push("--json")
     return args
@@ -181,7 +183,7 @@ export function Launch() {
         `--depth ${form.depth.trim() || "7"}`,
         mode === "start" && form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
         harnessValue ? `--harness ${harnessValue}` : "harness: configured default",
-        mode === "start" && form.noRuntime ? "--no-runtime" : null,
+        form.noRuntime ? "--no-runtime" : null,
         form.dryRun ? "--dry-run" : null,
         form.json ? "--json" : null,
       ].filter((v): v is string => v !== null)
@@ -366,7 +368,7 @@ export function Launch() {
           )}
 
           <div className="flex flex-wrap gap-x-6 gap-y-3">
-            {mode === "start" ? (
+            {mode !== "sync" ? (
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="launch-no-runtime"

@@ -880,8 +880,8 @@ def test_start_no_runtime_prints_command_and_skips_launch(isolated_config, tmp_p
     assert launched == []  # runtime must not run
     out = json.loads(r.stdout)
     assert out["worktree_path"] == str(worktree)
-    assert out["runtime_command"].startswith("omp ")
-    assert "runtime command: omp" in r.stderr
+    assert out["runtime_command"].startswith(f"cd {worktree} && omp ")
+    assert "runtime command: cd " in r.stderr
     assert str(worktree) in r.stderr
 
 
@@ -912,7 +912,7 @@ def test_start_no_runtime_tty_lands_shell_in_worktree(isolated_config, tmp_path,
     assert excinfo.value.args[0] == "/bin/bash"
     assert excinfo.value.args[2] == str(worktree)
     captured = capsys.readouterr()
-    assert "runtime command: omp" in captured.err
+    assert "runtime command: cd " in captured.err
     assert f"worktree_path: {worktree}" in captured.out
 
 
@@ -936,8 +936,8 @@ def test_review_no_runtime_prints_command_and_skips_launch(isolated_config, tmp_
     assert launched == []  # runtime must not run
     out = json.loads(r.stdout)
     assert out["worktree_path"] == str(worktree)
-    assert out["runtime_command"].startswith("omp ")
-    assert "runtime command: omp" in r.stderr
+    assert out["runtime_command"].startswith(f"cd {worktree} && omp ")
+    assert "runtime command: cd " in r.stderr
     assert str(worktree) in r.stderr
 
 
@@ -993,8 +993,8 @@ def test_no_runtime_shorthand_N_on_start_and_review(isolated_config, tmp_path, m
                                  "--no-tty", "-N", "--json"])
     assert r2.exit_code == 0, r2.output
     assert launched == []
-    assert json.loads(r.stdout)["runtime_command"].startswith("omp ")
-    assert json.loads(r2.stdout)["runtime_command"].startswith("omp ")
+    assert json.loads(r.stdout)["runtime_command"].startswith("cd ")
+    assert json.loads(r2.stdout)["runtime_command"].startswith("cd ")
 
 
 def test_base_completion_lists_cwd_git_branches(isolated_config, tmp_path, monkeypatch):

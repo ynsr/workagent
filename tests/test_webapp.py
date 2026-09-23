@@ -438,7 +438,8 @@ def test_start_accepts_and_forwards_no_runtime(client, monkeypatch):
     assert r.status_code == 202, r.text
     rid = r.json()["run_id"]
     run = client.app.state.registry.get(rid)
-    assert run.argv[-2:] == ["--no-runtime", "--yes"]  # server appends --yes
+    assert "--no-runtime" in run.argv and "--yes" in run.argv  # server appends --yes
+    assert "--session-file" in run.argv and run.session_file.endswith(".jsonl")
     _wait_state(client, rid, {"succeeded"})
 
 

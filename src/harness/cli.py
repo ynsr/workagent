@@ -198,11 +198,13 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     runtime = backend.get_runtime(harness_name)
     preview_extra = runtime.session_file_flag(session_file) if session_file else []
     preview_args = _HARNESS_ARGS + preview_extra if preview_extra else _HARNESS_ARGS
-    runtime_cmd = " ".join(shlex.quote(a) for a in
+    preview_cmd = " ".join(shlex.quote(a) for a in
                            runtime.command_argv(prompt, no_tty, preview_args))
     if no_runtime:
-        eprint(f"runtime command: {runtime_cmd}")
-        result["runtime_command"] = runtime_cmd
+        # Copy-paste runnable: the runtime must execute inside the worktree.
+        full_cmd = f"cd {shlex.quote(worktree or fallback_dir)} && {preview_cmd}"
+        eprint(f"runtime command: {full_cmd}")
+        result["runtime_command"] = full_cmd
         _print_result(result, json_output)
         if sys.stdin.isatty():
             # "cd" for the user: replace this process with their shell in the

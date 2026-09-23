@@ -219,8 +219,8 @@ def _session_file_for(sid: str) -> str:
 
 
 def _worktree_for_target(target: str) -> str:
-    """Best-effort worktree path for a run target (review:/sync: keys strip
-    to the recorded worktree ref)."""
+    """Best-effort worktree path for a run target (review:/sync:/start: keys
+    strip to the recorded worktree ref)."""
     from . import store as _store
     try:
         links = _store.load_links()
@@ -230,7 +230,7 @@ def _worktree_for_target(target: str) -> str:
         wt = links[target].get("worktree", "")
         if wt:
             return wt
-    for prefix in ("review:", "sync:", "cleanup:", "open:"):
+    for prefix in ("start:", "review:", "sync:", "cleanup:", "open:"):
         if target.startswith(prefix):
             ref = target[len(prefix):]
             if ref in links and isinstance(links[ref], dict):
@@ -321,13 +321,18 @@ class Registry:
 
 
 def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
+    worktree = run.worktree
+    if not worktree and run.state != "running" and run.command in ("start", "review"):
+        # Replays after the child recorded its link: the global `start` key
+        # can't know the worktree at spawn time.
+        worktree = _worktree_for_target(f"{run.command}:{_first_positional(run.args, VAL_FLAGS[run.command])}") or ""
     out: dict[str, Any] = {"id": run.id, "command": run.command,
                            "args": run.args, "state": run.state,
                            "exit_code": run.exit_code,
                            "truncated": run.truncated,
                            "created": run.created, "target": run.target,
                            "session_file": run.session_file,
-                           "worktree": run.worktree,
+                           "worktree": worktree,
                            "last_seq": run.last_seq}
     if lines is not None:
         out["lines"] = [{"seq": s, "text": t} for s, t in lines]
@@ -615,8 +620,10 @@ def create_app(static_dir: Path, host: str, port: int,
             tail.append("--force")
         if body.command in ("start", "review") \
                 and "--dry-run" not in body.args \
-                and not _has_session_file(body.command, body.args) \
-                and "--no-runtime" not in body.args:
+                and not _has_session_file(body.command, body.args):
+            # --no-runtime gets a path too: the CLI preview carries it as
+            # --resume (creating nothing), so resume/copy buttons work once
+            # the user runs the printed command manually.
             from . import store_sqlite as _sq
             session_file = _session_file_for(_sq.gen_session_id())
             tail += ["--session-file", session_file]
@@ -697,6 +704,8 @@ def create_app(static_dir: Path, host: str, port: int,
             raise ApiError("missing_session",
                            f"session transcript missing: {session_file}", 404)
         worktree = run.worktree or _worktree_for_target(run.target)
+        if not worktree and run.command in ("start", "review"):
+            worktree = _worktree_for_target(f"{run.command}:{_first_positional(run.args, VAL_FLAGS[run.command])}")
         if not worktree:
             raise ApiError("no_worktree",
                            f"no worktree for target {run.target!r}", 404)

@@ -146,7 +146,7 @@ Response 202: `{"run_id": "abc123"}` — `409 {code:"conflict"}` when
 another run holds the same target key.
 
 ### Target keys (409 collisions)
-`start`, `review` / `review:all` (`--all`), `cleanup:<ref>` / `cleanup:all`
+`start`, `review:<ref>` / `review:all` (`--all`), `cleanup:<ref>` / `cleanup:all`
 (`--merged`), `open:<ref>`, `sync:<ref>` / `sync:all`, `config`
 (register/repo/link subcommands).
 
@@ -161,7 +161,9 @@ another run holds the same target key.
 `session_file`/`worktree` are non-empty only for runs that executed a
 runtime session (`start`/`review`, or `sync` with an explicit
 `--session-file`); the web server injects `--session-file` for
-`start`/`review` launches. Clients show resume buttons iff
+`start`/`review` launches — including `--no-runtime` (the CLI preview
+carries it as `--resume` but creates nothing, so resume/copy buttons work
+once the printed command is run manually). Clients show resume buttons iff
 `session_file` is present.
 
 ### `GET /api/runs/{id}` → detail (adds `lines`)

@@ -100,6 +100,43 @@ function LogViewer({
     </div>
   )
 }
+/** Copy the full cd-prefixed runtime command parsed from the log. */
+function RunRuntimeCommandAction({ lines }: { lines: RunLine[] }) {
+  const cmd = useMemo(() => {
+    // The CLI preview embeds the prompt as one shlex-quoted argv element;
+    // prompts contain newlines, so run.append's splitlines() breaks the
+    // logged command across lines. Rejoin continuation lines (indented or
+    // quote-unbalanced) until quotes balance.
+    let start = -1
+    for (let i = 0; i < lines.length; i++) {
+      if (/runtime command:\s*\S/.test(lines[i]?.text ?? "")) {
+        start = i
+        break
+      }
+    }
+    if (start < 0) return ""
+    const first = (lines[start]?.text ?? "").replace(/^.*runtime command:\s*/, "")
+    let cmd = first.trimEnd()
+    const unbalanced = (s: string) => (s.match(/'/g) ?? []).length % 2 === 1
+    for (let i = start + 1; i < lines.length && unbalanced(cmd); i++) {
+      cmd += `\n${lines[i]?.text ?? ""}`
+    }
+    return cmd.trim()
+  }, [lines])
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => {
+        copyToClipboard(cmd)
+          .then(() => toast.success("Runtime command copied"))
+          .catch((err: unknown) => toast.error(errorText(err)))
+      }}
+    >
+      <Copy aria-hidden /> Copy runtime command
+    </Button>
+  )
+}
 /** Resume/copy buttons for a run that executed a runtime session. */
 function RunSessionActions({
   runId,
@@ -279,6 +316,7 @@ export function RunDetail() {
                 sessionFile={run.session_file}
               />
             ) : null}
+            <RunRuntimeCommandAction lines={lines} />
             {isRunning ? (
               <Button
                 variant="destructive"

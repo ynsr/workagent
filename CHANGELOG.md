@@ -30,6 +30,12 @@
   unlinked cwd repo when linked repos exist — the serve cwd is unrelated
   to the issue, so the established link wins instead of silently filing
   e.g. a personal-checkout path under `jira:IPG`.
+- Fix #24: Launch Start/Review default to `--no-runtime` (print the
+  runtime command for manual execution); `--no-runtime` previews are
+  `cd <worktree> && …` copy-paste runnable with a `--resume` session path
+  (server injects `--session-file` even for `--no-runtime`, creating
+  nothing) and the Run page gains a Copy-runtime-command button; finished
+  start runs resolve their worktree from links for resume/copy.
 - Fix cleanup on merged MRs: `glab mr close` fails with "already been
   merged" (not "already closed"), which aborted cleanup before tearing
   down the worktree — now treated like an already-closed MR. Cleanup also
