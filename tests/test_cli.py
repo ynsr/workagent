@@ -2151,6 +2151,21 @@ def test_repo_list_shows_tracker(isolated_config, tmp_path):
     assert items[0]["tracker"] == "jira:IPG"
 
 
+def test_repo_list_prefers_host_scoped_tracker(isolated_config, tmp_path):
+    """A repo under both jira:PREFIX and its remote-derived host id shows
+    the host-scoped one (the harness symptom: jira:IPG won over
+    github:ynsr/harness by first-write order)."""
+    from harness import store
+    cfg = store.load_config()
+    cfg["repos"] = {"h": {"path": str(tmp_path)}}
+    cfg["trackers"] = {"jira:IPG": {"repos": [str(tmp_path)]},
+                       "github:o/r": {"repos": [str(tmp_path)]}}
+    store.save_config(cfg)
+    r = _invoke("repo", "list", "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.output)[0]["tracker"] == "github:o/r"
+
+
 def test_run_harness_lock_blocked_spawns_nothing(monkeypatch):
     """A live record on the same worktree refuses the launch, spawn-free."""
     monkeypatch.setattr(cli.store, "record_harness_run",

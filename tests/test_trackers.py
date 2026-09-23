@@ -110,6 +110,22 @@ def test_mismatch_yes_records_new_repo(isolated_config, tmp_path, monkeypatch):
     assert str(a) in store.load_config()["trackers"]["jira:IPG"]["repos"]
 
 
+def test_host_scoped_tracker_rejects_foreign_remote_repo(isolated_config, tmp_path, monkeypatch):
+    """A host-scoped tracker must refuse a repo whose origin belongs to a
+    different host-scoped tracker (filing a GitLab checkout under
+    ``github:o/r`` is always a wrong-repo write)."""
+    import subprocess
+    d = tmp_path / "proj"
+    d.mkdir()
+    subprocess.run(["git", "-C", str(d), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(d), "remote", "add", "origin",
+                    "https://git.example.com/group/proj.git"], check=True)
+    monkeypatch.setattr(trackers.repos, "_detect_host_cli", lambda path: "glab")
+    monkeypatch.setattr(trackers.repos, "_known_glab_hosts", lambda: {"git.example.com"})
+    from harness.errors import HarnessError
+    with __import__("pytest").raises(HarnessError):
+        trackers.check_or_record("github:owner/repo", str(d), yes=True)
+
 # ── list_my_issues ────────────────────────────────────────────────────
 
 

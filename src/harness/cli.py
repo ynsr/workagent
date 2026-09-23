@@ -967,14 +967,23 @@ def repo_add(
 
 
 def _repo_tracker_map(cfg: dict) -> dict:
-    """Reverse-lookup {resolved repo path: tracker id} from the mapping."""
+    """Reverse-lookup {resolved repo path: tracker id} from the mapping.
+
+    A repo listed under several trackers (e.g. ``jira:IPG`` recorded first,
+    ``github:o/r`` derived later) shows the remote-derived host-scoped id:
+    it names the repo's own remote, while a Jira prefix legitimately spans
+    many repos/hosts. First-write still wins among equal-preference ids.
+    """
     out: dict = {}
     for tid, entry in (cfg.get("trackers", {}) or {}).items():
         for r in (entry or {}).get("repos", []):
             try:
-                out.setdefault(str(Path(r).expanduser().resolve()), tid)
+                key = str(Path(r).expanduser().resolve())
             except Exception:
                 continue
+            cur = out.get(key, "")
+            if not cur or (cur.startswith("jira:") and tid.startswith(("github:", "gitlab:"))):
+                out[key] = tid
     return out
 
 

@@ -81,6 +81,31 @@ def tracker_id(parsed: dict) -> str:
         return f"gitlab:{host}/{repo}" if host else f"gitlab:{repo}"
     return f"github:{repo}"
 
+def _guard_host_scoped_tracker(tid: str, repo: str) -> None:
+    """Refuse to file a repo under a host-scoped tracker it cannot belong to.
+
+    ``github:O/R`` and ``gitlab:host/group/repo`` name their remote; filing
+    a repo whose origin derives a *different* host-scoped tracker is a
+    wrong-repo write — raise exit 2 instead of recording it. ``jira:``
+    prefix trackers are exempt by design: one Jira project spans many
+    repos/hosts, so a GitHub checkout under ``jira:IPG`` can be legitimate.
+    Repos without a derivable remote are left alone (the caller decides).
+    """
+    from .errors import HarnessError
+    if not (tid.startswith(("github:", "gitlab:")) and repo):
+        return
+    try:
+        derived = default_tracker_for_repo(repo)
+    except Exception:
+        return
+    if not derived or derived == tid:
+        return
+    raise HarnessError(
+        f"tracker {tid} does not match repo remote ({derived}).\n"
+        f"  Pass --repo with a repo linked to {tid}, or record {derived} instead.",
+        exit_code=2,
+    )
+
 
 
 def check_or_record(tid: str, repo: str, yes: bool = False, persist: bool = True) -> str:
@@ -94,6 +119,7 @@ def check_or_record(tid: str, repo: str, yes: bool = False, persist: bool = True
     norm = str(Path(repo).expanduser().resolve()) if repo else repo
     if not tid:
         return "ok"
+    _guard_host_scoped_tracker(tid, norm)
     cfg = store.load_config()
     trackers = cfg.setdefault("trackers", {})
     entry = trackers.get(tid)
