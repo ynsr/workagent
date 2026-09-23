@@ -26,6 +26,10 @@
   rejects); `register --issue` records the full URL likewise. `review`
   rejects ambiguous shorthand refs with a PR/MR-URL hint instead of
   recording a non-URL `pr_url`.
+- Fix #23: `start --yes` (incl. web Launch runs) no longer adopts an
+  unlinked cwd repo when linked repos exist — the serve cwd is unrelated
+  to the issue, so the established link wins instead of silently filing
+  e.g. a personal-checkout path under `jira:IPG`.
 - Fix cleanup on merged MRs: `glab mr close` fails with "already been
   merged" (not "already closed"), which aborted cleanup before tearing
   down the worktree — now treated like an already-closed MR. Cleanup also

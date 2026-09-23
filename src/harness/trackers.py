@@ -267,14 +267,18 @@ def _confirm(tid: str, known: list[str], repo: str) -> bool:
 
 def _confirm_use_cwd(tid: str, known: list[str], repo: str, yes: bool = False) -> bool:
     """Step 2 y/N: use the unlinked cwd repo for *tid*?"""
+    if known and (yes or not _is_tty()):
+        # Linked repos exist and cwd is not one of them: never auto-adopt
+        # the cwd. The web Launch flow runs headless with --yes from the
+        # serve cwd, so auto-adopt silently filed an unrelated repo under
+        # the tracker (e.g. a Jira issue started from a server rooted in
+        # another project). Fall through to linked repos (single wins,
+        # multiple prompt/pick) so the established link wins.
+        eprint_note(f"note: cwd repo {repo} not linked to {tid}; using linked repo.")
+        return False
     if yes:
         return True
     if not _is_tty():
-        # Non-interactive: cwd repo unusable without consent — signal fall
-        # through by returning False when linked repos exist, else abort.
-        if known:
-            eprint_note(f"note: cwd repo {repo} not linked to {tid}; using linked repo.")
-            return False
         raise HarnessError(
             f"tracker {tid} is not linked to repo {repo}.\n"
             "  Re-run with --yes to link it, or pass --repo with a linked repo.",

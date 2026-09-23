@@ -80,3 +80,18 @@ def test_explicit_repo_still_guarded(isolated_config, tmp_path, monkeypatch):
         assert e.exit_code == 2
     else:
         raise AssertionError("expected HarnessError")
+
+def test_yes_does_not_adopt_unlinked_cwd(isolated_config, tmp_path, monkeypatch):
+    """--yes (web headless) with an unlinked cwd falls through to linked repos (issue #23)."""
+    other = tmp_path / "other"
+    other.mkdir()
+    linked = tmp_path / "proj"
+    linked.mkdir()
+    _seed("jira:IPG", [str(linked)], monkeypatch, tmp_path)
+    from harness import repos as _repos
+    monkeypatch.setattr(_repos, "repo_root", lambda cwd: other)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    r, outcome = trackers.resolve_for_tracker("jira:IPG", None, other, yes=True)
+    assert Path(r) == linked.resolve()
+    # The cwd repo must NOT be recorded under the tracker.
+    assert str(other.resolve()) not in store.load_config()["trackers"]["jira:IPG"]["repos"]
