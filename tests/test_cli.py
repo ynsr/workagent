@@ -283,7 +283,9 @@ def test_negative_cache_short_ttl():
     cached = {"checked_at": old, "pr": None, "branch_tip": "t", "base_tip": "b"}
     assert cli._cache_fresh(cached) is False          # negative: 30min TTL
     cached_pos = {**cached, "pr": {"number": 1, "state": "OPEN"}}
-    assert cli._cache_fresh(cached_pos) is True       # positive: 3h TTL
+    assert cli._cache_fresh(cached_pos) is True       # positive: 3d TTL
+    stale_pos = {**cached, "checked_at": (datetime.now(timezone.utc) - timedelta(days=4)).isoformat(), "pr": {"number": 1, "state": "OPEN"}}
+    assert cli._cache_fresh(stale_pos) is False       # positive: expired past 3d
 
 
 def test_status_cells_partial_entry():

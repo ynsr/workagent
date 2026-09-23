@@ -1162,7 +1162,7 @@ _CI_TTL_SECONDS = 600
 _CI_SYMBOLS = {"success": "✓", "failure": "✗", "running": "●"}
 _CI_STYLES = {"success": "bright_green", "failure": "bright_red", "running": "cyan"}
 _DB_CACHE: dict[str, str] = {}
-_STATUS_TTL_SECONDS = 3 * 3600
+_STATUS_TTL_SECONDS = 3 * 24 * 3600
 _NEGATIVE_TTL_SECONDS = 30 * 60
 
 
@@ -1291,7 +1291,7 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
 
     A cache entry (keyed by branch) is reused while the session-branch tip
     and the remote-tracking base tip are unchanged and the entry is younger
-    than its TTL (3h for a cached PR, 30min for a cached no-PR result),
+    than its TTL (3d for a cached PR, 30min for a cached no-PR result),
     and --refresh-pr is not given. Valid cache: two `git rev-parse` calls,
     no host-CLI spawn, no API call. --refresh-pr re-queries only the PR
     (counts still reuse when tips are unchanged). When the cache or the

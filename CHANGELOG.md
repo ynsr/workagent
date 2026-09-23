@@ -46,6 +46,8 @@
 - Fix #20: Dashboard/Links/Runs/Sessions gain per-repo tabs (`?repo=`,
   repo name = tab title) grouped by registered repo path; sessions resolve
   worktree refs via links, non-matching items under `(other)`.
+- Fix #17 (follow-up): PR-status cache TTL extended 3h → 3d; no-PR
+  negative cache stays 30min.
 - Fix cleanup on merged MRs: `glab mr close` fails with "already been
   merged" (not "already closed"), which aborted cleanup before tearing
   down the worktree — now treated like an already-closed MR. Cleanup also

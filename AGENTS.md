@@ -156,7 +156,7 @@ become `skipped:<reason>` rows — never torn down. Requires `--yes`
   `pr_cache.json` before) via `store.cache_pr_status`
   (pr, tool, base_branch, branch/base tips, behind/ahead counts, checked_at;
   CI in `ci`/`ci_checked_at`/`ci_sha` via `store.cache_ci_status`); a cached
-  PR is reused while both tips match and age < 3h, a cached no-PR result
+  PR is reused while both tips match and age < 3d, a cached no-PR result
   while age < 30min — repeat `status` runs cost two `git rev-parse` calls
   per worktree; `--refresh-pr` re-queries the PR and re-fetches CI (CI is
   otherwise reused while the branch tip is unchanged and `ci_checked_at`

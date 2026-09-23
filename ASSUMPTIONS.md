@@ -26,7 +26,7 @@ Sub-items:
 5. Hide Actions by default, hover-reveal pushed right — assume: CSS-only change in
    `StatusTable` RowActions (opacity-0 group-hover:opacity-100, focus-visible fallback
    for keyboard/touch). Keep icon buttons as-is, no redesign to dropdown menu.
-- #17.2 as built: `pr_detail.title` already served; kept 3h/30min TTLs (issue asked 3d — your call).
+- #17.2 as built: `pr_detail.title` already served; PR TTL bumped 3h → 3d per follow-up; no-PR TTL stays 30min.
 - #17.4 cost panel is static text from code constants, not measured timings.
 - #17.5 hover-hide only on `(hover:hover)`; touch/keyboard always see actions.
 - Sessions filter is exact `worktree_ref === key` via `?worktree=`.
