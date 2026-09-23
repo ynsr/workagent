@@ -3,19 +3,20 @@ import { useSearchParams } from "react-router-dom"
 import type { Repo } from "@/lib/api"
 
 /** Group key for one item: registered repo name whose path is a prefix of
- * the item path, else the item path's basename fallback. */
+ * the item path, else "(other)". */
 export function repoKeyForPath(itemPath: string, repos: Repo[]): string {
   const norm = itemPath.replace(/\\/g, "/").replace(/\/$/, "")
   let best = ""
+  let bestLen = -1
   for (const r of repos) {
     const rp = (r.path ?? "").replace(/\\/g, "/").replace(/\/$/, "")
-    if (rp && (norm === rp || norm.startsWith(rp + "/")) && rp.length > best.length) {
+    if (rp && (norm === rp || norm.startsWith(rp + "/")) && rp.length > bestLen) {
       best = r.name
+      bestLen = rp.length
     }
   }
   if (best) return best
-  const base = norm.split("/").filter(Boolean).pop() ?? ""
-  return base || "(unknown)"
+  return "(other)"
 }
 
 /** Repo tabs (?repo=) shared by Dashboard/Runs/Sessions: "All" + one tab per

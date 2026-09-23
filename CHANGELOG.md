@@ -47,7 +47,8 @@
   repo name = tab title) grouped by registered repo path; sessions resolve
   worktree refs via links, non-matching items under `(other)`.
 - Fix #17 (follow-up): PR-status cache TTL extended 3h → 3d; no-PR
-  negative cache stays 30min.
+  negative cache stays 30min. `_merge_pr` tolerates already-merged/closed
+  (cached OPEN state can lag up to 3d); Sessions `?q=` also matches Title.
 - Fix cleanup on merged MRs: `glab mr close` fails with "already been
   merged" (not "already closed"), which aborted cleanup before tearing
   down the worktree — now treated like an already-closed MR. Cleanup also
@@ -251,7 +252,7 @@
   detail panel (PR title/author/URL, counts; `--json` too).
 - Status cache: per-branch entries in `pr_cache.json` (PR, host tool, base
   branch, branch/base tips, counts) are reused while both tips are
-  unchanged and the entry is <3h old — repeat `status` runs skip host-CLI
+  unchanged and the entry is <3d old — repeat `status` runs skip host-CLI
   detection and PR/MR API calls entirely; `--refresh-pr` re-queries the
   PR/MR. gh↔glab mis-detection self-heals (the other CLI is tried and the
   working one is remembered). PR titles with `[` no longer crash Rich

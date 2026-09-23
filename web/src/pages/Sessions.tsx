@@ -167,7 +167,7 @@ export function Sessions() {
     if (worktreeFilter) out = out.filter((r) => r.worktree_ref === worktreeFilter)
     if (titleFilter) {
       out = out.filter((r) =>
-        `${r.id} ${r.worktree_ref} ${r.initiator_command} ${r.runtime_name} ${r.state}`.toLowerCase().includes(titleFilter),
+        `${r.id} ${r.worktree_ref} ${sessionTitle(r.worktree_ref)} ${r.initiator_command} ${r.runtime_name} ${r.state}`.toLowerCase().includes(titleFilter),
       )
     }
     return out
@@ -191,10 +191,11 @@ export function Sessions() {
         description="Persisted AI-harness sessions — one row per real launch, newest first."
       />
       {repos && repoTabs.tabs.names.length > 0 ? (
-        <div role="tablist" aria-label="Filter by repo" className="mb-3 flex flex-wrap gap-1.5">
+        <div role="group" aria-label="Filter by repo" className="mb-3 flex flex-wrap gap-1.5">
           <button
-            role="tab"
-            aria-selected={!repoFilter}
+            type="button"
+           
+            aria-pressed={!repoFilter}
             onClick={() => repoTabs.setRepo("")}
             className={
               !repoFilter
@@ -206,9 +207,10 @@ export function Sessions() {
           </button>
           {repoTabs.tabs.names.map((n) => (
             <button
+              type="button"
               key={n}
-              role="tab"
-              aria-selected={repoFilter === n}
+             
+              aria-pressed={repoFilter === n}
               onClick={() => repoTabs.setRepo(n)}
               className={
                 repoFilter === n

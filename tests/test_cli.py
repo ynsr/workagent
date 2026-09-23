@@ -284,6 +284,8 @@ def test_negative_cache_short_ttl():
     assert cli._cache_fresh(cached) is False          # negative: 30min TTL
     cached_pos = {**cached, "pr": {"number": 1, "state": "OPEN"}}
     assert cli._cache_fresh(cached_pos) is True       # positive: 3d TTL
+    day_old = {**cached, "checked_at": (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat(), "pr": {"number": 1, "state": "OPEN"}}
+    assert cli._cache_fresh(day_old) is True          # 6h: expired under 3h, fresh under 3d
     stale_pos = {**cached, "checked_at": (datetime.now(timezone.utc) - timedelta(days=4)).isoformat(), "pr": {"number": 1, "state": "OPEN"}}
     assert cli._cache_fresh(stale_pos) is False       # positive: expired past 3d
 
@@ -2064,6 +2066,17 @@ def test_close_pr_treats_merged_mr_as_closed(isolated_config, monkeypatch, capsy
     cli._close_pr({}, "https://git.jibit.cloud/server/projectx/-/merge_requests/1700",
                   force=False, cwd="/tmp")
     assert "already closed" in capsys.readouterr().err
+
+def test_merge_pr_treats_merged_mr_as_success(isolated_config, monkeypatch, capsys):
+    """`glab mr merge` on an already-merged MR must not abort cleanup (3d TTL staleness)."""
+    from harness.errors import HarnessError
+    import harness.errors as errors
+    def fake_run(*a, **k):
+        raise HarnessError("glab mr merge https://git.jibit.cloud/x/-/merge_requests/1 "
+                           "failed: ERROR\n\n  This merge request has already been merged.")
+    monkeypatch.setattr(cli, "run_cmd", fake_run)
+    cli._merge_pr("https://git.jibit.cloud/x/-/merge_requests/1", squash=True, cwd="/tmp")
+    assert "already merged/closed" in capsys.readouterr().err
 
 def test_cleanup_merged_state_skips_remote_close(isolated_config, monkeypatch, capsys):
     """Known-merged PR state skips the host close call entirely (no-op)."""

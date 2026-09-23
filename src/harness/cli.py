@@ -801,17 +801,29 @@ def cleanup(
 def _merge_pr(pr_url: str, squash: bool, cwd: str | None = None) -> None:
     """Merge an open PR/MR (squash default); raise HarnessError on failure.
 
+    Already-merged/closed is tolerated (returns with a note) since callers
+    may decide on cached PR state up to the 3d status TTL: the host PR can
+    have gone terminal without local tip movement. Other failures raise.
+
     ``cwd`` must be inside the MR/PR's repo so gh/glab bind the right
     host/remote — without it they probe the server's cwd (often an
     unrelated checkout) and fail with "no git remote points to a known
     host" or act on the wrong repo.
     """
-    if "github.com" in pr_url:
-        run_cmd("gh", "pr", "merge", pr_url,
-                *([] if squash else ["--no-squash"]), cwd=cwd)
-    else:
-        run_cmd("glab", "mr", "merge", pr_url,
-                *([] if squash else ["--no-squash"]), cwd=cwd)
+    try:
+        if "github.com" in pr_url:
+            run_cmd("gh", "pr", "merge", pr_url,
+                    *([] if squash else ["--no-squash"]), cwd=cwd)
+        else:
+            run_cmd("glab", "mr", "merge", pr_url,
+                    *([] if squash else ["--no-squash"]), cwd=cwd)
+    except HarnessError as e:
+        msg = str(e).lower()
+        if ("already merged" in msg or "already been merged" in msg
+                or "already closed" in msg or "already been closed" in msg):
+            eprint(f"note: {pr_url} already merged/closed; skipping merge.")
+            return
+        raise
     eprint(f"merged {pr_url}")
 
 

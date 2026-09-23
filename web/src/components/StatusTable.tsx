@@ -186,8 +186,8 @@ function matchesQuery(key: string, entry: WorktreeMap[string], q: string): boole
 function RepoTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
     <button
-      role="tab"
-      aria-selected={active}
+      type="button"
+      aria-pressed={active}
       onClick={onClick}
       className={
         active
@@ -241,7 +241,7 @@ export function StatusTable({
       .sort((a, b) =>
         (worktrees[b]?.added_at ?? "").localeCompare(worktrees[a]?.added_at ?? ""),
       )
-  }, [worktrees, q, repoFilter])
+  }, [worktrees, q, repoFilter, repoTabs])
 
   function setQuery(next: string) {
     const p = new URLSearchParams(params)
@@ -258,9 +258,9 @@ export function StatusTable({
 
   return (
     <div className={className}>
-      {repoTabs && repoTabs.tabs.names.length > 0 ? (
-        <div role="tablist" aria-label="Filter by repo" className="mb-3 flex flex-wrap gap-1.5">
-          <RepoTab active={!repoFilter} label={`All (${keys.length})`} onClick={() => repoTabs.setRepo("")} />
+      {repoTabs && (repoTabs.tabs.names.length > 0 || repoTabs.tabs.other > 0) ? (
+        <div role="group" aria-label="Filter by repo" className="mb-3 flex flex-wrap gap-1.5">
+          <RepoTab active={!repoFilter} label={`All repos (${repoTabs.tabs.names.reduce((n, name) => n + (repoTabs.tabs.counts.get(name) ?? 0), 0) + repoTabs.tabs.other})`} onClick={() => repoTabs.setRepo("")} />
           {repoTabs.tabs.names.map((n) => (
             <RepoTab
               key={n}
