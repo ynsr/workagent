@@ -2051,6 +2051,18 @@ def test_cleanup_unknown_pr_state_closes_without_merge(isolated_config, monkeypa
     assert "merge" not in calls
     assert "close" in calls
 
+def test_close_pr_treats_merged_mr_as_closed(isolated_config, monkeypatch, capsys):
+    """`glab mr close` on a merged MR must not abort cleanup (run eb420c1bb14d)."""
+    from harness.errors import HarnessError
+    import harness.errors as errors
+    def fake_run(*a, **k):
+        raise HarnessError("glab mr close https://git.jibit.cloud/server/projectx/-/merge_requests/1700 "
+                           "failed: ERROR\n\n  This merge request has already been merged.")
+    monkeypatch.setattr(errors, "run_cmd", fake_run)
+    cli._close_pr({}, "https://git.jibit.cloud/server/projectx/-/merge_requests/1700",
+                  force=False, cwd="/tmp")
+    assert "already closed" in capsys.readouterr().err
+
 
 def test_cleanup_repairs_stale_repo_from_live_worktree(isolated_config, tmp_path, monkeypatch):
     """Stale recorded repo (wrong checkout) is repaired from the live

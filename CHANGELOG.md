@@ -26,6 +26,9 @@
   rejects); `register --issue` records the full URL likewise. `review`
   rejects ambiguous shorthand refs with a PR/MR-URL hint instead of
   recording a non-URL `pr_url`.
+- Fix cleanup on merged MRs: `glab mr close` fails with "already been
+  merged" (not "already closed"), which aborted cleanup before tearing
+  down the worktree — now treated like an already-closed MR.
 - Fix #16: `parse_ref` accepts the `jira:KEY` form `issue_key()` emits, so
   web Start runs launched from issue dropdown keys (`jira:IPG-984`) parse.
 - Fix #15: stale `--no-harness` (renamed to `--no-runtime` in #14) is

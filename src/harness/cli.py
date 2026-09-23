@@ -928,7 +928,10 @@ def _close_pr(parsed: dict, pr_url: str, force: bool, cwd: str | None = None) ->
             _run("glab", "mr", "close", url, cwd=cwd)
         eprint(f"closed {url}")
     except HarnessError as e:
-        if "already closed" in str(e).lower() or "already been closed" in str(e).lower() or "404" in str(e) or "not found" in str(e).lower():
+        msg = str(e).lower()
+        if ("already closed" in msg or "already been closed" in msg
+                or "already been merged" in msg or "already merged" in msg
+                or "404" in msg or "not found" in msg):
             eprint(f"note: {url} already closed; continuing with local cleanup.")
             return
         if not force:
