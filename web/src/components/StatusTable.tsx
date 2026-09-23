@@ -1,7 +1,8 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react"
 import { useSearchParams } from "react-router-dom"
 import { FolderOpen, GitPullRequest, History, Info, RefreshCw, Rocket, Search, Trash2, XCircle } from "lucide-react"
-import type { WorktreeMap } from "@/lib/api"
+import type { Repo, WorktreeMap } from "@/lib/api"
+import { repoKeyForPath } from "@/lib/useRepoTabs"
 import { prLabel } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -182,6 +183,23 @@ function matchesQuery(key: string, entry: WorktreeMap[string], q: string): boole
   return hay.includes(q)
 }
 
+function RepoTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={
+        active
+          ? "min-h-11 rounded-full bg-primary px-3.5 text-sm font-medium text-primary-foreground"
+          : "min-h-11 rounded-full border px-3.5 text-sm text-muted-foreground hover:text-foreground"
+      }
+    >
+      {label}
+    </button>
+  )
+}
+
 /**
  * Worktrees table (GET /api/status or /api/links worktrees).
  * Table at ≥640px, cards below. Search is `?q=`-backed (Runs pattern);
@@ -193,28 +211,37 @@ export function StatusTable({
   showWorktree = false,
   networkExposed = false,
   className,
+  repoTabs,
 }: {
   worktrees: WorktreeMap
   actions: StatusTableActions
   showWorktree?: boolean
   networkExposed?: boolean
   className?: string
+  repoTabs?: { repoFilter: string; setRepo: (v: string) => void; tabs: { names: string[]; counts: Map<string, number>; other: number }; repos: Repo[] }
 }) {
   const [params, setParams] = useSearchParams()
   const q = (params.get("q") ?? "").trim()
   const [expanded, setExpanded] = useState<string | null>(null)
+  const repoFilter = repoTabs?.repoFilter ?? ""
 
   const keys = useMemo(() => {
     const needle = q.toLowerCase()
     return Object.keys(worktrees)
       .filter((key) => {
         const entry = worktrees[key]
-        return entry && (!needle || matchesQuery(key, entry, needle))
+        if (!entry) return false
+        if (repoFilter && repoTabs) {
+          const k = repoKeyForPath(entry.worktree ?? "", repoTabs.repos)
+          const want = repoFilter === "(other)" ? "(other)" : repoFilter
+          if (k !== want) return false
+        }
+        return !needle || matchesQuery(key, entry, needle)
       })
       .sort((a, b) =>
         (worktrees[b]?.added_at ?? "").localeCompare(worktrees[a]?.added_at ?? ""),
       )
-  }, [worktrees, q])
+  }, [worktrees, q, repoFilter])
 
   function setQuery(next: string) {
     const p = new URLSearchParams(params)
@@ -231,6 +258,26 @@ export function StatusTable({
 
   return (
     <div className={className}>
+      {repoTabs && repoTabs.tabs.names.length > 0 ? (
+        <div role="tablist" aria-label="Filter by repo" className="mb-3 flex flex-wrap gap-1.5">
+          <RepoTab active={!repoFilter} label={`All (${keys.length})`} onClick={() => repoTabs.setRepo("")} />
+          {repoTabs.tabs.names.map((n) => (
+            <RepoTab
+              key={n}
+              active={repoFilter === n}
+              label={`${n} (${repoTabs.tabs.counts.get(n) ?? 0})`}
+              onClick={() => repoTabs.setRepo(n)}
+            />
+          ))}
+          {repoTabs.tabs.other > 0 ? (
+            <RepoTab
+              active={repoFilter === "(other)"}
+              label={`(other) (${repoTabs.tabs.other})`}
+              onClick={() => repoTabs.setRepo("(other)")}
+            />
+          ) : null}
+        </div>
+      ) : null}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="relative min-w-52 flex-1 sm:max-w-xs">
           <Search aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />

@@ -43,6 +43,9 @@
 - Fix #18: Sessions page gains a Title column (humanized branch, 50 chars),
   a searchable worktree filter dropdown (+ text filter), and a Kind column
   (Start (task)/Review/Sync from the initiator command).
+- Fix #20: Dashboard/Links/Runs/Sessions gain per-repo tabs (`?repo=`,
+  repo name = tab title) grouped by registered repo path; sessions resolve
+  worktree refs via links, non-matching items under `(other)`.
 - Fix cleanup on merged MRs: `glab mr close` fails with "already been
   merged" (not "already closed"), which aborted cleanup before tearing
   down the worktree — now treated like an already-closed MR. Cleanup also

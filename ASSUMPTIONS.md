@@ -35,3 +35,11 @@ Sub-items:
 - Title: branch after first `/`, first 50 chars, `-`→space, Title Case; full ref in `title=` tooltip.
 - Worktree filter is a searchable dropdown of known `worktree_ref`s (+ free `?q=` text filter); exact-match on select.
 - Kind column maps initiator_command start/review/sync → Start (task)/Review/Sync; others raw.
+
+## Issue #20 — done as implemented
+- Tabs not routes: `?repo=` filter tabs on Dashboard/Links (StatusTable),
+  Runs, and Sessions; one level, no nested routing.
+- Grouping: registered repo name whose path prefixes the worktree path;
+  non-matching items under `(other)`; sessions resolve ref→path via
+  /api/links worktrees map first.
+- Tab counts are per-current-item-set, not all-time totals.

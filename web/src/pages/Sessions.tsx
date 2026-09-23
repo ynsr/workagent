@@ -23,7 +23,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { type SessionRow } from "@/lib/api"
-import { usePath, useResumeSession, useSession, useSessions } from "@/lib/queries"
+import { useLinks, usePath, useRepos, useResumeSession, useSession, useSessions } from "@/lib/queries"
+import { repoKeyForPath, useRepoTabs } from "@/lib/useRepoTabs"
 import {
   copyToClipboard,
   relativeTime,
@@ -150,12 +151,19 @@ export function Sessions() {
   const worktreeFilter = (params.get("worktree") ?? "").trim()
   const titleFilter = (params.get("q") ?? "").trim().toLowerCase()
   const allRows: SessionRow[] = data?.sessions ?? []
+  const { data: repos } = useRepos()
+  const { data: links } = useLinks()
+  const worktreePathOf = (ref: string) => links?.worktrees?.[ref]?.worktree ?? ref
+  const repoTabs = useRepoTabs(allRows.map((r) => worktreePathOf(r.worktree_ref)), repos)
+  const repoFilter = repoTabs.repoFilter
+  const repoOf = (ref: string) => repoKeyForPath(worktreePathOf(ref), repos ?? [])
   const worktreeOptions = useMemo(
     () => ["(all worktrees)", ...new Set(allRows.map((r) => r.worktree_ref))].sort(),
     [allRows],
   )
   const rows: SessionRow[] = useMemo(() => {
     let out = allRows
+    if (repoFilter) out = out.filter((r) => repoOf(r.worktree_ref) === repoFilter)
     if (worktreeFilter) out = out.filter((r) => r.worktree_ref === worktreeFilter)
     if (titleFilter) {
       out = out.filter((r) =>
@@ -163,7 +171,7 @@ export function Sessions() {
       )
     }
     return out
-  }, [allRows, worktreeFilter, titleFilter])
+  }, [allRows, worktreeFilter, titleFilter, repoFilter, links, repos])
 
   function setParam(key: string, value: string) {
     const next = new URLSearchParams(params)
@@ -182,6 +190,37 @@ export function Sessions() {
         title="Sessions"
         description="Persisted AI-harness sessions — one row per real launch, newest first."
       />
+      {repos && repoTabs.tabs.names.length > 0 ? (
+        <div role="tablist" aria-label="Filter by repo" className="mb-3 flex flex-wrap gap-1.5">
+          <button
+            role="tab"
+            aria-selected={!repoFilter}
+            onClick={() => repoTabs.setRepo("")}
+            className={
+              !repoFilter
+                ? "min-h-11 rounded-full bg-primary px-3.5 text-sm font-medium text-primary-foreground"
+                : "min-h-11 rounded-full border px-3.5 text-sm text-muted-foreground hover:text-foreground"
+            }
+          >
+            All repos
+          </button>
+          {repoTabs.tabs.names.map((n) => (
+            <button
+              key={n}
+              role="tab"
+              aria-selected={repoFilter === n}
+              onClick={() => repoTabs.setRepo(n)}
+              className={
+                repoFilter === n
+                  ? "min-h-11 rounded-full bg-primary px-3.5 text-sm font-medium text-primary-foreground"
+                  : "min-h-11 rounded-full border px-3.5 text-sm text-muted-foreground hover:text-foreground"
+              }
+            >
+              {n} ({repoTabs.tabs.counts.get(n) ?? 0})
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="min-w-52 flex-1 sm:max-w-xs">
           <SearchableSelect

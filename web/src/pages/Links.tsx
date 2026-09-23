@@ -7,6 +7,7 @@ import { CandidatesCard } from "@/components/CandidatesCard"
 import { PageHeader } from "@/components/PageHeader"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { StatusTable } from "@/components/StatusTable"
+import { useRepoTabs } from "@/lib/useRepoTabs"
 import {
   EmptyState,
   ErrorState,
@@ -548,6 +549,11 @@ export function Links() {
   const createRun = useCreateRun()
   const { data: worktrees, isPending, isError, error, refetch } = useStatusAll()
   const { data: info } = useInfo()
+  const { data: repos } = useRepos()
+  const repoTabs = useRepoTabs(
+    Object.values(worktrees ?? {}).map((e) => e.worktree ?? ""),
+    repos,
+  )
   const [showWorktree, setShowWorktree] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [activeForm, setActiveForm] = useState<null | "set" | "remove" | "register">(
@@ -748,6 +754,7 @@ export function Links() {
               actions={tableActions}
               showWorktree={showWorktree}
               networkExposed={info?.network_exposed ?? false}
+              repoTabs={repos ? { ...repoTabs, repos } : undefined}
             />
           )}
         </CardContent>

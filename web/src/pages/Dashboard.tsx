@@ -26,7 +26,8 @@ import { Switch } from "@/components/ui/switch"
 import { api, type WorktreeMap } from "@/lib/api"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
-import { queryKeys, useCreateRun, useInfo, useStatusAll } from "@/lib/queries"
+import { queryKeys, useCreateRun, useInfo, useRepos, useStatusAll } from "@/lib/queries"
+import { useRepoTabs } from "@/lib/useRepoTabs"
 
 const CSV_HEADERS = [
   "key",
@@ -63,6 +64,11 @@ export function Dashboard() {
   const createRun = useCreateRun()
   const { data: worktrees, isPending, isError, error, refetch } = useStatusAll()
   const { data: info } = useInfo()
+  const { data: repos } = useRepos()
+  const repoTabs = useRepoTabs(
+    Object.values(worktrees ?? {}).map((e) => e.worktree ?? ""),
+    repos,
+  )
 
   const [showWorktree, setShowWorktree] = useState(false)
   const [refreshingPr, setRefreshingPr] = useState(false)
@@ -390,6 +396,7 @@ export function Dashboard() {
             actions={tableActions}
             showWorktree={showWorktree}
             networkExposed={info?.network_exposed ?? false}
+            repoTabs={repos ? { ...repoTabs, repos } : undefined}
           />
           <details className="mt-3 rounded-md border px-3 py-2 text-xs text-muted-foreground">
             <summary className="cursor-pointer font-medium text-foreground">

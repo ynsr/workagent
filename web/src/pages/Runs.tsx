@@ -21,7 +21,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { type Run } from "@/lib/api"
-import { useCancelRun, useResumeRun, useRuns } from "@/lib/queries"
+import { useCancelRun, useRepos, useResumeRun, useRuns } from "@/lib/queries"
+import { repoKeyForPath, useRepoTabs } from "@/lib/useRepoTabs"
 import {
   argsText,
   copyToClipboard,
@@ -84,10 +85,35 @@ const FILTERS = [
 
 type Filter = (typeof FILTERS)[number]["value"]
 
-function filterRuns(runs: Run[] | undefined, filter: Filter, target: string): Run[] {
+function RepoTabsRow({ repoTabs }: { repoTabs: { repoFilter: string; setRepo: (v: string) => void; tabs: { names: string[]; counts: Map<string, number>; other: number } } }) {
+  const btn = (active: boolean) =>
+    active
+      ? "min-h-11 rounded-full bg-primary px-3.5 text-sm font-medium text-primary-foreground"
+      : "min-h-11 rounded-full border px-3.5 text-sm text-muted-foreground hover:text-foreground"
+  return (
+    <div role="tablist" aria-label="Filter by repo" className="mb-4 flex flex-wrap gap-1.5">
+      <button role="tab" aria-selected={!repoTabs.repoFilter} onClick={() => repoTabs.setRepo("")} className={btn(!repoTabs.repoFilter)}>
+        All repos
+      </button>
+      {repoTabs.tabs.names.map((n) => (
+        <button key={n} role="tab" aria-selected={repoTabs.repoFilter === n} onClick={() => repoTabs.setRepo(n)} className={btn(repoTabs.repoFilter === n)}>
+          {n} ({repoTabs.tabs.counts.get(n) ?? 0})
+        </button>
+      ))}
+      {repoTabs.tabs.other > 0 ? (
+        <button role="tab" aria-selected={repoTabs.repoFilter === "(other)"} onClick={() => repoTabs.setRepo("(other)")} className={btn(repoTabs.repoFilter === "(other)")}>
+          (other) ({repoTabs.tabs.other})
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function filterRuns(runs: Run[] | undefined, filter: Filter, target: string, repoOf: (r: Run) => string, repo: string): Run[] {
   if (!runs) return []
   let out = runs
   if (filter !== "all") out = out.filter((r) => r.state === filter)
+  if (repo) out = out.filter((r) => repoOf(r) === repo)
   if (target) {
     const t = target.toLowerCase()
     out = out.filter(
@@ -125,12 +151,15 @@ function CancelButton({ run }: { run: Run }) {
 export function Runs() {
   const [params, setParams] = useSearchParams()
   const { data: runs, isPending, isError, error, refetch } = useRuns()
+  const { data: repos } = useRepos()
   const [copied, setCopied] = useState(false)
 
   const target = params.get("target") ?? ""
   const filter = (params.get("state") as Filter | null) ?? "all"
 
-  const filtered = useMemo(() => filterRuns(runs, filter, target), [runs, filter, target])
+  const repoTabs = useRepoTabs((runs ?? []).map((r) => r.worktree || r.target), repos)
+  const repoOf = (r: Run) => repoKeyForPath(r.worktree || r.target, repos ?? [])
+  const filtered = useMemo(() => filterRuns(runs, filter, target, repoOf, repoTabs.repoFilter), [runs, filter, target, repoTabs.repoFilter, repos])
 
   function setFilter(next: Filter) {
     const p = new URLSearchParams(params)
@@ -200,6 +229,9 @@ export function Runs() {
           </span>
         ) : null}
       </div>
+      {repos && repoTabs.tabs.names.length > 0 ? (
+        <RepoTabsRow repoTabs={repoTabs} />
+      ) : null}
 
       {isPending ? (
         <TableSkeleton rows={5} />
