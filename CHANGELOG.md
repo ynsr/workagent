@@ -40,6 +40,9 @@
   hidden until hover (touch/keyboard unaffected) with a history button
   deep-linking the Sessions page (`?worktree=` filter); remote-call/TTL
   cost panel under the dashboard table.
+- Fix #18: Sessions page gains a Title column (humanized branch, 50 chars),
+  a searchable worktree filter dropdown (+ text filter), and a Kind column
+  (Start (task)/Review/Sync from the initiator command).
 - Fix cleanup on merged MRs: `glab mr close` fails with "already been
   merged" (not "already closed"), which aborted cleanup before tearing
   down the worktree — now treated like an already-closed MR. Cleanup also

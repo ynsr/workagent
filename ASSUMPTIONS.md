@@ -30,3 +30,8 @@ Sub-items:
 - #17.4 cost panel is static text from code constants, not measured timings.
 - #17.5 hover-hide only on `(hover:hover)`; touch/keyboard always see actions.
 - Sessions filter is exact `worktree_ref === key` via `?worktree=`.
+
+## Issue #18 — done as implemented
+- Title: branch after first `/`, first 50 chars, `-`→space, Title Case; full ref in `title=` tooltip.
+- Worktree filter is a searchable dropdown of known `worktree_ref`s (+ free `?q=` text filter); exact-match on select.
+- Kind column maps initiator_command start/review/sync → Start (task)/Review/Sync; others raw.

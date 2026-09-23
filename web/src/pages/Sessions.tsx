@@ -1,5 +1,6 @@
 import { useMemo } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
+import { SearchableSelect } from "@/components/SearchableSelect"
 import { toast } from "sonner"
 import { ArrowLeft, Copy, SquareTerminal } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
@@ -11,6 +12,7 @@ import {
 } from "@/components/StatusFeedback"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import {
   Table,
@@ -32,6 +34,22 @@ import {
 /** Every persisted session executed a real runtime session, so both
  * resume buttons always apply. Copy resolves the worktree path via
  * /api/path (falls back to the recorded ref). */
+
+/** Branch → human title: drop `<type>/` prefix, first 50 chars, `-`→space, Title Case. */
+export function sessionTitle(ref: string): string {
+  const branch = ref.includes("/") ? ref.slice(ref.indexOf("/") + 1) : ref
+  const words = branch.slice(0, 50).replace(/-/g, " ").split(/\s+/).filter(Boolean)
+  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") || ref
+}
+
+/** initiator_command → session kind label. */
+export function sessionKind(cmd: string): string {
+  const c = cmd.trim().toLowerCase()
+  if (c === "start") return "Start (task)"
+  if (c === "review") return "Review"
+  if (c === "sync") return "Sync"
+  return cmd || "—"
+}
 function SessionRowActions({ row }: { row: SessionRow }) {
   const resume = useResumeSession()
   const pathQ = usePath(row.worktree_ref)
@@ -130,16 +148,32 @@ export function Sessions() {
   } = useSessions()
   const [params, setParams] = useSearchParams()
   const worktreeFilter = (params.get("worktree") ?? "").trim()
+  const titleFilter = (params.get("q") ?? "").trim().toLowerCase()
+  const allRows: SessionRow[] = data?.sessions ?? []
+  const worktreeOptions = useMemo(
+    () => ["(all worktrees)", ...new Set(allRows.map((r) => r.worktree_ref))].sort(),
+    [allRows],
+  )
   const rows: SessionRow[] = useMemo(() => {
-    const all: SessionRow[] = data?.sessions ?? []
-    if (!worktreeFilter) return all
-    return all.filter((r) => r.worktree_ref === worktreeFilter)
-  }, [data, worktreeFilter])
+    let out = allRows
+    if (worktreeFilter) out = out.filter((r) => r.worktree_ref === worktreeFilter)
+    if (titleFilter) {
+      out = out.filter((r) =>
+        `${r.id} ${r.worktree_ref} ${r.initiator_command} ${r.runtime_name} ${r.state}`.toLowerCase().includes(titleFilter),
+      )
+    }
+    return out
+  }, [allRows, worktreeFilter, titleFilter])
+
+  function setParam(key: string, value: string) {
+    const next = new URLSearchParams(params)
+    if (value.trim()) next.set(key, value.trim())
+    else next.delete(key)
+    setParams(next, { replace: true })
+  }
 
   function clearWorktree() {
-    const next = new URLSearchParams(params)
-    next.delete("worktree")
-    setParams(next, { replace: true })
+    setParam("worktree", "")
   }
 
   return (
@@ -148,17 +182,29 @@ export function Sessions() {
         title="Sessions"
         description="Persisted AI-harness sessions — one row per real launch, newest first."
       />
-      {worktreeFilter ? (
-        <p className="mb-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          <span>
-            Filtered to worktree{" "}
-            <span className="font-mono text-[13px] text-foreground">{worktreeFilter}</span>
-          </span>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="min-w-52 flex-1 sm:max-w-xs">
+          <SearchableSelect
+            value={worktreeFilter}
+            options={worktreeOptions}
+            onChange={(v) => setParam("worktree", v === "(all worktrees)" ? "" : v)}
+            placeholder="(all worktrees)"
+          />
+        </div>
+        <div className="relative min-w-52 flex-1 sm:max-w-xs">
+          <Input
+            value={params.get("q") ?? ""}
+            onChange={(e) => setParam("q", e.target.value)}
+            placeholder="Filter sessions…"
+            aria-label="Filter sessions"
+          />
+        </div>
+        {worktreeFilter ? (
           <Button variant="outline" size="sm" onClick={clearWorktree}>
-            Clear
+            Clear worktree
           </Button>
-        </p>
-      ) : null}
+        ) : null}
+      </div>
       {isPending ? (
         <TableSkeleton rows={5} />
       ) : isError ? (
@@ -174,6 +220,7 @@ export function Sessions() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Title</TableHead>
                   <TableHead>ID</TableHead>
                   <TableHead>Worktree</TableHead>
                   <TableHead>Runtime</TableHead>
@@ -186,6 +233,9 @@ export function Sessions() {
               <TableBody>
                 {rows.map((s) => (
                   <TableRow key={s.id}>
+                    <TableCell className="max-w-64 truncate text-sm text-muted-foreground" title={sessionTitle(s.worktree_ref)}>
+                      {sessionTitle(s.worktree_ref)}
+                    </TableCell>
                     <TableCell className="font-mono text-[13px]">
                       <Link
                         to={`/sessions/${encodeURIComponent(s.id)}`}
@@ -199,7 +249,7 @@ export function Sessions() {
                     </TableCell>
                     <TableCell>{s.runtime_name}</TableCell>
                     <TableCell className="font-mono text-[13px]">
-                      {s.initiator_command}
+                      {sessionKind(s.initiator_command)}
                     </TableCell>
                     <TableCell>
                       <StateBadge state={s.state} />
