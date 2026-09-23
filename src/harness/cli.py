@@ -859,7 +859,8 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
     if merge is None:
         # Merge only on explicitly open states; unknown ("") falls back
         # to close-and-remove so offline/cache-miss cleanup still works.
-        merge = bool(pr_url) and state in ("OPEN", "OPENED")
+        merge = bool(pr_url) and state in ("open", "opened", "OPEN", "OPENED")
+    state_norm = (state or "").lower()
     # Remote close BEFORE local teardown: host-CLI calls run with cwd
     # inside the live worktree (its origin remote is authoritative). After
     # git-wt removes the worktree the cwd no longer exists and glab falls
@@ -871,7 +872,12 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
         merged_now = True
     else:
         _close_issue(parsed, force)
-        _close_pr(parsed, pr_url, force, cwd=host_cwd)
+        if state_norm in ("merged", "closed"):
+            # Already terminal on the host: closing is a no-op (glab fails
+            # "already been merged"), so skip straight to local teardown.
+            eprint(f"note: {pr_url} already {state_norm}; skipping remote close.")
+        else:
+            _close_pr(parsed, pr_url, force, cwd=host_cwd)
     cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=True,
                                      force=force, yes=yes)
     if merged_now:
@@ -909,6 +915,14 @@ def _close_issue(parsed: dict, force: bool) -> None:
             _run("gh", "issue", "close", *target)
             eprint(f"closed issue {parsed['url'] or parsed['number']}")
         except HarnessError as e:
+            msg = str(e).lower()
+            # Note: `gh issue close` on an already-closed issue exits 0
+            # (stdout "! ... already closed"), so this only fires for
+            # genuinely missing issues (nonzero "Could not resolve").
+            if ("already closed" in msg or "already been closed" in msg
+                    or "not found" in msg or "404" in msg or "could not resolve" in msg):
+                eprint(f"note: issue {parsed['url'] or parsed['number']} already closed; continuing.")
+                return
             if not force:
                 raise
             eprint(f"warning: {e}")

@@ -2063,6 +2063,36 @@ def test_close_pr_treats_merged_mr_as_closed(isolated_config, monkeypatch, capsy
                   force=False, cwd="/tmp")
     assert "already closed" in capsys.readouterr().err
 
+def test_cleanup_merged_state_skips_remote_close(isolated_config, monkeypatch, capsys):
+    """Known-merged PR state skips the host close call entirely (no-op)."""
+    store.record_link("jira:IPG-11", {"issue": "IPG-11", "worktree": "/tmp/wt",
+                                      "branch": "feat/11", "repo": "/tmp/proj",
+                                      "pr_url": "https://github.com/o/r/pull/11"})
+    calls = []
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: calls.append("close"))
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": "merged"}})
+    cli._cleanup_one("jira:IPG-11", dict(store.load_links()["jira:IPG-11"]),
+                     force=False, yes=True, dry_run=False, json_output=True)
+    assert "close" not in calls
+    assert "skipping remote close" in capsys.readouterr().err
+
+
+def test_close_issue_treats_closed_as_success(isolated_config, monkeypatch, capsys):
+    """`gh issue close` on a closed issue continues cleanup instead of raising."""
+    from harness.errors import HarnessError
+    import harness.errors as errors
+    def fake_run(*a, **k):
+        raise HarnessError("gh issue close 22 --repo o/r failed: GraphQL: Could not resolve to an Issue with the number of 22")
+    monkeypatch.setattr(errors, "run_cmd", fake_run)
+    cli._close_issue({"tool": "gh", "repo": "o/r", "kind": "issue_or_pr",
+                      "number": "22", "url": "https://github.com/o/r/issues/22"},
+                     force=False)
+    assert "already closed" in capsys.readouterr().err
+
 
 def test_cleanup_repairs_stale_repo_from_live_worktree(isolated_config, tmp_path, monkeypatch):
     """Stale recorded repo (wrong checkout) is repaired from the live
