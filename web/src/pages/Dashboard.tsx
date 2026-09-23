@@ -298,8 +298,9 @@ export function Dashboard() {
     onCleanup: handleCleanup,
     onOpenWorktree: handleOpenWorktree,
     onOpenRun: handleOpenRun,
+    onOpenSessions: (key: string) =>
+      navigate("/sessions?worktree=" + encodeURIComponent(key)),
   }
-
   const invalidCount = worktrees
     ? Object.values(worktrees).filter((e) => e.wt_valid === false).length
     : 0
@@ -390,6 +391,16 @@ export function Dashboard() {
             showWorktree={showWorktree}
             networkExposed={info?.network_exposed ?? false}
           />
+          <details className="mt-3 rounded-md border px-3 py-2 text-xs text-muted-foreground">
+            <summary className="cursor-pointer font-medium text-foreground">
+              Remote calls &amp; cache TTLs
+            </summary>
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              <li><span className="font-mono">gh pr list</span> / <span className="font-mono">glab mr list</span> per branch — PR result cached 3h, no-PR result 30min (refresh: Refresh PR).</li>
+              <li>CI pipeline lookup per PR branch — cached 10min.</li>
+              <li>Tracker issue lists (jira-cli / gh) — cached 1h (Issues/Candidates pages).</li>
+            </ul>
+          </details>
           <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
             <SquareTerminal className="size-3.5" aria-hidden />
             Sync, Review and Cleanup run as child processes — follow them under Runs.

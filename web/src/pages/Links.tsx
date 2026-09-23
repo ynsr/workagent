@@ -668,6 +668,7 @@ export function Links() {
     onCleanup: handleCleanup,
     onOpenWorktree: handleOpenWorktree,
     onOpenRun: (key: string) => navigate(`/runs?target=${encodeURIComponent(key)}`),
+    onOpenSessions: (key: string) => navigate(`/sessions?worktree=${encodeURIComponent(key)}`),
   }
 
   return (

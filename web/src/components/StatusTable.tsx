@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react"
 import { useSearchParams } from "react-router-dom"
-import { FolderOpen, GitPullRequest, Info, RefreshCw, Rocket, Search, Trash2, XCircle } from "lucide-react"
+import { FolderOpen, GitPullRequest, History, Info, RefreshCw, Rocket, Search, Trash2, XCircle } from "lucide-react"
 import type { WorktreeMap } from "@/lib/api"
 import { prLabel } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -28,8 +28,9 @@ export interface StatusTableActions {
   /** Open the worktree folder locally (`open` RunCommand; disabled when network-exposed). */
   onOpenWorktree: (key: string) => void
   onOpenRun: (key: string) => void
+  /** Navigate to the Sessions page filtered to this worktree. */
+  onOpenSessions?: (key: string) => void
 }
-
 function ActionIcon({
   title,
   onClick,
@@ -78,7 +79,7 @@ function RowActions({
 }) {
   const invalid = entry.wt_valid === false
   return (
-    <div className="flex items-center justify-end gap-0.5">
+    <div className="flex items-center justify-end gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-within:opacity-100 [@media(hover:hover)]:hover:opacity-100">
       <ActionIcon
         title={detailOpen ? `Hide details of ${worktreeKey}` : `Details of ${worktreeKey}`}
         onClick={onToggleDetail}
@@ -124,6 +125,14 @@ function RowActions({
       >
         <Rocket aria-hidden />
       </ActionIcon>
+      {actions.onOpenSessions ? (
+        <ActionIcon
+          title={`Worktree sessions for ${worktreeKey}`}
+          onClick={() => actions.onOpenSessions?.(worktreeKey)}
+        >
+          <History aria-hidden />
+        </ActionIcon>
+      ) : null}
     </div>
   )
 }
@@ -271,7 +280,7 @@ export function StatusTable({
                   <TableHead className="w-14 text-center">CI</TableHead>
                   <TableHead>Added</TableHead>
                   {showWorktree ? <TableHead>Path</TableHead> : null}
-                  <TableHead className="text-right pr-2">Actions</TableHead>
+                  <TableHead className="text-right pr-2" title="Actions appear on row hover; always visible on touch screens">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -317,9 +326,21 @@ export function StatusTable({
                         <TableCell>
                           <div className="flex min-w-0 items-center gap-2">
                             <PrBadge pr={entry.pr_detail ?? null} />
-                            <span className="truncate text-muted-foreground" title={entry.pr}>
-                              {entry.pr_detail ? entry.pr_detail.title : prLabel(entry.pr) || "—"}
-                            </span>
+                            {entry.pr && entry.pr.startsWith("http") ? (
+                              <a
+                                href={entry.pr}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="truncate text-muted-foreground underline-offset-2 hover:underline"
+                                title={`${entry.pr_detail ? entry.pr_detail.title + "\n" : ""}${entry.pr}`}
+                              >
+                                {entry.pr_detail ? entry.pr_detail.title : prLabel(entry.pr) || "—"}
+                              </a>
+                            ) : (
+                              <span className="truncate text-muted-foreground" title={entry.pr}>
+                                {entry.pr_detail ? entry.pr_detail.title : prLabel(entry.pr) || "—"}
+                              </span>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell className="text-center">
@@ -432,7 +453,15 @@ export function StatusTable({
                     {entry.pr && !entry.pr_detail ? (
                       <div className="flex items-baseline gap-2">
                         <dt className="w-16 shrink-0 text-xs text-muted-foreground">PR</dt>
-                        <dd className="min-w-0 truncate" title={entry.pr}>{prLabel(entry.pr)}</dd>
+                        <dd className="min-w-0 truncate" title={entry.pr}>
+                          {entry.pr.startsWith("http") ? (
+                            <a href={entry.pr} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
+                              {prLabel(entry.pr)}
+                            </a>
+                          ) : (
+                            prLabel(entry.pr)
+                          )}
+                        </dd>
                       </div>
                     ) : null}
                     <div className="flex items-baseline gap-2">

@@ -36,6 +36,10 @@
   (server injects `--session-file` even for `--no-runtime`, creating
   nothing) and the Run page gains a Copy-runtime-command button; finished
   start runs resolve their worktree from links for resume/copy.
+- Fix #17: dashboard PR/MR label links to the absolute URL; row actions
+  hidden until hover (touch/keyboard unaffected) with a history button
+  deep-linking the Sessions page (`?worktree=` filter); remote-call/TTL
+  cost panel under the dashboard table.
 - Fix cleanup on merged MRs: `glab mr close` fails with "already been
   merged" (not "already closed"), which aborted cleanup before tearing
   down the worktree — now treated like an already-closed MR. Cleanup also

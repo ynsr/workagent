@@ -1,4 +1,5 @@
-import { Link, useParams } from "react-router-dom"
+import { useMemo } from "react"
+import { Link, useParams, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { ArrowLeft, Copy, SquareTerminal } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
@@ -127,7 +128,19 @@ export function Sessions() {
   const {
     data, isPending, isError, error, refetch,
   } = useSessions()
-  const rows: SessionRow[] = data?.sessions ?? []
+  const [params, setParams] = useSearchParams()
+  const worktreeFilter = (params.get("worktree") ?? "").trim()
+  const rows: SessionRow[] = useMemo(() => {
+    const all: SessionRow[] = data?.sessions ?? []
+    if (!worktreeFilter) return all
+    return all.filter((r) => r.worktree_ref === worktreeFilter)
+  }, [data, worktreeFilter])
+
+  function clearWorktree() {
+    const next = new URLSearchParams(params)
+    next.delete("worktree")
+    setParams(next, { replace: true })
+  }
 
   return (
     <div>
@@ -135,6 +148,17 @@ export function Sessions() {
         title="Sessions"
         description="Persisted AI-harness sessions — one row per real launch, newest first."
       />
+      {worktreeFilter ? (
+        <p className="mb-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          <span>
+            Filtered to worktree{" "}
+            <span className="font-mono text-[13px] text-foreground">{worktreeFilter}</span>
+          </span>
+          <Button variant="outline" size="sm" onClick={clearWorktree}>
+            Clear
+          </Button>
+        </p>
+      ) : null}
       {isPending ? (
         <TableSkeleton rows={5} />
       ) : isError ? (
