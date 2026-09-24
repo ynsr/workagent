@@ -9,6 +9,7 @@ export const queryKeys = {
   statusDetail: (ref: string) => ["status-detail", ref] as const,
   path: (ref: string) => ["path", ref] as const,
   repos: ["repos"] as const,
+  trackers: ["trackers"] as const,
   links: ["links"] as const,
   doctor: ["doctor"] as const,
   runs: ["runs"] as const,
@@ -33,9 +34,12 @@ export function useStatusAll(refresh?: boolean) {
 export function useInfo() {
   return useQuery({ queryKey: queryKeys.info, queryFn: api.info, staleTime: 60_000 })
 }
-
 export function useRepos() {
   return useQuery({ queryKey: queryKeys.repos, queryFn: api.repos })
+}
+
+export function useTrackers() {
+  return useQuery({ queryKey: queryKeys.trackers, queryFn: api.trackers })
 }
 
 export function useLinks() {
@@ -133,6 +137,7 @@ export function invalidateAfterRun(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: queryKeys.runs })
   void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
   void qc.invalidateQueries({ queryKey: queryKeys.repos })
+  void qc.invalidateQueries({ queryKey: queryKeys.trackers })
   void qc.invalidateQueries({ queryKey: queryKeys.links })
   void qc.invalidateQueries({ queryKey: queryKeys.doctor })
 }

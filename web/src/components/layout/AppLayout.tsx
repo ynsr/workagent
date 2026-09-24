@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom"
 import {
   FolderGit2,
+  Tags,
   GitBranch,
   LayoutDashboard,
   Link2,
@@ -18,6 +19,7 @@ const NAV_ITEMS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/launch", label: "Launch", icon: Rocket },
   { to: "/repos", label: "Repos", icon: FolderGit2 },
+  { to: "/trackers", label: "Trackers", icon: Tags },
   { to: "/links", label: "Links", icon: Link2 },
   { to: "/doctor", label: "Doctor", icon: Stethoscope },
   { to: "/runs", label: "Runs", icon: SquareTerminal },

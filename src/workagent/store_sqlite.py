@@ -14,12 +14,10 @@ from pathlib import Path
 SCHEMA = """
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS trackers (
-  key_ref TEXT PRIMARY KEY, remote_url TEXT NOT NULL DEFAULT '',
-  vendor TEXT NOT NULL DEFAULT '');
+  key_ref TEXT PRIMARY KEY, remote_url TEXT NOT NULL, vendor TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS repos (
   key_ref TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL DEFAULT '',
-  tracker_key TEXT NOT NULL DEFAULT '',
   remote TEXT NOT NULL DEFAULT '', tool TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS tracker_repos (
   tracker_key TEXT NOT NULL REFERENCES trackers(key_ref) ON DELETE CASCADE,
@@ -57,87 +55,224 @@ def connect(path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _tracker_meta(tid: str) -> tuple[str, str]:
+    """(vendor, remote_url) for *tid*; both mandatory, never ''.
+
+    jira:PREFIX → ("jira", "<jira-site>/browse/PREFIX" or "jira:PREFIX").
+    github:O/R → ("github", "https://github.com/O/R").
+    gitlab:host/g/r → ("gitlab", "https://host/g/r").
+    """
+    if tid.startswith("jira:"):
+        vendor = "jira"
+        try:
+            from .refs import jira_site as _site
+            site = _site() or ""
+        except Exception:
+            site = ""
+        prefix = tid.split(":", 1)[1]
+        remote_url = f"{site.rstrip('/')}/browse/{prefix}" if site else tid
+        return vendor, remote_url
+    if tid.startswith("github:"):
+        return "github", f"https://github.com/{tid.split(':', 1)[1]}"
+    if tid.startswith("gitlab:"):
+        rest = tid.split(":", 1)[1]
+        host, _, repo = rest.partition("/")
+        return "gitlab", f"https://{rest}" if "/" in rest and host else tid
+    return "unknown", tid
+
+
+def _migrate_v2(conn) -> None:
+    """Schema v2: trackers gains mandatory vendor/remote_url; repos loses tracker_key.
+
+    - Legacy trackers rows (nullable/'' vendor/remote_url) are backfilled
+      from the key via _tracker_meta.
+    - Legacy repos.tracker_key values seed missing tracker rows + links,
+      then the column is dropped (SQLite ≥3.35 DROP COLUMN).
+    Idempotent: re-runs are no-ops.
+    """
+    tcols = {r[1]: r for r in conn.execute("PRAGMA table_info(trackers)")}
+    if tcols:
+        if "vendor" not in tcols:
+            conn.execute("ALTER TABLE trackers ADD COLUMN vendor TEXT NOT NULL DEFAULT 'unknown'")
+        if "remote_url" not in tcols:
+            conn.execute("ALTER TABLE trackers ADD COLUMN remote_url TEXT NOT NULL DEFAULT ''")
+        for row in conn.execute("SELECT key_ref, vendor, remote_url FROM trackers"):
+            tid, vendor, remote_url = row[0], row[1], row[2]
+            if not vendor or not remote_url:
+                v, u = _tracker_meta(tid)
+                conn.execute("UPDATE trackers SET vendor = ?, remote_url = ? WHERE key_ref = ?",
+                             (v or "unknown", u or tid, tid))
+        conn.execute("UPDATE trackers SET vendor = 'unknown' WHERE vendor IS NULL OR vendor = ''")
+        conn.execute("UPDATE trackers SET remote_url = key_ref WHERE remote_url IS NULL OR remote_url = ''")
+    rcols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
+    if "tracker_key" in rcols:
+        for row in conn.execute("SELECT key_ref, path, COALESCE(tracker_key, '') FROM repos"):
+            repo_key, repo_path, legacy = row[0], row[1], row[2]
+            if not legacy:
+                continue
+            v, u = _tracker_meta(legacy)
+            conn.execute("INSERT OR IGNORE INTO trackers (key_ref, vendor, remote_url)"
+                         " VALUES (?, ?, ?)", (legacy, v, u))
+            conn.execute("INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key)"
+                         " VALUES (?, ?)", (legacy, repo_key))
+        conn.execute("ALTER TABLE repos DROP COLUMN tracker_key")
+
+
 def init_db(path: Path) -> Path:
     with connect(path) as conn:
         conn.executescript(SCHEMA)
+        _migrate_v2(conn)
         cols = [r[1] for r in conn.execute("PRAGMA table_info(worktrees)")]
         if "payload" not in cols:
             conn.execute("ALTER TABLE worktrees ADD COLUMN payload TEXT NOT NULL DEFAULT '{}'")
         rcols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
         if "name" not in rcols:
             conn.execute("ALTER TABLE repos ADD COLUMN name TEXT NOT NULL DEFAULT ''")
-        if "tracker_key" not in rcols:
-            conn.execute("ALTER TABLE repos ADD COLUMN tracker_key TEXT NOT NULL DEFAULT ''")
         if "tool" not in rcols:
             conn.execute("ALTER TABLE repos ADD COLUMN tool TEXT NOT NULL DEFAULT ''")
     return path
-
-
 def _norm(p: str) -> str:
     from pathlib import Path as _P
     return str(_P(p).expanduser().resolve()) if p else ""
 
 
 def load_trackers(path: Path) -> dict:
-    """{tracker_id: {"repos": [paths]}} — SQLite source of truth post-cutover."""
+    """{tracker_id: {"repos", "vendor", "remote_url}} — SQLite source of truth."""
     if not path.exists():
         return {}
     init_db(path)
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         out: dict = {}
-        for t in conn.execute("SELECT key_ref FROM trackers ORDER BY key_ref"):
+        for t in conn.execute("SELECT key_ref, vendor, remote_url FROM trackers ORDER BY key_ref"):
             tid = t["key_ref"]
             rows = conn.execute(
                 "SELECT r.path FROM tracker_repos tr JOIN repos r"
                 " ON r.key_ref = tr.repo_key WHERE tr.tracker_key = ?"
                 " ORDER BY r.path", (tid,))
-            out[tid] = {"repos": [r["path"] for r in rows]}
+            out[tid] = {"repos": [r["path"] for r in rows],
+                        "vendor": t["vendor"], "remote_url": t["remote_url"]}
         return out
 
 
+def load_tracker_rows(path: Path) -> list[dict]:
+    """Flat tracker rows for CRUD UIs: key/vendor/remote_url + repo count."""
+    if not path.exists():
+        return []
+    init_db(path)
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(r) for r in conn.execute(
+            "SELECT t.key_ref AS key, t.vendor, t.remote_url,"
+            " COUNT(tr.repo_key) AS repos"
+            " FROM trackers t LEFT JOIN tracker_repos tr"
+            " ON tr.tracker_key = t.key_ref GROUP BY t.key_ref ORDER BY t.key_ref")]
+
+
+def upsert_tracker(path: Path, tid: str, vendor: str = "", remote_url: str = "") -> dict:
+    """Create/update a tracker row; vendor/remote_url default from the key.
+
+    Both columns are mandatory (NOT NULL, never ''): blanks are derived
+    via _tracker_meta. Returns the stored row.
+    """
+    init_db(path)
+    v, u = _tracker_meta(tid)
+    vendor = vendor or v
+    remote_url = remote_url or u
+    if not vendor:
+        vendor = "unknown"
+    if not remote_url:
+        remote_url = tid
+    with connect(path) as conn:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES (?, ?, ?)"
+                     " ON CONFLICT(key_ref) DO UPDATE SET vendor=excluded.vendor,"
+                     " remote_url=excluded.remote_url", (tid, vendor, remote_url))
+        conn.row_factory = sqlite3.Row
+        return dict(conn.execute("SELECT key_ref AS key, vendor, remote_url FROM trackers"
+                                 " WHERE key_ref = ?", (tid,)).fetchone())
+
+
+def _upsert_tracker_conn(conn, tid: str, vendor: str = "", remote_url: str = "") -> None:
+    """Conn-scoped ensure (no nested connect → no lock).
+
+    Blank vendor/remote_url never clobbers a customized row: INSERT fills
+    derived defaults only when the row is new, and the conflict branch
+    updates just the explicitly passed fields.
+    """
+    v, u = _tracker_meta(tid)
+    dv, du = v or "unknown", u or tid
+    if vendor and remote_url:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES (?, ?, ?)"
+                     " ON CONFLICT(key_ref) DO UPDATE SET vendor=excluded.vendor,"
+                     " remote_url=excluded.remote_url", (tid, vendor, remote_url))
+    elif vendor:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES (?, ?, ?)"
+                     " ON CONFLICT(key_ref) DO UPDATE SET vendor=excluded.vendor",
+                     (tid, vendor, du))
+    elif remote_url:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES (?, ?, ?)"
+                     " ON CONFLICT(key_ref) DO UPDATE SET remote_url=excluded.remote_url",
+                     (tid, dv, remote_url))
+    else:
+        conn.execute("INSERT OR IGNORE INTO trackers (key_ref, vendor, remote_url)"
+                     " VALUES (?, ?, ?)", (tid, dv, du))
+
+
+def delete_tracker(path: Path, tid: str) -> bool:
+    """Delete a tracker row (links cascade); True when it existed."""
+    init_db(path)
+    with connect(path) as conn:
+        return conn.execute("DELETE FROM trackers WHERE key_ref = ?", (tid,)).rowcount > 0
+
+
 def load_repos(path: Path) -> dict:
-    """{name: {path, tracker, remote, tool}} registry from SQLite."""
+    """{name: {path, trackers, remote, tool}} registry from SQLite.
+
+    Trackers come only from the tracker_repos join (repos.tracker_key is
+    gone — schema v2). ``trackers`` is the sorted linked-tracker list;
+    ``tracker`` keeps the first for backward-compatible callers.
+    """
     if not path.exists():
         return {}
     init_db(path)
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         out: dict = {}
-        for r in conn.execute("SELECT key_ref, name, path, tracker_key, remote, tool FROM repos ORDER BY name"):
+        for r in conn.execute("SELECT key_ref, name, path, remote, tool FROM repos ORDER BY name"):
             d = dict(r)
+            tids = [x["tracker_key"] for x in conn.execute(
+                "SELECT tracker_key FROM tracker_repos WHERE repo_key = ? ORDER BY tracker_key",
+                (d["key_ref"],))]
             out[d["name"] or d["key_ref"]] = {
-                "path": d["path"], "tracker": d["tracker_key"],
+                "path": d["path"], "trackers": tids, "tracker": tids[0] if tids else "",
                 "remote": d["remote"], "tool": d["tool"] or None}
         return out
 
 
 def ensure_tracker(path: Path, tid: str) -> None:
-    init_db(path)
-    with connect(path) as conn:
-        conn.execute("INSERT OR IGNORE INTO trackers (key_ref) VALUES (?)", (tid,))
-
+    """Ensure a tracker row exists (vendor/remote_url derived from the key)."""
+    upsert_tracker(path, tid)
 
 def add_tracker_repo(path: Path, tid: str, repo_path: str) -> bool:
-    """Link *repo_path* under *tid*; True when newly recorded."""
+    """Link *repo_path* under *tid*; True when newly recorded.
+
+    Pure join write: ensures the tracker row (meta derived from the key)
+    and a path-keyed repo row, then the tracker_repos link.
+    """
     init_db(path)
     norm = _norm(repo_path)
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
-        conn.execute("INSERT OR IGNORE INTO trackers (key_ref) VALUES (?)", (tid,))
+        _upsert_tracker_conn(conn, tid)
         row = conn.execute("SELECT key_ref FROM repos WHERE path = ?", (norm,)).fetchone()
         if row is None:
             key = norm
             name = key.rsplit("/", 1)[-1] if "/" in key else key
-            conn.execute(
-                "INSERT INTO repos (key_ref, path, name, tracker_key) VALUES (?, ?, ?, ?)",
-                (key, norm, name, tid))
+            conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
+                         (key, norm, name))
             repo_key = key
         else:
             repo_key = row["key_ref"]
-            conn.execute("UPDATE repos SET tracker_key = ? WHERE key_ref = ?"
-                         " AND COALESCE(tracker_key, '') = ''",
-                         (tid, repo_key))
         cur = conn.execute(
             "SELECT 1 FROM tracker_repos WHERE tracker_key = ? AND repo_key = ?",
             (tid, repo_key)).fetchone()
@@ -173,36 +308,64 @@ def remove_tracker_repo(path: Path, tid: str, repo_path: str | None = None) -> b
 
 def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
                       remote: str = "", tool: str | None = None) -> None:
-    """Upsert a named registry row; tracker_key is mandatory (NOT NULL)."""
+    """Upsert a named registry row and link it to *tracker_key* (join-only).
+
+    tracker_key stays mandatory: an explicit key wins, else the caller
+    derives it from the origin remote. The repo row itself carries no
+    tracker column — the mapping lives in tracker_repos.
+    """
     if not tracker_key:
         raise ValueError("tracker_key is mandatory")
     init_db(path)
     norm = _norm(repo_path)
     with connect(path) as conn:
-        conn.execute("INSERT OR IGNORE INTO trackers (key_ref) VALUES (?)", (tracker_key,))
+        _upsert_tracker_conn(conn, tracker_key)
         # Same normalized path under a different registry name: reuse the
-        # existing row (update name/tracker/remote/tool) instead of dying
-        # on the path UNIQUE constraint.
+        # existing row (update name/remote/tool) instead of dying on the
+        # path UNIQUE constraint.
         hit = conn.execute("SELECT key_ref FROM repos WHERE path = ?", (norm,)).fetchone()
         if hit is not None and hit[0] != name:
-            conn.execute(
-                "UPDATE repos SET key_ref = ?, name = ?, tracker_key = ?, remote = ?, tool = ?"
-                " WHERE key_ref = ?",
-                (name, name, tracker_key, remote or "", tool or "", hit[0]))
+            conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
+                         " WHERE key_ref = ?",
+                         (name, name, remote or "", tool or "", hit[0]))
             conn.execute("UPDATE OR IGNORE tracker_repos SET repo_key = ? WHERE repo_key = ?",
                          (name, hit[0]))
-            conn.execute(
-                "UPDATE worktrees SET repo_key = ? WHERE repo_key = ?",
-                (name, hit[0]))
-        conn.execute(
-            "INSERT INTO repos (key_ref, path, name, tracker_key, remote, tool)"
-            " VALUES (?, ?, ?, ?, ?, ?)"
-            " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"
-            " tracker_key=excluded.tracker_key, remote=excluded.remote, tool=excluded.tool",
-            (name, norm, name, tracker_key, remote or "", tool or ""))
+            conn.execute("UPDATE worktrees SET repo_key = ? WHERE repo_key = ?",
+                         (name, hit[0]))
+        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool)"
+                     " VALUES (?, ?, ?, ?, ?)"
+                     " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"
+                     " remote=excluded.remote, tool=excluded.tool",
+                     (name, norm, name, remote or "", tool or ""))
+        conn.execute("INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
+                     (tracker_key, name))
 
 
-def remove_repo_row(path: Path, name: str) -> bool:
+def register_repo_row_unlinked(path: Path, name: str, repo_path: str,
+                               remote: str = "", tool: str | None = None) -> None:
+    """Refresh remote/tool on a repo row without touching its tracker links.
+
+    Used by the host-tool refresh when the repo survived a `tracker remove`
+    cascade unlinked: re-deriving a tracker there could hit the network,
+    and the mandatory-tracker guard must not crash a read path.
+    """
+    init_db(path)
+    norm = _norm(repo_path)
+    with connect(path) as conn:
+        hit = conn.execute("SELECT key_ref FROM repos WHERE path = ?", (norm,)).fetchone()
+        if hit is not None and hit[0] != name:
+            conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
+                         " WHERE key_ref = ?",
+                         (name, name, remote or "", tool or "", hit[0]))
+            conn.execute("UPDATE OR IGNORE tracker_repos SET repo_key = ? WHERE repo_key = ?",
+                         (name, hit[0]))
+            conn.execute("UPDATE worktrees SET repo_key = ? WHERE repo_key = ?",
+                         (name, hit[0]))
+        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool)"
+                     " VALUES (?, ?, ?, ?, ?)"
+                     " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"
+                     " remote=excluded.remote, tool=excluded.tool",
+                     (name, norm, name, remote or "", tool or ""))
     init_db(path)
     with connect(path) as conn:
         cur = conn.execute("DELETE FROM repos WHERE key_ref = ?", (name,))
@@ -213,19 +376,20 @@ def backfill_trackers_repos(path: Path, cfg: dict,
                             derive_tracker=None) -> dict:
     """One-shot backfill of config.json {repos, trackers} into state.db.
 
-    Returns {"trackers": N, "repos": M, "links": L}. Every repo row gets a
-    mandatory tracker_key: explicit mapping wins, else *derive_tracker*
+    Returns {"trackers": N, "repos": M, "links": L}. Creates tracker rows
+    (vendor/remote_url derived from the key) and repo rows, then the
+    tracker_repos links: explicit mapping wins, else *derive_tracker*
     (origin-remote derivation); still empty → ValueError naming the repo.
     """
     init_db(path)
     counts = {"trackers": 0, "repos": 0, "links": 0}
     with connect(path) as conn:
-        # Idempotency guard: a fully-backfilled db (every repo row carries a
-        # tracker) is a no-op. Rows with NULL/'' tracker_key (e.g. repos from
-        # an older schema default or auto-created by migrate_json before this
-        # backfill ran) still need filling below.
+        # Idempotency guard: every repo row already linked to ≥1 tracker
+        # is a no-op. Unlinked rows (e.g. auto-created by migrate_json
+        # before this backfill ran) still need linking below.
         n = conn.execute("SELECT COUNT(*) FROM repos").fetchone()[0]
-        empty = conn.execute("SELECT COUNT(*) FROM repos WHERE COALESCE(tracker_key, '') = ''").fetchone()[0]
+        empty = conn.execute("SELECT COUNT(*) FROM repos r WHERE NOT EXISTS"
+                             " (SELECT 1 FROM tracker_repos tr WHERE tr.repo_key = r.key_ref)").fetchone()[0]
         if n and not empty:
             return counts
     cfg_repos = cfg.get("repos", {}) or {}
@@ -244,9 +408,10 @@ def backfill_trackers_repos(path: Path, cfg: dict,
                 path_to_tid[key] = tid
     with connect(path) as conn:
         for tid in cfg_trackers:
+            v, u = _tracker_meta(tid)
             counts["trackers"] += conn.execute(
-                "INSERT OR IGNORE INTO trackers (key_ref) VALUES (?)",
-                (tid,)).rowcount
+                "INSERT OR IGNORE INTO trackers (key_ref, vendor, remote_url) VALUES (?, ?, ?)",
+                (tid, v, u)).rowcount
         for name, v in cfg_repos.items():
             raw_path = str((v or {}).get("path", ""))
             norm = _norm(raw_path)
@@ -258,33 +423,30 @@ def backfill_trackers_repos(path: Path, cfg: dict,
                     tid = ""
             if not tid:
                 raise ValueError(f"cannot derive tracker for repo {name!r} ({raw_path}): pass --tracker")
-            conn.execute("INSERT OR IGNORE INTO trackers (key_ref) VALUES (?)", (tid,))
-            # Existing rows may be keyed by path (older migrate_json runs)
-            # with a NULL/'' tracker: update in place (keep key_ref so
-            # worktrees.repo_key references stay valid) instead of dying
-            # on the path UNIQUE.
+            vm, um = _tracker_meta(tid)
+            conn.execute("INSERT OR IGNORE INTO trackers (key_ref, vendor, remote_url)"
+                         " VALUES (?, ?, ?)", (tid, vm, um))
+            # Existing rows may be keyed by path (older migrate_json runs):
+            # update in place (keep key_ref so worktrees.repo_key refs stay
+            # valid) instead of dying on the path UNIQUE.
             row = conn.execute("SELECT key_ref FROM repos WHERE path = ? OR key_ref = ?",
                                (norm, name)).fetchone()
             if row is None:
-                conn.execute(
-                    "INSERT INTO repos (key_ref, path, name, tracker_key, remote, tool)"
-                    " VALUES (?, ?, ?, ?, ?, ?)",
-                    (name, norm, name, tid, str((v or {}).get("remote", "") or ""),
-                     str((v or {}).get("tool", "") or "")))
+                conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool)"
+                             " VALUES (?, ?, ?, ?, ?)",
+                             (name, norm, name, str((v or {}).get("remote", "") or ""),
+                              str((v or {}).get("tool", "") or "")))
                 counts["repos"] += 1
                 repo_key = name
             else:
                 repo_key = row[0]
-                cur = conn.execute(
-                    "UPDATE repos SET name = ?,"
-                    " tracker_key = CASE WHEN COALESCE(tracker_key, '') = '' THEN ? ELSE tracker_key END,"
-                    " remote = ?, tool = ? WHERE key_ref = ?",
-                    (name, tid, str((v or {}).get("remote", "") or ""),
+                counts["repos"] += conn.execute(
+                    "UPDATE repos SET name = ?, remote = ?, tool = ? WHERE key_ref = ?",
+                    (name, str((v or {}).get("remote", "") or ""),
                      str((v or {}).get("tool", "") or ""), repo_key)).rowcount
-                counts["repos"] += cur
-            conn.execute(
+            counts["links"] += conn.execute(
                 "INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
-                (tid, repo_key))
+                (tid, repo_key)).rowcount
         for tid, entry in cfg_trackers.items():
             for r in (entry or {}).get("repos", []):
                 norm = _norm(str(r))
@@ -292,19 +454,14 @@ def backfill_trackers_repos(path: Path, cfg: dict,
                 if row is None:
                     key = norm
                     name = key.rsplit("/", 1)[-1] if "/" in key else key
-                    conn.execute(
-                        "INSERT INTO repos (key_ref, path, name, tracker_key) VALUES (?, ?, ?, ?)",
-                        (key, norm, name or key, tid))
+                    conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
+                                 (key, norm, name or key))
                     repo_key = key
                 else:
                     repo_key = row[0]
-                    conn.execute(
-                        "UPDATE repos SET tracker_key = ? WHERE key_ref = ? AND COALESCE(tracker_key, '') = ''",
-                        (tid, repo_key))
-                cur = conn.execute(
+                counts["links"] += conn.execute(
                     "INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
                     (tid, repo_key)).rowcount
-                counts["links"] += cur
     return counts
 
 
@@ -449,12 +606,13 @@ def save_links_rows(path: Path, links: dict) -> None:
                 if row is None:
                     with_tid = extra.get("tracker", "")
                     if with_tid:
-                        conn.execute("INSERT OR IGNORE INTO trackers (key_ref) VALUES (?)",
-                                     (with_tid,))
-                    conn.execute(
-                        "INSERT INTO repos (key_ref, path, name, tracker_key) VALUES (?, ?, ?, ?)",
-                        (norm, norm, norm.rsplit("/", 1)[-1] or norm, with_tid))
+                        _upsert_tracker_conn(conn, with_tid)
+                    conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
+                                 (norm, norm, norm.rsplit("/", 1)[-1] or norm))
                     repo_key = norm
+                    if with_tid:
+                        conn.execute("INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key)"
+                                     " VALUES (?, ?)", (with_tid, repo_key))
                 else:
                     repo_key = row[0]
             conn.execute(
@@ -519,8 +677,8 @@ def migrate_json(config_dir: Path, db_path: Path) -> dict:
                                    (repo,)).fetchone()
                 if row is None:
                     conn.execute(
-                        "INSERT INTO repos (key_ref, path, name, tracker_key) VALUES (?, ?, ?, ?)",
-                        (repo, repo, repo.rsplit("/", 1)[-1], ""))
+                        "INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
+                        (repo, repo, repo.rsplit("/", 1)[-1]))
                     repo_key = repo
                 else:
                     repo_key = row[0]

@@ -58,9 +58,19 @@ after `store.record_link` gained it; older entries may lack it.
 
 ### `GET /api/repos`
 ```json
-[{"name": "projectx", "path": "/home/x/projects/projectx"}]
+[{"name": "projectx", "path": "/home/x/projects/projectx",
+  "tracker": "jira:IPG", "trackers": ["jira:IPG"]}]
 ```
-(any extra keys from the registry entry are passed through).
+(`tracker` = first linked tracker; `trackers` = all linked tracker ids
+from the tracker_repos join; any extra registry keys pass through).
+
+### `GET /api/trackers`
+```json
+{"trackers": [{"key": "jira:IPG", "vendor": "jira",
+  "remote_url": "https://jira/…", "repos": 2}]}
+```
+(CRUD page source: `tracker add/list/remove` run as runs; `repos` is the
+linked-repo count.)
 
 ### `GET /api/links`
 ```json

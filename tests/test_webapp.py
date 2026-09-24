@@ -654,8 +654,9 @@ def test_api_sessions_roundtrip(client, tmp_path, monkeypatch):
     db = sq.db_path()
     sq.init_db(db)
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref) VALUES ('t')")
-        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key) VALUES ('r', '/r', 'r', 't')")
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
                      " VALUES ('k', '/wt', 'b', 'r')")
     sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
@@ -785,8 +786,9 @@ def test_resume_session_opens_terminal(client, monkeypatch, tmp_path):
     db = sq.db_path()
     sq.init_db(db)
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref) VALUES ('t')")
-        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key) VALUES ('r', '/r', 'r', 't')")
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
                      " VALUES ('k', '/wt', 'b', 'r')")
     sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
@@ -827,7 +829,7 @@ def test_specs_mirror_cli_flags():
     inv = _walk(_tm.get_command(cli.app), [])
     skip = {"", "completions", "completions install", "completions show",
             "serve", "doctor", "migrate", "candidates", "status", "cd",
-            "repo", "link"}  # bare groups never invoked; subcommands covered
+            "repo", "link", "tracker"}  # bare groups never invoked; subcommands covered
     for path, (b, v) in sorted(inv.items()):
         if path in skip:
             continue
@@ -836,5 +838,5 @@ def test_specs_mirror_cli_flags():
         cv = {x for x in v if x.startswith("-")}
         assert cb == set(_w.BOOL_FLAGS.get(path, ())), f"BOOL drift [{path}]"
         assert cv == set(_w.VAL_FLAGS.get(path, ())), f"VAL drift [{path}]"
-    for cmd in ("start", "review", "cleanup", "sync", "open", "register", "repo", "link"):
+    for cmd in ("start", "review", "cleanup", "sync", "open", "register", "repo", "link", "tracker"):
         assert cmd in _w.SPECS, f"SPECS missing {cmd}"

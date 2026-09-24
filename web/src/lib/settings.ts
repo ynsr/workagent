@@ -13,6 +13,7 @@ export type OptOutAction =
   | "review"
   | "repo remove"
   | "link remove"
+  | "tracker remove"
 
 export const OPTOUT_ACTIONS: OptOutAction[] = [
   "cleanup",
@@ -21,6 +22,7 @@ export const OPTOUT_ACTIONS: OptOutAction[] = [
   "review",
   "repo remove",
   "link remove",
+  "tracker remove",
 ]
 
 export const OPTOUT_LABELS: Record<OptOutAction, string> = {
@@ -30,6 +32,7 @@ export const OPTOUT_LABELS: Record<OptOutAction, string> = {
   review: "Review",
   "repo remove": "Repo removal",
   "link remove": "Link removal",
+  "tracker remove": "Tracker removal",
 }
 
 export function getTheme(): Theme {

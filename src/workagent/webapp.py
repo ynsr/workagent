@@ -68,6 +68,7 @@ SPECS: dict[str, dict[str, Any]] = {
                  "key": lambda args: f"register:{_first_positional(args, VAL_FLAGS['register'])}"},
     "repo": {"confirm": False, "force": False, "key": "config"},
     "link": {"confirm": False, "force": False, "key": "config"},
+    "tracker": {"confirm": False, "force": False, "key": "config"},
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
@@ -86,6 +87,9 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "link set": ("--json",),
     "link remove": ("--json",),
     "link list": ("--worktree", "--refresh-pr", "--json", "--csv"),
+    "tracker add": ("--json",),
+    "tracker remove": ("--json",),
+    "tracker list": ("--json", "--csv"),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "start": ("--repo", "--depth", "--base", "--harness", "--session-file"),
@@ -94,9 +98,11 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "register": ("--key", "--issue", "--repo"),
     "repo add": ("--name", "--path", "--tracker"),
     "link remove": ("--repo",),
+    "tracker add": ("--vendor", "--remote-url"),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove"},
-                                    "link": {"list", "set", "remove"}}
+                                    "link": {"list", "set", "remove"},
+                                    "tracker": {"add", "list", "remove"}}
 
 
 def _first_positional(args: list[str], vals: tuple[str, ...] = ()) -> str:
@@ -537,10 +543,23 @@ def create_app(static_dir: Path, host: str, port: int,
 
     @app.get("/api/repos")
     def repos_list() -> list[dict]:
-        return [{"name": n, "path": v.get("path", ""), "tracker": v.get("tracker", ""),
-                 **{k: val for k, val in v.items() if k not in ("path", "tracker")}}
+        return [{"name": n, "path": v.get("path", ""),
+                 "tracker": v.get("tracker", ""),
+                 "trackers": v.get("trackers", [v.get("tracker", "")] if v.get("tracker") else []),
+                 **{k: val for k, val in v.items() if k not in ("path", "tracker", "trackers")}}
                 for n, v in store.load_repos().items()]
 
+    @app.get("/api/trackers")
+    def trackers_list() -> dict:
+        """Issue trackers with linked-repo counts (CRUD page source)."""
+        from . import store_sqlite as _sq
+        db = _sq.db_path()
+        if db.exists():
+            return {"trackers": _sq.load_tracker_rows(db)}
+        return {"trackers": [
+            {"key": t, "vendor": "", "remote_url": "",
+             "repos": len((v or {}).get("repos", []))}
+            for t, v in store.load_trackers().items()]}
     @app.get("/api/links")
     def links_list() -> dict:
         return {"trackers": store.load_trackers(),

@@ -22,6 +22,15 @@
   now link `pr_detail.url` via a shared `prUrl()` helper.
 - Animate worktree row detail open/close (~160ms grid-rows + fade/slide;
   `motion-reduce` skips it).
+- Promote the trackers table (schema v2): `trackers` gains mandatory
+  `vendor` + `remote_url` (NOT NULL, derived from the key when blank —
+  jira:PREFIX → jira site/browse URL, github:O/R → github.com URL,
+  gitlab:host/g/r → host URL), `repos.tracker_key` is dropped (mapping
+  lives only in `tracker_repos.tracker_key → trackers.key_ref`), and
+  legacy DBs migrate in place on `init_db`. New CLI `tracker
+  add/list/remove` (+ web Trackers page `GET /api/trackers`, nav, run
+  types) with full CRUD parity; `repo list` shows joined `trackers`,
+  `link list` shows vendor/remote_url.
 - Ignore the CWD as default repo (Fix #26): trackers + repos now live in
   `state.db` (`trackers`/`repos`/`tracker_repos`, migrated from
   `config.json` with `tracker_key` backfilled from the origin remote);

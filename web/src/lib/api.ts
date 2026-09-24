@@ -69,7 +69,15 @@ export interface Repo {
   name: string
   path: string
   tracker?: string
+  trackers?: string[]
   [key: string]: unknown
+}
+
+export interface TrackerRow {
+  key: string
+  vendor: string
+  remote_url: string
+  repos: number
 }
 
 export interface Links {
@@ -182,6 +190,7 @@ export type RunCommand =
   | "register"
   | "repo"
   | "link"
+  | "tracker"
 
 /** Display label for a PR/MR URL: "PR #33" (GitHub) or "MR #42" (GitLab);
  * falls back to the raw URL when the kind cannot be determined. */
@@ -282,6 +291,7 @@ export const api = {
   path: (ref: string) => request<PathInfo>(`/api/path${qs({ ref })}`),
 
   repos: () => request<Repo[]>("/api/repos"),
+  trackers: () => request<{ trackers: TrackerRow[] }>("/api/trackers"),
   links: () => request<Links>("/api/links"),
   doctor: () => request<DoctorInfo>("/api/doctor"),
 

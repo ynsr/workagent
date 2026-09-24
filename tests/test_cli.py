@@ -628,7 +628,7 @@ def test_repo_list_csv(isolated_config, tmp_path):
     r = _invoke("repo", "list", "--csv")
     assert r.exit_code == 0
     lines = [l for l in r.output.strip().splitlines() if l]
-    assert lines[0] == "name,path,tracker"
+    assert lines[0] == "name,path,trackers"
     assert len(lines) == 2 and lines[1].startswith("proj,")
 
 
@@ -1961,8 +1961,9 @@ def test_run_harness_writes_session_row(isolated_config, tmp_path, monkeypatch):
     db = sq.db_path()
     sq.init_db(db)
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref) VALUES ('t')")
-        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key) VALUES ('r', '/r', 'r', 't')")
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
                      " VALUES ('jira:IPG-929', '/wt', 'b', 'r')")
     result = {"key": "jira:IPG-929"}
@@ -2178,8 +2179,9 @@ def test_cutover_link_write_preserves_sessions(isolated_config):
     assert r.exit_code == 0, r.output
     db = sq.db_path()
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref) VALUES ('t')")
-        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key) VALUES ('x', '/x', 'x', 't')")
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('x', '/x', 'x')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'x')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
                      " VALUES ('jira:IPG-9', '/wt9', 'b9', 'x')")
     sid = sq.insert_session(db, worktree_ref="jira:IPG-9",
@@ -2201,8 +2203,9 @@ def test_session_id_matches_file(isolated_config, tmp_path, monkeypatch):
     db = sq.db_path()
     sq.init_db(db)
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref) VALUES ('t')")
-        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key) VALUES ('r', '/r', 'r', 't')")
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
                      " VALUES ('jira:IPG-929', '/wt', 'b', 'r')")
     result = {"key": "jira:IPG-929"}
@@ -2255,7 +2258,7 @@ def test_repo_list_shows_tracker(isolated_config, tmp_path):
     r = _invoke("repo", "list", "--json")
     assert r.exit_code == 0, r.output
     items = json.loads(r.output)
-    assert items[0]["tracker"] == "jira:IPG"
+    assert items[0]["trackers"] == "jira:IPG"
 
 
 def test_repo_list_prefers_host_scoped_tracker(isolated_config, tmp_path):
@@ -2270,7 +2273,7 @@ def test_repo_list_prefers_host_scoped_tracker(isolated_config, tmp_path):
     store.save_config(cfg)
     r = _invoke("repo", "list", "--json")
     assert r.exit_code == 0, r.output
-    assert json.loads(r.output)[0]["tracker"] == "github:o/r"
+    assert json.loads(r.output)[0]["trackers"] == "github:o/r"
 
 
 def test_run_harness_lock_blocked_spawns_nothing(monkeypatch):

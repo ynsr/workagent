@@ -142,7 +142,7 @@ def _record_link_locked(path: Path, issue_key: str, entry: dict) -> None:
     _atomic_replace(path, links)
 
 def load_trackers() -> dict:
-    """{tracker_id: {"repos": [paths]}} — SQLite post-migration, else config.json."""
+    """{tracker_id: {"repos", "vendor", "remote_url}} — SQLite post-migration, else config.json."""
     db = _sqlite_path()
     if db is not None:
         from . import store_sqlite as sq
@@ -151,7 +151,7 @@ def load_trackers() -> dict:
 
 
 def load_repos() -> dict:
-    """{name: {path, tracker, remote, tool}} — SQLite post-migration, else config.json."""
+    """{name: {path, trackers, tracker, remote, tool}} — SQLite post-migration, else config.json."""
     db = _sqlite_path()
     if db is not None:
         from . import store_sqlite as sq

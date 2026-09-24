@@ -1076,9 +1076,10 @@ def repo_list(
       workagent repo list --csv
       workagent repo list --json | jq '.[].name'
     """
-    items = [{"name": n, "path": v.get("path", ""), "tracker": v.get("tracker", "")}
+    items = [{"name": n, "path": v.get("path", ""),
+              "trackers": ",".join(v.get("trackers", []) or ([v["tracker"]] if v.get("tracker") else []))}
              for n, v in store.load_repos().items()]
-    _print_rows(items, json_output, csv_output, ["name", "path", "tracker"],
+    _print_rows(items, json_output, csv_output, ["name", "path", "trackers"],
                 "Registered repos", "(no repos registered)")
 
 
@@ -1096,10 +1097,94 @@ def repo_remove(
         _fail(f"unknown repo: {name}", EXIT_USAGE)
     _print_result({"removed": name}, json_output)
 
+# ── tracker ───────────────────────────────────────────────────────────
+
+tracker_app = typer.Typer(help="Manage issue trackers (CRUD over the trackers table).",
+                           no_args_is_help=True)
+app.add_typer(tracker_app, name="tracker")
+
 # ── link ──────────────────────────────────────────────────────────────
 
 link_app = typer.Typer(help="View and manage tracker↔repo relations and worktree links.", no_args_is_help=True)
 app.add_typer(link_app, name="link")
+
+
+@tracker_app.command("add")
+@_catch_harness_errors
+def tracker_add(
+    tracker: str = typer.Argument(..., help="Tracker id (e.g. jira:IPG, github:OWNER/REPO, gitlab:host/group/repo)."),
+    vendor: str = typer.Option("", "--vendor", help="Tracker vendor (default: derived from the id)."),
+    remote_url: str = typer.Option("", "--remote-url", help="Tracker web URL (default: derived from the id)."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Create (or update) an issue tracker.
+
+    Example:
+      workagent tracker add jira:IPG
+      workagent tracker add github:OWNER/REPO --remote-url https://github.com/OWNER/REPO
+    """
+    from . import store_sqlite as sq
+    tid = trackers.normalize_id(tracker)
+    if store._sqlite_path() is None:
+        from . import store_sqlite as _sqm
+        v, u = _sqm._tracker_meta(tid)
+        cfg = store.load_config()
+        entry = cfg.setdefault("trackers", {}).setdefault(tid, {"repos": []})
+        # config.json has no vendor columns: keep explicit flags in the
+        # entry so pre/post-migration runs of the same command agree.
+        if vendor:
+            entry["vendor"] = vendor
+        else:
+            entry.setdefault("vendor", v or "unknown")
+        if remote_url:
+            entry["remote_url"] = remote_url
+        else:
+            entry.setdefault("remote_url", u or tid)
+        store.save_config(cfg)
+        _print_result({"tracker": tid, "repos": entry.get("repos", [])}, json_output)
+        return
+    row = sq.upsert_tracker(sq.db_path(), tid, vendor=vendor, remote_url=remote_url)
+    _print_result(row, json_output)
+
+
+@tracker_app.command("list")
+def tracker_list(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    csv_output: bool = typer.Option(False, "--csv", help="Output as CSV (stdout; logs go to stderr)."),
+) -> None:
+    """List issue trackers with their linked repo counts.
+
+    Example: workagent tracker list --json
+    """
+    from . import store_sqlite as sq
+    if store._sqlite_path() is None:
+        items = [{"key": t, "vendor": "", "remote_url": "",
+                  "repos": len((v or {}).get("repos", []))}
+                 for t, v in store.load_trackers().items()]
+    else:
+        items = sq.load_tracker_rows(sq.db_path())
+    _print_rows(items, json_output, csv_output, ["key", "vendor", "remote_url", "repos"],
+                "Issue trackers", "(no trackers)")
+
+
+@tracker_app.command("remove")
+@_catch_harness_errors
+def tracker_remove(
+    tracker: str = typer.Argument(..., help="Tracker id to delete (links cascade)."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Delete an issue tracker (its repo links cascade).
+
+    Example: workagent tracker remove jira:IPG
+    """
+    from . import store_sqlite as sq
+    tid = trackers.normalize_id(tracker)
+    if store._sqlite_path() is None:
+        if not store.remove_tracker_repo(tid):
+            _fail(f"unknown tracker: {tid}", EXIT_USAGE)
+    elif not sq.delete_tracker(sq.db_path(), tid):
+        _fail(f"unknown tracker: {tid}", EXIT_USAGE)
+    _print_result({"removed": tid}, json_output)
 
 
 @link_app.command("list")
@@ -1123,9 +1208,10 @@ def link_list(
                                         for k, v in links.items()}},
                          indent=2, ensure_ascii=False))
         return
-    rows = [{"tracker": t, "repos": ", ".join(v.get("repos", []))}
+    rows = [{"tracker": t, "vendor": v.get("vendor", ""), "remote_url": v.get("remote_url", ""),
+             "repos": ", ".join(v.get("repos", []))}
             for t, v in trackers_map.items()]
-    _print_rows(rows, json_output, csv_output, ["tracker", "repos"],
+    _print_rows(rows, json_output, csv_output, ["tracker", "vendor", "remote_url", "repos"],
                 "Tracker links", "(no tracker links)")
     srows, scolumns = _session_rows(links, worktree, refresh_pr)
     _print_rows(srows, json_output, csv_output, scolumns,
@@ -1227,8 +1313,17 @@ def _repo_tool(repo: str) -> str | None:
         from . import store_sqlite as sq
         if store._sqlite_path() is not None:
             row = sq.load_repos(sq.db_path()).get(hit[0], {})
-            sq.register_repo_row(sq.db_path(), hit[0], repo,
-                                 row.get("tracker", ""), remote=remote, tool=tool)
+            tids = row.get("trackers", []) or ([row["tracker"]] if row.get("tracker") else [])
+            if tids:
+                sq.register_repo_row(sq.db_path(), hit[0], repo,
+                                     tids[0], remote=remote, tool=tool)
+            else:
+                # Repo survived a `tracker remove` cascade unlinked: refresh
+                # tool/remote only (derivation may need network), never crash
+                # on the mandatory-tracker guard.
+                cur = row.get("remote", "")
+                sq.register_repo_row_unlinked(sq.db_path(), hit[0], repo,
+                                              remote=remote or cur, tool=tool)
         else:
             cfg = store.load_config()
             cfg["repos"][hit[0]]["tool"] = tool

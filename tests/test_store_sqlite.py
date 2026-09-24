@@ -17,8 +17,9 @@ def test_worktree_delete_cascades_sessions(tmp_path):
     db = tmp_path / "state.db"
     sq.init_db(db)
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref) VALUES ('t')")
-        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key) VALUES ('r', '/r', 'r', 't')")
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
                      " VALUES ('k', '/wt', 'b', 'r')")
     sq.insert_session(db, worktree_ref="k", runtime_name="omp",
@@ -33,8 +34,9 @@ def test_finish_session_states(tmp_path):
     db = tmp_path / "state.db"
     sq.init_db(db)
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref) VALUES ('t')")
-        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key) VALUES ('r', '/r', 'r', 't')")
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
                      " VALUES ('k', '/wt', 'b', 'r')")
     sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
@@ -97,20 +99,22 @@ def test_backfill_maps_explicit_tracker(tmp_path):
            "trackers": {"jira:IPG": {"repos": ["/x/proj"]}}}
     out = sq.backfill_trackers_repos(db, cfg)
     assert out["trackers"] == 1 and out["repos"] == 1
-    assert out["links"] == 0  # link pass only fires for unregistered tracker paths
+    assert out["links"] == 1  # repo loop writes the join link directly
     with sq.connect(db) as conn:
-        row = conn.execute("SELECT tracker_key FROM repos WHERE key_ref = 'proj'").fetchone()
-        assert row[0] == "jira:IPG"
+        row = conn.execute("SELECT repo_key FROM tracker_repos"
+                           " WHERE tracker_key = 'jira:IPG'").fetchone()
+        assert row[0] == "proj"
 
 
 def test_backfill_derives_tracker(tmp_path):
-    """No explicit mapping → derive_tracker fills tracker_key (issue #26)."""
+    """No explicit mapping → derive_tracker writes the join link (issue #26)."""
     db = tmp_path / "state.db"
     cfg = {"repos": {"r1": {"path": "/x/r1"}}, "trackers": {}}
     out = sq.backfill_trackers_repos(db, cfg, derive_tracker=lambda p: "github:o/r")
     assert out["repos"] == 1
     with sq.connect(db) as conn:
-        row = conn.execute("SELECT tracker_key FROM repos WHERE key_ref = 'r1'").fetchone()
+        row = conn.execute("SELECT tracker_key FROM tracker_repos"
+                           " WHERE repo_key = 'r1'").fetchone()
         assert row[0] == "github:o/r"
 
 
@@ -128,9 +132,11 @@ def test_load_links_returns_repo_path(tmp_path):
     db = tmp_path / "state.db"
     sq.init_db(db)
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref) VALUES ('jira:IPG')")
-        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key)"
-                     " VALUES ('proj', '/x/proj', 'proj', 'jira:IPG')")
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('jira:IPG', 'jira', 'jira:IPG')")
+        conn.execute("INSERT INTO repos (key_ref, path, name)"
+                     " VALUES ('proj', '/x/proj', 'proj')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key)"
+                     " VALUES ('jira:IPG', 'proj')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
                      " VALUES ('jira:IPG-1', '/wt', 'b', 'proj')")
     assert sq.load_links_rows(db)["jira:IPG-1"]["repo"] == "/x/proj"
@@ -156,7 +162,7 @@ def test_backfill_repairs_null_legacy_rows(tmp_path):
            "trackers": {"jira:IPG": {"repos": ["/x/proj"]}}}
     sq.backfill_trackers_repos(db, cfg)
     with sq.connect(db) as conn:
-        row = conn.execute("SELECT key_ref, tracker_key FROM repos").fetchone()
-        assert row[0] == "/x/proj" and row[1] == "jira:IPG"
+        row = conn.execute("SELECT key_ref FROM repos").fetchone()
+        assert row[0] == "/x/proj"
         assert conn.execute("SELECT COUNT(*) FROM trackers").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM tracker_repos").fetchone()[0] == 1
