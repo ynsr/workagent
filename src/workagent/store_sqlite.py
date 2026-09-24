@@ -135,7 +135,8 @@ def add_tracker_repo(path: Path, tid: str, repo_path: str) -> bool:
             repo_key = key
         else:
             repo_key = row["key_ref"]
-            conn.execute("UPDATE repos SET tracker_key = ? WHERE key_ref = ? AND tracker_key = ''",
+            conn.execute("UPDATE repos SET tracker_key = ? WHERE key_ref = ?"
+                         " AND COALESCE(tracker_key, '') = ''",
                          (tid, repo_key))
         cur = conn.execute(
             "SELECT 1 FROM tracker_repos WHERE tracker_key = ? AND repo_key = ?",
@@ -220,10 +221,11 @@ def backfill_trackers_repos(path: Path, cfg: dict,
     counts = {"trackers": 0, "repos": 0, "links": 0}
     with connect(path) as conn:
         # Idempotency guard: a fully-backfilled db (every repo row carries a
-        # tracker) is a no-op. Rows with tracker_key='' (e.g. auto-created by
-        # migrate_json before this backfill ran) still need filling below.
+        # tracker) is a no-op. Rows with NULL/'' tracker_key (e.g. repos from
+        # an older schema default or auto-created by migrate_json before this
+        # backfill ran) still need filling below.
         n = conn.execute("SELECT COUNT(*) FROM repos").fetchone()[0]
-        empty = conn.execute("SELECT COUNT(*) FROM repos WHERE tracker_key = ''").fetchone()[0]
+        empty = conn.execute("SELECT COUNT(*) FROM repos WHERE COALESCE(tracker_key, '') = ''").fetchone()[0]
         if n and not empty:
             return counts
     cfg_repos = cfg.get("repos", {}) or {}
@@ -242,9 +244,9 @@ def backfill_trackers_repos(path: Path, cfg: dict,
                 path_to_tid[key] = tid
     with connect(path) as conn:
         for tid in cfg_trackers:
-            cur = conn.execute("INSERT OR IGNORE INTO trackers (key_ref) VALUES (?)",
-                               (tid,)).rowcount
-            counts["trackers"] += cur
+            counts["trackers"] += conn.execute(
+                "INSERT OR IGNORE INTO trackers (key_ref) VALUES (?)",
+                (tid,)).rowcount
         for name, v in cfg_repos.items():
             raw_path = str((v or {}).get("path", ""))
             norm = _norm(raw_path)
@@ -257,15 +259,32 @@ def backfill_trackers_repos(path: Path, cfg: dict,
             if not tid:
                 raise ValueError(f"cannot derive tracker for repo {name!r} ({raw_path}): pass --tracker")
             conn.execute("INSERT OR IGNORE INTO trackers (key_ref) VALUES (?)", (tid,))
-            cur = conn.execute(
-                "INSERT OR IGNORE INTO repos (key_ref, path, name, tracker_key, remote, tool)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (name, norm, name, tid, str((v or {}).get("remote", "") or ""),
-                 str((v or {}).get("tool", "") or ""))).rowcount
-            counts["repos"] += cur
+            # Existing rows may be keyed by path (older migrate_json runs)
+            # with a NULL/'' tracker: update in place (keep key_ref so
+            # worktrees.repo_key references stay valid) instead of dying
+            # on the path UNIQUE.
+            row = conn.execute("SELECT key_ref FROM repos WHERE path = ? OR key_ref = ?",
+                               (norm, name)).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO repos (key_ref, path, name, tracker_key, remote, tool)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (name, norm, name, tid, str((v or {}).get("remote", "") or ""),
+                     str((v or {}).get("tool", "") or "")))
+                counts["repos"] += 1
+                repo_key = name
+            else:
+                repo_key = row[0]
+                cur = conn.execute(
+                    "UPDATE repos SET name = ?,"
+                    " tracker_key = CASE WHEN COALESCE(tracker_key, '') = '' THEN ? ELSE tracker_key END,"
+                    " remote = ?, tool = ? WHERE key_ref = ?",
+                    (name, tid, str((v or {}).get("remote", "") or ""),
+                     str((v or {}).get("tool", "") or ""), repo_key)).rowcount
+                counts["repos"] += cur
             conn.execute(
                 "INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
-                (tid, name))
+                (tid, repo_key))
         for tid, entry in cfg_trackers.items():
             for r in (entry or {}).get("repos", []):
                 norm = _norm(str(r))
@@ -280,7 +299,7 @@ def backfill_trackers_repos(path: Path, cfg: dict,
                 else:
                     repo_key = row[0]
                     conn.execute(
-                        "UPDATE repos SET tracker_key = ? WHERE key_ref = ? AND tracker_key = ''",
+                        "UPDATE repos SET tracker_key = ? WHERE key_ref = ? AND COALESCE(tracker_key, '') = ''",
                         (tid, repo_key))
                 cur = conn.execute(
                     "INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",

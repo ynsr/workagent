@@ -134,3 +134,29 @@ def test_load_links_returns_repo_path(tmp_path):
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
                      " VALUES ('jira:IPG-1', '/wt', 'b', 'proj')")
     assert sq.load_links_rows(db)["jira:IPG-1"]["repo"] == "/x/proj"
+
+
+def test_backfill_repairs_null_legacy_rows(tmp_path):
+    """Legacy repos rows (path-keyed, tracker_key NULL — pre-#26 schema)
+    are repaired in place: key_ref preserved, tracker filled, link written."""
+    import sqlite3
+    db = tmp_path / "state.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE trackers (key_ref TEXT PRIMARY KEY)")
+        conn.execute("CREATE TABLE repos (key_ref TEXT PRIMARY KEY,"
+                     " path TEXT UNIQUE NOT NULL, name TEXT NOT NULL DEFAULT '',"
+                     " tracker_key TEXT, remote TEXT NOT NULL DEFAULT '',"
+                     " tool TEXT NOT NULL DEFAULT '')")
+        conn.execute("CREATE TABLE tracker_repos (tracker_key TEXT NOT NULL,"
+                     " repo_key TEXT NOT NULL,"
+                     " PRIMARY KEY (tracker_key, repo_key))")
+        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key)"
+                     " VALUES ('/x/proj', '/x/proj', 'proj', NULL)")
+    cfg = {"repos": {"proj": {"path": "/x/proj"}},
+           "trackers": {"jira:IPG": {"repos": ["/x/proj"]}}}
+    sq.backfill_trackers_repos(db, cfg)
+    with sq.connect(db) as conn:
+        row = conn.execute("SELECT key_ref, tracker_key FROM repos").fetchone()
+        assert row[0] == "/x/proj" and row[1] == "jira:IPG"
+        assert conn.execute("SELECT COUNT(*) FROM trackers").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM tracker_repos").fetchone()[0] == 1
