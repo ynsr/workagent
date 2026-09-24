@@ -680,6 +680,35 @@ def test_api_repos_includes_tracker(client, monkeypatch):
     assert r.json()[0]["tracker"] == "jira:IPG"
 
 
+def test_api_trackers_lists_rows(client, tmp_path, monkeypatch):
+    """GET /api/trackers returns key/vendor/remote_url + repo counts."""
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    sq.upsert_tracker(db, "jira:IPG", vendor="jira", remote_url="https://jira/browse/IPG")
+    sq.add_tracker_repo(db, "jira:IPG", "/r")
+    r = client.get("/api/trackers")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"trackers": [{"key": "jira:IPG", "vendor": "jira",
+                                       "remote_url": "https://jira/browse/IPG", "repos": 1}]}
+
+
+def test_api_repos_includes_trackers_array(client, tmp_path, monkeypatch):
+    """GET /api/repos carries the joined trackers array + first-tracker compat."""
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    sq.upsert_tracker(db, "jira:IPG")
+    sq.upsert_tracker(db, "github:o/r")
+    sq.register_repo_row(db, "p", "/tmp/proj", "jira:IPG")
+    sq.add_tracker_repo(db, "github:o/r", "/tmp/proj")
+    r = client.get("/api/repos")
+    assert r.status_code == 200, r.text
+    row = r.json()[0]
+    assert row["trackers"] == ["github:o/r", "jira:IPG"]
+    assert row["tracker"] == "github:o/r"
+
+
 def test_api_default_repo_prefers_linked_worktree(client, tmp_path, monkeypatch):
     """Issue #26: /api/default-repo returns the linked-worktree repo, else single-linked."""
     from workagent import repos, trackers, store

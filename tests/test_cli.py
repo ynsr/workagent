@@ -2289,3 +2289,32 @@ def test_run_harness_lock_blocked_spawns_nothing(monkeypatch):
         cli._run_harness("omp", "prompt", "/tmp/wt", "/tmp", True, False,
                          result, False, run_key="jira:X")
     assert launched == []
+
+
+def test_tracker_add_list_remove_roundtrip(isolated_config):
+    """tracker add persists vendor/remote_url; list shows the count; remove cascades."""
+    from workagent import store_sqlite as _sq
+    _sq.init_db(_sq.db_path())
+    r = _invoke("tracker", "add", "IPG", "--json")
+    assert r.exit_code == 0, r.output
+    row = json.loads(r.stdout)
+    assert row["key"] == "jira:IPG" and row["vendor"] == "jira"
+    r = _invoke("tracker", "list", "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)[0]["repos"] == 0
+    r = _invoke("tracker", "remove", "IPG", "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout) == {"removed": "jira:IPG"}
+
+
+def test_tracker_add_sets_custom_vendor(isolated_config):
+    """tracker add --vendor/--remote-url beats key derivation and survives ensures."""
+    from workagent import store_sqlite as sq
+    sq.init_db(sq.db_path())
+    r = _invoke("tracker", "add", "IPG", "--vendor", "Custom",
+                "--remote-url", "https://x", "--json")
+    assert r.exit_code == 0, r.output
+    db = sq.db_path()
+    sq.add_tracker_repo(db, "jira:IPG", "/r")
+    rows = sq.load_tracker_rows(db)
+    assert (rows[0]["vendor"], rows[0]["remote_url"]) == ("Custom", "https://x")

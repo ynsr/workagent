@@ -166,3 +166,45 @@ def test_backfill_repairs_null_legacy_rows(tmp_path):
         assert row[0] == "/x/proj"
         assert conn.execute("SELECT COUNT(*) FROM trackers").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM tracker_repos").fetchone()[0] == 1
+
+
+def test_tracker_meta_derivation():
+    """_tracker_meta derives mandatory vendor/remote_url from every key shape."""
+    assert sq._tracker_meta("github:o/r") == ("github", "https://github.com/o/r")
+    assert sq._tracker_meta("gitlab:h/g/r") == ("gitlab", "https://h/g/r")
+    assert sq._tracker_meta("jira:IPG")[0] == "jira"
+    assert sq._tracker_meta("weird")[0] == "unknown"
+
+
+def test_upsert_tracker_preserves_vendor_on_blank_ensure(tmp_path):
+    """Blank ensure-upserts never clobber a customized vendor/remote_url."""
+    db = tmp_path / "state.db"
+    sq.upsert_tracker(db, "jira:IPG", vendor="Custom", remote_url="https://x")
+    sq.add_tracker_repo(db, "jira:IPG", "/r")
+    row = sq.load_tracker_rows(db)[0]
+    assert (row["vendor"], row["remote_url"]) == ("Custom", "https://x")
+
+
+def test_migrate_v2_repairs_legacy_trackers_and_drops_column(tmp_path):
+    """Legacy DB: vendor/remote_url backfilled, tracker_key links seeded, column dropped."""
+    import sqlite3
+    db = tmp_path / "state.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE trackers (key_ref TEXT PRIMARY KEY)")
+        conn.execute("CREATE TABLE repos (key_ref TEXT PRIMARY KEY,"
+                     " path TEXT UNIQUE NOT NULL, name TEXT NOT NULL DEFAULT '',"
+                     " tracker_key TEXT, remote TEXT NOT NULL DEFAULT '',"
+                     " tool TEXT NOT NULL DEFAULT '')")
+        conn.execute("CREATE TABLE tracker_repos (tracker_key TEXT NOT NULL,"
+                     " repo_key TEXT NOT NULL,"
+                     " PRIMARY KEY (tracker_key, repo_key))")
+        conn.execute("INSERT INTO trackers (key_ref) VALUES ('github:o/r')")
+        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key)"
+                     " VALUES ('r', '/r', 'r', 'github:o/r')")
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        t = conn.execute("SELECT vendor, remote_url FROM trackers").fetchone()
+        assert t[0] == "github" and t[1] == "https://github.com/o/r"
+        assert conn.execute("SELECT COUNT(*) FROM tracker_repos").fetchone()[0] == 1
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
+        assert "tracker_key" not in cols
