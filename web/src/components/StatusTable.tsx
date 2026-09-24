@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom"
 import { FolderOpen, GitPullRequest, History, Info, RefreshCw, Rocket, Search, Trash2, XCircle } from "lucide-react"
 import type { Repo, WorktreeMap } from "@/lib/api"
 import { repoKeyForPath } from "@/lib/useRepoTabs"
-import { prLabel } from "@/lib/api"
+import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -374,19 +374,19 @@ export function StatusTable({
                         <TableCell>
                           <div className="flex min-w-0 items-center gap-2">
                             <PrBadge pr={entry.pr_detail ?? null} />
-                            {entry.pr && entry.pr.startsWith("http") ? (
+                            {prUrl(entry) ? (
                               <a
-                                href={entry.pr}
+                                href={prUrl(entry)}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="truncate text-muted-foreground underline-offset-2 hover:underline"
-                                title={`${entry.pr_detail ? entry.pr_detail.title + "\n" : ""}${entry.pr}`}
+                                title={`${entry.pr_detail ? entry.pr_detail.title + "\n" : ""}${prUrl(entry)}`}
                               >
-                                {entry.pr_detail ? entry.pr_detail.title : prLabel(entry.pr) || "—"}
+                                {entry.pr_detail ? entry.pr_detail.title : prLabel(prUrl(entry)) || entry.pr || "—"}
                               </a>
                             ) : (
                               <span className="truncate text-muted-foreground" title={entry.pr}>
-                                {entry.pr_detail ? entry.pr_detail.title : prLabel(entry.pr) || "—"}
+                                {entry.pr_detail ? entry.pr_detail.title : entry.pr || "—"}
                               </span>
                             )}
                           </div>
@@ -514,17 +514,13 @@ export function StatusTable({
                         </dd>
                       </div>
                     ) : null}
-                    {entry.pr && !entry.pr_detail ? (
+                    {prUrl(entry) ? (
                       <div className="flex items-baseline gap-2">
                         <dt className="w-16 shrink-0 text-xs text-muted-foreground">PR</dt>
-                        <dd className="min-w-0 truncate" title={entry.pr}>
-                          {entry.pr.startsWith("http") ? (
-                            <a href={entry.pr} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
-                              {prLabel(entry.pr)}
-                            </a>
-                          ) : (
-                            prLabel(entry.pr)
-                          )}
+                        <dd className="min-w-0 truncate" title={prUrl(entry)}>
+                          <a href={prUrl(entry)} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
+                            {prLabel(prUrl(entry))}
+                          </a>
                         </dd>
                       </div>
                     ) : null}

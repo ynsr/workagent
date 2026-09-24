@@ -16,6 +16,10 @@
 - Drop the Actions column from the Dashboard/Links worktree tables:
   action buttons now render as a right-anchored overlay on the last
   column (hover/focus reveal on fine pointers, always visible on touch).
+- Fix PR/MR links pointing at the dev-server origin (e.g.
+  `http://127.0.0.1:3344/MR%20#1695%20(open)`): the backend `pr` cell is a
+  display label, not a URL — the table, mobile cards, and worktree detail
+  now link `pr_detail.url` via a shared `prUrl()` helper.
 ## 0.2.1 — 2026-09-18
 
 - Fix Tab completion: typer 0.27 never registers its shell completion

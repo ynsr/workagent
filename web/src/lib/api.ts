@@ -191,6 +191,16 @@ export function prLabel(prUrl: string | undefined): string {
   return m ? `${m[1] === "pull" ? "PR" : "MR"} #${m[2]}` : prUrl
 }
 
+/** Absolute PR/MR URL for an entry: pr_detail.url first (backend `pr` is a
+ * display label like "MR #1695 (open)", not a URL). Recorded-URL entries
+ * carry the raw URL in pr_detail.url too. */
+export function prUrl(entry: Pick<WorktreeEntry, "pr" | "pr_detail">): string {
+  const u = entry.pr_detail?.url ?? ""
+  if (u.startsWith("http")) return u
+  const raw = entry.pr ?? ""
+  return raw.startsWith("http") ? raw : ""
+}
+
 export interface CreateRunInput {
   command: RunCommand
   args: string[]

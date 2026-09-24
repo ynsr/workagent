@@ -1,6 +1,6 @@
 import { useState } from "react"
 import type { WorktreeEntry } from "@/lib/api"
-import { prLabel } from "@/lib/api"
+import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -144,15 +144,15 @@ export function WorktreeDetail({
           <div className="flex items-baseline gap-2">
             <dt className="w-16 shrink-0 text-xs text-muted-foreground">PR</dt>
             <dd className="min-w-0 truncate">
-              {entry.pr ? (
+              {prUrl(entry) ? (
                 <a
-                  href={entry.pr}
+                  href={prUrl(entry)}
                   target="_blank"
                   rel="noreferrer"
                   className="underline-offset-2 hover:underline"
-                  title={entry.pr}
+                  title={prUrl(entry)}
                 >
-                  {prLabel(entry.pr)}
+                  {prLabel(prUrl(entry))}
                 </a>
               ) : (
                 <span className="text-muted-foreground">—</span>
