@@ -1,11 +1,11 @@
-# harness — Web feature inventory
+# workagent — Web feature inventory
 
-Ground truth for `harness serve`: every command/subcommand/option, its
+Ground truth for `workagent serve`: every command/subcommand/option, its
 class (read-only vs mutating), the in-process core function a read-only
 API endpoint reuses, the concurrency target key for mutating runs,
 destructiveness, and where the CLI can exit with code 2 or prompt on
 stdin. Byte-exact help snapshots were captured before any change at
-`/tmp/harness-help-before/`.
+`/tmp/workagent-help-before/`.
 
 Global options (on every subcommand invocation): `--version`, `-v/--verbose`,
 `-q/--quiet`. The web server passes `-v` (Settings toggle) **before** the
@@ -54,16 +54,16 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `register PATH [--key] [--issue] [--repo] [--yes/--force] [--json]` | mutating | — | `register` | no (links.json write) | bad path/main checkout (2), key conflict (1) | none |
 | `doctor [--json]` | read-only | `doctor.check(json_output=True)` returns dict | — | no | exit 1 when stale | none |
 | `completions show/install` | mutating (writes rc) | — | — | — | — | **excluded from UI per prompt** |
-| `harness serve` | — | this feature | — | — | port busy (1), missing web/dist (1) | none |
+| `workagent serve` | — | this feature | — | — | port busy (1), missing web/dist (1) | none |
 
 ## Headless agent mechanism (reused, not reimplemented)
 
-- File: `src/harness/backend.py` → `command_argv(harness, prompt, no_tty=True)` builds
+- File: `src/workagent/backend.py` → `command_argv(harness, prompt, no_tty=True)` builds
   `omp -p --auto-approve [extra] "<prompt>"`.
-- CLI surface: `harness start <ref> --no-tty` (and `review ... --no-tty`)
+- CLI surface: `workagent start <ref> --no-tty` (and `review ... --no-tty`)
   launch the agent headless with auto-approve; `--no-tty` also appends the
   "commit, push and create an MR/PR" suffix for `start`.
-- The web server therefore runs `harness start <ref> [--repo ...] --no-tty`
+- The web server therefore runs `workagent start <ref> [--repo ...] --no-tty`
   as a child process of the same code version. It never re-derives the argv.
 
 ## Exit-code → run state mapping

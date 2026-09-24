@@ -165,8 +165,8 @@ def resolve_repo(explicit: str | None, cwd: Path, depth: int = 7) -> Path:
     if not names:
         raise HarnessError(
             "not in a git repo and no repos registered.\n"
-            "  Register one: harness repo add --name <name> --path <path>\n"
-            "  Or pass: harness start <issue> --repo <path|url|name>",
+            "  Register one: workagent repo add --name <name> --path <path>\n"
+            "  Or pass: workagent start <issue> --repo <path|url|name>",
             exit_code=2,
         )
     if not sys.stdin.isatty():

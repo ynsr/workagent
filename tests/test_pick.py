@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 
-from harness import pick as pick_mod
+from workagent import pick as pick_mod
 
 
 class _FakeTty:

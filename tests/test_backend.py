@@ -6,8 +6,8 @@ import os
 
 import pytest
 
-from harness import backend
-from harness.errors import HarnessError
+from workagent import backend
+from workagent.errors import HarnessError
 
 
 class _Execed(Exception):
@@ -24,7 +24,7 @@ def _fake_omp(monkeypatch):
 
 def test_launch_tty_chdirs_into_worktree(tmp_path, monkeypatch):
     """TTY exec must run in the worktree, not the caller's cwd (regression:
-    harness start used to leave omp in the original directory)."""
+    workagent start used to leave omp in the original directory)."""
     worktree = tmp_path / "wt"
     worktree.mkdir()
     monkeypatch.chdir(tmp_path)
@@ -85,7 +85,7 @@ def test_prompt_push_target_mentions_origin_branch():
     assert "origin/chore/a--b" in p
 
 def test_omp_session_file_routes_via_resume():
-    from harness.backend import OmpRuntime
+    from workagent.backend import OmpRuntime
     assert OmpRuntime().session_file_flag("/tmp/x.jsonl") == ["--resume", "/tmp/x.jsonl"]
     assert OmpRuntime().session_file_flag("") == []
     argv = OmpRuntime().command_argv("prompt", True, ["--auto-approve"])

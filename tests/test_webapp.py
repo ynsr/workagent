@@ -1,8 +1,8 @@
-"""Tests for harness serve (FastAPI app in harness.webapp).
+"""Tests for workagent serve (FastAPI app in workagent.webapp).
 
 Mutating runs use a fake argv via monkeypatching Registry/_spawn so no
 real command executes. Read endpoints reuse the real in-process helpers
-against an isolated HARNESS_CONFIG_DIR.
+against an isolated WORKAGENT_CONFIG_DIR.
 """
 
 from __future__ import annotations
@@ -14,11 +14,13 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from harness import cli, refs, store, trackers
-from harness.errors import HarnessError
-from harness.webapp import (
+from workagent import cli, refs, store, trackers
+from workagent.errors import HarnessError
+from workagent.webapp import (
+    BOOL_FLAGS,
     MAX_LINES,
     MAX_RUNS,
+    VAL_FLAGS,
     Registry,
     Run,
     _build_argv,
@@ -159,7 +161,7 @@ def _stub_spawn(monkeypatch):
         run.proc = object()  # non-None so cancel paths take the fake branch
         threading.Thread(target=reader, daemon=True).start()
 
-    monkeypatch.setattr("harness.webapp._spawn", fake_spawn)
+    monkeypatch.setattr("workagent.webapp._spawn", fake_spawn)
 
 
 FAKE_SCRIPTS: dict[str, dict[tuple, tuple[list, int]]] = {
@@ -211,7 +213,7 @@ def test_exit_one_fails(client, monkeypatch):
 
 
 def test_real_child_process_end_to_end(client):
-    """Real spawn path: harness register on a missing path exits 2."""
+    """Real spawn path: workagent register on a missing path exits 2."""
     r = client.post("/api/runs", json={"command": "register",
                                        "args": ["/nonexistent/wt"]})
     assert r.status_code == 202
@@ -235,7 +237,7 @@ class _FakeProc:
 
 def test_cancel_running_run(client, monkeypatch):
     sent: list[tuple[int, int]] = []
-    monkeypatch.setattr("harness.webapp.os.killpg",
+    monkeypatch.setattr("workagent.webapp.os.killpg",
                         lambda pid, sig: sent.append((pid, sig)))
     app_state = client.app.state.registry
     run = app_state.create("sync", ["x"], "sync:test")
@@ -423,7 +425,7 @@ def test_doctor_endpoint(client):
 def test_build_argv_uses_same_interpreter():
     argv = _build_argv("start", ["-v", "IPG-1", "--no-tty"])
     assert argv[0].endswith("python") or argv[0].endswith("python3")
-    assert argv[1:3] == ["-m", "harness"]
+    assert argv[1:3] == ["-m", "workagent"]
     assert argv[3] == "-v"
     assert argv[4:] == ["start", "IPG-1", "--no-tty"]
 
@@ -494,18 +496,18 @@ def test_error_shape_on_404(client):
 
 
 def test_default_static_dir_prefers_source_tree(monkeypatch, tmp_path):
-    from harness import cli
+    from workagent import cli
     fake_src = tmp_path / "src"
     (fake_src / "web" / "dist").mkdir(parents=True)
     (fake_src / "web" / "dist" / "index.html").write_text("x")
     monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(
-        cli, "__file__", str(fake_src / "src" / "harness" / "cli.py"))
+        cli, "__file__", str(fake_src / "src" / "workagent" / "cli.py"))
     assert cli._default_static_dir() == fake_src / "web" / "dist"
 
 
 def test_default_static_dir_falls_back_to_receipt(monkeypatch, tmp_path):
-    from harness import cli
+    from workagent import cli
     installed_src = tmp_path / "installed"
     (installed_src / "web" / "dist").mkdir(parents=True)
     (installed_src / "web" / "dist" / "index.html").write_text("x")
@@ -516,21 +518,21 @@ def test_default_static_dir_falls_back_to_receipt(monkeypatch, tmp_path):
     # home has no receipt at the default path -> point home at tmp and
     # write the receipt there.
     monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
-    receipt_dir = tmp_path / ".local" / "share" / "harness"
+    receipt_dir = tmp_path / ".local" / "share" / "workagent"
     receipt_dir.mkdir(parents=True)
     receipt_dir.joinpath("install-receipt.json").write_text(
         json.dumps({"source_dir": str(installed_src)}))
     monkeypatch.setattr(
-        cli, "__file__", str(tmp_path / "site-packages" / "harness" / "cli.py"))
+        cli, "__file__", str(tmp_path / "site-packages" / "workagent" / "cli.py"))
     assert cli._default_static_dir() == installed_src / "web" / "dist"
 
 
 def test_default_static_dir_no_receipt_returns_source_default(
         monkeypatch, tmp_path):
-    from harness import cli
+    from workagent import cli
     monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(
-        cli, "__file__", str(tmp_path / "site-packages" / "harness" / "cli.py"))
+        cli, "__file__", str(tmp_path / "site-packages" / "workagent" / "cli.py"))
     assert cli._default_static_dir() == \
         tmp_path / "web" / "dist"
 
@@ -648,7 +650,7 @@ def test_api_sessions_empty(client):
 
 
 def test_api_sessions_roundtrip(client, tmp_path, monkeypatch):
-    from harness import store_sqlite as sq
+    from workagent import store_sqlite as sq
     db = sq.db_path()
     sq.init_db(db)
     with sq.connect(db) as conn:
@@ -666,7 +668,7 @@ def test_api_sessions_roundtrip(client, tmp_path, monkeypatch):
 
 
 def test_api_repos_includes_tracker(client, monkeypatch):
-    import harness.store as store
+    import workagent.store as store
     cfg = store.load_config()
     cfg["repos"] = {"p": {"path": "/tmp/proj"}}
     cfg["trackers"] = {"jira:IPG": {"repos": ["/tmp/proj"]}}
@@ -697,7 +699,7 @@ def test_start_run_injects_session_file(client, monkeypatch):
             run.state = "succeeded"
         registry.release_target(run)
 
-    monkeypatch.setattr("harness.webapp._spawn", fake_spawn)
+    monkeypatch.setattr("workagent.webapp._spawn", fake_spawn)
     r = client.post("/api/runs", json={"command": "start",
                                        "args": ["IPG-1"],
                                        "confirm": True})
@@ -718,7 +720,7 @@ def test_sync_explicit_session_file_recorded(client, monkeypatch):
             run.state = "succeeded"
         registry.release_target(run)
 
-    monkeypatch.setattr("harness.webapp._spawn", fake_spawn)
+    monkeypatch.setattr("workagent.webapp._spawn", fake_spawn)
     body = {"command": "sync", "args": ["k", "--session-file", "/tmp/s.jsonl"],
             "confirm": True}
     r = client.post("/api/runs", json=body)
@@ -749,7 +751,7 @@ def test_resume_run_opens_terminal(client, monkeypatch, tmp_path):
     session = tmp_path / "s.jsonl"
     session.write_text("{}\n")
     opened: dict = {}
-    monkeypatch.setattr("harness.webapp._open_terminal",
+    monkeypatch.setattr("workagent.webapp._open_terminal",
                         lambda wt, sf: opened.update(wt=wt, sf=sf))
     run = client.app.state.registry.create("review", ["o/r#1"],
                                            "review:o/r#1")
@@ -761,7 +763,7 @@ def test_resume_run_opens_terminal(client, monkeypatch, tmp_path):
 
 
 def test_resume_session_opens_terminal(client, monkeypatch, tmp_path):
-    from harness import store_sqlite as sq
+    from workagent import store_sqlite as sq
     session = tmp_path / "s.jsonl"
     session.write_text("{}\n")
     db = sq.db_path()
@@ -774,8 +776,48 @@ def test_resume_session_opens_terminal(client, monkeypatch, tmp_path):
                             initiator_command="start", prompt="hello",
                             file_path=str(session))
     opened: dict = {}
-    monkeypatch.setattr("harness.webapp._open_terminal",
+    monkeypatch.setattr("workagent.webapp._open_terminal",
                         lambda wt, sf: opened.update(wt=wt, sf=sf))
     r = client.post(f"/api/sessions/{sid}/resume")
     assert r.status_code == 200, r.text
     assert opened == {"wt": "/wt", "sf": str(session)}
+
+
+def test_specs_mirror_cli_flags():
+    """Parity: webapp BOOL_FLAGS/VAL_FLAGS mirror the real Typer CLI (#25 checklist).
+
+    Catches drift like `--post-comments`, `sync --force/-y`, `register -y`.
+    Read-only/local commands (status/cd/doctor/migrate/candidates/serve/
+    completions) are intentionally not web-exposed.
+    """
+    import typer.main as _tm
+
+    from workagent import webapp as _w
+
+    def _walk(cmd, path):
+        out = {}
+        bools, vals = set(), set()
+        for p in getattr(cmd, "params", []) or []:
+            names = list(getattr(p, "opts", []) or []) + list(getattr(p, "secondary_opts", []) or [])
+            if not names:
+                continue
+            (bools if getattr(p, "is_flag", False) else vals).update(names)
+        out[" ".join(path)] = (bools, vals)
+        for name, sub in (getattr(cmd, "commands", {}) or {}).items():
+            out.update(_walk(sub, path + [name]))
+        return out
+
+    inv = _walk(_tm.get_command(cli.app), [])
+    skip = {"", "completions", "completions install", "completions show",
+            "serve", "doctor", "migrate", "candidates", "status", "cd",
+            "repo", "link"}  # bare groups never invoked; subcommands covered
+    for path, (b, v) in sorted(inv.items()):
+        if path in skip:
+            continue
+        assert path in _w.BOOL_FLAGS or path in _w.VAL_FLAGS, f"{path} missing from webapp inventory"
+        cb = {x for x in b if x.startswith("-")}
+        cv = {x for x in v if x.startswith("-")}
+        assert cb == set(_w.BOOL_FLAGS.get(path, ())), f"BOOL drift [{path}]"
+        assert cv == set(_w.VAL_FLAGS.get(path, ())), f"VAL drift [{path}]"
+    for cmd in ("start", "review", "cleanup", "sync", "open", "register", "repo", "link"):
+        assert cmd in _w.SPECS, f"SPECS missing {cmd}"

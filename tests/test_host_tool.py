@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from harness import cli, repos, store
+from workagent import cli, repos, store
 
 
 def _git_repo(tmp_path, url):

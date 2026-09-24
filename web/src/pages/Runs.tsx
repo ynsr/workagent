@@ -190,7 +190,7 @@ export function Runs() {
     <div>
       <PageHeader
         title="Runs"
-        description="Child-process runs of harness commands. Follow a run for its live log."
+        description="Child-process runs of workagent commands. Follow a run for its live log."
         actions={
           <Button variant="outline" size="sm" onClick={handleCopyJson}>
             <Copy aria-hidden /> {copied ? "Copied" : "JSON"}

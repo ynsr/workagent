@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from harness import repos
+from workagent import repos
 
 
 def _git(*args, cwd) -> None:

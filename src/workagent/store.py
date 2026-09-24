@@ -1,6 +1,6 @@
 """Persistent state: repo registry, tracker links, session links.
 
-Layout (~/.config/harness/, override with HARNESS_CONFIG_DIR):
+Layout (~/.config/workagent/, override with WORKAGENT_CONFIG_DIR):
   config.json   — {"default_harness": "omp", "repos": {...}, "trackers": {...}}
   links.json    — {"<issue-key>": {"issue": ..., "pr_url": ..., "worktree": ...,
                                    "branch": ..., "repo": ...}}
@@ -19,10 +19,17 @@ SUPPORTED_HARNESSES = ("omp",)
 
 
 def config_dir() -> Path:
-    override = os.environ.get("HARNESS_CONFIG_DIR")
+    override = os.environ.get("WORKAGENT_CONFIG_DIR")
     if override:
         return Path(override).expanduser()
-    return Path.home() / ".config" / "harness"
+    new = Path.home() / ".config" / "workagent"
+    legacy = Path.home() / ".config" / "harness"
+    if not new.exists() and legacy.exists():
+        # One-shot auto-migration from the pre-rename layout (issue #25).
+        import shutil
+        new.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(legacy, new)
+    return new
 
 
 def _read_json(path: Path, default: dict) -> dict:

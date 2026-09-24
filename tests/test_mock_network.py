@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.errors import HarnessError, run_cmd
+from workagent.errors import HarnessError, run_cmd
 from tests.conftest import NETWORK_CLIS, network_guard
 
 

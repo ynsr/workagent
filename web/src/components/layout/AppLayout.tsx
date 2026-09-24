@@ -42,7 +42,7 @@ function Sidebar() {
           <GitBranch aria-hidden className="size-5" />
         </span>
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold leading-tight">harness</p>
+          <p className="truncate text-sm font-semibold leading-tight">workagent</p>
           <p className="truncate text-xs text-muted-foreground">serve</p>
         </div>
       </div>
@@ -122,7 +122,7 @@ function MobileHeader() {
       <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
         <GitBranch aria-hidden className="size-4" />
       </span>
-      <span className="text-sm font-semibold">harness serve</span>
+      <span className="text-sm font-semibold">workagent serve</span>
     </header>
   )
 }
@@ -148,7 +148,7 @@ function Footer() {
   const { data: info } = useInfo()
   return (
     <footer className="border-t px-4 py-3 text-xs text-muted-foreground lg:px-8">
-      harness serve{info ? ` v${info.version}` : ""} · {info ? `${info.host}:${info.port}` : "connecting…"} ·
+      workagent serve{info ? ` v${info.version}` : ""} · {info ? `${info.host}:${info.port}` : "connecting…"} ·
       web UI
     </footer>
   )

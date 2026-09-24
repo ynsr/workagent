@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from harness import cli, store
+from workagent import cli, store
 
 runner = CliRunner()
 
@@ -607,12 +607,12 @@ def test_sync_all_missing_worktree_skipped(isolated_config, tmp_path, monkeypatc
 
 
 def test_doctor_missing_and_ok(isolated_config, tmp_path, monkeypatch):
-    from harness import doctor as _doctor
+    from workagent import doctor as _doctor
     monkeypatch.setenv("HOME", str(tmp_path))
     r = _invoke("doctor")
     assert r.exit_code == 1
     assert "doctor: missing" in r.output
-    receipt = tmp_path / ".local/share/harness/install-receipt.json"
+    receipt = tmp_path / ".local/share/workagent/install-receipt.json"
     receipt.parent.mkdir(parents=True)
     receipt.write_text(json.dumps({"source_hash": _doctor.source_hash()}))
     r = _invoke("doctor")
@@ -743,14 +743,14 @@ def test_cleanup_merged_usage_errors(isolated_config):
 def test_version(isolated_config):
     r = _invoke("--version")
     assert r.exit_code == 0
-    assert "harness" in r.output
+    assert "workagent" in r.output
 
 
 def test_help_shows_examples_and_exit_codes(isolated_config):
     r = _invoke("--help")
     assert r.exit_code == 0
     assert "Exit codes" in r.output
-    assert "harness start" in r.output
+    assert "workagent start" in r.output
 def _start_mocks(monkeypatch, repo_dir):
     """Stub repo/issue lookups for `start` (no subprocesses, no network)."""
     monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
@@ -1132,12 +1132,12 @@ def test_cd_unknown_ref(isolated_config):
 
 
 def test_cd_wrapper_snippets():
-    from harness import completions as c
-    w = c.cd_wrapper("harness", "bash")
-    assert w.startswith("harness-cd()") and 'cd "$(command harness cd' in w
-    assert "function harness-cd" in c.cd_wrapper("harness", "fish")
-    snip = c.install_snippet("harness", "bash")
-    assert "harness-cd()" in snip
+    from workagent import completions as c
+    w = c.cd_wrapper("workagent", "bash")
+    assert w.startswith("workagent-cd()") and 'cd "$(command workagent cd' in w
+    assert "function workagent-cd" in c.cd_wrapper("workagent", "fish")
+    snip = c.install_snippet("workagent", "bash")
+    assert "workagent-cd()" in snip
 
 
 def test_open_resolves_and_opens(isolated_config, tmp_path, monkeypatch):
@@ -1198,7 +1198,7 @@ def test_open_no_opener_available(isolated_config, tmp_path, monkeypatch):
 
 def test_sync_rebase_failure_falls_back_to_local_merge(
         isolated_config, tmp_path, monkeypatch):
-    from harness.errors import HarnessError
+    from workagent.errors import HarnessError
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
@@ -1395,7 +1395,7 @@ def test_review_all_spawns_parallel_children(isolated_config, tmp_path, monkeypa
     assert r.exit_code == 0, r.output
     assert len(spawns) == 2
     for argv in spawns:
-        assert argv[:3] == [cli.sys.executable, "-m", "harness"]
+        assert argv[:3] == [cli.sys.executable, "-m", "workagent"]
         assert "--no-tty" in argv and "--post-comments" in argv
     out = json.loads(r.stdout)
     assert sorted(e["key"] for e in out) == ["jira:A-1", "jira:B-2"]
@@ -1492,7 +1492,7 @@ def test_review_all_notes_no_pr_skips(isolated_config, tmp_path, monkeypatch):
 
 
 def test_review_without_ref_is_usage_error(isolated_config):
-    """Bare `harness review` (no ref, no --all) is a usage error, not a crash."""
+    """Bare `workagent review` (no ref, no --all) is a usage error, not a crash."""
     r = runner.invoke(cli.app, ["review"])
     assert r.exit_code == 2, r.output
     assert "missing PR/MR ref" in r.stderr
@@ -1543,7 +1543,7 @@ def test_review_reuses_existing_worktree_row(isolated_config, tmp_path, monkeypa
     """Reviewing an already-tracked worktree stamps pr_url on its own row —
     no second pr:<url> row for the same path/branch (UNIQUE regression on a
     real state.db)."""
-    from harness import store_sqlite as sq
+    from workagent import store_sqlite as sq
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     worktree = tmp_path / "wt"
@@ -1673,7 +1673,7 @@ def test_review_all_dry_run_prints_plan_without_spawning(isolated_config,
     assert sorted(e["key"] for e in out) == ["jira:A-1", "jira:B-2"]
     for row in out:
         assert row["pr_url"].startswith("https://github.com/o/r/pull/")
-        assert "-m harness review" in row["command"]
+        assert "-m workagent review" in row["command"]
         assert row["pr_url"] in row["command"]
         assert "--no-tty" in row["command"] and "--post-comments" in row["command"]
 
@@ -1705,7 +1705,7 @@ def test_review_all_no_runtime_prints_commands_without_spawning(isolated_config,
     out = json.loads(r.stdout)
     assert [e["key"] for e in out] == ["jira:A-1"]
     assert out[0]["exit_code"] == ""
-    assert "-m harness review https://github.com/o/r/pull/1" in out[0]["command"]
+    assert "-m workagent review https://github.com/o/r/pull/1" in out[0]["command"]
     assert "--no-tty" in out[0]["command"] and "--post-comments" in out[0]["command"]
 
 
@@ -1727,7 +1727,7 @@ def test_review_launch_failure_clears_reviewed(isolated_config, tmp_path,
                         lambda repo, **kw: {"worktree_path": str(worktree),
                                             "branch": "feat/33"})
 
-    from harness.errors import HarnessError
+    from workagent.errors import HarnessError
 
     def boom(*a, **k):
         raise HarnessError("no such harness", 1)
@@ -1934,7 +1934,7 @@ def test_scan_worktrees_missing_root(isolated_config, tmp_path):
 
 
 def test_run_harness_writes_session_row(isolated_config, tmp_path, monkeypatch):
-    from harness import store_sqlite as sq
+    from workagent import store_sqlite as sq
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
@@ -1956,7 +1956,7 @@ def test_run_harness_writes_session_row(isolated_config, tmp_path, monkeypatch):
 
 
 def test_run_harness_no_runtime_writes_nothing(isolated_config, tmp_path, monkeypatch):
-    from harness import store_sqlite as sq
+    from workagent import store_sqlite as sq
     result = {"key": "k"}
     cli._run_harness("omp", "prompt", "/tmp/wt", "/tmp", False,
                      True, result, True, run_key="k")
@@ -1974,11 +1974,11 @@ def test_cleanup_merges_open_pr_first(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: calls.append("close"))
     monkeypatch.setattr(cli, "_status_cells",
                         lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
-    from harness.errors import run_cmd as _real  # noqa: F841 (documents the seam)
+    from workagent.errors import run_cmd as _real  # noqa: F841 (documents the seam)
     def fake(*a, **k):
         calls.append(a)
         return ""
-    monkeypatch.setattr("harness.cli.run_cmd", fake)
+    monkeypatch.setattr("workagent.cli.run_cmd", fake)
     entry = dict(store.load_links()["jira:IPG-9"])
     out = cli._cleanup_one("jira:IPG-9", entry, force=True, yes=True,
                            dry_run=False, json_output=True)
@@ -1991,12 +1991,12 @@ def test_cleanup_merge_failure_keeps_worktree(isolated_config, tmp_path, monkeyp
     store.record_link("jira:IPG-9", {"issue": "IPG-9", "worktree": "/tmp/wt",
                                      "branch": "feat/9", "repo": "/tmp/proj",
                                      "pr_url": "https://github.com/o/r/pull/9"})
-    from harness.errors import HarnessError
+    from workagent.errors import HarnessError
     monkeypatch.setattr(cli, "_status_cells",
                         lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
     def boom(*a, **k):
         raise HarnessError("merge conflict")
-    monkeypatch.setattr("harness.cli.run_cmd", boom)
+    monkeypatch.setattr("workagent.cli.run_cmd", boom)
     import pytest
     with pytest.raises(HarnessError):
         cli._cleanup_one("jira:IPG-9", dict(store.load_links()["jira:IPG-9"]),
@@ -2048,7 +2048,7 @@ def test_cleanup_unknown_pr_state_closes_without_merge(isolated_config, monkeypa
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: calls.append("close"))
     monkeypatch.setattr(cli, "_status_cells",
                         lambda entry, refresh_pr=False: {"pr_data": {"state": ""}})
-    monkeypatch.setattr("harness.cli.run_cmd",
+    monkeypatch.setattr("workagent.cli.run_cmd",
                         lambda *a, **k: calls.append("merge") or "")
     cli._cleanup_one("jira:IPG-10", dict(store.load_links()["jira:IPG-10"]),
                      force=False, yes=True, dry_run=False, json_output=True)
@@ -2057,8 +2057,8 @@ def test_cleanup_unknown_pr_state_closes_without_merge(isolated_config, monkeypa
 
 def test_close_pr_treats_merged_mr_as_closed(isolated_config, monkeypatch, capsys):
     """`glab mr close` on a merged MR must not abort cleanup (run eb420c1bb14d)."""
-    from harness.errors import HarnessError
-    import harness.errors as errors
+    from workagent.errors import HarnessError
+    import workagent.errors as errors
     def fake_run(*a, **k):
         raise HarnessError("glab mr close https://git.jibit.cloud/server/projectx/-/merge_requests/1700 "
                            "failed: ERROR\n\n  This merge request has already been merged.")
@@ -2069,8 +2069,8 @@ def test_close_pr_treats_merged_mr_as_closed(isolated_config, monkeypatch, capsy
 
 def test_merge_pr_treats_merged_mr_as_success(isolated_config, monkeypatch, capsys):
     """`glab mr merge` on an already-merged MR must not abort cleanup (3d TTL staleness)."""
-    from harness.errors import HarnessError
-    import harness.errors as errors
+    from workagent.errors import HarnessError
+    import workagent.errors as errors
     def fake_run(*a, **k):
         raise HarnessError("glab mr merge https://git.jibit.cloud/x/-/merge_requests/1 "
                            "failed: ERROR\n\n  This merge request has already been merged.")
@@ -2098,8 +2098,8 @@ def test_cleanup_merged_state_skips_remote_close(isolated_config, monkeypatch, c
 
 def test_close_issue_treats_closed_as_success(isolated_config, monkeypatch, capsys):
     """`gh issue close` on a closed issue continues cleanup instead of raising."""
-    from harness.errors import HarnessError
-    import harness.errors as errors
+    from workagent.errors import HarnessError
+    import workagent.errors as errors
     def fake_run(*a, **k):
         raise HarnessError("gh issue close 22 --repo o/r failed: GraphQL: Could not resolve to an Issue with the number of 22")
     monkeypatch.setattr(errors, "run_cmd", fake_run)
@@ -2150,7 +2150,7 @@ def test_cleanup_repairs_stale_repo_from_live_worktree(isolated_config, tmp_path
 
 def test_cutover_link_write_preserves_sessions(isolated_config):
     import json
-    from harness import store_sqlite as sq
+    from workagent import store_sqlite as sq
     d = Path(str(isolated_config))
     (d / "links.json").write_text(json.dumps({
         "jira:IPG-1": {"worktree": "/wt1", "branch": "feat/1", "repo": "/r"},
@@ -2173,7 +2173,7 @@ def test_cutover_link_write_preserves_sessions(isolated_config):
 
 
 def test_session_id_matches_file(isolated_config, tmp_path, monkeypatch):
-    from harness import store_sqlite as sq
+    from workagent import store_sqlite as sq
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
@@ -2193,7 +2193,7 @@ def test_session_id_matches_file(isolated_config, tmp_path, monkeypatch):
 
 
 def test_candidates_reset_cache_clears(isolated_config, monkeypatch):
-    from harness import store_sqlite as sq
+    from workagent import store_sqlite as sq
     db = sq.db_path()
     sq.init_db(db)
     sq.set_issue_cache(db, "jira", [{"key": "IPG-1"}])
@@ -2241,7 +2241,7 @@ def test_repo_list_prefers_host_scoped_tracker(isolated_config, tmp_path):
     """A repo under both jira:PREFIX and its remote-derived host id shows
     the host-scoped one (the harness symptom: jira:IPG won over
     github:ynsr/harness by first-write order)."""
-    from harness import store
+    from workagent import store
     cfg = store.load_config()
     cfg["repos"] = {"h": {"path": str(tmp_path)}}
     cfg["trackers"] = {"jira:IPG": {"repos": [str(tmp_path)]},

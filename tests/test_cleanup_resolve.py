@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from harness import worktrees
+from workagent import worktrees
 
 
 def _links():

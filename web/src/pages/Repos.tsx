@@ -88,7 +88,7 @@ export function Repos() {
     const ok = await confirm({
       action: "repo remove",
       title: `Remove repo ${repo.name}`,
-      description: "Unregisters the repo from the harness registry.",
+      description: "Unregisters the repo from the workagent registry.",
       destructive: true,
       confirmLabel: "Remove repo",
       details: [

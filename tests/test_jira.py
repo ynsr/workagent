@@ -4,8 +4,8 @@ import json
 import os
 import subprocess
 
-from harness import cli, gitwt, refs
-from harness.errors import HarnessError
+from workagent import cli, gitwt, refs
+from workagent.errors import HarnessError
 
 
 def _repo_with_branch(tmp_path, name: str):

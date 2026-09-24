@@ -1,4 +1,4 @@
-"""harness CLI — launch AI agent harnesses in git-wt worktrees from issue/PR links.
+"""workagent CLI — launch AI agent harnesses in git-wt worktrees from issue/PR links.
 
 stdout carries ONLY command output; every log/progress/confirmation line
 goes to stderr.
@@ -38,19 +38,19 @@ _HARNESS_ARGS: list[str] = []
 _DEFAULT_BRANCH_NAMES = {"main", "master", "develop"}
 
 app = typer.Typer(
-    name="harness",
+    name="workagent",
     help="Launch AI agent harnesses in git-wt worktrees from issue/PR links.",
     no_args_is_help=True,
     add_completion=False,  # single completion system: `completions show|install` (see completions.py)
     context_settings={"help_option_names": ["-h", "--help"]},
     pretty_exceptions_enable=False,
     epilog=("Examples:\n"
-            "  harness start https://github.com/OWNER/REPO/issues/22\n"
-            "  harness start OWNER/REPO#22 --repo my-checkout\n"
-            "  harness review https://github.com/OWNER/REPO/pull/33\n"
-            "  harness cleanup OWNER/REPO#22 --force --yes\n"
-            "  harness repo add --name projectx --path ~/projects/projectx\n"
-            "  harness status\n\n"
+            "  workagent start https://github.com/OWNER/REPO/issues/22\n"
+            "  workagent start OWNER/REPO#22 --repo my-checkout\n"
+            "  workagent review https://github.com/OWNER/REPO/pull/33\n"
+            "  workagent cleanup OWNER/REPO#22 --force --yes\n"
+            "  workagent repo add --name projectx --path ~/projects/projectx\n"
+            "  workagent status\n\n"
             "Exit codes: 0=success, 1=error, 2=needs human input / usage error"),
 )
 
@@ -61,7 +61,7 @@ _complete_refs = _completions.complete_names(_completions._ref_candidates)
 
 def _version_callback(value: bool) -> None:
     if value:
-        print(f"harness {__version__}")
+        print(f"workagent {__version__}")
         raise typer.Exit(0)
 
 
@@ -297,17 +297,17 @@ def start(
     """Create worktree from issue and launch harness.
 
     Example:
-      harness start https://github.com/OWNER/REPO/issues/22
-      harness start OWNER/REPO#22 --repo my-checkout --no-tty
-      harness start OWNER/REPO#22 --dry-run
-      harness start OWNER/REPO#22 --base feat/22--add-login
-      harness start OWNER/REPO#22 --no-runtime
+      workagent start https://github.com/OWNER/REPO/issues/22
+      workagent start OWNER/REPO#22 --repo my-checkout --no-tty
+      workagent start OWNER/REPO#22 --dry-run
+      workagent start OWNER/REPO#22 --base feat/22--add-login
+      workagent start OWNER/REPO#22 --no-runtime
     """
     if not isinstance(session_file, str):
         session_file = None
     parsed = refs.parse_ref(ref)
     if parsed["kind"] in ("pr", "mr"):
-        _fail(f"{ref} looks like a PR/MR — use `harness review`", EXIT_USAGE)
+        _fail(f"{ref} looks like a PR/MR — use `workagent review`", EXIT_USAGE)
     r, outcome = trackers.resolve_for_tracker(
         trackers.tracker_id(parsed), repo, Path.cwd(), depth=depth,
         yes=yes, persist=not dry_run)
@@ -505,10 +505,10 @@ def review(
     """Create worktree from PR/MR and launch review.
 
     Example:
-      harness review https://github.com/OWNER/REPO/pull/33
-      harness review OWNER/REPO#33 --no-tty
-      harness review OWNER/REPO#33 --no-runtime
-      harness review --all [--sequential] [--fix]
+      workagent review https://github.com/OWNER/REPO/pull/33
+      workagent review OWNER/REPO#33 --no-tty
+      workagent review OWNER/REPO#33 --no-runtime
+      workagent review --all [--sequential] [--fix]
     """
     if not isinstance(session_file, str):
         session_file = None
@@ -529,7 +529,7 @@ def review(
             return
 
         def _child_argv(pr: str) -> list[str]:
-            return [sys.executable, "-m", "harness", "review", pr,
+            return [sys.executable, "-m", "workagent", "review", pr,
                     "--no-tty", "--post-comments"] + (["--fix"] if fix else [])
 
         def _child_cmd(pr: str) -> str:
@@ -708,9 +708,9 @@ def cleanup(
     """Close issue + remove worktree/branch/PR.
 
     Example:
-      harness cleanup OWNER/REPO#22 --force --yes
-      harness cleanup OWNER/REPO#22 --dry-run
-      harness cleanup --merged --yes
+      workagent cleanup OWNER/REPO#22 --force --yes
+      workagent cleanup OWNER/REPO#22 --dry-run
+      workagent cleanup --merged --yes
     """
     if merged and ref:
         _fail("--merged takes no ref; it loops every linked worktree.", EXIT_USAGE)
@@ -761,7 +761,7 @@ def cleanup(
     if resolved is None:
         _fail(
             f"no linked state for {ref}.\n"
-            "  Run `harness link list` to see linked worktrees.",
+            "  Run `workagent link list` to see linked worktrees.",
             EXIT_USAGE,
         )
     key = worktrees.pick_worktree(ref, resolved, links)
@@ -915,7 +915,7 @@ def _close_issue(parsed: dict, force: bool) -> None:
         try:
             from .errors import run_cmd as _run
             _run("jira-cli", "issue", parsed["number"], "add-comment",
-                 "--body", "Resolved via harness cleanup.")
+                 "--body", "Resolved via workagent cleanup.")
             eprint(f"commented on {parsed['number']} (status left unchanged)")
         except HarnessError as e:
             if not force:
@@ -984,8 +984,8 @@ def repo_add(
     """Register an offline repo.
 
     Example:
-      harness repo add --name projectx --path ~/projects/projectx
-      harness repo add --name projectx --path ~/projects/projectx --tracker IPG
+      workagent repo add --name projectx --path ~/projects/projectx
+      workagent repo add --name projectx --path ~/projects/projectx --tracker IPG
     """
     p = path.expanduser()
     if not (p / ".git").exists() and not p.is_dir():
@@ -1035,9 +1035,9 @@ def repo_list(
     """List registered repos (Rich table by default).
 
     Example:
-      harness repo list
-      harness repo list --csv
-      harness repo list --json | jq '.[].name'
+      workagent repo list
+      workagent repo list --csv
+      workagent repo list --json | jq '.[].name'
     """
     cfg = store.load_config()
     tmap = _repo_tracker_map(cfg)
@@ -1057,7 +1057,7 @@ def repo_remove(
 ) -> None:
     """Unregister a repo.
 
-    Example: harness repo remove projectx
+    Example: workagent repo remove projectx
     """
     cfg = store.load_config()
     if name not in cfg.get("repos", {}):
@@ -1083,8 +1083,8 @@ def link_list(
     """List tracker↔repo relations and worktree links.
 
     Example:
-      harness link list
-      harness link list --json
+      workagent link list
+      workagent link list --json
     """
     cfg = store.load_config()
     links = store.load_links()
@@ -1114,8 +1114,8 @@ def link_set(
     """Link a tracker to a repo (persists the relation).
 
     Example:
-      harness link set jira:IPG ~/projects/projectx
-      harness link set github:OWNER/REPO my-checkout
+      workagent link set jira:IPG ~/projects/projectx
+      workagent link set github:OWNER/REPO my-checkout
     """
     tid = trackers.normalize_id(tracker)
     target = repos.resolve_repo(repo, Path.cwd())
@@ -1138,9 +1138,9 @@ def link_remove(
     """Remove a tracker mapping or a worktree link.
 
     Example:
-      harness link remove jira:IPG
-      harness link remove jira:IPG --repo ~/projects/other
-      harness link remove o/r#22
+      workagent link remove jira:IPG
+      workagent link remove jira:IPG --repo ~/projects/other
+      workagent link remove o/r#22
     """
     tid = trackers.normalize_id(ref)
     cfg = store.load_config()
@@ -1550,10 +1550,10 @@ def status(
     the latest PR/MR for the branch (cached; --refresh-pr re-queries).
 
     Example:
-      harness status
-      harness status IPG-929
-      harness status OWNER/REPO#22
-      harness status --json
+      workagent status
+      workagent status IPG-929
+      workagent status OWNER/REPO#22
+      workagent status --json
     """
     links = store.load_links()
     if ref:
@@ -1713,8 +1713,8 @@ def candidates_cmd(
     """List unlinked open PR/MRs and my recent issues (last 7 days).
 
     Example:
-      harness candidates
-      harness candidates --json
+      workagent candidates
+      workagent candidates --json
     """
     if reset_cache:
         from . import store_sqlite as _sq
@@ -1759,11 +1759,11 @@ def cd_cmd(
                               help="Issue/PR ref or worktree key."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
-    """Print the worktree root for a ref: cd "$(harness cd <ref>)".
+    """Print the worktree root for a ref: cd "$(workagent cd <ref>)".
 
     A child process cannot change the shell's cwd, so the command prints
     the path; the `completions install` shell wrapper (installed since
-    0.4.0) makes bare `harness cd <ref>` change directory directly.
+    0.4.0) makes bare `workagent cd <ref>` change directory directly.
     """
     links = store.load_links()
     resolved = worktrees.resolve_worktree(ref, links)
@@ -1795,13 +1795,13 @@ def open_cmd(
     invalid worktrees.
 
     Example:
-      harness open IPG-929
+      workagent open IPG-929
     """
     links = store.load_links()
     resolved = worktrees.resolve_worktree(ref, links)
     if resolved is None:
         _fail(f"no linked state for {ref}.\n"
-              "  Run `harness link list` to see linked worktrees.", EXIT_USAGE)
+              "  Run `workagent link list` to see linked worktrees.", EXIT_USAGE)
     key = worktrees.pick_worktree(ref, resolved, links)
     wt = links.get(key, {}).get("worktree", "")
     if not wt or not worktrees.is_valid_worktree(wt):
@@ -1831,7 +1831,7 @@ def register(
 ) -> None:
     """Register an existing (unregistered) worktree as a link.
 
-    Example: harness link-wt ~/dev/worktrees/projectx/feat/IPG-999--x
+    Example: workagent link-wt ~/dev/worktrees/projectx/feat/IPG-999--x
 
     The worktree must be a linked git worktree (not the main checkout).
     After registration the path works with status, sync, cd, and cleanup.
@@ -1946,9 +1946,9 @@ def sync_cmd(
     (including after harness-resolved conflicts).
 
     Example:
-      harness sync IPG-929
-      harness sync IPG-929 --merge
-      harness sync --all --dry-run
+      workagent sync IPG-929
+      workagent sync IPG-929 --merge
+      workagent sync --all --dry-run
     """
     if not isinstance(session_file, str):
         session_file = None
@@ -2121,7 +2121,7 @@ def doctor(
 ) -> None:
     """Check install sync + tool availability.
 
-    Example: harness doctor
+    Example: workagent doctor
 
     Exit codes: 0 in sync · 1 stale/missing receipt (fix: ./install.sh).
     """
@@ -2142,7 +2142,7 @@ def migrate_cmd(
     Verifies row counts, then deletes the JSON files (config.json kept).
     Idempotent: re-run is a no-op.
 
-    Example: harness migrate --json
+    Example: workagent migrate --json
     """
     from . import store_sqlite as sq
     out = sq.migrate_json(store.config_dir(), sq.db_path())
@@ -2163,7 +2163,7 @@ def _default_static_dir() -> Path:
     source = Path(__file__).resolve().parent.parent.parent
     if (source / "web" / "dist" / "index.html").exists():
         return source / "web" / "dist"
-    receipt = Path.home() / ".local" / "share" / "harness" / "install-receipt.json"
+    receipt = Path.home() / ".local" / "share" / "workagent" / "install-receipt.json"
     try:
         src: Path | None = Path(
             json.loads(receipt.read_text()).get("source_dir", ""))
@@ -2185,8 +2185,8 @@ def serve(
     """Start the local web UI server (feature parity with the CLI).
 
     Example:
-      harness serve
-      harness serve --port 3345 --allowed-host devbox.local
+      workagent serve
+      workagent serve --port 3345 --allowed-host devbox.local
 
     Requires the web extra (fastapi, uvicorn) and a built UI:
       cd web && npm ci && npm run build
@@ -2214,17 +2214,17 @@ def completions_show(
     """Print the shell init script — source it via eval in your rc file.
 
     Example:
-      eval "$(harness completions show bash)"   # ~/.bashrc
-      eval "$(harness completions show zsh)"    # ~/.zshrc
-      harness completions show fish | source    # fish config
+      eval "$(workagent completions show bash)"   # ~/.bashrc
+      eval "$(workagent completions show zsh)"    # ~/.zshrc
+      workagent completions show fish | source    # fish config
     """
     import typer.main as _typer_main
 
     try:
-        script = _completions.get_completion_script("harness", shell, click_cmd=_typer_main.get_command(app))
+        script = _completions.get_completion_script("workagent", shell, click_cmd=_typer_main.get_command(app))
     except ValueError as exc:
         _fail(str(exc), EXIT_USAGE)
-    wrapper = _completions.cd_wrapper(prog="harness", shell=shell)
+    wrapper = _completions.cd_wrapper(prog="workagent", shell=shell)
     print(wrapper + script, end="" if script.endswith("\n") else "\n")
 
 
@@ -2237,21 +2237,21 @@ def completions_install(
     """Install the eval line into your rc file (idempotent; keeps a .bak backup).
 
     Example:
-      harness completions install          # detect shell from $SHELL
-      harness completions install bash     # explicit shell
-      harness completions install zsh --rcfile ~/.zshrc --yes
+      workagent completions install          # detect shell from $SHELL
+      workagent completions install bash     # explicit shell
+      workagent completions install zsh --rcfile ~/.zshrc --yes
     """
     resolved = shell or _completions.detect_shell()
     if resolved is None:
         _fail(f"cannot detect shell from $SHELL={os.environ.get('SHELL', '')!r}; pass bash, zsh, or fish explicitly", EXIT_USAGE)
-    if not yes and sys.stdin.isatty() and not typer.confirm(f"Add harness completion to your {resolved} rc file?"):
+    if not yes and sys.stdin.isatty() and not typer.confirm(f"Add workagent completion to your {resolved} rc file?"):
         raise typer.Exit(EXIT_USAGE)
     try:
-        rc, changed = _completions.install_completion("harness", resolved, Path(rcfile) if rcfile else None)
+        rc, changed = _completions.install_completion("workagent", resolved, Path(rcfile) if rcfile else None)
     except ValueError as exc:
         _fail(str(exc), EXIT_USAGE)
     if changed:
-        _completions.print_install_hint("harness", resolved, rc)
+        _completions.print_install_hint("workagent", resolved, rc)
     else:
         print(f"already installed in {rc}", file=sys.stderr)
 

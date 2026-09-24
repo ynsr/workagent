@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from harness import gitwt
-from harness.errors import HarnessError
+from workagent import gitwt
+from workagent.errors import HarnessError
 
 
 def _git(*args, cwd) -> None:

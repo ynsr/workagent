@@ -3,15 +3,15 @@
 set -euo pipefail
 
 if command -v pipx &>/dev/null; then
-  pipx uninstall harness || true
+  pipx uninstall workagent || true
 elif command -v uv &>/dev/null; then
-  uv tool uninstall harness || true
+  uv tool uninstall workagent || true
 fi
 
-rm -rf "${HOME}/.local/share/harness"
+rm -rf "${HOME}/.local/share/workagent"
 
 if command -v cli-hub &>/dev/null; then
-  cli-hub unregister harness --yes || true
+  cli-hub unregister workagent --yes || true
 fi
 
-echo "==> harness uninstalled. Config left at ~/.config/harness (remove manually if wanted)."
+echo "==> workagent uninstalled. Config left at ~/.config/workagent (remove manually if wanted)."

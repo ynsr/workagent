@@ -1,4 +1,18 @@
 # Changelog
+## Unreleased
+
+- Rename project to workagent (Fix #25): package `src/harness` →
+  `src/workagent`, binary `harness` → `workagent`, config
+  `~/.config/harness` → `~/.config/workagent` (one-shot auto-migration of
+  the legacy dir on first run), receipt `~/.local/share/workagent/`,
+  `_HARNESS_COMPLETE` → `_WORKAGENT_COMPLETE`, `HARNESS_CONFIG_DIR` →
+  `WORKAGENT_CONFIG_DIR`. Completions install strips pre-rename marker
+  blocks. No `harness` shim (hard cutover).
+- Fix web arg inventory drift found during the rename: `review
+  --post-comments`, `sync --force/-y`, `register -y` added; `sync
+  --harness` corrected from value flag to bool. New parity test
+  `test_specs_mirror_cli_flags` introspects the real Typer app and fails
+  on future drift.
 ## 0.2.1 — 2026-09-18
 
 - Fix Tab completion: typer 0.27 never registers its shell completion

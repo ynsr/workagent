@@ -253,7 +253,7 @@ export function Sessions() {
       ) : rows.length === 0 ? (
         <EmptyState
           title="No sessions yet"
-          description="Run harness start, review, or sync to record a session."
+          description="Run workagent start, review, or sync to record a session."
         />
       ) : (
         <Card>

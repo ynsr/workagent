@@ -1,5 +1,5 @@
 /**
- * Typed client for the `harness serve` API.
+ * Typed client for the `workagent serve` API.
  * Contract: web/API_CONTRACT.md (authoritative).
  */
 
@@ -24,7 +24,7 @@ export interface CommitsDetail {
   ahead: number
 }
 
-/** One worktree entry, as in `harness status --json`. */
+/** One worktree entry, as in `workagent status --json`. */
 export interface WorktreeEntry {
   issue?: string
   worktree?: string
@@ -223,7 +223,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(
       0,
       "network_error",
-      `Cannot reach the harness server (${String(cause)})`,
+      `Cannot reach the workagent server (${String(cause)})`,
     )
   }
   const text = await res.text()

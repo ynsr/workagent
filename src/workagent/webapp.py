@@ -1,5 +1,5 @@
-"""harness serve — local web UI server (FastAPI). Imported lazily by
-`harness serve` so the rest of the CLI never needs the web extra.
+"""workagent serve — local web UI server (FastAPI). Imported lazily by
+`workagent serve` so the rest of the CLI never needs the web extra.
 
 Security model (no authentication, by design):
 - default bind 127.0.0.1; a non-loopback bind prints a startup warning
@@ -8,7 +8,7 @@ Security model (no authentication, by design):
 - no CORS (development uses the Vite proxy)
 
 Run lifecycle: mutating CLI commands run as child processes of this same
-code version (`sys.executable -m harness`). Output is buffered per run
+code version (`sys.executable -m workagent`). Output is buffered per run
 (≤10 000 lines, oldest dropped), ANSI-stripped, and streamed over SSE.
 At most 100 runs are kept; finished runs are evicted oldest-first.
 """
@@ -74,12 +74,12 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "start": ("-N", "--no-tty", "--no-runtime", "--dry-run", "--yes",
               "--json"),
     "review": ("-N", "--no-tty", "--no-runtime", "--dry-run", "--yes",
-               "--json", "--all", "--sequential", "--fix"),
+               "--json", "--all", "--sequential", "--fix", "--post-comments"),
     "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--no-squash"),
     "open": (),
-    "sync": ("-m", "--merge", "--harness", "--all", "--yes", "--dry-run",
-             "--json"),
-    "register": ("--yes", "--force", "--json"),
+    "sync": ("-m", "--merge", "--harness", "--all", "--yes", "--force",
+             "-y", "--dry-run", "--json"),
+    "register": ("--yes", "-y", "--force", "--json"),
     "repo add": ("--json",),
     "repo remove": ("--json",),
     "repo list": ("--json", "--csv"),
@@ -90,7 +90,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "start": ("--repo", "--depth", "--base", "--harness", "--session-file"),
     "review": ("--repo", "--depth", "--harness", "--session-file"),
-    "sync": ("--harness", "--session-file"),
+    "sync": ("--session-file",),
     "register": ("--key", "--issue", "--repo"),
     "repo add": ("--name", "--path", "--tracker"),
     "link remove": ("--repo",),
@@ -175,11 +175,11 @@ def _validate_args(command: str, args: list[str]) -> None:
                        "launch gets its own file)", 400)
 
 def _build_argv(command: str, args: list[str]) -> list[str]:
-    """Same-code child invocation: this interpreter, `python -m harness`.
+    """Same-code child invocation: this interpreter, `python -m workagent`.
 
     Global flags (only -v is exposed) precede the subcommand.
     """
-    argv = [sys.executable, "-m", "harness"]
+    argv = [sys.executable, "-m", "workagent"]
     verbose = any(a in ("-v", "--verbose") for a in args)
     if verbose:
         argv.append("-v")
@@ -421,7 +421,7 @@ def _resume_shell_command(worktree: str, session_file: str) -> str:
 
 def _open_terminal(worktree: str, session_file: str) -> None:
     """Detached-spawn the OS default terminal resumed on the session
-    (mirrors `harness open` detachment)."""
+    (mirrors `workagent open` detachment)."""
     cmd = _resume_shell_command(worktree, session_file)
     kwargs: dict = {"stdin": subprocess.DEVNULL,
                     "stdout": subprocess.DEVNULL,

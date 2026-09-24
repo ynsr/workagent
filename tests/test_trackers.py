@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from harness import refs, store, trackers
-from harness.errors import HarnessError
+from workagent import refs, store, trackers
+from workagent.errors import HarnessError
 
 
 def test_tracker_id_jira_prefix(isolated_config):
@@ -81,7 +81,7 @@ def test_same_repo_passes_silently(isolated_config, tmp_path):
 
 
 def test_mismatch_non_tty_without_yes_aborts(isolated_config, tmp_path, monkeypatch):
-    from harness.errors import HarnessError
+    from workagent.errors import HarnessError
 
     a = tmp_path / "a"
     a.mkdir()
@@ -122,7 +122,7 @@ def test_host_scoped_tracker_rejects_foreign_remote_repo(isolated_config, tmp_pa
                     "https://git.example.com/group/proj.git"], check=True)
     monkeypatch.setattr(trackers.repos, "_detect_host_cli", lambda path: "glab")
     monkeypatch.setattr(trackers.repos, "_known_glab_hosts", lambda: {"git.example.com"})
-    from harness.errors import HarnessError
+    from workagent.errors import HarnessError
     with __import__("pytest").raises(HarnessError):
         trackers.check_or_record("github:owner/repo", str(d), yes=True)
 
@@ -262,9 +262,9 @@ def test_parse_created_offsets():
 
 
 def test_my_issues_uses_cache_within_ttl(monkeypatch, tmp_path):
-    from harness import trackers
-    from harness import store_sqlite as sq
-    import harness.store as store
+    from workagent import trackers
+    from workagent import store_sqlite as sq
+    import workagent.store as store
     monkeypatch.setattr(store, "config_dir", lambda: tmp_path)
     rows = [{"key": "IPG-1", "title": "t", "url": "u", "status": "To Do",
              "created": "2026-09-01"}]
@@ -278,9 +278,9 @@ def test_my_issues_uses_cache_within_ttl(monkeypatch, tmp_path):
 
 
 def test_my_issues_force_skips_cache(monkeypatch, tmp_path):
-    from harness import trackers
-    from harness import store_sqlite as sq
-    import harness.store as store
+    from workagent import trackers
+    from workagent import store_sqlite as sq
+    import workagent.store as store
     monkeypatch.setattr(store, "config_dir", lambda: tmp_path)
     sq.set_issue_cache(sq.db_path(), "jira", [{"key": "STALE"}])
     monkeypatch.setattr(trackers, "_jira_my_issues", lambda warn: [])
@@ -290,8 +290,8 @@ def test_my_issues_force_skips_cache(monkeypatch, tmp_path):
 
 
 def test_my_issues_fetch_exception_never_raises(monkeypatch, tmp_path):
-    from harness import trackers
-    import harness.store as store
+    from workagent import trackers
+    import workagent.store as store
     monkeypatch.setattr(store, "config_dir", lambda: tmp_path)
     def _boom(warn):
         raise OSError("no such binary")

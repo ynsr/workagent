@@ -1,10 +1,10 @@
-# harness
+# workagent
 
 Launch AI agent harnesses in git-wt worktrees from issue/PR links.
 
 ## Introduction
 
-`harness` sits above `git-wt`: it resolves a GitHub issue or PR/MR link into a
+`workagent` sits above `git-wt`: it resolves a GitHub issue or PR/MR link into a
 worktree (via `git-wt start`), records the issue↔PR↔worktree link, then execs
 the configured AI harness (`omp` in v1) with the issue summary + description as
 the initial prompt. `review` and `cleanup` close the loop.
@@ -16,14 +16,14 @@ the initial prompt. `review` and `cleanup` close the loop.
 ```
 
 Uses `uv tool install` when available, falls back to `pipx install`; writes
-the install receipt (`~/.local/share/harness/install-receipt.json`),
+the install receipt (`~/.local/share/workagent/install-receipt.json`),
 bootstraps `git-wt` from the vendored snapshot when missing, registers with
-cli-hub when present, and self-checks via `harness doctor`. Requires
+cli-hub when present, and self-checks via `workagent doctor`. Requires
 `git-wt` and `omp` on PATH, plus `gh`/`glab` for tracker access.
 
 While iterating from a checkout, use `uv tool install --force .` (or
 `pipx install --force .`) to re-sync the installed copy after edits —
-`harness doctor` tells you when it is stale.
+`workagent doctor` tells you when it is stale.
 
 ## Uninstall
 
@@ -32,21 +32,21 @@ While iterating from a checkout, use `uv tool install --force .` (or
 ```
 
 Removes the tool (uv/pipx), the install receipt, and the cli-hub entry.
-Config is left at `~/.config/harness/` for you to delete if unwanted.
+Config is left at `~/.config/workagent/` for you to delete if unwanted.
 
 ## Usage
 
 ```bash
-harness start https://github.com/OWNER/REPO/issues/22
-harness start OWNER/REPO#22 --repo my-checkout --no-tty
-harness review https://github.com/OWNER/REPO/pull/33
-harness sync IPG-929          # or OWNER/REPO#22, or a worktree key
-harness repo add --name projectx --path ~/projects/projectx
-harness repo list
-harness link list
-harness link set jira:IPG ~/projects/projectx
-harness status                # or: status IPG-929 for a detail panel
-harness doctor
+workagent start https://github.com/OWNER/REPO/issues/22
+workagent start OWNER/REPO#22 --repo my-checkout --no-tty
+workagent review https://github.com/OWNER/REPO/pull/33
+workagent sync IPG-929          # or OWNER/REPO#22, or a worktree key
+workagent repo add --name projectx --path ~/projects/projectx
+workagent repo list
+workagent link list
+workagent link set jira:IPG ~/projects/projectx
+workagent status                # or: status IPG-929 for a detail panel
+workagent doctor
 ```
 
 `status` and `repo list` render Rich tables for humans; add `--csv` or
@@ -71,16 +71,16 @@ as follows:
      for `--repo`).
 
 The selected repo is linked to the tracker project and used for the
-worktree. Manage mappings with `harness link list|set|remove`; pass `--yes`
+worktree. Manage mappings with `workagent link list|set|remove`; pass `--yes`
 to accept prompts non-interactively.
 
 Tab completion (one system, never goes stale):
 
 ```bash
-eval "$(harness completions show bash)"   # ~/.bashrc
-eval "$(harness completions show zsh)"    # ~/.zshrc
-harness completions show fish | source    # fish config
-harness completions install               # or: install zsh --rcfile ~/.zshrc --yes
+eval "$(workagent completions show bash)"   # ~/.bashrc
+eval "$(workagent completions show zsh)"    # ~/.zshrc
+workagent completions show fish | source    # fish config
+workagent completions install               # or: install zsh --rcfile ~/.zshrc --yes
 ```
 
 The tradeoff: the eval line spawns Python on every new shell (~200–400ms)
@@ -88,19 +88,19 @@ but never goes stale when commands change — the right default for this tier.
 
 Exit codes: `0` success · `1` general error · `2` usage/needs human input.
 
-State lives in `~/.config/harness/` (`config.json` registry, `links.json`
+State lives in `~/.config/workagent/` (`config.json` registry, `links.json`
 worktree links, `pr_cache.json` PR-status cache). Override with
 `HARNESS_CONFIG_DIR`.
 
 ## Registering existing worktrees
 
-Worktrees created outside `harness start` (plain `git worktree add`,
+Worktrees created outside `workagent start` (plain `git worktree add`,
 `git-wt start` run by hand) can be adopted:
 
 ```bash
-harness register ~/dev/worktrees/projectx/feat/IPG-999--fix-thing
-harness register ~/dev/wt/feat/x --issue IPG-999      # attach an issue/PR ref
-harness register ~/dev/wt/feat/x --key jira:IPG-999 --repo ~/dev/projectx
+workagent register ~/dev/worktrees/projectx/feat/IPG-999--fix-thing
+workagent register ~/dev/wt/feat/x --issue IPG-999      # attach an issue/PR ref
+workagent register ~/dev/wt/feat/x --key jira:IPG-999 --repo ~/dev/projectx
 ```
 
 The path must be a linked git worktree (not the main checkout). The
@@ -115,7 +115,7 @@ same key. Registered worktrees work with `status`, `sync`, `cd`, and
 
 ## Sync
 
-`harness sync <ref>` brings a worktree branch up to date with its base
+`workagent sync <ref>` brings a worktree branch up to date with its base
 branch. Refs resolve fuzzily (worktree key, issue number, branch/worktree
 substring) like `cleanup`; no ref picks interactively (or `--all` for
 every worktree, confirmed one by one).
@@ -139,7 +139,7 @@ every worktree, confirmed one by one).
 
 ## Status
 
-`harness status` shows every linked worktree with the branch, the `commits`
+`workagent status` shows every linked worktree with the branch, the `commits`
 column (`behind|ahead` vs the remote-tracking base branch — no fetch;
 `gone` when the worktree is missing), and the latest PR/MR with a bright
 color for the state (open/merged/closed). `status <ref>` shows a detail
@@ -150,7 +150,7 @@ or the GitHub repo in the worktree key; a stored URL wins.
 The PR/MR lookup CLI (gh/glab) is chosen from the repo's origin URL host
 (gh's known hosts vs glab's) and persisted per registered repo, so GitLab
 repos never query GitHub. Status is cached per branch in
-`~/.config/harness/pr_cache.json` and reused while the worktree-branch tip
+`~/.config/workagent/pr_cache.json` and reused while the worktree-branch tip
 and the base-branch tip are unchanged and the entry is younger than 3h —
 `--refresh-pr` re-queries the PR/MR. When a worktree has no PR/MR, the
 `status <ref>` detail shows a create hint: the web create-PR URL for
@@ -158,27 +158,27 @@ GitHub remotes, otherwise a `glab mr create` command for the branch.
 
 ## cd
 
-`harness cd <ref>` prints the linked worktree path — use it as
-`cd "$(harness cd IPG-959)"`. `completions show|install` also provides a
-`harness-cd` shell function, so after installing completions
-`harness-cd IPG-959` changes directory directly.
+`workagent cd <ref>` prints the linked worktree path — use it as
+`cd "$(workagent cd IPG-959)"`. `completions show|install` also provides a
+`workagent-cd` shell function, so after installing completions
+`workagent-cd IPG-959` changes directory directly.
 
 Refs (`status`, `sync`, `review`, `cleanup`, `cd`) complete in the shell
 over worktree keys, branches, and worktree names.
 
 
-## Web UI (`harness serve`)
+## Web UI (`workagent serve`)
 
-`harness serve` starts a local web server that mirrors the CLI: worktree
+`workagent serve` starts a local web server that mirrors the CLI: worktree
 table with branch/commits/PR/CI state, launch (`start`/`review`),
 repos, tracker↔repo links, sync, cleanup, register, runs with live logs,
 and doctor.
 
 ```bash
-pip install 'harness[web]'            # or: uv tool install --force --with fastapi --with uvicorn .
+pip install 'workagent[web]'            # or: uv tool install --force --with fastapi --with uvicorn .
 cd web && npm ci && npm run build     # build the UI (needed once)
-harness serve                         # http://127.0.0.1:3344
-harness serve --port 3345 --allowed-host devbox.local
+workagent serve                         # http://127.0.0.1:3344
+workagent serve --port 3345 --allowed-host devbox.local
 ```
 
 - Run logs stream over SSE; destructive runs need an explicit
@@ -186,7 +186,7 @@ harness serve --port 3345 --allowed-host devbox.local
   for `--force`).
 - The built-in static path is `<repo>/web/dist` (correct for
   editable/source installs). For non-editable installs pass
-  `--static-dir /path/to/harness/web/dist`.
+  `--static-dir /path/to/workagent/web/dist`.
 - One run per target at a time: a second launch for the same worktree
   returns 409; cancel sends SIGTERM, then SIGKILL after 10 s.
 - **No authentication.** The server binds to `127.0.0.1` by default and
@@ -212,7 +212,7 @@ Install it with `pipx install ./vendored/git-wt`.
   `KEY-123` or `https://<host>/browse/KEY-123`). Jira URLs are configured
   via `jira-cli setup` (`~/.jira-cli.json`, `JIRA_URL`/`JIRA_USER`/`JIRA_PASS`).
 - v1 supports the `omp` harness only; `ccline` comes later.
-- `harness start` execs `omp` in TTY mode (replaces the process); use
+- `workagent start` execs `omp` in TTY mode (replaces the process); use
   `--dry-run` to preview without launching, or `--no-tty` to run
   `omp -p <prompt>` non-interactively (extra harness flags after `--`).
 

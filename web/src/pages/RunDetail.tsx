@@ -342,7 +342,7 @@ export function RunDetail() {
           exit code: <span className="font-mono">{exitCode ?? "—"}</span>
         </span>
         <span className="font-mono text-[13px] text-muted-foreground">
-          harness {run.command} {run.args.join(" ")}
+          workagent {run.command} {run.args.join(" ")}
         </span>
         {run.truncated ? (
           <span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">

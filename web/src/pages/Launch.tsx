@@ -228,7 +228,7 @@ export function Launch() {
     <div>
       <PageHeader
         title="Launch"
-        description="Start an agent from an issue ref/URL, review a PR/MR ref/URL, or sync a linked worktree. Runs headless as a child process of harness serve."
+        description="Start an agent from an issue ref/URL, review a PR/MR ref/URL, or sync a linked worktree. Runs headless as a child process of workagent serve."
         actions={
           <div
             role="tablist"
@@ -325,7 +325,7 @@ export function Launch() {
                     allowCustom
                   />
                   <p className="text-xs text-muted-foreground">
-                    --repo accepts a registered name, a local path, or a clone URL; "(auto)" lets the harness pick.
+                    --repo accepts a registered name, a local path, or a clone URL; "(auto)" lets workagent pick.
                   </p>
                 </div>
                 <div className="grid gap-2">

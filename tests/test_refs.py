@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from harness import refs
-from harness.errors import HarnessError
+from workagent import refs
+from workagent.errors import HarnessError
 
 import pytest
 

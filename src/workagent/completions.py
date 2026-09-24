@@ -2,7 +2,7 @@
 
 The app is constructed with ``add_completion=False`` so there is exactly one
 completion system. ``completions show <shell>`` prints a script for
-``eval "$(harness completions show bash)"``; ``completions install`` drops
+``eval "$(workagent completions show bash)"``; ``completions install`` drops
 that eval line into ~/.bashrc / ~/.zshrc idempotently inside a marker block
 (atomic write, .bak backup kept).
 
@@ -53,7 +53,7 @@ def ensure_completion_classes() -> None:
 
     typer >= 0.27 vendors click but only registers its bash/zsh/fish
     completion classes inside ``completion_init()``, which the env-var
-    completion server (``_HARNESS_COMPLETE=complete_<shell>``) never
+    completion server (``_WORKAGENT_COMPLETE=complete_<shell>``) never
     calls — without this every Tab dies with "Shell bash not
     supported." (ble.sh fires the server on every keystroke). Idempotent;
     no-op when typer pairs with a plain click that self-registers.
@@ -83,7 +83,7 @@ def eval_line(prog: str, shell: str) -> str:
 
 
 def cd_wrapper(prog: str, shell: str) -> str:
-    """Shell function making `harness cd <ref>` change the caller's cwd."""
+    """Shell function making `workagent cd <ref>` change the caller's cwd."""
     if shell == "fish":
         return (f"function {prog}-cd; cd \"$(command {prog} cd $argv)\"; end\n")
     return (f"{prog}-cd() {{ cd \"$(command {prog} cd \"$@\")\" || return; }}\n")
@@ -92,7 +92,7 @@ def cd_wrapper(prog: str, shell: str) -> str:
 def install_snippet(prog: str, shell: str) -> str:
     """Marker block written into the rc file. zsh needs compinit first.
 
-    Also installs a `harness cd <ref>` shell function that changes the
+    Also installs a `workagent cd <ref>` shell function that changes the
     caller's directory (a child process cannot do that itself).
     """
     lines = [START_MARKER.format(prog=prog)]
@@ -141,8 +141,10 @@ def install_completion(prog: str, shell: str, rcfile: Optional[Path] = None) -> 
     else:
         sep = "" if not existing or existing.endswith("\n") else "\n"
         updated = existing + (sep + "\n" if existing else "") + snippet
+    # Pre-rename blocks: same markers with the old `harness` prog name
+    # (singular `completion` variant handled by the pattern's `?`).
     updated = re.sub(
-        re.escape(legacy_start) + r".*?" + re.escape(legacy_end) + r"\n?",
+        r"# >>> harness completions? >>>.*?# <<< harness completions? <<<\n?",
         "",
         updated,
         flags=re.DOTALL,

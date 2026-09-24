@@ -5,7 +5,7 @@ import subprocess
 from datetime import datetime
 from unittest import mock
 
-from harness import store
+from workagent import store
 
 
 def test_config_defaults(isolated_config):

@@ -25,11 +25,11 @@ def source_hash() -> str:
 
 def receipt_path() -> Path:
     home = Path(os.environ.get("HOME", str(Path.home())))
-    return home / ".local" / "share" / "harness" / "install-receipt.json"
+    return home / ".local" / "share" / "workagent" / "install-receipt.json"
 
 
 def source_dir() -> Path:
-    # <project>/src/harness/doctor.py → <project>
+    # <project>/src/workagent/doctor.py → <project>
     return _pkg_dir().parent.parent
 
 
@@ -74,7 +74,7 @@ def dev_warning() -> str | None:
         recorded = ""
     if recorded != source_hash():
         return (
-            "warning: running harness from source tree with a stale/missing install "
+            "warning: running workagent from source tree with a stale/missing install "
             "(run ./install.sh to sync)."
         )
     return None
