@@ -143,12 +143,15 @@ def resolve_repo(explicit: str | None, cwd: Path, depth: int = 7) -> Path:
     --repo accepts a registered name, a local path, or a clone URL.
     Without it: cwd repo if inside one, else interactive pick of registered
     repos (TTY) or an error (non-TTY).
+
+    Note: ``start``/``review`` never reach this fallback — they resolve
+    via ``trackers.resolve_for_tracker`` (linked-worktree → single linked
+    repo), which never defaults to the CWD (issue #26).
     """
-    cfg = store.load_config()
+    registry = store.load_repos()
     if explicit:
-        repos = cfg.get("repos", {})
-        if explicit in repos:
-            p = Path(repos[explicit]["path"]).expanduser()
+        if explicit in registry:
+            p = Path(registry[explicit]["path"]).expanduser()
             if not p.is_dir():
                 raise HarnessError(f"registered repo '{explicit}' path missing: {p}")
             return p
@@ -161,7 +164,7 @@ def resolve_repo(explicit: str | None, cwd: Path, depth: int = 7) -> Path:
     if root is not None:
         return main_repo_root(root)
     import sys
-    names = list(cfg.get("repos", {}))
+    names = list(registry)
     if not names:
         raise HarnessError(
             "not in a git repo and no repos registered.\n"
@@ -176,13 +179,13 @@ def resolve_repo(explicit: str | None, cwd: Path, depth: int = 7) -> Path:
         )
     print("Select a repo:", file=sys.stderr)
     for i, name in enumerate(names, 1):
-        print(f"  {i}. {name} ({cfg['repos'][name].get('path', '?')})", file=sys.stderr)
+        print(f"  {i}. {name} ({registry[name].get('path', '?')})", file=sys.stderr)
     try:
         choice = input("repo [number/name, or paste path/URL]: ").strip()
     except EOFError:
         raise HarnessError("no repo selected", exit_code=2)
     if choice.isdigit() and 1 <= int(choice) <= len(names):
-        return Path(cfg["repos"][names[int(choice) - 1]]["path"]).expanduser()
+        return Path(registry[names[int(choice) - 1]]["path"]).expanduser()
     return resolve_repo(choice or None, cwd, depth)
 
 
@@ -197,18 +200,48 @@ def clone_url(url: str, depth: int = 7) -> Path:
     register_repo(name, dest)
     return dest
 
-def register_repo(name: str, path: Path) -> None:
+def register_repo(name: str, path: Path, tracker_key: str = "") -> None:
+    """Register *name* → *path* (+ mandatory tracker derivation).
+
+    Post-migration the SQLite repos row is the registry (``tracker_key``
+    NOT NULL): an explicit key wins, else the origin remote is derived
+    via ``trackers.default_tracker_for_repo``. Pre-migration both the
+    config.json registry and the tracker mapping are updated (dual-write).
+    """
+    from . import trackers as _trackers
+    tid = tracker_key or _trackers.default_tracker_for_repo(path)
+    if not tid:
+        raise HarnessError(
+            "cannot derive tracker from origin remote: pass tracker_key (repo add --tracker)", exit_code=2)
+    if store._sqlite_path() is not None:
+        from . import store_sqlite as sq
+        sq.register_repo_row(sq.db_path(), name, str(path), tid,
+                             remote=remote_url(path), tool=_detect_host_cli(path))
+        return
     cfg = store.load_config()
     repos = cfg.setdefault("repos", {})
     repos[name] = {"path": str(path), "remote": remote_url(path),
                    "tool": _detect_host_cli(path)}
     store.save_config(cfg)
+    store.add_tracker_repo(tid, str(path))
 
+
+def unregister_repo(name: str) -> bool:
+    """Drop *name* from the registry; True when it existed."""
+    if store._sqlite_path() is not None:
+        from . import store_sqlite as sq
+        return sq.remove_repo_row(sq.db_path(), name)
+    cfg = store.load_config()
+    if name not in cfg.get("repos", {}):
+        return False
+    del cfg["repos"][name]
+    store.save_config(cfg)
+    return True
 
 
 def repo_names() -> list[str]:
     """Registered repo names (local state only; used for shell completion)."""
-    return list(store.load_config().get("repos", {}))
+    return list(store.load_repos())
 
 def _remote_host(url: str) -> str | None:
     """Hostname from an https/ssh git URL (https://h/p, git@h:p, ssh://h/p)."""

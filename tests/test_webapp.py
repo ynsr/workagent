@@ -654,7 +654,8 @@ def test_api_sessions_roundtrip(client, tmp_path, monkeypatch):
     db = sq.db_path()
     sq.init_db(db)
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO repos (key_ref, path) VALUES ('r', '/r')")
+        conn.execute("INSERT INTO trackers (key_ref) VALUES ('t')")
+        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key) VALUES ('r', '/r', 'r', 't')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
                      " VALUES ('k', '/wt', 'b', 'r')")
     sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
@@ -677,6 +678,21 @@ def test_api_repos_includes_tracker(client, monkeypatch):
     assert r.status_code == 200
     assert r.json()[0]["tracker"] == "jira:IPG"
 
+
+def test_api_default_repo_prefers_linked_worktree(client, tmp_path, monkeypatch):
+    """Issue #26: /api/default-repo returns the linked-worktree repo, else single-linked."""
+    from workagent import repos, trackers, store
+    linked = tmp_path / "proj"
+    linked.mkdir()
+    trackers.check_or_record("jira:IPG", str(linked), persist=True)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    store.record_link("jira:IPG-1", {"worktree": str(wt), "branch": "b",
+                                     "repo": str(linked)})
+    r = client.get("/api/default-repo", params={"ref": "IPG-1"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ref": "IPG-1", "repo": str(linked)}
+    assert client.get("/api/default-repo", params={"ref": "IPG-99"}).json()["repo"] == str(linked)
 
 def test_register_run_key_unique_per_path(client):
     r1 = client.post("/api/runs", json={"command": "register",
@@ -769,7 +785,8 @@ def test_resume_session_opens_terminal(client, monkeypatch, tmp_path):
     db = sq.db_path()
     sq.init_db(db)
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO repos (key_ref, path) VALUES ('r', '/r')")
+        conn.execute("INSERT INTO trackers (key_ref) VALUES ('t')")
+        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key) VALUES ('r', '/r', 'r', 't')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
                      " VALUES ('k', '/wt', 'b', 'r')")
     sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",

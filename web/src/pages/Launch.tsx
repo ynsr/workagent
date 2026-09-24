@@ -19,6 +19,9 @@ const AUTO_REPO = "__auto__"
 const AUTO_LABEL = "Registry default (auto)"
 const DEFAULT_HARNESS = "__default__"
 const HARNESS_DEFAULT_LABEL = "Configured default"
+/** Issue #26: Launch never defaults to the serve CWD. The backend
+ * `GET /api/default-repo?ref=` returns the linked-worktree repo for the
+ * typed ref, else the single-linked repo — else no default. */
 
 type Mode = "start" | "review" | "sync"
 
@@ -110,6 +113,8 @@ export function Launch() {
   }))
   const [submitting, setSubmitting] = useState(false)
   const [prefillChecked, setPrefillChecked] = useState(false)
+  const [defaultRepo, setDefaultRepo] = useState("")
+  const [defaultRepoReady, setDefaultRepoReady] = useState(false)
   // Unknown prefill → blank form + warning, never a crash: an unrecognized
   // mode, or a sync key matching no linked worktree (stale Dashboard link).
   useEffect(() => {
@@ -128,6 +133,39 @@ export function Launch() {
       }
     }
   }, [prefillChecked, modeParam, refParam, links])
+  const refValue = form.ref.trim()
+  // Issue #26 default-repo prefill: linked-worktree repo wins, else the
+  // single linked repo. Debounced on the typed ref; blanks mean "pick".
+  useEffect(() => {
+    if (mode === "sync") return
+    const ref = refValue
+    if (!ref) {
+      setDefaultRepo("")
+      setDefaultRepoReady(true)
+      return
+    }
+    setDefaultRepoReady(false)
+    let live = true
+    const t = setTimeout(() => {
+      api
+        .defaultRepo(ref)
+        .then((r) => {
+          if (!live) return
+          setDefaultRepo(r.repo ?? "")
+          setDefaultRepoReady(true)
+        })
+        .catch(() => {
+          if (!live) return
+          setDefaultRepo("")
+          setDefaultRepoReady(true)
+        })
+    }, 250)
+    return () => {
+      live = false
+      clearTimeout(t)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refValue, mode])
 
   function update<K extends keyof LaunchForm>(key: K, value: LaunchForm[K]) {
     setForm((f) => ({ ...f, [key]: value }))
@@ -138,16 +176,25 @@ export function Launch() {
     setForm((f) => ({ ...f, base: "" }))
   }
 
-  const refValue = form.ref.trim()
-  const repoValue = form.repo === AUTO_REPO ? undefined : form.repo
-  const harnessValue = form.harness === DEFAULT_HARNESS ? undefined : form.harness
+  const autoRepo = defaultRepoReady && defaultRepo ? defaultRepo : ""
+  const repoValue = form.repo === AUTO_REPO ? (autoRepo || undefined) : form.repo
   const copy = COPY[mode]
-
+  const repoHint =
+    mode === "sync"
+      ? ""
+      : !refValue
+        ? "Type a ref — the default repo appears once the ref matches a linked worktree or a single linked repo."
+        : !defaultRepoReady
+          ? "Looking up the default repo for this ref…"
+          : autoRepo
+            ? `Default for this ref: ${autoRepo}. Pick another repo to override, or leave auto.`
+            : "No default repo for this ref — pick a repo (the server CWD is never used)."
   const repoOptions = useMemo(
     () => [AUTO_LABEL, ...(repos ?? []).map((r) => r.name)],
     [repos],
   )
   const repoDisplay = form.repo === AUTO_REPO ? AUTO_LABEL : form.repo
+  const harnessValue = form.harness === DEFAULT_HARNESS ? undefined : form.harness
   const harnessOptions = useMemo(() => [HARNESS_DEFAULT_LABEL, "omp"], [])
   const harnessDisplay = form.harness === DEFAULT_HARNESS ? HARNESS_DEFAULT_LABEL : form.harness
 
@@ -325,7 +372,7 @@ export function Launch() {
                     allowCustom
                   />
                   <p className="text-xs text-muted-foreground">
-                    --repo accepts a registered name, a local path, or a clone URL; "(auto)" lets workagent pick.
+                    {repoHint || "--repo accepts a registered name, a local path, or a clone URL."}
                   </p>
                 </div>
                 <div className="grid gap-2">

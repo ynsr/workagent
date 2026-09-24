@@ -773,10 +773,28 @@ def test_start_passes_github_issue_url_to_git_wt(isolated_config, tmp_path, monk
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
     for ref in ("o/r#22", "github:o/r#22", "https://github.com/o/r/issues/22"):
         calls.clear()
+        store.save_links({})
         r = runner.invoke(cli.app, ["start", ref, "--json"])
         assert r.exit_code == 0, r.output
         assert calls["link"] == "https://github.com/o/r/issues/22"
         assert calls["issue"] == "22"
+
+
+def test_start_reuses_linked_worktree(isolated_config, tmp_path, monkeypatch):
+    """Issue #26 rule 1: `start` for an already-linked issue reuses its worktree."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: (_ for _ in ()).throw(AssertionError("must reuse, not start")))
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    store.record_link("github:o/r#22", {"worktree": str(worktree), "branch": "b",
+                                        "repo": str(repo_dir)})
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--json"])
+    assert r.exit_code == 0, r.output
+    assert '"reused": true' in r.output
 
 def test_review_rejects_shorthand_issue_ref(isolated_config, tmp_path, monkeypatch):
     """`review` needs a PR/MR URL — a shorthand issue ref must fail loudly (exit 2)."""
@@ -1943,7 +1961,8 @@ def test_run_harness_writes_session_row(isolated_config, tmp_path, monkeypatch):
     db = sq.db_path()
     sq.init_db(db)
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO repos (key_ref, path) VALUES ('r', '/r')")
+        conn.execute("INSERT INTO trackers (key_ref) VALUES ('t')")
+        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key) VALUES ('r', '/r', 'r', 't')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
                      " VALUES ('jira:IPG-929', '/wt', 'b', 'r')")
     result = {"key": "jira:IPG-929"}
@@ -2159,7 +2178,8 @@ def test_cutover_link_write_preserves_sessions(isolated_config):
     assert r.exit_code == 0, r.output
     db = sq.db_path()
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO repos (key_ref, path) VALUES ('x', '/x')")
+        conn.execute("INSERT INTO trackers (key_ref) VALUES ('t')")
+        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key) VALUES ('x', '/x', 'x', 't')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
                      " VALUES ('jira:IPG-9', '/wt9', 'b9', 'x')")
     sid = sq.insert_session(db, worktree_ref="jira:IPG-9",
@@ -2181,7 +2201,8 @@ def test_session_id_matches_file(isolated_config, tmp_path, monkeypatch):
     db = sq.db_path()
     sq.init_db(db)
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO repos (key_ref, path) VALUES ('r', '/r')")
+        conn.execute("INSERT INTO trackers (key_ref) VALUES ('t')")
+        conn.execute("INSERT INTO repos (key_ref, path, name, tracker_key) VALUES ('r', '/r', 'r', 't')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
                      " VALUES ('jira:IPG-929', '/wt', 'b', 'r')")
     result = {"key": "jira:IPG-929"}

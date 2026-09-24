@@ -289,6 +289,9 @@ export const api = {
   issues: () => request<IssuesResponse>("/api/issues"),
   /** GET /api/candidates — unlinked PR/MRs + recent issues. */
   candidates: () => request<CandidatesResponse>("/api/candidates"),
+  /** GET /api/default-repo?ref=… — linked-worktree repo else single-linked (issue #26). */
+  defaultRepo: (ref: string) =>
+    request<{ ref: string; repo: string }>(`/api/default-repo${qs({ ref })}`),
 
   /** GET /api/sessions — persisted harness sessions (newest first). */
   sessions: () => request<SessionsResponse>("/api/sessions"),

@@ -141,6 +141,87 @@ def _record_link_locked(path: Path, issue_key: str, entry: dict) -> None:
     links[issue_key] = merged
     _atomic_replace(path, links)
 
+def load_trackers() -> dict:
+    """{tracker_id: {"repos": [paths]}} — SQLite post-migration, else config.json."""
+    db = _sqlite_path()
+    if db is not None:
+        from . import store_sqlite as sq
+        return sq.load_trackers(db)
+    return load_config().get("trackers", {})
+
+
+def load_repos() -> dict:
+    """{name: {path, tracker, remote, tool}} — SQLite post-migration, else config.json."""
+    db = _sqlite_path()
+    if db is not None:
+        from . import store_sqlite as sq
+        return sq.load_repos(db)
+    cfg = load_config()
+    tmap: dict = {}
+    for tid, entry in (cfg.get("trackers", {}) or {}).items():
+        for r in (entry or {}).get("repos", []):
+            try:
+                key = str(Path(r).expanduser().resolve())
+            except Exception:
+                continue
+            cur = tmap.get(key, "")
+            if not cur or (cur.startswith("jira:") and str(tid).startswith(("github:", "gitlab:"))):
+                tmap[key] = tid
+    out: dict = {}
+    for name, v in (cfg.get("repos", {}) or {}).items():
+        raw = str((v or {}).get("path", ""))
+        try:
+            key = str(Path(raw).expanduser().resolve()) if raw else ""
+        except Exception:
+            key = ""
+        out[name] = {"path": raw, "tracker": tmap.get(key, ""),
+                     "remote": str((v or {}).get("remote", "") or ""),
+                     "tool": (v or {}).get("tool")}
+    return out
+
+
+def add_tracker_repo(tid: str, repo_path: str) -> bool:
+    """Link *repo_path* under *tid*; True when newly recorded (dual-write pre-migration)."""
+    db = _sqlite_path()
+    if db is not None:
+        from . import store_sqlite as sq
+        return sq.add_tracker_repo(db, tid, repo_path)
+    cfg = load_config()
+    entry = cfg.setdefault("trackers", {}).setdefault(tid, {"repos": []})
+    norm = str(Path(repo_path).expanduser().resolve())
+    if norm in [str(Path(r).expanduser().resolve()) for r in entry.get("repos", [])]:
+        return False
+    entry.setdefault("repos", []).append(norm)
+    save_config(cfg)
+    return True
+
+
+def remove_tracker_repo(tid: str, repo_path: str | None = None) -> bool:
+    """Drop one repo link (or the whole tracker); dual-write pre-migration."""
+    db = _sqlite_path()
+    if db is not None:
+        from . import store_sqlite as sq
+        return sq.remove_tracker_repo(db, tid, repo_path)
+    cfg = load_config()
+    trackers = cfg.get("trackers", {})
+    if tid not in trackers:
+        return False
+    if repo_path is None:
+        del trackers[tid]
+        save_config(cfg)
+        return True
+    norm = str(Path(repo_path).expanduser().resolve())
+    kept = [r for r in trackers[tid].get("repos", [])
+            if str(Path(r).expanduser().resolve()) != norm]
+    if len(kept) == len(trackers[tid].get("repos", [])):
+        return False
+    if kept:
+        trackers[tid]["repos"] = kept
+    else:
+        del trackers[tid]
+    save_config(cfg)
+    return True
+
 def lookup_link(issue_key: str) -> dict | None:
     return load_links().get(issue_key)
 

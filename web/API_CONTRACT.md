@@ -68,6 +68,15 @@ after `store.record_link` gained it; older entries may lack it.
  "worktrees": { …same shape as GET /api/status… }}
 ```
 
+### `GET /api/default-repo?ref=…`
+Issue #26: repo default for Launch (never the serve CWD). Returns the
+repo of the worktree already linked to `ref` (rule 1), else the single
+linked repo of the ref's tracker (rule 2), else `""` (multi/zero linked
+repos — the picker has no default and `--repo` is required headless):
+```json
+{"ref": "IPG-1", "repo": "/home/x/projects/projectx"}
+```
+
 ### `GET /api/doctor`
 ```json
 {"status": "ok", "live_hash": "…", "recorded_hash": "…",

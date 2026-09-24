@@ -178,6 +178,23 @@ def _harness_cell(key: str, worktree: str = "") -> str:
     return f"{rec['harness']} {rec['pid']}" if rec else ""
 
 
+def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool,
+                        no_runtime: bool, session_file: str | None, json_output: bool) -> None:
+    """Re-launch the runtime in an already-linked worktree (issue #26 rule 1)."""
+    worktree = str(entry.get("worktree", ""))
+    repo = str(entry.get("repo", worktree))
+    harness_name = harness or store.load_config().get("default_harness", "omp")
+    prompt = backend.prompt_for_issue(
+        str(entry.get("issue", key)), "", key,
+        worktree=worktree, branch=str(entry.get("branch", "")))
+    result = {"worktree_path": worktree, "branch": str(entry.get("branch", "")),
+              "key": key, "harness": harness_name, "reused": True}
+    eprint(f"worktree: {worktree}  branch: {entry.get('branch', '')}")
+    if not no_runtime:
+        _guard_harness(key, worktree)
+    _run_harness(harness_name, prompt, worktree, repo, no_tty, no_runtime,
+                 result, json_output, run_key=key, session_file=session_file)
+
 def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: str,
                  no_tty: bool, no_runtime: bool, result: dict, json_output: bool,
                  run_key: str | None = None, session_file: str | None = None) -> None:
@@ -303,17 +320,34 @@ def start(
       workagent start OWNER/REPO#22 --base feat/22--add-login
       workagent start OWNER/REPO#22 --no-runtime
     """
-    if not isinstance(session_file, str):
-        session_file = None
     parsed = refs.parse_ref(ref)
     if parsed["kind"] in ("pr", "mr"):
         _fail(f"{ref} looks like a PR/MR — use `workagent review`", EXIT_USAGE)
-    r, outcome = trackers.resolve_for_tracker(
-        trackers.tracker_id(parsed), repo, Path.cwd(), depth=depth,
-        yes=yes, persist=not dry_run)
+    key = refs.issue_key(parsed)
+    links = store.load_links()
+    existing = links.get(key, {})
+    if existing.get("worktree") and Path(str(existing["worktree"])).is_dir():
+        # Rule 1: the issue is already linked — reuse that worktree (never
+        # create a second one, never touch the CWD). Its repo wins; an
+        # explicit --repo that disagrees is a usage error, not a silent drop.
+        if repo and str(existing.get("repo", "")) and str(repo) != str(existing.get("repo", "")):
+            _fail(f"--repo {repo} disagrees with the linked worktree repo"
+                  f" {existing.get('repo', '')} for {key}", EXIT_USAGE)
+        eprint(f"note: reusing linked worktree {existing['worktree']} for {key}")
+        if dry_run:
+            _print_result({"dry_run": True, "repo": str(existing.get("repo", "")),
+                           "worktree": str(existing.get("worktree", "")),
+                           "branch": str(existing.get("branch", "")),
+                           "key": key, "reused": True,
+                           "tracker": trackers.tracker_id(parsed),
+                           "tracker_link": "reused"}, json_output)
+            return
+        return _launch_in_worktree(key, existing, harness, no_tty, no_runtime,
+                                   session_file, json_output)
     tid = trackers.tracker_id(parsed)
-    if outcome == "recorded" and tid and not dry_run:
-        eprint(f"note: linked tracker {tid} to repo {r}")
+    r, outcome = trackers.resolve_for_tracker(
+        tid, repo, Path.cwd(), depth=depth,
+        yes=yes, persist=not dry_run)
     detected_default = repos.default_branch(r)
     # --base naming a non-default branch: run on that existing branch (worktree
     # checked out at it, upstream origin/<branch>); no new branch is created.
@@ -602,8 +636,17 @@ def review(
         _fail(f"{ref} is ambiguous — `review` needs a PR/MR URL (e.g. "
               f"https://{repo_hint}).", EXIT_USAGE)
     tid = trackers.tracker_id(parsed)
+    # Rule 1 for review: a worktree already linked to this ref pins the
+    # repo — never the CWD. (The head-branch reuse check below runs after
+    # fetch_pr_info; this pre-check covers worktree-ref invocations.)
+    # An explicit --repo always wins over the pinned repo.
+    _pre_repo = ""
+    if not repo:
+        _pre = worktrees.resolve_worktree(ref, store.load_links())
+        if isinstance(_pre, str):
+            _pre_repo = store.load_links().get(_pre, {}).get("repo", "")
     repo_dir, outcome = trackers.resolve_for_tracker(
-        tid, repo, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
+        tid, repo or _pre_repo or None, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
     if outcome == "recorded" and tid and not dry_run:
         eprint(f"note: linked tracker {tid} to repo {repo_dir}")
     base_branch = repos.default_branch(repo_dir)
@@ -996,13 +1039,7 @@ def repo_add(
     tid = trackers.normalize_id(tracker) if tracker else trackers.default_tracker_for_repo(p)
     if not tid:
         _fail("cannot derive tracker from origin remote: pass --tracker IPG|github:O/R|GitLab URL", EXIT_USAGE)
-    repos.register_repo(name, p)
-    cfg = store.load_config()
-    entry = cfg.setdefault("trackers", {}).setdefault(tid, {"repos": []})
-    norm = str(p.expanduser().resolve())
-    if norm not in [str(Path(r).expanduser().resolve()) for r in entry.get("repos", [])]:
-        entry.setdefault("repos", []).append(norm)
-    store.save_config(cfg)
+    repos.register_repo(name, p, tracker_key=tid)
     _print_result({"registered": name, "path": str(p), "tracker": tid}, json_output)
 
 
@@ -1039,12 +1076,8 @@ def repo_list(
       workagent repo list --csv
       workagent repo list --json | jq '.[].name'
     """
-    cfg = store.load_config()
-    tmap = _repo_tracker_map(cfg)
-    items = [{"name": n, "path": v.get("path", ""),
-              "tracker": tmap.get(str(Path(str(v.get("path", ""))).expanduser().resolve())
-                                  if str(v.get("path", "")) else "", "")}
-             for n, v in cfg.get("repos", {}).items()]
+    items = [{"name": n, "path": v.get("path", ""), "tracker": v.get("tracker", "")}
+             for n, v in store.load_repos().items()]
     _print_rows(items, json_output, csv_output, ["name", "path", "tracker"],
                 "Registered repos", "(no repos registered)")
 
@@ -1059,12 +1092,8 @@ def repo_remove(
 
     Example: workagent repo remove projectx
     """
-    cfg = store.load_config()
-    if name not in cfg.get("repos", {}):
+    if not repos.unregister_repo(name):
         _fail(f"unknown repo: {name}", EXIT_USAGE)
-
-    del cfg["repos"][name]
-    store.save_config(cfg)
     _print_result({"removed": name}, json_output)
 
 # ── link ──────────────────────────────────────────────────────────────
@@ -1086,16 +1115,16 @@ def link_list(
       workagent link list
       workagent link list --json
     """
-    cfg = store.load_config()
+    trackers_map = store.load_trackers()
     links = store.load_links()
     if json_output:
-        print(json.dumps({"trackers": cfg.get("trackers", {}),
+        print(json.dumps({"trackers": trackers_map,
                           "worktrees": {k: _enrich_entry(k, v, refresh_pr)
                                         for k, v in links.items()}},
                          indent=2, ensure_ascii=False))
         return
     rows = [{"tracker": t, "repos": ", ".join(v.get("repos", []))}
-            for t, v in cfg.get("trackers", {}).items()]
+            for t, v in trackers_map.items()]
     _print_rows(rows, json_output, csv_output, ["tracker", "repos"],
                 "Tracker links", "(no tracker links)")
     srows, scolumns = _session_rows(links, worktree, refresh_pr)
@@ -1119,13 +1148,11 @@ def link_set(
     """
     tid = trackers.normalize_id(tracker)
     target = repos.resolve_repo(repo, Path.cwd())
-    cfg = store.load_config()
-    entry = cfg.setdefault("trackers", {}).setdefault(tid, {"repos": []})
-    norm = str(target.expanduser().resolve())
-    if norm not in [str(Path(r).expanduser().resolve()) for r in entry.get("repos", [])]:
-        entry.setdefault("repos", []).append(norm)
-    store.save_config(cfg)
-    _print_result({"tracker": tid, "repos": entry["repos"]}, json_output)
+    recorded = store.add_tracker_repo(tid, str(target.expanduser().resolve()))
+    current = store.load_trackers().get(tid, {"repos": []})
+    if not recorded:
+        eprint(f"note: {target} already linked to {tid}")
+    _print_result({"tracker": tid, "repos": current["repos"]}, json_output)
 
 
 @link_app.command("remove")
@@ -1143,21 +1170,13 @@ def link_remove(
       workagent link remove o/r#22
     """
     tid = trackers.normalize_id(ref)
-    cfg = store.load_config()
-    if tid in cfg.get("trackers", {}):
+    if tid in store.load_trackers():
         if repo:
             target = str(repos.resolve_repo(repo, Path.cwd()).expanduser().resolve())
-            kept = [r for r in cfg["trackers"][tid].get("repos", [])
-                    if str(Path(r).expanduser().resolve()) != target]
-            if len(kept) == len(cfg["trackers"][tid].get("repos", [])):
+            if not store.remove_tracker_repo(tid, target):
                 _fail(f"repo {repo} not linked to tracker {tid}", EXIT_USAGE)
-            if kept:
-                cfg["trackers"][tid]["repos"] = kept
-            else:
-                del cfg["trackers"][tid]
         else:
-            del cfg["trackers"][tid]
-        store.save_config(cfg)
+            store.remove_tracker_repo(tid)
         _print_result({"removed": tid}, json_output)
         return
     resolved = worktrees.resolve_worktree(ref, store.load_links())
@@ -1194,9 +1213,9 @@ def _repo_tool(repo: str) -> str | None:
     the repo's current origin; a changed/missing remote re-detects and
     updates the entry. Unregistered repos are detected fresh (no store).
     """
-    cfg = store.load_config()
-    entry = next((e for e in cfg.get("repos", {}).values()
-                  if e.get("path") == repo), None)
+    registry = store.load_repos()
+    hit = next(((n, e) for n, e in registry.items() if e.get("path") == repo), (None, None))
+    entry = hit[1]
     remote = repos.remote_url(Path(repo))
     if (entry and entry.get("tool") in ("gh", "glab")
             and entry.get("remote") == remote):
@@ -1205,9 +1224,16 @@ def _repo_tool(repo: str) -> str | None:
             if Path(repo).exists() else None)
     if entry is not None and (tool != entry.get("tool")
                               or remote != entry.get("remote")):
-        entry["tool"] = tool
-        entry["remote"] = remote
-        store.save_config(cfg)
+        from . import store_sqlite as sq
+        if store._sqlite_path() is not None:
+            row = sq.load_repos(sq.db_path()).get(hit[0], {})
+            sq.register_repo_row(sq.db_path(), hit[0], repo,
+                                 row.get("tracker", ""), remote=remote, tool=tool)
+        else:
+            cfg = store.load_config()
+            cfg["repos"][hit[0]]["tool"] = tool
+            cfg["repos"][hit[0]]["remote"] = remote
+            store.save_config(cfg)
     return tool
 
 
@@ -1602,7 +1628,7 @@ def _candidates(force: bool = False) -> dict:
     linked = {str(v["pr_url"]).rstrip("/")
               for v in store.load_links().values() if v.get("pr_url")}
     prs: list[dict] = []
-    for name, entry in store.load_config().get("repos", {}).items():
+    for name, entry in store.load_repos().items():
         path = str(entry.get("path", ""))
         if not path or not Path(path).exists():
             continue
@@ -2139,13 +2165,24 @@ def migrate_cmd(
 ) -> None:
     """One-shot migration: links/pr_cache/harnesses JSON → state.db (issue #9).
 
-    Verifies row counts, then deletes the JSON files (config.json kept).
-    Idempotent: re-run is a no-op.
+    Also backfills config.json {trackers, repos} into the SQLite tracker
+    tables (issue #26): every repos row gets a mandatory tracker_key
+    (explicit mapping wins, else origin-remote derivation). Verifies row
+    counts, then deletes the JSON files (config.json kept — its
+    repos/trackers sections stay as a pre-migration backup). Idempotent:
+    re-run is a no-op.
 
     Example: workagent migrate --json
     """
     from . import store_sqlite as sq
+    # Backfill first: migrate_json auto-creates repo rows keyed by path
+    # (tracker unknown at that point); the backfill then fills tracker_key
+    # from config.json explicit mappings / origin-remote derivation.
+    back = sq.backfill_trackers_repos(
+        sq.db_path(), store.load_config(),
+        derive_tracker=trackers.default_tracker_for_repo)
     out = sq.migrate_json(store.config_dir(), sq.db_path())
+    out.update(back)
     _print_result({"migrated": out}, json_output)
 
 

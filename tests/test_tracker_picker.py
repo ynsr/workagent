@@ -8,9 +8,8 @@ from workagent import store, trackers
 
 
 def _seed(tid, repos, monkeypatch, tmp_path):
-    cfg = store.load_config()
-    cfg["trackers"] = {tid: {"repos": repos}}
-    store.save_config(cfg)
+    for r in repos:
+        store.add_tracker_repo(tid, r)
     monkeypatch.setattr(trackers.repos, "repo_root", lambda cwd: None)
 
 
@@ -21,6 +20,8 @@ def test_cwd_linked_uses_cwd(isolated_config, tmp_path, monkeypatch):
     cwd_repo.mkdir()
     _seed("jira:IPG", [str(cwd_repo)], monkeypatch, tmp_path)
     monkeypatch.setattr(_repos, "repo_root", lambda cwd: cwd_repo)
+    # Issue #26: CWD is never a default — the single linked repo wins
+    # regardless of where the process runs from.
     r, outcome = trackers.resolve_for_tracker("jira:IPG", None, cwd_repo, yes=False)
     assert Path(r) == cwd_repo.resolve() and outcome == "ok"
 
@@ -35,8 +36,7 @@ def test_cwd_unlinked_no_falls_to_linked_list(isolated_config, tmp_path, monkeyp
 
     monkeypatch.setattr(_repos, "repo_root", lambda cwd: other)
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-    # "n" to the y/N prompt -> falls through to linked repos; single linked repo wins.
-    monkeypatch.setattr("builtins.input", lambda *a, **k: "n")
+    # No prompt anymore: unlinked CWD is ignored, single linked repo wins.
     r, outcome = trackers.resolve_for_tracker("jira:IPG", None, other, yes=False)
     assert Path(r) == linked.resolve()
 
@@ -47,6 +47,47 @@ def test_no_repo_single_linked_wins(isolated_config, tmp_path, monkeypatch):
     _seed("jira:IPG", [str(linked)], monkeypatch, tmp_path)
     r, outcome = trackers.resolve_for_tracker("jira:IPG", None, tmp_path / "plain", yes=False)
     assert Path(r) == linked.resolve()
+
+
+def test_zero_links_aborts_without_repo(isolated_config, tmp_path, monkeypatch):
+    """No linked repos + no --repo → exit 2 even on a TTY-less run (issue #26)."""
+    from workagent.errors import HarnessError
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    try:
+        trackers.resolve_for_tracker("jira:IPG", None, tmp_path, yes=False)
+    except HarnessError as e:
+        assert e.exit_code == 2 and "--repo" in str(e)
+    else:
+        raise AssertionError("expected HarnessError")
+
+
+def test_default_repo_for_ref_prefers_linked_worktree(isolated_config, tmp_path):
+    """Rule 1: an issue already linked to a worktree resolves to its repo."""
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    store.record_link("jira:IPG-1", {"worktree": str(wt), "branch": "b",
+                                     "repo": str(repo)})
+    assert trackers.default_repo_for_ref("IPG-1") == str(repo)
+
+
+def test_default_repo_for_ref_single_linked(isolated_config, tmp_path, monkeypatch):
+    """Rule 2: tracker with exactly one linked repo → that repo."""
+    linked = tmp_path / "proj"
+    linked.mkdir()
+    _seed("jira:IPG", [str(linked)], monkeypatch, tmp_path)
+    assert trackers.default_repo_for_ref("IPG-99") == str(linked)
+
+
+def test_default_repo_for_ref_multi_linked_empty(isolated_config, tmp_path, monkeypatch):
+    """Ambiguous tracker (2+ repos) and no worktree link → no default."""
+    a = tmp_path / "a"
+    a.mkdir()
+    b = tmp_path / "b"
+    b.mkdir()
+    _seed("jira:IPG", [str(a), str(b)], monkeypatch, tmp_path)
+    assert trackers.default_repo_for_ref("IPG-99") == ""
 
 
 def test_no_repo_multi_linked_prompts(isolated_config, tmp_path, monkeypatch):

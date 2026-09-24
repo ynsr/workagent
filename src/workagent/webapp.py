@@ -537,20 +537,23 @@ def create_app(static_dir: Path, host: str, port: int,
 
     @app.get("/api/repos")
     def repos_list() -> list[dict]:
-        from .cli import _repo_tracker_map
-        cfg = store.load_config()
-        tmap = _repo_tracker_map(cfg)
-        return [{"name": n, "path": v.get("path", ""),
-                 "tracker": tmap.get(str(Path(str(v.get("path", ""))).expanduser().resolve())
-                                     if str(v.get("path", "")) else "", ""),
-                 **{k: val for k, val in v.items() if k != "path"}}
-                for n, v in cfg.get("repos", {}).items()]
+        return [{"name": n, "path": v.get("path", ""), "tracker": v.get("tracker", ""),
+                 **{k: val for k, val in v.items() if k not in ("path", "tracker")}}
+                for n, v in store.load_repos().items()]
 
     @app.get("/api/links")
     def links_list() -> dict:
-        return {"trackers": store.load_config().get("trackers", {}),
+        return {"trackers": store.load_trackers(),
                 "worktrees": {k: _enrich_entry(k, v, False)
                              for k, v in store.load_links().items()}}
+
+    @app.get("/api/default-repo")
+    def default_repo(ref: str) -> dict:
+        """Issue #26 default repo for *ref* — linked-worktree repo first,
+        else the tracker's single linked repo; "" when ambiguous/unknown.
+        Never touches the CWD."""
+        from . import trackers as _trackers
+        return {"ref": ref, "repo": _trackers.default_repo_for_ref(ref)}
 
     @app.get("/api/doctor")
     def doctor() -> dict:

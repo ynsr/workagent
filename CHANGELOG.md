@@ -22,6 +22,12 @@
   now link `pr_detail.url` via a shared `prUrl()` helper.
 - Animate worktree row detail open/close (~160ms grid-rows + fade/slide;
   `motion-reduce` skips it).
+- Ignore the CWD as default repo (Fix #26): trackers + repos now live in
+  `state.db` (`trackers`/`repos`/`tracker_repos`, migrated from
+  `config.json` with `tracker_key` backfilled from the origin remote);
+  `start`/`review` reuse the linked-worktree repo, else the single linked
+  repo, else prompt (no CWD default; headless aborts with `--repo` usage);
+  Launch prefills the repo default via `GET /api/default-repo?ref=`.
 ## 0.2.1 — 2026-09-18
 
 - Fix Tab completion: typer 0.27 never registers its shell completion
