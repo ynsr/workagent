@@ -680,6 +680,13 @@ def test_api_repos_includes_tracker(client, monkeypatch):
     assert r.json()[0]["tracker"] == "jira:IPG"
 
 
+def test_run_tracker_add_requires_remote_url(client, tmp_path, monkeypatch):
+    """tracker add via /api/runs is rejected without --remote-url (400)."""
+    r = client.post("/api/runs", json={"command": "tracker", "args": ["add", "jira:IPG"]})
+    assert r.status_code == 400, r.text
+    assert "--remote-url" in r.json()["error"]["message"]
+
+
 def test_api_trackers_lists_rows(client, tmp_path, monkeypatch):
     """GET /api/trackers returns key/vendor/remote_url + repo counts."""
     from workagent import store_sqlite as sq

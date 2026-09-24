@@ -59,7 +59,8 @@ export function Trackers() {
           "add",
           key.trim(),
           ...(vendor.trim() ? ["--vendor", vendor.trim()] : []),
-          ...(remoteUrl.trim() ? ["--remote-url", remoteUrl.trim()] : []),
+          "--remote-url",
+          remoteUrl.trim(),
           ...(addJson ? ["--json"] : []),
         ],
       })

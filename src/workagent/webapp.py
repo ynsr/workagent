@@ -179,6 +179,20 @@ def _validate_args(command: str, args: list[str]) -> None:
                        "--session-file cannot be used with --all "
                        "(one transcript per worktree — omit it and each "
                        "launch gets its own file)", 400)
+    if sub == "tracker add":
+        try:
+            uidx = rest.index("add")
+        except ValueError:
+            uidx = -1
+        tail = rest[uidx + 1:] if uidx >= 0 else rest
+        if "--remote-url" not in tail:
+            raise ApiError("bad_arg", "tracker add requires --remote-url", 400)
+        try:
+            u = tail[tail.index("--remote-url") + 1]
+        except IndexError:
+            raise ApiError("bad_arg", "--remote-url needs a value", 400)
+        if not u.strip():
+            raise ApiError("bad_arg", "--remote-url must be a real tracker web URL", 400)
 
 def _build_argv(command: str, args: list[str]) -> list[str]:
     """Same-code child invocation: this interpreter, `python -m workagent`.
