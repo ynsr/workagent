@@ -13,6 +13,9 @@
   --harness` corrected from value flag to bool. New parity test
   `test_specs_mirror_cli_flags` introspects the real Typer app and fails
   on future drift.
+- Drop the Actions column from the Dashboard/Links worktree tables:
+  action buttons now render as a right-anchored overlay on the last
+  column (hover/focus reveal on fine pointers, always visible on touch).
 ## 0.2.1 — 2026-09-18
 
 - Fix Tab completion: typer 0.27 never registers its shell completion

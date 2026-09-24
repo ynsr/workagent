@@ -70,6 +70,7 @@ function RowActions({
   detailOpen,
   onToggleDetail,
   networkExposed,
+  overlay = false,
 }: {
   worktreeKey: string
   entry: WorktreeMap[string]
@@ -77,10 +78,11 @@ function RowActions({
   detailOpen: boolean
   onToggleDetail: () => void
   networkExposed: boolean
+  overlay?: boolean
 }) {
   const invalid = entry.wt_valid === false
   return (
-    <div className="flex items-center justify-end gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-within:opacity-100 [@media(hover:hover)]:hover:opacity-100">
+    <div className={overlay ? "flex items-center justify-end gap-0.5" : "flex items-center justify-end gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-within:opacity-100 [@media(hover:hover)]:hover:opacity-100"}>
       <ActionIcon
         title={detailOpen ? `Hide details of ${worktreeKey}` : `Details of ${worktreeKey}`}
         onClick={onToggleDetail}
@@ -327,7 +329,6 @@ export function StatusTable({
                   <TableHead className="w-14 text-center">CI</TableHead>
                   <TableHead>Added</TableHead>
                   {showWorktree ? <TableHead>Path</TableHead> : null}
-                  <TableHead className="text-right pr-2" title="Actions appear on row hover; always visible on touch screens">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -338,7 +339,7 @@ export function StatusTable({
                   const invalid = entry.wt_valid === false
                   return (
                     <Fragment key={key}>
-                      <TableRow className={invalid ? "bg-destructive/5" : undefined}>
+                      <TableRow className={cn("group relative", invalid ? "bg-destructive/5" : undefined)}>
                         <TableCell className="font-medium">
                           <span className="flex items-center gap-2">
                             <WorktreeKeyLink worktreeKey={key} entry={entry} />
@@ -398,32 +399,48 @@ export function StatusTable({
                           title={entry.added_at ?? "first-seen stamp missing"}
                         >
                           {formatAdded(entry.added_at)}
+                          {showWorktree ? null : (
+                            <span className="pointer-events-none absolute inset-y-1 right-1 hidden items-center justify-end gap-0.5 rounded-md border bg-card/95 px-1 shadow-sm backdrop-blur transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:hover)]:flex [@media(hover:hover)]:opacity-0 [@media(hover:none)]:flex">
+                              <RowActions
+                                worktreeKey={key}
+                                entry={entry}
+                                actions={actions}
+                                detailOpen={detailOpen}
+                                onToggleDetail={() =>
+                                  setExpanded((cur) => (cur === key ? null : key))
+                                }
+                                networkExposed={networkExposed}
+                                overlay
+                              />
+                            </span>
+                          )}
                         </TableCell>
                         {showWorktree ? (
                           <TableCell
-                            className="max-w-52 truncate font-mono text-[13px]"
+                            className="relative max-w-52 truncate pr-24 font-mono text-[13px]"
                             title={entry.worktree}
                           >
                             {entry.worktree ?? "—"}
+                            <span className="pointer-events-none absolute inset-y-1 right-1 hidden items-center justify-end gap-0.5 rounded-md border bg-card/95 px-1 shadow-sm backdrop-blur transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:hover)]:flex [@media(hover:hover)]:opacity-0 [@media(hover:none)]:flex">
+                              <RowActions
+                                worktreeKey={key}
+                                entry={entry}
+                                actions={actions}
+                                detailOpen={detailOpen}
+                                onToggleDetail={() =>
+                                  setExpanded((cur) => (cur === key ? null : key))
+                                }
+                                networkExposed={networkExposed}
+                                overlay
+                              />
+                            </span>
                           </TableCell>
                         ) : null}
-                        <TableCell className="pr-1">
-                          <RowActions
-                            worktreeKey={key}
-                            entry={entry}
-                            actions={actions}
-                            detailOpen={detailOpen}
-                            onToggleDetail={() =>
-                              setExpanded((cur) => (cur === key ? null : key))
-                            }
-                            networkExposed={networkExposed}
-                          />
-                        </TableCell>
                       </TableRow>
                       {detailOpen ? (
                         <TableRow className="hover:bg-transparent">
                           <TableCell
-                            colSpan={showWorktree ? 9 : 8}
+                            colSpan={showWorktree ? 8 : 7}
                           >
                             <div className="mx-auto w-full max-w-2xl py-1">
                               <WorktreeDetail
