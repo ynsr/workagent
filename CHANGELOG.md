@@ -20,6 +20,8 @@
   `http://127.0.0.1:3344/MR%20#1695%20(open)`): the backend `pr` cell is a
   display label, not a URL — the table, mobile cards, and worktree detail
   now link `pr_detail.url` via a shared `prUrl()` helper.
+- Animate worktree row detail open/close (~160ms grid-rows + fade/slide;
+  `motion-reduce` skips it).
 ## 0.2.1 — 2026-09-18
 
 - Fix Tab completion: typer 0.27 never registers its shell completion

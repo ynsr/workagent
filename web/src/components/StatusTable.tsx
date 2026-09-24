@@ -203,6 +203,38 @@ function RepoTab({ active, label, onClick }: { active: boolean; label: string; o
 }
 
 /**
+ * Fast open/close reveal for row details (~160ms). Grid-rows animation
+ * (no max-height guessing, no unmount jump); hidden stays mounted to
+ * animate the close. `motion-reduce` skips animation entirely.
+ */
+function DetailReveal({
+  open,
+  children,
+}: {
+  open: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <div
+      className={cn(
+        "grid transition-[grid-template-rows,opacity] duration-150 ease-out motion-reduce:transition-none",
+        open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+      )}
+    >
+      <div className="overflow-hidden">
+        <div
+          className={cn(
+            "transition-transform duration-150 ease-out motion-reduce:transition-none",
+            open ? "translate-y-0" : "-translate-y-1",
+          )}
+        >
+          {children}
+        </div>
+      </div>
+    </div>
+  )
+}
+/**
  * Worktrees table (GET /api/status or /api/links worktrees).
  * Table at ≥640px, cards below. Search is `?q=`-backed (Runs pattern);
  * default sort is added_at desc, entries without a stamp last.
@@ -437,11 +469,12 @@ export function StatusTable({
                           </TableCell>
                         ) : null}
                       </TableRow>
-                      {detailOpen ? (
-                        <TableRow className="hover:bg-transparent">
-                          <TableCell
-                            colSpan={showWorktree ? 8 : 7}
-                          >
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell
+                          colSpan={showWorktree ? 8 : 7}
+                          className={detailOpen ? "py-1" : "border-0 !p-0"}
+                        >
+                          <DetailReveal open={detailOpen}>
                             <div className="mx-auto w-full max-w-2xl py-1">
                               <WorktreeDetail
                                 entry={entry}
@@ -450,9 +483,9 @@ export function StatusTable({
                                 onClose={() => setExpanded(null)}
                               />
                             </div>
-                          </TableCell>
-                        </TableRow>
-                      ) : null}
+                          </DetailReveal>
+                        </TableCell>
+                      </TableRow>
                     </Fragment>
                   )
                 })}
@@ -550,16 +583,18 @@ export function StatusTable({
                       networkExposed={networkExposed}
                     />
                   </div>
-                  {detailOpen ? (
-                    <div className="mt-3">
-                      <WorktreeDetail
-                        entry={entry}
-                        mode="view"
-                        onSave={() => undefined}
-                        onClose={() => setExpanded(null)}
-                      />
-                    </div>
-                  ) : null}
+                  <div className="mt-1">
+                    <DetailReveal open={detailOpen}>
+                      <div className="pt-2">
+                        <WorktreeDetail
+                          entry={entry}
+                          mode="view"
+                          onSave={() => undefined}
+                          onClose={() => setExpanded(null)}
+                        />
+                      </div>
+                    </DetailReveal>
+                  </div>
                 </div>
               )
             })}
