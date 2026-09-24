@@ -70,7 +70,8 @@ from the tracker_repos join; any extra registry keys pass through).
   "remote_url": "https://jira/…", "repos": 2}]}
 ```
 (CRUD page source: `tracker add/list/remove` run as runs; `repos` is the
-linked-repo count. `vendor` is an enum: `jira` | `github`.)
+linked-repo count. `vendor` is an enum: `jira` | `github`; `remote_url` is mandatory —
+`tracker add` runs require `--remote-url`.)
 
 ### `GET /api/links`
 ```json

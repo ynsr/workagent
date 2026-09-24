@@ -657,8 +657,8 @@ def test_api_sessions_roundtrip(client, tmp_path, monkeypatch):
         conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
         conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
-                     " VALUES ('k', '/wt', 'b', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
     sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
                             initiator_command="start", prompt="hello",
                             file_path="/tmp/x.jsonl")
@@ -698,8 +698,8 @@ def test_api_repos_includes_trackers_array(client, tmp_path, monkeypatch):
     from workagent import store_sqlite as sq
     db = sq.db_path()
     sq.init_db(db)
-    sq.upsert_tracker(db, "jira:IPG")
-    sq.upsert_tracker(db, "github:o/r")
+    sq.ensure_tracker(db, "jira:IPG")
+    sq.ensure_tracker(db, "github:o/r")
     sq.register_repo_row(db, "p", "/tmp/proj", "jira:IPG")
     sq.add_tracker_repo(db, "github:o/r", "/tmp/proj")
     r = client.get("/api/repos")
@@ -818,8 +818,8 @@ def test_resume_session_opens_terminal(client, monkeypatch, tmp_path):
         conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
         conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
-                     " VALUES ('k', '/wt', 'b', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
     sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
                             initiator_command="start", prompt="hello",
                             file_path=str(session))

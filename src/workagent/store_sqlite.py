@@ -12,37 +12,35 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA = """
-PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS trackers (
-  key_ref TEXT PRIMARY KEY, remote_url TEXT NOT NULL, vendor TEXT NOT NULL);
+  key_ref TEXT PRIMARY KEY NOT NULL, remote_url TEXT NOT NULL, vendor TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS repos (
-  key_ref TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL,
-  name TEXT NOT NULL DEFAULT '',
+  key_ref TEXT PRIMARY KEY NOT NULL, path TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
   remote TEXT NOT NULL DEFAULT '', tool TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS tracker_repos (
   tracker_key TEXT NOT NULL REFERENCES trackers(key_ref) ON DELETE CASCADE,
   repo_key TEXT NOT NULL REFERENCES repos(key_ref) ON DELETE CASCADE,
   PRIMARY KEY (tracker_key, repo_key));
 CREATE TABLE IF NOT EXISTS worktrees (
-  ref_key TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL,
+  ref_key TEXT PRIMARY KEY NOT NULL, path TEXT UNIQUE NOT NULL,
   branch TEXT UNIQUE NOT NULL, repo_key TEXT REFERENCES repos(key_ref) ON DELETE CASCADE,
   issue_url TEXT NOT NULL DEFAULT '', pr_url TEXT NOT NULL DEFAULT '',
-  added_at TEXT NOT NULL DEFAULT '', payload TEXT NOT NULL DEFAULT '{}');
+  added_at TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS pr_cache (
-  branch TEXT PRIMARY KEY, payload TEXT NOT NULL DEFAULT '{}',
-  checked_at TEXT NOT NULL DEFAULT '');
+  branch TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, checked_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (
-  id TEXT PRIMARY KEY, worktree_ref TEXT NOT NULL REFERENCES worktrees(ref_key) ON DELETE CASCADE,
-  state TEXT NOT NULL DEFAULT 'running', runtime_name TEXT NOT NULL DEFAULT '',
+  id TEXT PRIMARY KEY NOT NULL, worktree_ref TEXT NOT NULL REFERENCES worktrees(ref_key) ON DELETE CASCADE,
+  state TEXT NOT NULL, runtime_name TEXT NOT NULL DEFAULT '',
   initiator_command TEXT NOT NULL DEFAULT '', prompt TEXT NOT NULL DEFAULT '',
   file_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  command TEXT NOT NULL DEFAULT '', args TEXT NOT NULL DEFAULT '[]',
+  command TEXT NOT NULL, args TEXT NOT NULL,
   exit_code INTEGER, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS issue_cache (
-  source TEXT PRIMARY KEY, payload TEXT NOT NULL DEFAULT '[]',
-  fetched_at TEXT NOT NULL DEFAULT '');
+  source TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL,
+  fetched_at TEXT NOT NULL);
 """
 
 
@@ -112,8 +110,14 @@ def _migrate_v2(conn) -> None:
       from the key via _tracker_meta.
     - Legacy repos.tracker_key values seed missing tracker rows + links,
       then the column is dropped (SQLite ≥3.35 DROP COLUMN).
-    Idempotent: re-runs are no-ops.
+    - Every required column ends NOT NULL with NO DEFAULT: legacy tables
+      carrying ``DEFAULT ''`` (or NULLable required columns) are rebuilt
+      from the canonical DDL after their data is backfilled with real
+      values. Idempotent: re-runs are no-ops.
     """
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
     tcols = {r[1]: r for r in conn.execute("PRAGMA table_info(trackers)")}
     if tcols:
         if "vendor" not in tcols:
@@ -122,16 +126,13 @@ def _migrate_v2(conn) -> None:
             conn.execute("ALTER TABLE trackers ADD COLUMN remote_url TEXT NOT NULL DEFAULT ''")
         for row in conn.execute("SELECT key_ref, vendor, remote_url FROM trackers"):
             tid, vendor, remote_url = row[0], row[1], row[2]
-            if not vendor or not remote_url:
-                v, u = _tracker_meta(tid)
-                conn.execute("UPDATE trackers SET vendor = ?, remote_url = ? WHERE key_ref = ?",
-                             (v, u or tid, tid))
-            elif vendor not in VENDORS:
-                conn.execute("UPDATE trackers SET vendor = ? WHERE key_ref = ?",
-                             (_tracker_meta(tid)[0], tid))
-        conn.execute("UPDATE trackers SET vendor = 'github'"
-                     " WHERE vendor IS NULL OR vendor = '' OR vendor NOT IN ('jira', 'github')")
-        conn.execute("UPDATE trackers SET remote_url = key_ref WHERE remote_url IS NULL OR remote_url = ''")
+            v, u = _tracker_meta(tid)
+            if not vendor or vendor not in VENDORS:
+                vendor = v
+            if not remote_url:
+                remote_url = u
+            conn.execute("UPDATE trackers SET vendor = ?, remote_url = ? WHERE key_ref = ?",
+                         (vendor, remote_url, tid))
     rcols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
     if "tracker_key" in rcols:
         for row in conn.execute("SELECT key_ref, path, COALESCE(tracker_key, '') FROM repos"):
@@ -144,20 +145,98 @@ def _migrate_v2(conn) -> None:
             conn.execute("INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key)"
                          " VALUES (?, ?)", (legacy, repo_key))
         conn.execute("ALTER TABLE repos DROP COLUMN tracker_key")
+    # Backfill remaining required columns with real data before the
+    # rebuild pass copies the rows into canonical-shaped tables.
+    for row in conn.execute("SELECT key_ref, path FROM repos"
+                            " WHERE name IS NULL OR name = ''").fetchall():
+        key, p = row[0], row[1]
+        name = p.rsplit("/", 1)[-1] if p else key
+        conn.execute("UPDATE repos SET name = ? WHERE key_ref = ?", (name or key, key))
+    conn.execute("UPDATE worktrees SET added_at = ? WHERE added_at IS NULL OR added_at = ''",
+                 (now,))
+    conn.execute("UPDATE pr_cache SET checked_at = ? WHERE checked_at IS NULL OR checked_at = ''",
+                 (now,))
+    conn.execute("UPDATE pr_cache SET payload = '{}' WHERE payload IS NULL OR payload = ''")
+    _rebuild_required_columns(conn)
+
+
+# Required (NOT NULL, no DEFAULT) columns per table — the code always
+# fills these with real data; optional columns keep their DEFAULT.
+_REQUIRED_COLS = {
+    "trackers": ("key_ref", "remote_url", "vendor"),
+    "repos": ("key_ref", "path", "name"),
+    "tracker_repos": ("tracker_key", "repo_key"),
+    "worktrees": ("ref_key", "path", "branch", "added_at"),
+    "pr_cache": ("branch", "payload", "checked_at"),
+    "sessions": ("id", "worktree_ref", "state", "created_at"),
+    "runs": ("session_id", "command", "args", "created_at"),
+    "issue_cache": ("source", "payload", "fetched_at"),
+}
+
+
+def _canonical_ddl() -> dict[str, str]:
+    """{table: CREATE TABLE …} from SCHEMA (single source of truth)."""
+    ddl: dict[str, str] = {}
+    for stmt in SCHEMA.split(";"):
+        s = stmt.strip()
+        if s.startswith("CREATE TABLE IF NOT EXISTS "):
+            ddl[s.split()[5]] = s.replace("CREATE TABLE IF NOT EXISTS ",
+                                          "CREATE TABLE ", 1)
+    return ddl
+
+
+def _rebuild_required_columns(conn) -> list[str]:
+    """Rebuild tables whose required columns are NULLable or DEFAULTed.
+
+    SQLite cannot drop a column DEFAULT in place, so a deviating table is
+    recreated from the canonical DDL and its rows copied. Runs with the
+    connection's transaction committed and foreign_keys off (children
+    referencing a rebuilt parent survive the drop/rename window).
+    Returns the rebuilt table names.
+    """
+    if conn.in_transaction:
+        conn.commit()
+    was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if was_on:
+        conn.execute("PRAGMA foreign_keys = OFF")
+    rebuilt: list[str] = []
+    try:
+        for table, ddl in _canonical_ddl().items():
+            info = list(conn.execute(f"PRAGMA table_info({table})"))
+            if not info:
+                continue
+            by_name = {r[1]: r for r in info}
+            bad = any(c not in by_name or by_name[c][3] != 1 or by_name[c][4] is not None
+                      for c in _REQUIRED_COLS.get(table, ()))
+            if not bad:
+                continue
+            tmp = f"{table}_rebuild"
+            conn.execute(f'DROP TABLE IF EXISTS "{tmp}"')
+            conn.execute(ddl.replace(f"CREATE TABLE {table}",
+                                     f'CREATE TABLE "{tmp}"', 1))
+            new_cols = {r[1] for r in conn.execute(f'PRAGMA table_info("{tmp}")')}
+            cols = ", ".join(f'"{r[1]}"' for r in info if r[1] in new_cols)
+            conn.execute(f'INSERT INTO "{tmp}" ({cols}) SELECT {cols} FROM "{table}"')
+            conn.execute(f'DROP TABLE "{table}"')
+            conn.execute(f'ALTER TABLE "{tmp}" RENAME TO "{table}"')
+            rebuilt.append(table)
+        if conn.in_transaction:
+            conn.commit()
+    finally:
+        if was_on:
+            conn.execute("PRAGMA foreign_keys = ON")
+    if "runs" in rebuilt:
+        # AUTOINCREMENT sequence: keep it at/above the copied max(id).
+        conn.execute("UPDATE sqlite_sequence SET seq ="
+                     " (SELECT COALESCE(MAX(id), 0) FROM runs) WHERE name = 'runs'")
+        conn.commit()
+    return rebuilt
 
 
 def init_db(path: Path) -> Path:
     with connect(path) as conn:
         conn.executescript(SCHEMA)
         _migrate_v2(conn)
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(worktrees)")]
-        if "payload" not in cols:
-            conn.execute("ALTER TABLE worktrees ADD COLUMN payload TEXT NOT NULL DEFAULT '{}'")
-        rcols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
-        if "name" not in rcols:
-            conn.execute("ALTER TABLE repos ADD COLUMN name TEXT NOT NULL DEFAULT ''")
-        if "tool" not in rcols:
-            conn.execute("ALTER TABLE repos ADD COLUMN tool TEXT NOT NULL DEFAULT ''")
     return path
 def _norm(p: str) -> str:
     from pathlib import Path as _P
@@ -198,18 +277,18 @@ def load_tracker_rows(path: Path) -> list[dict]:
 
 
 def upsert_tracker(path: Path, tid: str, vendor: str = "", remote_url: str = "") -> dict:
-    """Create/update a tracker row; vendor/remote_url default from the key.
+    """Create/update a tracker row; blank vendor derives from the key.
 
-    Both columns are mandatory (NOT NULL, never ''): blanks are derived
-    via _tracker_meta. Returns the stored row.
+    remote_url is mandatory and stored as given (no key fallback);
+    blank raises ValueError. Returns the stored row.
     """
     init_db(path)
     vendor = normalize_vendor(vendor)
-    v, u = _tracker_meta(tid)
+    v, _u = _tracker_meta(tid)
     vendor = vendor or v
-    remote_url = remote_url or u
+    remote_url = (remote_url or "").strip()
     if not remote_url:
-        remote_url = tid
+        raise ValueError(f"remote_url is required for tracker {tid!r}")
     with connect(path) as conn:
         conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES (?, ?, ?)"
                      " ON CONFLICT(key_ref) DO UPDATE SET vendor=excluded.vendor,"
@@ -228,7 +307,7 @@ def _upsert_tracker_conn(conn, tid: str, vendor: str = "", remote_url: str = "")
     """
     vendor = normalize_vendor(vendor)
     v, u = _tracker_meta(tid)
-    dv, du = v, u or tid
+    dv, du = v, u
     if vendor and remote_url:
         conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES (?, ?, ?)"
                      " ON CONFLICT(key_ref) DO UPDATE SET vendor=excluded.vendor,"
@@ -279,7 +358,10 @@ def load_repos(path: Path) -> dict:
 
 def ensure_tracker(path: Path, tid: str) -> None:
     """Ensure a tracker row exists (vendor/remote_url derived from the key)."""
-    upsert_tracker(path, tid)
+    init_db(path)
+    with connect(path) as conn:
+        _upsert_tracker_conn(conn, tid)
+
 
 def add_tracker_repo(path: Path, tid: str, repo_path: str) -> bool:
     """Link *repo_path* under *tid*; True when newly recorded.
@@ -435,11 +517,12 @@ def backfill_trackers_repos(path: Path, cfg: dict,
             if not cur or (cur.startswith("jira:") and str(tid).startswith(("github:", "gitlab:"))):
                 path_to_tid[key] = tid
     with connect(path) as conn:
-        for tid in cfg_trackers:
+        for tid, entry in cfg_trackers.items():
             v, u = _tracker_meta(tid)
+            stored = str((entry or {}).get("remote_url", "") or u)
             counts["trackers"] += conn.execute(
                 "INSERT OR IGNORE INTO trackers (key_ref, vendor, remote_url) VALUES (?, ?, ?)",
-                (tid, v, u)).rowcount
+                (tid, str((entry or {}).get("vendor", "") or v), stored)).rowcount
         for name, v in cfg_repos.items():
             raw_path = str((v or {}).get("path", ""))
             norm = _norm(raw_path)
@@ -452,8 +535,9 @@ def backfill_trackers_repos(path: Path, cfg: dict,
             if not tid:
                 raise ValueError(f"cannot derive tracker for repo {name!r} ({raw_path}): pass --tracker")
             vm, um = _tracker_meta(tid)
+            entry_u = str((cfg_trackers.get(tid) or {}).get("remote_url", "") or um)
             conn.execute("INSERT OR IGNORE INTO trackers (key_ref, vendor, remote_url)"
-                         " VALUES (?, ?, ?)", (tid, vm, um))
+                         " VALUES (?, ?, ?)", (tid, vm, entry_u))
             # Existing rows may be keyed by path (older migrate_json runs):
             # update in place (keep key_ref so worktrees.repo_key refs stay
             # valid) instead of dying on the path UNIQUE.
@@ -653,7 +737,8 @@ def save_links_rows(path: Path, links: dict) -> None:
                 " added_at=excluded.added_at, payload=excluded.payload",
                 (key, str(e.get("worktree", "")), str(e.get("branch", "")),
                  repo_key, str(e.get("issue_url", "")),
-                 str(e.get("pr_url", "")), str(e.get("added_at", "")),
+                 str(e.get("pr_url", "")), str(e.get("added_at")
+                 or datetime.now(timezone.utc).isoformat()),
                  json.dumps(extra)))
         if links:
             conn.execute(
@@ -716,13 +801,15 @@ def migrate_json(config_dir: Path, db_path: Path) -> dict:
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (key, str(e.get("worktree", "")), str(e.get("branch", "")),
                  repo_key, str(e.get("issue_url", "")),
-                 str(e.get("pr_url", "")), str(e.get("added_at", "")),
+                 str(e.get("pr_url", "")), str(e.get("added_at")
+                 or datetime.now(timezone.utc).isoformat()),
                  json.dumps(extra)))
             counts["worktrees"] += 1
         for branch, entry in pr_cache.items():
             full = dict(entry)
             full.setdefault("pr", None)
-            checked = str(full.get("checked_at", ""))
+            checked = str(full.get("checked_at")
+                          or datetime.now(timezone.utc).isoformat())
             conn.execute(
                 "INSERT INTO pr_cache (branch, payload, checked_at)"
                 " VALUES (?, ?, ?)",

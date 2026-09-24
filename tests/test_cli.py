@@ -1964,8 +1964,8 @@ def test_run_harness_writes_session_row(isolated_config, tmp_path, monkeypatch):
         conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
         conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
-                     " VALUES ('jira:IPG-929', '/wt', 'b', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('jira:IPG-929', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
     result = {"key": "jira:IPG-929"}
     cli._run_harness("omp", "prompt", str(wt_dir), str(repo_dir), False,
                      False, result, True, run_key="jira:IPG-929")
@@ -2182,8 +2182,8 @@ def test_cutover_link_write_preserves_sessions(isolated_config):
         conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
         conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('x', '/x', 'x')")
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'x')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
-                     " VALUES ('jira:IPG-9', '/wt9', 'b9', 'x')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('jira:IPG-9', '/wt9', 'b9', 'x', '2026-01-01T00:00:00+00:00')")
     sid = sq.insert_session(db, worktree_ref="jira:IPG-9",
                             runtime_name="omp", initiator_command="start",
                             prompt="p", file_path="/tmp/s.jsonl",
@@ -2206,8 +2206,8 @@ def test_session_id_matches_file(isolated_config, tmp_path, monkeypatch):
         conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
         conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
-                     " VALUES ('jira:IPG-929', '/wt', 'b', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('jira:IPG-929', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
     result = {"key": "jira:IPG-929"}
     cli._run_harness("omp", "prompt", str(wt_dir), str(repo_dir), False,
                      False, result, True, run_key="jira:IPG-929")
@@ -2295,7 +2295,7 @@ def test_tracker_add_list_remove_roundtrip(isolated_config):
     """tracker add persists vendor/remote_url; list shows the count; remove cascades."""
     from workagent import store_sqlite as _sq
     _sq.init_db(_sq.db_path())
-    r = _invoke("tracker", "add", "IPG", "--json")
+    r = _invoke("tracker", "add", "IPG", "--remote-url", "https://jira.example/browse/IPG", "--json")
     assert r.exit_code == 0, r.output
     row = json.loads(r.stdout)
     assert row["key"] == "jira:IPG" and row["vendor"] == "jira"

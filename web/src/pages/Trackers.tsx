@@ -50,7 +50,7 @@ export function Trackers() {
   const [adding, setAdding] = useState(false)
 
   async function handleAdd() {
-    if (!key.trim()) return
+    if (!key.trim() || !remoteUrl.trim()) return
     setAdding(true)
     try {
       const { run_id } = await createRun.mutateAsync({
@@ -268,7 +268,7 @@ export function Trackers() {
           <CardHeader>
             <CardTitle>Add a tracker</CardTitle>
             <CardDescription>
-              tracker add KEY [--vendor --remote-url] — vendor/URL derive from the key when blank.
+              tracker add KEY --remote-url [--vendor] — vendor derives from the key when blank.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
@@ -294,7 +294,7 @@ export function Trackers() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="tracker-url">Remote URL (optional)</Label>
+              <Label htmlFor="tracker-url">Remote URL</Label>
               <Input
                 id="tracker-url"
                 value={remoteUrl}
@@ -302,6 +302,7 @@ export function Trackers() {
                 placeholder="https://…"
                 autoComplete="off"
                 spellCheck={false}
+                required
               />
             </div>
             <div className="flex items-center gap-2">
@@ -314,7 +315,7 @@ export function Trackers() {
                 <span className="font-mono text-[13px]">--json</span> output
               </Label>
             </div>
-            <Button onClick={() => void handleAdd()} disabled={!key.trim() || adding}>
+            <Button onClick={() => void handleAdd()} disabled={!key.trim() || !remoteUrl.trim() || adding}>
               <Plus aria-hidden />
               {adding ? "Adding…" : "Add tracker"}
             </Button>

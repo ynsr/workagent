@@ -22,8 +22,8 @@ def test_worktree_delete_cascades_sessions(tmp_path):
         conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
         conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
-                     " VALUES ('k', '/wt', 'b', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
     sq.insert_session(db, worktree_ref="k", runtime_name="omp",
                       initiator_command="start", prompt="p",
                       file_path="/tmp/x.jsonl")
@@ -39,8 +39,8 @@ def test_finish_session_states(tmp_path):
         conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
         conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
-                     " VALUES ('k', '/wt', 'b', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
     sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
                             initiator_command="start", prompt="p",
                             file_path="/tmp/x.jsonl")
@@ -139,8 +139,8 @@ def test_load_links_returns_repo_path(tmp_path):
                      " VALUES ('proj', '/x/proj', 'proj')")
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key)"
                      " VALUES ('jira:IPG', 'proj')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
-                     " VALUES ('jira:IPG-1', '/wt', 'b', 'proj')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('jira:IPG-1', '/wt', 'b', 'proj', '2026-01-01T00:00:00+00:00')")
     assert sq.load_links_rows(db)["jira:IPG-1"]["repo"] == "/x/proj"
 
 

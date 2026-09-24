@@ -259,7 +259,8 @@ def _write_pr_cache(cache: dict) -> None:
         conn.execute("DELETE FROM pr_cache")
         for branch, entry in cache.items():
             payload = dict(entry) if isinstance(entry, dict) else {"pr": entry}
-            checked = str(payload.pop("checked_at", ""))
+            checked = str(payload.pop("checked_at", "")
+                          or datetime.now(timezone.utc).isoformat())
             conn.execute(
                 "INSERT INTO pr_cache (branch, payload, checked_at)"
                 " VALUES (?, ?, ?)",

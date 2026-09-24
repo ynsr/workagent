@@ -22,6 +22,11 @@
   now link `pr_detail.url` via a shared `prUrl()` helper.
 - Animate worktree row detail open/close (~160ms grid-rows + fade/slide;
   `motion-reduce` skips it).
+- Make `trackers.remote_url` mandatory with a real value: every required
+  column across all state.db tables is now `NOT NULL` with no DEFAULT
+  (legacy `DEFAULT ''` tables are rebuilt in place; legacy blank values
+  are backfilled with derived URLs / timestamps), and
+  `tracker add --remote-url` is required — no key-derived fallback.
 - Make `trackers.vendor` a closed enum: `jira` | `github` (`--vendor`
   outside the enum is a usage error; legacy `gitlab`/`unknown`/blank
   vendors migrate to an enum member — gitlab maps to the

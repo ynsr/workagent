@@ -1114,14 +1114,15 @@ app.add_typer(link_app, name="link")
 def tracker_add(
     tracker: str = typer.Argument(..., help="Tracker id (e.g. jira:IPG, github:OWNER/REPO, gitlab:host/group/repo)."),
     vendor: str = typer.Option("", "--vendor", help="Tracker vendor: jira or github (default: derived from the id)."),
-    remote_url: str = typer.Option("", "--remote-url", help="Tracker web URL (default: derived from the id)."),
+    remote_url: str = typer.Option("", "--remote-url", help="Tracker web URL (required; e.g. https://github.com/OWNER/REPO)."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Create (or update) an issue tracker.
 
-    Example:
-      workagent tracker add jira:IPG
-      workagent tracker add github:OWNER/REPO --remote-url https://github.com/OWNER/REPO
+    --remote-url is required and must be a real URL — it is stored as-is
+    (no derivation from the key). Example:
+
+      workagent tracker add jira:IPG --remote-url https://tribe.jibit.cloud/browse/IPG
     """
     from . import store_sqlite as sq
     tid = trackers.normalize_id(tracker)
@@ -1129,9 +1130,13 @@ def tracker_add(
         vendor = sq.normalize_vendor(vendor)
     except ValueError as e:
         raise HarnessError(str(e), exit_code=2) from e
+    remote_url = remote_url.strip()
+    if not remote_url:
+        raise HarnessError("--remote-url is required (a real tracker web URL, "
+                           "e.g. https://tribe.jibit.cloud/browse/IPG)", exit_code=2)
     if store._sqlite_path() is None:
         from . import store_sqlite as _sqm
-        v, u = _sqm._tracker_meta(tid)
+        v, _u = _sqm._tracker_meta(tid)
         cfg = store.load_config()
         entry = cfg.setdefault("trackers", {}).setdefault(tid, {"repos": []})
         # config.json has no vendor columns: keep explicit flags in the
@@ -1140,10 +1145,7 @@ def tracker_add(
             entry["vendor"] = vendor
         else:
             entry.setdefault("vendor", v)
-        if remote_url:
-            entry["remote_url"] = remote_url
-        else:
-            entry.setdefault("remote_url", u or tid)
+        entry["remote_url"] = remote_url
         store.save_config(cfg)
         _print_result({"tracker": tid, "repos": entry.get("repos", [])}, json_output)
         return
