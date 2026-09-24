@@ -22,6 +22,11 @@
   now link `pr_detail.url` via a shared `prUrl()` helper.
 - Animate worktree row detail open/close (~160ms grid-rows + fade/slide;
   `motion-reduce` skips it).
+- Make `trackers.vendor` a closed enum: `jira` | `github` (`--vendor`
+  outside the enum is a usage error; legacy `gitlab`/`unknown`/blank
+  vendors migrate to an enum member — gitlab maps to the
+  github-compatible vendor). The web Add-Tracker Vendor field is now a
+  searchable dropdown with those two options.
 - Promote the trackers table (schema v2): `trackers` gains mandatory
   `vendor` + `remote_url` (NOT NULL, derived from the key when blank —
   jira:PREFIX → jira site/browse URL, github:O/R → github.com URL,

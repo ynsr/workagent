@@ -55,12 +55,36 @@ def connect(path: Path) -> sqlite3.Connection:
     return conn
 
 
+#: Allowed values for trackers.vendor — an enum, never free text.
+VENDORS = ("jira", "github")
+
+#: Legacy vendor values that migrate forward to an enum member.
+_VENDOR_REMAP = {"gitlab": "github"}
+
+
+def normalize_vendor(vendor: str) -> str:
+    """Validate *vendor* against the VENDORS enum; '' stays '' (derive later).
+
+    Raises ValueError (→ HarnessError at the CLI boundary) for anything
+    outside the enum.
+    """
+    v = (vendor or "").strip().lower()
+    if not v:
+        return ""
+    if v in VENDORS:
+        return v
+    if v in _VENDOR_REMAP:
+        return _VENDOR_REMAP[v]
+    raise ValueError(f"vendor must be one of {', '.join(VENDORS)} (got {vendor!r})")
+
+
 def _tracker_meta(tid: str) -> tuple[str, str]:
     """(vendor, remote_url) for *tid*; both mandatory, never ''.
 
     jira:PREFIX → ("jira", "<jira-site>/browse/PREFIX" or "jira:PREFIX").
     github:O/R → ("github", "https://github.com/O/R").
-    gitlab:host/g/r → ("gitlab", "https://host/g/r").
+    gitlab:host/g/r → ("github", "https://host/g/r") — gitlab hosts are
+    served by glab under the github-compatible vendor enum member.
     """
     if tid.startswith("jira:"):
         vendor = "jira"
@@ -77,8 +101,8 @@ def _tracker_meta(tid: str) -> tuple[str, str]:
     if tid.startswith("gitlab:"):
         rest = tid.split(":", 1)[1]
         host, _, repo = rest.partition("/")
-        return "gitlab", f"https://{rest}" if "/" in rest and host else tid
-    return "unknown", tid
+        return "github", f"https://{rest}" if "/" in rest and host else tid
+    return "github", tid
 
 
 def _migrate_v2(conn) -> None:
@@ -93,7 +117,7 @@ def _migrate_v2(conn) -> None:
     tcols = {r[1]: r for r in conn.execute("PRAGMA table_info(trackers)")}
     if tcols:
         if "vendor" not in tcols:
-            conn.execute("ALTER TABLE trackers ADD COLUMN vendor TEXT NOT NULL DEFAULT 'unknown'")
+            conn.execute("ALTER TABLE trackers ADD COLUMN vendor TEXT NOT NULL DEFAULT 'github'")
         if "remote_url" not in tcols:
             conn.execute("ALTER TABLE trackers ADD COLUMN remote_url TEXT NOT NULL DEFAULT ''")
         for row in conn.execute("SELECT key_ref, vendor, remote_url FROM trackers"):
@@ -101,8 +125,12 @@ def _migrate_v2(conn) -> None:
             if not vendor or not remote_url:
                 v, u = _tracker_meta(tid)
                 conn.execute("UPDATE trackers SET vendor = ?, remote_url = ? WHERE key_ref = ?",
-                             (v or "unknown", u or tid, tid))
-        conn.execute("UPDATE trackers SET vendor = 'unknown' WHERE vendor IS NULL OR vendor = ''")
+                             (v, u or tid, tid))
+            elif vendor not in VENDORS:
+                conn.execute("UPDATE trackers SET vendor = ? WHERE key_ref = ?",
+                             (_tracker_meta(tid)[0], tid))
+        conn.execute("UPDATE trackers SET vendor = 'github'"
+                     " WHERE vendor IS NULL OR vendor = '' OR vendor NOT IN ('jira', 'github')")
         conn.execute("UPDATE trackers SET remote_url = key_ref WHERE remote_url IS NULL OR remote_url = ''")
     rcols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
     if "tracker_key" in rcols:
@@ -176,11 +204,10 @@ def upsert_tracker(path: Path, tid: str, vendor: str = "", remote_url: str = "")
     via _tracker_meta. Returns the stored row.
     """
     init_db(path)
+    vendor = normalize_vendor(vendor)
     v, u = _tracker_meta(tid)
     vendor = vendor or v
     remote_url = remote_url or u
-    if not vendor:
-        vendor = "unknown"
     if not remote_url:
         remote_url = tid
     with connect(path) as conn:
@@ -199,8 +226,9 @@ def _upsert_tracker_conn(conn, tid: str, vendor: str = "", remote_url: str = "")
     derived defaults only when the row is new, and the conflict branch
     updates just the explicitly passed fields.
     """
+    vendor = normalize_vendor(vendor)
     v, u = _tracker_meta(tid)
-    dv, du = v or "unknown", u or tid
+    dv, du = v, u or tid
     if vendor and remote_url:
         conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES (?, ?, ?)"
                      " ON CONFLICT(key_ref) DO UPDATE SET vendor=excluded.vendor,"

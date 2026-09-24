@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/SearchableSelect"
 import { Label } from "@/components/ui/label"
 import {
   Table,
@@ -283,14 +284,13 @@ export function Trackers() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="tracker-vendor">Vendor (optional)</Label>
-              <Input
+              <Label htmlFor="tracker-vendor">Vendor</Label>
+              <SearchableSelect
                 id="tracker-vendor"
                 value={vendor}
-                onChange={(e) => setVendor(e.target.value)}
-                placeholder="jira"
-                autoComplete="off"
-                spellCheck={false}
+                options={["jira", "github"]}
+                onChange={setVendor}
+                placeholder="auto-detect from key"
               />
             </div>
             <div className="grid gap-2">

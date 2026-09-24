@@ -2,6 +2,8 @@
 
 import re
 
+import pytest
+
 from workagent import store_sqlite as sq
 
 
@@ -168,21 +170,57 @@ def test_backfill_repairs_null_legacy_rows(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM tracker_repos").fetchone()[0] == 1
 
 
+def test_normalize_vendor_enum():
+    """Vendor is a closed enum: jira/github accepted (any case), rest rejected."""
+    assert sq.normalize_vendor("") == ""
+    assert sq.normalize_vendor("JIRA") == "jira"
+    assert sq.normalize_vendor(" github ") == "github"
+    assert sq.normalize_vendor("gitlab") == "github"  # legacy remap
+    with pytest.raises(ValueError, match="must be one of jira, github"):
+        sq.normalize_vendor("Custom")
+
+
 def test_tracker_meta_derivation():
     """_tracker_meta derives mandatory vendor/remote_url from every key shape."""
     assert sq._tracker_meta("github:o/r") == ("github", "https://github.com/o/r")
-    assert sq._tracker_meta("gitlab:h/g/r") == ("gitlab", "https://h/g/r")
-    assert sq._tracker_meta("jira:IPG")[0] == "jira"
-    assert sq._tracker_meta("weird")[0] == "unknown"
+    assert sq._tracker_meta("gitlab:h/g/r") == ("github", "https://h/g/r")
+    # jira remote_url uses jira-cli's configured site when available.
+    vendor, url = sq._tracker_meta("jira:IPG")
+    assert vendor == "jira" and (url == "jira:IPG" or url.endswith("/browse/IPG"))
+    assert sq._tracker_meta("weird") == ("github", "weird")
 
 
 def test_upsert_tracker_preserves_vendor_on_blank_ensure(tmp_path):
-    """Blank ensure-upserts never clobber a customized vendor/remote_url."""
+    """Blank ensure-upserts never clobber an explicitly-set enum vendor."""
     db = tmp_path / "state.db"
-    sq.upsert_tracker(db, "jira:IPG", vendor="Custom", remote_url="https://x")
+    sq.upsert_tracker(db, "jira:IPG", vendor="github", remote_url="https://x")
     sq.add_tracker_repo(db, "jira:IPG", "/r")
     row = sq.load_tracker_rows(db)[0]
-    assert (row["vendor"], row["remote_url"]) == ("Custom", "https://x")
+    assert (row["vendor"], row["remote_url"]) == ("github", "https://x")
+
+
+def test_upsert_tracker_rejects_non_enum_vendor(tmp_path):
+    """upsert_tracker enforces the enum at the store boundary too."""
+    import pytest as _pytest
+    db = tmp_path / "state.db"
+    with _pytest.raises(ValueError, match="must be one of"):
+        sq.upsert_tracker(db, "jira:IPG", vendor="Custom")
+
+
+def test_migrate_v2_repairs_non_enum_vendor(tmp_path):
+    """Legacy rows carrying off-enum vendors are remapped into the enum."""
+    import sqlite3
+    db = tmp_path / "state.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE trackers (key_ref TEXT PRIMARY KEY,"
+                     " vendor TEXT NOT NULL DEFAULT '',"
+                     " remote_url TEXT NOT NULL DEFAULT '')")
+        conn.execute("INSERT INTO trackers VALUES ('jira:X', 'unknown', 'jira:X')")
+        conn.execute("INSERT INTO trackers VALUES ('github:o/r', 'gitlab', 'https://h/g/r')")
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        rows = dict(conn.execute("SELECT key_ref, vendor FROM trackers"))
+    assert rows == {"jira:X": "jira", "github:o/r": "github"}
 
 
 def test_migrate_v2_repairs_legacy_trackers_and_drops_column(tmp_path):

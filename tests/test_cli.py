@@ -2307,14 +2307,21 @@ def test_tracker_add_list_remove_roundtrip(isolated_config):
     assert json.loads(r.stdout) == {"removed": "jira:IPG"}
 
 
-def test_tracker_add_sets_custom_vendor(isolated_config):
-    """tracker add --vendor/--remote-url beats key derivation and survives ensures."""
+def test_tracker_add_sets_explicit_vendor(isolated_config):
+    """tracker add --vendor (enum) beats key derivation and survives ensures."""
     from workagent import store_sqlite as sq
     sq.init_db(sq.db_path())
-    r = _invoke("tracker", "add", "IPG", "--vendor", "Custom",
+    r = _invoke("tracker", "add", "IPG", "--vendor", "jira",
                 "--remote-url", "https://x", "--json")
     assert r.exit_code == 0, r.output
     db = sq.db_path()
     sq.add_tracker_repo(db, "jira:IPG", "/r")
     rows = sq.load_tracker_rows(db)
-    assert (rows[0]["vendor"], rows[0]["remote_url"]) == ("Custom", "https://x")
+    assert (rows[0]["vendor"], rows[0]["remote_url"]) == ("jira", "https://x")
+
+
+def test_tracker_add_rejects_non_enum_vendor(isolated_config):
+    """--vendor outside the jira/github enum is a usage error (exit 2)."""
+    r = _invoke("tracker", "add", "IPG", "--vendor", "Custom", "--json")
+    assert r.exit_code == 2
+    assert "must be one of jira, github" in r.output
