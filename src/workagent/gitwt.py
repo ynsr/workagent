@@ -48,20 +48,22 @@ def start_worktree(repo: Path, branch: str | None = None, issue: str | None = No
 def _ensure_local_branch(repo: Path, branch: str) -> None:
     """Make sure ``--branch <branch>`` names a local branch git-wt can check out.
 
-    A remote-only branch (exists only as ``origin/<branch>``) is materialized
-    as a local branch tracking it — fetch-free, via the local remote-tracking
-    mirror. Missing everywhere → actionable error (run ``git fetch``).
+    Fetches from origin first so a freshly-pushed PR/MR source branch is
+    visible even when the local remote-tracking mirror is stale; a
+    remote-only branch is then materialized as a local tracking branch.
+    Missing everywhere → actionable error.
     """
     if run_cmd("git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}",
                cwd=repo, check=False) is not None:
         return
+    run_cmd("git", "fetch", "origin", branch, cwd=repo, check=False)
     if run_cmd("git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}",
                cwd=repo, check=False) is not None:
         run_cmd("git", "branch", "--track", branch, f"origin/{branch}", cwd=repo)
         return
     raise HarnessError(
-        f"branch {branch!r} not found locally or as origin/{branch} — "
-        f"run `git fetch origin` first (repo: {repo})"
+        f"branch {branch!r} not found locally or as origin/{branch} "
+        f"even after `git fetch origin {branch}` (repo: {repo})"
     )
 
 

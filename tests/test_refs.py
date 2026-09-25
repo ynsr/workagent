@@ -110,6 +110,49 @@ def test_latest_pr_picks_newest():
     assert refs.latest_pr([]) is None
 
 
+def test_pick_branch_pr_prefers_latest_open():
+    prs = [{"number": 1, "state": "merged", "created_at": "2026-09-01"},
+           {"number": 2, "state": "closed", "created_at": "2026-09-20"},
+           {"number": 3, "state": "open", "created_at": "2026-09-05"},
+           {"number": 4, "state": "open", "created_at": "2026-09-15"}]
+    assert refs.pick_branch_pr(prs)["number"] == 4
+    # Newest closed PR does NOT win while an older open PR exists.
+    assert refs.pick_branch_pr([
+        {"number": 1, "state": "open", "created_at": "2026-09-01"},
+        {"number": 2, "state": "closed", "created_at": "2026-09-20"},
+    ])["number"] == 1
+    # No open PR: latest overall (even merged) identifies the branch fate.
+    assert refs.pick_branch_pr([
+        {"number": 1, "state": "merged", "created_at": "2026-09-01"},
+        {"number": 2, "state": "merged", "created_at": "2026-09-15"},
+    ])["number"] == 2
+    assert refs.pick_branch_pr([]) is None
+
+
+def test_fetch_pr_merge_state_github(monkeypatch):
+    import workagent.refs as r
+    calls = []
+    def fake(*a, **k):
+        calls.append(a)
+        return '{"state": "OPEN", "mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"}'
+    monkeypatch.setattr(r, "run_cmd", fake)
+    out = refs.fetch_pr_merge_state("https://github.com/o/r/pull/9")
+    assert out == {"state": "OPEN", "mergeable": "CONFLICTING",
+                   "merge_state": "DIRTY"}
+    assert "mergeStateStatus" in str(calls)
+
+
+def test_fetch_pr_merge_state_404_surfaces(monkeypatch):
+    import workagent.refs as r
+    from workagent.errors import HarnessError
+    import pytest
+    def fake(*a, **k):
+        raise HarnessError("gh pr view failed: 404 Not Found")
+    monkeypatch.setattr(r, "run_cmd", fake)
+    with pytest.raises(HarnessError, match="404"):
+        refs.fetch_pr_merge_state("https://github.com/o/r/pull/404")
+
+
 def test_issue_url_stored_http_wins():
     assert refs.issue_url("jira:IPG-1", "https://x/browse/IPG-1") == "https://x/browse/IPG-1"
 
@@ -248,20 +291,34 @@ def test_fetch_ci_glab_empty_list(monkeypatch):
     ) == "not_started"
 
 def test_fetch_pr_comment_stats_gh(monkeypatch):
-    """Issue #28: gh counts # Code Review comments + thread resolution."""
+    """Issue #28: gh counts # Code Review comments + thread resolution.
+
+    Issue #32: plain bot comments without a `Status: RESOLVED` second line
+    count as unresolved (no native resolution state on GitHub comments).
+    """
     def fake_run(*a, **k):
         if "graphql" in a:
             return json.dumps({"data": {"repository": {"pullRequest": {
                 "reviewThreads": {"nodes": [{"isResolved": True},
                                             {"isResolved": False}]}}}}})
         return json.dumps({"comments": [
-            {"body": "# Code Review: looks good"},
+            {"body": "# Code Review: looks good\nStatus: RESOLVED"},
             {"body": "  # Code Review follow-up"},
             {"body": "just a comment"}]})
     monkeypatch.setattr(refs, "run_cmd", fake_run)
     assert refs.fetch_pr_comment_stats(
         "gh", "https://github.com/o/r/pull/9", "/repo") == {
-            "reviews": 2, "unresolved": 1, "resolved": 1}
+            "reviews": 2, "unresolved": 2, "resolved": 2}
+
+
+def test_gh_bot_comment_resolved_marker():
+    """Issue #32: only an exact `Status: RESOLVED` second line resolves."""
+    assert refs._gh_bot_comment_resolved("# Code Review: ok\nStatus: RESOLVED")
+    assert refs._gh_bot_comment_resolved("# Code Review: ok\n\n  Status: RESOLVED  \nbody text")
+    assert not refs._gh_bot_comment_resolved("# Code Review: open finding")
+    assert not refs._gh_bot_comment_resolved("# Code Review: ok\nbody\nStatus: RESOLVED")
+    assert not refs._gh_bot_comment_resolved("# Code Review: only header, no second line")
+    assert not refs._gh_bot_comment_resolved("")
 
 
 def test_fetch_pr_comment_stats_glab(monkeypatch):

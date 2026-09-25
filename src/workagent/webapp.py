@@ -75,7 +75,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "start": ("-N", "--no-tty", "--no-runtime", "--dry-run", "--yes",
               "--json"),
     "review": ("-N", "--no-tty", "--no-runtime", "--dry-run", "--yes",
-               "--json", "--all", "--sequential", "--fix", "--force-all", "--post-comments"),
+               "--json", "--all", "--sequential", "--fix", "--fix-comments", "--force-all", "--post-comments"),
     "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--no-squash"),
     "open": (),
     "sync": ("-m", "--merge", "--harness", "--all", "--yes", "--force",

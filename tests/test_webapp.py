@@ -471,6 +471,8 @@ def test_validate_args_allows_verbose_global():
 def test_webapp_review_all_flags_and_target():
     _validate_args("review", ["--all"])
     _validate_args("review", ["--all", "--sequential", "--fix"])
+    _validate_args("review", ["--all", "--fix-comments"])
+    _validate_args("review", ["o/r#33", "--fix-comments"])
     assert _target_for("review", ["--all"]) == "review:all"
     assert _target_for("review", ["o/r#33"]) == "review:o/r#33"
 

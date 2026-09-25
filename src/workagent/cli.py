@@ -321,8 +321,11 @@ def start(
       workagent start OWNER/REPO#22 --no-runtime
     """
     parsed = refs.parse_ref(ref)
-    if parsed["kind"] in ("pr", "mr"):
-        _fail(f"{ref} looks like a PR/MR — use `workagent review`", EXIT_USAGE)
+    pr_mode = parsed["kind"] in ("pr", "mr")
+    if pr_mode:
+        return _start_from_pr(ref, parsed, repo, depth, harness, no_tty,
+                              no_runtime, dry_run, yes, json_output,
+                              session_file)
     key = refs.issue_key(parsed)
     links = store.load_links()
     existing = links.get(key, {})
@@ -438,6 +441,50 @@ def start(
                  result, json_output, run_key=key, session_file=session_file)
 
 
+def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
+                   harness: str | None, no_tty: bool, no_runtime: bool,
+                   dry_run: bool, yes: bool, json_output: bool,
+                   session_file: str | None) -> None:
+    """Start a coding session on a PR/MR source branch (branch-keyed row)."""
+    tid = trackers.tracker_id(parsed)
+    repo_dir, outcome = trackers.resolve_for_tracker(
+        tid, repo, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
+    base_branch = repos.default_branch(repo_dir)
+    harness_name = harness or store.load_config().get("default_harness", "omp")
+    pr_url = parsed["url"]
+    try:
+        info = refs.fetch_pr_info(parsed, cwd=str(repo_dir))
+    except HarnessError as e:
+        _fail(f"could not determine the source branch for {pr_url}: {e}",
+              EXIT_USAGE)
+    head_ref = info.get("head_ref", "")
+    if not head_ref:
+        _fail(f"could not determine the source branch for {pr_url}.\n"
+              f"  Run `git fetch origin` in {repo_dir} and check `gh`/`glab` auth for that host.",
+              EXIT_USAGE)
+    if dry_run:
+        _print_result({"dry_run": True, "repo": str(repo_dir), "pr_url": pr_url,
+                       "key": head_ref, "branch": head_ref,
+                       "harness": harness_name,
+                       "tracker": tid, "tracker_link": outcome}, json_output)
+        return
+    key, worktree, branch = _ensure_branch_worktree(
+        repo_dir, head_ref, base_branch, pr_url)
+    prompt = backend.prompt_for_issue(info.get("title", ""), info.get("body", ""),
+                                      pr_url, worktree=worktree, branch=branch)
+    if no_tty:
+        prompt += "\n\nAfter task done, commit and push to the PR/MR source branch"
+    result = {"worktree_path": worktree, "branch": branch,
+              "base": base_branch, "key": key, "pr_url": pr_url,
+              "harness": harness_name}
+    eprint(f"worktree: {worktree}  branch: {branch}")
+    if not no_runtime:
+        _guard_harness(key, worktree)
+    _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
+                 no_runtime, result, json_output, run_key=key,
+                 session_file=session_file)
+
+
 # ── review ────────────────────────────────────────────────────────────
 
 
@@ -505,14 +552,43 @@ def _has_unresolved_comments(entry: dict, pr_url: str) -> bool:
 
 def _review_key_for(pr_url: str, worktree: str, branch: str) -> str:
     """Link key review state lives under: the recorded row for this
-    worktree/branch when one exists, else the pr:<url> key.
+    worktree/branch when one exists, else the source branch name.
 
     Reviewing an already-tracked worktree must reuse its row (stamping
     pr_url on it) — never insert a second row for the same path/branch
     (which collides on the worktrees.branch UNIQUE key).
     """
     return (worktrees.recorded_key(worktree, branch, store.load_links())
-            or f"pr:{pr_url}")
+            or branch)
+
+
+def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
+                            pr_url: str) -> tuple[str, str, str]:
+    """Reuse or create the worktree for a PR/MR source branch.
+
+    Returns (key, worktree, branch): an already-recorded row wins (its key
+    is reused with pr_url stamped on it); otherwise a fresh worktree is
+    created via git-wt and recorded under the bare branch name.
+    """
+    links = store.load_links()
+    reuse = worktrees.recorded_key("", head_ref, links)
+    if isinstance(reuse, str):
+        entry = links.get(reuse, {})
+        worktree = entry.get("worktree", "")
+        branch = entry.get("branch", head_ref)
+        store.record_link(reuse, {"pr_url": pr_url, "worktree": worktree,
+                                  "branch": branch, "repo": str(repo_dir)})
+        return reuse, worktree, branch
+    wt = gitwt.start_worktree(repo_dir, branch=head_ref, base=base_branch)
+    worktree = wt.get("worktree_path", "")
+    branch = wt.get("branch", head_ref)
+    store.record_link(head_ref, {"pr_url": pr_url, "worktree": worktree,
+                                 "branch": branch, "repo": str(repo_dir)})
+    try:
+        repos.register_repo(repos.repo_name(repo_dir), repo_dir)
+    except HarnessError:
+        pass
+    return head_ref, worktree, branch
 
 
 def _mark_reviewed(key: str, worktree: str) -> None:
@@ -556,6 +632,7 @@ def review(
     fix: bool = typer.Option(False, "--fix", help="With --all: children auto-fix identified issues after yielding."),
     force_all: bool = typer.Option(False, "--force-all", help="With --all: include already-reviewed and unresolved-comment worktrees too (still needs a PR/MR)."),
     post_comments: bool = typer.Option(False, "--post-comments", hidden=True, help="Append the auto-comment prompt segment (set by --all)."),
+    fix_comments: bool = typer.Option(False, "--fix-comments", help="Fix open PR/MR review comments instead of reviewing: validate each finding, apply, resolve/close, commit and push."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the runtime (omp --resume)."),
 ) -> None:
     """Create worktree from PR/MR and launch review.
@@ -576,6 +653,10 @@ def review(
         _fail("--force-all requires --all", EXIT_USAGE)
     if session_file and all_wts:
         _fail("--session-file cannot be used with --all (one transcript per worktree — omit it and each launch gets its own file)", EXIT_USAGE)
+    if fix and fix_comments:
+        _fail("--fix cannot be used with --fix-comments", EXIT_USAGE)
+    if post_comments and fix_comments:
+        _fail("--post-comments cannot be used with --fix-comments", EXIT_USAGE)
     if ref is None and not all_wts:
         _fail("missing PR/MR ref or worktree key\n"
               "  Pass a ref, or use --all to review every not-reviewed worktree.",
@@ -587,8 +668,11 @@ def review(
             return
 
         def _child_argv(pr: str) -> list[str]:
-            return [sys.executable, "-m", "workagent", "review", pr,
-                    "--no-tty", "--post-comments"] + (["--fix"] if fix else [])
+            argv = [sys.executable, "-m", "workagent", "review", pr, "--no-tty"]
+            if fix_comments:
+                return argv + ["--fix-comments"]
+            return argv + ["--post-comments"] + (["--fix"] if fix else [])
+
 
         def _child_cmd(pr: str) -> str:
             return " ".join(shlex.quote(a) for a in _child_argv(pr))
@@ -699,11 +783,14 @@ def review(
             review_key = _review_key_for(pr_url, worktree, branch)
             store.record_link(review_key, {"pr_url": pr_url, "worktree": worktree,
                                            "branch": branch, "repo": str(repo_dir)})
-            prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
+            if fix_comments:
+                prompt = backend.prompt_for_fix_comments(pr_url, worktree=worktree, branch=branch)
+            else:
+                prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
 
-            if post_comments:
+            if post_comments and not fix_comments:
                 prompt += "\n\nAuto add all comments to the PR/MR at yielding and don't wait for user approval"
-            if fix:
+            if fix and not fix_comments:
                 prompt += "\n\nAuto-fix all identified issues after yielding and don't wait for user approval."
             result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
                       "harness": harness_name}
@@ -725,22 +812,17 @@ def review(
         _fail(f"could not determine the MR head branch for {pr_url}.\n"
               f"  Run `git fetch origin` in {repo_dir} and check `glab`/`gh` auth for that host.",
               EXIT_USAGE)
-    wt = gitwt.start_worktree(repo_dir, branch=head_ref, base=base_branch)
-    worktree = wt.get("worktree_path", "")
-    branch = wt.get("branch", head_ref)
-    review_key = _review_key_for(pr_url, worktree, branch)
-    store.record_link(review_key, {"pr_url": pr_url, "worktree": worktree,
-                                   "branch": branch, "repo": str(repo_dir)})
-    try:
-        repos.register_repo(repos.repo_name(repo_dir), repo_dir)
-    except HarnessError:
-        pass
+    review_key, worktree, branch = _ensure_branch_worktree(
+        repo_dir, head_ref, base_branch, pr_url)
 
-    prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
+    if fix_comments:
+        prompt = backend.prompt_for_fix_comments(pr_url, worktree=worktree, branch=branch)
+    else:
+        prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
 
-    if post_comments:
+    if post_comments and not fix_comments:
         prompt += "\n\nAuto add all comments to the PR/MR at yielding and don't wait for user approval"
-    if fix:
+    if fix and not fix_comments:
         prompt += "\n\nAuto-fix all identified issues after yielding and don't wait for user approval."
     result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
               "harness": harness_name}
@@ -865,6 +947,64 @@ def cleanup(
                           squash=not no_squash)
 
 
+def _pr_missing(msg: str) -> bool:
+    """True when a host-CLI error means the PR/MR is gone (404/not found)."""
+    msg = (msg or "").lower()
+    return ("404" in msg or "not found" in msg or "could not resolve" in msg
+            or "couldn't find" in msg or "could not find" in msg)
+
+
+def _pr_conflicted(fresh: dict | None) -> bool:
+    """True when fresh merge state reports destination-branch conflicts."""
+    if not fresh:
+        return False
+    vals = " ".join(str(fresh.get(k) or "") for k in
+                    ("mergeable", "merge_state")).lower()
+    return any(t in vals for t in ("conflict", "dirty", "cannot_be_merged",
+                                   "cannot be merged", "unmergable"))
+
+
+def _fresh_pr_state(pr_url: str, host_cwd: str) -> dict | None:
+    """Fresh PR/MR state (never cached); None on lookup failure (warned)."""
+    if not pr_url:
+        return None
+    try:
+        return refs.fetch_pr_merge_state(pr_url, cwd=host_cwd)
+    except HarnessError as e:
+        eprint(f"warning: cannot read PR/MR state for {pr_url}: {e}")
+        return None
+
+
+def _resolve_branch_pr(branch: str, recorded_url: str, host_cwd: str,
+                       tool: str | None = None) -> tuple[str, dict | None, bool]:
+    """(pr_url, fresh, picked) for a source branch.
+
+    Lists every PR/MR sourced from *branch* and picks the latest open,
+    else the latest overall. Falls back to the recorded URL (fresh lookup)
+    when the list lookup fails or is empty. `picked` is True
+    when the URL came from the branch list rather than the recorded link.
+    """
+    if branch:
+        tools = ([tool] if tool in ("gh", "glab") else []) + ["gh", "glab"]
+        seen: set[str] = set()
+        for t in tools:
+            if t in seen:
+                continue
+            seen.add(t)
+            try:
+                prs = refs.fetch_pr_list_for_branch(t, branch, cwd=host_cwd)
+            except HarnessError as e:
+                eprint(f"warning: {t} pr lookup failed for {branch}: {e}")
+                continue
+            picked = refs.pick_branch_pr(prs)
+            if picked and picked.get("url"):
+                url = picked["url"]
+                return url, _fresh_pr_state(url, host_cwd), url != recorded_url
+            if prs:
+                break
+    return recorded_url, (_fresh_pr_state(recorded_url, host_cwd) if recorded_url else None), False
+
+
 def _merge_pr(pr_url: str, squash: bool, cwd: str | None = None) -> None:
     """Merge an open PR/MR (squash default); raise HarnessError on failure.
 
@@ -936,7 +1076,21 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
                 "merge": pr_url or ""}
     state = (_status_cells(dict(entry), refresh_pr=False).get("pr_data")
              or {}).get("state", "")
+    tool = _repo_tool(str(repo))
+    recorded_url = pr_url
+    pr_url, fresh, picked = _resolve_branch_pr(branch, recorded_url, host_cwd,
+                                               tool=tool)
+    if picked:
+        eprint(f"note: acting on {pr_url} (latest for branch {branch}).")
+    fresh_state = ((fresh or {}).get("state") or "").lower()
+    # A 404 on the fresh lookup means the cached row is stale but the host
+    # PR is gone; fall back to cached state unless it is explicitly open.
+    if fresh is None and state.lower() not in ("open", "opened"):
+        fresh = {"state": state}
+        fresh_state = (state or "").lower()
+    conflicted = _pr_conflicted(fresh)
     merged_now = False
+    remote_deleted = False
     if merge is None:
         # Merge only on explicitly open states; unknown ("") falls back
         # to close-and-remove so offline/cache-miss cleanup still works.
@@ -948,9 +1102,28 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
     # back to the server cwd — an unrelated checkout — failing with
     # "no git remote points to a known host" (IPG-953). Merge failures
     # raise BEFORE teardown — nothing is torn down on a failed merge.
+    open_states = ("open", "opened")
+    if (not force and pr_url and fresh_state in open_states and conflicted):
+        # Rule 2: conflicted PR stays open; nothing is torn down.
+        _fail(f"{pr_url} conflicts with its destination branch — remote branch kept.\n"
+              "  Resolve the conflict on the host, then re-run cleanup.",
+              EXIT_GENERAL)
     if merge:
-        _merge_pr(pr_url, squash=squash, cwd=host_cwd)
-        merged_now = True
+        try:
+            _merge_pr(pr_url, squash=squash, cwd=host_cwd)
+        except HarnessError as e:
+            if force and not _pr_missing(str(e)):
+                # Rule 3: --force merge failed (e.g. conflicts) → leave the
+                # PR open, keep the remote branch, continue local cleanup.
+                _close_issue(parsed, force)
+                eprint(f"note: {pr_url} could not be merged ({e}); left open.")
+                merged_now = False
+            else:
+                # 404 without force, or conflict without force: PR stays
+                # open, user notified via the raised error; nothing torn down.
+                raise
+        else:
+            merged_now = True
     else:
         _close_issue(parsed, force)
         if state_norm in ("merged", "closed"):
@@ -958,21 +1131,55 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
             # "already been merged"), so skip straight to local teardown.
             eprint(f"note: {pr_url} already {state_norm}; skipping remote close.")
         else:
-            _close_pr(parsed, pr_url, force, cwd=host_cwd)
-    cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=True,
+            try:
+                _close_pr(parsed, pr_url, force, cwd=host_cwd)
+            except HarnessError as e:
+                if _pr_missing(str(e)):
+                    # 404: host PR is gone; keep the remote branch and the
+                    # link so nothing is lost silently.
+                    _fail(f"{pr_url} not found on the host (404) — remote branch kept.\n"
+                          "  Re-run with the branch deleted manually once confirmed.",
+                          EXIT_GENERAL)
+                raise
+    # git-wt only removes the local branch (delete_branch=False below):
+    # remote deletion is workagent's call. Rule 1: delete the remote branch
+    # iff the PR/MR merged with this branch as its source (merged here, or
+    # already-merged for this branch, verified via head_ref). Unmerged PRs —
+    # closed, open, conflicted, or left open after a failed --force merge —
+    # keep their remote branch.
+    head_ref = ""
+    if pr_url and (merged_now or fresh_state == "merged"):
+        try:
+            head_ref = (refs.fetch_pr_info(refs.parse_ref(pr_url),
+                                           cwd=host_cwd).get("head_ref") or "")
+        except HarnessError as e:
+            eprint(f"warning: cannot verify PR head branch for {pr_url}: {e}")
+            head_ref = branch if merged_now else ""
+    delete_remote = bool(branch) and (merged_now or fresh_state == "merged") \
+        and (not head_ref or head_ref == branch)
+    cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=False,
                                      force=force, yes=yes)
-    if merged_now:
+    try:
+        run_cmd("git", "-C", str(repo), "branch", "-D", branch)
+        cleanup.setdefault("actions", []).append(f"deleted local branch {branch}")
+    except HarnessError:
+        pass
+    if delete_remote:
         # Remote branch goes LAST: local cleanup already succeeded.
         try:
             run_cmd("git", "-C", str(repo), "push", "origin",
                     "--delete", branch)
+            remote_deleted = True
         except HarnessError as e:
             eprint(f"warning: remote branch delete failed: {e}")
     remaining = {k: v for k, v in store.load_links().items() if k != key}
     store.save_links(remaining)
     if not json_output:
-        eprint(f"{key}: cleaned")
-    return {"key": key, "branch": branch, "status": "cleaned", "cleanup": cleanup}
+        tail = " (remote branch deleted)" if remote_deleted \
+            else " (remote branch kept)"
+        eprint(f"{key}: cleaned{tail}")
+    return {"key": key, "branch": branch, "status": "cleaned", "cleanup": cleanup,
+            "remote_deleted": remote_deleted}
 
 
 def _close_issue(parsed: dict, force: bool) -> None:
@@ -1509,7 +1716,7 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
                       or cached_target == (cached.get("base_branch") or "")))
     if wt_ok and branch and use_cache:
         base_branch = cached.get("base_branch") or ""
-        branch_tip = _git_tip(wt, "HEAD")
+        branch_tip = _git_tip(wt, branch) or _git_tip(wt, "HEAD")
         base_tip = _git_tip(wt, f"origin/{base_branch}") if base_branch else None
         if (cached.get("branch_tip") == branch_tip
                 and cached.get("base_tip") == base_tip):
@@ -1543,9 +1750,9 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
         db = (target
               or (cached or {}).get("base_branch")
               or _repo_default_branch(repo)) or None
-        ab = repos.ahead_behind(Path(wt), db) if (wt_ok and db) else None
+        ab = repos.ahead_behind(Path(wt), db, branch) if (wt_ok and db) else None
         if wt_ok:
-            branch_tip = _git_tip(wt, "HEAD")
+            branch_tip = _git_tip(wt, branch) or _git_tip(wt, "HEAD")
             store.cache_pr_status(branch, pr, tool=used if pr else None,
                                   base_branch=db,
                                   branch_tip=branch_tip,
@@ -2203,8 +2410,20 @@ def sync_cmd(
     if ref:
         resolved = worktrees.resolve_worktree(ref, links)
         if resolved is None:
-            _fail(f"no linked state for {ref}", EXIT_USAGE)
-        key = worktrees.pick_worktree(ref, resolved, links)
+            parsed_ref = None
+            try:
+                parsed_ref = refs.parse_ref(ref)
+            except HarnessError:
+                parsed_ref = None
+            if parsed_ref is not None and parsed_ref["kind"] in ("pr", "mr"):
+                key = _sync_create_pr_worktree(ref, parsed_ref, dry_run)
+                if key is None:
+                    return
+                links = store.load_links()
+            else:
+                _fail(f"no linked state for {ref}", EXIT_USAGE)
+        else:
+            key = worktrees.pick_worktree(ref, resolved, links)
         keys = [key]
     elif all_sessions:
         keys = list(links)
@@ -2231,6 +2450,38 @@ def sync_cmd(
     if json_output:
         out = results[0] if len(results) == 1 and ref else results
         print(json.dumps(out, indent=2, ensure_ascii=False))
+
+
+def _sync_create_pr_worktree(ref: str, parsed: dict, dry_run: bool) -> str | None:
+    """Create the branch-keyed worktree for an unregistered PR/MR ref.
+
+    Returns the link key (the source branch name); the shared helper
+    reuses an already-recorded row when one exists. Dry-run prints the
+    plan without creating anything and returns None.
+    """
+    tid = trackers.tracker_id(parsed)
+    repo_dir, _ = trackers.resolve_for_tracker(
+        tid, None, Path.cwd(), depth=7, yes=True, persist=not dry_run)
+    base_branch = repos.default_branch(repo_dir)
+    try:
+        info = refs.fetch_pr_info(parsed, cwd=str(repo_dir))
+    except HarnessError as e:
+        _fail(f"could not determine the source branch for {ref}: {e}",
+              EXIT_USAGE)
+    head_ref = info.get("head_ref", "")
+    if not head_ref:
+        _fail(f"could not determine the source branch for {ref}.\n"
+              f"  Run `git fetch origin` in {repo_dir} and check `gh`/`glab` auth for that host.",
+              EXIT_USAGE)
+    if dry_run:
+        _print_result({"dry_run": True, "repo": str(repo_dir),
+                       "pr_url": parsed["url"], "key": head_ref,
+                       "branch": head_ref}, False)
+        return None
+    key, _worktree, _branch = _ensure_branch_worktree(
+        repo_dir, head_ref, base_branch, parsed["url"])
+    eprint(f"note: created worktree for {ref} on branch {head_ref}")
+    return key
 
 
 def result_failed(result: dict) -> bool:

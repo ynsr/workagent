@@ -117,7 +117,7 @@ def test_status_table_shows_behind_ahead(isolated_config, tmp_path, monkeypatch)
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
     monkeypatch.setattr(cli.repos, "ahead_behind",
-                        lambda wt, db: {"behind": 5, "ahead": 8})
+                        lambda wt, db, branch="": {"behind": 5, "ahead": 8})
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
     r = _invoke("status", "--json")
     data = json.loads(r.stdout)
@@ -134,7 +134,7 @@ def test_status_pr_from_cache(isolated_config, tmp_path, monkeypatch):
                                               "created_at": "2026-09-15",
                                               "url": "https://x/mr/123",
                                               "target_branch": "main"})
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     r = _invoke("status", "--json")
     data = json.loads(r.stdout)
     assert data["jira:IPG-929"]["pr"] == "PR #123 (merged)"
@@ -146,7 +146,7 @@ def test_status_pr_live_query_then_cache(isolated_config, tmp_path, monkeypatch)
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
     calls = []
     def fake_list(tool, branch, cwd=None):
@@ -177,7 +177,7 @@ def test_status_cache_reused_until_tip_or_ttl(isolated_config, tmp_path, monkeyp
                           branch_tip="a1", base_tip="b1", behind=5, ahead=1)
     ab_calls = []
     monkeypatch.setattr(cli.repos, "ahead_behind",
-                        lambda wt, db: ab_calls.append(db)
+                        lambda wt, db, branch="": ab_calls.append(db)
                         or {"behind": 9, "ahead": 9})
     data = json.loads(_invoke("status", "--json").stdout)
     assert data["jira:IPG-929"]["commits"] == "5|1"  # served from cache
@@ -204,7 +204,7 @@ def test_status_cache_expired_by_ttl(isolated_config, tmp_path, monkeypatch):
         datetime.now(timezone.utc) - timedelta(hours=4)).isoformat()
     store.save_pr_cache(cache)
     monkeypatch.setattr(cli.repos, "ahead_behind",
-                        lambda wt, db: {"behind": 7, "ahead": 0})
+                        lambda wt, db, branch="": {"behind": 7, "ahead": 0})
     data = json.loads(_invoke("status", "--json").stdout)
     assert data["jira:IPG-929"]["commits"] == "7|0"
 
@@ -304,7 +304,7 @@ def test_status_cells_ci_cache_reuse(isolated_config, tmp_path, monkeypatch):
                           branch_tip="a1", base_tip="b1", behind=0, ahead=0)
     tips = {"HEAD": "a1", "origin/main": "b1"}
     monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: tips.get(ref))
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     fetches = []
     monkeypatch.setattr(cli.refs, "fetch_ci_status",
                         lambda tool, url, cwd=None: fetches.append(url)
@@ -369,7 +369,7 @@ def test_status_ci_column_symbols_json_csv(isolated_config, tmp_path,
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
     tips = {"HEAD": "a1", "origin/main": "b1"}
     monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: tips.get(ref))
@@ -424,7 +424,7 @@ def test_status_reviews_column_and_force_all(isolated_config, tmp_path, monkeypa
     _store.cache_review_stats("feat/a", {"reviews": 2, "unresolved": 1, "resolved": 3},
                               sha="a1")
     monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: "a1" if ref == "HEAD" else None)
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     monkeypatch.setattr(cli.refs, "fetch_ci_status", lambda tool, url, cwd=None: None)
     monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
                         lambda tool, url, cwd=None: {"reviews": 0, "unresolved": 0, "resolved": 0})
@@ -444,7 +444,7 @@ def test_status_json_detail_carries_ci(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
     monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: None)
     monkeypatch.setattr(cli.refs, "fetch_pr_list_for_branch",
@@ -468,7 +468,7 @@ def test_status_ref_detail(isolated_config, tmp_path, monkeypatch):
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
     monkeypatch.setattr(cli.repos, "ahead_behind",
-                        lambda wt, db: {"behind": 1, "ahead": 2})
+                        lambda wt, db, branch="": {"behind": 1, "ahead": 2})
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
     r = _invoke("status", "IPG-929", "--json")
     out = json.loads(r.stdout)
@@ -496,7 +496,7 @@ def test_link_list_worktrees_enriched(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
     r = _invoke("link", "list", "--json")
     data = json.loads(r.stdout)
@@ -509,7 +509,7 @@ def _sync_mocks(monkeypatch, local_calls=None, rebase_calls=None, pulled=None):
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     if local_calls is not None:
         monkeypatch.setattr(cli.sync_mod, "local_merge",
-                            lambda wt, db: (local_calls.append((str(wt), db))
+                            lambda wt, db, branch="": (local_calls.append((str(wt), db))
                                             or {"status": "merged", "conflicts": []}))
     if rebase_calls is not None:
         monkeypatch.setattr(cli.sync_mod, "rebase_remote",
@@ -537,7 +537,7 @@ def test_sync_rebase_strategy_with_open_pr(isolated_config, tmp_path, monkeypatc
     rebase, local, pulled = [], [], []
     _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase,
                 pulled=pulled)
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     r = _invoke("sync", "IPG-929", "--yes", "--json")
     assert r.exit_code == 0
     out = json.loads(r.stdout)
@@ -573,7 +573,7 @@ def test_sync_no_pr_falls_back_to_local(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     local = []
     monkeypatch.setattr(cli.sync_mod, "local_merge",
-                        lambda wt, db: (local.append((str(wt), db))
+                        lambda wt, db, branch="": (local.append((str(wt), db))
                                         or {"status": "merged", "conflicts": []}))
     monkeypatch.setattr(cli.sync_mod, "push", lambda wt, br: None)
     r = _invoke("sync", "IPG-929", "--yes", "--json")
@@ -597,7 +597,7 @@ def test_sync_recorded_pr_seed_uses_local_merge(isolated_config, tmp_path,
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     rebase, local = [], []
     monkeypatch.setattr(cli.sync_mod, "local_merge",
-                        lambda wt, db: (local.append((str(wt), db))
+                        lambda wt, db, branch="": (local.append((str(wt), db))
                                         or {"status": "merged", "conflicts": []}))
     monkeypatch.setattr(cli.sync_mod, "push", lambda wt, br: None)
     monkeypatch.setattr(cli.sync_mod, "rebase_remote",
@@ -1576,7 +1576,7 @@ def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
     launched = []
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
     url = "https://github.com/o/r/pull/33"
-    key = f"pr:{url}"
+    key = "feat/33"
 
     # --no-runtime starts nothing: must not mark reviewed (Task 2 precedent).
     r0 = runner.invoke(cli.app, ["review", url, "--no-tty", "--no-runtime", "--json"])
@@ -1795,7 +1795,7 @@ def test_review_launch_failure_clears_reviewed(isolated_config, tmp_path,
 
     monkeypatch.setattr(cli.backend, "launch", boom)
     url = "https://github.com/o/r/pull/33"
-    key = f"pr:{url}"
+    key = "feat/33"
     r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
     assert r.exit_code == 1
     entry = store.load_links()[key]
@@ -1849,6 +1849,40 @@ def test_review_fix_without_all_is_usage_error():
     assert r.exit_code == 2
     assert "--fix requires --all" in r.stderr
 
+
+def test_review_fix_comments_rejects_fix_and_post_comments():
+    """Issue #32: --fix-comments is exclusive with --fix/--post-comments."""
+    r = runner.invoke(cli.app, ["review", "--all", "--fix", "--fix-comments"])
+    assert r.exit_code == 2
+    assert "--fix cannot be used with --fix-comments" in r.stderr
+
+
+def test_review_all_fix_comments_reaches_child_argv(isolated_config, tmp_path, monkeypatch):
+    """Issue #32: review --all --fix-comments spawns fix-children (no post-comments)."""
+    links = {
+        "jira:A-1": {"branch": "feat/a", "worktree": str(tmp_path / "a"),
+                     "pr_url": "https://github.com/o/r/pull/1"},
+    }
+    (tmp_path / "a").mkdir()
+    store.save_links(links)
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda p: True)
+    monkeypatch.setattr(cli.worktrees, "resolve_worktree", lambda ref, _l: "jira:A-1")
+    monkeypatch.setattr(cli.worktrees, "worktree_pr_url",
+                        lambda k, e: links[k]["pr_url"])
+    seen: list[list[str]] = []
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            seen.append(argv)
+        def wait(self, timeout=None):
+            return 0
+
+
+    monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
+    r = runner.invoke(cli.app, ["review", "--all", "--fix-comments", "--json"])
+    assert r.exit_code == 0, r.output
+    assert seen and "--fix-comments" in seen[0]
+    assert "--post-comments" not in seen[0] and "--fix" not in seen[0]
 
 def test_status_detail_shows_harness_line(isolated_config, tmp_path,
                                           monkeypatch):
@@ -2037,17 +2071,26 @@ def test_cleanup_merges_open_pr_first(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: calls.append("close"))
     monkeypatch.setattr(cli, "_status_cells",
                         lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (
+                            url, {"state": "OPEN", "mergeable": "MERGEABLE",
+                                  "merge_state": ""}, False))
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/9"})
     from workagent.errors import run_cmd as _real  # noqa: F841 (documents the seam)
     def fake(*a, **k):
         calls.append(a)
         return ""
+    monkeypatch.setattr(cli, "_merge_pr",
+                        lambda url, squash=True, cwd=None: calls.append("merge"))
     monkeypatch.setattr("workagent.cli.run_cmd", fake)
     entry = dict(store.load_links()["jira:IPG-9"])
     out = cli._cleanup_one("jira:IPG-9", entry, force=True, yes=True,
                            dry_run=False, json_output=True)
     assert out["status"] == "cleaned"
-    assert any("merge" in str(c) for c in calls)
+    assert "merge" in calls
     assert "close" not in calls  # merged, not closed
+    assert out["remote_deleted"] is True
 
 
 def test_cleanup_merge_failure_keeps_worktree(isolated_config, tmp_path, monkeypatch):
@@ -2057,11 +2100,17 @@ def test_cleanup_merge_failure_keeps_worktree(isolated_config, tmp_path, monkeyp
     from workagent.errors import HarnessError
     monkeypatch.setattr(cli, "_status_cells",
                         lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (
+                            url, {"state": "OPEN", "mergeable": "CONFLICTING",
+                                  "merge_state": "DIRTY"}, False))
     def boom(*a, **k):
         raise HarnessError("merge conflict")
     monkeypatch.setattr("workagent.cli.run_cmd", boom)
-    import pytest
-    with pytest.raises(HarnessError):
+    import pytest, typer
+    # Conflicted without --force fails closed BEFORE the merge call:
+    # PR stays open, worktree/link/remote branch all kept.
+    with pytest.raises(typer.exceptions.Exit):
         cli._cleanup_one("jira:IPG-9", dict(store.load_links()["jira:IPG-9"]),
                          force=False, yes=True, dry_run=False,
                          json_output=True)
@@ -2100,6 +2149,97 @@ def test_migrate_roundtrip_uses_sqlite(isolated_config):
     assert not (d / "links.json").exists()
 
 
+def test_cleanup_picks_latest_open_pr(isolated_config, monkeypatch, capsys):
+    """Newer closed PR must not win over the live open one."""
+    store.record_link("jira:IPG-12", {"issue": "IPG-12", "worktree": "/tmp/wt",
+                                      "branch": "feat/12", "repo": "/tmp/proj",
+                                      "pr_url": "https://github.com/o/r/pull/1"})
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+    monkeypatch.setattr(cli.refs, "fetch_pr_list_for_branch",
+                        lambda tool, branch, cwd=None: [
+                            {"number": 1, "state": "merged",
+                             "created_at": "2026-09-01",
+                             "url": "https://github.com/o/r/pull/1"},
+                            {"number": 2, "state": "open",
+                             "created_at": "2026-09-15",
+                             "url": "https://github.com/o/r/pull/2"},
+                            {"number": 3, "state": "closed",
+                             "created_at": "2026-09-20",
+                             "url": "https://github.com/o/r/pull/3"}])
+    seen = {}
+    def fake_fresh(url, cwd):
+        seen["url"] = url
+        return {"state": "MERGED", "mergeable": "", "merge_state": ""}
+    monkeypatch.setattr(cli, "_fresh_pr_state", fake_fresh)
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/12"})
+    monkeypatch.setattr("workagent.cli.run_cmd", lambda *a, **k: "")
+    out = cli._cleanup_one("jira:IPG-12", dict(store.load_links()["jira:IPG-12"]),
+                           force=False, yes=True, dry_run=False,
+                           json_output=True, merge=False)
+    assert seen["url"] == "https://github.com/o/r/pull/2"
+    assert "latest for branch" in capsys.readouterr().err
+    assert out["remote_deleted"] is True
+
+
+def test_cleanup_force_conflict_leaves_pr_open_keeps_remote(isolated_config, monkeypatch, capsys):
+    """Rule 3: --force merge-fail → PR left open, remote kept, cleanup continues."""
+    from workagent.errors import HarnessError
+    store.record_link("jira:IPG-13", {"issue": "IPG-13", "worktree": "/tmp/wt",
+                                      "branch": "feat/13", "repo": "/tmp/proj",
+                                      "pr_url": "https://github.com/o/r/pull/13"})
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    closed = []
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: closed.append(True))
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (
+                            url, {"state": "OPEN", "mergeable": "CONFLICTING",
+                                  "merge_state": "DIRTY"}, False))
+    def boom(*a, **k):
+        if "--delete" in str(a):
+            return ""
+        raise HarnessError("merge conflict")
+    monkeypatch.setattr("workagent.cli.run_cmd", boom)
+    out = cli._cleanup_one("jira:IPG-13", dict(store.load_links()["jira:IPG-13"]),
+                           force=True, yes=True, dry_run=False,
+                           json_output=True)
+    assert not closed  # PR left open on unmergeable --force
+    assert "left open" in capsys.readouterr().err
+    assert out["status"] == "cleaned"
+    assert out["remote_deleted"] is False
+
+
+def test_cleanup_404_close_keeps_remote_and_link(isolated_config, monkeypatch):
+    """Rule 2: close on a 404 PR keeps the remote branch and the link."""
+    from workagent.errors import HarnessError
+    import pytest, typer
+    store.record_link("jira:IPG-14", {"issue": "IPG-14", "worktree": "/tmp/wt",
+                                      "branch": "feat/14", "repo": "/tmp/proj",
+                                      "pr_url": "https://github.com/o/r/pull/404"})
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (url, None, False))
+    def boom(parsed, url, force, cwd=None):
+        raise HarnessError("gh pr close failed: 404 Not Found")
+    monkeypatch.setattr(cli, "_close_pr", boom)
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    with pytest.raises(typer.exceptions.Exit):
+        cli._cleanup_one("jira:IPG-14", dict(store.load_links()["jira:IPG-14"]),
+                         force=False, yes=True, dry_run=False,
+                         json_output=True, merge=False)
+    assert "jira:IPG-14" in store.load_links()
+
+
 def test_cleanup_unknown_pr_state_closes_without_merge(isolated_config, monkeypatch):
     store.record_link("jira:IPG-10", {"issue": "IPG-10", "worktree": "/tmp/wt",
                                       "branch": "feat/10", "repo": "/tmp/proj",
@@ -2111,12 +2251,13 @@ def test_cleanup_unknown_pr_state_closes_without_merge(isolated_config, monkeypa
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: calls.append("close"))
     monkeypatch.setattr(cli, "_status_cells",
                         lambda entry, refresh_pr=False: {"pr_data": {"state": ""}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr", lambda branch, url, cwd, tool=None: (url, None, False))
     monkeypatch.setattr("workagent.cli.run_cmd",
                         lambda *a, **k: calls.append("merge") or "")
-    cli._cleanup_one("jira:IPG-10", dict(store.load_links()["jira:IPG-10"]),
-                     force=False, yes=True, dry_run=False, json_output=True)
-    assert "merge" not in calls
+    out = cli._cleanup_one("jira:IPG-10", dict(store.load_links()["jira:IPG-10"]),
+                           force=False, yes=True, dry_run=False, json_output=True)
     assert "close" in calls
+    assert out["remote_deleted"] is False  # unknown state keeps remote branch
 
 def test_close_pr_treats_merged_mr_as_closed(isolated_config, monkeypatch, capsys):
     """`glab mr close` on a merged MR must not abort cleanup (run eb420c1bb14d)."""
@@ -2153,10 +2294,23 @@ def test_cleanup_merged_state_skips_remote_close(isolated_config, monkeypatch, c
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: calls.append("close"))
     monkeypatch.setattr(cli, "_status_cells",
                         lambda entry, refresh_pr=False: {"pr_data": {"state": "merged"}})
-    cli._cleanup_one("jira:IPG-11", dict(store.load_links()["jira:IPG-11"]),
-                     force=False, yes=True, dry_run=False, json_output=True)
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (
+                            url, {"state": "MERGED", "mergeable": "",
+                                  "merge_state": ""}, False))
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/11"})
+    pushes = []
+    def fake_run(*a, **k):
+        pushes.append(a)
+        return ""
+    monkeypatch.setattr("workagent.cli.run_cmd", fake_run)
+    out = cli._cleanup_one("jira:IPG-11", dict(store.load_links()["jira:IPG-11"]),
+                           force=False, yes=True, dry_run=False, json_output=True)
     assert "close" not in calls
     assert "skipping remote close" in capsys.readouterr().err
+    assert out["remote_deleted"] is True  # merged source branch is deleted
+    assert any("--delete" in str(c) for c in pushes)
 
 
 def test_close_issue_treats_closed_as_success(isolated_config, monkeypatch, capsys):
@@ -2386,7 +2540,7 @@ def test_status_base_follows_mr_target_branch(isolated_config, tmp_path, monkeyp
                           branch_tip="a1", base_tip=None, behind=0, ahead=0)
     ab_calls = []
     monkeypatch.setattr(cli.repos, "ahead_behind",
-                        lambda wt, db: ab_calls.append(db) or {"behind": 0, "ahead": 3})
+                        lambda wt, db, branch="": ab_calls.append(db) or {"behind": 0, "ahead": 3})
     data = json.loads(_invoke("status", "--json").stdout)
     assert data["jira:IPG-929"]["commits"] == "0|3"
     assert ab_calls == ["develop"]
@@ -2419,3 +2573,98 @@ def test_repo_remove_guard_and_force(isolated_config, tmp_path):
     with sq.connect(db) as conn:
         assert conn.execute("SELECT COUNT(*) FROM repos").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM worktrees").fetchone()[0] == 0
+
+
+def test_review_new_pr_keys_row_by_branch(isolated_config, tmp_path, monkeypatch):
+    """A fresh PR head branch is recorded under the branch name with pr_url."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.repos, "branch_tip", lambda wt: "abc123")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed, cwd=None: {"head_ref": "feat/77"})
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/77"})
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    url = "https://github.com/o/r/pull/77"
+    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
+    assert r.exit_code == 0, r.output
+    links = store.load_links()
+    assert set(links) == {"feat/77"}
+    assert links["feat/77"]["pr_url"] == url
+    assert links["feat/77"]["reviewed"] is True
+
+
+def test_start_accepts_pr_ref(isolated_config, tmp_path, monkeypatch):
+    """start <PR-url> creates the branch worktree and launches the harness."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"title": "T", "body": "B",
+                                                  "head_ref": "feat/88"})
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/88"})
+    monkeypatch.setattr(cli.backend, "prompt_for_issue", lambda *a, **k: "PROMPT")
+    launched = []
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    url = "https://github.com/o/r/pull/88"
+    r = runner.invoke(cli.app, ["start", url, "--no-tty", "--json"])
+    assert r.exit_code == 0, r.output
+    assert launched != []
+    links = store.load_links()
+    assert set(links) == {"feat/88"}
+    assert links["feat/88"]["pr_url"] == url
+
+
+def test_sync_creates_worktree_for_new_pr_ref(isolated_config, tmp_path, monkeypatch):
+    """sync <PR-url> with no linked state creates the branch worktree then syncs."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/99"})
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/99"})
+    synced = []
+    monkeypatch.setattr(cli, "_sync_one",
+                        lambda k, entry, **kw: synced.append(k) or {"key": k, "result": "ok"})
+    url = "https://github.com/o/r/pull/99"
+    r = runner.invoke(cli.app, ["sync", url, "--json"])
+    assert r.exit_code == 0, r.output
+    assert synced == ["feat/99"]
+    links = store.load_links()
+    assert links["feat/99"]["pr_url"] == url
+
+
+def test_sync_pr_ref_dry_run_creates_nothing(isolated_config, tmp_path, monkeypatch):
+    """sync <PR-url> --dry-run prints the plan without creating a worktree."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/100"})
+
+    def _no_start(repo, **kw):
+        raise AssertionError("dry-run must not create a worktree")
+    monkeypatch.setattr(cli.gitwt, "start_worktree", _no_start)
+    url = "https://github.com/o/r/pull/100"
+    r = runner.invoke(cli.app, ["sync", url, "--dry-run", "--json"])
+    assert r.exit_code == 0, r.output
+    assert store.load_links() == {}

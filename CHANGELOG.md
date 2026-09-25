@@ -4,6 +4,29 @@
   toward unresolved/resolved — system/activity discussions ("added N
   commits", "marked as draft", individual notes) are excluded, matching
   GitLab's own UI counter.
+- start/review/sync: a new PR/MR (not already registered) creates a git
+  worktree on the fetched source branch and records it under the branch
+  name (pr_url kept on the row). `start` accepts PR/MR refs directly;
+  `sync` creates the worktree first, then syncs it. `_ensure_local_branch`
+  fetches from origin before materializing a remote-only branch so a
+  freshly-pushed source branch is found even with a stale local mirror.
+- Cleanup remote-branch rules: the remote branch is deleted only when the
+  branch's PR/MR merged with it as source (latest open PR/MR wins,
+  else latest overall; head_ref verified). 404/conflicted PRs stay open —
+  nothing is torn down and the user is told to resolve the conflict first.
+  `--force` merges first; when merge is impossible the PR is left open and
+  the remote branch kept while everything else is cleaned up (notified).
+- Remove-worktree modal: new live Cleanup-vs---force comparison table (mergeable / conflicted / merged / 404 rows) that follows the --force checkbox; all modal shells widened to 2xl with scroll caps to stop text overflow.
+- Issue #32: GitHub Reviews detection now counts plain (non-inline)
+  `# Code Review` bot comments as resolved only when their second non-empty
+  line (below the header) is exactly `Status: RESOLVED` (GitHub-only; GitLab MRs keep native
+  flags). New `review --fix-comments` (per-worktree and `--all`,
+  exclusive with `--fix`/`--post-comments`) launches a fix agent that
+  validates each open comment against code + PR/MR description, applies,
+  resolves/closes (appending the marker line on GitHub), then commits and
+  pushes. Dashboard gains a per-row Fix action (wrench icon) and a
+  "Fix all PR comments" top-bar button, both routed via Launch review
+  mode (`fixComments=1` prefill) + `--fix-comments` checkbox.
 - Issue #28: Dashboard worktree table gains a Reviews R|U|R column (done
   `# Code Review` comments | unresolved threads | resolved threads, cached
   10 min by branch tip like CI) in the table, mobile cards, worktree
