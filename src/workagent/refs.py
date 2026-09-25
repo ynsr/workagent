@@ -256,6 +256,39 @@ def fetch_pr_list_for_branch(tool: str, branch: str, cwd: str | None = None) -> 
              "target_branch": m.get("target_branch", "")} for m in data]
 
 
+
+def fetch_pr_merge_state(pr_url: str, cwd: str | None = None) -> dict:
+    """Fresh {state, mergeable} for a PR/MR URL; raises HarnessError on failure.
+
+    GitHub: state in OPEN|MERGED|CLOSED, mergeable in MERGEABLE|CONFLICTING|UNKNOWN.
+    GitLab: state in opened|merged|closed (+ detailed_merge_status / has_conflicts).
+    A deleted/missing PR (404) surfaces as HarnessError with "404"/"not found"
+    in the message so callers can keep the remote branch and the link.
+    """
+    m = _GITHUB_PR.match(pr_url or "")
+    if m:
+        out = run_cmd("gh", "pr", "view", pr_url, "--json",
+                      "state,mergeable,mergeStateStatus", cwd=cwd)
+        try:
+            data = json.loads(out or "{}")
+        except json.JSONDecodeError:
+            raise HarnessError(f"cannot parse gh output for {pr_url}")
+        return {"state": str(data.get("state") or ""),
+                "mergeable": str(data.get("mergeable") or ""),
+                "merge_state": str(data.get("mergeStateStatus") or "")}
+    m = _GITLAB_MR.match(pr_url or "")
+    if m:
+        out = run_cmd("glab", "mr", "view", pr_url, cwd=cwd)
+        try:
+            data = json.loads(out or "{}")
+        except json.JSONDecodeError:
+            raise HarnessError(f"cannot parse glab output for {pr_url}")
+        return {"state": str(data.get("state") or ""),
+                "mergeable": str(data.get("detailed_merge_status") or ""),
+                "merge_state": "conflicts" if data.get("has_conflicts") else ""}
+    raise HarnessError(f"not a PR/MR URL: {pr_url}")
+
+
 def latest_pr(prs: list[dict]) -> dict | None:
     """Most recent PR by creation date, or None."""
     if not prs:
@@ -263,6 +296,20 @@ def latest_pr(prs: list[dict]) -> dict | None:
     return max(prs, key=lambda p: p.get("created_at", ""))
 
 
+def pick_branch_pr(prs: list[dict]) -> dict | None:
+    """PR/MR to act on for a source branch: latest open, else latest.
+
+    A branch can source several PRs/MRs over time (closed superseded ones
+    plus the live one). Only an open PR is live — prefer the newest open
+    one. With no open PR, the latest (merged/closed) row still identifies
+    the branch's fate for remote-branch deletion. Returns None for an
+    empty list.
+    """
+    if not prs:
+        return None
+    live = [p for p in prs if (p.get("state") or "").lower() == "open"]
+    pool = live or prs
+    return max(pool, key=lambda p: p.get("created_at", ""))
 
 _GH_FAILURE = {"FAILURE", "ACTION_REQUIRED", "TIMED_OUT", "STARTUP_FAILURE",
                "CANCELLED"}

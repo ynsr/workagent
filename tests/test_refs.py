@@ -110,6 +110,49 @@ def test_latest_pr_picks_newest():
     assert refs.latest_pr([]) is None
 
 
+def test_pick_branch_pr_prefers_latest_open():
+    prs = [{"number": 1, "state": "merged", "created_at": "2026-09-01"},
+           {"number": 2, "state": "closed", "created_at": "2026-09-20"},
+           {"number": 3, "state": "open", "created_at": "2026-09-05"},
+           {"number": 4, "state": "open", "created_at": "2026-09-15"}]
+    assert refs.pick_branch_pr(prs)["number"] == 4
+    # Newest closed PR does NOT win while an older open PR exists.
+    assert refs.pick_branch_pr([
+        {"number": 1, "state": "open", "created_at": "2026-09-01"},
+        {"number": 2, "state": "closed", "created_at": "2026-09-20"},
+    ])["number"] == 1
+    # No open PR: latest overall (even merged) identifies the branch fate.
+    assert refs.pick_branch_pr([
+        {"number": 1, "state": "merged", "created_at": "2026-09-01"},
+        {"number": 2, "state": "merged", "created_at": "2026-09-15"},
+    ])["number"] == 2
+    assert refs.pick_branch_pr([]) is None
+
+
+def test_fetch_pr_merge_state_github(monkeypatch):
+    import workagent.refs as r
+    calls = []
+    def fake(*a, **k):
+        calls.append(a)
+        return '{"state": "OPEN", "mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"}'
+    monkeypatch.setattr(r, "run_cmd", fake)
+    out = refs.fetch_pr_merge_state("https://github.com/o/r/pull/9")
+    assert out == {"state": "OPEN", "mergeable": "CONFLICTING",
+                   "merge_state": "DIRTY"}
+    assert "mergeStateStatus" in str(calls)
+
+
+def test_fetch_pr_merge_state_404_surfaces(monkeypatch):
+    import workagent.refs as r
+    from workagent.errors import HarnessError
+    import pytest
+    def fake(*a, **k):
+        raise HarnessError("gh pr view failed: 404 Not Found")
+    monkeypatch.setattr(r, "run_cmd", fake)
+    with pytest.raises(HarnessError, match="404"):
+        refs.fetch_pr_merge_state("https://github.com/o/r/pull/404")
+
+
 def test_issue_url_stored_http_wins():
     assert refs.issue_url("jira:IPG-1", "https://x/browse/IPG-1") == "https://x/browse/IPG-1"
 

@@ -2071,17 +2071,26 @@ def test_cleanup_merges_open_pr_first(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: calls.append("close"))
     monkeypatch.setattr(cli, "_status_cells",
                         lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (
+                            url, {"state": "OPEN", "mergeable": "MERGEABLE",
+                                  "merge_state": ""}, False))
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/9"})
     from workagent.errors import run_cmd as _real  # noqa: F841 (documents the seam)
     def fake(*a, **k):
         calls.append(a)
         return ""
+    monkeypatch.setattr(cli, "_merge_pr",
+                        lambda url, squash=True, cwd=None: calls.append("merge"))
     monkeypatch.setattr("workagent.cli.run_cmd", fake)
     entry = dict(store.load_links()["jira:IPG-9"])
     out = cli._cleanup_one("jira:IPG-9", entry, force=True, yes=True,
                            dry_run=False, json_output=True)
     assert out["status"] == "cleaned"
-    assert any("merge" in str(c) for c in calls)
+    assert "merge" in calls
     assert "close" not in calls  # merged, not closed
+    assert out["remote_deleted"] is True
 
 
 def test_cleanup_merge_failure_keeps_worktree(isolated_config, tmp_path, monkeypatch):
@@ -2091,11 +2100,17 @@ def test_cleanup_merge_failure_keeps_worktree(isolated_config, tmp_path, monkeyp
     from workagent.errors import HarnessError
     monkeypatch.setattr(cli, "_status_cells",
                         lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (
+                            url, {"state": "OPEN", "mergeable": "CONFLICTING",
+                                  "merge_state": "DIRTY"}, False))
     def boom(*a, **k):
         raise HarnessError("merge conflict")
     monkeypatch.setattr("workagent.cli.run_cmd", boom)
-    import pytest
-    with pytest.raises(HarnessError):
+    import pytest, typer
+    # Conflicted without --force fails closed BEFORE the merge call:
+    # PR stays open, worktree/link/remote branch all kept.
+    with pytest.raises(typer.exceptions.Exit):
         cli._cleanup_one("jira:IPG-9", dict(store.load_links()["jira:IPG-9"]),
                          force=False, yes=True, dry_run=False,
                          json_output=True)
@@ -2134,6 +2149,96 @@ def test_migrate_roundtrip_uses_sqlite(isolated_config):
     assert not (d / "links.json").exists()
 
 
+def test_cleanup_picks_latest_open_pr(isolated_config, monkeypatch, capsys):
+    """Newer closed PR must not win over the live open one."""
+    store.record_link("jira:IPG-12", {"issue": "IPG-12", "worktree": "/tmp/wt",
+                                      "branch": "feat/12", "repo": "/tmp/proj",
+                                      "pr_url": "https://github.com/o/r/pull/1"})
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+    monkeypatch.setattr(cli.refs, "fetch_pr_list_for_branch",
+                        lambda tool, branch, cwd=None: [
+                            {"number": 1, "state": "merged",
+                             "created_at": "2026-09-01",
+                             "url": "https://github.com/o/r/pull/1"},
+                            {"number": 2, "state": "open",
+                             "created_at": "2026-09-15",
+                             "url": "https://github.com/o/r/pull/2"},
+                            {"number": 3, "state": "closed",
+                             "created_at": "2026-09-20",
+                             "url": "https://github.com/o/r/pull/3"}])
+    seen = {}
+    def fake_fresh(url, cwd):
+        seen["url"] = url
+        return {"state": "MERGED", "mergeable": "", "merge_state": ""}
+    monkeypatch.setattr(cli, "_fresh_pr_state", fake_fresh)
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/12"})
+    monkeypatch.setattr("workagent.cli.run_cmd", lambda *a, **k: "")
+    out = cli._cleanup_one("jira:IPG-12", dict(store.load_links()["jira:IPG-12"]),
+                           force=False, yes=True, dry_run=False,
+                           json_output=True, merge=False)
+    assert seen["url"] == "https://github.com/o/r/pull/2"
+    assert "latest for branch" in capsys.readouterr().err
+    assert out["remote_deleted"] is True
+
+
+def test_cleanup_force_conflict_closes_and_deletes_remote(isolated_config, monkeypatch, capsys):
+    """Rule 3: --force on a conflicted PR merges-fails → closes → deletes remote."""
+    from workagent.errors import HarnessError
+    store.record_link("jira:IPG-13", {"issue": "IPG-13", "worktree": "/tmp/wt",
+                                      "branch": "feat/13", "repo": "/tmp/proj",
+                                      "pr_url": "https://github.com/o/r/pull/13"})
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    closed = []
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: closed.append(True))
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (
+                            url, {"state": "OPEN", "mergeable": "CONFLICTING",
+                                  "merge_state": "DIRTY"}, False))
+    def boom(*a, **k):
+        if "--delete" in str(a):
+            return ""
+        raise HarnessError("merge conflict")
+    monkeypatch.setattr("workagent.cli.run_cmd", boom)
+    out = cli._cleanup_one("jira:IPG-13", dict(store.load_links()["jira:IPG-13"]),
+                           force=True, yes=True, dry_run=False,
+                           json_output=True)
+    assert closed  # PR was closed after the failed merge
+    assert "closed instead" in capsys.readouterr().err
+    assert out["remote_deleted"] is True
+
+
+def test_cleanup_404_close_keeps_remote_and_link(isolated_config, monkeypatch):
+    """Rule 2: close on a 404 PR keeps the remote branch and the link."""
+    from workagent.errors import HarnessError
+    import pytest, typer
+    store.record_link("jira:IPG-14", {"issue": "IPG-14", "worktree": "/tmp/wt",
+                                      "branch": "feat/14", "repo": "/tmp/proj",
+                                      "pr_url": "https://github.com/o/r/pull/404"})
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (url, None, False))
+    def boom(parsed, url, force, cwd=None):
+        raise HarnessError("gh pr close failed: 404 Not Found")
+    monkeypatch.setattr(cli, "_close_pr", boom)
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    with pytest.raises(typer.exceptions.Exit):
+        cli._cleanup_one("jira:IPG-14", dict(store.load_links()["jira:IPG-14"]),
+                         force=False, yes=True, dry_run=False,
+                         json_output=True, merge=False)
+    assert "jira:IPG-14" in store.load_links()
+
+
 def test_cleanup_unknown_pr_state_closes_without_merge(isolated_config, monkeypatch):
     store.record_link("jira:IPG-10", {"issue": "IPG-10", "worktree": "/tmp/wt",
                                       "branch": "feat/10", "repo": "/tmp/proj",
@@ -2145,12 +2250,13 @@ def test_cleanup_unknown_pr_state_closes_without_merge(isolated_config, monkeypa
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: calls.append("close"))
     monkeypatch.setattr(cli, "_status_cells",
                         lambda entry, refresh_pr=False: {"pr_data": {"state": ""}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr", lambda branch, url, cwd, tool=None: (url, None, False))
     monkeypatch.setattr("workagent.cli.run_cmd",
                         lambda *a, **k: calls.append("merge") or "")
-    cli._cleanup_one("jira:IPG-10", dict(store.load_links()["jira:IPG-10"]),
-                     force=False, yes=True, dry_run=False, json_output=True)
-    assert "merge" not in calls
+    out = cli._cleanup_one("jira:IPG-10", dict(store.load_links()["jira:IPG-10"]),
+                           force=False, yes=True, dry_run=False, json_output=True)
     assert "close" in calls
+    assert out["remote_deleted"] is False  # unknown state keeps remote branch
 
 def test_close_pr_treats_merged_mr_as_closed(isolated_config, monkeypatch, capsys):
     """`glab mr close` on a merged MR must not abort cleanup (run eb420c1bb14d)."""
@@ -2187,10 +2293,23 @@ def test_cleanup_merged_state_skips_remote_close(isolated_config, monkeypatch, c
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: calls.append("close"))
     monkeypatch.setattr(cli, "_status_cells",
                         lambda entry, refresh_pr=False: {"pr_data": {"state": "merged"}})
-    cli._cleanup_one("jira:IPG-11", dict(store.load_links()["jira:IPG-11"]),
-                     force=False, yes=True, dry_run=False, json_output=True)
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (
+                            url, {"state": "MERGED", "mergeable": "",
+                                  "merge_state": ""}, False))
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/11"})
+    pushes = []
+    def fake_run(*a, **k):
+        pushes.append(a)
+        return ""
+    monkeypatch.setattr("workagent.cli.run_cmd", fake_run)
+    out = cli._cleanup_one("jira:IPG-11", dict(store.load_links()["jira:IPG-11"]),
+                           force=False, yes=True, dry_run=False, json_output=True)
     assert "close" not in calls
     assert "skipping remote close" in capsys.readouterr().err
+    assert out["remote_deleted"] is True  # merged source branch is deleted
+    assert any("--delete" in str(c) for c in pushes)
 
 
 def test_close_issue_treats_closed_as_success(isolated_config, monkeypatch, capsys):

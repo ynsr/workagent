@@ -879,6 +879,64 @@ def cleanup(
                           squash=not no_squash)
 
 
+def _pr_missing(msg: str) -> bool:
+    """True when a host-CLI error means the PR/MR is gone (404/not found)."""
+    msg = (msg or "").lower()
+    return ("404" in msg or "not found" in msg or "could not resolve" in msg
+            or "couldn't find" in msg or "could not find" in msg)
+
+
+def _pr_conflicted(fresh: dict | None) -> bool:
+    """True when fresh merge state reports destination-branch conflicts."""
+    if not fresh:
+        return False
+    vals = " ".join(str(fresh.get(k) or "") for k in
+                    ("mergeable", "merge_state")).lower()
+    return any(t in vals for t in ("conflict", "dirty", "cannot_be_merged",
+                                   "cannot be merged", "unmergable"))
+
+
+def _fresh_pr_state(pr_url: str, host_cwd: str) -> dict | None:
+    """Fresh PR/MR state (never cached); None on lookup failure (warned)."""
+    if not pr_url:
+        return None
+    try:
+        return refs.fetch_pr_merge_state(pr_url, cwd=host_cwd)
+    except HarnessError as e:
+        eprint(f"warning: cannot read PR/MR state for {pr_url}: {e}")
+        return None
+
+
+def _resolve_branch_pr(branch: str, recorded_url: str, host_cwd: str,
+                       tool: str | None = None) -> tuple[str, dict | None, bool]:
+    """(pr_url, fresh, picked) for a source branch.
+
+    Lists every PR/MR sourced from *branch* and picks the latest open,
+    else the latest overall. Falls back to the recorded URL (fresh lookup)
+    when the list lookup fails or is empty. `picked` is True
+    when the URL came from the branch list rather than the recorded link.
+    """
+    if branch:
+        tools = ([tool] if tool in ("gh", "glab") else []) + ["gh", "glab"]
+        seen: set[str] = set()
+        for t in tools:
+            if t in seen:
+                continue
+            seen.add(t)
+            try:
+                prs = refs.fetch_pr_list_for_branch(t, branch, cwd=host_cwd)
+            except HarnessError as e:
+                eprint(f"warning: {t} pr lookup failed for {branch}: {e}")
+                continue
+            picked = refs.pick_branch_pr(prs)
+            if picked and picked.get("url"):
+                url = picked["url"]
+                return url, _fresh_pr_state(url, host_cwd), url != recorded_url
+            if prs:
+                break
+    return recorded_url, (_fresh_pr_state(recorded_url, host_cwd) if recorded_url else None), False
+
+
 def _merge_pr(pr_url: str, squash: bool, cwd: str | None = None) -> None:
     """Merge an open PR/MR (squash default); raise HarnessError on failure.
 
@@ -950,7 +1008,21 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
                 "merge": pr_url or ""}
     state = (_status_cells(dict(entry), refresh_pr=False).get("pr_data")
              or {}).get("state", "")
+    tool = _repo_tool(str(repo))
+    recorded_url = pr_url
+    pr_url, fresh, picked = _resolve_branch_pr(branch, recorded_url, host_cwd,
+                                               tool=tool)
+    if picked:
+        eprint(f"note: acting on {pr_url} (latest for branch {branch}).")
+    fresh_state = ((fresh or {}).get("state") or "").lower()
+    # A 404 on the fresh lookup means the cached row is stale but the host
+    # PR is gone; fall back to cached state unless it is explicitly open.
+    if fresh is None and state.lower() not in ("open", "opened"):
+        fresh = {"state": state}
+        fresh_state = (state or "").lower()
+    conflicted = _pr_conflicted(fresh)
     merged_now = False
+    remote_deleted = False
     if merge is None:
         # Merge only on explicitly open states; unknown ("") falls back
         # to close-and-remove so offline/cache-miss cleanup still works.
@@ -962,9 +1034,30 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
     # back to the server cwd — an unrelated checkout — failing with
     # "no git remote points to a known host" (IPG-953). Merge failures
     # raise BEFORE teardown — nothing is torn down on a failed merge.
+    open_states = ("open", "opened")
+    if (not force and pr_url and fresh_state in open_states and conflicted):
+        # Rule 2: conflicted PR stays open; nothing is torn down.
+        _fail(f"{pr_url} conflicts with its destination branch — remote branch kept.\n"
+              "  Resolve the conflict on the host, then re-run cleanup.",
+              EXIT_GENERAL)
     if merge:
-        _merge_pr(pr_url, squash=squash, cwd=host_cwd)
-        merged_now = True
+        try:
+            _merge_pr(pr_url, squash=squash, cwd=host_cwd)
+        except HarnessError as e:
+            if force and not _pr_missing(str(e)):
+                # Rule 3: --force merge failed (e.g. conflicts) → close,
+                # then still tear down locally and delete the remote branch.
+                _close_issue(parsed, force)
+                _close_pr(parsed, pr_url, force=True, cwd=host_cwd)
+                eprint(f"note: {pr_url} could not be merged ({e}); closed instead.")
+                merged_now = False
+                fresh_state = "closed"
+            else:
+                # 404/conflict without --force: PR stays open, user notified
+                # via the raised error; nothing is torn down below.
+                raise
+        else:
+            merged_now = True
     else:
         _close_issue(parsed, force)
         if state_norm in ("merged", "closed"):
@@ -972,21 +1065,57 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
             # "already been merged"), so skip straight to local teardown.
             eprint(f"note: {pr_url} already {state_norm}; skipping remote close.")
         else:
-            _close_pr(parsed, pr_url, force, cwd=host_cwd)
-    cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=True,
+            try:
+                _close_pr(parsed, pr_url, force, cwd=host_cwd)
+            except HarnessError as e:
+                if _pr_missing(str(e)):
+                    # 404: host PR is gone; keep the remote branch and the
+                    # link so nothing is lost silently.
+                    _fail(f"{pr_url} not found on the host (404) — remote branch kept.\n"
+                          "  Re-run with the branch deleted manually once confirmed.",
+                          EXIT_GENERAL)
+                raise
+    # git-wt only removes the local branch (delete_branch=False below):
+    # remote deletion is workagent's call. Rule 1: delete the remote branch
+    # iff the PR/MR merged with this branch as its source (merged here, or
+    # already-merged for this branch, verified via head_ref). Rule 3: --force
+    # on a merged/just-closed PR still deletes the recorded remote branch.
+    # Open/conflicted/404 PRs keep their remote branch.
+    head_ref = ""
+    if pr_url and (merged_now or fresh_state == "merged"):
+        try:
+            head_ref = (refs.fetch_pr_info(refs.parse_ref(pr_url),
+                                           cwd=host_cwd).get("head_ref") or "")
+        except HarnessError as e:
+            eprint(f"warning: cannot verify PR head branch for {pr_url}: {e}")
+            head_ref = branch if merged_now else ""
+    delete_remote = bool(branch) and (merged_now or fresh_state == "merged") \
+        and (not head_ref or head_ref == branch)
+    if force and not delete_remote and pr_url and (merged_now or fresh_state in ("merged", "closed")):
+        delete_remote = True
+    cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=False,
                                      force=force, yes=yes)
-    if merged_now:
+    try:
+        run_cmd("git", "-C", str(repo), "branch", "-D", branch)
+        cleanup.setdefault("actions", []).append(f"deleted local branch {branch}")
+    except HarnessError:
+        pass
+    if delete_remote:
         # Remote branch goes LAST: local cleanup already succeeded.
         try:
             run_cmd("git", "-C", str(repo), "push", "origin",
                     "--delete", branch)
+            remote_deleted = True
         except HarnessError as e:
             eprint(f"warning: remote branch delete failed: {e}")
     remaining = {k: v for k, v in store.load_links().items() if k != key}
     store.save_links(remaining)
     if not json_output:
-        eprint(f"{key}: cleaned")
-    return {"key": key, "branch": branch, "status": "cleaned", "cleanup": cleanup}
+        tail = " (remote branch deleted)" if remote_deleted \
+            else " (remote branch kept)"
+        eprint(f"{key}: cleaned{tail}")
+    return {"key": key, "branch": branch, "status": "cleaned", "cleanup": cleanup,
+            "remote_deleted": remote_deleted}
 
 
 def _close_issue(parsed: dict, force: bool) -> None:

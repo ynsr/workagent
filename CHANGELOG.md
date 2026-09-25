@@ -1,5 +1,11 @@
 # Changelog
 ## Unreleased
+- Cleanup remote-branch rules: the remote branch is deleted only when the
+  branch's PR/MR merged with it as source (latest open PR/MR wins,
+  else latest overall; head_ref verified). 404/conflicted PRs stay open —
+  nothing is torn down and the user is told to resolve the conflict first.
+  `--force` merges first, closes when merge is impossible, and always
+  deletes the remote branch afterwards (merge/close notified).
 - Issue #32: GitHub Reviews detection now counts plain (non-inline)
   `# Code Review` bot comments as resolved only when their second non-empty
   line (below the header) is exactly `Status: RESOLVED` (GitHub-only; GitLab MRs keep native
