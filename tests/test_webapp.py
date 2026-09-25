@@ -932,3 +932,9 @@ def test_status_endpoint_refresh_fetches(client, isolated_config, tmp_path, monk
     r = client.get("/api/status")
     assert r.status_code == 200, r.text
     assert not [a for a in git_calls if "fetch" in a]  # no fetch without refresh
+
+def test_resume_run_unknown_is_404_not_500(client):
+    """POST /api/runs/<unknown>/resume -> 404 JSON (never bare 500)."""
+    r = client.post("/api/runs/does-not-exist-123/resume")
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "not_found"

@@ -465,14 +465,12 @@ def _open_terminal(worktree: str, session_file: str) -> None:
         argv = ["cmd", "/c", "start", "", "cmd", "/k", cmd]
     else:
         term = os.environ.get("TERMINAL", "")
+        has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
         candidates = ([term] if term else []) + [
-            "xdg-terminal-exec", "gnome-terminal", "konsole",
-            "xfce4-terminal", "xterm"]
+            "gnome-terminal", "konsole", "xfce4-terminal", "xterm"]
         for t in candidates:
             if t and shutil.which(t):
-                if t == "xdg-terminal-exec":
-                    argv = [t, "bash", "-lc", cmd]
-                elif t == "gnome-terminal":
+                if t == "gnome-terminal":
                     argv = [t, "--", "bash", "-lc", cmd]
                 elif t == "konsole":
                     argv = [t, "-e", "bash", "-lc", cmd]
@@ -480,11 +478,15 @@ def _open_terminal(worktree: str, session_file: str) -> None:
                     argv = [t, "-e", f"bash -lc {shlex.quote(cmd)}"]
                 break
         else:
+            if not has_display:
+                raise ApiError("no_display",
+                               "the server has no graphical session (no $DISPLAY/"
+                               "$WAYLAND_DISPLAY) — copy the resume command instead", 500)
             raise ApiError("no_terminal",
                            "no terminal emulator found (set $TERMINAL)", 500)
     try:
         subprocess.Popen(argv, **kwargs)
-    except FileNotFoundError as e:
+    except (FileNotFoundError, OSError, PermissionError) as e:
         raise ApiError("no_terminal", f"terminal spawn failed: {e}", 500)
 
 
@@ -743,6 +745,7 @@ def create_app(static_dir: Path, host: str, port: int,
         Non-destructive (same class as `open`): no confirm needed. 404 when
         the run executed no runtime session or the transcript is missing.
         """
+        # 404 not_found when unknown (e.g. server restarted since the run).
         run = registry.get(run_id)
         session_file = run.session_file \
             or _session_file_arg(run.command, run.args)
