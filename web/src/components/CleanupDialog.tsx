@@ -13,8 +13,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 
 /**
- * Remove-worktree ("cleanup") confirmation with a live comparison table.
- * Local `force` state drives the Effective column, so toggling --force
+ * Remove-worktree ("cleanup") confirmation with a live outcome table.
+ * Local `force` state drives the "What happens" column, so toggling --force
  * updates the table instantly (a shared confirm() extras node would be a
  * stale snapshot captured at open time).
  */
@@ -32,35 +32,26 @@ export function CleanupDialog({
   const [json, setJson] = useState(false)
   const effectiveForce = (invalid || force) && !dryRun
 
-  const rows: [string, string, string][] = invalid
-    ? [["State check", "Runs", "Skipped"]]
+  const rows: [string, string][] = invalid
+    ? [["State check", "Skipped — entry is removed either way"]]
     : [
         [
-          "Conflicted PR (no --force)",
-          "Aborts — nothing is torn down",
-          effectiveForce ? "Skipped — merge attempted" : "Aborts (exit 1)",
-        ],
-        [
           "Mergeable PR",
-          "Squash-merge, then delete remote branch",
-          "Squash-merge, then delete remote branch",
+          "Squash-merge, then delete the remote branch",
         ],
         [
-          "Unmergeable PR + --force",
-          "—",
+          "Conflicted PR",
           effectiveForce
-            ? "Left open, remote kept, rest cleaned"
-            : "Aborts (exit 1)",
+            ? "Merge attempted — left open, remote kept, rest cleaned"
+            : "Aborts (exit 1) — nothing is torn down",
         ],
         [
           "Merged PR",
-          "Local cleanup, delete remote branch",
-          "Local cleanup, delete remote branch",
+          "Local cleanup, then delete the remote branch",
         ],
         [
-          "404 PR on close",
-          "Aborts — link and remote kept",
-          "Aborts — link and remote kept",
+          "PR missing on host (404)",
+          "Aborts — link and remote branch kept",
         ],
       ]
 
@@ -84,8 +75,8 @@ export function CleanupDialog({
             <div className="overflow-x-auto rounded-md border">
               <table className="w-full min-w-130 text-left text-sm">
                 <caption className="px-3 pt-2 text-left text-xs font-medium text-muted-foreground">
-                  Cleanup vs --force
-                  {effectiveForce ? " — showing --force behavior" : ""}
+                  What will happen
+                  {effectiveForce ? " with --force" : " without --force"}
                 </caption>
                 <thead>
                   <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
@@ -93,21 +84,17 @@ export function CleanupDialog({
                       Situation
                     </th>
                     <th scope="col" className="px-3 py-2 font-medium">
-                      Cleanup
-                    </th>
-                    <th scope="col" className="px-3 py-2 font-medium">
-                      With --force
+                      What happens
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map(([situation, plain, forced]) => (
+                  {rows.map(([situation, outcome]) => (
                     <tr key={situation} className="border-b align-top last:border-0">
                       <th scope="row" className="px-3 py-2 font-medium">
                         {situation}
                       </th>
-                      <td className="px-3 py-2 text-muted-foreground">{plain}</td>
-                      <td className="px-3 py-2">{forced}</td>
+                      <td className="px-3 py-2">{outcome}</td>
                     </tr>
                   ))}
                 </tbody>
