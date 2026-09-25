@@ -801,6 +801,11 @@ def _start_mocks(monkeypatch, repo_dir):
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     monkeypatch.setattr(cli.refs, "fetch_issue",
                         lambda parsed: {"title": "Add login", "body": "Details here"})
+    # Hermetic regardless of where pytest runs: pin the cwd seam so a
+    # feature-branch checkout can't flip start into cwd_mode (which takes
+    # the branch= path and never passes link=/issue=/slug=).
+    monkeypatch.setattr(cli.repos, "repo_root", lambda cwd=None: None)
+    monkeypatch.setattr(cli.repos, "worktree_branch", lambda path: None)
 
 def test_start_passes_github_issue_url_to_git_wt(isolated_config, tmp_path, monkeypatch):
     """Shorthand refs must reach git-wt --link as full issue URLs (issue #22)."""
@@ -910,10 +915,6 @@ def test_start_base_default_branch_still_creates_new_branch(isolated_config, tmp
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     _start_mocks(monkeypatch, repo_dir)
-    # Hermetic regardless of where pytest runs: pin the cwd seam so a
-    # feature-branch checkout can't flip start into cwd_mode.
-    monkeypatch.setattr(cli.repos, "repo_root", lambda cwd=None: None)
-    monkeypatch.setattr(cli.repos, "worktree_branch", lambda path: None)
     calls = {}
 
     def fake_start_worktree(repo, **kw):
@@ -1656,8 +1657,6 @@ def test_start_refused_while_harness_live(isolated_config, tmp_path, monkeypatch
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     _start_mocks(monkeypatch, repo_dir)
-    monkeypatch.setattr(cli.repos, "repo_root", lambda cwd=None: None)
-    monkeypatch.setattr(cli.repos, "worktree_branch", lambda path: None)
     monkeypatch.setattr(cli.store, "active_harness",
                         lambda key: {"harness": "omp", "pid": 99999, "started_at": 1.0})
     launched = []
@@ -1689,8 +1688,6 @@ def test_start_no_runtime_not_guarded_when_busy(isolated_config, tmp_path, monke
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     _start_mocks(monkeypatch, repo_dir)
-    monkeypatch.setattr(cli.repos, "repo_root", lambda cwd=None: None)
-    monkeypatch.setattr(cli.repos, "worktree_branch", lambda path: None)
     monkeypatch.setattr(cli.store, "active_harness",
                         lambda key: {"harness": "omp", "pid": 99999, "started_at": 1.0})
     launched = []
