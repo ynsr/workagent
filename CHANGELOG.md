@@ -1,4 +1,110 @@
 # Changelog
+## Unreleased
+- Dashboard review counts on GitLab: only resolvable review threads count
+  toward unresolved/resolved — system/activity discussions ("added N
+  commits", "marked as draft", individual notes) are excluded, matching
+  GitLab's own UI counter.
+- cleanup: GitHub merges pass an explicit `--squash` strategy (`gh pr merge`
+  requires one non-interactively); `--no-squash` maps to `gh --merge`.
+- start/review/sync: a new PR/MR (not already registered) creates a git
+  worktree on the fetched source branch and records it under the branch
+  name (pr_url kept on the row). `start` accepts PR/MR refs directly;
+  `sync` creates the worktree first, then syncs it. `_ensure_local_branch`
+  fetches from origin before materializing a remote-only branch so a
+  freshly-pushed source branch is found even with a stale local mirror.
+- Cleanup remote-branch rules: the remote branch is deleted only when the
+  branch's PR/MR merged with it as source (latest open PR/MR wins,
+  else latest overall; head_ref verified). 404/conflicted PRs stay open —
+  nothing is torn down and the user is told to resolve the conflict first.
+  `--force` merges first; when merge is impossible the PR is left open and
+  the remote branch kept while everything else is cleaned up (notified).
+- Remove-worktree modal: new live Cleanup-vs---force comparison table (mergeable / conflicted / merged / 404 rows) that follows the --force checkbox; all modal shells widened to 2xl with scroll caps to stop text overflow.
+- Issue #32: GitHub Reviews detection now counts plain (non-inline)
+  `# Code Review` bot comments as resolved only when their second non-empty
+  line (below the header) is exactly `Status: RESOLVED` (GitHub-only; GitLab MRs keep native
+  flags). New `review --fix-comments` (per-worktree and `--all`,
+  exclusive with `--fix`/`--post-comments`) launches a fix agent that
+  validates each open comment against code + PR/MR description, applies,
+  resolves/closes (appending the marker line on GitHub), then commits and
+  pushes. Dashboard gains a per-row Fix action (wrench icon) and a
+  "Fix all PR comments" top-bar button, both routed via Launch review
+  mode (`fixComments=1` prefill) + `--fix-comments` checkbox.
+- Issue #28: Dashboard worktree table gains a Reviews R|U|R column (done
+  `# Code Review` comments | unresolved threads | resolved threads, cached
+  10 min by branch tip like CI) in the table, mobile cards, worktree
+  detail, and `status --json/--csv`; `review --all` skips worktrees without
+  a PR/MR, with a live harness, or with unresolved PR comments — new
+  `--force-all` re-includes already-reviewed and unresolved worktrees.
+- Cleanup merged: the glab branch query now passes `--all` so merged/closed
+  MRs are found (previously only open MRs listed, so a merged MR like #1720
+  reported `skipped:no-pr`); the merged/closed state compare is
+  case-insensitive (`merged` from the normalizer now matches `MERGED`).
+- Issue #29: `start`/`review` with no `--repo` when the ref's tracker is
+  linked to multiple repos now errors (exit 2 CLI, 400 `repo_ambiguous`
+  via `/api/runs` — never a Run-logs surprise); the Launch form blocks
+  submit and disables Launch until a repo is picked when no default
+  resolves. Single-repo and linked-worktree defaults are unchanged.
+  per distinct repo before recomputing, so Behind/Ahead and PR lookups see
+- Web `repo remove`: pre-run 400 `{code: "worktrees_exist"}` when the repo
+  still has linked worktrees; `force: true` appends `--force` and cascades
+  them. Repos page remove dialog gains a `--force` checkbox.
+- Status Behind/Ahead now uses the MR/PR target branch as the base: a
+  cached base that disagrees with the PR's `target_branch` is treated as
+  stale and recomputed, and fresh queries prefer the target branch over
+  repo default-branch detection (fixes `0|0` for GitLab MRs targeting
+  e.g. `develop`). Status rows served from a healed cache stay stable.
+- Fix `repo remove` AttributeError: missing `store_sqlite.remove_repo_row`
+  (lost in the SQLite cutover) restored; `register_repo_row_unlinked` no
+  longer deletes the repo row via a spliced-in stray body.
+- `repo remove` refuses while linked worktrees exist (exit 2, names the
+  count); `--force` cascades them. Web passes `--force` on forced runs.
+
+- Rename project to workagent (Fix #25): package `src/harness` →
+  `src/workagent`, binary `harness` → `workagent`, config
+  `~/.config/harness` → `~/.config/workagent` (one-shot auto-migration of
+  the legacy dir on first run), receipt `~/.local/share/workagent/`,
+  `_HARNESS_COMPLETE` → `_WORKAGENT_COMPLETE`, `HARNESS_CONFIG_DIR` →
+  `WORKAGENT_CONFIG_DIR`. Completions install strips pre-rename marker
+  blocks. No `harness` shim (hard cutover).
+- Fix web arg inventory drift found during the rename: `review
+  --post-comments`, `sync --force/-y`, `register -y` added; `sync
+  --harness` corrected from value flag to bool. New parity test
+  `test_specs_mirror_cli_flags` introspects the real Typer app and fails
+  on future drift.
+- Drop the Actions column from the Dashboard/Links worktree tables:
+  action buttons now render as a right-anchored overlay on the last
+  column (hover/focus reveal on fine pointers, always visible on touch).
+- Fix PR/MR links pointing at the dev-server origin (e.g.
+  `http://127.0.0.1:3344/MR%20#1695%20(open)`): the backend `pr` cell is a
+  display label, not a URL — the table, mobile cards, and worktree detail
+  now link `pr_detail.url` via a shared `prUrl()` helper.
+- Animate worktree row detail open/close (~160ms grid-rows + fade/slide;
+  `motion-reduce` skips it).
+- Make `trackers.remote_url` mandatory with a real value: every required
+  column across all state.db tables is now `NOT NULL` with no DEFAULT
+  (legacy `DEFAULT ''` tables are rebuilt in place; legacy blank values
+  are backfilled with derived URLs / timestamps), and
+  `tracker add --remote-url` is required — no key-derived fallback.
+- Make `trackers.vendor` a closed enum: `jira` | `github` (`--vendor`
+  outside the enum is a usage error; legacy `gitlab`/`unknown`/blank
+  vendors migrate to an enum member — gitlab maps to the
+  github-compatible vendor). The web Add-Tracker Vendor field is now a
+  searchable dropdown with those two options.
+- Promote the trackers table (schema v2): `trackers` gains mandatory
+  `vendor` + `remote_url` (NOT NULL, derived from the key when blank —
+  jira:PREFIX → jira site/browse URL, github:O/R → github.com URL,
+  gitlab:host/g/r → host URL), `repos.tracker_key` is dropped (mapping
+  lives only in `tracker_repos.tracker_key → trackers.key_ref`), and
+  legacy DBs migrate in place on `init_db`. New CLI `tracker
+  add/list/remove` (+ web Trackers page `GET /api/trackers`, nav, run
+  types) with full CRUD parity; `repo list` shows joined `trackers`,
+  `link list` shows vendor/remote_url.
+- Ignore the CWD as default repo (Fix #26): trackers + repos now live in
+  `state.db` (`trackers`/`repos`/`tracker_repos`, migrated from
+  `config.json` with `tracker_key` backfilled from the origin remote);
+  `start`/`review` reuse the linked-worktree repo, else the single linked
+  repo, else prompt (no CWD default; headless aborts with `--repo` usage);
+  Launch prefills the repo default via `GET /api/default-repo?ref=`.
 ## 0.2.1 — 2026-09-18
 
 - Fix Tab completion: typer 0.27 never registers its shell completion
@@ -16,20 +122,72 @@
   + `completions install [shell] [--rcfile] [--yes]` (idempotent marker block,
   atomic write, .bak, stale-block replace); replaces `completion`/
   `completion-install`. Repo names complete on `--repo` and `repo remove`.
-- `install.sh` installs harness itself (uv preferred, pipx fallback) and
+- `install.sh` installs workagent itself (uv preferred, pipx fallback) and
   derives the cli-hub `--version` from `pyproject.toml`.
 - Fixed `review` reading `--dry-run` without defining the flag.
 
-## Unreleased
-- Fix `review` crashing on an already-recorded worktree with
-  `UNIQUE constraint failed: worktrees.branch`: review recorded its
-  state under a fresh `pr:<url>` row sharing the same `branch`/`path`
-  as the existing row (`worktrees.branch/path` are UNIQUE). Review now
-  keys its link by the row already on disk (`worktrees.recorded_key`,
-  exact match on the UNIQUE branch then path) and stamps `pr_url`/
-  `reviewed` there — a genuinely new worktree is still keyed
-  `pr:<url>`; this also fixes the session FK (`sessions.worktree_ref`)
-  to reference the real row.
+- Fix #22: `start` passes full GitHub issue URLs to `git-wt --link`
+  (shorthand `OWNER/REPO#N` built `github:OWNER/REPO#N`, which git-wt
+  rejects); `register --issue` records the full URL likewise. `review`
+  rejects ambiguous shorthand refs with a PR/MR-URL hint instead of
+  recording a non-URL `pr_url`.
+- Fix #23: `start --yes` (incl. web Launch runs) no longer adopts an
+  unlinked cwd repo when linked repos exist — the serve cwd is unrelated
+  to the issue, so the established link wins instead of silently filing
+  e.g. a personal-checkout path under `jira:IPG`.
+- Fix #24: Launch Start/Review default to `--no-runtime` (print the
+  runtime command for manual execution); `--no-runtime` previews are
+  `cd <worktree> && …` copy-paste runnable with a `--resume` session path
+  (server injects `--session-file` even for `--no-runtime`, creating
+  nothing) and the Run page gains a Copy-runtime-command button; finished
+  start runs resolve their worktree from links for resume/copy.
+- Fix #17: dashboard PR/MR label links to the absolute URL; row actions
+  hidden until hover (touch/keyboard unaffected) with a history button
+  deep-linking the Sessions page (`?worktree=` filter); remote-call/TTL
+  cost panel under the dashboard table.
+- Fix #18: Sessions page gains a Title column (humanized branch, 50 chars),
+  a searchable worktree filter dropdown (+ text filter), and a Kind column
+  (Start (task)/Review/Sync from the initiator command).
+- Fix #20: Dashboard/Links/Runs/Sessions gain per-repo tabs (`?repo=`,
+  repo name = tab title) grouped by registered repo path; sessions resolve
+  worktree refs via links, non-matching items under `(other)`.
+- Fix #17 (follow-up): PR-status cache TTL extended 3h → 3d; no-PR
+  negative cache stays 30min. `_merge_pr` tolerates already-merged/closed
+  (cached OPEN state can lag up to 3d); Sessions `?q=` also matches Title.
+- Fix cleanup on merged MRs: `glab mr close` fails with "already been
+  merged" (not "already closed"), which aborted cleanup before tearing
+  down the worktree — now treated like an already-closed MR. Cleanup also
+  skips the remote close entirely when cached PR state is already
+  merged/closed, and `gh issue close` tolerates already-closed/missing
+  issues instead of aborting.
+- Fix #16: `parse_ref` accepts the `jira:KEY` form `issue_key()` emits, so
+  web Start runs launched from issue dropdown keys (`jira:IPG-984`) parse.
+- Fix #15: stale `--no-harness` (renamed to `--no-runtime` in #14) is
+  rejected by `/api/runs` validation with a hint naming `--no-runtime`;
+  current `--no-runtime`/`-N` already validated (reporter's serve predated
+  the rename — reinstall/rebuild after pulling).
+- Fix #19: `repo add` no longer requires `--tracker` when the origin remote
+  reveals it — GitHub remotes map to `github:OWNER/REPO`, GitLab remotes to
+  `gitlab:<host>/<group>/<repo>`; unknowable remotes still exit 2 with no
+  half-registered repo left behind.
+- Runtime session resume: every real `start`/`review` launch carries a
+  transcript path (`--session-file`, routed to omp as `--resume`; the web
+  server injects one per run). Runs expose `session_file`/`worktree` and
+  resume buttons (terminal + copy `cd <worktree> && omp --resume <file>`)
+  appear on Sessions rows/detail always and on run rows/Run log page only
+  when the run executed a runtime session. New `POST
+  /api/runs/{id}/resume` and `POST /api/sessions/{id}/resume` spawn the OS
+  default terminal detached (`$TERMINAL` → `xdg-terminal-exec` →
+  gnome-terminal/konsole/xfce4-terminal/xterm). `--session-file` is
+  rejected with `--all` (one transcript per worktree — omit it and each
+  launch gets its own file). Rename `--no-harness`
+  (`-N`) → `--no-runtime` everywhere (flag, `runtime_command` result key,
+  messages, docs).
+- `review` reuses a tracked worktree's row instead of inserting a
+  `pr:<url>` alias that collides on the `worktrees.branch` UNIQUE key
+  (crashed re-reviewing tracked worktrees); the row matcher keys on
+  branch identity + normalized path (`worktrees.recorded_key`). The
+  regression test now runs on a real `state.db`.
 - Issue cache + mandatory repo tracker + candidate actions: `issue_cache`
   table (per-source rows, 1h TTL) behind `trackers.list_my_issues(force)`;
   `candidates --reset-cache` clears and re-fetches; `GET /api/issues` and
@@ -38,7 +196,7 @@
   `tracker` column. LinkSet tracker dropdown with URL auto-ref. Candidate
   rows gain Start/Review/Register actions via the run pipeline; `register`
   runs are keyed per path (`register:<path>`).
-- SQLite sessions + cutover: `harness migrate` one-shots
+- SQLite sessions + cutover: `workagent migrate` one-shots
   `links.json`/`pr_cache.json`/`harnesses.json` into `state.db`
   (counts verified, files deleted, `config.json` kept; idempotent re-run
   is a no-op) and all link/PR-cache reads+writes delegate to SQLite
@@ -68,7 +226,7 @@
   (`refs.fetch_ci_status`; soft-fails to null with a stderr warning),
   cached 10 min per branch tip (`store.cache_ci_status` in
   `pr_cache.json`); Rich tables render ✓/✗/●, `-` otherwise.
-- New `harness open <ref>`: open the linked worktree in the OS file
+- New `workagent open <ref>`: open the linked worktree in the OS file
   manager (`xdg-open`/`open`/`explorer`, detached); prints the path on
   stdout, refuses missing/invalid worktrees. Also runnable from the web
   UI (Status table row action) via `POST /api/runs`.
@@ -79,7 +237,7 @@
   "Cleanup merged" bulk button next to "Review all" (`review --all`) and
   "Sync all".
 - **BREAKING**: `GET /api/links` renames the `sessions` key to
-  `worktrees`, and `harness link list --json` renames its `sessions` key
+  `worktrees`, and `workagent link list --json` renames its `sessions` key
   to `worktrees` — same shape, new key. Stored link state is unchanged.
 - Web UX wave: `?q=` search over the status table (URL-synced), first-seen
   `added_at` column (stamped by `store.record_link`, never bumped; default
@@ -199,7 +357,7 @@
   detail panel (PR title/author/URL, counts; `--json` too).
 - Status cache: per-branch entries in `pr_cache.json` (PR, host tool, base
   branch, branch/base tips, counts) are reused while both tips are
-  unchanged and the entry is <3h old — repeat `status` runs skip host-CLI
+  unchanged and the entry is <3d old — repeat `status` runs skip host-CLI
   detection and PR/MR API calls entirely; `--refresh-pr` re-queries the
   PR/MR. gh↔glab mis-detection self-heals (the other CLI is tried and the
   working one is remembered). PR titles with `[` no longer crash Rich

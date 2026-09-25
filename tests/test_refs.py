@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from harness import refs
-from harness.errors import HarnessError
+from workagent import refs
+from workagent.errors import HarnessError
 
 import pytest
 
@@ -30,6 +30,20 @@ def test_gitlab_issue_and_mr():
 def test_shorthand_and_bare_number():
     assert refs.parse_ref("o/r#22")["repo"] == "o/r"
     assert refs.parse_ref("22")["kind"] == "issue_or_pr"
+
+
+def test_shorthand_accepts_tracker_prefixed_repo():
+    """Launch sends tracker-qualified refs like github:o/r#22; the repo
+    field must not keep the tracker prefix (doubled github:github:o/r)."""
+    p = refs.parse_ref("github:ynsr/harness#20")
+    assert p["repo"] == "ynsr/harness" and p["number"] == "20"
+
+
+def test_jira_prefixed_key_round_trip():
+    """issue_key() emits jira:KEY; parse_ref must accept it back (issue #16)."""
+    p = refs.parse_ref("jira:IPG-984")
+    assert p["tool"] == "jira-cli" and p["number"] == "IPG-984"
+    assert refs.issue_key(p) == "jira:IPG-984"
 
 
 def test_unknown_rejected():
@@ -61,17 +75,31 @@ def test_fetch_pr_list_gh(monkeypatch):
 
 
 def test_fetch_pr_list_glab(monkeypatch):
+    """glab branch query must include merged/closed MRs, not just opened (#31)."""
+    seen: list[list[str]] = []
     glab_json = json.dumps([
         {"iid": 1701, "state": "opened", "title": "X",
          "created_at": "2026-09-15T03:01:59Z", "author": {"username": "younes"},
          "web_url": "https://git.jibit.cloud/g/r/-/merge_requests/1701",
          "target_branch": "develop"},
+        {"iid": 1720, "state": "merged", "title": "Y",
+         "created_at": "2026-09-20T03:01:59Z", "author": {"username": "younes"},
+         "web_url": "https://git.jibit.cloud/g/r/-/merge_requests/1720",
+         "target_branch": "develop"},
     ])
-    monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: glab_json)
+    def fake_run(*a, **k):
+        seen.append(list(a))
+        return glab_json
+    monkeypatch.setattr(refs, "run_cmd", fake_run)
     prs = refs.fetch_pr_list_for_branch("glab", "feat/x")
+    assert "--all" in seen[0]
     assert prs == [{"number": 1701, "state": "open", "title": "X",
                     "author": "younes", "created_at": "2026-09-15T03:01:59Z",
                     "url": "https://git.jibit.cloud/g/r/-/merge_requests/1701",
+                    "target_branch": "develop"},
+                   {"number": 1720, "state": "merged", "title": "Y",
+                    "author": "younes", "created_at": "2026-09-20T03:01:59Z",
+                    "url": "https://git.jibit.cloud/g/r/-/merge_requests/1720",
                     "target_branch": "develop"}]
 
 
@@ -80,6 +108,49 @@ def test_latest_pr_picks_newest():
            {"number": 2, "created_at": "2026-09-15"}]
     assert refs.latest_pr(prs)["number"] == 2
     assert refs.latest_pr([]) is None
+
+
+def test_pick_branch_pr_prefers_latest_open():
+    prs = [{"number": 1, "state": "merged", "created_at": "2026-09-01"},
+           {"number": 2, "state": "closed", "created_at": "2026-09-20"},
+           {"number": 3, "state": "open", "created_at": "2026-09-05"},
+           {"number": 4, "state": "open", "created_at": "2026-09-15"}]
+    assert refs.pick_branch_pr(prs)["number"] == 4
+    # Newest closed PR does NOT win while an older open PR exists.
+    assert refs.pick_branch_pr([
+        {"number": 1, "state": "open", "created_at": "2026-09-01"},
+        {"number": 2, "state": "closed", "created_at": "2026-09-20"},
+    ])["number"] == 1
+    # No open PR: latest overall (even merged) identifies the branch fate.
+    assert refs.pick_branch_pr([
+        {"number": 1, "state": "merged", "created_at": "2026-09-01"},
+        {"number": 2, "state": "merged", "created_at": "2026-09-15"},
+    ])["number"] == 2
+    assert refs.pick_branch_pr([]) is None
+
+
+def test_fetch_pr_merge_state_github(monkeypatch):
+    import workagent.refs as r
+    calls = []
+    def fake(*a, **k):
+        calls.append(a)
+        return '{"state": "OPEN", "mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"}'
+    monkeypatch.setattr(r, "run_cmd", fake)
+    out = refs.fetch_pr_merge_state("https://github.com/o/r/pull/9")
+    assert out == {"state": "OPEN", "mergeable": "CONFLICTING",
+                   "merge_state": "DIRTY"}
+    assert "mergeStateStatus" in str(calls)
+
+
+def test_fetch_pr_merge_state_404_surfaces(monkeypatch):
+    import workagent.refs as r
+    from workagent.errors import HarnessError
+    import pytest
+    def fake(*a, **k):
+        raise HarnessError("gh pr view failed: 404 Not Found")
+    monkeypatch.setattr(r, "run_cmd", fake)
+    with pytest.raises(HarnessError, match="404"):
+        refs.fetch_pr_merge_state("https://github.com/o/r/pull/404")
 
 
 def test_issue_url_stored_http_wins():
@@ -218,6 +289,66 @@ def test_fetch_ci_glab_empty_list(monkeypatch):
     assert refs.fetch_ci_status(
         "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo"
     ) == "not_started"
+
+def test_fetch_pr_comment_stats_gh(monkeypatch):
+    """Issue #28: gh counts # Code Review comments + thread resolution.
+
+    Issue #32: plain bot comments without a `Status: RESOLVED` second line
+    count as unresolved (no native resolution state on GitHub comments).
+    """
+    def fake_run(*a, **k):
+        if "graphql" in a:
+            return json.dumps({"data": {"repository": {"pullRequest": {
+                "reviewThreads": {"nodes": [{"isResolved": True},
+                                            {"isResolved": False}]}}}}})
+        return json.dumps({"comments": [
+            {"body": "# Code Review: looks good\nStatus: RESOLVED"},
+            {"body": "  # Code Review follow-up"},
+            {"body": "just a comment"}]})
+    monkeypatch.setattr(refs, "run_cmd", fake_run)
+    assert refs.fetch_pr_comment_stats(
+        "gh", "https://github.com/o/r/pull/9", "/repo") == {
+            "reviews": 2, "unresolved": 2, "resolved": 2}
+
+
+def test_gh_bot_comment_resolved_marker():
+    """Issue #32: only an exact `Status: RESOLVED` second line resolves."""
+    assert refs._gh_bot_comment_resolved("# Code Review: ok\nStatus: RESOLVED")
+    assert refs._gh_bot_comment_resolved("# Code Review: ok\n\n  Status: RESOLVED  \nbody text")
+    assert not refs._gh_bot_comment_resolved("# Code Review: open finding")
+    assert not refs._gh_bot_comment_resolved("# Code Review: ok\nbody\nStatus: RESOLVED")
+    assert not refs._gh_bot_comment_resolved("# Code Review: only header, no second line")
+    assert not refs._gh_bot_comment_resolved("")
+
+
+def test_fetch_pr_comment_stats_glab(monkeypatch):
+    """Issue #28: glab counts # Code Review notes + discussion resolution.
+
+    System/activity notes ("added N commits", …) are individual
+    non-resolvable discussions and must not count as unresolved.
+    """
+    monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: json.dumps([
+        {"resolved": True, "notes": [
+            {"body": "# Code Review: done", "resolved": True,
+             "resolvable": True}]},
+        {"notes": [{"body": "fix this", "resolved": False,
+                    "resolvable": True}]},
+        {"individual_note": True, "notes": [
+            {"system": True, "body": "added 2 commits", "resolvable": False}]},
+    ]))
+    assert refs.fetch_pr_comment_stats(
+        "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo") == {
+            "reviews": 1, "unresolved": 1, "resolved": 1}
+
+
+def test_pr_comment_stats_failure_is_soft(monkeypatch):
+    def boom(*a, **k):
+        raise HarnessError("timeout")
+    monkeypatch.setattr(refs, "run_cmd", boom)
+    assert refs.fetch_pr_comment_stats(
+        "gh", "https://github.com/o/r/pull/9", "/repo") is None
+    assert refs.fetch_pr_comment_stats(
+        "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo") is None
 
 
 # ── fetch_open_prs / pr_key ───────────────────────────────────────────

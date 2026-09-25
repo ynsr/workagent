@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from harness import cli, completions, store
+from workagent import cli, completions, store
 
 runner = CliRunner()
 
@@ -21,7 +21,7 @@ def test_show_nonempty_per_shell(shell):
     r = runner.invoke(cli.app, ["completions", "show", shell])
     assert r.exit_code == 0
     assert r.output.strip()
-    assert "harness" in r.output
+    assert "workagent" in r.output
 
 
 def test_show_unknown_shell_exits_2():
@@ -37,7 +37,7 @@ def test_install_preserves_rc_and_bak(isolated_config, tmp_path):
     assert r.exit_code == 0, r.output
     text = rc.read_text(encoding="utf-8")
     assert "export FOO=1" in text
-    assert completions.START_MARKER.format(prog="harness") in text
+    assert completions.START_MARKER.format(prog="workagent") in text
     assert Path(str(rc) + ".bak").read_text(encoding="utf-8") == "# my config\nexport FOO=1\n"
 
 
@@ -59,7 +59,7 @@ def test_install_replaces_stale_block(isolated_config, tmp_path):
     text = rc.read_text(encoding="utf-8")
     assert text.startswith("keep\n")
     assert "old-eval-line" not in text
-    assert text.count(completions.START_MARKER.format(prog="harness")) == 1
+    assert text.count(completions.START_MARKER.format(prog="workagent")) == 1
 
 
 def test_repo_names_callback_filters_and_tolerates_missing(isolated_config):
@@ -74,8 +74,8 @@ def test_repo_names_callback_filters_and_tolerates_missing(isolated_config):
 
 
 def test_repo_names_callback_missing_store_returns_empty(tmp_path, monkeypatch):
-    from harness import store as _store
-    monkeypatch.setenv("HARNESS_CONFIG_DIR", str(tmp_path / "absent"))
+    from workagent import store as _store
+    monkeypatch.setenv("WORKAGENT_CONFIG_DIR", str(tmp_path / "absent"))
     names = cli.repos.repo_names()
     assert names == []
     cb = completions.complete_names(cli.repos.repo_names)
@@ -87,19 +87,19 @@ def test_runtime_completion_protocol_lists_subcommands(isolated_config):
 
     typer >= 0.27 only registers its shell completion classes while
     building an app with add_completion=True; with add_completion=False
-    the `_HARNESS_COMPLETE=complete_bash` server died with "Shell bash
+    the `_WORKAGENT_COMPLETE=complete_bash` server died with "Shell bash
     not supported." on every keystroke (ble.sh fires it constantly).
     cli.main() now registers the classes; this exercises the real
     subprocess path and asserts stderr stays empty.
     """
     env = {
         **os.environ,
-        "_HARNESS_COMPLETE": "complete_bash",
-        "COMP_WORDS": "harness s",
+        "_WORKAGENT_COMPLETE": "complete_bash",
+        "COMP_WORDS": "workagent s",
         "COMP_CWORD": "1",
     }
     r = subprocess.run(
-        [sys.executable, "-c", "import sys; sys.argv = ['harness', '']; from harness.cli import main; main()"],
+        [sys.executable, "-c", "import sys; sys.argv = ['workagent', '']; from workagent.cli import main; main()"],
         capture_output=True, text=True, env=env,
     )
     assert r.returncode == 0, r.stderr
@@ -109,8 +109,8 @@ def test_runtime_completion_protocol_lists_subcommands(isolated_config):
 
 def test_show_eval_line_discards_server_stderr():
     """The sourced eval line must never let the server print into the shell."""
-    assert "2>/dev/null" in completions.eval_line("harness", "bash")
-    assert "2>/dev/null" in completions.eval_line("harness", "fish")
+    assert "2>/dev/null" in completions.eval_line("workagent", "bash")
+    assert "2>/dev/null" in completions.eval_line("workagent", "fish")
 
 
 def test_base_branch_candidates_merges_local_and_remote(monkeypatch):

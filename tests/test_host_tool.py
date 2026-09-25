@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from harness import cli, repos, store
+from workagent import cli, repos, store
 
 
 def _git_repo(tmp_path, url):
@@ -108,6 +108,7 @@ def test_register_repo_seeds_tool(isolated_config, tmp_path, monkeypatch):
     assert cfg["repos"]["proj"]["tool"] == "glab"
     assert cfg["repos"]["proj"]["remote"] == \
         "https://git.jibit.cloud/server/projectx.git"
+    assert store.load_trackers()["gitlab:git.jibit.cloud/server/projectx"]["repos"] == [str(d)]
 
 
 def test_repo_tool_reuses_persisted_entry(isolated_config, tmp_path, monkeypatch):
@@ -130,9 +131,9 @@ def test_repo_tool_redetects_on_remote_change(isolated_config, tmp_path,
     subprocess.run(["git", "-C", str(d), "remote", "set-url", "origin",
                     "git@github.com:owner/repo.git"], check=True)
     assert cli._repo_tool(str(d)) == "gh"
-    cfg = store.load_config()
-    assert cfg["repos"]["proj"]["tool"] == "gh"
-    assert cfg["repos"]["proj"]["remote"] == "git@github.com:owner/repo.git"
+    row = store.load_repos()["proj"]
+    assert row["tool"] == "gh"
+    assert row["remote"] == "git@github.com:owner/repo.git"
 
 
 def test_repo_tool_unregistered_detected_not_persisted(isolated_config,

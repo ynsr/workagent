@@ -172,7 +172,7 @@ function ConfirmDialog({
 
   return (
     <AlertDialog open onOpenChange={handleOpenChange}>
-      <AlertDialogContent className="max-w-lg">
+      <AlertDialogContent className="max-w-2xl">
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             {pending.destructive ? (

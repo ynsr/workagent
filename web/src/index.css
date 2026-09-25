@@ -4,7 +4,7 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * harness serve — custom palette ("indigo slate").
+ * workagent serve — custom palette ("indigo slate").
  * Deliberately not a stock shadcn base color: cool slate surfaces with a
  * deep-indigo primary, warm amber for warnings, cool red for destructive.
  */

@@ -13,8 +13,36 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-from . import pick, refs, repos, store
+from . import refs, repos, store
 from .errors import HarnessError, run_cmd
+
+
+def default_tracker_for_repo(path: str | Path, tool: str | None = None) -> str:
+    """Best-effort tracker id from a local repo's origin remote.
+
+    GitHub remotes → ``github:OWNER/REPO``; GitLab remotes →
+    ``gitlab:<host>/<group>/<repo>``. ``""`` when the remote is missing
+    or matches neither host CLI.
+    """
+    from . import repos as _repos
+    p = Path(path).expanduser()
+    url = _repos.remote_url(p)
+    if not url:
+        return ""
+    host = _repos._remote_host(url) or ""
+    cli = tool or _repos._detect_host_cli(p)
+    if host == "github.com" or cli == "gh":
+        m = re.match(r"^(?:https?://github\.com/|ssh://(?:[^/@]+@)?github\.com[:/]|[^@]+@github\.com:)([^/]+/[^/]+?)(?:\.git)?/?$", url, re.IGNORECASE)
+        if m:
+            return f"github:{m.group(1)}"
+        return ""
+    if cli == "glab" or host in _repos._known_glab_hosts():
+        m = re.match(r"^(?:[a-z][a-z0-9+.-]*://(?:[^/@]+@)?([^/:?#]+)[:/]|[^/@]+@([^/:]+):)(.+?)(?:\.git)?/?$", url, re.IGNORECASE)
+        if m:
+            repo = re.sub(r"/-/.*$", "", m.group(3)).strip("/")
+            return f"gitlab:{host}/{repo}" if host and repo else ""
+        return ""
+    return ""
 
 
 def normalize_id(raw: str) -> str:
@@ -39,7 +67,6 @@ def normalize_id(raw: str) -> str:
         return s
     return tid or s
 
-
 def tracker_id(parsed: dict) -> str:
     """Derive the tracker id for a parsed ref; ``""`` when unknowable."""
     tool = parsed.get("tool", "")
@@ -54,6 +81,31 @@ def tracker_id(parsed: dict) -> str:
         return f"gitlab:{host}/{repo}" if host else f"gitlab:{repo}"
     return f"github:{repo}"
 
+def _guard_host_scoped_tracker(tid: str, repo: str) -> None:
+    """Refuse to file a repo under a host-scoped tracker it cannot belong to.
+
+    ``github:O/R`` and ``gitlab:host/group/repo`` name their remote; filing
+    a repo whose origin derives a *different* host-scoped tracker is a
+    wrong-repo write — raise exit 2 instead of recording it. ``jira:``
+    prefix trackers are exempt by design: one Jira project spans many
+    repos/hosts, so a GitHub checkout under ``jira:IPG`` can be legitimate.
+    Repos without a derivable remote are left alone (the caller decides).
+    """
+    from .errors import HarnessError
+    if not (tid.startswith(("github:", "gitlab:")) and repo):
+        return
+    try:
+        derived = default_tracker_for_repo(repo)
+    except Exception:
+        return
+    if not derived or derived == tid:
+        return
+    raise HarnessError(
+        f"tracker {tid} does not match repo remote ({derived}).\n"
+        f"  Pass --repo with a repo linked to {tid}, or record {derived} instead.",
+        exit_code=2,
+    )
+
 
 
 def check_or_record(tid: str, repo: str, yes: bool = False, persist: bool = True) -> str:
@@ -63,100 +115,100 @@ def check_or_record(tid: str, repo: str, yes: bool = False, persist: bool = True
     mapping was (or, with ``persist=False``, would be) persisted.
     Raises ``HarnessError`` (exit 2) when the repo differs from the
     stored mapping and the user does not confirm.
+
+    Post-migration the SQLite trackers table is the source of truth
+    (via :func:`store.add_tracker_repo`); pre-migration the same helper
+    dual-writes config.json.
     """
     norm = str(Path(repo).expanduser().resolve()) if repo else repo
     if not tid:
         return "ok"
-    cfg = store.load_config()
-    trackers = cfg.setdefault("trackers", {})
-    entry = trackers.get(tid)
-    if entry is None:
+    _guard_host_scoped_tracker(tid, norm)
+    known = [str(Path(r).expanduser().resolve()) for r in linked_repos(tid)]
+    if not known:
         if persist:
-            trackers[tid] = {"repos": [norm]}
-            store.save_config(cfg)
+            store.add_tracker_repo(tid, norm)
         return "recorded"
-    known = [str(Path(r).expanduser().resolve()) for r in entry.get("repos", [])]
     if norm in known:
         return "ok"
     if yes or _confirm(tid, known, norm):
         if persist:
-            entry.setdefault("repos", []).append(norm)
-            store.save_config(cfg)
+            store.add_tracker_repo(tid, norm)
         return "recorded"
     raise HarnessError("aborted", exit_code=2)
 
 
 def linked_repos(tid: str) -> list[str]:
     """Stored repo paths for *tid* (raw, unnormalized)."""
-    return list(store.load_config().get("trackers", {}).get(tid, {}).get("repos", []))
+    return list(store.load_trackers().get(tid, {}).get("repos", []))
+
+
+def default_repo_for_ref(issue_ref: str) -> str:
+    """Default repo path for *issue_ref* without touching the CWD.
+
+    Rule 1: the issue is already linked to a live worktree → that
+    worktree's repo. Rule 2: the ref's tracker has exactly one linked
+    repo → that repo. Otherwise ``""`` (the caller must ask for `--repo`).
+    """
+    try:
+        parsed = refs.parse_ref(issue_ref)
+        want = refs.issue_key(parsed)
+    except Exception:
+        return ""
+    links = store.load_links()
+    for key, entry in links.items():
+        if key != issue_ref and key != want:
+            continue
+        repo = str((entry or {}).get("repo", ""))
+        if repo:
+            return repo
+    tid = tracker_id(parsed)
+    if not tid:
+        return ""
+    known = linked_repos(tid)
+    if len(known) == 1:
+        return known[0]
+    return ""
 
 
 def resolve_for_tracker(tid: str, explicit: str | None, cwd: Path,
                         depth: int = 7, yes: bool = False,
                         persist: bool = True) -> tuple[Path, str]:
-    """Pick the repo for *tid* following the cwd/linked-repos flow.
+    """Pick the repo for *tid* — never defaulting to the CWD.
 
     1. ``--repo`` given → resolve it, guard via :func:`check_or_record`.
-    2. cwd inside a linked repo (worktrees resolve to main checkout) → use it.
-    3. cwd inside another repo → y/N to use it (No → step 4); non-TTY
-       without ``--yes`` aborts unless cwd is not a repo at all.
-    4. cwd outside any repo → single linked repo wins; multiple → pick;
-       none → type a path/name/URL (TTY) or abort (non-TTY).
-    Returns ``(repo_path, outcome)`` where outcome mirrors
-    :func:`check_or_record`.
+    2. Exactly one repo linked to *tid* → use it (silent auto-select).
+    3. Several linked → usage error naming the candidates (explicit
+       ``--repo`` required, even under ``--yes``/non-TTY).
+    4. None linked → ask for an explicit repo (name/path/URL) with no
+       CWD default; ``--yes``/non-TTY aborts with a usage error.
     """
     if explicit:
-        target = repos.resolve_repo(explicit, cwd, depth=depth)
-        return target, check_or_record(tid, str(target), yes=yes, persist=persist)
-    root = repos.repo_root(cwd)
-    main = None
-    if root is not None:
-        try:
-            main = repos.main_repo_root(root)
-        except HarnessError:
-            main = root
-    if main is None:
-        known = linked_repos(tid)
-        if len(known) == 1:
-            single = repos.resolve_repo(known[0], cwd, depth=depth)
-            eprint_note(f"note: using linked repo {single} for tracker {tid}")
-            return single, check_or_record(tid, str(single), yes=True, persist=persist)
-        if len(known) > 1:
-            return _pick_linked(tid, known, cwd, depth=depth, yes=yes, persist=persist)
-        return _ask_manual(tid, cwd, depth=depth, persist=persist)
-    known_now = [str(Path(rr).expanduser().resolve()) for rr in linked_repos(tid)]
-    if str(main.expanduser().resolve()) in known_now:
-        return main, "ok"
-    # Cwd repo not linked: y/N to use it; "no" falls through to linked repos.
-    if _confirm_use_cwd(tid, known_now, str(main), yes=yes):
-        return main, check_or_record(tid, str(main), yes=True, persist=persist)
-    known = linked_repos(tid)
+        repo = repos.resolve_repo(explicit, cwd, depth=depth)
+        return repo, check_or_record(tid, str(repo), yes=yes, persist=persist)
+    known = [str(Path(r).expanduser()) for r in linked_repos(tid)]
     if len(known) == 1:
-        single = repos.resolve_repo(known[0], cwd, depth=depth)
-        eprint_note(f"note: using linked repo {single} for tracker {tid}")
-        return single, check_or_record(tid, str(single), yes=True, persist=persist)
+        return Path(known[0]).expanduser(), "ok"
     if len(known) > 1:
         return _pick_linked(tid, known, cwd, depth=depth, yes=yes, persist=persist)
+    if yes or not _is_tty():
+        from .errors import HarnessError
+        raise HarnessError(
+            f"tracker {tid} has no linked repo — pass --repo <name|path|URL>.",
+            exit_code=2)
     return _ask_manual(tid, cwd, depth=depth, persist=persist)
 
 
 def _pick_linked(tid: str, known: list[str], cwd: Path, depth: int = 7,
                  yes: bool = False, persist: bool = True) -> tuple[Path, str]:
     """Step 3B: choose one of several linked repos."""
-    if not _is_tty():
-        raise HarnessError(
-            f"tracker {tid} is linked to multiple repos: {', '.join(known)}.\n"
-            "  Re-run with --repo <name|path> or --yes to use the first.",
-            exit_code=2,
-        )
-    if yes:
-        first = repos.resolve_repo(known[0], cwd, depth=depth)
-        return first, check_or_record(tid, str(first), yes=True, persist=persist)
-    idx = pick.pick(f"tracker {tid} is linked to multiple repos:", known)
-    if idx is None:
-        raise HarnessError("aborted", exit_code=2)
-    target = repos.resolve_repo(known[idx], cwd, depth=depth)
-    return target, check_or_record(tid, str(target), yes=True, persist=persist)
+    # Issue #29: never silently pick the first repo — an explicit --repo
+    # is required even under --yes/non-TTY (no Run-logs surprise).
+    raise HarnessError(
+        f"tracker {tid} is linked to multiple repos: {', '.join(known)}.\n"
+        "  Re-run with --repo <name|path> to pick one.",
+        exit_code=2,
+    )
 
 
 def _ask_manual(tid: str, cwd: Path, depth: int = 7,
@@ -212,31 +264,6 @@ def _confirm(tid: str, known: list[str], repo: str) -> bool:
     return answer in ("y", "yes")
 
 
-def _confirm_use_cwd(tid: str, known: list[str], repo: str, yes: bool = False) -> bool:
-    """Step 2 y/N: use the unlinked cwd repo for *tid*?"""
-    if yes:
-        return True
-    if not _is_tty():
-        # Non-interactive: cwd repo unusable without consent — signal fall
-        # through by returning False when linked repos exist, else abort.
-        if known:
-            eprint_note(f"note: cwd repo {repo} not linked to {tid}; using linked repo.")
-            return False
-        raise HarnessError(
-            f"tracker {tid} is not linked to repo {repo}.\n"
-            "  Re-run with --yes to link it, or pass --repo with a linked repo.",
-            exit_code=2,
-        )
-    if known:
-        prompt = (f"cwd repo {repo} is not linked to {tid} "
-                  f"(linked: {', '.join(known)}); use cwd anyway? [y/N] ")
-    else:
-        prompt = f"tracker {tid} is not linked to any repo; link cwd repo {repo}? [y/N] "
-    try:
-        answer = input(prompt).strip().lower()
-    except EOFError:
-        answer = ""
-    return answer in ("y", "yes")
 
 
 # ── my issues / candidates listing (issue #7 task 5) ──────────────────

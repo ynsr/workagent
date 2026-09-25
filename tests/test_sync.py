@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 
-from harness import sync
+from workagent import sync
 
 
 def _git(*args, cwd):
@@ -298,7 +298,7 @@ def _cli_link(isolated_config, tmp_path, monkeypatch, cli, store, wt_dir):
 
 def test_sync_local_merge_pushes_automatically(isolated_config, tmp_path,
                                                monkeypatch):
-    from harness import cli, store
+    from workagent import cli, store
     wt_dir = tmp_path / "wt"
     _cli_link(isolated_config, tmp_path, monkeypatch, cli, store, wt_dir)
     monkeypatch.setattr(cli.sync_mod, "local_merge",
@@ -316,13 +316,13 @@ def test_sync_local_merge_pushes_automatically(isolated_config, tmp_path,
 
 def cli_test_invoke(*args):
     from typer.testing import CliRunner
-    from harness import cli
+    from workagent import cli
     return CliRunner().invoke(cli.app, list(args))
 
 
 def test_sync_conflict_with_yes_runs_non_tty_harness(isolated_config,
                                                      tmp_path, monkeypatch):
-    from harness import cli, store
+    from workagent import cli, store
     wt_dir = tmp_path / "wt"
     _cli_link(isolated_config, tmp_path, monkeypatch, cli, store, wt_dir)
     monkeypatch.setattr(cli.sync_mod, "local_merge",
@@ -332,9 +332,9 @@ def test_sync_conflict_with_yes_runs_non_tty_harness(isolated_config,
                         lambda wt, c: False)
     launched = []
     monkeypatch.setattr(cli, "_run_harness",
-                        lambda name, prompt, wt, fb, no_tty, no_harness,
-                        result, json_output, run_key=None:
-                        launched.append((no_tty, no_harness, prompt)))
+                        lambda name, prompt, wt, fb, no_tty, no_runtime,
+                        result, json_output, run_key=None, session_file=None:
+                        launched.append((no_tty, no_runtime, prompt)))
     r = cli_test_invoke("sync", "IPG-929", "--merge", "--yes")
     assert r.exit_code == 0
     assert launched and launched[0][0] is True and launched[0][1] is False
@@ -343,7 +343,7 @@ def test_sync_conflict_with_yes_runs_non_tty_harness(isolated_config,
 
 def test_sync_conflict_without_harness_flags_reports_conflict(
         isolated_config, tmp_path, monkeypatch):
-    from harness import cli, store
+    from workagent import cli, store
     wt_dir = tmp_path / "wt"
     _cli_link(isolated_config, tmp_path, monkeypatch, cli, store, wt_dir)
     monkeypatch.setattr(cli.sync_mod, "local_merge",
@@ -363,7 +363,7 @@ def test_sync_conflict_without_harness_flags_reports_conflict(
 
 def test_sync_all_continues_after_failure(isolated_config, tmp_path,
                                           monkeypatch):
-    from harness import cli, store
+    from workagent import cli, store
     wt1 = tmp_path / "wt1"; wt2 = tmp_path / "wt2"
     _cli_link(isolated_config, tmp_path, monkeypatch, cli, store, wt1)
     wt2.mkdir(parents=True, exist_ok=True)

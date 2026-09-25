@@ -1,6 +1,6 @@
 """Branch synchronization engine: local merge, conflict helpers, rebase.
 
-`harness sync` supports two strategies:
+`workagent sync` supports two strategies:
   - remote rebase (default): `gh pr update-branch --rebase` / `glab mr rebase`;
     the remote host pushes the rebased branch server-side.
   - local merge: fetch, fast-forward the local default branch, merge it into

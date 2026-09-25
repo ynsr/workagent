@@ -3,6 +3,7 @@ import { AppLayout } from "@/components/layout/AppLayout"
 import { Dashboard } from "@/pages/Dashboard"
 import { Launch } from "@/pages/Launch"
 import { Repos } from "@/pages/Repos"
+import { Trackers } from "@/pages/Trackers"
 import { Links } from "@/pages/Links"
 import { Doctor } from "@/pages/Doctor"
 import { Runs } from "@/pages/Runs"
@@ -18,6 +19,7 @@ export default function App() {
         <Route index element={<Dashboard />} />
         <Route path="launch" element={<Launch />} />
         <Route path="repos" element={<Repos />} />
+        <Route path="trackers" element={<Trackers />} />
         <Route path="links" element={<Links />} />
         <Route path="doctor" element={<Doctor />} />
         <Route path="runs" element={<Runs />} />

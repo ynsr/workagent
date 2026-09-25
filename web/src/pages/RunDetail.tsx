@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { ArrowLeft, Ban, Redo, SquareTerminal } from "lucide-react"
+import { ArrowLeft, Ban, Copy, Redo, SquareTerminal } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
 import { RunStateBadge } from "@/components/StateBadge"
 import { ErrorState, errorText } from "@/components/StatusFeedback"
@@ -18,8 +18,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { mergeLines, useRunEvents } from "@/hooks/useRunEvents"
 import { api, type CreateRunInput, type RunDetail as RunDetailData, type RunLine } from "@/lib/api"
 import { useConfirm } from "@/lib/confirm"
-import { relativeTime, shortId } from "@/lib/format"
-import { queryKeys, useCancelRun, useRun } from "@/lib/queries"
+import { queryKeys, useCancelRun, usePath, useResumeRun, useRun } from "@/lib/queries"
+import { copyToClipboard, relativeTime, resumeCommand, shortId } from "@/lib/format"
 import { DESTRUCTIVE_COMMANDS, commandAction, commandLabel } from "@/lib/runs"
 
 function LogViewer({
@@ -100,6 +100,89 @@ function LogViewer({
     </div>
   )
 }
+/** Copy the full cd-prefixed runtime command parsed from the log. */
+function RunRuntimeCommandAction({ lines }: { lines: RunLine[] }) {
+  const cmd = useMemo(() => {
+    // The CLI preview embeds the prompt as one shlex-quoted argv element;
+    // prompts contain newlines, so run.append's splitlines() breaks the
+    // logged command across lines. Rejoin continuation lines (indented or
+    // quote-unbalanced) until quotes balance.
+    let start = -1
+    for (let i = 0; i < lines.length; i++) {
+      if (/runtime command:\s*\S/.test(lines[i]?.text ?? "")) {
+        start = i
+        break
+      }
+    }
+    if (start < 0) return ""
+    const first = (lines[start]?.text ?? "").replace(/^.*runtime command:\s*/, "")
+    let cmd = first.trimEnd()
+    const unbalanced = (s: string) => (s.match(/'/g) ?? []).length % 2 === 1
+    for (let i = start + 1; i < lines.length && unbalanced(cmd); i++) {
+      cmd += `\n${lines[i]?.text ?? ""}`
+    }
+    return cmd.trim()
+  }, [lines])
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => {
+        copyToClipboard(cmd)
+          .then(() => toast.success("Runtime command copied"))
+          .catch((err: unknown) => toast.error(errorText(err)))
+      }}
+    >
+      <Copy aria-hidden /> Copy runtime command
+    </Button>
+  )
+}
+/** Resume/copy buttons for a run that executed a runtime session. */
+function RunSessionActions({
+  runId,
+  target,
+  worktree,
+  sessionFile,
+}: {
+  runId: string
+  target: string
+  worktree: string
+  sessionFile: string
+}) {
+  const resume = useResumeRun()
+  const pathQ = usePath(target)
+  const wt = worktree || pathQ.data?.worktree || ""
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={resume.isPending}
+        onClick={() => {
+          resume
+            .mutateAsync(runId)
+            .then(() => toast.success("Terminal opened on the session"))
+            .catch((err: unknown) => toast.error(errorText(err)))
+        }}
+      >
+        <SquareTerminal aria-hidden /> Resume in terminal
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={!wt}
+        onClick={() => {
+          copyToClipboard(resumeCommand(wt, sessionFile))
+            .then(() => toast.success("Resume command copied"))
+            .catch((err: unknown) => toast.error(errorText(err)))
+        }}
+      >
+        <Copy aria-hidden /> Copy resume command
+      </Button>
+    </>
+  )
+}
+
 
 export function RunDetail() {
   const { runId = "" } = useParams()
@@ -216,10 +299,24 @@ export function RunDetail() {
         actions={
           <>
             <Button variant="ghost" size="sm" asChild>
+              <Link to={`/runs?target=${encodeURIComponent(run.target)}`}>
+                <ArrowLeft aria-hidden /> Same worktree runs
+              </Link>
+            </Button>
+            <Button variant="ghost" size="sm" asChild>
               <Link to="/runs">
                 <ArrowLeft aria-hidden /> All runs
               </Link>
             </Button>
+            {run.session_file ? (
+              <RunSessionActions
+                runId={run.id}
+                target={run.target}
+                worktree={run.worktree}
+                sessionFile={run.session_file}
+              />
+            ) : null}
+            <RunRuntimeCommandAction lines={lines} />
             {isRunning ? (
               <Button
                 variant="destructive"
@@ -245,7 +342,7 @@ export function RunDetail() {
           exit code: <span className="font-mono">{exitCode ?? "—"}</span>
         </span>
         <span className="font-mono text-[13px] text-muted-foreground">
-          harness {run.command} {run.args.join(" ")}
+          workagent {run.command} {run.args.join(" ")}
         </span>
         {run.truncated ? (
           <span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">

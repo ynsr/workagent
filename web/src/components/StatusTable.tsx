@@ -1,8 +1,9 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react"
 import { useSearchParams } from "react-router-dom"
-import { FolderOpen, GitPullRequest, Info, RefreshCw, Rocket, Search, Trash2, XCircle } from "lucide-react"
-import type { WorktreeMap } from "@/lib/api"
-import { prLabel } from "@/lib/api"
+import { FolderOpen, GitPullRequest, History, Info, RefreshCw, Rocket, Search, Trash2, Wrench, XCircle } from "lucide-react"
+import type { Repo, WorktreeMap } from "@/lib/api"
+import { repoKeyForItem } from "@/lib/useRepoTabs"
+import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -24,12 +25,15 @@ export interface StatusTableActions {
   onSync?: (key: string) => void
   /** Navigate to Launch with mode=review&ref=key (prefill contract). */
   onReview?: (key: string) => void
+  /** Navigate to Launch with mode=review&fixComments=1&ref=key. */
+  onFixComments?: (key: string) => void
   onCleanup?: (key: string) => void
   /** Open the worktree folder locally (`open` RunCommand; disabled when network-exposed). */
   onOpenWorktree: (key: string) => void
   onOpenRun: (key: string) => void
+  /** Navigate to the Sessions page filtered to this worktree. */
+  onOpenSessions?: (key: string) => void
 }
-
 function ActionIcon({
   title,
   onClick,
@@ -68,6 +72,7 @@ function RowActions({
   detailOpen,
   onToggleDetail,
   networkExposed,
+  overlay = false,
 }: {
   worktreeKey: string
   entry: WorktreeMap[string]
@@ -75,10 +80,11 @@ function RowActions({
   detailOpen: boolean
   onToggleDetail: () => void
   networkExposed: boolean
+  overlay?: boolean
 }) {
   const invalid = entry.wt_valid === false
   return (
-    <div className="flex items-center justify-end gap-0.5">
+    <div className={overlay ? "flex items-center justify-end gap-0.5" : "flex items-center justify-end gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-within:opacity-100 [@media(hover:hover)]:hover:opacity-100"}>
       <ActionIcon
         title={detailOpen ? `Hide details of ${worktreeKey}` : `Details of ${worktreeKey}`}
         onClick={onToggleDetail}
@@ -96,6 +102,14 @@ function RowActions({
           onClick={() => actions.onReview?.(worktreeKey)}
         >
           <GitPullRequest aria-hidden />
+        </ActionIcon>
+      ) : null}
+      {actions.onFixComments ? (
+        <ActionIcon
+          title={`Fix PR comments of ${worktreeKey}`}
+          onClick={() => actions.onFixComments?.(worktreeKey)}
+        >
+          <Wrench aria-hidden />
         </ActionIcon>
       ) : null}
       {actions.onCleanup ? (
@@ -124,6 +138,14 @@ function RowActions({
       >
         <Rocket aria-hidden />
       </ActionIcon>
+      {actions.onOpenSessions ? (
+        <ActionIcon
+          title={`Worktree sessions for ${worktreeKey}`}
+          onClick={() => actions.onOpenSessions?.(worktreeKey)}
+        >
+          <History aria-hidden />
+        </ActionIcon>
+      ) : null}
     </div>
   )
 }
@@ -152,6 +174,25 @@ function CommitsCell({ entry }: { entry: WorktreeMap[string] }) {
     </span>
   )
 }
+/** Reviews R|U|R (completed review passes|unresolved comments|resolved comments); "-" when no PR or lookup failed. */
+function ReviewsCell({ entry }: { entry: WorktreeMap[string] }) {
+  const rd = entry.reviews_detail
+  if (!rd) return <span className="font-mono text-[13px] text-muted-foreground">—</span>
+  return (
+    <span
+      className="font-mono text-[13px]"
+      title={`${rd.reviews} completed review passes, ${rd.unresolved} unresolved comments, ${rd.resolved} resolved comments`}
+    >
+      <span className="text-muted-foreground">{rd.reviews}</span>
+      <span className="text-muted-foreground">|</span>
+      <span className={rd.unresolved > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}>
+        {rd.unresolved}
+      </span>
+      <span className="text-muted-foreground">|</span>
+      <span className="text-sky-600 dark:text-sky-400">{rd.resolved}</span>
+    </span>
+  )
+}
 
 /** First-seen stamp → locale date; missing/unparseable → "—". */
 function formatAdded(addedAt: string | undefined): string {
@@ -173,6 +214,55 @@ function matchesQuery(key: string, entry: WorktreeMap[string], q: string): boole
   return hay.includes(q)
 }
 
+function RepoTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={
+        active
+          ? "min-h-11 rounded-full bg-primary px-3.5 text-sm font-medium text-primary-foreground"
+          : "min-h-11 rounded-full border px-3.5 text-sm text-muted-foreground hover:text-foreground"
+      }
+    >
+      {label}
+    </button>
+  )
+}
+
+/**
+ * Fast open/close reveal for row details (~160ms). Grid-rows animation
+ * (no max-height guessing, no unmount jump); hidden stays mounted to
+ * animate the close. `motion-reduce` skips animation entirely.
+ */
+function DetailReveal({
+  open,
+  children,
+}: {
+  open: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <div
+      className={cn(
+        "grid transition-[grid-template-rows,opacity] duration-150 ease-out motion-reduce:transition-none",
+        open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+      )}
+    >
+      <div className="overflow-hidden">
+        <div
+          className={cn(
+            "transition-transform duration-150 ease-out motion-reduce:transition-none",
+            open ? "translate-y-0" : "-translate-y-1",
+          )}
+        >
+          {children}
+        </div>
+      </div>
+    </div>
+  )
+}
 /**
  * Worktrees table (GET /api/status or /api/links worktrees).
  * Table at ≥640px, cards below. Search is `?q=`-backed (Runs pattern);
@@ -184,28 +274,37 @@ export function StatusTable({
   showWorktree = false,
   networkExposed = false,
   className,
+  repoTabs,
 }: {
   worktrees: WorktreeMap
   actions: StatusTableActions
   showWorktree?: boolean
   networkExposed?: boolean
   className?: string
+  repoTabs?: { repoFilter: string; setRepo: (v: string) => void; tabs: { names: string[]; counts: Map<string, number>; other: number }; repos: Repo[] }
 }) {
   const [params, setParams] = useSearchParams()
   const q = (params.get("q") ?? "").trim()
   const [expanded, setExpanded] = useState<string | null>(null)
+  const repoFilter = repoTabs?.repoFilter ?? ""
 
   const keys = useMemo(() => {
     const needle = q.toLowerCase()
     return Object.keys(worktrees)
       .filter((key) => {
         const entry = worktrees[key]
-        return entry && (!needle || matchesQuery(key, entry, needle))
+        if (!entry) return false
+        if (repoFilter && repoTabs) {
+          const k = repoKeyForItem(entry, repoTabs.repos)
+          const want = repoFilter === "(other)" ? "(other)" : repoFilter
+          if (k !== want) return false
+        }
+        return !needle || matchesQuery(key, entry, needle)
       })
       .sort((a, b) =>
         (worktrees[b]?.added_at ?? "").localeCompare(worktrees[a]?.added_at ?? ""),
       )
-  }, [worktrees, q])
+  }, [worktrees, q, repoFilter, repoTabs])
 
   function setQuery(next: string) {
     const p = new URLSearchParams(params)
@@ -222,6 +321,26 @@ export function StatusTable({
 
   return (
     <div className={className}>
+      {repoTabs && (repoTabs.tabs.names.length > 0 || repoTabs.tabs.other > 0) ? (
+        <div role="group" aria-label="Filter by repo" className="mb-3 flex flex-wrap gap-1.5">
+          <RepoTab active={!repoFilter} label={`All repos (${repoTabs.tabs.names.reduce((n, name) => n + (repoTabs.tabs.counts.get(name) ?? 0), 0) + repoTabs.tabs.other})`} onClick={() => repoTabs.setRepo("")} />
+          {repoTabs.tabs.names.map((n) => (
+            <RepoTab
+              key={n}
+              active={repoFilter === n}
+              label={`${n} (${repoTabs.tabs.counts.get(n) ?? 0})`}
+              onClick={() => repoTabs.setRepo(n)}
+            />
+          ))}
+          {repoTabs.tabs.other > 0 ? (
+            <RepoTab
+              active={repoFilter === "(other)"}
+              label={`(other) (${repoTabs.tabs.other})`}
+              onClick={() => repoTabs.setRepo("(other)")}
+            />
+          ) : null}
+        </div>
+      ) : null}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="relative min-w-52 flex-1 sm:max-w-xs">
           <Search aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -269,9 +388,9 @@ export function StatusTable({
                   <TableHead className="w-20">Behind|Ahead</TableHead>
                   <TableHead>PR / MR</TableHead>
                   <TableHead className="w-14 text-center">CI</TableHead>
+                  <TableHead className="w-20 text-center">Reviews</TableHead>
                   <TableHead>Added</TableHead>
                   {showWorktree ? <TableHead>Path</TableHead> : null}
-                  <TableHead className="text-right pr-2">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -282,7 +401,7 @@ export function StatusTable({
                   const invalid = entry.wt_valid === false
                   return (
                     <Fragment key={key}>
-                      <TableRow className={invalid ? "bg-destructive/5" : undefined}>
+                      <TableRow className={cn("group relative", invalid ? "bg-destructive/5" : undefined)}>
                         <TableCell className="font-medium">
                           <span className="flex items-center gap-2">
                             <WorktreeKeyLink worktreeKey={key} entry={entry} />
@@ -317,46 +436,78 @@ export function StatusTable({
                         <TableCell>
                           <div className="flex min-w-0 items-center gap-2">
                             <PrBadge pr={entry.pr_detail ?? null} />
-                            <span className="truncate text-muted-foreground" title={entry.pr}>
-                              {entry.pr_detail ? entry.pr_detail.title : prLabel(entry.pr) || "—"}
-                            </span>
+                            {prUrl(entry) ? (
+                              <a
+                                href={prUrl(entry)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="truncate text-muted-foreground underline-offset-2 hover:underline"
+                                title={`${entry.pr_detail ? entry.pr_detail.title + "\n" : ""}${prUrl(entry)}`}
+                              >
+                                {entry.pr_detail ? entry.pr_detail.title : prLabel(prUrl(entry)) || entry.pr || "—"}
+                              </a>
+                            ) : (
+                              <span className="truncate text-muted-foreground" title={entry.pr}>
+                                {entry.pr_detail ? entry.pr_detail.title : entry.pr || "—"}
+                              </span>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell className="text-center">
                           <CiBadge ci={entry.ci} />
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <ReviewsCell entry={entry} />
                         </TableCell>
                         <TableCell
                           className="whitespace-nowrap text-[13px] text-muted-foreground"
                           title={entry.added_at ?? "first-seen stamp missing"}
                         >
                           {formatAdded(entry.added_at)}
+                          {showWorktree ? null : (
+                            <span className="pointer-events-none absolute inset-y-1 right-1 hidden items-center justify-end gap-0.5 rounded-md border bg-card/95 px-1 shadow-sm backdrop-blur transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:hover)]:flex [@media(hover:hover)]:opacity-0 [@media(hover:none)]:flex">
+                              <RowActions
+                                worktreeKey={key}
+                                entry={entry}
+                                actions={actions}
+                                detailOpen={detailOpen}
+                                onToggleDetail={() =>
+                                  setExpanded((cur) => (cur === key ? null : key))
+                                }
+                                networkExposed={networkExposed}
+                                overlay
+                              />
+                            </span>
+                          )}
                         </TableCell>
                         {showWorktree ? (
                           <TableCell
-                            className="max-w-52 truncate font-mono text-[13px]"
+                            className="relative max-w-52 truncate pr-24 font-mono text-[13px]"
                             title={entry.worktree}
                           >
                             {entry.worktree ?? "—"}
+                            <span className="pointer-events-none absolute inset-y-1 right-1 hidden items-center justify-end gap-0.5 rounded-md border bg-card/95 px-1 shadow-sm backdrop-blur transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:hover)]:flex [@media(hover:hover)]:opacity-0 [@media(hover:none)]:flex">
+                              <RowActions
+                                worktreeKey={key}
+                                entry={entry}
+                                actions={actions}
+                                detailOpen={detailOpen}
+                                onToggleDetail={() =>
+                                  setExpanded((cur) => (cur === key ? null : key))
+                                }
+                                networkExposed={networkExposed}
+                                overlay
+                              />
+                            </span>
                           </TableCell>
                         ) : null}
-                        <TableCell className="pr-1">
-                          <RowActions
-                            worktreeKey={key}
-                            entry={entry}
-                            actions={actions}
-                            detailOpen={detailOpen}
-                            onToggleDetail={() =>
-                              setExpanded((cur) => (cur === key ? null : key))
-                            }
-                            networkExposed={networkExposed}
-                          />
-                        </TableCell>
                       </TableRow>
-                      {detailOpen ? (
-                        <TableRow className="hover:bg-transparent">
-                          <TableCell
-                            colSpan={showWorktree ? 9 : 8}
-                          >
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell
+                          colSpan={showWorktree ? 8 : 7}
+                          className={detailOpen ? "py-1" : "border-0 !p-0"}
+                        >
+                          <DetailReveal open={detailOpen}>
                             <div className="mx-auto w-full max-w-2xl py-1">
                               <WorktreeDetail
                                 entry={entry}
@@ -365,9 +516,9 @@ export function StatusTable({
                                 onClose={() => setExpanded(null)}
                               />
                             </div>
-                          </TableCell>
-                        </TableRow>
-                      ) : null}
+                          </DetailReveal>
+                        </TableCell>
+                      </TableRow>
                     </Fragment>
                   )
                 })}
@@ -429,16 +580,26 @@ export function StatusTable({
                         </dd>
                       </div>
                     ) : null}
-                    {entry.pr && !entry.pr_detail ? (
+                    {prUrl(entry) ? (
                       <div className="flex items-baseline gap-2">
                         <dt className="w-16 shrink-0 text-xs text-muted-foreground">PR</dt>
-                        <dd className="min-w-0 truncate" title={entry.pr}>{prLabel(entry.pr)}</dd>
+                        <dd className="min-w-0 truncate" title={prUrl(entry)}>
+                          <a href={prUrl(entry)} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
+                            {prLabel(prUrl(entry))}
+                          </a>
+                        </dd>
                       </div>
                     ) : null}
                     <div className="flex items-baseline gap-2">
                       <dt className="w-16 shrink-0 text-xs text-muted-foreground">CI</dt>
                       <dd>
                         <CiBadge ci={entry.ci} />
+                      </dd>
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <dt className="w-16 shrink-0 text-xs text-muted-foreground">Reviews</dt>
+                      <dd>
+                        <ReviewsCell entry={entry} />
                       </dd>
                     </div>
                     <div className="flex items-baseline gap-2">
@@ -461,16 +622,18 @@ export function StatusTable({
                       networkExposed={networkExposed}
                     />
                   </div>
-                  {detailOpen ? (
-                    <div className="mt-3">
-                      <WorktreeDetail
-                        entry={entry}
-                        mode="view"
-                        onSave={() => undefined}
-                        onClose={() => setExpanded(null)}
-                      />
-                    </div>
-                  ) : null}
+                  <div className="mt-1">
+                    <DetailReveal open={detailOpen}>
+                      <div className="pt-2">
+                        <WorktreeDetail
+                          entry={entry}
+                          mode="view"
+                          onSave={() => undefined}
+                          onClose={() => setExpanded(null)}
+                        />
+                      </div>
+                    </DetailReveal>
+                  </div>
                 </div>
               )
             })}

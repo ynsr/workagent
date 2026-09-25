@@ -1,5 +1,5 @@
-"""harness serve — local web UI server (FastAPI). Imported lazily by
-`harness serve` so the rest of the CLI never needs the web extra.
+"""workagent serve — local web UI server (FastAPI). Imported lazily by
+`workagent serve` so the rest of the CLI never needs the web extra.
 
 Security model (no authentication, by design):
 - default bind 127.0.0.1; a non-loopback bind prints a startup warning
@@ -8,7 +8,7 @@ Security model (no authentication, by design):
 - no CORS (development uses the Vite proxy)
 
 Run lifecycle: mutating CLI commands run as child processes of this same
-code version (`sys.executable -m harness`). Output is buffered per run
+code version (`sys.executable -m workagent`). Output is buffered per run
 (≤10 000 lines, oldest dropped), ANSI-stripped, and streamed over SSE.
 At most 100 runs are kept; finished runs are evicted oldest-first.
 """
@@ -55,56 +55,71 @@ SPECS: dict[str, dict[str, Any]] = {
     "start": {"confirm": True, "force": False, "key": "start"},
     "review": {"confirm": True, "force": False,
                "key": lambda args: "review:all" if "--all" in args
-               else "review"},
+               else f"review:{_first_positional(args, VAL_FLAGS['review'])}"},
     "cleanup": {"confirm": True, "force": True,
                 "key": lambda args: "cleanup:all" if "--merged" in args
                 else f"cleanup:{_first_positional(args)}"},
     "sync": {"confirm": True, "force": False,
              "key": lambda args: "sync:all" if "--all" in args
-             else f"sync:{_first_positional(args)}"},
+             else f"sync:{_first_positional(args, VAL_FLAGS['sync'])}"},
     "open": {"confirm": False, "force": False,
              "key": lambda args: f"open:{_first_positional(args)}"},
     "register": {"confirm": False, "force": True,
-                 "key": lambda args: f"register:{_first_positional(args)}"},
-    "repo": {"confirm": False, "force": False, "key": "config"},
+                 "key": lambda args: f"register:{_first_positional(args, VAL_FLAGS['register'])}"},
+    "repo": {"confirm": False, "force": True, "key": "config"},
     "link": {"confirm": False, "force": False, "key": "config"},
+    "tracker": {"confirm": False, "force": False, "key": "config"},
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
-    "start": ("-N", "--no-tty", "--no-harness", "--dry-run", "--yes",
+    "start": ("-N", "--no-tty", "--no-runtime", "--dry-run", "--yes",
               "--json"),
-    "review": ("-N", "--no-tty", "--no-harness", "--dry-run", "--yes",
-               "--json", "--all", "--sequential", "--fix"),
+    "review": ("-N", "--no-tty", "--no-runtime", "--dry-run", "--yes",
+               "--json", "--all", "--sequential", "--fix", "--fix-comments", "--force-all", "--post-comments"),
     "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--no-squash"),
     "open": (),
-    "sync": ("-m", "--merge", "--harness", "--all", "--yes", "--dry-run",
-             "--json"),
-    "register": ("--yes", "--force", "--json"),
+    "sync": ("-m", "--merge", "--harness", "--all", "--yes", "--force",
+             "-y", "--dry-run", "--json"),
+    "register": ("--yes", "-y", "--force", "--json"),
     "repo add": ("--json",),
-    "repo remove": ("--json",),
     "repo list": ("--json", "--csv"),
     "link set": ("--json",),
     "link remove": ("--json",),
     "link list": ("--worktree", "--refresh-pr", "--json", "--csv"),
+    "tracker add": ("--json",),
+    "repo remove": ("--json", "--force"),
+    "tracker remove": ("--json",),
+    "tracker list": ("--json", "--csv"),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
-    "start": ("--repo", "--depth", "--base", "--harness"),
-    "review": ("--repo", "--depth", "--harness"),
-    "sync": ("--harness",),
+    "start": ("--repo", "--depth", "--base", "--harness", "--session-file"),
+    "review": ("--repo", "--depth", "--harness", "--session-file"),
+    "sync": ("--session-file",),
     "register": ("--key", "--issue", "--repo"),
     "repo add": ("--name", "--path", "--tracker"),
     "link remove": ("--repo",),
+    "tracker add": ("--vendor", "--remote-url"),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove"},
-                                    "link": {"list", "set", "remove"}}
+                                    "link": {"list", "set", "remove"},
+                                    "tracker": {"add", "list", "remove"}}
 
 
-def _first_positional(args: list[str]) -> str:
+def _first_positional(args: list[str], vals: tuple[str, ...] = ()) -> str:
+    skip_next = False
     for a in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if a in vals:
+            skip_next = True
+            continue
+        if a.startswith("--") and "=" in a:
+            name = a.split("=", 1)[0]
+            if name in vals:
+                continue
         if not a.startswith("-"):
             return a
-        if a in VAL_FLAGS.get("", ()) :  # pragma: no cover
-            continue
     return ""
 
 
@@ -128,7 +143,7 @@ def _sub_of(command: str, args: list[str]) -> str:
     return command
 
 
-def _validate_args(command: str, args: list[str]) -> None:
+def _validate_args(command: str, args: list[str], body_force: bool = False) -> None:
     if command not in SPECS:
         raise ApiError("bad_command", f"command not allowed: {command!r}", 400)
     rest = [a for a in args if a not in ("-v", "--verbose")]
@@ -155,17 +170,80 @@ def _validate_args(command: str, args: list[str]) -> None:
                     f"value for {a} must not start with '-': {value!r}", 400)
             i += 2
         elif a.startswith("-"):
-            raise ApiError("bad_arg", f"unknown option for {sub}: {a!r}", 400)
+            hint = " (renamed to '--no-runtime' in #14)" if a == "--no-harness" else ""
+            raise ApiError("bad_arg", f"unknown option for {sub}: {a!r}{hint}", 400)
         else:
             i += 1
-
+    if "--all" in rest and "--session-file" in rest:
+        raise ApiError("bad_arg",
+                       "--session-file cannot be used with --all "
+                       "(one transcript per worktree — omit it and each "
+                       "launch gets its own file)", 400)
+    if sub == "tracker add":
+        try:
+            uidx = rest.index("add")
+        except ValueError:
+            uidx = -1
+        tail = rest[uidx + 1:] if uidx >= 0 else rest
+        if "--remote-url" not in tail:
+            raise ApiError("bad_arg", "tracker add requires --remote-url", 400)
+        try:
+            u = tail[tail.index("--remote-url") + 1]
+        except IndexError:
+            raise ApiError("bad_arg", "--remote-url needs a value", 400)
+        if not u.strip():
+            raise ApiError("bad_arg", "--remote-url must be a real tracker web URL", 400)
+    if command in ("start", "review"):
+        from . import trackers as _trackers
+        from . import worktrees as _worktrees
+        from . import refs as _refs
+        ref = _first_positional(rest, VAL_FLAGS.get(command, ()))
+        repo = ""
+        for i, a in enumerate(rest):
+            if a == "--repo" and i + 1 < len(rest):
+                repo = rest[i + 1]
+        if ref and not repo:
+            try:
+                parsed = _refs.parse_ref(ref)
+                tid = _trackers.tracker_id(parsed)
+            except Exception:
+                parsed, tid = None, ""
+            pinned = False
+            if parsed is not None:
+                links = store.load_links()
+                if command == "start":
+                    try:
+                        key = _refs.issue_key(parsed)
+                    except Exception:
+                        key = ""
+                    pinned = bool(key and str((links.get(key) or {}).get("repo", "")))
+                else:
+                    pinned = isinstance(_worktrees.resolve_worktree(ref, links), str)
+            if tid and not pinned:
+                known = _trackers.linked_repos(tid)
+                if len(known) > 1:
+                    raise ApiError(
+                        "repo_ambiguous",
+                        f"tracker {tid} is linked to multiple repos: "
+                        f"{', '.join(known)}. Re-run with --repo <name|path> to pick one.",
+                        400)
+    if sub == "repo remove" and not (body_force or "--force" in rest):
+        name = next((a for a in rest[1:] if not a.startswith("-")), "")
+        if name and store._sqlite_path() is not None:
+            from . import store_sqlite as _sq
+            n = _sq.worktree_count_for_repo(_sq.db_path(), name)
+            if n:
+                raise ApiError(
+                    "worktrees_exist",
+                    f"repo {name} still has {n} linked worktree(s) — "
+                    "pass force: true to remove them with the repo", 400)
 
 def _build_argv(command: str, args: list[str]) -> list[str]:
-    """Same-code child invocation: this interpreter, `python -m harness`.
+    """Same-code child invocation: this interpreter, `python -m workagent`.
 
     Global flags (only -v is exposed) precede the subcommand.
     """
-    argv = [sys.executable, "-m", "harness"]
+    argv = [sys.executable, "-m", "workagent"]
     verbose = any(a in ("-v", "--verbose") for a in args)
     if verbose:
         argv.append("-v")
@@ -178,6 +256,60 @@ def _target_for(command: str, args: list[str]) -> str:
     key = SPECS[command]["key"]
     rest = [a for a in args if a not in ("-v", "--verbose")]
     return key(rest) if callable(key) else key
+
+
+def _has_session_file(command: str, args: list[str]) -> bool:
+    return _session_file_arg(command, args) != ""
+
+
+def _session_file_arg(command: str, args: list[str]) -> str:
+    for i, a in enumerate(args):
+        if a == "--session-file" and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith("--session-file="):
+            return a.split("=", 1)[1]
+    return ""
+
+
+def _session_file_for(sid: str) -> str:
+    from . import store_sqlite as _sq
+    try:
+        return str(_sq.session_file_path(sid, "omp"))
+    except Exception:
+        from . import store as _store
+        base = _store.config_dir() / "sessions" / "omp"
+        base.mkdir(parents=True, exist_ok=True)
+        return str(base / f"{sid}.jsonl")
+
+
+def _worktree_for_target(target: str) -> str:
+    """Best-effort worktree path for a run target (review:/sync:/start: keys
+    strip to the recorded worktree ref)."""
+    from . import store as _store
+    try:
+        links = _store.load_links()
+    except Exception:
+        return ""
+    if target in links and isinstance(links[target], dict):
+        wt = links[target].get("worktree", "")
+        if wt:
+            return wt
+    for prefix in ("start:", "review:", "sync:", "cleanup:", "open:"):
+        if target.startswith(prefix):
+            ref = target[len(prefix):]
+            if ref in links and isinstance(links[ref], dict):
+                wt = links[ref].get("worktree", "")
+                if wt:
+                    return wt
+            for key, entry in links.items():
+                if not isinstance(entry, dict):
+                    continue
+                if key == ref or entry.get("branch") == ref \
+                        or entry.get("worktree") == ref:
+                    wt = entry.get("worktree", "")
+                    if wt:
+                        return wt
+    return ""
 
 
 @dataclass
@@ -195,6 +327,8 @@ class Run:
     proc: subprocess.Popen | None = None
     created: float = field(default_factory=time.time)
     lock: threading.RLock = field(default_factory=threading.RLock)
+    session_file: str = ""
+    worktree: str = ""
 
     def append(self, text: str) -> None:
         with self.lock:
@@ -251,11 +385,18 @@ class Registry:
 
 
 def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
+    worktree = run.worktree
+    if not worktree and run.state != "running" and run.command in ("start", "review"):
+        # Replays after the child recorded its link: the global `start` key
+        # can't know the worktree at spawn time.
+        worktree = _worktree_for_target(f"{run.command}:{_first_positional(run.args, VAL_FLAGS[run.command])}") or ""
     out: dict[str, Any] = {"id": run.id, "command": run.command,
                            "args": run.args, "state": run.state,
                            "exit_code": run.exit_code,
                            "truncated": run.truncated,
                            "created": run.created, "target": run.target,
+                           "session_file": run.session_file,
+                           "worktree": worktree,
                            "last_seq": run.last_seq}
     if lines is not None:
         out["lines"] = [{"seq": s, "text": t} for s, t in lines]
@@ -331,9 +472,61 @@ def _port_free(host: str, port: int) -> bool:
             return False
 
 
+def _worktree_for_session(row: dict) -> str:
+    wt = row.get("worktree", "")
+    if wt:
+        return wt
+    return _worktree_for_target(row.get("worktree_ref", ""))
+
+
+def _resume_shell_command(worktree: str, session_file: str) -> str:
+    return f"cd {shlex.quote(worktree)} && omp --resume {shlex.quote(session_file)}"
+
+
+def _open_terminal(worktree: str, session_file: str) -> None:
+    """Detached-spawn the OS default terminal resumed on the session
+    (mirrors `workagent open` detachment)."""
+    cmd = _resume_shell_command(worktree, session_file)
+    kwargs: dict = {"stdin": subprocess.DEVNULL,
+                    "stdout": subprocess.DEVNULL,
+                    "stderr": subprocess.DEVNULL}
+    if os.name == "posix":
+        kwargs["start_new_session"] = True
+    if sys.platform == "darwin":
+        argv = ["open", "-a", "Terminal", worktree, "--args",
+                "bash", "-lc", cmd]
+    elif os.name == "nt":
+        argv = ["cmd", "/c", "start", "", "cmd", "/k", cmd]
+    else:
+        term = os.environ.get("TERMINAL", "")
+        has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        candidates = ([term] if term else []) + [
+            "gnome-terminal", "konsole", "xfce4-terminal", "xterm"]
+        for t in candidates:
+            if t and shutil.which(t):
+                if t == "gnome-terminal":
+                    argv = [t, "--", "bash", "-lc", cmd]
+                elif t == "konsole":
+                    argv = [t, "-e", "bash", "-lc", cmd]
+                else:
+                    argv = [t, "-e", f"bash -lc {shlex.quote(cmd)}"]
+                break
+        else:
+            if not has_display:
+                raise ApiError("no_display",
+                               "the server has no graphical session (no $DISPLAY/"
+                               "$WAYLAND_DISPLAY) — copy the resume command instead", 500)
+            raise ApiError("no_terminal",
+                           "no terminal emulator found (set $TERMINAL)", 500)
+    try:
+        subprocess.Popen(argv, **kwargs)
+    except (FileNotFoundError, OSError, PermissionError) as e:
+        raise ApiError("no_terminal", f"terminal spawn failed: {e}", 500)
+
+
 def create_app(static_dir: Path, host: str, port: int,
                allowed_hosts: list[str]) -> FastAPI:
-    app = FastAPI(title="harness", docs_url=None, redoc_url=None)
+    app = FastAPI(title="workagent", docs_url=None, redoc_url=None)
     registry = Registry()
     allowed = set(allowed_hosts)
     network_exposed = not _is_loopback(host)
@@ -375,26 +568,29 @@ def create_app(static_dir: Path, host: str, port: int,
     from .cli import (
         _candidates,
         _enrich_entry,
+        _fetch_origins,
         _session_detail,
     )
     from . import trackers as trackers_mod
-
-    @app.get("/api/info")
-    def info() -> dict:
-        return {"version": __version__, "host": host, "port": port,
-                "network_exposed": network_exposed}
 
     @app.get("/api/status")
     def status(ref: str | None = None, refresh: bool = False):
         links = store.load_links()
         if not ref:
+            _fetch_origins(links, refresh)
             return {k: _enrich_entry(k, v, refresh)
                     for k, v in links.items()}
         resolved = worktrees.resolve_worktree(ref, links)
         if resolved is None:
             raise HTTPException(404, f"no linked state for {ref}")
         key = worktrees.pick_worktree(ref, resolved, links)
+        _fetch_origins({key: links[key]}, refresh)
         return _session_detail(key, links[key], refresh=refresh)
+
+    @app.get("/api/info")
+    def info() -> dict:
+        return {"version": __version__, "host": host, "port": port,
+                "network_exposed": network_exposed}
 
     @app.get("/api/path")
     def path(ref: str):
@@ -410,20 +606,36 @@ def create_app(static_dir: Path, host: str, port: int,
 
     @app.get("/api/repos")
     def repos_list() -> list[dict]:
-        from .cli import _repo_tracker_map
-        cfg = store.load_config()
-        tmap = _repo_tracker_map(cfg)
         return [{"name": n, "path": v.get("path", ""),
-                 "tracker": tmap.get(str(Path(str(v.get("path", ""))).expanduser().resolve())
-                                     if str(v.get("path", "")) else "", ""),
-                 **{k: val for k, val in v.items() if k != "path"}}
-                for n, v in cfg.get("repos", {}).items()]
+                 "tracker": v.get("tracker", ""),
+                 "trackers": v.get("trackers", [v.get("tracker", "")] if v.get("tracker") else []),
+                 **{k: val for k, val in v.items() if k not in ("path", "tracker", "trackers")}}
+                for n, v in store.load_repos().items()]
 
+    @app.get("/api/trackers")
+    def trackers_list() -> dict:
+        """Issue trackers with linked-repo counts (CRUD page source)."""
+        from . import store_sqlite as _sq
+        db = _sq.db_path()
+        if db.exists():
+            return {"trackers": _sq.load_tracker_rows(db)}
+        return {"trackers": [
+            {"key": t, "vendor": "", "remote_url": "",
+             "repos": len((v or {}).get("repos", []))}
+            for t, v in store.load_trackers().items()]}
     @app.get("/api/links")
     def links_list() -> dict:
-        return {"trackers": store.load_config().get("trackers", {}),
+        return {"trackers": store.load_trackers(),
                 "worktrees": {k: _enrich_entry(k, v, False)
                              for k, v in store.load_links().items()}}
+
+    @app.get("/api/default-repo")
+    def default_repo(ref: str) -> dict:
+        """Issue #26 default repo for *ref* — linked-worktree repo first,
+        else the tracker's single linked repo; "" when ambiguous/unknown.
+        Never touches the CWD."""
+        from . import trackers as _trackers
+        return {"ref": ref, "repo": _trackers.default_repo_for_ref(ref)}
 
     @app.get("/api/doctor")
     def doctor() -> dict:
@@ -475,7 +687,7 @@ def create_app(static_dir: Path, host: str, port: int,
         if body.force and not body.confirm:
             raise ApiError("force_needs_confirm",
                            "force requires confirm: true", 400)
-        _validate_args(body.command, body.args)
+        _validate_args(body.command, body.args, body_force=body.force)
         spec = SPECS[body.command]
         destructive = spec["confirm"] and "--dry-run" not in body.args
         if destructive and not body.confirm:
@@ -491,6 +703,20 @@ def create_app(static_dir: Path, host: str, port: int,
             tail.append("--yes")
         if body.force and spec["force"]:
             tail.append("--force")
+        if body.command in ("start", "review") \
+                and "--dry-run" not in body.args \
+                and not _has_session_file(body.command, body.args):
+            # --no-runtime gets a path too: the CLI preview carries it as
+            # --resume (creating nothing), so resume/copy buttons work once
+            # the user runs the printed command manually.
+            from . import store_sqlite as _sq
+            session_file = _session_file_for(_sq.gen_session_id())
+            tail += ["--session-file", session_file]
+            run.session_file = session_file
+        else:
+            run.session_file = _session_file_arg(body.command, body.args) or ""
+        if body.command in ("start", "review", "sync"):
+            run.worktree = _worktree_for_target(target) or ""
         run.argv = argv + tail
         _spawn(run, registry)
         return {"run_id": run.id}
@@ -546,6 +772,53 @@ def create_app(static_dir: Path, host: str, port: int,
         _cancel(run)
         return {"id": run.id, "state": run.state}
 
+    @app.post("/api/runs/{run_id}/resume")
+    async def resume_run(run_id: str) -> dict:
+        """Open the OS default terminal resumed on this run's session.
+
+        Non-destructive (same class as `open`): no confirm needed. 404 when
+        the run executed no runtime session or the transcript is missing.
+        """
+        # 404 not_found when unknown (e.g. server restarted since the run).
+        run = registry.get(run_id)
+        session_file = run.session_file \
+            or _session_file_arg(run.command, run.args)
+        if not session_file:
+            raise ApiError("no_session",
+                           f"run {run_id} executed no runtime session", 404)
+        if not Path(session_file).exists():
+            raise ApiError("missing_session",
+                           f"session transcript missing: {session_file}", 404)
+        worktree = run.worktree or _worktree_for_target(run.target)
+        if not worktree and run.command in ("start", "review"):
+            worktree = _worktree_for_target(f"{run.command}:{_first_positional(run.args, VAL_FLAGS[run.command])}")
+        if not worktree:
+            raise ApiError("no_worktree",
+                           f"no worktree for target {run.target!r}", 404)
+        _open_terminal(worktree, session_file)
+        return {"id": run.id, "session_file": session_file,
+                "worktree": worktree}
+
+    @app.post("/api/sessions/{sid}/resume")
+    async def resume_session(sid: str) -> dict:
+        """Open the OS default terminal resumed on a persisted session."""
+        from . import store_sqlite as _sq
+        db = _sq.db_path()
+        row = _sq.get_session(db, sid) if db.exists() else None
+        if row is None:
+            raise ApiError("not_found", f"no session {sid}", 404)
+        session_file = row.get("file_path", "")
+        if not session_file or not Path(session_file).exists():
+            raise ApiError("missing_session",
+                           f"session transcript missing: {session_file}", 404)
+        worktree = _worktree_for_session(row) or ""
+        if not worktree:
+            raise ApiError("no_worktree",
+                           f"no worktree for session {sid}", 404)
+        _open_terminal(worktree, session_file)
+        return {"id": sid, "session_file": session_file,
+                "worktree": worktree}
+
     @app.exception_handler(ApiError)
     async def api_error(request: Request, exc: ApiError) -> JSONResponse:
         return JSONResponse({"error": {"code": exc.code,
@@ -592,8 +865,8 @@ def run_server(host: str, port: int, static_dir: Path,
         import uvicorn
     except ImportError:
         print("error: the web extra is required — install with "
-              "`pip install 'harness[web]'` or `uv tool install "
-              "--force --with fastapi --with uvicorn .`", file=sys.stderr)
+              "`pip install 'workagent[web]'` or `uv tool install "
+              "--force --from '.[web]' workagent`", file=sys.stderr)
         raise SystemExit(1)
     if not _port_free(host, port):
         print(f"error: port {port} is busy — pick another with --port",

@@ -1,7 +1,7 @@
 # Feature coverage notes
 
 Mapping of every command/option in FEATURE_INVENTORY.md to the web UI. Explicitly
-out of scope per the task: shell `completions`, `--quiet`, `-N/--no-harness`.
+out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
 
 ## Coverage matrix
 
@@ -46,7 +46,7 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-harness`.
    `harness.confirm.optout`) are the interactive equivalent of `--yes`.
 2. **`sync --harness`**: no control in the web UI; sync runs use the harness
    configured in the CLI config file. Only start/review expose `--harness`.
-3. **`completions`, `--quiet`, `-N/--no-harness`**: out of scope per task.
+3. **`completions`, `--quiet`, `-N/--no-runtime`**: out of scope per task.
 4. **Backend 404 error shape**: `GET /api/status?ref=` and `GET /api/path?ref=`
    return FastAPI's `{"detail": "…"}` instead of the documented
    `{"error": {"code", "message"}}` on 404 (observed against the running

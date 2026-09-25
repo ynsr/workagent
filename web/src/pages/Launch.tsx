@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { Rocket, ShieldAlert } from "lucide-react"
+import { RefreshCw, Rocket, ShieldAlert } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { Button } from "@/components/ui/button"
@@ -11,7 +12,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useConfirm } from "@/lib/confirm"
 import { errorText } from "@/components/StatusFeedback"
-import { useCreateRun, useLinks, useRepos } from "@/lib/queries"
+import { queryKeys, useCreateRun, useLinks, useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -19,6 +20,9 @@ const AUTO_REPO = "__auto__"
 const AUTO_LABEL = "Registry default (auto)"
 const DEFAULT_HARNESS = "__default__"
 const HARNESS_DEFAULT_LABEL = "Configured default"
+/** Issue #26: Launch never defaults to the serve CWD. The backend
+ * `GET /api/default-repo?ref=` returns the linked-worktree repo for the
+ * typed ref, else the single-linked repo — else no default. */
 
 type Mode = "start" | "review" | "sync"
 
@@ -69,19 +73,22 @@ interface LaunchForm {
   depth: string
   base: string
   harness: string
-  noHarness: boolean
+  noRuntime: boolean
+  fixComments: boolean
   merge: boolean
   dryRun: boolean
   json: boolean
 }
-
 const INITIAL: LaunchForm = {
   ref: "",
   repo: AUTO_REPO,
   depth: "7",
   base: "",
   harness: DEFAULT_HARNESS,
-  noHarness: false,
+  // Issue #24: Start/Review launches should default to printing the
+  // runtime command for manual execution instead of auto-running.
+  noRuntime: true,
+  fixComments: false,
   merge: false,
   dryRun: false,
   json: false,
@@ -92,9 +99,9 @@ export function Launch() {
   const [params] = useSearchParams()
   const confirm = useConfirm()
   const createRun = useCreateRun()
+  const qc = useQueryClient()
   const { data: repos } = useRepos()
   const { data: links } = useLinks()
-
   const modeParam = params.get("mode")
   const refParam = params.get("ref") ?? ""
   const modeKnown = modeParam === null || MODES.includes(modeParam as Mode)
@@ -105,9 +112,34 @@ export function Launch() {
   const [form, setForm] = useState<LaunchForm>(() => ({
     ...INITIAL,
     ref: modeKnown ? refParam : "",
+    fixComments: modeParam === "review" && params.get("fixComments") === "1",
   }))
   const [submitting, setSubmitting] = useState(false)
+  const [refreshingIssues, setRefreshingIssues] = useState(false)
+  const [issuesNonce, setIssuesNonce] = useState(0)
   const [prefillChecked, setPrefillChecked] = useState(false)
+  const [defaultRepo, setDefaultRepo] = useState("")
+  const [defaultRepoReady, setDefaultRepoReady] = useState(false)
+
+  async function handleRefreshIssues() {
+    setRefreshingIssues(true)
+    try {
+      const fresh = await qc.fetchQuery({
+        queryKey: [...queryKeys.issues, true],
+        queryFn: () => api.issues({ force: true }),
+        staleTime: 0,
+      })
+      qc.setQueryData(queryKeys.issues, fresh)
+      // Remount the Issue ref dropdown so its first-open fetch reloads
+      // the now-fresh server cache immediately.
+      setIssuesNonce((n) => n + 1)
+      toast.success("Issues re-fetched live")
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setRefreshingIssues(false)
+    }
+  }
   // Unknown prefill → blank form + warning, never a crash: an unrecognized
   // mode, or a sync key matching no linked worktree (stale Dashboard link).
   useEffect(() => {
@@ -126,6 +158,39 @@ export function Launch() {
       }
     }
   }, [prefillChecked, modeParam, refParam, links])
+  const refValue = form.ref.trim()
+  // Issue #26 default-repo prefill: linked-worktree repo wins, else the
+  // single linked repo. Debounced on the typed ref; blanks mean "pick".
+  useEffect(() => {
+    if (mode === "sync") return
+    const ref = refValue
+    if (!ref) {
+      setDefaultRepo("")
+      setDefaultRepoReady(true)
+      return
+    }
+    setDefaultRepoReady(false)
+    let live = true
+    const t = setTimeout(() => {
+      api
+        .defaultRepo(ref)
+        .then((r) => {
+          if (!live) return
+          setDefaultRepo(r.repo ?? "")
+          setDefaultRepoReady(true)
+        })
+        .catch(() => {
+          if (!live) return
+          setDefaultRepo("")
+          setDefaultRepoReady(true)
+        })
+    }, 250)
+    return () => {
+      live = false
+      clearTimeout(t)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refValue, mode])
 
   function update<K extends keyof LaunchForm>(key: K, value: LaunchForm[K]) {
     setForm((f) => ({ ...f, [key]: value }))
@@ -136,16 +201,25 @@ export function Launch() {
     setForm((f) => ({ ...f, base: "" }))
   }
 
-  const refValue = form.ref.trim()
-  const repoValue = form.repo === AUTO_REPO ? undefined : form.repo
-  const harnessValue = form.harness === DEFAULT_HARNESS ? undefined : form.harness
+  const autoRepo = defaultRepoReady && defaultRepo ? defaultRepo : ""
+  const repoValue = form.repo === AUTO_REPO ? (autoRepo || undefined) : form.repo
   const copy = COPY[mode]
-
+  const repoHint =
+    mode === "sync"
+      ? ""
+      : !refValue
+        ? "Type a ref — the default repo appears once the ref matches a linked worktree or a single linked repo."
+        : !defaultRepoReady
+          ? "Looking up the default repo for this ref…"
+          : autoRepo
+            ? `Default for this ref: ${autoRepo}. Pick another repo to override, or leave auto.`
+            : "No default repo for this ref — pick a repo (the server CWD is never used)."
   const repoOptions = useMemo(
     () => [AUTO_LABEL, ...(repos ?? []).map((r) => r.name)],
     [repos],
   )
   const repoDisplay = form.repo === AUTO_REPO ? AUTO_LABEL : form.repo
+  const harnessValue = form.harness === DEFAULT_HARNESS ? undefined : form.harness
   const harnessOptions = useMemo(() => [HARNESS_DEFAULT_LABEL, "omp"], [])
   const harnessDisplay = form.harness === DEFAULT_HARNESS ? HARNESS_DEFAULT_LABEL : form.harness
 
@@ -159,11 +233,12 @@ export function Launch() {
       ]
     }
     const args = [refValue, "--no-tty"]
+    if (mode === "review" && form.fixComments) args.push("--fix-comments")
     if (repoValue) args.push("--repo", repoValue)
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
     if (mode === "start" && form.base.trim()) args.push("--base", form.base.trim())
     if (harnessValue) args.push("--harness", harnessValue)
-    if (mode === "start" && form.noHarness) args.push("--no-harness")
+    if (form.noRuntime) args.push("--no-runtime")
     if (form.dryRun) args.push("--dry-run")
     if (form.json) args.push("--json")
     return args
@@ -177,17 +252,24 @@ export function Launch() {
       ].filter((v): v is string => v !== null)
     : [
         "headless (--no-tty)",
+        mode === "review" && form.fixComments ? "--fix-comments (fix open review comments)" : null,
         repoValue ? `--repo ${repoValue}` : "repo: registry default",
         `--depth ${form.depth.trim() || "7"}`,
         mode === "start" && form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
         harnessValue ? `--harness ${harnessValue}` : "harness: configured default",
-        mode === "start" && form.noHarness ? "--no-harness" : null,
+        form.noRuntime ? "--no-runtime" : null,
         form.dryRun ? "--dry-run" : null,
         form.json ? "--json" : null,
       ].filter((v): v is string => v !== null)
 
   async function handleSubmit() {
     if (!refValue) return
+    if (!repoValue && defaultRepoReady && !autoRepo) {
+      toast.error(
+        "No default repo for this ref — pick a repo. The tracker is linked to multiple repos, or none.",
+      )
+      return
+    }
     const ok = await confirm({
       action: mode,
       title: `Launch ${copy.label}`,
@@ -226,33 +308,43 @@ export function Launch() {
     <div>
       <PageHeader
         title="Launch"
-        description="Start an agent from an issue ref/URL, review a PR/MR ref/URL, or sync a linked worktree. Runs headless as a child process of harness serve."
+        description="Start an agent from an issue ref/URL, review a PR/MR ref/URL, or sync a linked worktree. Runs headless as a child process of workagent serve."
         actions={
-          <div
-            role="tablist"
-            aria-label="Launch mode"
-            className="inline-flex rounded-lg border p-1"
-          >
-            {MODES.map((m) => (
-              <button
-                key={m}
-                role="tab"
-                aria-selected={mode === m}
-                onClick={() => switchMode(m)}
-                className={cn(
-                  "min-h-9 rounded-md px-4 text-sm font-medium transition-colors",
-                  mode === m
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {COPY[m].label}
-              </button>
-            ))}
-        </div>
-      }
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleRefreshIssues()}
+              disabled={refreshingIssues}
+            >
+              <RefreshCw className={refreshingIssues ? "animate-spin" : undefined} aria-hidden />
+              Refresh issues
+            </Button>
+            <div
+              role="tablist"
+              aria-label="Launch mode"
+              className="inline-flex rounded-lg border p-1"
+            >
+              {MODES.map((m) => (
+                <button
+                  key={m}
+                  role="tab"
+                  aria-selected={mode === m}
+                  onClick={() => switchMode(m)}
+                  className={cn(
+                    "min-h-9 rounded-md px-4 text-sm font-medium transition-colors",
+                    mode === m
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {COPY[m].label}
+                </button>
+              ))}
+            </div>
+          </>
+        }
       />
-
       <Card className="mx-auto max-w-2xl">
         <CardHeader>
           <CardTitle>{copy.title}</CardTitle>
@@ -266,6 +358,7 @@ export function Launch() {
             {mode === "start" && !refParam ? (
               <>
                 <SearchableSelect
+                  key={issuesNonce}
                   id="launch-ref"
                   value={form.ref}
                   options={[]}
@@ -323,7 +416,7 @@ export function Launch() {
                     allowCustom
                   />
                   <p className="text-xs text-muted-foreground">
-                    --repo accepts a registered name, a local path, or a clone URL; "(auto)" lets the harness pick.
+                    {repoHint || "--repo accepts a registered name, a local path, or a clone URL."}
                   </p>
                 </div>
                 <div className="grid gap-2">
@@ -366,15 +459,27 @@ export function Launch() {
           )}
 
           <div className="flex flex-wrap gap-x-6 gap-y-3">
-            {mode === "start" ? (
+            {mode !== "sync" ? (
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="launch-no-harness"
-                  checked={form.noHarness}
-                  onCheckedChange={(v) => update("noHarness", v === true)}
+                  id="launch-no-runtime"
+                  checked={form.noRuntime}
+                  onCheckedChange={(v) => update("noRuntime", v === true)}
                 />
-                <Label htmlFor="launch-no-harness" className="font-normal">
-                  <span className="font-mono text-[13px]">--no-harness</span> — skip the agent: print the command and hand over the worktree
+                <Label htmlFor="launch-no-runtime" className="font-normal">
+                  <span className="font-mono text-[13px]">--no-runtime</span> — skip the agent: print the command and hand over the worktree
+                </Label>
+              </div>
+            ) : null}
+            {mode === "review" ? (
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="launch-fix-comments"
+                  checked={form.fixComments}
+                  onCheckedChange={(v) => update("fixComments", v === true)}
+                />
+                <Label htmlFor="launch-fix-comments" className="font-normal">
+                  <span className="font-mono text-[13px]">--fix-comments</span> — fix open review comments: validate, apply, resolve/close, commit and push
                 </Label>
               </div>
             ) : null}
@@ -425,7 +530,16 @@ export function Launch() {
             <Button
               type="button"
               onClick={() => void handleSubmit()}
-              disabled={!refValue || submitting}
+              disabled={
+                !refValue ||
+                submitting ||
+                (mode !== "sync" && !repoValue && defaultRepoReady && !autoRepo)
+              }
+              title={
+                mode !== "sync" && refValue && !repoValue && defaultRepoReady && !autoRepo
+                  ? "No default repo for this ref — pick a repo (multiple or no linked repos)"
+                  : undefined
+              }
             >
               <Rocket aria-hidden />
               {submitting ? "Launching…" : `Launch ${copy.label}`}

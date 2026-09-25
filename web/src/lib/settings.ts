@@ -3,8 +3,8 @@
 export type Theme = "light" | "dark" | "system"
 
 export const THEME_KEY = "theme"
-export const VERBOSE_KEY = "harness.verbose"
-export const OPTOUT_KEY = "harness.confirm.optout"
+export const VERBOSE_KEY = "workagent.verbose"
+export const OPTOUT_KEY = "workagent.confirm.optout"
 
 export type OptOutAction =
   | "cleanup"
@@ -13,6 +13,7 @@ export type OptOutAction =
   | "review"
   | "repo remove"
   | "link remove"
+  | "tracker remove"
 
 export const OPTOUT_ACTIONS: OptOutAction[] = [
   "cleanup",
@@ -21,6 +22,7 @@ export const OPTOUT_ACTIONS: OptOutAction[] = [
   "review",
   "repo remove",
   "link remove",
+  "tracker remove",
 ]
 
 export const OPTOUT_LABELS: Record<OptOutAction, string> = {
@@ -30,6 +32,7 @@ export const OPTOUT_LABELS: Record<OptOutAction, string> = {
   review: "Review",
   "repo remove": "Repo removal",
   "link remove": "Link removal",
+  "tracker remove": "Tracker removal",
 }
 
 export function getTheme(): Theme {

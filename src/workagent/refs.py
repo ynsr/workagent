@@ -1,7 +1,7 @@
 """Issue/PR link parsing and fetching via jira-cli/gh/glab.
 
 Supported inputs:
-  - Jira key:          IPG-980
+  - Jira key:          IPG-980 or jira:IPG-980 (issue_key() emits the prefixed form)
   - Jira URL:          https://tribe.jibit.cloud/browse/IPG-980
   - GitHub issue URL:  https://github.com/OWNER/REPO/issues/22
   - GitHub PR URL:     https://github.com/OWNER/REPO/pull/33
@@ -25,8 +25,8 @@ _GITHUB_PR = re.compile(r"^https?://github\.com/([^/]+/[^/]+)/pull/(\d+)/*$")
 _GITLAB_ISSUE = re.compile(r"^https?://([^/]+)/(.+)/-/issues/(\d+)/*$")
 _GITLAB_MR = re.compile(r"^https?://([^/]+)/(.+)/-/merge_requests/(\d+)/*$")
 _JIRA_URL = re.compile(r"^https?://[^/]+/browse/([A-Z][A-Z0-9_]*-\d+)/*$")
-_JIRA_KEY = re.compile(r"^([A-Z][A-Z0-9_]*-\d+)$")
-_SHORTHAND = re.compile(r"^([^/\s]+/[^/\s#]+)#(\d+)$")
+_JIRA_KEY = re.compile(r"^(?:jira:)?([A-Z][A-Z0-9_]*-\d+)$")
+_SHORTHAND = re.compile(r"^(?:github:)?([^/\s]+/[^/\s#]+)#(\d+)$")
 
 
 def parse_ref(ref: str) -> dict:
@@ -243,7 +243,7 @@ def fetch_pr_list_for_branch(tool: str, branch: str, cwd: str | None = None) -> 
                  "title": p.get("title", ""), "author": (p.get("author") or {}).get("login", ""),
                  "created_at": p.get("createdAt", ""), "url": p.get("url", ""),
                  "target_branch": p.get("baseRefName", "")} for p in data]
-    out = run_cmd("glab", "mr", "list", "--source-branch", branch, "-F", "json",
+    out = run_cmd("glab", "mr", "list", "--source-branch", branch, "--all", "-F", "json",
                   cwd=cwd)
     try:
         data = json.loads(out or "[]")
@@ -256,6 +256,39 @@ def fetch_pr_list_for_branch(tool: str, branch: str, cwd: str | None = None) -> 
              "target_branch": m.get("target_branch", "")} for m in data]
 
 
+
+def fetch_pr_merge_state(pr_url: str, cwd: str | None = None) -> dict:
+    """Fresh {state, mergeable} for a PR/MR URL; raises HarnessError on failure.
+
+    GitHub: state in OPEN|MERGED|CLOSED, mergeable in MERGEABLE|CONFLICTING|UNKNOWN.
+    GitLab: state in opened|merged|closed (+ detailed_merge_status / has_conflicts).
+    A deleted/missing PR (404) surfaces as HarnessError with "404"/"not found"
+    in the message so callers can keep the remote branch and the link.
+    """
+    m = _GITHUB_PR.match(pr_url or "")
+    if m:
+        out = run_cmd("gh", "pr", "view", pr_url, "--json",
+                      "state,mergeable,mergeStateStatus", cwd=cwd)
+        try:
+            data = json.loads(out or "{}")
+        except json.JSONDecodeError:
+            raise HarnessError(f"cannot parse gh output for {pr_url}")
+        return {"state": str(data.get("state") or ""),
+                "mergeable": str(data.get("mergeable") or ""),
+                "merge_state": str(data.get("mergeStateStatus") or "")}
+    m = _GITLAB_MR.match(pr_url or "")
+    if m:
+        out = run_cmd("glab", "mr", "view", pr_url, cwd=cwd)
+        try:
+            data = json.loads(out or "{}")
+        except json.JSONDecodeError:
+            raise HarnessError(f"cannot parse glab output for {pr_url}")
+        return {"state": str(data.get("state") or ""),
+                "mergeable": str(data.get("detailed_merge_status") or ""),
+                "merge_state": "conflicts" if data.get("has_conflicts") else ""}
+    raise HarnessError(f"not a PR/MR URL: {pr_url}")
+
+
 def latest_pr(prs: list[dict]) -> dict | None:
     """Most recent PR by creation date, or None."""
     if not prs:
@@ -263,6 +296,20 @@ def latest_pr(prs: list[dict]) -> dict | None:
     return max(prs, key=lambda p: p.get("created_at", ""))
 
 
+def pick_branch_pr(prs: list[dict]) -> dict | None:
+    """PR/MR to act on for a source branch: latest open, else latest.
+
+    A branch can source several PRs/MRs over time (closed superseded ones
+    plus the live one). Only an open PR is live — prefer the newest open
+    one. With no open PR, the latest (merged/closed) row still identifies
+    the branch's fate for remote-branch deletion. Returns None for an
+    empty list.
+    """
+    if not prs:
+        return None
+    live = [p for p in prs if (p.get("state") or "").lower() == "open"]
+    pool = live or prs
+    return max(pool, key=lambda p: p.get("created_at", ""))
 
 _GH_FAILURE = {"FAILURE", "ACTION_REQUIRED", "TIMED_OUT", "STARTUP_FAILURE",
                "CANCELLED"}
@@ -337,4 +384,122 @@ def fetch_ci_status(tool: str, pr_url: str, cwd: str | None = None) -> str | Non
         raise HarnessError(f"unknown host CLI: {tool}")
     except HarnessError as e:
         print(f"warning: ci lookup failed for {pr_url}: {e}", file=sys.stderr)
+        return None
+
+def _gh_bot_comment_resolved(body: str) -> bool:
+    """True when a GitHub bot `# Code Review` comment is marked resolved.
+
+    Plain PR comments carry no resolution state, so by convention (issue #32)
+    a bot review comment whose second non-empty line (directly below the
+    `# Code Review` header) is exactly `Status: RESOLVED` counts as
+    resolved; anything else is unresolved.
+    GitLab MRs keep their native resolved flags — this rule is GitHub-only.
+    """
+    lines = [ln.strip() for ln in str(body or "").splitlines() if ln.strip()]
+    return len(lines) >= 2 and lines[1] == "Status: RESOLVED"
+
+
+def _review_comments_gh(pr_url: str, cwd: str | None) -> dict:
+    """{reviews, unresolved, resolved} for a GitHub PR.
+
+    reviews = issue comments whose body starts with `# Code Review`
+    (each one marks a completed harness review). Inline reviewThreads carry
+    a native isResolved flag; plain (non-inline) bot comments have no
+    resolution state, so a bot comment counts as resolved only when its
+    second non-empty line (below the header) is exactly `Status: RESOLVED`
+    (issue #32, GitHub-only).
+    """
+    m = _GITHUB_PR.match(pr_url or "")
+    if not m:
+        raise HarnessError(f"not a GitHub PR URL: {pr_url}")
+    out = run_cmd("gh", "pr", "view", pr_url, "--json", "comments",
+                  cwd=cwd)
+    try:
+        comments = json.loads(out or "{}").get("comments") or []
+    except json.JSONDecodeError:
+        raise HarnessError(f"cannot parse gh output for {pr_url}")
+    bot_comments = [str((c or {}).get("body") or "")
+                    for c in comments
+                    if str((c or {}).get("body") or "").lstrip().startswith("# Code Review")]
+    reviews = len(bot_comments)
+    bot_resolved = sum(1 for b in bot_comments if _gh_bot_comment_resolved(b))
+    bot_unresolved = reviews - bot_resolved
+    owner, name = m.group(1).split("/", 1)
+    try:
+        number = int(m.group(2))
+    except ValueError:
+        raise HarnessError(f"not a GitHub PR URL: {pr_url}")
+    query = ('{repository(owner:"%s",name:"%s"){pullRequest(number:%d)'
+             '{reviewThreads(first:100){nodes{isResolved}}}}}' % (owner, name, number))
+    tout = run_cmd("gh", "api", "graphql", "-f", f"query={query}", cwd=cwd)
+    try:
+        nodes = (json.loads(tout or "{}").get("data", {}).get("repository", {})
+                 .get("pullRequest", {}).get("reviewThreads", {}).get("nodes") or [])
+    except json.JSONDecodeError:
+        raise HarnessError(f"cannot parse gh output for {pr_url}")
+    thread_unresolved = sum(1 for n in nodes if not (n or {}).get("isResolved"))
+    thread_resolved = sum(1 for n in nodes if (n or {}).get("isResolved"))
+    return {"reviews": reviews,
+            "unresolved": thread_unresolved + bot_unresolved,
+            "resolved": thread_resolved + bot_resolved}
+
+
+def _review_comments_glab(pr_url: str, cwd: str | None) -> dict:
+    """{reviews, unresolved, resolved} for a GitLab MR via discussions API.
+
+    reviews = notes whose body starts with `# Code Review`. A discussion is
+    resolved when every note in it is marked resolved (or the discussion
+    itself carries resolved=True).
+    """
+    m = _GITLAB_MR.match(pr_url or "")
+    if not m:
+        raise HarnessError(f"not a GitLab MR URL: {pr_url}")
+    host, path, iid = m.group(1), m.group(2), m.group(3)
+    api = (f"projects/{quote(path, safe='')}/merge_requests/{iid}"
+           "/discussions?per_page=100")
+    try:
+        out = run_cmd("glab", "api", api, "--hostname", host, cwd=cwd)
+    except HarnessError:
+        out = run_cmd("glab", "api", api, cwd=cwd)
+    try:
+        data = json.loads(out or "[]")
+    except json.JSONDecodeError:
+        raise HarnessError(f"cannot parse glab output for {pr_url}")
+    reviews = 0
+    unresolved = 0
+    resolved = 0
+    for disc in data or []:
+        notes = (disc or {}).get("notes") or []
+        for n in notes:
+            if str((n or {}).get("body") or "").lstrip().startswith("# Code Review"):
+                reviews += 1
+        # Only review threads are resolvable; system/activity notes
+        # ("added N commits", "marked as draft", …) are individual
+        # discussions GitLab's UI never counts as unresolved.
+        resolvable = [n for n in notes if (n or {}).get("resolvable")]
+        if not resolvable:
+            continue
+        if (disc or {}).get("resolved") is True:
+            resolved += 1
+        elif all((n or {}).get("resolved") for n in resolvable):
+            resolved += 1
+        else:
+            unresolved += 1
+    return {"reviews": reviews, "unresolved": unresolved, "resolved": resolved}
+
+
+def fetch_pr_comment_stats(tool: str, pr_url: str, cwd: str | None = None) -> dict | None:
+    """{reviews, unresolved, resolved} for a PR/MR URL.
+
+    Soft-failing like fetch_ci_status: None on any lookup error (warning
+    to stderr) so status rendering never breaks on an unhappy host CLI.
+    """
+    try:
+        if tool == "gh":
+            return _review_comments_gh(pr_url, cwd)
+        if tool == "glab":
+            return _review_comments_glab(pr_url, cwd)
+        raise HarnessError(f"unknown host CLI: {tool}")
+    except HarnessError as e:
+        print(f"warning: review-comment lookup failed for {pr_url}: {e}", file=sys.stderr)
         return None

@@ -1,5 +1,5 @@
 /**
- * Typed client for the `harness serve` API.
+ * Typed client for the `workagent serve` API.
  * Contract: web/API_CONTRACT.md (authoritative).
  */
 
@@ -24,7 +24,7 @@ export interface CommitsDetail {
   ahead: number
 }
 
-/** One worktree entry, as in `harness status --json`. */
+/** One worktree entry, as in `workagent status --json`. */
 export interface WorktreeEntry {
   issue?: string
   worktree?: string
@@ -37,12 +37,22 @@ export interface WorktreeEntry {
   pr?: string
   /** CI pipeline status: success | failure | running | not_started; absent when unknown. */
   ci?: string
+  /** Review stats display "R|U|R" (done|unresolved|resolved); "-" when no PR/lookup failed. */
+  reviews?: string
   /** First-seen stamp (ISO-8601); older entries may lack it. */
   added_at?: string
   /** False when the recorded path is missing or not a live git worktree. */
   wt_valid?: boolean
   commits_detail?: CommitsDetail | null
   pr_detail?: PrDetail | null
+  reviews_detail?: ReviewsDetail | null
+}
+
+/** Review-comment stats: done reviews + thread resolution. */
+export interface ReviewsDetail {
+  reviews: number
+  unresolved: number
+  resolved: number
 }
 
 /** GET /api/status — map of worktree key → entry. */
@@ -55,8 +65,8 @@ export interface WorktreeDetail extends WorktreeEntry {
   pr: string
   commits_detail?: CommitsDetail | null
   pr_detail?: PrDetail | null
+  reviews_detail?: ReviewsDetail | null
   base_branch?: string
-  issue_url?: string
   create_hint?: string
 }
 
@@ -69,7 +79,15 @@ export interface Repo {
   name: string
   path: string
   tracker?: string
+  trackers?: string[]
   [key: string]: unknown
+}
+
+export interface TrackerRow {
+  key: string
+  vendor: string
+  remote_url: string
+  repos: number
 }
 
 export interface Links {
@@ -159,6 +177,8 @@ export interface Run {
   truncated: boolean
   created: number
   target: string
+  session_file: string
+  worktree: string
   last_seq: number
 }
 
@@ -180,6 +200,7 @@ export type RunCommand =
   | "register"
   | "repo"
   | "link"
+  | "tracker"
 
 /** Display label for a PR/MR URL: "PR #33" (GitHub) or "MR #42" (GitLab);
  * falls back to the raw URL when the kind cannot be determined. */
@@ -187,6 +208,16 @@ export function prLabel(prUrl: string | undefined): string {
   if (!prUrl) return ""
   const m = /\/(pull|merge_requests)\/(\d+)/.exec(prUrl)
   return m ? `${m[1] === "pull" ? "PR" : "MR"} #${m[2]}` : prUrl
+}
+
+/** Absolute PR/MR URL for an entry: pr_detail.url first (backend `pr` is a
+ * display label like "MR #1695 (open)", not a URL). Recorded-URL entries
+ * carry the raw URL in pr_detail.url too. */
+export function prUrl(entry: Pick<WorktreeEntry, "pr" | "pr_detail">): string {
+  const u = entry.pr_detail?.url ?? ""
+  if (u.startsWith("http")) return u
+  const raw = entry.pr ?? ""
+  return raw.startsWith("http") ? raw : ""
 }
 
 export interface CreateRunInput {
@@ -221,7 +252,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(
       0,
       "network_error",
-      `Cannot reach the harness server (${String(cause)})`,
+      `Cannot reach the workagent server (${String(cause)})`,
     )
   }
   const text = await res.text()
@@ -270,13 +301,25 @@ export const api = {
   path: (ref: string) => request<PathInfo>(`/api/path${qs({ ref })}`),
 
   repos: () => request<Repo[]>("/api/repos"),
+  trackers: () => request<{ trackers: TrackerRow[] }>("/api/trackers"),
   links: () => request<Links>("/api/links"),
   doctor: () => request<DoctorInfo>("/api/doctor"),
 
-  /** GET /api/issues — my open issues; always 200 with an optional warning. */
-  issues: () => request<IssuesResponse>("/api/issues"),
-  /** GET /api/candidates — unlinked PR/MRs + recent issues. */
-  candidates: () => request<CandidatesResponse>("/api/candidates"),
+  /** GET /api/issues — my open issues; always 200 with an optional warning.
+   * `force` bypasses the 1h server cache and re-queries the tracker CLIs live. */
+  issues: (opts?: { force?: boolean }) =>
+    request<IssuesResponse>(
+      `/api/issues${qs({ force: opts?.force ? "true" : undefined })}`,
+    ),
+  /** GET /api/candidates — unlinked PR/MRs + recent issues.
+   * `force` re-queries the tracker CLIs live instead of the 1h issue cache. */
+  candidates: (opts?: { force?: boolean }) =>
+    request<CandidatesResponse>(
+      `/api/candidates${qs({ force: opts?.force ? "true" : undefined })}`,
+    ),
+  /** GET /api/default-repo?ref=… — linked-worktree repo else single-linked (issue #26). */
+  defaultRepo: (ref: string) =>
+    request<{ ref: string; repo: string }>(`/api/default-repo${qs({ ref })}`),
 
   /** GET /api/sessions — persisted harness sessions (newest first). */
   sessions: () => request<SessionsResponse>("/api/sessions"),
@@ -298,6 +341,20 @@ export const api = {
   cancelRun: (id: string) =>
     request<{ id: string; state: string }>(
       `/api/runs/${encodeURIComponent(id)}/cancel`,
+      { method: "POST" },
+    ),
+
+  /** POST /api/runs/{id}/resume — open OS terminal resumed on the run session. */
+  resumeRun: (id: string) =>
+    request<{ id: string; session_file: string; worktree: string }>(
+      `/api/runs/${encodeURIComponent(id)}/resume`,
+      { method: "POST" },
+    ),
+
+  /** POST /api/sessions/{id}/resume — open OS terminal resumed on the session. */
+  resumeSession: (id: string) =>
+    request<{ id: string; session_file: string; worktree: string }>(
+      `/api/sessions/${encodeURIComponent(id)}/resume`,
       { method: "POST" },
     ),
 }

@@ -1,8 +1,8 @@
-"""Tests for harness serve (FastAPI app in harness.webapp).
+"""Tests for workagent serve (FastAPI app in workagent.webapp).
 
 Mutating runs use a fake argv via monkeypatching Registry/_spawn so no
 real command executes. Read endpoints reuse the real in-process helpers
-against an isolated HARNESS_CONFIG_DIR.
+against an isolated WORKAGENT_CONFIG_DIR.
 """
 
 from __future__ import annotations
@@ -14,11 +14,13 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from harness import cli, refs, store, trackers
-from harness.errors import HarnessError
-from harness.webapp import (
+from workagent import cli, refs, store, trackers
+from workagent.errors import HarnessError
+from workagent.webapp import (
+    BOOL_FLAGS,
     MAX_LINES,
     MAX_RUNS,
+    VAL_FLAGS,
     Registry,
     Run,
     _build_argv,
@@ -159,7 +161,7 @@ def _stub_spawn(monkeypatch):
         run.proc = object()  # non-None so cancel paths take the fake branch
         threading.Thread(target=reader, daemon=True).start()
 
-    monkeypatch.setattr("harness.webapp._spawn", fake_spawn)
+    monkeypatch.setattr("workagent.webapp._spawn", fake_spawn)
 
 
 FAKE_SCRIPTS: dict[str, dict[tuple, tuple[list, int]]] = {
@@ -211,7 +213,7 @@ def test_exit_one_fails(client, monkeypatch):
 
 
 def test_real_child_process_end_to_end(client):
-    """Real spawn path: harness register on a missing path exits 2."""
+    """Real spawn path: workagent register on a missing path exits 2."""
     r = client.post("/api/runs", json={"command": "register",
                                        "args": ["/nonexistent/wt"]})
     assert r.status_code == 202
@@ -235,7 +237,7 @@ class _FakeProc:
 
 def test_cancel_running_run(client, monkeypatch):
     sent: list[tuple[int, int]] = []
-    monkeypatch.setattr("harness.webapp.os.killpg",
+    monkeypatch.setattr("workagent.webapp.os.killpg",
                         lambda pid, sig: sent.append((pid, sig)))
     app_state = client.app.state.registry
     run = app_state.create("sync", ["x"], "sync:test")
@@ -423,33 +425,44 @@ def test_doctor_endpoint(client):
 def test_build_argv_uses_same_interpreter():
     argv = _build_argv("start", ["-v", "IPG-1", "--no-tty"])
     assert argv[0].endswith("python") or argv[0].endswith("python3")
-    assert argv[1:3] == ["-m", "harness"]
+    assert argv[1:3] == ["-m", "workagent"]
     assert argv[3] == "-v"
     assert argv[4:] == ["start", "IPG-1", "--no-tty"]
 
 
-def test_start_accepts_and_forwards_no_harness(client, monkeypatch):
-    """`start --no-harness` passes validation and reaches the child argv."""
+def test_start_accepts_and_forwards_no_runtime(client, monkeypatch):
+    """`start --no-runtime` passes validation and reaches the child argv."""
     _stub_spawn(monkeypatch)
     r = client.post("/api/runs", json={
-        "command": "start", "args": ["IPG-1", "--no-tty", "--no-harness"],
+        "command": "start", "args": ["IPG-1", "--no-tty", "--no-runtime"],
         "confirm": True,
     })
     assert r.status_code == 202, r.text
     rid = r.json()["run_id"]
     run = client.app.state.registry.get(rid)
-    assert run.argv[-2:] == ["--no-harness", "--yes"]  # server appends --yes
+    assert "--no-runtime" in run.argv and "--yes" in run.argv  # server appends --yes
+    assert "--session-file" in run.argv and run.session_file.endswith(".jsonl")
     _wait_state(client, rid, {"succeeded"})
 
 
-def test_review_accepts_no_harness_shorthand_N(client, monkeypatch):
-    """-N (CLI shorthand) passes web validation like --no-harness."""
+def test_review_accepts_no_runtime_shorthand_N(client, monkeypatch):
+    """-N (CLI shorthand) passes web validation like --no-runtime."""
     _stub_spawn(monkeypatch)
     r = client.post("/api/runs", json={
         "command": "review", "args": ["o/r#33", "-N", "--dry-run"],
     })
     assert r.status_code == 202, r.text
 
+
+def test_start_rejects_stale_no_harness_alias(client):
+    """Old `--no-harness` (pre-#14 rename) is rejected with a bad_arg hint (issue #15)."""
+    r = client.post("/api/runs", json={
+        "command": "start", "args": ["IPG-1", "--no-tty", "--no-harness"],
+        "confirm": True,
+    })
+    assert r.status_code == 400, r.text
+    body = r.json()["error"]
+    assert body["code"] == "bad_arg" and "--no-runtime" in body["message"]
 
 def test_validate_args_allows_verbose_global():
     _validate_args("sync", ["-v", "IPG-1"])
@@ -458,8 +471,10 @@ def test_validate_args_allows_verbose_global():
 def test_webapp_review_all_flags_and_target():
     _validate_args("review", ["--all"])
     _validate_args("review", ["--all", "--sequential", "--fix"])
+    _validate_args("review", ["--all", "--fix-comments"])
+    _validate_args("review", ["o/r#33", "--fix-comments"])
     assert _target_for("review", ["--all"]) == "review:all"
-    assert _target_for("review", ["o/r#33"]) == "review"
+    assert _target_for("review", ["o/r#33"]) == "review:o/r#33"
 
 
 def test_webapp_open_allowed_and_target():
@@ -483,18 +498,18 @@ def test_error_shape_on_404(client):
 
 
 def test_default_static_dir_prefers_source_tree(monkeypatch, tmp_path):
-    from harness import cli
+    from workagent import cli
     fake_src = tmp_path / "src"
     (fake_src / "web" / "dist").mkdir(parents=True)
     (fake_src / "web" / "dist" / "index.html").write_text("x")
     monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(
-        cli, "__file__", str(fake_src / "src" / "harness" / "cli.py"))
+        cli, "__file__", str(fake_src / "src" / "workagent" / "cli.py"))
     assert cli._default_static_dir() == fake_src / "web" / "dist"
 
 
 def test_default_static_dir_falls_back_to_receipt(monkeypatch, tmp_path):
-    from harness import cli
+    from workagent import cli
     installed_src = tmp_path / "installed"
     (installed_src / "web" / "dist").mkdir(parents=True)
     (installed_src / "web" / "dist" / "index.html").write_text("x")
@@ -505,21 +520,21 @@ def test_default_static_dir_falls_back_to_receipt(monkeypatch, tmp_path):
     # home has no receipt at the default path -> point home at tmp and
     # write the receipt there.
     monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
-    receipt_dir = tmp_path / ".local" / "share" / "harness"
+    receipt_dir = tmp_path / ".local" / "share" / "workagent"
     receipt_dir.mkdir(parents=True)
     receipt_dir.joinpath("install-receipt.json").write_text(
         json.dumps({"source_dir": str(installed_src)}))
     monkeypatch.setattr(
-        cli, "__file__", str(tmp_path / "site-packages" / "harness" / "cli.py"))
+        cli, "__file__", str(tmp_path / "site-packages" / "workagent" / "cli.py"))
     assert cli._default_static_dir() == installed_src / "web" / "dist"
 
 
 def test_default_static_dir_no_receipt_returns_source_default(
         monkeypatch, tmp_path):
-    from harness import cli
+    from workagent import cli
     monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
     monkeypatch.setattr(
-        cli, "__file__", str(tmp_path / "site-packages" / "harness" / "cli.py"))
+        cli, "__file__", str(tmp_path / "site-packages" / "workagent" / "cli.py"))
     assert cli._default_static_dir() == \
         tmp_path / "web" / "dist"
 
@@ -539,6 +554,20 @@ def test_api_issues_missing_cli(client, monkeypatch):
     body = r.json()
     assert body["issues"] == []
     assert body["warning"]
+
+def test_api_issues_force_bypasses_cache(client, monkeypatch):
+    """?force=true reaches list_my_issues with force=True (live re-fetch)."""
+    seen = {}
+
+    def fake(warnings, force=False):
+        seen["force"] = force
+        return []
+
+    monkeypatch.setattr(trackers, "list_my_issues", fake)
+    assert client.get("/api/issues").json()["issues"] == []
+    assert seen["force"] is False
+    assert client.get("/api/issues?force=true").json()["issues"] == []
+    assert seen["force"] is True
 
 
 def test_api_issues_jira_ok(client, monkeypatch, tmp_path):
@@ -637,13 +666,15 @@ def test_api_sessions_empty(client):
 
 
 def test_api_sessions_roundtrip(client, tmp_path, monkeypatch):
-    from harness import store_sqlite as sq
+    from workagent import store_sqlite as sq
     db = sq.db_path()
     sq.init_db(db)
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO repos (key_ref, path) VALUES ('r', '/r')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key)"
-                     " VALUES ('k', '/wt', 'b', 'r')")
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
     sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
                             initiator_command="start", prompt="hello",
                             file_path="/tmp/x.jsonl")
@@ -655,7 +686,7 @@ def test_api_sessions_roundtrip(client, tmp_path, monkeypatch):
 
 
 def test_api_repos_includes_tracker(client, monkeypatch):
-    import harness.store as store
+    import workagent.store as store
     cfg = store.load_config()
     cfg["repos"] = {"p": {"path": "/tmp/proj"}}
     cfg["trackers"] = {"jira:IPG": {"repos": ["/tmp/proj"]}}
@@ -665,6 +696,57 @@ def test_api_repos_includes_tracker(client, monkeypatch):
     assert r.json()[0]["tracker"] == "jira:IPG"
 
 
+def test_run_tracker_add_requires_remote_url(client, tmp_path, monkeypatch):
+    """tracker add via /api/runs is rejected without --remote-url (400)."""
+    r = client.post("/api/runs", json={"command": "tracker", "args": ["add", "jira:IPG"]})
+    assert r.status_code == 400, r.text
+    assert "--remote-url" in r.json()["error"]["message"]
+
+
+def test_api_trackers_lists_rows(client, tmp_path, monkeypatch):
+    """GET /api/trackers returns key/vendor/remote_url + repo counts."""
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    sq.upsert_tracker(db, "jira:IPG", vendor="jira", remote_url="https://jira/browse/IPG")
+    sq.add_tracker_repo(db, "jira:IPG", "/r")
+    r = client.get("/api/trackers")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"trackers": [{"key": "jira:IPG", "vendor": "jira",
+                                       "remote_url": "https://jira/browse/IPG", "repos": 1}]}
+
+
+def test_api_repos_includes_trackers_array(client, tmp_path, monkeypatch):
+    """GET /api/repos carries the joined trackers array + first-tracker compat."""
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    sq.ensure_tracker(db, "jira:IPG")
+    sq.ensure_tracker(db, "github:o/r")
+    sq.register_repo_row(db, "p", "/tmp/proj", "jira:IPG")
+    sq.add_tracker_repo(db, "github:o/r", "/tmp/proj")
+    r = client.get("/api/repos")
+    assert r.status_code == 200, r.text
+    row = r.json()[0]
+    assert row["trackers"] == ["github:o/r", "jira:IPG"]
+    assert row["tracker"] == "github:o/r"
+
+
+def test_api_default_repo_prefers_linked_worktree(client, tmp_path, monkeypatch):
+    """Issue #26: /api/default-repo returns the linked-worktree repo, else single-linked."""
+    from workagent import repos, trackers, store
+    linked = tmp_path / "proj"
+    linked.mkdir()
+    trackers.check_or_record("jira:IPG", str(linked), persist=True)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    store.record_link("jira:IPG-1", {"worktree": str(wt), "branch": "b",
+                                     "repo": str(linked)})
+    r = client.get("/api/default-repo", params={"ref": "IPG-1"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ref": "IPG-1", "repo": str(linked)}
+    assert client.get("/api/default-repo", params={"ref": "IPG-99"}).json()["repo"] == str(linked)
+
 def test_register_run_key_unique_per_path(client):
     r1 = client.post("/api/runs", json={"command": "register",
                                         "args": ["/tmp/wt-a"]})
@@ -673,3 +755,246 @@ def test_register_run_key_unique_per_path(client):
     assert r1.status_code == 202, r1.text
     assert r2.status_code == 202, r2.text
     assert r1.json()["run_id"] != r2.json()["run_id"]
+
+
+def test_start_run_injects_session_file(client, monkeypatch):
+    seen: dict = {}
+
+    def fake_spawn(run, registry):
+        seen["argv"] = run.argv
+        seen["session_file"] = run.session_file
+        with run.lock:
+            run.exit_code = 0
+            run.state = "succeeded"
+        registry.release_target(run)
+
+    monkeypatch.setattr("workagent.webapp._spawn", fake_spawn)
+    r = client.post("/api/runs", json={"command": "start",
+                                       "args": ["IPG-1"],
+                                       "confirm": True})
+    assert r.status_code == 202, r.text
+    assert seen["session_file"].endswith(".jsonl")
+    assert "--session-file" in seen["argv"]
+    detail = client.get(f"/api/runs/{r.json()['run_id']}").json()
+    assert detail["session_file"] == seen["session_file"]
+
+
+def test_sync_explicit_session_file_recorded(client, monkeypatch):
+    seen: dict = {}
+
+    def fake_spawn(run, registry):
+        seen["argv"] = run.argv
+        with run.lock:
+            run.exit_code = 0
+            run.state = "succeeded"
+        registry.release_target(run)
+
+    monkeypatch.setattr("workagent.webapp._spawn", fake_spawn)
+    body = {"command": "sync", "args": ["k", "--session-file", "/tmp/s.jsonl"],
+            "confirm": True}
+    r = client.post("/api/runs", json=body)
+    assert r.status_code == 202, r.text
+    assert seen["argv"].count("--session-file") == 1
+    detail = client.get(f"/api/runs/{r.json()['run_id']}").json()
+    assert detail["session_file"] == "/tmp/s.jsonl"
+
+def test_all_with_session_file_rejected(client):
+    for command in ("review", "sync"):
+        r = client.post("/api/runs", json={
+            "command": command,
+            "args": ["--all", "--session-file", "/tmp/s.jsonl"],
+            "confirm": True})
+        assert r.status_code == 400, r.text
+        assert r.json()["error"]["code"] == "bad_arg"
+
+
+def test_resume_run_needs_session(client):
+    run = client.app.state.registry.create("register", ["/tmp/x"],
+                                           "register:/tmp/x")
+    r = client.post(f"/api/runs/{run.id}/resume")
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "no_session"
+
+
+def test_resume_run_opens_terminal(client, monkeypatch, tmp_path):
+    session = tmp_path / "s.jsonl"
+    session.write_text("{}\n")
+    opened: dict = {}
+    monkeypatch.setattr("workagent.webapp._open_terminal",
+                        lambda wt, sf: opened.update(wt=wt, sf=sf))
+    run = client.app.state.registry.create("review", ["o/r#1"],
+                                           "review:o/r#1")
+    run.session_file = str(session)
+    run.worktree = "/tmp/wt"
+    r = client.post(f"/api/runs/{run.id}/resume")
+    assert r.status_code == 200, r.text
+    assert opened == {"wt": "/tmp/wt", "sf": str(session)}
+
+
+def test_resume_session_opens_terminal(client, monkeypatch, tmp_path):
+    from workagent import store_sqlite as sq
+    session = tmp_path / "s.jsonl"
+    session.write_text("{}\n")
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
+    sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
+                            initiator_command="start", prompt="hello",
+                            file_path=str(session))
+    opened: dict = {}
+    monkeypatch.setattr("workagent.webapp._open_terminal",
+                        lambda wt, sf: opened.update(wt=wt, sf=sf))
+    r = client.post(f"/api/sessions/{sid}/resume")
+    assert r.status_code == 200, r.text
+    assert opened == {"wt": "/wt", "sf": str(session)}
+
+
+def test_specs_mirror_cli_flags():
+    """Parity: webapp BOOL_FLAGS/VAL_FLAGS mirror the real Typer CLI (#25 checklist).
+
+    Catches drift like `--post-comments`, `sync --force/-y`, `register -y`.
+    Read-only/local commands (status/cd/doctor/migrate/candidates/serve/
+    completions) are intentionally not web-exposed.
+    """
+    import typer.main as _tm
+
+    from workagent import webapp as _w
+
+    def _walk(cmd, path):
+        out = {}
+        bools, vals = set(), set()
+        for p in getattr(cmd, "params", []) or []:
+            names = list(getattr(p, "opts", []) or []) + list(getattr(p, "secondary_opts", []) or [])
+            if not names:
+                continue
+            (bools if getattr(p, "is_flag", False) else vals).update(names)
+        out[" ".join(path)] = (bools, vals)
+        for name, sub in (getattr(cmd, "commands", {}) or {}).items():
+            out.update(_walk(sub, path + [name]))
+        return out
+
+    inv = _walk(_tm.get_command(cli.app), [])
+    skip = {"", "completions", "completions install", "completions show",
+            "serve", "doctor", "migrate", "candidates", "status", "cd",
+            "repo", "link", "tracker"}  # bare groups never invoked; subcommands covered
+    for path, (b, v) in sorted(inv.items()):
+        if path in skip:
+            continue
+        assert path in _w.BOOL_FLAGS or path in _w.VAL_FLAGS, f"{path} missing from webapp inventory"
+        cb = {x for x in b if x.startswith("-")}
+        cv = {x for x in v if x.startswith("-")}
+        assert cb == set(_w.BOOL_FLAGS.get(path, ())), f"BOOL drift [{path}]"
+        assert cv == set(_w.VAL_FLAGS.get(path, ())), f"VAL drift [{path}]"
+
+def test_review_force_all_passthrough_accepted():
+    """Issue #28: --force-all passes web arg validation for review --all."""
+    from workagent import webapp as _w2
+    from workagent.webapp import _validate_args
+    _validate_args("review", ["--all", "--force-all"])
+    for cmd in ("start", "review", "cleanup", "sync", "open", "register", "repo", "link", "tracker"):
+        assert cmd in _w2.SPECS, f"SPECS missing {cmd}"
+
+def test_start_review_multi_repo_requires_explicit_repo(client, tmp_path, monkeypatch):
+    """Issue #29: ambiguous tracker + no --repo → 400 repo_ambiguous (not a run)."""
+    from workagent import store
+    from workagent import store_sqlite as _sq
+    _stub_spawn(monkeypatch)
+    _sq.init_db(_sq.db_path())
+    (tmp_path / "a").mkdir(exist_ok=True)
+    (tmp_path / "b").mkdir(exist_ok=True)
+    wt = tmp_path / "wt-pinned"
+    wt.mkdir(exist_ok=True)
+    store.add_tracker_repo("jira:IPG", str(tmp_path / "a"))
+    store.add_tracker_repo("jira:IPG", str(tmp_path / "b"))
+    from workagent import trackers as _t
+    assert len(_t.linked_repos("jira:IPG")) == 2, _t.linked_repos("jira:IPG")
+    store.add_tracker_repo("github:o/r", str(tmp_path / "a"))
+    store.add_tracker_repo("github:o/r", str(tmp_path / "b"))
+    for command, ref in (("start", "IPG-987"), ("review", "https://github.com/o/r/pull/1")):
+        r = client.post("/api/runs", json={"command": command,
+                                           "args": [ref, "--dry-run"],
+                                           "confirm": True})
+        assert r.status_code == 400, r.text
+        body = r.json()
+        assert body["error"]["code"] == "repo_ambiguous"
+        assert "--repo" in body["error"]["message"]
+    # Rule-1 pinned: exact key already linked to a worktree repo skips the guard.
+    store.record_link("jira:IPG-987", {"branch": "feat/x", "worktree": str(wt),
+                                      "repo": str(tmp_path / "a"),
+                                      "added_at": "2026-01-01T00:00:00+00:00"})
+    r = client.post("/api/runs", json={"command": "start",
+                                       "args": ["IPG-987", "--dry-run"],
+                                       "confirm": True})
+    assert r.status_code == 202, r.text
+    r = client.post("/api/runs", json={"command": "start",
+                                       "args": ["IPG-987", "--dry-run", "--repo", str(tmp_path / "a")],
+                                       "confirm": True})
+    assert r.status_code == 202, r.text
+
+
+def test_repo_remove_worktrees_require_force(client, tmp_path, monkeypatch):
+    """repo remove over a repo with linked worktrees 400s unless force."""
+    from workagent import store_sqlite as sq
+    _stub_spawn(monkeypatch)
+    db = sq.db_path()
+    sq.register_repo_row(db, "proj", str(tmp_path / "proj"), "jira:IPG")
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'proj', '2026-01-01T00:00:00+00:00')")
+    r = client.post("/api/runs", json={"command": "repo",
+                                       "args": ["remove", "proj"],
+                                       "confirm": True})
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["code"] == "worktrees_exist"
+    r = client.post("/api/runs", json={"command": "repo",
+                                       "args": ["remove", "proj"],
+                                       "confirm": True, "force": True})
+    assert r.status_code == 202, r.text
+
+
+def test_fetch_origins_dedupes_per_repo(tmp_path, monkeypatch):
+    """_fetch_origins fetches once per distinct repo; only with refresh."""
+    links = {
+        "jira:A": {"worktree": str(tmp_path / "wt1"), "repo": str(tmp_path / "repo1")},
+        "jira:B": {"worktree": str(tmp_path / "wt2"), "repo": str(tmp_path / "repo1")},
+        "jira:C": {"worktree": str(tmp_path / "wt3"), "repo": str(tmp_path / "repo2")},
+    }
+    for e in links.values():
+        open(e["worktree"], "w").close()
+    calls = []
+    monkeypatch.setattr(cli, "run_cmd",
+                        lambda *a, **k: calls.append(a) or "")
+    cli._fetch_origins(links, True)
+    assert len([a for a in calls if "fetch" in a]) == 2  # deduped per repo
+    cli._fetch_origins(links, False)
+    assert len([a for a in calls if "fetch" in a]) == 2  # no fetch without refresh
+
+
+def test_status_endpoint_refresh_fetches(client, isolated_config, tmp_path, monkeypatch):
+    """/api/status?refresh=true triggers an origin fetch (ref path fetches
+    only that repo); plain GET does not."""
+    wt = tmp_path / "wt"; wt.mkdir()
+    store.record_link("jira:IPG-929", {"issue": "IPG-929", "worktree": str(wt),
+                                       "branch": "feat/IPG-929--x",
+                                       "repo": str(tmp_path / "proj")})
+    git_calls = []
+    monkeypatch.setattr(cli, "run_cmd",
+                        lambda *a, **k: git_calls.append(a) or "")
+    r = client.get("/api/status", params={"refresh": True})
+    assert r.status_code == 200, r.text
+    assert [a for a in git_calls if "fetch" in a]  # fetched for the ref's repo
+    git_calls.clear()
+    r = client.get("/api/status")
+    assert r.status_code == 200, r.text
+    assert not [a for a in git_calls if "fetch" in a]  # no fetch without refresh
+
+def test_resume_run_unknown_is_404_not_500(client):
+    """POST /api/runs/<unknown>/resume -> 404 JSON (never bare 500)."""
+    r = client.post("/api/runs/does-not-exist-123/resume")
+    assert r.status_code == 404, r.text
+    assert r.json()["error"]["code"] == "not_found"

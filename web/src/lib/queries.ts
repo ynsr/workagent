@@ -9,6 +9,7 @@ export const queryKeys = {
   statusDetail: (ref: string) => ["status-detail", ref] as const,
   path: (ref: string) => ["path", ref] as const,
   repos: ["repos"] as const,
+  trackers: ["trackers"] as const,
   links: ["links"] as const,
   doctor: ["doctor"] as const,
   runs: ["runs"] as const,
@@ -33,9 +34,12 @@ export function useStatusAll(refresh?: boolean) {
 export function useInfo() {
   return useQuery({ queryKey: queryKeys.info, queryFn: api.info, staleTime: 60_000 })
 }
-
 export function useRepos() {
   return useQuery({ queryKey: queryKeys.repos, queryFn: api.repos })
+}
+
+export function useTrackers() {
+  return useQuery({ queryKey: queryKeys.trackers, queryFn: api.trackers })
 }
 
 export function useLinks() {
@@ -47,11 +51,11 @@ export function useDoctor() {
 }
 
 export function useIssues() {
-  return useQuery({ queryKey: queryKeys.issues, queryFn: api.issues, staleTime: 3600_000 })
+  return useQuery({ queryKey: queryKeys.issues, queryFn: () => api.issues(), staleTime: 3600_000 })
 }
 
 export function useCandidates() {
-  return useQuery({ queryKey: queryKeys.candidates, queryFn: api.candidates, staleTime: 3600_000 })
+  return useQuery({ queryKey: queryKeys.candidates, queryFn: () => api.candidates(), staleTime: 3600_000 })
 }
 
 export function useSessions() {
@@ -114,11 +118,26 @@ export function useCancelRun() {
   })
 }
 
+/** Resume a run's runtime session in the OS terminal (fire-and-forget). */
+export function useResumeRun() {
+  return useMutation({
+    mutationFn: (id: string) => api.resumeRun(id),
+  })
+}
+
+/** Resume a persisted session in the OS terminal (fire-and-forget). */
+export function useResumeSession() {
+  return useMutation({
+    mutationFn: (id: string) => api.resumeSession(id),
+  })
+}
+
 /** Invalidate shared queries after any run finishes (config-changing commands). */
 export function invalidateAfterRun(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: queryKeys.runs })
   void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
   void qc.invalidateQueries({ queryKey: queryKeys.repos })
+  void qc.invalidateQueries({ queryKey: queryKeys.trackers })
   void qc.invalidateQueries({ queryKey: queryKeys.links })
   void qc.invalidateQueries({ queryKey: queryKeys.doctor })
 }

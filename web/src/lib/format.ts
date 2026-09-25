@@ -25,6 +25,12 @@ export function argsText(args: string[] | undefined): string {
   return args.join(" ")
 }
 
+/** Shell command that cds to the worktree then resumes the runtime session. */
+export function resumeCommand(worktree: string, sessionFile: string): string {
+  const q = (s: string) => `'${s.replaceAll("'", "'\\''")}'`
+  return `cd ${q(worktree)} && omp --resume ${q(sessionFile)}`
+}
+
 export async function copyToClipboard(text: string): Promise<void> {
   if (!navigator.clipboard) {
     throw new Error("Clipboard is not available")

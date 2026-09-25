@@ -6,8 +6,8 @@ import os
 
 import pytest
 
-from harness import backend
-from harness.errors import HarnessError
+from workagent import backend
+from workagent.errors import HarnessError
 
 
 class _Execed(Exception):
@@ -24,7 +24,7 @@ def _fake_omp(monkeypatch):
 
 def test_launch_tty_chdirs_into_worktree(tmp_path, monkeypatch):
     """TTY exec must run in the worktree, not the caller's cwd (regression:
-    harness start used to leave omp in the original directory)."""
+    workagent start used to leave omp in the original directory)."""
     worktree = tmp_path / "wt"
     worktree.mkdir()
     monkeypatch.chdir(tmp_path)
@@ -80,12 +80,23 @@ def test_prompt_includes_push_target():
     assert "Never create or push a different branch" in r
 
 
+def test_prompt_for_fix_comments_rules():
+    """Issue #32: fix prompt carries resolve/validate/commit-push rules."""
+    p = backend.prompt_for_fix_comments("https://x/pull/1", worktree="/wt", branch="pr-1")
+    assert "https://x/pull/1" in p
+    assert "Resolve/close" in p
+    assert "Status: RESOLVED" in p
+    assert "validate" in p and "commit and push" in p
+    assert "Never create or push a different branch" in p
+
+
 def test_prompt_push_target_mentions_origin_branch():
     p = backend.prompt_for_issue("T", "B", "o/r#22", worktree="/w", branch="chore/a--b")
     assert "origin/chore/a--b" in p
 
-def test_omp_argv_has_no_session_file_flag():
-    from harness.backend import OmpRuntime
-    assert OmpRuntime().session_file_flag("/tmp/x.jsonl") == []
+def test_omp_session_file_routes_via_resume():
+    from workagent.backend import OmpRuntime
+    assert OmpRuntime().session_file_flag("/tmp/x.jsonl") == ["--resume", "/tmp/x.jsonl"]
+    assert OmpRuntime().session_file_flag("") == []
     argv = OmpRuntime().command_argv("prompt", True, ["--auto-approve"])
     assert "--session-file" not in argv

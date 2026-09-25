@@ -47,7 +47,7 @@ def _mock_network_clis(request, monkeypatch):
 
 @pytest.fixture
 def isolated_config(tmp_path, monkeypatch):
-    d = tmp_path / "harness-config"
+    d = tmp_path / "workagent-config"
     d.mkdir()
-    monkeypatch.setenv("HARNESS_CONFIG_DIR", str(d))
+    monkeypatch.setenv("WORKAGENT_CONFIG_DIR", str(d))
     return d

@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { Copy, Download, FolderGit2, Plus, Trash2 } from "lucide-react"
+import { Copy, Download, Plus, Tags, Trash2 } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
 import {
   EmptyState,
@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/SearchableSelect"
 import { Label } from "@/components/ui/label"
 import {
   Table,
@@ -31,52 +32,44 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
-import { useCreateRun, useRepos } from "@/lib/queries"
-import type { Repo } from "@/lib/api"
+import { useCreateRun, useTrackers } from "@/lib/queries"
+import type { TrackerRow } from "@/lib/api"
 
-export function Repos() {
+export function Trackers() {
   const navigate = useNavigate()
   const confirm = useConfirm()
   const createRun = useCreateRun()
-  const { data: repos, isPending, isError, error, refetch } = useRepos()
+  const { data, isPending, isError, error, refetch } = useTrackers()
+  const trackers = data?.trackers ?? []
 
-  const [name, setName] = useState("")
-  const [path, setPath] = useState("")
-  const [tracker, setTracker] = useState("")
+  const [key, setKey] = useState("")
+  const [vendor, setVendor] = useState("")
+  const [remoteUrl, setRemoteUrl] = useState("")
   const [addJson, setAddJson] = useState(false)
   const [removeJson, setRemoveJson] = useState(false)
-  const [removeForce, setRemoveForce] = useState(false)
   const [adding, setAdding] = useState(false)
 
-  const [trackerError, setTrackerError] = useState("")
   async function handleAdd() {
-    if (!name.trim() || !path.trim()) return
-    if (!tracker.trim()) {
-      setTrackerError("Tracker is required (e.g. IPG or github:OWNER/REPO).")
-      return
-    }
-    setTrackerError("")
+    if (!key.trim() || !remoteUrl.trim()) return
     setAdding(true)
     try {
       const { run_id } = await createRun.mutateAsync({
-        command: "repo",
+        command: "tracker",
         args: [
           "add",
-          "--name",
-          name.trim(),
-          "--path",
-          path.trim(),
-          "--tracker",
-          tracker.trim(),
+          key.trim(),
+          ...(vendor.trim() ? ["--vendor", vendor.trim()] : []),
+          "--remote-url",
+          remoteUrl.trim(),
           ...(addJson ? ["--json"] : []),
         ],
       })
-      toast.success("Repo add started", {
+      toast.success("Tracker add started", {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
       })
-      setName("")
-      setPath("")
-      setTracker("")
+      setKey("")
+      setVendor("")
+      setRemoteUrl("")
       setAddJson(false)
     } catch (err) {
       toast.error(errorText(err))
@@ -85,54 +78,39 @@ export function Repos() {
     }
   }
 
-  async function handleRemove(repo: Repo) {
+  async function handleRemove(row: TrackerRow) {
     const ok = await confirm({
-      action: "repo remove",
-      title: `Remove repo ${repo.name}`,
-      description: "Unregisters the repo from the workagent registry.",
+      action: "tracker remove",
+      title: `Remove tracker ${row.key}`,
+      description: "Deletes the tracker row; its repo links cascade.",
       destructive: true,
-      confirmLabel: "Remove repo",
+      confirmLabel: "Remove tracker",
       details: [
-        { label: "Name", value: repo.name, mono: true },
-        { label: "Path", value: repo.path, mono: true },
-        ...(typeof repo.tracker === "string" && repo.tracker
-          ? [{ label: "Tracker", value: repo.tracker, mono: true }]
-          : []),
+        { label: "Key", value: row.key, mono: true },
+        ...(row.vendor ? [{ label: "Vendor", value: row.vendor, mono: true }] : []),
+        ...(row.remote_url ? [{ label: "URL", value: row.remote_url, mono: true }] : []),
       ],
       extras: (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="repo-remove-json"
-              checked={removeJson}
-              onCheckedChange={(v) => setRemoveJson(v === true)}
-            />
-            <Label htmlFor="repo-remove-json" className="font-normal">
-              <span className="font-mono text-[13px]">--json</span> — JSON output in the run log
-            </Label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="repo-remove-force"
-              checked={removeForce}
-              onCheckedChange={(v) => setRemoveForce(v === true)}
-            />
-            <Label htmlFor="repo-remove-force" className="font-normal">
-              <span className="font-mono text-[13px]">--force</span> — remove linked worktrees (and their sessions) too
-            </Label>
-          </div>
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="tracker-remove-json"
+            checked={removeJson}
+            onCheckedChange={(v) => setRemoveJson(v === true)}
+          />
+          <Label htmlFor="tracker-remove-json" className="font-normal">
+            <span className="font-mono text-[13px]">--json</span> — JSON output in the run log
+          </Label>
         </div>
       ),
     })
     if (!ok) return
     try {
       const { run_id } = await createRun.mutateAsync({
-        command: "repo",
-        args: ["remove", repo.name, ...(removeJson ? ["--json"] : [])],
+        command: "tracker",
+        args: ["remove", row.key, ...(removeJson ? ["--json"] : [])],
         confirm: true,
-        force: removeForce,
       })
-      toast.success("Repo remove started", {
+      toast.success("Tracker remove started", {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
       })
     } catch (err) {
@@ -141,22 +119,21 @@ export function Repos() {
   }
 
   async function handleCopyJson() {
-    if (!repos) return
+    if (!trackers) return
     try {
-      await copyToClipboard(JSON.stringify(repos, null, 2))
-      toast.success("Repo list JSON copied")
+      await copyToClipboard(JSON.stringify(trackers, null, 2))
+      toast.success("Tracker list JSON copied")
     } catch (err) {
       toast.error(errorText(err))
     }
   }
 
   function handleDownloadCsv() {
-    if (!repos) return
     downloadText(
-      "workagent-repos.csv",
+      "workagent-trackers.csv",
       toCsv(
-        ["name", "path", "tracker"],
-        repos.map((r) => [r.name, r.path, typeof r.tracker === "string" ? r.tracker : ""]),
+        ["key", "vendor", "remote_url", "repos"],
+        trackers.map((t) => [t.key, t.vendor, t.remote_url, String(t.repos)]),
       ),
       "text/csv",
     )
@@ -165,8 +142,8 @@ export function Repos() {
   return (
     <div>
       <PageHeader
-        title="Repos"
-        description="Registered repositories (repo list / repo add / repo remove)."
+        title="Trackers"
+        description="Issue trackers (tracker list / tracker add / tracker remove). Repos link to these rows."
         actions={
           <>
             <Button variant="outline" size="sm" onClick={handleCopyJson}>
@@ -182,19 +159,19 @@ export function Repos() {
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         <Card className="order-2 lg:order-1">
           <CardHeader>
-            <CardTitle>Registered repos</CardTitle>
-            <CardDescription>GET /api/repos</CardDescription>
+            <CardTitle>Issue trackers</CardTitle>
+            <CardDescription>GET /api/trackers</CardDescription>
           </CardHeader>
           <CardContent>
             {isPending ? (
               <TableSkeleton rows={4} />
             ) : isError ? (
               <ErrorState error={error} onRetry={() => void refetch()} />
-            ) : !repos || repos.length === 0 ? (
+            ) : trackers.length === 0 ? (
               <EmptyState
-                icon={<FolderGit2 className="size-10" aria-hidden />}
-                title="No repos registered"
-                description="Add one with the form — name, local path, optional tracker mapping."
+                icon={<Tags className="size-10" aria-hidden />}
+                title="No trackers"
+                description="Add one with the form — key, vendor, and web URL (vendor/URL derive from the key when blank)."
               />
             ) : (
               <>
@@ -203,35 +180,48 @@ export function Repos() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Path</TableHead>
-                        <TableHead>Tracker</TableHead>
+                        <TableHead>Key</TableHead>
+                        <TableHead>Vendor</TableHead>
+                        <TableHead>Remote URL</TableHead>
+                        <TableHead>Repos</TableHead>
                         <TableHead className="w-12" aria-label="Remove" />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {repos.map((r) => (
-                        <TableRow key={r.name}>
-                          <TableCell className="font-medium">{r.name}</TableCell>
-                          <TableCell className="max-w-72 truncate font-mono text-[13px]" title={r.path}>
-                            {r.path}
-                          </TableCell>
+                      {trackers.map((t) => (
+                        <TableRow key={t.key}>
+                          <TableCell className="font-mono text-[13px]">{t.key}</TableCell>
                           <TableCell>
-                            {typeof r.tracker === "string" && r.tracker ? (
+                            {t.vendor ? (
                               <Badge variant="secondary" className="font-mono">
-                                {r.tracker}
+                                {t.vendor}
                               </Badge>
                             ) : (
                               <span className="text-muted-foreground">—</span>
                             )}
                           </TableCell>
+                          <TableCell className="max-w-72 truncate font-mono text-[13px]" title={t.remote_url}>
+                            {t.remote_url ? (
+                              <a
+                                href={t.remote_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="underline decoration-muted-foreground/50 underline-offset-2 hover:decoration-foreground"
+                              >
+                                {t.remote_url}
+                              </a>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell>{t.repos}</TableCell>
                           <TableCell>
                             <Button
                               variant="ghost"
                               size="icon"
-                              aria-label={`Remove repo ${r.name}`}
-                              title={`Remove repo ${r.name}`}
-                              onClick={() => void handleRemove(r)}
+                              aria-label={`Remove tracker ${t.key}`}
+                              title={`Remove tracker ${t.key}`}
+                              onClick={() => void handleRemove(t)}
                               className="size-11 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                             >
                               <Trash2 aria-hidden />
@@ -244,24 +234,24 @@ export function Repos() {
                 </div>
                 {/* Cards <sm */}
                 <div className="space-y-3 sm:hidden">
-                  {repos.map((r) => (
-                    <div key={r.name} className="rounded-xl border bg-card p-4">
+                  {trackers.map((t) => (
+                    <div key={t.key} className="rounded-xl border bg-card p-4">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="font-medium">{r.name}</p>
-                        {typeof r.tracker === "string" && r.tracker ? (
+                        <p className="font-mono text-sm">{t.key}</p>
+                        {t.vendor ? (
                           <Badge variant="secondary" className="font-mono">
-                            {r.tracker}
+                            {t.vendor}
                           </Badge>
                         ) : null}
                       </div>
                       <p className="mt-1 break-all font-mono text-[13px] text-muted-foreground">
-                        {r.path}
+                        {t.remote_url || "—"} · {t.repos} repos
                       </p>
                       <div className="mt-3 flex justify-end border-t pt-1">
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => void handleRemove(r)}
+                          onClick={() => void handleRemove(t)}
                           className="min-h-11 text-destructive hover:bg-destructive/10"
                         >
                           <Trash2 aria-hidden /> Remove
@@ -277,60 +267,58 @@ export function Repos() {
 
         <Card className="order-1 h-fit lg:order-2">
           <CardHeader>
-            <CardTitle>Add a repo</CardTitle>
+            <CardTitle>Add a tracker</CardTitle>
             <CardDescription>
-              repo add --name --path [--tracker] — writes the registry config.
+              tracker add KEY --remote-url [--vendor] — vendor derives from the key when blank.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
             <div className="grid gap-2">
-              <Label htmlFor="repo-name">Name</Label>
+              <Label htmlFor="tracker-key">Key</Label>
               <Input
-                id="repo-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="projectx"
+                id="tracker-key"
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                placeholder="jira:IPG or github:OWNER/REPO"
                 autoComplete="off"
                 spellCheck={false}
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="repo-path">Path</Label>
-              <Input
-                id="repo-path"
-                value={path}
-                onChange={(e) => setPath(e.target.value)}
-                placeholder="/home/you/projects/projectx"
-                autoComplete="off"
-                spellCheck={false}
+              <Label htmlFor="tracker-vendor">Vendor</Label>
+              <SearchableSelect
+                id="tracker-vendor"
+                value={vendor}
+                options={["jira", "github"]}
+                onChange={setVendor}
+                placeholder="auto-detect from key"
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="repo-tracker">Tracker project (required)</Label>
+              <Label htmlFor="tracker-url">Remote URL</Label>
               <Input
-                id="repo-tracker"
-                value={tracker}
-                onChange={(e) => { setTracker(e.target.value); if (trackerError) setTrackerError("") }}
-                placeholder="IPG or github:OWNER/REPO"
+                id="tracker-url"
+                value={remoteUrl}
+                onChange={(e) => setRemoteUrl(e.target.value)}
+                placeholder="https://…"
                 autoComplete="off"
                 spellCheck={false}
-                aria-invalid={trackerError ? true : undefined}
+                required
               />
-              {trackerError ? <p className="text-xs text-destructive">{trackerError}</p> : null}
             </div>
             <div className="flex items-center gap-2">
               <Checkbox
-                id="repo-add-json"
+                id="tracker-add-json"
                 checked={addJson}
                 onCheckedChange={(v) => setAddJson(v === true)}
               />
-              <Label htmlFor="repo-add-json" className="font-normal">
+              <Label htmlFor="tracker-add-json" className="font-normal">
                 <span className="font-mono text-[13px]">--json</span> output
               </Label>
             </div>
-            <Button onClick={() => void handleAdd()} disabled={!name.trim() || !path.trim() || !tracker.trim() || adding}>
+            <Button onClick={() => void handleAdd()} disabled={!key.trim() || !remoteUrl.trim() || adding}>
               <Plus aria-hidden />
-              {adding ? "Adding…" : "Add repo"}
+              {adding ? "Adding…" : "Add tracker"}
             </Button>
           </CardContent>
         </Card>

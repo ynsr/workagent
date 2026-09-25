@@ -156,7 +156,7 @@ export function Doctor() {
               Stale environment
             </CardTitle>
             <CardDescription>
-              Re-run <span className="font-mono text-[13px]">harness doctor</span> in a
+              Re-run <span className="font-mono text-[13px]">workagent doctor</span> in a
               terminal to regenerate the receipt — the web UI only reads it.
             </CardDescription>
           </CardHeader>

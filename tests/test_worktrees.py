@@ -1,5 +1,5 @@
 """Triple-key worktree resolution."""
-from harness import worktrees
+from workagent import worktrees
 
 LINKS = {
     "jira:IPG-929": {"branch": "feat/IPG-929--x", "worktree": "/tmp/wt-a",

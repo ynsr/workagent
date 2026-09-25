@@ -12,6 +12,25 @@ def _norm_path(p: str) -> str:
     return str(Path(p).expanduser().resolve()) if p else ""
 
 
+def recorded_key(worktree: str, branch: str, links: dict) -> str | None:
+    """Link key already recording this worktree/branch, else None.
+
+    Branch is the unique worktree identity (exact match first); the
+    normalized path is the fallback. Reusing the recorded row keeps
+    review from inserting a second row for the same path/branch (which
+    collides on the worktrees.branch UNIQUE key).
+    """
+    for k, v in links.items():
+        if isinstance(v, dict) and branch and branch == (v.get("branch", "") or ""):
+            return k
+    want = _norm_path(worktree)
+    if want:
+        for k, v in links.items():
+            if isinstance(v, dict) and want == _norm_path(v.get("worktree", "") or ""):
+                return k
+    return None
+
+
 def resolve_worktree(ref: str, links: dict) -> str | list[str] | None:
     """Resolve ref to a worktree key via key, branch, or path.
 
@@ -79,23 +98,25 @@ def pick_worktree(ref: str, resolved: str | list[str], links: dict | None = None
     return resolved[idx]
 
 
-def recorded_key(worktree: str, branch: str, links: dict) -> str | None:
-    """Exact-match the link key already recorded for a physical worktree.
+def effective_repo_for_entry(entry: dict, default: Path | None = None) -> Path | None:
+    """Authoritative main repo for a link entry.
 
-    Identity is the UNIQUE branch, falling back to the resolved path — never
-    the fuzzy ref matching of resolve_worktree. Review keys its link by the
-    concrete worktree/branch so one checkout never gets a second row
-    (worktrees.branch/path are UNIQUE).
+    A live worktree resolves via ``--git-common-dir`` to its real main
+    checkout, which wins over the recorded ``repo`` (links created while
+    the server cwd was an unrelated checkout record the wrong repo).
+    Falls back to *default* (or the recorded repo) when no worktree.
     """
-    for k, v in links.items():
-        if branch and (v.get("branch", "") or "") == branch:
-            return k
-    want = _norm_path(worktree)
-    if want:
-        for k, v in links.items():
-            if want == _norm_path(v.get("worktree", "") or ""):
-                return k
-    return None
+    from . import repos
+    wt = (entry.get("worktree", "") or "")
+    if wt and Path(wt).expanduser().is_dir():
+        try:
+            return repos.main_repo_root(Path(wt).expanduser())
+        except HarnessError:
+            pass
+    rec = (entry.get("repo", "") or "")
+    if rec:
+        return Path(rec).expanduser()
+    return default
 
 
 def is_valid_worktree(path: str) -> bool:

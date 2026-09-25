@@ -11,6 +11,7 @@ import {
   SearchX,
   SquareTerminal,
 } from "lucide-react"
+import { CleanupDialog } from "@/components/CleanupDialog"
 import { PageHeader } from "@/components/PageHeader"
 import { StatusTable } from "@/components/StatusTable"
 import {
@@ -26,7 +27,8 @@ import { Switch } from "@/components/ui/switch"
 import { api, type WorktreeMap } from "@/lib/api"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
-import { queryKeys, useCreateRun, useInfo, useStatusAll } from "@/lib/queries"
+import { queryKeys, useCreateRun, useInfo, useRepos, useStatusAll } from "@/lib/queries"
+import { useRepoTabs } from "@/lib/useRepoTabs"
 
 const CSV_HEADERS = [
   "key",
@@ -38,6 +40,9 @@ const CSV_HEADERS = [
   "pr",
   "pr_url",
   "pr_state",
+  "reviews",
+  "reviews_unresolved",
+  "reviews_resolved",
 ]
 
 function worktreeRows(worktrees: WorktreeMap): string[][] {
@@ -53,6 +58,9 @@ function worktreeRows(worktrees: WorktreeMap): string[][] {
     e.pr ?? "",
     e.pr_detail?.url ?? "",
     e.pr_detail?.state ?? "",
+    e.reviews ?? "",
+    String(e.reviews_detail?.unresolved ?? ""),
+    String(e.reviews_detail?.resolved ?? ""),
   ])
 }
 
@@ -63,11 +71,16 @@ export function Dashboard() {
   const createRun = useCreateRun()
   const { data: worktrees, isPending, isError, error, refetch } = useStatusAll()
   const { data: info } = useInfo()
+  const { data: repos } = useRepos()
+  const repoTabs = useRepoTabs(
+    Object.values(worktrees ?? {}),
+    repos,
+  )
 
   const [showWorktree, setShowWorktree] = useState(false)
   const [refreshingPr, setRefreshingPr] = useState(false)
   const [syncOpts, setSyncOpts] = useState({ merge: false, dryRun: false, json: false })
-  const [cleanupOpts, setCleanupOpts] = useState({ force: false, dryRun: false, json: false })
+  const [reviewOpts, setReviewOpts] = useState({ forceAll: false })
 
   async function handleRefreshPr() {
     setRefreshingPr(true)
@@ -146,20 +159,31 @@ export function Dashboard() {
   }
 
   async function handleReviewAll() {
+    setReviewOpts({ forceAll: false })
     const ok = await confirm({
       action: "review",
       title: "Review all worktrees",
       description:
-        "Reviews every not-reviewed linked worktree in parallel (non-TTY). Reviewed worktrees whose tip moved are reviewed again.",
+        "Reviews every not-reviewed linked worktree in parallel (non-TTY). Skips worktrees without a PR/MR, with a live harness, or with unresolved PR comments. Reviewed worktrees whose tip moved are reviewed again.",
       destructive: true,
       confirmLabel: "Review all",
       details: [{ label: "Scope", value: "Every linked worktree" }],
+      extras: (
+        <div className="grid gap-2.5">
+          <OptRow
+            id="reviewall-force"
+            checked={reviewOpts.forceAll}
+            onChange={(v) => setReviewOpts((o) => ({ ...o, forceAll: v }))}
+            label="--force-all — include already-reviewed and unresolved-comment worktrees too"
+          />
+        </div>
+      ),
     })
     if (!ok) return
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "review",
-        args: ["--all"],
+        args: ["--all", ...(reviewOpts.forceAll ? ["--force-all"] : [])],
         confirm: true,
       })
       runCreated(run_id, "Review all")
@@ -167,6 +191,30 @@ export function Dashboard() {
       toast.error(errorText(err))
     }
   }
+
+  async function handleFixAll() {
+    const ok = await confirm({
+      action: "review",
+      title: "Fix PR comments on all worktrees",
+      description:
+        "Fixes open (not-resolved) PR/MR review comments on every linked worktree with a PR/MR (non-TTY). Validates each finding against the code and PR/MR description, resolves/closes fixed comments (GitHub bot comments get a `Status: RESOLVED` second line), then commits and pushes.",
+      destructive: true,
+      confirmLabel: "Fix all",
+      details: [{ label: "Scope", value: "Every linked worktree with a PR/MR" }],
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "review",
+        args: ["--all", "--fix-comments"],
+        confirm: true,
+      })
+      runCreated(run_id, "Fix all PR comments")
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
 
   async function handleCleanupMerged() {
     const ok = await confirm({
@@ -191,59 +239,27 @@ export function Dashboard() {
     }
   }
 
+  const [cleanupTarget, setCleanupTarget] = useState<string | null>(null)
+
   async function handleCleanup(key: string) {
-    setCleanupOpts({ force: false, dryRun: false, json: false })
-    const invalid = worktrees?.[key]?.wt_valid === false
-    const ok = await confirm({
-      action: "cleanup",
-      ref: key,
-      title: invalid ? `Delete invalid worktree ${key}` : `Remove worktree ${key}`,
-      description: invalid
-        ? "The recorded path is missing or not a live git worktree. --force skips state validation; the entry is removed either way. This cannot be undone."
-        : "Closes the tracker issue, removes the worktree, deletes the branch and closes the PR. This cannot be undone.",
-      destructive: true,
-      confirmLabel: invalid ? "Delete worktree" : "Remove worktree",
-      force: invalid || undefined,
-      extras: (
-        <div className="grid gap-2.5">
-          <OptRow
-            id="cleanup-force"
-            checked={invalid || (cleanupOpts.force && !cleanupOpts.dryRun)}
-            disabled={invalid || cleanupOpts.dryRun}
-            onChange={(v) => setCleanupOpts((o) => ({ ...o, force: v }))}
-            label="--force — skip state validation (always requires this confirmation)"
-          />
-          <OptRow
-            id="cleanup-dry"
-            checked={cleanupOpts.dryRun}
-            onChange={(v) =>
-              setCleanupOpts((o) => ({ ...o, dryRun: v, force: v ? false : o.force }))
-            }
-            label="--dry-run — print the plan without acting"
-          />
-          <OptRow
-            id="cleanup-json"
-            checked={cleanupOpts.json}
-            onChange={(v) => setCleanupOpts((o) => ({ ...o, json: v }))}
-            label="--json — JSON output in the run log"
-          />
-        </div>
-      ),
-    })
-    if (!ok) return
-    const dry = cleanupOpts.dryRun
-    const force = (invalid || cleanupOpts.force) && !dry
+    // Local dialog owns --force/--dry-run/--json state (CleanupDialog);
+    // the shared confirm() extras snapshot would go stale on toggle.
+    setCleanupTarget(key)
+  }
+
+  async function submitCleanup(key: string, opts: { force: boolean; dry: boolean; json: boolean }) {
+    setCleanupTarget(null)
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "cleanup",
         args: [
           key,
-          ...(force ? ["--force"] : []),
-          ...(dry ? ["--dry-run"] : []),
-          ...(cleanupOpts.json ? ["--json"] : []),
+          ...(opts.force ? ["--force"] : []),
+          ...(opts.dry ? ["--dry-run"] : []),
+          ...(opts.json ? ["--json"] : []),
         ],
-        confirm: dry ? undefined : true,
-        force: force || undefined,
+        confirm: opts.dry ? undefined : true,
+        force: opts.force || undefined,
       })
       runCreated(run_id, `Cleanup ${key}`)
     } catch (err) {
@@ -282,7 +298,7 @@ export function Dashboard() {
   function handleDownloadCsv() {
     if (!worktrees) return
     downloadText(
-      "harness-status.csv",
+      "workagent-status.csv",
       toCsv(CSV_HEADERS, worktreeRows(worktrees)),
       "text/csv",
     )
@@ -295,11 +311,14 @@ export function Dashboard() {
       navigate("/launch?mode=sync&ref=" + encodeURIComponent(key)),
     onReview: (key: string) =>
       navigate("/launch?mode=review&ref=" + encodeURIComponent(key)),
+    onFixComments: (key: string) =>
+      navigate("/launch?mode=review&fixComments=1&ref=" + encodeURIComponent(key)),
     onCleanup: handleCleanup,
     onOpenWorktree: handleOpenWorktree,
     onOpenRun: handleOpenRun,
+    onOpenSessions: (key: string) =>
+      navigate("/sessions?worktree=" + encodeURIComponent(key)),
   }
-
   const invalidCount = worktrees
     ? Object.values(worktrees).filter((e) => e.wt_valid === false).length
     : 0
@@ -325,6 +344,9 @@ export function Dashboard() {
             </Button>
             <Button variant="outline" size="sm" onClick={handleReviewAll}>
               Review all
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleFixAll}>
+              Fix all PR comments
             </Button>
             <Button variant="outline" size="sm" onClick={handleCleanupMerged}>
               Cleanup merged
@@ -389,13 +411,37 @@ export function Dashboard() {
             actions={tableActions}
             showWorktree={showWorktree}
             networkExposed={info?.network_exposed ?? false}
+            repoTabs={repos ? { ...repoTabs, repos } : undefined}
           />
+          <details className="mt-3 rounded-md border px-3 py-2 text-xs text-muted-foreground">
+            <summary className="cursor-pointer font-medium text-foreground">
+              Remote calls &amp; cache TTLs
+            </summary>
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              <li><span className="font-mono">gh pr list</span> / <span className="font-mono">glab mr list</span> per branch — PR result cached 3d, no-PR result 30min (refresh: Refresh PR).</li>
+              <li>CI pipeline lookup per PR branch — cached 10min.</li>
+              <li>Tracker issue lists (jira-cli / gh) — cached 1h (Issues/Candidates pages).</li>
+            </ul>
+          </details>
           <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
             <SquareTerminal className="size-3.5" aria-hidden />
             Sync, Review and Cleanup run as child processes — follow them under Runs.
           </p>
         </>
       )}
+      {cleanupTarget ? (
+        <CleanupDialog
+          worktreeKey={cleanupTarget}
+          invalid={worktrees?.[cleanupTarget]?.wt_valid === false}
+          onClose={(res) => {
+            if (!res) {
+              setCleanupTarget(null)
+              return
+            }
+            void submitCleanup(cleanupTarget, res)
+          }}
+        />
+      ) : null}
     </div>
   )
 }
