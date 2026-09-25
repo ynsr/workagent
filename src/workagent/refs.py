@@ -243,7 +243,7 @@ def fetch_pr_list_for_branch(tool: str, branch: str, cwd: str | None = None) -> 
                  "title": p.get("title", ""), "author": (p.get("author") or {}).get("login", ""),
                  "created_at": p.get("createdAt", ""), "url": p.get("url", ""),
                  "target_branch": p.get("baseRefName", "")} for p in data]
-    out = run_cmd("glab", "mr", "list", "--source-branch", branch, "-F", "json",
+    out = run_cmd("glab", "mr", "list", "--source-branch", branch, "--all", "-F", "json",
                   cwd=cwd)
     try:
         data = json.loads(out or "[]")

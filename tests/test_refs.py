@@ -75,17 +75,31 @@ def test_fetch_pr_list_gh(monkeypatch):
 
 
 def test_fetch_pr_list_glab(monkeypatch):
+    """glab branch query must include merged/closed MRs, not just opened (#31)."""
+    seen: list[list[str]] = []
     glab_json = json.dumps([
         {"iid": 1701, "state": "opened", "title": "X",
          "created_at": "2026-09-15T03:01:59Z", "author": {"username": "younes"},
          "web_url": "https://git.jibit.cloud/g/r/-/merge_requests/1701",
          "target_branch": "develop"},
+        {"iid": 1720, "state": "merged", "title": "Y",
+         "created_at": "2026-09-20T03:01:59Z", "author": {"username": "younes"},
+         "web_url": "https://git.jibit.cloud/g/r/-/merge_requests/1720",
+         "target_branch": "develop"},
     ])
-    monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: glab_json)
+    def fake_run(*a, **k):
+        seen.append(list(a))
+        return glab_json
+    monkeypatch.setattr(refs, "run_cmd", fake_run)
     prs = refs.fetch_pr_list_for_branch("glab", "feat/x")
+    assert "--all" in seen[0]
     assert prs == [{"number": 1701, "state": "open", "title": "X",
                     "author": "younes", "created_at": "2026-09-15T03:01:59Z",
                     "url": "https://git.jibit.cloud/g/r/-/merge_requests/1701",
+                    "target_branch": "develop"},
+                   {"number": 1720, "state": "merged", "title": "Y",
+                    "author": "younes", "created_at": "2026-09-20T03:01:59Z",
+                    "url": "https://git.jibit.cloud/g/r/-/merge_requests/1720",
                     "target_branch": "develop"}]
 
 

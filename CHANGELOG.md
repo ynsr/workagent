@@ -6,6 +6,10 @@
   detail, and `status --json/--csv`; `review --all` skips worktrees without
   a PR/MR, with a live harness, or with unresolved PR comments — new
   `--force-all` re-includes already-reviewed and unresolved worktrees.
+- Cleanup merged: the glab branch query now passes `--all` so merged/closed
+  MRs are found (previously only open MRs listed, so a merged MR like #1720
+  reported `skipped:no-pr`); the merged/closed state compare is
+  case-insensitive (`merged` from the normalizer now matches `MERGED`).
 - Issue #29: `start`/`review` with no `--repo` when the ref's tracker is
   linked to multiple repos now errors (exit 2 CLI, 400 `repo_ambiguous`
   via `/api/runs` — never a Run-logs surprise); the Launch form blocks

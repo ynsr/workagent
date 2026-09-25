@@ -797,8 +797,8 @@ def cleanup(
         rows = []
         for key, entry in links.items():
             branch = entry.get("branch", "")
-            state = (_status_cells(dict(entry), refresh_pr=True).get("pr_data")
-                     or {}).get("state", "")
+            state = ((_status_cells(dict(entry), refresh_pr=True).get("pr_data")
+                     or {}).get("state", "") or "").upper()
             if state not in ("MERGED", "CLOSED"):
                 rows.append({"key": key, "branch": branch,
                              "status": f"skipped:{state.lower() or 'no-pr'}"})
