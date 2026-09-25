@@ -248,20 +248,34 @@ def test_fetch_ci_glab_empty_list(monkeypatch):
     ) == "not_started"
 
 def test_fetch_pr_comment_stats_gh(monkeypatch):
-    """Issue #28: gh counts # Code Review comments + thread resolution."""
+    """Issue #28: gh counts # Code Review comments + thread resolution.
+
+    Issue #32: plain bot comments without a `Status: RESOLVED` second line
+    count as unresolved (no native resolution state on GitHub comments).
+    """
     def fake_run(*a, **k):
         if "graphql" in a:
             return json.dumps({"data": {"repository": {"pullRequest": {
                 "reviewThreads": {"nodes": [{"isResolved": True},
                                             {"isResolved": False}]}}}}})
         return json.dumps({"comments": [
-            {"body": "# Code Review: looks good"},
+            {"body": "# Code Review: looks good\nStatus: RESOLVED"},
             {"body": "  # Code Review follow-up"},
             {"body": "just a comment"}]})
     monkeypatch.setattr(refs, "run_cmd", fake_run)
     assert refs.fetch_pr_comment_stats(
         "gh", "https://github.com/o/r/pull/9", "/repo") == {
-            "reviews": 2, "unresolved": 1, "resolved": 1}
+            "reviews": 2, "unresolved": 2, "resolved": 2}
+
+
+def test_gh_bot_comment_resolved_marker():
+    """Issue #32: only an exact `Status: RESOLVED` second line resolves."""
+    assert refs._gh_bot_comment_resolved("# Code Review: ok\nStatus: RESOLVED")
+    assert refs._gh_bot_comment_resolved("# Code Review: ok\n\n  Status: RESOLVED  \nbody text")
+    assert not refs._gh_bot_comment_resolved("# Code Review: open finding")
+    assert not refs._gh_bot_comment_resolved("# Code Review: ok\nbody\nStatus: RESOLVED")
+    assert not refs._gh_bot_comment_resolved("# Code Review: only header, no second line")
+    assert not refs._gh_bot_comment_resolved("")
 
 
 def test_fetch_pr_comment_stats_glab(monkeypatch):

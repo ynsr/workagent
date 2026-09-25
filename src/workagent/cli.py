@@ -556,6 +556,7 @@ def review(
     fix: bool = typer.Option(False, "--fix", help="With --all: children auto-fix identified issues after yielding."),
     force_all: bool = typer.Option(False, "--force-all", help="With --all: include already-reviewed and unresolved-comment worktrees too (still needs a PR/MR)."),
     post_comments: bool = typer.Option(False, "--post-comments", hidden=True, help="Append the auto-comment prompt segment (set by --all)."),
+    fix_comments: bool = typer.Option(False, "--fix-comments", help="Fix open PR/MR review comments instead of reviewing: validate each finding, apply, resolve/close, commit and push."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the runtime (omp --resume)."),
 ) -> None:
     """Create worktree from PR/MR and launch review.
@@ -576,6 +577,10 @@ def review(
         _fail("--force-all requires --all", EXIT_USAGE)
     if session_file and all_wts:
         _fail("--session-file cannot be used with --all (one transcript per worktree — omit it and each launch gets its own file)", EXIT_USAGE)
+    if fix and fix_comments:
+        _fail("--fix cannot be used with --fix-comments", EXIT_USAGE)
+    if post_comments and fix_comments:
+        _fail("--post-comments cannot be used with --fix-comments", EXIT_USAGE)
     if ref is None and not all_wts:
         _fail("missing PR/MR ref or worktree key\n"
               "  Pass a ref, or use --all to review every not-reviewed worktree.",
@@ -587,8 +592,11 @@ def review(
             return
 
         def _child_argv(pr: str) -> list[str]:
-            return [sys.executable, "-m", "workagent", "review", pr,
-                    "--no-tty", "--post-comments"] + (["--fix"] if fix else [])
+            argv = [sys.executable, "-m", "workagent", "review", pr, "--no-tty"]
+            if fix_comments:
+                return argv + ["--fix-comments"]
+            return argv + ["--post-comments"] + (["--fix"] if fix else [])
+
 
         def _child_cmd(pr: str) -> str:
             return " ".join(shlex.quote(a) for a in _child_argv(pr))
@@ -699,11 +707,14 @@ def review(
             review_key = _review_key_for(pr_url, worktree, branch)
             store.record_link(review_key, {"pr_url": pr_url, "worktree": worktree,
                                            "branch": branch, "repo": str(repo_dir)})
-            prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
+            if fix_comments:
+                prompt = backend.prompt_for_fix_comments(pr_url, worktree=worktree, branch=branch)
+            else:
+                prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
 
-            if post_comments:
+            if post_comments and not fix_comments:
                 prompt += "\n\nAuto add all comments to the PR/MR at yielding and don't wait for user approval"
-            if fix:
+            if fix and not fix_comments:
                 prompt += "\n\nAuto-fix all identified issues after yielding and don't wait for user approval."
             result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
                       "harness": harness_name}
@@ -736,11 +747,14 @@ def review(
     except HarnessError:
         pass
 
-    prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
+    if fix_comments:
+        prompt = backend.prompt_for_fix_comments(pr_url, worktree=worktree, branch=branch)
+    else:
+        prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
 
-    if post_comments:
+    if post_comments and not fix_comments:
         prompt += "\n\nAuto add all comments to the PR/MR at yielding and don't wait for user approval"
-    if fix:
+    if fix and not fix_comments:
         prompt += "\n\nAuto-fix all identified issues after yielding and don't wait for user approval."
     result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
               "harness": harness_name}

@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react"
 import { useSearchParams } from "react-router-dom"
-import { FolderOpen, GitPullRequest, History, Info, RefreshCw, Rocket, Search, Trash2, XCircle } from "lucide-react"
+import { FolderOpen, GitPullRequest, History, Info, RefreshCw, Rocket, Search, Trash2, Wrench, XCircle } from "lucide-react"
 import type { Repo, WorktreeMap } from "@/lib/api"
 import { repoKeyForItem } from "@/lib/useRepoTabs"
 import { prLabel, prUrl } from "@/lib/api"
@@ -25,6 +25,8 @@ export interface StatusTableActions {
   onSync?: (key: string) => void
   /** Navigate to Launch with mode=review&ref=key (prefill contract). */
   onReview?: (key: string) => void
+  /** Navigate to Launch with mode=review&fixComments=1&ref=key. */
+  onFixComments?: (key: string) => void
   onCleanup?: (key: string) => void
   /** Open the worktree folder locally (`open` RunCommand; disabled when network-exposed). */
   onOpenWorktree: (key: string) => void
@@ -100,6 +102,14 @@ function RowActions({
           onClick={() => actions.onReview?.(worktreeKey)}
         >
           <GitPullRequest aria-hidden />
+        </ActionIcon>
+      ) : null}
+      {actions.onFixComments ? (
+        <ActionIcon
+          title={`Fix PR comments of ${worktreeKey}`}
+          onClick={() => actions.onFixComments?.(worktreeKey)}
+        >
+          <Wrench aria-hidden />
         </ActionIcon>
       ) : null}
       {actions.onCleanup ? (

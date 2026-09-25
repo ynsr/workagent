@@ -74,11 +74,11 @@ interface LaunchForm {
   base: string
   harness: string
   noRuntime: boolean
+  fixComments: boolean
   merge: boolean
   dryRun: boolean
   json: boolean
 }
-
 const INITIAL: LaunchForm = {
   ref: "",
   repo: AUTO_REPO,
@@ -88,6 +88,7 @@ const INITIAL: LaunchForm = {
   // Issue #24: Start/Review launches should default to printing the
   // runtime command for manual execution instead of auto-running.
   noRuntime: true,
+  fixComments: false,
   merge: false,
   dryRun: false,
   json: false,
@@ -111,6 +112,7 @@ export function Launch() {
   const [form, setForm] = useState<LaunchForm>(() => ({
     ...INITIAL,
     ref: modeKnown ? refParam : "",
+    fixComments: modeParam === "review" && params.get("fixComments") === "1",
   }))
   const [submitting, setSubmitting] = useState(false)
   const [refreshingIssues, setRefreshingIssues] = useState(false)
@@ -231,6 +233,7 @@ export function Launch() {
       ]
     }
     const args = [refValue, "--no-tty"]
+    if (mode === "review" && form.fixComments) args.push("--fix-comments")
     if (repoValue) args.push("--repo", repoValue)
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
     if (mode === "start" && form.base.trim()) args.push("--base", form.base.trim())
@@ -249,6 +252,7 @@ export function Launch() {
       ].filter((v): v is string => v !== null)
     : [
         "headless (--no-tty)",
+        mode === "review" && form.fixComments ? "--fix-comments (fix open review comments)" : null,
         repoValue ? `--repo ${repoValue}` : "repo: registry default",
         `--depth ${form.depth.trim() || "7"}`,
         mode === "start" && form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
@@ -464,6 +468,18 @@ export function Launch() {
                 />
                 <Label htmlFor="launch-no-runtime" className="font-normal">
                   <span className="font-mono text-[13px]">--no-runtime</span> — skip the agent: print the command and hand over the worktree
+                </Label>
+              </div>
+            ) : null}
+            {mode === "review" ? (
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="launch-fix-comments"
+                  checked={form.fixComments}
+                  onCheckedChange={(v) => update("fixComments", v === true)}
+                />
+                <Label htmlFor="launch-fix-comments" className="font-normal">
+                  <span className="font-mono text-[13px]">--fix-comments</span> — fix open review comments: validate, apply, resolve/close, commit and push
                 </Label>
               </div>
             ) : null}

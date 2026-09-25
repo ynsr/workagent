@@ -80,6 +80,16 @@ def test_prompt_includes_push_target():
     assert "Never create or push a different branch" in r
 
 
+def test_prompt_for_fix_comments_rules():
+    """Issue #32: fix prompt carries resolve/validate/commit-push rules."""
+    p = backend.prompt_for_fix_comments("https://x/pull/1", worktree="/wt", branch="pr-1")
+    assert "https://x/pull/1" in p
+    assert "Resolve/close" in p
+    assert "Status: RESOLVED" in p
+    assert "validate" in p and "commit and push" in p
+    assert "Never create or push a different branch" in p
+
+
 def test_prompt_push_target_mentions_origin_branch():
     p = backend.prompt_for_issue("T", "B", "o/r#22", worktree="/w", branch="chore/a--b")
     assert "origin/chore/a--b" in p

@@ -192,6 +192,30 @@ export function Dashboard() {
     }
   }
 
+  async function handleFixAll() {
+    const ok = await confirm({
+      action: "review",
+      title: "Fix PR comments on all worktrees",
+      description:
+        "Fixes open (not-resolved) PR/MR review comments on every linked worktree with a PR/MR (non-TTY). Validates each finding against the code and PR/MR description, resolves/closes fixed comments (GitHub bot comments get a `Status: RESOLVED` second line), then commits and pushes.",
+      destructive: true,
+      confirmLabel: "Fix all",
+      details: [{ label: "Scope", value: "Every linked worktree with a PR/MR" }],
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "review",
+        args: ["--all", "--fix-comments"],
+        confirm: true,
+      })
+      runCreated(run_id, "Fix all PR comments")
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+
   async function handleCleanupMerged() {
     const ok = await confirm({
       action: "cleanup",
@@ -319,6 +343,8 @@ export function Dashboard() {
       navigate("/launch?mode=sync&ref=" + encodeURIComponent(key)),
     onReview: (key: string) =>
       navigate("/launch?mode=review&ref=" + encodeURIComponent(key)),
+    onFixComments: (key: string) =>
+      navigate("/launch?mode=review&fixComments=1&ref=" + encodeURIComponent(key)),
     onCleanup: handleCleanup,
     onOpenWorktree: handleOpenWorktree,
     onOpenRun: handleOpenRun,
@@ -350,6 +376,9 @@ export function Dashboard() {
             </Button>
             <Button variant="outline" size="sm" onClick={handleReviewAll}>
               Review all
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleFixAll}>
+              Fix all PR comments
             </Button>
             <Button variant="outline" size="sm" onClick={handleCleanupMerged}>
               Cleanup merged

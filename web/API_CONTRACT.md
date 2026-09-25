@@ -40,9 +40,12 @@ Map of worktree key → entry (same shape as `workagent status --json`):
 pipeline status for the PR — `success` | `failure` | `running` |
 `not_started` — or `null` when there is no PR or the lookup failed
 (cached 10 min while the branch tip is unchanged). `reviews` is the
-display string `"R|U|R"` (done reviews | unresolved threads | resolved
-threads); `reviews_detail` is `{"reviews", "unresolved", "resolved"}` or
+display string `"R|U|R"` (done reviews | unresolved | resolved);
+`reviews_detail` is `{"reviews", "unresolved", "resolved"}` or
 `null` when there is no PR or the lookup failed (same 10-min/tip cache).
+GitHub-only (#32): plain (non-inline) `# Code Review` bot comments carry
+no native resolution state, so one counts as resolved only when its second
+non-empty line (below the header) is exactly `Status: RESOLVED`; GitLab MRs use native flags.
 Optional query:
 `?refresh=true` fetches origin (fresh remote tips for Behind/Ahead) and
 re-queries PR status (slow, hits the tracker CLI).

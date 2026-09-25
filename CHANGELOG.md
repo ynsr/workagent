@@ -1,5 +1,15 @@
 # Changelog
 ## Unreleased
+- Issue #32: GitHub Reviews detection now counts plain (non-inline)
+  `# Code Review` bot comments as resolved only when their second non-empty
+  line (below the header) is exactly `Status: RESOLVED` (GitHub-only; GitLab MRs keep native
+  flags). New `review --fix-comments` (per-worktree and `--all`,
+  exclusive with `--fix`/`--post-comments`) launches a fix agent that
+  validates each open comment against code + PR/MR description, applies,
+  resolves/closes (appending the marker line on GitHub), then commits and
+  pushes. Dashboard gains a per-row Fix action (wrench icon) and a
+  "Fix all PR comments" top-bar button, both routed via Launch review
+  mode (`fixComments=1` prefill) + `--fix-comments` checkbox.
 - Issue #28: Dashboard worktree table gains a Reviews R|U|R column (done
   `# Code Review` comments | unresolved threads | resolved threads, cached
   10 min by branch tip like CI) in the table, mobile cards, worktree

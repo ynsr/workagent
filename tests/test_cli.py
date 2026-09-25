@@ -1850,6 +1850,40 @@ def test_review_fix_without_all_is_usage_error():
     assert "--fix requires --all" in r.stderr
 
 
+def test_review_fix_comments_rejects_fix_and_post_comments():
+    """Issue #32: --fix-comments is exclusive with --fix/--post-comments."""
+    r = runner.invoke(cli.app, ["review", "--all", "--fix", "--fix-comments"])
+    assert r.exit_code == 2
+    assert "--fix cannot be used with --fix-comments" in r.stderr
+
+
+def test_review_all_fix_comments_reaches_child_argv(isolated_config, tmp_path, monkeypatch):
+    """Issue #32: review --all --fix-comments spawns fix-children (no post-comments)."""
+    links = {
+        "jira:A-1": {"branch": "feat/a", "worktree": str(tmp_path / "a"),
+                     "pr_url": "https://github.com/o/r/pull/1"},
+    }
+    (tmp_path / "a").mkdir()
+    store.save_links(links)
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda p: True)
+    monkeypatch.setattr(cli.worktrees, "resolve_worktree", lambda ref, _l: "jira:A-1")
+    monkeypatch.setattr(cli.worktrees, "worktree_pr_url",
+                        lambda k, e: links[k]["pr_url"])
+    seen: list[list[str]] = []
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            seen.append(argv)
+        def wait(self, timeout=None):
+            return 0
+
+
+    monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
+    r = runner.invoke(cli.app, ["review", "--all", "--fix-comments", "--json"])
+    assert r.exit_code == 0, r.output
+    assert seen and "--fix-comments" in seen[0]
+    assert "--post-comments" not in seen[0] and "--fix" not in seen[0]
+
 def test_status_detail_shows_harness_line(isolated_config, tmp_path,
                                           monkeypatch):
     """The human detail panel includes the harness line, even when empty."""

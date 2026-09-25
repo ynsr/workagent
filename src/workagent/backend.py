@@ -111,7 +111,28 @@ def prompt_for_issue(title: str, body: str, issue_ref: str,
 
 
 def prompt_for_review(pr_url: str, worktree: str = "", branch: str = "") -> str:
-    prompt = f"Review this PR/MR using pr-reviewer skill: {pr_url}"
+    prompt = f"Review this PR/MR using auto-pr-reviewer skill: {pr_url}"
+    if worktree and branch:
+        prompt += _push_target_lines(worktree, branch)
+    return prompt
+
+
+def prompt_for_fix_comments(pr_url: str, worktree: str = "", branch: str = "") -> str:
+    """Apply/fix open PR/MR review findings (issue #32)."""
+    prompt = (
+        f"Fix all open (not-resolved) review comments on this PR/MR: {pr_url}\n\n"
+        "Fetch every open/unresolved thread and every plain PR comment that is not "
+        "marked resolved. Review each comment and validate it against the code and "
+        "the PR/MR description — apply only the findings that hold up; briefly note "
+        "any you skip and why.\n\n"
+        "Rules:\n"
+        "- Resolve/close every comment you fixed or verified as already addressed.\n"
+        "- On GitHub, a plain `# Code Review` bot comment counts as resolved only "
+        "when its second non-empty line (directly below the header) is exactly "
+        "`Status: RESOLVED`; skip comments already carrying that second line and "
+        "insert `Status: RESOLVED` as the new second line of each bot comment you resolve.\n"
+        "- After fixing/applying the required changes, commit and push the code."
+    )
     if worktree and branch:
         prompt += _push_target_lines(worktree, branch)
     return prompt
