@@ -231,20 +231,23 @@ def load_pr_cache() -> dict:
     if db is not None:
         import json as _json
         import sqlite3 as _sqlite3
-        with _sqlite3.connect(str(db)) as conn:
-            conn.row_factory = _sqlite3.Row
-            out = {}
-            for row in conn.execute("SELECT * FROM pr_cache"):
-                r = dict(row)
-                try:
-                    payload = _json.loads(r.get("payload") or "{}")
-                except ValueError:
-                    payload = {}
-                entry = payload if isinstance(payload, dict) else {"pr": payload}
-                entry.setdefault("pr", None)
-                entry.setdefault("checked_at", r.get("checked_at", ""))
-                out[r["branch"]] = entry
-            return out
+        try:
+            with _sqlite3.connect(str(db)) as conn:
+                conn.row_factory = _sqlite3.Row
+                out = {}
+                for row in conn.execute("SELECT * FROM pr_cache"):
+                    r = dict(row)
+                    try:
+                        payload = _json.loads(r.get("payload") or "{}")
+                    except ValueError:
+                        payload = {}
+                    entry = payload if isinstance(payload, dict) else {"pr": payload}
+                    entry.setdefault("pr", None)
+                    entry.setdefault("checked_at", r.get("checked_at", ""))
+                    out[r["branch"]] = entry
+                return out
+        except _sqlite3.OperationalError:
+            return _read_json(config_dir() / "pr_cache.json", {})
     return _read_json(config_dir() / "pr_cache.json", {})
 
 
@@ -290,7 +293,9 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
         cache = load_pr_cache()
         prev = cache.get(branch) or {}
         merged = dict(entry)
-        for k in ("ci", "ci_checked_at", "ci_sha"):
+        for k in ("ci", "ci_checked_at", "ci_sha",
+                  "reviews", "unresolved", "resolved",
+                  "reviews_checked_at", "reviews_sha"):
             if k in prev and k not in merged:
                 merged[k] = prev[k]
         cache[branch] = merged
@@ -303,7 +308,9 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
             cache = _read_json(path, {})
             prev = cache.get(branch) or {}
             merged = dict(entry)
-            for k in ("ci", "ci_checked_at", "ci_sha"):
+            for k in ("ci", "ci_checked_at", "ci_sha",
+                      "reviews", "unresolved", "resolved",
+                      "reviews_checked_at", "reviews_sha"):
                 if k in prev and k not in merged:
                     merged[k] = prev[k]
             cache[branch] = merged
@@ -346,6 +353,40 @@ def cache_ci_status(branch: str, ci: str | None, sha: str | None = None) -> None
             entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
             if sha:
                 entry["ci_sha"] = sha
+            _atomic_replace(path, cache)
+        _locked(lock, _update)
+
+def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None) -> None:
+    """Record {reviews, unresolved, resolved} on a branch's pr_cache entry.
+
+    Mirrors cache_ci_status: a None stats (lookup failed) writes nothing so
+    the next run retries.
+    """
+    if stats is None:
+        return
+    if _sqlite_path() is not None:
+        cache = load_pr_cache()
+        entry = cache.setdefault(branch, {})
+        entry["reviews"] = int(stats.get("reviews") or 0)
+        entry["unresolved"] = int(stats.get("unresolved") or 0)
+        entry["resolved"] = int(stats.get("resolved") or 0)
+        entry["reviews_checked_at"] = datetime.now(timezone.utc).isoformat()
+        if sha:
+            entry["reviews_sha"] = sha
+        _write_pr_cache(cache)
+        return
+    path = config_dir() / "pr_cache.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.parent / (path.name + ".lock"), "w") as lock:
+        def _update() -> None:
+            cache = _read_json(path, {})
+            entry = cache.setdefault(branch, {})
+            entry["reviews"] = int(stats.get("reviews") or 0)
+            entry["unresolved"] = int(stats.get("unresolved") or 0)
+            entry["resolved"] = int(stats.get("resolved") or 0)
+            entry["reviews_checked_at"] = datetime.now(timezone.utc).isoformat()
+            if sha:
+                entry["reviews_sha"] = sha
             _atomic_replace(path, cache)
         _locked(lock, _update)
 

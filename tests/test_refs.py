@@ -233,6 +233,44 @@ def test_fetch_ci_glab_empty_list(monkeypatch):
         "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo"
     ) == "not_started"
 
+def test_fetch_pr_comment_stats_gh(monkeypatch):
+    """Issue #28: gh counts # Code Review comments + thread resolution."""
+    def fake_run(*a, **k):
+        if "graphql" in a:
+            return json.dumps({"data": {"repository": {"pullRequest": {
+                "reviewThreads": {"nodes": [{"isResolved": True},
+                                            {"isResolved": False}]}}}}})
+        return json.dumps({"comments": [
+            {"body": "# Code Review: looks good"},
+            {"body": "  # Code Review follow-up"},
+            {"body": "just a comment"}]})
+    monkeypatch.setattr(refs, "run_cmd", fake_run)
+    assert refs.fetch_pr_comment_stats(
+        "gh", "https://github.com/o/r/pull/9", "/repo") == {
+            "reviews": 2, "unresolved": 1, "resolved": 1}
+
+
+def test_fetch_pr_comment_stats_glab(monkeypatch):
+    """Issue #28: glab counts # Code Review notes + discussion resolution."""
+    monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: json.dumps([
+        {"resolved": True, "notes": [
+            {"body": "# Code Review: done", "resolved": True}]},
+        {"notes": [{"body": "fix this", "resolved": False}]},
+    ]))
+    assert refs.fetch_pr_comment_stats(
+        "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo") == {
+            "reviews": 1, "unresolved": 1, "resolved": 1}
+
+
+def test_pr_comment_stats_failure_is_soft(monkeypatch):
+    def boom(*a, **k):
+        raise HarnessError("timeout")
+    monkeypatch.setattr(refs, "run_cmd", boom)
+    assert refs.fetch_pr_comment_stats(
+        "gh", "https://github.com/o/r/pull/9", "/repo") is None
+    assert refs.fetch_pr_comment_stats(
+        "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo") is None
+
 
 # ── fetch_open_prs / pr_key ───────────────────────────────────────────
 

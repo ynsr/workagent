@@ -260,6 +260,12 @@ export function Launch() {
 
   async function handleSubmit() {
     if (!refValue) return
+    if (!repoValue && defaultRepoReady && !autoRepo) {
+      toast.error(
+        "No default repo for this ref — pick a repo. The tracker is linked to multiple repos, or none.",
+      )
+      return
+    }
     const ok = await confirm({
       action: mode,
       title: `Launch ${copy.label}`,
@@ -508,7 +514,16 @@ export function Launch() {
             <Button
               type="button"
               onClick={() => void handleSubmit()}
-              disabled={!refValue || submitting}
+              disabled={
+                !refValue ||
+                submitting ||
+                (mode !== "sync" && !repoValue && defaultRepoReady && !autoRepo)
+              }
+              title={
+                mode !== "sync" && refValue && !repoValue && defaultRepoReady && !autoRepo
+                  ? "No default repo for this ref — pick a repo (multiple or no linked repos)"
+                  : undefined
+              }
             >
               <Rocket aria-hidden />
               {submitting ? "Launching…" : `Launch ${copy.label}`}

@@ -556,6 +556,7 @@ export function Links() {
   )
   const [showWorktree, setShowWorktree] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [forceAll, setForceAll] = useState(false)
   const [activeForm, setActiveForm] = useState<null | "set" | "remove" | "register">(
     null,
   )
@@ -573,20 +574,35 @@ export function Links() {
   }
 
   async function handleReviewAll() {
+    setForceAll(false)
     const ok = await confirm({
       action: "review",
       title: "Review all worktrees",
       description:
-        "Reviews every not-reviewed linked worktree in parallel (non-TTY). Reviewed worktrees whose tip moved are reviewed again.",
+        "Reviews every not-reviewed linked worktree in parallel (non-TTY). Skips worktrees without a PR/MR, with a live harness, or with unresolved PR comments. Reviewed worktrees whose tip moved are reviewed again.",
       destructive: true,
       confirmLabel: "Review all",
       details: [{ label: "Scope", value: "Every linked worktree" }],
+      extras: (
+        <div className="flex items-start gap-2">
+          <Checkbox
+            id="reviewall-force-links"
+            checked={forceAll}
+            onCheckedChange={(v) => setForceAll(v === true)}
+            className="mt-0.5"
+          />
+          <Label htmlFor="reviewall-force-links" className="text-sm font-normal leading-snug">
+            <span className="font-mono text-[13px]">--force-all</span>
+            {" — include already-reviewed and unresolved-comment worktrees too"}
+          </Label>
+        </div>
+      ),
     })
     if (!ok) return
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "review",
-        args: ["--all"],
+        args: ["--all", ...(forceAll ? ["--force-all"] : [])],
         confirm: true,
       })
       toast.success("Review all started", {
@@ -597,7 +613,6 @@ export function Links() {
       toast.error(errorText(err))
     }
   }
-
   async function handleCleanupMerged() {
     const ok = await confirm({
       action: "cleanup",

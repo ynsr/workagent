@@ -1,8 +1,17 @@
 # Changelog
 ## Unreleased
-- `status --refresh-pr` (and web `?refresh=true`) now fetches origin once
+- Issue #28: Dashboard worktree table gains a Reviews R|U|R column (done
+  `# Code Review` comments | unresolved threads | resolved threads, cached
+  10 min by branch tip like CI) in the table, mobile cards, worktree
+  detail, and `status --json/--csv`; `review --all` skips worktrees without
+  a PR/MR, with a live harness, or with unresolved PR comments — new
+  `--force-all` re-includes already-reviewed and unresolved worktrees.
+- Issue #29: `start`/`review` with no `--repo` when the ref's tracker is
+  linked to multiple repos now errors (exit 2 CLI, 400 `repo_ambiguous`
+  via `/api/runs` — never a Run-logs surprise); the Launch form blocks
+  submit and disables Launch until a repo is picked when no default
+  resolves. Single-repo and linked-worktree defaults are unchanged.
   per distinct repo before recomputing, so Behind/Ahead and PR lookups see
-  fresh remote tips instead of a stale local `origin/<base>`.
 - Web `repo remove`: pre-run 400 `{code: "worktrees_exist"}` when the repo
   still has linked worktrees; `force: true` appends `--force` and cascades
   them. Repos page remove dialog gains a `--force` checkbox.

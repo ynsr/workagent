@@ -888,8 +888,52 @@ def test_specs_mirror_cli_flags():
         cv = {x for x in v if x.startswith("-")}
         assert cb == set(_w.BOOL_FLAGS.get(path, ())), f"BOOL drift [{path}]"
         assert cv == set(_w.VAL_FLAGS.get(path, ())), f"VAL drift [{path}]"
+
+def test_review_force_all_passthrough_accepted():
+    """Issue #28: --force-all passes web arg validation for review --all."""
+    from workagent import webapp as _w2
+    from workagent.webapp import _validate_args
+    _validate_args("review", ["--all", "--force-all"])
     for cmd in ("start", "review", "cleanup", "sync", "open", "register", "repo", "link", "tracker"):
-        assert cmd in _w.SPECS, f"SPECS missing {cmd}"
+        assert cmd in _w2.SPECS, f"SPECS missing {cmd}"
+
+def test_start_review_multi_repo_requires_explicit_repo(client, tmp_path, monkeypatch):
+    """Issue #29: ambiguous tracker + no --repo → 400 repo_ambiguous (not a run)."""
+    from workagent import store
+    from workagent import store_sqlite as _sq
+    _stub_spawn(monkeypatch)
+    _sq.init_db(_sq.db_path())
+    (tmp_path / "a").mkdir(exist_ok=True)
+    (tmp_path / "b").mkdir(exist_ok=True)
+    wt = tmp_path / "wt-pinned"
+    wt.mkdir(exist_ok=True)
+    store.add_tracker_repo("jira:IPG", str(tmp_path / "a"))
+    store.add_tracker_repo("jira:IPG", str(tmp_path / "b"))
+    from workagent import trackers as _t
+    assert len(_t.linked_repos("jira:IPG")) == 2, _t.linked_repos("jira:IPG")
+    store.add_tracker_repo("github:o/r", str(tmp_path / "a"))
+    store.add_tracker_repo("github:o/r", str(tmp_path / "b"))
+    for command, ref in (("start", "IPG-987"), ("review", "https://github.com/o/r/pull/1")):
+        r = client.post("/api/runs", json={"command": command,
+                                           "args": [ref, "--dry-run"],
+                                           "confirm": True})
+        assert r.status_code == 400, r.text
+        body = r.json()
+        assert body["error"]["code"] == "repo_ambiguous"
+        assert "--repo" in body["error"]["message"]
+    # Rule-1 pinned: exact key already linked to a worktree repo skips the guard.
+    store.record_link("jira:IPG-987", {"branch": "feat/x", "worktree": str(wt),
+                                      "repo": str(tmp_path / "a"),
+                                      "added_at": "2026-01-01T00:00:00+00:00"})
+    r = client.post("/api/runs", json={"command": "start",
+                                       "args": ["IPG-987", "--dry-run"],
+                                       "confirm": True})
+    assert r.status_code == 202, r.text
+    r = client.post("/api/runs", json={"command": "start",
+                                       "args": ["IPG-987", "--dry-run", "--repo", str(tmp_path / "a")],
+                                       "confirm": True})
+    assert r.status_code == 202, r.text
+
 
 def test_repo_remove_worktrees_require_force(client, tmp_path, monkeypatch):
     """repo remove over a repo with linked worktrees 400s unless force."""

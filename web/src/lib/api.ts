@@ -37,12 +37,22 @@ export interface WorktreeEntry {
   pr?: string
   /** CI pipeline status: success | failure | running | not_started; absent when unknown. */
   ci?: string
+  /** Review stats display "R|U|R" (done|unresolved|resolved); "-" when no PR/lookup failed. */
+  reviews?: string
   /** First-seen stamp (ISO-8601); older entries may lack it. */
   added_at?: string
   /** False when the recorded path is missing or not a live git worktree. */
   wt_valid?: boolean
   commits_detail?: CommitsDetail | null
   pr_detail?: PrDetail | null
+  reviews_detail?: ReviewsDetail | null
+}
+
+/** Review-comment stats: done reviews + thread resolution. */
+export interface ReviewsDetail {
+  reviews: number
+  unresolved: number
+  resolved: number
 }
 
 /** GET /api/status — map of worktree key → entry. */
@@ -55,8 +65,8 @@ export interface WorktreeDetail extends WorktreeEntry {
   pr: string
   commits_detail?: CommitsDetail | null
   pr_detail?: PrDetail | null
+  reviews_detail?: ReviewsDetail | null
   base_branch?: string
-  issue_url?: string
   create_hint?: string
 }
 

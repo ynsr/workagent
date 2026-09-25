@@ -39,17 +39,20 @@ Map of worktree key → entry (same shape as `workagent status --json`):
 `pr_detail` is `null` when no open/known PR. `ci` is the latest CI
 pipeline status for the PR — `success` | `failure` | `running` |
 `not_started` — or `null` when there is no PR or the lookup failed
-(cached 10 min while the branch tip is unchanged). Optional query:
+(cached 10 min while the branch tip is unchanged). `reviews` is the
+display string `"R|U|R"` (done reviews | unresolved threads | resolved
+threads); `reviews_detail` is `{"reviews", "unresolved", "resolved"}` or
+`null` when there is no PR or the lookup failed (same 10-min/tip cache).
+Optional query:
 `?refresh=true` fetches origin (fresh remote tips for Behind/Ahead) and
 re-queries PR status (slow, hits the tracker CLI).
 
-### `GET /api/status?ref=IPG-932` → single worktree detail
 `_session_detail` shape: the entry fields plus
 `key`, `harness`, `commits`, `pr` (display string), `commits_detail`,
-`pr_detail`, `ci`, `base_branch`, `issue_url`, `wt_valid` (false when the
-recorded path is missing or not a live git worktree), and `create_hint`
+`pr_detail`, `ci`, `reviews`, `reviews_detail`, `base_branch`, `issue_url`,
+`wt_valid` (false when the recorded path is missing or not a live git
+worktree), and `create_hint`
 (only when there is no PR). `added_at` is present on entries stamped
-after `store.record_link` gained it; older entries may lack it.
 
 ### `GET /api/path?ref=IPG-932`
 ```json
@@ -162,14 +165,17 @@ Request:
 - `repo remove` of a repo with linked worktrees → 400
   `{code: "worktrees_exist"}` unless `force: true` (cascades them).
   `tracker add` without a non-blank `--remote-url` → 400 `bad_arg`.
+  `start`/`review` with no `--repo` when the ref's tracker is linked to
+  multiple repos → 400 `{code: "repo_ambiguous"}` naming the candidates
+  (never a run — the Launch form also blocks submit until a repo is picked).
 
 Response 202: `{"run_id": "abc123"}` — `409 {code:"conflict"}` when
 another run holds the same target key.
 
 ### Target keys (409 collisions)
-`start`, `review:<ref>` / `review:all` (`--all`), `cleanup:<ref>` / `cleanup:all`
-(`--merged`), `open:<ref>`, `sync:<ref>` / `sync:all`, `config`
-(register/repo/link subcommands).
+`start`, `review:<ref>` / `review:all` (`--all`, plus `--force-all` to
+re-include already-reviewed and unresolved-comment worktrees),
+`cleanup:<ref>` / `cleanup:all`
 
 ### `GET /api/runs` → list
 ```json

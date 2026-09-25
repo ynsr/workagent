@@ -90,19 +90,23 @@ def test_default_repo_for_ref_multi_linked_empty(isolated_config, tmp_path, monk
     assert trackers.default_repo_for_ref("IPG-99") == ""
 
 
-def test_no_repo_multi_linked_prompts(isolated_config, tmp_path, monkeypatch):
+def test_no_repo_multi_linked_errors(isolated_config, tmp_path, monkeypatch):
+    """Issue #29: several linked repos + no --repo → exit 2 naming candidates."""
+    from workagent.errors import HarnessError
     a = tmp_path / "a"
     a.mkdir()
     b = tmp_path / "b"
     b.mkdir()
     _seed("jira:IPG", [str(a), str(b)], monkeypatch, tmp_path)
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    chosen = []
-    monkeypatch.setattr(trackers.pick, "pick",
-                        lambda label, options: chosen.append(options) or 1)
-    r, outcome = trackers.resolve_for_tracker("jira:IPG", None, tmp_path / "plain", yes=False)
-    assert Path(r) == b.resolve()
-    assert chosen == [[str(a), str(b)]]
+    for yes, tty in ((False, True), (True, True), (False, False)):
+        monkeypatch.setattr("sys.stdin.isatty", lambda: tty)
+        try:
+            trackers.resolve_for_tracker("jira:IPG", None, tmp_path / "plain", yes=yes)
+        except HarnessError as e:
+            assert e.exit_code == 2
+            assert "--repo" in str(e) and str(a) in str(e) and str(b) in str(e)
+        else:
+            raise AssertionError(f"expected HarnessError (yes={yes})")
 
 
 

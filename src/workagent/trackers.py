@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-from . import pick, refs, repos, store
+from . import refs, repos, store
 from .errors import HarnessError, run_cmd
 
 
@@ -178,7 +178,8 @@ def resolve_for_tracker(tid: str, explicit: str | None, cwd: Path,
 
     1. ``--repo`` given → resolve it, guard via :func:`check_or_record`.
     2. Exactly one repo linked to *tid* → use it (silent auto-select).
-    3. Several linked → pick from the list (``--yes``/non-TTY aborts).
+    3. Several linked → usage error naming the candidates (explicit
+       ``--repo`` required, even under ``--yes``/non-TTY).
     4. None linked → ask for an explicit repo (name/path/URL) with no
        CWD default; ``--yes``/non-TTY aborts with a usage error.
     """
@@ -201,20 +202,13 @@ def resolve_for_tracker(tid: str, explicit: str | None, cwd: Path,
 def _pick_linked(tid: str, known: list[str], cwd: Path, depth: int = 7,
                  yes: bool = False, persist: bool = True) -> tuple[Path, str]:
     """Step 3B: choose one of several linked repos."""
-    if yes:
-        first = repos.resolve_repo(known[0], cwd, depth=depth)
-        return first, check_or_record(tid, str(first), yes=True, persist=persist)
-    if not _is_tty():
-        raise HarnessError(
-            f"tracker {tid} is linked to multiple repos: {', '.join(known)}.\n"
-            "  Re-run with --repo <name|path> or --yes to use the first.",
-            exit_code=2,
-        )
-    idx = pick.pick(f"tracker {tid} is linked to multiple repos:", known)
-    if idx is None:
-        raise HarnessError("aborted", exit_code=2)
-    target = repos.resolve_repo(known[idx], cwd, depth=depth)
-    return target, check_or_record(tid, str(target), yes=True, persist=persist)
+    # Issue #29: never silently pick the first repo — an explicit --repo
+    # is required even under --yes/non-TTY (no Run-logs surprise).
+    raise HarnessError(
+        f"tracker {tid} is linked to multiple repos: {', '.join(known)}.\n"
+        "  Re-run with --repo <name|path> to pick one.",
+        exit_code=2,
+    )
 
 
 def _ask_manual(tid: str, cwd: Path, depth: int = 7,

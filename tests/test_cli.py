@@ -309,6 +309,8 @@ def test_status_cells_ci_cache_reuse(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli.refs, "fetch_ci_status",
                         lambda tool, url, cwd=None: fetches.append(url)
                         or "success")
+    monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
+                        lambda tool, url, cwd=None: {"reviews": 0, "unresolved": 0, "resolved": 0})
     c1 = cli._status_cells(entry)
     assert c1["ci"] == "success"
     assert fetches == ["https://x/mr/9"]
@@ -346,11 +348,12 @@ def test_status_cells_ci_reuse_stale_ttl(isolated_config, tmp_path,
     store.save_pr_cache(cache)
     monkeypatch.setattr(cli, "_git_tip",
                         lambda wt, ref: "a1" if ref == "HEAD" else None)
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
     fetches = []
     monkeypatch.setattr(cli.refs, "fetch_ci_status",
                         lambda tool, url, cwd=None: fetches.append(url)
                         or "failure")
+    monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
+                        lambda tool, url, cwd=None: {"reviews": 0, "unresolved": 0, "resolved": 0})
     assert cli._status_cells(entry)["ci"] == "failure"
     assert len(fetches) == 1  # stale (11 min > 10 min TTL) -> refetched
 
@@ -378,6 +381,8 @@ def test_status_ci_column_symbols_json_csv(isolated_config, tmp_path,
                         [] if branch == "no-pr" else pr9)
     monkeypatch.setattr(cli.refs, "fetch_ci_status",
                         lambda tool, url, cwd=None: "failure")
+    monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
+                        lambda tool, url, cwd=None: {"reviews": 1, "unresolved": 0, "resolved": 1})
     rows, columns = cli._session_rows(store.load_links(), False, False)
     assert columns.index("ci") == columns.index("pr") + 1
     assert rows[0]["ci"] == "failure"  # raw, machine-readable
@@ -398,6 +403,42 @@ def test_status_ci_column_symbols_json_csv(isolated_config, tmp_path,
     assert cli._colorize_session(rows2[0])["ci"] == "-"
     assert rows2[0]["ci"] == ""
 
+def test_status_reviews_column_and_force_all(isolated_config, tmp_path, monkeypatch):
+    """Issue #28: reviews R|U|R column rides rows/JSON; --force-all re-includes."""
+    from workagent import store as _store
+    a = tmp_path / "a"; a.mkdir(); (a / ".git").mkdir()
+    b = tmp_path / "b"; b.mkdir(); (b / ".git").mkdir()
+    pr = "https://github.com/o/r/pull/1"
+    _store.record_link("jira:A-1", {"branch": "feat/a", "worktree": str(a),
+                                    "repo": str(tmp_path), "pr_url": pr})
+    _store.record_link("jira:B-2", {"branch": "feat/b", "worktree": str(b),
+                                    "repo": str(tmp_path), "pr_url": pr})
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda p: True)
+    monkeypatch.setattr(cli.store, "active_harness", lambda key: None)
+    monkeypatch.setattr(cli.refs, "fetch_pr_list_for_branch",
+                        lambda tool, branch, cwd=None: [])
+    monkeypatch.setattr(cli, "_repo_default_branch", lambda repo: None)
+    _store.cache_pr_status("feat/a", {"number": 1, "state": "open", "url": pr},
+                           tool="gh", base_branch="main", branch_tip="a1",
+                           base_tip="b1", behind=0, ahead=1)
+    _store.cache_review_stats("feat/a", {"reviews": 2, "unresolved": 1, "resolved": 3},
+                              sha="a1")
+    monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: "a1" if ref == "HEAD" else None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.refs, "fetch_ci_status", lambda tool, url, cwd=None: None)
+    monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
+                        lambda tool, url, cwd=None: {"reviews": 0, "unresolved": 0, "resolved": 0})
+    rows, columns = cli._session_rows(_store.load_links(), False, False)
+    assert columns[-1] == "reviews"
+    assert rows[0]["reviews"] == "2|1|3"
+    keys = [k for k, _ in cli._reviewable_keys(_store.load_links())]
+    assert "jira:B-2" in keys and "jira:A-1" not in keys  # unresolved skip
+    forced = [k for k, _ in cli._reviewable_keys(_store.load_links(), force=True)]
+    assert "jira:A-1" in forced  # --force-all re-includes
+    data = json.loads(_invoke("status", "--json").stdout)
+    assert data["jira:A-1"]["reviews"] == "2|1|3"
+    assert data["jira:A-1"]["reviews_detail"] == {"reviews": 2, "unresolved": 1, "resolved": 3}
+
 
 def test_status_json_detail_carries_ci(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
@@ -414,6 +455,8 @@ def test_status_json_detail_carries_ci(isolated_config, tmp_path, monkeypatch):
                              "target_branch": "main"}])
     monkeypatch.setattr(cli.refs, "fetch_ci_status",
                         lambda tool, url, cwd=None: "running")
+    monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
+                        lambda tool, url, cwd=None: {"reviews": 1, "unresolved": 1, "resolved": 0})
     data = json.loads(_invoke("status", "IPG-929", "--json").stdout)
     assert data["ci"] == "running"
     enriched = json.loads(_invoke("status", "--json").stdout)
@@ -989,7 +1032,7 @@ def test_review_no_runtime_tty_lands_shell_in_worktree(isolated_config, tmp_path
     with pytest.raises(_Shell) as excinfo:
         cli.review(ref="https://github.com/o/r/pull/33", repo=None, depth=7, harness=None,
                    no_tty=False, no_runtime=True, dry_run=False, yes=False, json_output=False,
-                   all_wts=False, sequential=False, fix=False, post_comments=False)
+                   all_wts=False, sequential=False, fix=False, force_all=False, post_comments=False)
     assert excinfo.value.args[0] == "/bin/zsh"
     assert excinfo.value.args[2] == str(worktree)
 

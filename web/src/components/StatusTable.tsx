@@ -164,6 +164,25 @@ function CommitsCell({ entry }: { entry: WorktreeMap[string] }) {
     </span>
   )
 }
+/** Reviews R|U|R (done|unresolved|resolved); "-" when no PR or lookup failed. */
+function ReviewsCell({ entry }: { entry: WorktreeMap[string] }) {
+  const rd = entry.reviews_detail
+  if (!rd) return <span className="font-mono text-[13px] text-muted-foreground">—</span>
+  return (
+    <span
+      className="font-mono text-[13px]"
+      title={`${rd.reviews} done / ${rd.unresolved} unresolved / ${rd.resolved} resolved`}
+    >
+      <span className="text-muted-foreground">{rd.reviews}</span>
+      <span className="text-muted-foreground">|</span>
+      <span className={rd.unresolved > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}>
+        {rd.unresolved}
+      </span>
+      <span className="text-muted-foreground">|</span>
+      <span className="text-sky-600 dark:text-sky-400">{rd.resolved}</span>
+    </span>
+  )
+}
 
 /** First-seen stamp → locale date; missing/unparseable → "—". */
 function formatAdded(addedAt: string | undefined): string {
@@ -359,6 +378,7 @@ export function StatusTable({
                   <TableHead className="w-20">Behind|Ahead</TableHead>
                   <TableHead>PR / MR</TableHead>
                   <TableHead className="w-14 text-center">CI</TableHead>
+                  <TableHead className="w-20 text-center">Reviews</TableHead>
                   <TableHead>Added</TableHead>
                   {showWorktree ? <TableHead>Path</TableHead> : null}
                 </TableRow>
@@ -425,6 +445,9 @@ export function StatusTable({
                         </TableCell>
                         <TableCell className="text-center">
                           <CiBadge ci={entry.ci} />
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <ReviewsCell entry={entry} />
                         </TableCell>
                         <TableCell
                           className="whitespace-nowrap text-[13px] text-muted-foreground"
@@ -561,6 +584,12 @@ export function StatusTable({
                       <dt className="w-16 shrink-0 text-xs text-muted-foreground">CI</dt>
                       <dd>
                         <CiBadge ci={entry.ci} />
+                      </dd>
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <dt className="w-16 shrink-0 text-xs text-muted-foreground">Reviews</dt>
+                      <dd>
+                        <ReviewsCell entry={entry} />
                       </dd>
                     </div>
                     <div className="flex items-baseline gap-2">

@@ -451,7 +451,7 @@ def _is_reviewed(key: str, entry: dict) -> bool:
     return bool(tip) and tip == entry.get("reviewed_at", "")
 
 
-def _reviewable_keys(links: dict) -> list[tuple[str, str]]:
+def _reviewable_keys(links: dict, force: bool = False) -> list[tuple[str, str]]:
     """(key, pr_url) pairs to review under --all: live worktree, resolvable
     PR/MR, no live harness, and not already reviewed at the current tip.
 
@@ -459,13 +459,18 @@ def _reviewable_keys(links: dict) -> list[tuple[str, str]]:
     alias: reviewed/tip live on the pr: entry, so the alias is skipped and
     one worktree/PR yields exactly one child (links for different PRs stay
     distinct).
+
+    Issue #28: worktrees with an in-progress review/PR-comment (a live
+    harness or any unresolved PR thread) are skipped unless force=True;
+    worktrees without a PR/MR can never be reviewed. --force-all re-includes
+    already-reviewed worktrees (still PR/MR only).
     """
     out = []
     for k, v in links.items():
         own_pr = v.get("pr_url", "")
         if own_pr and not k.startswith("pr:") and f"pr:{own_pr}" in links:
             continue
-        if _is_reviewed(k, v):
+        if _is_reviewed(k, v) and not force:
             continue
         pr = worktrees.worktree_pr_url(k, v)
         if pr and not worktrees.is_valid_worktree(v.get("worktree", "")):
@@ -478,8 +483,24 @@ def _reviewable_keys(links: dict) -> list[tuple[str, str]]:
         if store.active_harness(k):
             eprint(f"{k}: harness already live — skipping")
             continue
+        if not force and _has_unresolved_comments(v, pr):
+            eprint(f"{k}: unresolved PR comments — skipping (use --force-all)")
+            continue
         out.append((k, pr))
     return out
+
+
+def _has_unresolved_comments(entry: dict, pr_url: str) -> bool:
+    """True when the cached PR stats record unresolved threads (issue #28).
+
+    Cache-only by design: _reviewable_keys must not spawn host-CLI lookups
+    (the --all tests run fully offline). Live stats ride the status cells
+    via _reviews_cell and persist through cache_review_stats.
+    """
+    branch = str(entry.get("branch", ""))
+    cached = store.load_pr_cache().get(branch) if branch else None
+    n = (cached or {}).get("unresolved")
+    return isinstance(n, int) and n > 0
 
 
 def _review_key_for(pr_url: str, worktree: str, branch: str) -> str:
@@ -533,6 +554,7 @@ def review(
     all_wts: bool = typer.Option(False, "--all", help="Review every not-reviewed linked worktree in parallel (non-TTY)."),
     sequential: bool = typer.Option(False, "--sequential", help="With --all: review one-by-one instead of in parallel."),
     fix: bool = typer.Option(False, "--fix", help="With --all: children auto-fix identified issues after yielding."),
+    force_all: bool = typer.Option(False, "--force-all", help="With --all: include already-reviewed and unresolved-comment worktrees too (still needs a PR/MR)."),
     post_comments: bool = typer.Option(False, "--post-comments", hidden=True, help="Append the auto-comment prompt segment (set by --all)."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the runtime (omp --resume)."),
 ) -> None:
@@ -550,6 +572,8 @@ def review(
         _fail("--sequential requires --all", EXIT_USAGE)
     if fix and not all_wts:
         _fail("--fix requires --all", EXIT_USAGE)
+    if force_all and not all_wts:
+        _fail("--force-all requires --all", EXIT_USAGE)
     if session_file and all_wts:
         _fail("--session-file cannot be used with --all (one transcript per worktree — omit it and each launch gets its own file)", EXIT_USAGE)
     if ref is None and not all_wts:
@@ -557,7 +581,7 @@ def review(
               "  Pass a ref, or use --all to review every not-reviewed worktree.",
               EXIT_USAGE)
     if all_wts:
-        reviewable = _reviewable_keys(store.load_links())
+        reviewable = _reviewable_keys(store.load_links(), force=force_all)
         if not reviewable:
             eprint("nothing to review")
             return
@@ -1535,15 +1559,20 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
 
 
 def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
-    """_pr_cells plus the CI pipeline cell.
+    """_pr_cells plus the CI pipeline and review-comment cells.
 
     CI resolves after the PR: no PR -> no CI cell. A cached ``ci`` is
     reused while the branch tip is unchanged, the check is younger than
     _CI_TTL_SECONDS (10 min) and --refresh-pr is not given; otherwise the
     pipeline is fetched once and persisted via store.cache_ci_status.
+    Review stats ({reviews, unresolved, resolved} via
+    refs.fetch_pr_comment_stats) follow the same 10-min/tip/refresh rules
+    and ride in ``reviews``/``reviews_detail``.
     """
     cells = _pr_cells(entry, refresh_pr)
     cells["ci"] = _ci_cell(entry, cells, refresh_pr)
+    cells["reviews_detail"] = _reviews_cell(entry, cells, refresh_pr)
+    cells["reviews"] = _fmt_reviews(cells["reviews_detail"])
     return cells
 
 
@@ -1574,6 +1603,54 @@ def _ci_cell(entry: dict, cells: dict, refresh_pr: bool) -> str | None:
         store.cache_ci_status(branch, ci, sha=branch_tip or "")
     return ci
 
+def _reviews_fresh(cached: dict) -> bool:
+    """Cached review-comment stats still valid: checked within _CI_TTL_SECONDS."""
+    ts = cached.get("reviews_checked_at", "")
+    if not ts:
+        return False
+    try:
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
+    except ValueError:
+        return False
+    return age < timedelta(seconds=_CI_TTL_SECONDS)
+
+
+def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool) -> dict | None:
+    """{reviews, unresolved, resolved} for the resolved PR (issue #28).
+
+    None when there is no PR (no url) or the lookup failed (soft failure —
+    fetch_pr_comment_stats warns on stderr and returns None; nothing is
+    cached so the next run retries). Cached 10 min while the tip matches.
+    """
+    pr = cells.get("pr_data")
+    if not pr or not pr.get("url"):
+        return None
+    branch = entry.get("branch", "")
+    cached = store.load_pr_cache().get(branch) if branch else None
+    branch_tip = cells.get("_tip")
+    if branch_tip is None and entry.get("worktree") \
+            and Path(entry["worktree"]).exists():
+        branch_tip = _git_tip(entry["worktree"], "HEAD")
+    if not refresh_pr and cached and _reviews_fresh(cached) \
+            and cached.get("reviews_sha") == branch_tip \
+            and all(k in cached for k in ("reviews", "unresolved", "resolved")):
+        return {"reviews": int(cached.get("reviews") or 0),
+                "unresolved": int(cached.get("unresolved") or 0),
+                "resolved": int(cached.get("resolved") or 0)}
+    url = pr["url"]
+    tool = ((cached or {}).get("tool")
+            or ("gh" if "github.com" in url else "glab"))
+    stats = refs.fetch_pr_comment_stats(tool, url, entry.get("repo", ""))
+    if branch:
+        store.cache_review_stats(branch, stats, sha=branch_tip or "")
+    return stats
+
+
+def _fmt_reviews(stats: dict | None) -> str:
+    if not stats:
+        return "-"
+    return f"{stats.get('reviews', 0)}|{stats.get('unresolved', 0)}|{stats.get('resolved', 0)}"
+
 
 def _session_rows(links: dict, show_worktree: bool, refresh: bool
                   ) -> tuple[list[dict], list[str]]:
@@ -1583,14 +1660,14 @@ def _session_rows(links: dict, show_worktree: bool, refresh: bool
         row = {"key": k, "branch": v.get("branch", "?"),
                "harness": _harness_cell(k, v.get("worktree", "")),
                "commits": cells["commits"], "pr": cells["pr"],
-               "ci": cells["ci"] or "",
+               "ci": cells["ci"] or "", "reviews": cells["reviews"],
                "_pr_state": (cells["pr_data"] or {}).get("state", "")}
         if show_worktree:
             row["worktree"] = v.get("worktree", "?")
         rows.append(row)
-    columns = (["key", "worktree", "branch", "harness", "commits", "pr", "ci"]
+    columns = (["key", "worktree", "branch", "harness", "commits", "pr", "ci", "reviews"]
                if show_worktree
-               else ["key", "branch", "harness", "commits", "pr", "ci"])
+               else ["key", "branch", "harness", "commits", "pr", "ci", "reviews"])
     return rows, columns
 
 
@@ -1615,10 +1692,10 @@ def _enrich_entry(key: str, entry: dict, refresh: bool) -> dict:
     cells = _status_cells(entry, refresh)
     return {**entry, "harness": _harness_cell(key, entry.get("worktree", "")),
             "commits": cells["commits"], "pr": cells["pr"],
-            "ci": cells["ci"],
+            "ci": cells["ci"], "reviews": cells["reviews"],
             "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),
-            "commits_detail": cells["ab"], "pr_detail": cells["pr_data"]}
-
+            "commits_detail": cells["ab"], "pr_detail": cells["pr_data"],
+            "reviews_detail": cells["reviews_detail"]}
 
 def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
     cells = _status_cells(entry, refresh)
@@ -1627,7 +1704,8 @@ def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
               "commits": cells["commits"],
               "pr": _fmt_pr(cells["pr_data"]), "commits_detail": cells["ab"],
               "pr_detail": cells["pr_data"], "base_branch": cells["base_branch"],
-              "ci": cells["ci"],
+              "ci": cells["ci"], "reviews": cells["reviews"],
+              "reviews_detail": cells["reviews_detail"],
               "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),
               "issue_url": refs.issue_url(key, entry.get("issue"))}
     if not cells["pr_data"]:
@@ -1658,6 +1736,10 @@ def _print_detail(detail: dict) -> None:
     if ci:
         style = _CI_STYLES.get(ci, "white")
         c.print(f"  ci: [{style}]{_CI_SYMBOLS.get(ci, ci)} {escape(ci)}[/{style}]")
+    rd = detail.get("reviews_detail")
+    if rd:
+        c.print(f"  reviews: {rd.get('reviews', 0)} done / "
+                f"{rd.get('unresolved', 0)} unresolved / {rd.get('resolved', 0)} resolved")
     cd = detail.get("commits_detail")
     if cd:
         base = escape(detail.get("base_branch") or "the base branch")

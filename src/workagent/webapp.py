@@ -75,7 +75,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "start": ("-N", "--no-tty", "--no-runtime", "--dry-run", "--yes",
               "--json"),
     "review": ("-N", "--no-tty", "--no-runtime", "--dry-run", "--yes",
-               "--json", "--all", "--sequential", "--fix", "--post-comments"),
+               "--json", "--all", "--sequential", "--fix", "--force-all", "--post-comments"),
     "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--no-squash"),
     "open": (),
     "sync": ("-m", "--merge", "--harness", "--all", "--yes", "--force",
@@ -193,6 +193,40 @@ def _validate_args(command: str, args: list[str], body_force: bool = False) -> N
             raise ApiError("bad_arg", "--remote-url needs a value", 400)
         if not u.strip():
             raise ApiError("bad_arg", "--remote-url must be a real tracker web URL", 400)
+    if command in ("start", "review"):
+        from . import trackers as _trackers
+        from . import worktrees as _worktrees
+        from . import refs as _refs
+        ref = _first_positional(rest, VAL_FLAGS.get(command, ()))
+        repo = ""
+        for i, a in enumerate(rest):
+            if a == "--repo" and i + 1 < len(rest):
+                repo = rest[i + 1]
+        if ref and not repo:
+            try:
+                parsed = _refs.parse_ref(ref)
+                tid = _trackers.tracker_id(parsed)
+            except Exception:
+                parsed, tid = None, ""
+            pinned = False
+            if parsed is not None:
+                links = store.load_links()
+                if command == "start":
+                    try:
+                        key = _refs.issue_key(parsed)
+                    except Exception:
+                        key = ""
+                    pinned = bool(key and str((links.get(key) or {}).get("repo", "")))
+                else:
+                    pinned = isinstance(_worktrees.resolve_worktree(ref, links), str)
+            if tid and not pinned:
+                known = _trackers.linked_repos(tid)
+                if len(known) > 1:
+                    raise ApiError(
+                        "repo_ambiguous",
+                        f"tracker {tid} is linked to multiple repos: "
+                        f"{', '.join(known)}. Re-run with --repo <name|path> to pick one.",
+                        400)
     if sub == "repo remove" and not (body_force or "--force" in rest):
         name = next((a for a in rest[1:] if not a.startswith("-")), "")
         if name and store._sqlite_path() is not None:

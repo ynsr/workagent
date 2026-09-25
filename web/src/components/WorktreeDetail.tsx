@@ -165,6 +165,18 @@ export function WorktreeDetail({
               <CiBadge ci={entry.ci} />
             </dd>
           </div>
+          {entry.reviews_detail ? (
+            <div className="flex items-baseline gap-2">
+              <dt className="w-16 shrink-0 text-xs text-muted-foreground">Reviews</dt>
+              <dd
+                className="font-mono text-[13px]"
+                title={`${entry.reviews_detail.reviews} done / ${entry.reviews_detail.unresolved} unresolved / ${entry.reviews_detail.resolved} resolved`}
+              >
+                {entry.reviews_detail.reviews} done / {entry.reviews_detail.unresolved} unresolved /{" "}
+                {entry.reviews_detail.resolved} resolved
+              </dd>
+            </div>
+          ) : null}
         </dl>
       </CardContent>
       <CardFooter className="justify-end">

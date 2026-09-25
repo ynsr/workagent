@@ -338,3 +338,93 @@ def fetch_ci_status(tool: str, pr_url: str, cwd: str | None = None) -> str | Non
     except HarnessError as e:
         print(f"warning: ci lookup failed for {pr_url}: {e}", file=sys.stderr)
         return None
+
+def _review_comments_gh(pr_url: str, cwd: str | None) -> dict:
+    """{reviews, unresolved, resolved} for a GitHub PR.
+
+    reviews = issue comments whose body starts with `# Code Review`
+    (each one marks a completed harness review). unresolved/resolved come
+    from the GraphQL reviewThreads connection.
+    """
+    m = _GITHUB_PR.match(pr_url or "")
+    if not m:
+        raise HarnessError(f"not a GitHub PR URL: {pr_url}")
+    out = run_cmd("gh", "pr", "view", pr_url, "--json", "comments",
+                  cwd=cwd)
+    try:
+        comments = json.loads(out or "{}").get("comments") or []
+    except json.JSONDecodeError:
+        raise HarnessError(f"cannot parse gh output for {pr_url}")
+    reviews = sum(1 for c in comments
+                  if str((c or {}).get("body") or "").lstrip().startswith("# Code Review"))
+    owner, name = m.group(1).split("/", 1)
+    try:
+        number = int(m.group(2))
+    except ValueError:
+        raise HarnessError(f"not a GitHub PR URL: {pr_url}")
+    query = ('{repository(owner:"%s",name:"%s"){pullRequest(number:%d)'
+             '{reviewThreads(first:100){nodes{isResolved}}}}}' % (owner, name, number))
+    tout = run_cmd("gh", "api", "graphql", "-f", f"query={query}", cwd=cwd)
+    try:
+        nodes = (json.loads(tout or "{}").get("data", {}).get("repository", {})
+                 .get("pullRequest", {}).get("reviewThreads", {}).get("nodes") or [])
+    except json.JSONDecodeError:
+        raise HarnessError(f"cannot parse gh output for {pr_url}")
+    unresolved = sum(1 for n in nodes if not (n or {}).get("isResolved"))
+    resolved = sum(1 for n in nodes if (n or {}).get("isResolved"))
+    return {"reviews": reviews, "unresolved": unresolved, "resolved": resolved}
+
+
+def _review_comments_glab(pr_url: str, cwd: str | None) -> dict:
+    """{reviews, unresolved, resolved} for a GitLab MR via discussions API.
+
+    reviews = notes whose body starts with `# Code Review`. A discussion is
+    resolved when every note in it is marked resolved (or the discussion
+    itself carries resolved=True).
+    """
+    m = _GITLAB_MR.match(pr_url or "")
+    if not m:
+        raise HarnessError(f"not a GitLab MR URL: {pr_url}")
+    host, path, iid = m.group(1), m.group(2), m.group(3)
+    api = (f"projects/{quote(path, safe='')}/merge_requests/{iid}"
+           "/discussions?per_page=100")
+    try:
+        out = run_cmd("glab", "api", api, "--hostname", host, cwd=cwd)
+    except HarnessError:
+        out = run_cmd("glab", "api", api, cwd=cwd)
+    try:
+        data = json.loads(out or "[]")
+    except json.JSONDecodeError:
+        raise HarnessError(f"cannot parse glab output for {pr_url}")
+    reviews = 0
+    unresolved = 0
+    resolved = 0
+    for disc in data or []:
+        notes = (disc or {}).get("notes") or []
+        for n in notes:
+            if str((n or {}).get("body") or "").lstrip().startswith("# Code Review"):
+                reviews += 1
+        if (disc or {}).get("resolved") is True:
+            resolved += 1
+        elif notes and all((n or {}).get("resolved") for n in notes):
+            resolved += 1
+        elif notes:
+            unresolved += 1
+    return {"reviews": reviews, "unresolved": unresolved, "resolved": resolved}
+
+
+def fetch_pr_comment_stats(tool: str, pr_url: str, cwd: str | None = None) -> dict | None:
+    """{reviews, unresolved, resolved} for a PR/MR URL.
+
+    Soft-failing like fetch_ci_status: None on any lookup error (warning
+    to stderr) so status rendering never breaks on an unhappy host CLI.
+    """
+    try:
+        if tool == "gh":
+            return _review_comments_gh(pr_url, cwd)
+        if tool == "glab":
+            return _review_comments_glab(pr_url, cwd)
+        raise HarnessError(f"unknown host CLI: {tool}")
+    except HarnessError as e:
+        print(f"warning: review-comment lookup failed for {pr_url}: {e}", file=sys.stderr)
+        return None

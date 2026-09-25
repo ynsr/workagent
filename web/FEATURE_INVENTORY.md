@@ -13,7 +13,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 
 | Command | Class | Core function (read-only reuse) | Target key | Destructive | Exit-2 sites | stdin prompts |
 |---|---|---|---|---|---|---|
-| `start REF` | mutating | — | `start` (per server) | no (spawns agent) | `refs.parse_ref` failure; no linked repo + non-TTY; missing git-wt | repo picker (TTY); tracker y/N |
+| `start REF` | mutating | — | `start` (per server) | no (spawns agent) | `refs.parse_ref` failure; no linked repo + non-TTY; tracker linked to 2+ repos without `--repo` (#29, exit 2 naming candidates); missing git-wt | repo picker (TTY); tracker y/N |
 | `start --repo NAME` | mutating | — | `start` | no | as above | tracker y/N when repo unlinked (TTY) |
 | `start --depth N` | mutating | — | `start` | no | | |
 | `start --base BR` | mutating | — | `start` | no | unknown branch → git-wt error (exit 1) | repo-on-X note (TTY, no `--yes`) |
@@ -23,9 +23,9 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `start --dry-run` | read-only-ish | — | `start` | no | | none |
 | `start --yes` | mutating | — | `start` | no | | skips confirmations |
 | `start --json` | mutating | — | `start` | no | | |
-| `review REF` | mutating | — | `review` | no | parse failure; not a PR/MR ref and no discoverable PR | repo picker (TTY) |
+| `review REF` | mutating | — | `review` | no | parse failure; not a PR/MR ref and no discoverable PR; tracker linked to 2+ repos without `--repo` (#29, exit 2 naming candidates) | repo picker (TTY) |
 | `review --repo/--depth/--harness/--no-tty/-N/--dry-run/--yes/--json` | mutating | — | `review` | no | as above | as above |
-| `review --all [--sequential] [--fix]` | mutating | — | `review:all` | no (spawns agent children) | nothing to review → exit 0 note | none — non-TTY parallel/sequential children |
+| `review --all [--sequential] [--fix] [--force-all]` | mutating | — | `review:all` | no (spawns agent children) | nothing to review → exit 0 note | none — non-TTY parallel/sequential children; `--force-all` re-includes already-reviewed and unresolved-comment worktrees (still PR/MR only) |
 | `cleanup --merged [--force/--dry-run/--json]` | mutating | — | `cleanup:all` | **yes** (per merged/closed link) | `--merged` w/o `--yes` non-interactive (2); ref given with `--merged` (2) | none — requires `--yes`; skips live-harness/invalid worktrees |
 | `open REF` | read-only-ish (OS opener) | — | `open:<ref>` | no | no linked state (2), invalid/missing worktree (1), no opener (1) | none — prints the worktree path |
 | `cleanup REF` | mutating | — | `cleanup:<ref>` | **yes** (closes tracker issue, removes worktree, branch, PR) | no linked state | none (non-TTY) / y-N (TTY) |

@@ -429,19 +429,24 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
     init_db(path)
     norm = _norm(repo_path)
     with connect(path) as conn:
+        # Defer FK enforcement to commit for the whole txn (no-op if set
+        # after the first write — issue #30): the same-path rename below
+        # re-keys repos.key_ref while children still reference the old key.
+        conn.execute("PRAGMA defer_foreign_keys = ON")
         _upsert_tracker_conn(conn, tracker_key)
         # Same normalized path under a different registry name: reuse the
         # existing row (update name/remote/tool) instead of dying on the
-        # path UNIQUE constraint.
         hit = conn.execute("SELECT key_ref FROM repos WHERE path = ?", (norm,)).fetchone()
         if hit is not None and hit[0] != name:
-            conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
-                         " WHERE key_ref = ?",
-                         (name, name, remote or "", tool or "", hit[0]))
+            # Deferred-FK same-path rename (issue #30): child re-keys and
+            # the parent rename land before commit-time checks.
             conn.execute("UPDATE OR IGNORE tracker_repos SET repo_key = ? WHERE repo_key = ?",
                          (name, hit[0]))
             conn.execute("UPDATE worktrees SET repo_key = ? WHERE repo_key = ?",
                          (name, hit[0]))
+            conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
+                         " WHERE key_ref = ?",
+                         (name, name, remote or "", tool or "", hit[0]))
         conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool)"
                      " VALUES (?, ?, ?, ?, ?)"
                      " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"
@@ -462,15 +467,16 @@ def register_repo_row_unlinked(path: Path, name: str, repo_path: str,
     init_db(path)
     norm = _norm(repo_path)
     with connect(path) as conn:
+        conn.execute("PRAGMA defer_foreign_keys = ON")
         hit = conn.execute("SELECT key_ref FROM repos WHERE path = ?", (norm,)).fetchone()
         if hit is not None and hit[0] != name:
-            conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
-                         " WHERE key_ref = ?",
-                         (name, name, remote or "", tool or "", hit[0]))
             conn.execute("UPDATE OR IGNORE tracker_repos SET repo_key = ? WHERE repo_key = ?",
                          (name, hit[0]))
             conn.execute("UPDATE worktrees SET repo_key = ? WHERE repo_key = ?",
                          (name, hit[0]))
+            conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
+                         " WHERE key_ref = ?",
+                         (name, name, remote or "", tool or "", hit[0]))
         conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool)"
                      " VALUES (?, ?, ?, ?, ?)"
                      " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"

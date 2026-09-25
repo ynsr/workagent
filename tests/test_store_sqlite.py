@@ -270,6 +270,35 @@ def test_remove_repo_row_cascades_and_unlinked_register_keeps_row(tmp_path):
     assert sq.remove_repo_row(db, "missing") is False
 
 
+def test_register_repo_row_same_path_rename_rekeys_children(tmp_path):
+    """Issue #30: same-path re-register under a new name re-keys joins +
+    worktrees instead of dying on the FK constraint."""
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    sq.register_repo_row(db, "proj", "/proj", "jira:IPG")
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'proj', '2026-01-01T00:00:00+00:00')")
+    sq.register_repo_row(db, "proj-renamed", "/proj", "jira:IPG")
+    with sq.connect(db) as conn:
+        assert conn.execute("SELECT key_ref FROM repos").fetchall() == [("proj-renamed",)]
+        assert conn.execute("SELECT repo_key FROM tracker_repos").fetchall() == [("proj-renamed",)]
+        assert conn.execute("SELECT repo_key FROM worktrees").fetchall() == [("proj-renamed",)]
+
+def test_cache_review_stats_roundtrip(tmp_path, monkeypatch, isolated_config):
+    """Issue #28: cache_review_stats persists reviews/unresolved/resolved."""
+    from workagent import store
+    monkeypatch.setattr(store, "_sqlite_path", lambda: tmp_path / "state.db")
+    store.cache_review_stats("feat/x", {"reviews": 2, "unresolved": 1, "resolved": 3},
+                             sha="abc")
+    cached = store.load_pr_cache()["feat/x"]
+    assert (cached["reviews"], cached["unresolved"], cached["resolved"]) == (2, 1, 3)
+    assert cached["reviews_sha"] == "abc"
+    assert "reviews_checked_at" in cached
+    store.cache_review_stats("feat/x", None)
+    assert store.load_pr_cache()["feat/x"]["reviews"] == 2
+
+
 def test_worktree_count_for_repo(tmp_path):
     db = tmp_path / "state.db"
     sq.init_db(db)

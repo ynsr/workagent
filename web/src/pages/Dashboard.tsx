@@ -39,6 +39,9 @@ const CSV_HEADERS = [
   "pr",
   "pr_url",
   "pr_state",
+  "reviews",
+  "reviews_unresolved",
+  "reviews_resolved",
 ]
 
 function worktreeRows(worktrees: WorktreeMap): string[][] {
@@ -54,6 +57,9 @@ function worktreeRows(worktrees: WorktreeMap): string[][] {
     e.pr ?? "",
     e.pr_detail?.url ?? "",
     e.pr_detail?.state ?? "",
+    e.reviews ?? "",
+    String(e.reviews_detail?.unresolved ?? ""),
+    String(e.reviews_detail?.resolved ?? ""),
   ])
 }
 
@@ -73,6 +79,7 @@ export function Dashboard() {
   const [showWorktree, setShowWorktree] = useState(false)
   const [refreshingPr, setRefreshingPr] = useState(false)
   const [syncOpts, setSyncOpts] = useState({ merge: false, dryRun: false, json: false })
+  const [reviewOpts, setReviewOpts] = useState({ forceAll: false })
   const [cleanupOpts, setCleanupOpts] = useState({ force: false, dryRun: false, json: false })
 
   async function handleRefreshPr() {
@@ -152,20 +159,31 @@ export function Dashboard() {
   }
 
   async function handleReviewAll() {
+    setReviewOpts({ forceAll: false })
     const ok = await confirm({
       action: "review",
       title: "Review all worktrees",
       description:
-        "Reviews every not-reviewed linked worktree in parallel (non-TTY). Reviewed worktrees whose tip moved are reviewed again.",
+        "Reviews every not-reviewed linked worktree in parallel (non-TTY). Skips worktrees without a PR/MR, with a live harness, or with unresolved PR comments. Reviewed worktrees whose tip moved are reviewed again.",
       destructive: true,
       confirmLabel: "Review all",
       details: [{ label: "Scope", value: "Every linked worktree" }],
+      extras: (
+        <div className="grid gap-2.5">
+          <OptRow
+            id="reviewall-force"
+            checked={reviewOpts.forceAll}
+            onChange={(v) => setReviewOpts((o) => ({ ...o, forceAll: v }))}
+            label="--force-all — include already-reviewed and unresolved-comment worktrees too"
+          />
+        </div>
+      ),
     })
     if (!ok) return
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "review",
-        args: ["--all"],
+        args: ["--all", ...(reviewOpts.forceAll ? ["--force-all"] : [])],
         confirm: true,
       })
       runCreated(run_id, "Review all")
