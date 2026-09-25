@@ -4,8 +4,9 @@
   branch's PR/MR merged with it as source (latest open PR/MR wins,
   else latest overall; head_ref verified). 404/conflicted PRs stay open —
   nothing is torn down and the user is told to resolve the conflict first.
-  `--force` merges first, closes when merge is impossible, and always
-  deletes the remote branch afterwards (merge/close notified).
+  `--force` merges first; when merge is impossible the PR is left open and
+  the remote branch kept while everything else is cleaned up (notified).
+- Remove-worktree modal: new live Cleanup-vs---force comparison table (mergeable / conflicted / merged / 404 rows) that follows the --force checkbox; all modal shells widened to 2xl with scroll caps to stop text overflow.
 - Issue #32: GitHub Reviews detection now counts plain (non-inline)
   `# Code Review` bot comments as resolved only when their second non-empty
   line (below the header) is exactly `Status: RESOLVED` (GitHub-only; GitLab MRs keep native

@@ -1045,16 +1045,14 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
             _merge_pr(pr_url, squash=squash, cwd=host_cwd)
         except HarnessError as e:
             if force and not _pr_missing(str(e)):
-                # Rule 3: --force merge failed (e.g. conflicts) → close,
-                # then still tear down locally and delete the remote branch.
+                # Rule 3: --force merge failed (e.g. conflicts) → leave the
+                # PR open, keep the remote branch, continue local cleanup.
                 _close_issue(parsed, force)
-                _close_pr(parsed, pr_url, force=True, cwd=host_cwd)
-                eprint(f"note: {pr_url} could not be merged ({e}); closed instead.")
+                eprint(f"note: {pr_url} could not be merged ({e}); left open.")
                 merged_now = False
-                fresh_state = "closed"
             else:
-                # 404/conflict without --force: PR stays open, user notified
-                # via the raised error; nothing is torn down below.
+                # 404 without force, or conflict without force: PR stays
+                # open, user notified via the raised error; nothing torn down.
                 raise
         else:
             merged_now = True
@@ -1078,9 +1076,9 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
     # git-wt only removes the local branch (delete_branch=False below):
     # remote deletion is workagent's call. Rule 1: delete the remote branch
     # iff the PR/MR merged with this branch as its source (merged here, or
-    # already-merged for this branch, verified via head_ref). Rule 3: --force
-    # on a merged/just-closed PR still deletes the recorded remote branch.
-    # Open/conflicted/404 PRs keep their remote branch.
+    # already-merged for this branch, verified via head_ref). Unmerged PRs —
+    # closed, open, conflicted, or left open after a failed --force merge —
+    # keep their remote branch.
     head_ref = ""
     if pr_url and (merged_now or fresh_state == "merged"):
         try:
@@ -1091,8 +1089,6 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
             head_ref = branch if merged_now else ""
     delete_remote = bool(branch) and (merged_now or fresh_state == "merged") \
         and (not head_ref or head_ref == branch)
-    if force and not delete_remote and pr_url and (merged_now or fresh_state in ("merged", "closed")):
-        delete_remote = True
     cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=False,
                                      force=force, yes=yes)
     try:

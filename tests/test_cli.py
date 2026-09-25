@@ -2187,8 +2187,8 @@ def test_cleanup_picks_latest_open_pr(isolated_config, monkeypatch, capsys):
     assert out["remote_deleted"] is True
 
 
-def test_cleanup_force_conflict_closes_and_deletes_remote(isolated_config, monkeypatch, capsys):
-    """Rule 3: --force on a conflicted PR merges-fails → closes → deletes remote."""
+def test_cleanup_force_conflict_leaves_pr_open_keeps_remote(isolated_config, monkeypatch, capsys):
+    """Rule 3: --force merge-fail → PR left open, remote kept, cleanup continues."""
     from workagent.errors import HarnessError
     store.record_link("jira:IPG-13", {"issue": "IPG-13", "worktree": "/tmp/wt",
                                       "branch": "feat/13", "repo": "/tmp/proj",
@@ -2212,9 +2212,10 @@ def test_cleanup_force_conflict_closes_and_deletes_remote(isolated_config, monke
     out = cli._cleanup_one("jira:IPG-13", dict(store.load_links()["jira:IPG-13"]),
                            force=True, yes=True, dry_run=False,
                            json_output=True)
-    assert closed  # PR was closed after the failed merge
-    assert "closed instead" in capsys.readouterr().err
-    assert out["remote_deleted"] is True
+    assert not closed  # PR left open on unmergeable --force
+    assert "left open" in capsys.readouterr().err
+    assert out["status"] == "cleaned"
+    assert out["remote_deleted"] is False
 
 
 def test_cleanup_404_close_keeps_remote_and_link(isolated_config, monkeypatch):

@@ -11,6 +11,7 @@ import {
   SearchX,
   SquareTerminal,
 } from "lucide-react"
+import { CleanupDialog } from "@/components/CleanupDialog"
 import { PageHeader } from "@/components/PageHeader"
 import { StatusTable } from "@/components/StatusTable"
 import {
@@ -80,7 +81,6 @@ export function Dashboard() {
   const [refreshingPr, setRefreshingPr] = useState(false)
   const [syncOpts, setSyncOpts] = useState({ merge: false, dryRun: false, json: false })
   const [reviewOpts, setReviewOpts] = useState({ forceAll: false })
-  const [cleanupOpts, setCleanupOpts] = useState({ force: false, dryRun: false, json: false })
 
   async function handleRefreshPr() {
     setRefreshingPr(true)
@@ -239,59 +239,27 @@ export function Dashboard() {
     }
   }
 
+  const [cleanupTarget, setCleanupTarget] = useState<string | null>(null)
+
   async function handleCleanup(key: string) {
-    setCleanupOpts({ force: false, dryRun: false, json: false })
-    const invalid = worktrees?.[key]?.wt_valid === false
-    const ok = await confirm({
-      action: "cleanup",
-      ref: key,
-      title: invalid ? `Delete invalid worktree ${key}` : `Remove worktree ${key}`,
-      description: invalid
-        ? "The recorded path is missing or not a live git worktree. --force skips state validation; the entry is removed either way. This cannot be undone."
-        : "Closes the tracker issue, removes the worktree, deletes the branch and closes the PR. This cannot be undone.",
-      destructive: true,
-      confirmLabel: invalid ? "Delete worktree" : "Remove worktree",
-      force: invalid || undefined,
-      extras: (
-        <div className="grid gap-2.5">
-          <OptRow
-            id="cleanup-force"
-            checked={invalid || (cleanupOpts.force && !cleanupOpts.dryRun)}
-            disabled={invalid || cleanupOpts.dryRun}
-            onChange={(v) => setCleanupOpts((o) => ({ ...o, force: v }))}
-            label="--force — skip state validation (always requires this confirmation)"
-          />
-          <OptRow
-            id="cleanup-dry"
-            checked={cleanupOpts.dryRun}
-            onChange={(v) =>
-              setCleanupOpts((o) => ({ ...o, dryRun: v, force: v ? false : o.force }))
-            }
-            label="--dry-run — print the plan without acting"
-          />
-          <OptRow
-            id="cleanup-json"
-            checked={cleanupOpts.json}
-            onChange={(v) => setCleanupOpts((o) => ({ ...o, json: v }))}
-            label="--json — JSON output in the run log"
-          />
-        </div>
-      ),
-    })
-    if (!ok) return
-    const dry = cleanupOpts.dryRun
-    const force = (invalid || cleanupOpts.force) && !dry
+    // Local dialog owns --force/--dry-run/--json state (CleanupDialog);
+    // the shared confirm() extras snapshot would go stale on toggle.
+    setCleanupTarget(key)
+  }
+
+  async function submitCleanup(key: string, opts: { force: boolean; dry: boolean; json: boolean }) {
+    setCleanupTarget(null)
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "cleanup",
         args: [
           key,
-          ...(force ? ["--force"] : []),
-          ...(dry ? ["--dry-run"] : []),
-          ...(cleanupOpts.json ? ["--json"] : []),
+          ...(opts.force ? ["--force"] : []),
+          ...(opts.dry ? ["--dry-run"] : []),
+          ...(opts.json ? ["--json"] : []),
         ],
-        confirm: dry ? undefined : true,
-        force: force || undefined,
+        confirm: opts.dry ? undefined : true,
+        force: opts.force || undefined,
       })
       runCreated(run_id, `Cleanup ${key}`)
     } catch (err) {
@@ -461,6 +429,19 @@ export function Dashboard() {
           </p>
         </>
       )}
+      {cleanupTarget ? (
+        <CleanupDialog
+          worktreeKey={cleanupTarget}
+          invalid={worktrees?.[cleanupTarget]?.wt_valid === false}
+          onClose={(res) => {
+            if (!res) {
+              setCleanupTarget(null)
+              return
+            }
+            void submitCleanup(cleanupTarget, res)
+          }}
+        />
+      ) : null}
     </div>
   )
 }
