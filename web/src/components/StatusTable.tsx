@@ -174,14 +174,14 @@ function CommitsCell({ entry }: { entry: WorktreeMap[string] }) {
     </span>
   )
 }
-/** Reviews R|U|R (done|unresolved|resolved); "-" when no PR or lookup failed. */
+/** Reviews R|U|R (completed review passes|unresolved comments|resolved comments); "-" when no PR or lookup failed. */
 function ReviewsCell({ entry }: { entry: WorktreeMap[string] }) {
   const rd = entry.reviews_detail
   if (!rd) return <span className="font-mono text-[13px] text-muted-foreground">—</span>
   return (
     <span
       className="font-mono text-[13px]"
-      title={`${rd.reviews} done / ${rd.unresolved} unresolved / ${rd.resolved} resolved`}
+      title={`${rd.reviews} completed review passes, ${rd.unresolved} unresolved comments, ${rd.resolved} resolved comments`}
     >
       <span className="text-muted-foreground">{rd.reviews}</span>
       <span className="text-muted-foreground">|</span>

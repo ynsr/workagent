@@ -170,7 +170,7 @@ export function WorktreeDetail({
               <dt className="w-16 shrink-0 text-xs text-muted-foreground">Reviews</dt>
               <dd
                 className="font-mono text-[13px]"
-                title={`${entry.reviews_detail.reviews} done / ${entry.reviews_detail.unresolved} unresolved / ${entry.reviews_detail.resolved} resolved`}
+                title={`${entry.reviews_detail.reviews} completed review passes, ${entry.reviews_detail.unresolved} unresolved comments, ${entry.reviews_detail.resolved} resolved comments`}
               >
                 {entry.reviews_detail.reviews} done / {entry.reviews_detail.unresolved} unresolved /{" "}
                 {entry.reviews_detail.resolved} resolved
