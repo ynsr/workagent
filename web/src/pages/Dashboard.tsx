@@ -66,7 +66,7 @@ export function Dashboard() {
   const { data: info } = useInfo()
   const { data: repos } = useRepos()
   const repoTabs = useRepoTabs(
-    Object.values(worktrees ?? {}).map((e) => e.worktree ?? ""),
+    Object.values(worktrees ?? {}),
     repos,
   )
 

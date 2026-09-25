@@ -2,7 +2,7 @@ import { Fragment, useMemo, useState, type ReactNode } from "react"
 import { useSearchParams } from "react-router-dom"
 import { FolderOpen, GitPullRequest, History, Info, RefreshCw, Rocket, Search, Trash2, XCircle } from "lucide-react"
 import type { Repo, WorktreeMap } from "@/lib/api"
-import { repoKeyForPath } from "@/lib/useRepoTabs"
+import { repoKeyForItem } from "@/lib/useRepoTabs"
 import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -266,7 +266,7 @@ export function StatusTable({
         const entry = worktrees[key]
         if (!entry) return false
         if (repoFilter && repoTabs) {
-          const k = repoKeyForPath(entry.worktree ?? "", repoTabs.repos)
+          const k = repoKeyForItem(entry, repoTabs.repos)
           const want = repoFilter === "(other)" ? "(other)" : repoFilter
           if (k !== want) return false
         }

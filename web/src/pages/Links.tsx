@@ -551,7 +551,7 @@ export function Links() {
   const { data: info } = useInfo()
   const { data: repos } = useRepos()
   const repoTabs = useRepoTabs(
-    Object.values(worktrees ?? {}).map((e) => e.worktree ?? ""),
+    Object.values(worktrees ?? {}),
     repos,
   )
   const [showWorktree, setShowWorktree] = useState(false)
