@@ -1019,8 +1019,10 @@ def _merge_pr(pr_url: str, squash: bool, cwd: str | None = None) -> None:
     """
     try:
         if "github.com" in pr_url:
+            # gh requires an explicit strategy non-interactively; squash
+            # default, --no-squash maps to a merge commit (--merge).
             run_cmd("gh", "pr", "merge", pr_url,
-                    *([] if squash else ["--no-squash"]), cwd=cwd)
+                    "--squash" if squash else "--merge", cwd=cwd)
         else:
             run_cmd("glab", "mr", "merge", pr_url,
                     *([] if squash else ["--no-squash"]), cwd=cwd)

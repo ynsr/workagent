@@ -2668,3 +2668,21 @@ def test_sync_pr_ref_dry_run_creates_nothing(isolated_config, tmp_path, monkeypa
     r = runner.invoke(cli.app, ["sync", url, "--dry-run", "--json"])
     assert r.exit_code == 0, r.output
     assert store.load_links() == {}
+
+
+def test_merge_pr_github_squash_default(isolated_config, monkeypatch):
+    """GitHub merges pass --squash (gh requires an explicit strategy non-interactively)."""
+    seen = []
+    monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp")
+    assert seen[0][:4] == ("gh", "pr", "merge", "https://github.com/o/r/pull/9")
+    assert "--squash" in seen[0]
+
+
+def test_merge_pr_github_no_squash_uses_merge(isolated_config, monkeypatch):
+    """--no-squash maps to gh --merge (gh has no --no-squash flag)."""
+    seen = []
+    monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    cli._merge_pr("https://github.com/o/r/pull/9", squash=False, cwd="/tmp")
+    assert "--merge" in seen[0]
+    assert "--no-squash" not in seen[0]
