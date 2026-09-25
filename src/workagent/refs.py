@@ -407,11 +407,12 @@ def _review_comments_glab(pr_url: str, cwd: str | None) -> dict:
         # Only review threads are resolvable; system/activity notes
         # ("added N commits", "marked as draft", …) are individual
         # discussions GitLab's UI never counts as unresolved.
-        if not any((n or {}).get("resolvable") for n in notes):
+        resolvable = [n for n in notes if (n or {}).get("resolvable")]
+        if not resolvable:
             continue
         if (disc or {}).get("resolved") is True:
             resolved += 1
-        elif all((n or {}).get("resolved") for n in notes if (n or {}).get("resolvable")):
+        elif all((n or {}).get("resolved") for n in resolvable):
             resolved += 1
         else:
             unresolved += 1
