@@ -321,8 +321,11 @@ def start(
       workagent start OWNER/REPO#22 --no-runtime
     """
     parsed = refs.parse_ref(ref)
-    if parsed["kind"] in ("pr", "mr"):
-        _fail(f"{ref} looks like a PR/MR — use `workagent review`", EXIT_USAGE)
+    pr_mode = parsed["kind"] in ("pr", "mr")
+    if pr_mode:
+        return _start_from_pr(ref, parsed, repo, depth, harness, no_tty,
+                              no_runtime, dry_run, yes, json_output,
+                              session_file)
     key = refs.issue_key(parsed)
     links = store.load_links()
     existing = links.get(key, {})
@@ -438,6 +441,50 @@ def start(
                  result, json_output, run_key=key, session_file=session_file)
 
 
+def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
+                   harness: str | None, no_tty: bool, no_runtime: bool,
+                   dry_run: bool, yes: bool, json_output: bool,
+                   session_file: str | None) -> None:
+    """Start a coding session on a PR/MR source branch (branch-keyed row)."""
+    tid = trackers.tracker_id(parsed)
+    repo_dir, outcome = trackers.resolve_for_tracker(
+        tid, repo, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
+    base_branch = repos.default_branch(repo_dir)
+    harness_name = harness or store.load_config().get("default_harness", "omp")
+    pr_url = parsed["url"]
+    try:
+        info = refs.fetch_pr_info(parsed, cwd=str(repo_dir))
+    except HarnessError as e:
+        _fail(f"could not determine the source branch for {pr_url}: {e}",
+              EXIT_USAGE)
+    head_ref = info.get("head_ref", "")
+    if not head_ref:
+        _fail(f"could not determine the source branch for {pr_url}.\n"
+              f"  Run `git fetch origin` in {repo_dir} and check `gh`/`glab` auth for that host.",
+              EXIT_USAGE)
+    if dry_run:
+        _print_result({"dry_run": True, "repo": str(repo_dir), "pr_url": pr_url,
+                       "key": head_ref, "branch": head_ref,
+                       "harness": harness_name,
+                       "tracker": tid, "tracker_link": outcome}, json_output)
+        return
+    key, worktree, branch = _ensure_branch_worktree(
+        repo_dir, head_ref, base_branch, pr_url)
+    prompt = backend.prompt_for_issue(info.get("title", ""), info.get("body", ""),
+                                      pr_url, worktree=worktree, branch=branch)
+    if no_tty:
+        prompt += "\n\nAfter task done, commit and push to the PR/MR source branch"
+    result = {"worktree_path": worktree, "branch": branch,
+              "base": base_branch, "key": key, "pr_url": pr_url,
+              "harness": harness_name}
+    eprint(f"worktree: {worktree}  branch: {branch}")
+    if not no_runtime:
+        _guard_harness(key, worktree)
+    _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
+                 no_runtime, result, json_output, run_key=key,
+                 session_file=session_file)
+
+
 # ── review ────────────────────────────────────────────────────────────
 
 
@@ -505,14 +552,43 @@ def _has_unresolved_comments(entry: dict, pr_url: str) -> bool:
 
 def _review_key_for(pr_url: str, worktree: str, branch: str) -> str:
     """Link key review state lives under: the recorded row for this
-    worktree/branch when one exists, else the pr:<url> key.
+    worktree/branch when one exists, else the source branch name.
 
     Reviewing an already-tracked worktree must reuse its row (stamping
     pr_url on it) — never insert a second row for the same path/branch
     (which collides on the worktrees.branch UNIQUE key).
     """
     return (worktrees.recorded_key(worktree, branch, store.load_links())
-            or f"pr:{pr_url}")
+            or branch)
+
+
+def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
+                            pr_url: str) -> tuple[str, str, str]:
+    """Reuse or create the worktree for a PR/MR source branch.
+
+    Returns (key, worktree, branch): an already-recorded row wins (its key
+    is reused with pr_url stamped on it); otherwise a fresh worktree is
+    created via git-wt and recorded under the bare branch name.
+    """
+    links = store.load_links()
+    reuse = worktrees.recorded_key("", head_ref, links)
+    if isinstance(reuse, str):
+        entry = links.get(reuse, {})
+        worktree = entry.get("worktree", "")
+        branch = entry.get("branch", head_ref)
+        store.record_link(reuse, {"pr_url": pr_url, "worktree": worktree,
+                                  "branch": branch, "repo": str(repo_dir)})
+        return reuse, worktree, branch
+    wt = gitwt.start_worktree(repo_dir, branch=head_ref, base=base_branch)
+    worktree = wt.get("worktree_path", "")
+    branch = wt.get("branch", head_ref)
+    store.record_link(head_ref, {"pr_url": pr_url, "worktree": worktree,
+                                 "branch": branch, "repo": str(repo_dir)})
+    try:
+        repos.register_repo(repos.repo_name(repo_dir), repo_dir)
+    except HarnessError:
+        pass
+    return head_ref, worktree, branch
 
 
 def _mark_reviewed(key: str, worktree: str) -> None:
@@ -736,16 +812,8 @@ def review(
         _fail(f"could not determine the MR head branch for {pr_url}.\n"
               f"  Run `git fetch origin` in {repo_dir} and check `glab`/`gh` auth for that host.",
               EXIT_USAGE)
-    wt = gitwt.start_worktree(repo_dir, branch=head_ref, base=base_branch)
-    worktree = wt.get("worktree_path", "")
-    branch = wt.get("branch", head_ref)
-    review_key = _review_key_for(pr_url, worktree, branch)
-    store.record_link(review_key, {"pr_url": pr_url, "worktree": worktree,
-                                   "branch": branch, "repo": str(repo_dir)})
-    try:
-        repos.register_repo(repos.repo_name(repo_dir), repo_dir)
-    except HarnessError:
-        pass
+    review_key, worktree, branch = _ensure_branch_worktree(
+        repo_dir, head_ref, base_branch, pr_url)
 
     if fix_comments:
         prompt = backend.prompt_for_fix_comments(pr_url, worktree=worktree, branch=branch)
@@ -2342,8 +2410,20 @@ def sync_cmd(
     if ref:
         resolved = worktrees.resolve_worktree(ref, links)
         if resolved is None:
-            _fail(f"no linked state for {ref}", EXIT_USAGE)
-        key = worktrees.pick_worktree(ref, resolved, links)
+            parsed_ref = None
+            try:
+                parsed_ref = refs.parse_ref(ref)
+            except HarnessError:
+                parsed_ref = None
+            if parsed_ref is not None and parsed_ref["kind"] in ("pr", "mr"):
+                key = _sync_create_pr_worktree(ref, parsed_ref, dry_run)
+                if key is None:
+                    return
+                links = store.load_links()
+            else:
+                _fail(f"no linked state for {ref}", EXIT_USAGE)
+        else:
+            key = worktrees.pick_worktree(ref, resolved, links)
         keys = [key]
     elif all_sessions:
         keys = list(links)
@@ -2370,6 +2450,38 @@ def sync_cmd(
     if json_output:
         out = results[0] if len(results) == 1 and ref else results
         print(json.dumps(out, indent=2, ensure_ascii=False))
+
+
+def _sync_create_pr_worktree(ref: str, parsed: dict, dry_run: bool) -> str | None:
+    """Create the branch-keyed worktree for an unregistered PR/MR ref.
+
+    Returns the link key (the source branch name); the shared helper
+    reuses an already-recorded row when one exists. Dry-run prints the
+    plan without creating anything and returns None.
+    """
+    tid = trackers.tracker_id(parsed)
+    repo_dir, _ = trackers.resolve_for_tracker(
+        tid, None, Path.cwd(), depth=7, yes=True, persist=not dry_run)
+    base_branch = repos.default_branch(repo_dir)
+    try:
+        info = refs.fetch_pr_info(parsed, cwd=str(repo_dir))
+    except HarnessError as e:
+        _fail(f"could not determine the source branch for {ref}: {e}",
+              EXIT_USAGE)
+    head_ref = info.get("head_ref", "")
+    if not head_ref:
+        _fail(f"could not determine the source branch for {ref}.\n"
+              f"  Run `git fetch origin` in {repo_dir} and check `gh`/`glab` auth for that host.",
+              EXIT_USAGE)
+    if dry_run:
+        _print_result({"dry_run": True, "repo": str(repo_dir),
+                       "pr_url": parsed["url"], "key": head_ref,
+                       "branch": head_ref}, False)
+        return None
+    key, _worktree, _branch = _ensure_branch_worktree(
+        repo_dir, head_ref, base_branch, parsed["url"])
+    eprint(f"note: created worktree for {ref} on branch {head_ref}")
+    return key
 
 
 def result_failed(result: dict) -> bool:

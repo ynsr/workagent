@@ -71,3 +71,27 @@ def test_ensure_local_branch_missing_everywhere(tmp_path):
     with pytest.raises(HarnessError) as excinfo:
         gitwt._ensure_local_branch(repo, "nope/x")
     assert "git fetch" in str(excinfo.value)
+
+
+def test_ensure_local_branch_fetches_stale_mirror(tmp_path):
+    """A branch pushed after our last fetch is found via fetch, not an error."""
+    repo = _origin_clone(tmp_path)
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", str(tmp_path / "origin.git"), str(other)],
+                   check=True)
+    _git("config", "user.email", "t@t", cwd=other)
+    _git("config", "user.name", "t", cwd=other)
+    _git("checkout", "-qb", "feat/stale-mirror", cwd=other)
+    (other / "g.txt").write_text("y\n", encoding="utf-8")
+    _git("add", "-A", cwd=other)
+    _git("commit", "-q", "-m", "feat", cwd=other)
+    _git("push", "-q", "-u", "origin", "feat/stale-mirror", cwd=other)
+    # repo's remote-tracking mirror predates the push.
+    assert subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet",
+         "refs/remotes/origin/feat/stale-mirror"],
+        cwd=str(repo), capture_output=True, check=False).returncode != 0
+
+    gitwt._ensure_local_branch(repo, "feat/stale-mirror")
+
+    assert _has_branch(repo, "feat/stale-mirror")

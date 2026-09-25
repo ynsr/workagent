@@ -1576,7 +1576,7 @@ def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
     launched = []
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
     url = "https://github.com/o/r/pull/33"
-    key = f"pr:{url}"
+    key = "feat/33"
 
     # --no-runtime starts nothing: must not mark reviewed (Task 2 precedent).
     r0 = runner.invoke(cli.app, ["review", url, "--no-tty", "--no-runtime", "--json"])
@@ -1795,7 +1795,7 @@ def test_review_launch_failure_clears_reviewed(isolated_config, tmp_path,
 
     monkeypatch.setattr(cli.backend, "launch", boom)
     url = "https://github.com/o/r/pull/33"
-    key = f"pr:{url}"
+    key = "feat/33"
     r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
     assert r.exit_code == 1
     entry = store.load_links()[key]
@@ -2573,3 +2573,98 @@ def test_repo_remove_guard_and_force(isolated_config, tmp_path):
     with sq.connect(db) as conn:
         assert conn.execute("SELECT COUNT(*) FROM repos").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM worktrees").fetchone()[0] == 0
+
+
+def test_review_new_pr_keys_row_by_branch(isolated_config, tmp_path, monkeypatch):
+    """A fresh PR head branch is recorded under the branch name with pr_url."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.repos, "branch_tip", lambda wt: "abc123")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed, cwd=None: {"head_ref": "feat/77"})
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/77"})
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    url = "https://github.com/o/r/pull/77"
+    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
+    assert r.exit_code == 0, r.output
+    links = store.load_links()
+    assert set(links) == {"feat/77"}
+    assert links["feat/77"]["pr_url"] == url
+    assert links["feat/77"]["reviewed"] is True
+
+
+def test_start_accepts_pr_ref(isolated_config, tmp_path, monkeypatch):
+    """start <PR-url> creates the branch worktree and launches the harness."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"title": "T", "body": "B",
+                                                  "head_ref": "feat/88"})
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/88"})
+    monkeypatch.setattr(cli.backend, "prompt_for_issue", lambda *a, **k: "PROMPT")
+    launched = []
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    url = "https://github.com/o/r/pull/88"
+    r = runner.invoke(cli.app, ["start", url, "--no-tty", "--json"])
+    assert r.exit_code == 0, r.output
+    assert launched != []
+    links = store.load_links()
+    assert set(links) == {"feat/88"}
+    assert links["feat/88"]["pr_url"] == url
+
+
+def test_sync_creates_worktree_for_new_pr_ref(isolated_config, tmp_path, monkeypatch):
+    """sync <PR-url> with no linked state creates the branch worktree then syncs."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/99"})
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/99"})
+    synced = []
+    monkeypatch.setattr(cli, "_sync_one",
+                        lambda k, entry, **kw: synced.append(k) or {"key": k, "result": "ok"})
+    url = "https://github.com/o/r/pull/99"
+    r = runner.invoke(cli.app, ["sync", url, "--json"])
+    assert r.exit_code == 0, r.output
+    assert synced == ["feat/99"]
+    links = store.load_links()
+    assert links["feat/99"]["pr_url"] == url
+
+
+def test_sync_pr_ref_dry_run_creates_nothing(isolated_config, tmp_path, monkeypatch):
+    """sync <PR-url> --dry-run prints the plan without creating a worktree."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/100"})
+
+    def _no_start(repo, **kw):
+        raise AssertionError("dry-run must not create a worktree")
+    monkeypatch.setattr(cli.gitwt, "start_worktree", _no_start)
+    url = "https://github.com/o/r/pull/100"
+    r = runner.invoke(cli.app, ["sync", url, "--dry-run", "--json"])
+    assert r.exit_code == 0, r.output
+    assert store.load_links() == {}

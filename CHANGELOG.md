@@ -1,5 +1,11 @@
 # Changelog
 ## Unreleased
+- start/review/sync: a new PR/MR (not already registered) creates a git
+  worktree on the fetched source branch and records it under the branch
+  name (pr_url kept on the row). `start` accepts PR/MR refs directly;
+  `sync` creates the worktree first, then syncs it. `_ensure_local_branch`
+  fetches from origin before materializing a remote-only branch so a
+  freshly-pushed source branch is found even with a stale local mirror.
 - Cleanup remote-branch rules: the remote branch is deleted only when the
   branch's PR/MR merged with it as source (latest open PR/MR wins,
   else latest overall; head_ref verified). 404/conflicted PRs stay open —
