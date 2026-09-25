@@ -295,10 +295,18 @@ export const api = {
   links: () => request<Links>("/api/links"),
   doctor: () => request<DoctorInfo>("/api/doctor"),
 
-  /** GET /api/issues — my open issues; always 200 with an optional warning. */
-  issues: () => request<IssuesResponse>("/api/issues"),
-  /** GET /api/candidates — unlinked PR/MRs + recent issues. */
-  candidates: () => request<CandidatesResponse>("/api/candidates"),
+  /** GET /api/issues — my open issues; always 200 with an optional warning.
+   * `force` bypasses the 1h server cache and re-queries the tracker CLIs live. */
+  issues: (opts?: { force?: boolean }) =>
+    request<IssuesResponse>(
+      `/api/issues${qs({ force: opts?.force ? "true" : undefined })}`,
+    ),
+  /** GET /api/candidates — unlinked PR/MRs + recent issues.
+   * `force` re-queries the tracker CLIs live instead of the 1h issue cache. */
+  candidates: (opts?: { force?: boolean }) =>
+    request<CandidatesResponse>(
+      `/api/candidates${qs({ force: opts?.force ? "true" : undefined })}`,
+    ),
   /** GET /api/default-repo?ref=… — linked-worktree repo else single-linked (issue #26). */
   defaultRepo: (ref: string) =>
     request<{ ref: string; repo: string }>(`/api/default-repo${qs({ ref })}`),

@@ -98,21 +98,17 @@ repos — the picker has no default and `--repo` is required headless):
 
 ### `GET /api/issues`
 My open issues (jira To Do/In Progress reported by me in the last two
-months + GitHub issues authored by me, state=open). Always 200 — a
+months + GitHub issues authored by me, state=open). Per-source rows are
+cached 1h server-side; `?force=true` bypasses the cache and re-queries
+the tracker CLIs live (slow). Always 200 — a
 missing/failing host CLI yields `[]` plus a `warning`:
-```json
-{"issues": [{"key": "jira:IPG-981", "title": "…",
-             "url": "https://…/browse/IPG-981", "status": "To Do",
-             "created": "2026-09-20T10:00:00.000+0000"}],
- "warning": "github: command not found: gh"}
-```
 
 ### `GET /api/candidates`
 Unlinked open PR/MRs across every registered repo (PR/MR URLs already
 present in `links.json` are excluded server-side) plus my issues created
 within the last 7 days (server-side filter) plus unregistered on-disk
-worktrees under the scan root. Read-only:
-```json
+worktrees under the scan root. `?force=true` re-queries the tracker CLIs
+live instead of the 1h issue cache (slow). Read-only:
 {"prs": [{"key": "github:o/r#33", "number": 33, "title": "…",
           "url": "https://github.com/o/r/pull/33", "branch": "feat/x",
           "updated": "2026-09-20T10:00:00Z", "state": "OPEN",

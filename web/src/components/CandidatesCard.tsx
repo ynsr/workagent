@@ -13,6 +13,7 @@ import {
 } from "@/components/StatusFeedback"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard } from "@/lib/format"
+import { api } from "@/lib/api"
 import { queryKeys, useCandidates, useCreateRun } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
@@ -39,6 +40,7 @@ export function CandidatesCard() {
   const { data, isPending, isError, error, refetch, isFetching } = useCandidates()
   const [tab, setTab] = useState<Tab>("prs")
   const [copied, setCopied] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
 
   async function handleCopyRef(ref: string) {
     try {
@@ -48,6 +50,23 @@ export function CandidatesCard() {
       toast.success(`Copied ${ref}`)
     } catch (err) {
       toast.error(errorText(err))
+    }
+  }
+
+  async function handleRefresh() {
+    setRefreshing(true)
+    try {
+      const fresh = await qc.fetchQuery({
+        queryKey: [...queryKeys.candidates, true],
+        queryFn: () => api.candidates({ force: true }),
+        staleTime: 0,
+      })
+      qc.setQueryData(queryKeys.candidates, fresh)
+      toast.success("Candidates re-fetched live")
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setRefreshing(false)
     }
   }
 
@@ -104,10 +123,10 @@ export function CandidatesCard() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void refetch()}
-            disabled={isFetching}
+            onClick={() => void handleRefresh()}
+            disabled={isFetching || refreshing}
           >
-            <RefreshCw className={isFetching ? "animate-spin" : undefined} aria-hidden />
+            <RefreshCw className={isFetching || refreshing ? "animate-spin" : undefined} aria-hidden />
             Refresh
           </Button>
         </div>

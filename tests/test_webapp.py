@@ -553,6 +553,20 @@ def test_api_issues_missing_cli(client, monkeypatch):
     assert body["issues"] == []
     assert body["warning"]
 
+def test_api_issues_force_bypasses_cache(client, monkeypatch):
+    """?force=true reaches list_my_issues with force=True (live re-fetch)."""
+    seen = {}
+
+    def fake(warnings, force=False):
+        seen["force"] = force
+        return []
+
+    monkeypatch.setattr(trackers, "list_my_issues", fake)
+    assert client.get("/api/issues").json()["issues"] == []
+    assert seen["force"] is False
+    assert client.get("/api/issues?force=true").json()["issues"] == []
+    assert seen["force"] is True
+
 
 def test_api_issues_jira_ok(client, monkeypatch, tmp_path):
     cfg = tmp_path / "config.json"

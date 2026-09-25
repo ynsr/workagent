@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { Rocket, ShieldAlert } from "lucide-react"
+import { RefreshCw, Rocket, ShieldAlert } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { Button } from "@/components/ui/button"
@@ -11,7 +12,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useConfirm } from "@/lib/confirm"
 import { errorText } from "@/components/StatusFeedback"
-import { useCreateRun, useLinks, useRepos } from "@/lib/queries"
+import { queryKeys, useCreateRun, useLinks, useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -97,9 +98,9 @@ export function Launch() {
   const [params] = useSearchParams()
   const confirm = useConfirm()
   const createRun = useCreateRun()
+  const qc = useQueryClient()
   const { data: repos } = useRepos()
   const { data: links } = useLinks()
-
   const modeParam = params.get("mode")
   const refParam = params.get("ref") ?? ""
   const modeKnown = modeParam === null || MODES.includes(modeParam as Mode)
@@ -112,9 +113,31 @@ export function Launch() {
     ref: modeKnown ? refParam : "",
   }))
   const [submitting, setSubmitting] = useState(false)
+  const [refreshingIssues, setRefreshingIssues] = useState(false)
+  const [issuesNonce, setIssuesNonce] = useState(0)
   const [prefillChecked, setPrefillChecked] = useState(false)
   const [defaultRepo, setDefaultRepo] = useState("")
   const [defaultRepoReady, setDefaultRepoReady] = useState(false)
+
+  async function handleRefreshIssues() {
+    setRefreshingIssues(true)
+    try {
+      const fresh = await qc.fetchQuery({
+        queryKey: [...queryKeys.issues, true],
+        queryFn: () => api.issues({ force: true }),
+        staleTime: 0,
+      })
+      qc.setQueryData(queryKeys.issues, fresh)
+      // Remount the Issue ref dropdown so its first-open fetch reloads
+      // the now-fresh server cache immediately.
+      setIssuesNonce((n) => n + 1)
+      toast.success("Issues re-fetched live")
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setRefreshingIssues(false)
+    }
+  }
   // Unknown prefill → blank form + warning, never a crash: an unrecognized
   // mode, or a sync key matching no linked worktree (stale Dashboard link).
   useEffect(() => {
@@ -277,31 +300,41 @@ export function Launch() {
         title="Launch"
         description="Start an agent from an issue ref/URL, review a PR/MR ref/URL, or sync a linked worktree. Runs headless as a child process of workagent serve."
         actions={
-          <div
-            role="tablist"
-            aria-label="Launch mode"
-            className="inline-flex rounded-lg border p-1"
-          >
-            {MODES.map((m) => (
-              <button
-                key={m}
-                role="tab"
-                aria-selected={mode === m}
-                onClick={() => switchMode(m)}
-                className={cn(
-                  "min-h-9 rounded-md px-4 text-sm font-medium transition-colors",
-                  mode === m
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {COPY[m].label}
-              </button>
-            ))}
-        </div>
-      }
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleRefreshIssues()}
+              disabled={refreshingIssues}
+            >
+              <RefreshCw className={refreshingIssues ? "animate-spin" : undefined} aria-hidden />
+              Refresh issues
+            </Button>
+            <div
+              role="tablist"
+              aria-label="Launch mode"
+              className="inline-flex rounded-lg border p-1"
+            >
+              {MODES.map((m) => (
+                <button
+                  key={m}
+                  role="tab"
+                  aria-selected={mode === m}
+                  onClick={() => switchMode(m)}
+                  className={cn(
+                    "min-h-9 rounded-md px-4 text-sm font-medium transition-colors",
+                    mode === m
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {COPY[m].label}
+                </button>
+              ))}
+            </div>
+          </>
+        }
       />
-
       <Card className="mx-auto max-w-2xl">
         <CardHeader>
           <CardTitle>{copy.title}</CardTitle>
@@ -315,6 +348,7 @@ export function Launch() {
             {mode === "start" && !refParam ? (
               <>
                 <SearchableSelect
+                  key={issuesNonce}
                   id="launch-ref"
                   value={form.ref}
                   options={[]}
