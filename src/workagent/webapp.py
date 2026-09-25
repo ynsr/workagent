@@ -66,7 +66,7 @@ SPECS: dict[str, dict[str, Any]] = {
              "key": lambda args: f"open:{_first_positional(args)}"},
     "register": {"confirm": False, "force": True,
                  "key": lambda args: f"register:{_first_positional(args, VAL_FLAGS['register'])}"},
-    "repo": {"confirm": False, "force": False, "key": "config"},
+    "repo": {"confirm": False, "force": True, "key": "config"},
     "link": {"confirm": False, "force": False, "key": "config"},
     "tracker": {"confirm": False, "force": False, "key": "config"},
 }
@@ -143,7 +143,7 @@ def _sub_of(command: str, args: list[str]) -> str:
     return command
 
 
-def _validate_args(command: str, args: list[str]) -> None:
+def _validate_args(command: str, args: list[str], body_force: bool = False) -> None:
     if command not in SPECS:
         raise ApiError("bad_command", f"command not allowed: {command!r}", 400)
     rest = [a for a in args if a not in ("-v", "--verbose")]
@@ -193,6 +193,16 @@ def _validate_args(command: str, args: list[str]) -> None:
             raise ApiError("bad_arg", "--remote-url needs a value", 400)
         if not u.strip():
             raise ApiError("bad_arg", "--remote-url must be a real tracker web URL", 400)
+    if sub == "repo remove" and not (body_force or "--force" in rest):
+        name = next((a for a in rest[1:] if not a.startswith("-")), "")
+        if name and store._sqlite_path() is not None:
+            from . import store_sqlite as _sq
+            n = _sq.worktree_count_for_repo(_sq.db_path(), name)
+            if n:
+                raise ApiError(
+                    "worktrees_exist",
+                    f"repo {name} still has {n} linked worktree(s) — "
+                    "pass force: true to remove them with the repo", 400)
 
 def _build_argv(command: str, args: list[str]) -> list[str]:
     """Same-code child invocation: this interpreter, `python -m workagent`.
@@ -522,26 +532,29 @@ def create_app(static_dir: Path, host: str, port: int,
     from .cli import (
         _candidates,
         _enrich_entry,
+        _fetch_origins,
         _session_detail,
     )
     from . import trackers as trackers_mod
-
-    @app.get("/api/info")
-    def info() -> dict:
-        return {"version": __version__, "host": host, "port": port,
-                "network_exposed": network_exposed}
 
     @app.get("/api/status")
     def status(ref: str | None = None, refresh: bool = False):
         links = store.load_links()
         if not ref:
+            _fetch_origins(links, refresh)
             return {k: _enrich_entry(k, v, refresh)
                     for k, v in links.items()}
         resolved = worktrees.resolve_worktree(ref, links)
         if resolved is None:
             raise HTTPException(404, f"no linked state for {ref}")
         key = worktrees.pick_worktree(ref, resolved, links)
+        _fetch_origins({key: links[key]}, refresh)
         return _session_detail(key, links[key], refresh=refresh)
+
+    @app.get("/api/info")
+    def info() -> dict:
+        return {"version": __version__, "host": host, "port": port,
+                "network_exposed": network_exposed}
 
     @app.get("/api/path")
     def path(ref: str):
@@ -638,7 +651,7 @@ def create_app(static_dir: Path, host: str, port: int,
         if body.force and not body.confirm:
             raise ApiError("force_needs_confirm",
                            "force requires confirm: true", 400)
-        _validate_args(body.command, body.args)
+        _validate_args(body.command, body.args, body_force=body.force)
         spec = SPECS[body.command]
         destructive = spec["confirm"] and "--dry-run" not in body.args
         if destructive and not body.confirm:

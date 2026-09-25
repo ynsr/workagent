@@ -876,3 +876,59 @@ def test_specs_mirror_cli_flags():
         assert cv == set(_w.VAL_FLAGS.get(path, ())), f"VAL drift [{path}]"
     for cmd in ("start", "review", "cleanup", "sync", "open", "register", "repo", "link", "tracker"):
         assert cmd in _w.SPECS, f"SPECS missing {cmd}"
+
+def test_repo_remove_worktrees_require_force(client, tmp_path, monkeypatch):
+    """repo remove over a repo with linked worktrees 400s unless force."""
+    from workagent import store_sqlite as sq
+    _stub_spawn(monkeypatch)
+    db = sq.db_path()
+    sq.register_repo_row(db, "proj", str(tmp_path / "proj"), "jira:IPG")
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'proj', '2026-01-01T00:00:00+00:00')")
+    r = client.post("/api/runs", json={"command": "repo",
+                                       "args": ["remove", "proj"],
+                                       "confirm": True})
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["code"] == "worktrees_exist"
+    r = client.post("/api/runs", json={"command": "repo",
+                                       "args": ["remove", "proj"],
+                                       "confirm": True, "force": True})
+    assert r.status_code == 202, r.text
+
+
+def test_fetch_origins_dedupes_per_repo(tmp_path, monkeypatch):
+    """_fetch_origins fetches once per distinct repo; only with refresh."""
+    links = {
+        "jira:A": {"worktree": str(tmp_path / "wt1"), "repo": str(tmp_path / "repo1")},
+        "jira:B": {"worktree": str(tmp_path / "wt2"), "repo": str(tmp_path / "repo1")},
+        "jira:C": {"worktree": str(tmp_path / "wt3"), "repo": str(tmp_path / "repo2")},
+    }
+    for e in links.values():
+        open(e["worktree"], "w").close()
+    calls = []
+    monkeypatch.setattr(cli, "run_cmd",
+                        lambda *a, **k: calls.append(a) or "")
+    cli._fetch_origins(links, True)
+    assert len([a for a in calls if "fetch" in a]) == 2  # deduped per repo
+    cli._fetch_origins(links, False)
+    assert len([a for a in calls if "fetch" in a]) == 2  # no fetch without refresh
+
+
+def test_status_endpoint_refresh_fetches(client, isolated_config, tmp_path, monkeypatch):
+    """/api/status?refresh=true triggers an origin fetch (ref path fetches
+    only that repo); plain GET does not."""
+    wt = tmp_path / "wt"; wt.mkdir()
+    store.record_link("jira:IPG-929", {"issue": "IPG-929", "worktree": str(wt),
+                                       "branch": "feat/IPG-929--x",
+                                       "repo": str(tmp_path / "proj")})
+    git_calls = []
+    monkeypatch.setattr(cli, "run_cmd",
+                        lambda *a, **k: git_calls.append(a) or "")
+    r = client.get("/api/status", params={"refresh": True})
+    assert r.status_code == 200, r.text
+    assert [a for a in git_calls if "fetch" in a]  # fetched for the ref's repo
+    git_calls.clear()
+    r = client.get("/api/status")
+    assert r.status_code == 200, r.text
+    assert not [a for a in git_calls if "fetch" in a]  # no fetch without refresh

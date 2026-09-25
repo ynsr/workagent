@@ -1204,7 +1204,7 @@ def tracker_remove(
 @link_app.command("list")
 def link_list(
     worktree: bool = typer.Option(False, "--worktree", help="Show the worktree column in worktree links."),
-    refresh_pr: bool = typer.Option(False, "--refresh-pr", help="Re-query PR status instead of using the cache."),
+    refresh_pr: bool = typer.Option(False, "--refresh-pr", help="Fetch origin, then re-query PR status instead of using the cache."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
     csv_output: bool = typer.Option(False, "--csv", help="Output as CSV (stdout; logs go to stderr)."),
 ) -> None:
@@ -1216,6 +1216,7 @@ def link_list(
     """
     trackers_map = store.load_trackers()
     links = store.load_links()
+    _fetch_origins(links, refresh_pr)
     if json_output:
         print(json.dumps({"trackers": trackers_map,
                           "worktrees": {k: _enrich_entry(k, v, refresh_pr)
@@ -1396,6 +1397,27 @@ def _cache_fresh(cached: dict) -> bool:
         return False
     ttl = _STATUS_TTL_SECONDS if cached.get("pr") else _NEGATIVE_TTL_SECONDS
     return age < timedelta(seconds=ttl)
+
+
+def _fetch_origins(links: dict, refresh: bool) -> None:
+    """--refresh-pr companion: fetch origin once per distinct repo so
+    behind/ahead counts and PR lookups see fresh remote tips (worktrees
+    share remote-tracking refs via the common git dir). Soft-fails."""
+    if not refresh:
+        return
+    seen: set[str] = set()
+    for e in links.values():
+        wt = e.get("worktree", "")
+        if not wt or not Path(wt).exists():
+            continue
+        repo = e.get("repo", "") or wt
+        if repo in seen:
+            continue
+        seen.add(repo)
+        try:
+            run_cmd("git", "-C", wt, "fetch", "origin", "--prune", echo=False)
+        except HarnessError as err:
+            eprint(f"warning: fetch failed for {repo}: {err}")
 
 
 def _ci_fresh(cached: dict) -> bool:
@@ -1683,20 +1705,16 @@ def _create_hint(entry: dict) -> str | None:
 def status(
     ref: Optional[str] = typer.Argument(None, autocompletion=_complete_refs, help="Issue/PR ref or worktree key (omit: all links)."),
     worktree: bool = typer.Option(False, "--worktree", help="Show the worktree column."),
-    refresh_pr: bool = typer.Option(False, "--refresh-pr", help="Re-query PR status instead of using the cache."),
+    refresh_pr: bool = typer.Option(False, "--refresh-pr",
+                                    help="Fetch origin, then re-query PR status instead of using the cache."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
     csv_output: bool = typer.Option(False, "--csv", help="Output as CSV (stdout; logs go to stderr)."),
 ) -> None:
     """Show linked issue↔PR↔worktree state (Rich table by default).
 
-    Columns: behind|ahead vs the repo's remote-tracking default branch and
-    the latest PR/MR for the branch (cached; --refresh-pr re-queries).
-
-    Example:
-      workagent status
-      workagent status IPG-929
-      workagent status OWNER/REPO#22
-      workagent status --json
+    Columns: behind|ahead vs the repo's remote-tracking base branch (the
+    PR/MR target when known) and the latest PR/MR for the branch (cached;
+    --refresh-pr fetches origin and re-queries).
     """
     links = store.load_links()
     if ref:
@@ -1713,12 +1731,14 @@ def status(
             entry = links.get(key) or links.get(f"pr:{parsed['url']}", {})
             if not entry:
                 _fail(f"no linked state for {ref}", EXIT_USAGE)
+        _fetch_origins({key: entry}, refresh_pr)
         detail = _session_detail(key, entry, refresh=refresh_pr)
         if json_output:
             print(json.dumps(detail, indent=2, ensure_ascii=False))
             return
         _print_detail(detail)
         return
+    _fetch_origins(links, refresh_pr)
     if json_output:
         print(json.dumps({k: _enrich_entry(k, v, refresh_pr)
                           for k, v in links.items()}, indent=2, ensure_ascii=False))

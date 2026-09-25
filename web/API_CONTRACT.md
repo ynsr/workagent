@@ -40,7 +40,8 @@ Map of worktree key → entry (same shape as `workagent status --json`):
 pipeline status for the PR — `success` | `failure` | `running` |
 `not_started` — or `null` when there is no PR or the lookup failed
 (cached 10 min while the branch tip is unchanged). Optional query:
-`?refresh=true` re-queries PR status (slow, hits the tracker CLI).
+`?refresh=true` fetches origin (fresh remote tips for Behind/Ahead) and
+re-queries PR status (slow, hits the tracker CLI).
 
 ### `GET /api/status?ref=IPG-932` → single worktree detail
 `_session_detail` shape: the entry fields plus
@@ -161,7 +162,11 @@ Request:
 - Values must not start with `-`; unknown options → 400.
 - Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`) need
   `confirm: true` → the server appends `--yes`. `force: true` requires
-  `confirm: true` and appends `--force` (cleanup, register only).
+  `confirm: true` and appends `--force` (cleanup, register, repo remove).
+- `repo remove` of a repo with linked worktrees → 400
+  `{code: "worktrees_exist"}` unless `force: true` (cascades them).
+  `tracker add` without a non-blank `--remote-url` → 400 `bad_arg`.
+
 Response 202: `{"run_id": "abc123"}` — `409 {code:"conflict"}` when
 another run holds the same target key.
 

@@ -1,5 +1,11 @@
 # Changelog
 ## Unreleased
+- `status --refresh-pr` (and web `?refresh=true`) now fetches origin once
+  per distinct repo before recomputing, so Behind/Ahead and PR lookups see
+  fresh remote tips instead of a stale local `origin/<base>`.
+- Web `repo remove`: pre-run 400 `{code: "worktrees_exist"}` when the repo
+  still has linked worktrees; `force: true` appends `--force` and cascades
+  them. Repos page remove dialog gains a `--force` checkbox.
 - Status Behind/Ahead now uses the MR/PR target branch as the base: a
   cached base that disagrees with the PR's `target_branch` is treated as
   stale and recomputed, and fresh queries prefer the target branch over

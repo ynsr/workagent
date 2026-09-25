@@ -45,6 +45,7 @@ export function Repos() {
   const [tracker, setTracker] = useState("")
   const [addJson, setAddJson] = useState(false)
   const [removeJson, setRemoveJson] = useState(false)
+  const [removeForce, setRemoveForce] = useState(false)
   const [adding, setAdding] = useState(false)
 
   const [trackerError, setTrackerError] = useState("")
@@ -99,15 +100,27 @@ export function Repos() {
           : []),
       ],
       extras: (
-        <div className="flex items-center gap-2">
-          <Checkbox
-            id="repo-remove-json"
-            checked={removeJson}
-            onCheckedChange={(v) => setRemoveJson(v === true)}
-          />
-          <Label htmlFor="repo-remove-json" className="font-normal">
-            <span className="font-mono text-[13px]">--json</span> — JSON output in the run log
-          </Label>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="repo-remove-json"
+              checked={removeJson}
+              onCheckedChange={(v) => setRemoveJson(v === true)}
+            />
+            <Label htmlFor="repo-remove-json" className="font-normal">
+              <span className="font-mono text-[13px]">--json</span> — JSON output in the run log
+            </Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="repo-remove-force"
+              checked={removeForce}
+              onCheckedChange={(v) => setRemoveForce(v === true)}
+            />
+            <Label htmlFor="repo-remove-force" className="font-normal">
+              <span className="font-mono text-[13px]">--force</span> — remove linked worktrees (and their sessions) too
+            </Label>
+          </div>
         </div>
       ),
     })
@@ -117,6 +130,7 @@ export function Repos() {
         command: "repo",
         args: ["remove", repo.name, ...(removeJson ? ["--json"] : [])],
         confirm: true,
+        force: removeForce,
       })
       toast.success("Repo remove started", {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
