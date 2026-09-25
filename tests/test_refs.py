@@ -265,11 +265,19 @@ def test_fetch_pr_comment_stats_gh(monkeypatch):
 
 
 def test_fetch_pr_comment_stats_glab(monkeypatch):
-    """Issue #28: glab counts # Code Review notes + discussion resolution."""
+    """Issue #28: glab counts # Code Review notes + discussion resolution.
+
+    System/activity notes ("added N commits", …) are individual
+    non-resolvable discussions and must not count as unresolved.
+    """
     monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: json.dumps([
         {"resolved": True, "notes": [
-            {"body": "# Code Review: done", "resolved": True}]},
-        {"notes": [{"body": "fix this", "resolved": False}]},
+            {"body": "# Code Review: done", "resolved": True,
+             "resolvable": True}]},
+        {"notes": [{"body": "fix this", "resolved": False,
+                    "resolvable": True}]},
+        {"individual_note": True, "notes": [
+            {"system": True, "body": "added 2 commits", "resolvable": False}]},
     ]))
     assert refs.fetch_pr_comment_stats(
         "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo") == {

@@ -1,5 +1,9 @@
 # Changelog
 ## Unreleased
+- Dashboard review counts on GitLab: only resolvable review threads count
+  toward unresolved/resolved — system/activity discussions ("added N
+  commits", "marked as draft", individual notes) are excluded, matching
+  GitLab's own UI counter.
 - Issue #28: Dashboard worktree table gains a Reviews R|U|R column (done
   `# Code Review` comments | unresolved threads | resolved threads, cached
   10 min by branch tip like CI) in the table, mobile cards, worktree
