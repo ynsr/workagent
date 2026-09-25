@@ -80,10 +80,15 @@ def branch_tip(worktree: str) -> str:
     except HarnessError:
         return ""
 
-def ahead_behind(path: Path, default_branch: str) -> dict | None:
+def ahead_behind(path: Path, default_branch: str, branch: str = "") -> dict | None:
     """Behind/ahead counts vs remote-tracking origin/<default> (no fetch).
 
-    Returns {"behind": n, "ahead": n}, or None when the branch or
+    Compares the recorded branch tip (not the worktree HEAD), so a link
+    whose worktree checkout differs from its recorded branch still reports
+    the branch's real position. Falls back to HEAD when `branch` is empty
+    or the local branch ref is missing.
+
+    Returns {"behind": n, "ahead": n}, or None when the base
     remote-tracking ref is missing.
     """
     base = f"origin/{default_branch}"
@@ -91,9 +96,14 @@ def ahead_behind(path: Path, default_branch: str) -> dict | None:
         run_cmd("git", "-C", str(path), "rev-parse", "--verify", "-q", base)
     except HarnessError:
         return None
+    head = branch or "HEAD"
+    try:
+        run_cmd("git", "-C", str(path), "rev-parse", "--verify", "-q", head)
+    except HarnessError:
+        head = "HEAD"
     try:
         counts = run_cmd("git", "-C", str(path), "rev-list", "--left-right",
-                         "--count", f"{base}...HEAD")
+                         "--count", f"{base}...{head}")
     except HarnessError:
         return None
     behind, _, ahead = counts.partition("\t")

@@ -1523,7 +1523,7 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
                       or cached_target == (cached.get("base_branch") or "")))
     if wt_ok and branch and use_cache:
         base_branch = cached.get("base_branch") or ""
-        branch_tip = _git_tip(wt, "HEAD")
+        branch_tip = _git_tip(wt, branch) or _git_tip(wt, "HEAD")
         base_tip = _git_tip(wt, f"origin/{base_branch}") if base_branch else None
         if (cached.get("branch_tip") == branch_tip
                 and cached.get("base_tip") == base_tip):
@@ -1557,9 +1557,9 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
         db = (target
               or (cached or {}).get("base_branch")
               or _repo_default_branch(repo)) or None
-        ab = repos.ahead_behind(Path(wt), db) if (wt_ok and db) else None
+        ab = repos.ahead_behind(Path(wt), db, branch) if (wt_ok and db) else None
         if wt_ok:
-            branch_tip = _git_tip(wt, "HEAD")
+            branch_tip = _git_tip(wt, branch) or _git_tip(wt, "HEAD")
             store.cache_pr_status(branch, pr, tool=used if pr else None,
                                   base_branch=db,
                                   branch_tip=branch_tip,

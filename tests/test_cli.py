@@ -117,7 +117,7 @@ def test_status_table_shows_behind_ahead(isolated_config, tmp_path, monkeypatch)
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
     monkeypatch.setattr(cli.repos, "ahead_behind",
-                        lambda wt, db: {"behind": 5, "ahead": 8})
+                        lambda wt, db, branch="": {"behind": 5, "ahead": 8})
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
     r = _invoke("status", "--json")
     data = json.loads(r.stdout)
@@ -134,7 +134,7 @@ def test_status_pr_from_cache(isolated_config, tmp_path, monkeypatch):
                                               "created_at": "2026-09-15",
                                               "url": "https://x/mr/123",
                                               "target_branch": "main"})
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     r = _invoke("status", "--json")
     data = json.loads(r.stdout)
     assert data["jira:IPG-929"]["pr"] == "PR #123 (merged)"
@@ -146,7 +146,7 @@ def test_status_pr_live_query_then_cache(isolated_config, tmp_path, monkeypatch)
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
     calls = []
     def fake_list(tool, branch, cwd=None):
@@ -177,7 +177,7 @@ def test_status_cache_reused_until_tip_or_ttl(isolated_config, tmp_path, monkeyp
                           branch_tip="a1", base_tip="b1", behind=5, ahead=1)
     ab_calls = []
     monkeypatch.setattr(cli.repos, "ahead_behind",
-                        lambda wt, db: ab_calls.append(db)
+                        lambda wt, db, branch="": ab_calls.append(db)
                         or {"behind": 9, "ahead": 9})
     data = json.loads(_invoke("status", "--json").stdout)
     assert data["jira:IPG-929"]["commits"] == "5|1"  # served from cache
@@ -204,7 +204,7 @@ def test_status_cache_expired_by_ttl(isolated_config, tmp_path, monkeypatch):
         datetime.now(timezone.utc) - timedelta(hours=4)).isoformat()
     store.save_pr_cache(cache)
     monkeypatch.setattr(cli.repos, "ahead_behind",
-                        lambda wt, db: {"behind": 7, "ahead": 0})
+                        lambda wt, db, branch="": {"behind": 7, "ahead": 0})
     data = json.loads(_invoke("status", "--json").stdout)
     assert data["jira:IPG-929"]["commits"] == "7|0"
 
@@ -304,7 +304,7 @@ def test_status_cells_ci_cache_reuse(isolated_config, tmp_path, monkeypatch):
                           branch_tip="a1", base_tip="b1", behind=0, ahead=0)
     tips = {"HEAD": "a1", "origin/main": "b1"}
     monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: tips.get(ref))
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     fetches = []
     monkeypatch.setattr(cli.refs, "fetch_ci_status",
                         lambda tool, url, cwd=None: fetches.append(url)
@@ -369,7 +369,7 @@ def test_status_ci_column_symbols_json_csv(isolated_config, tmp_path,
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
     tips = {"HEAD": "a1", "origin/main": "b1"}
     monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: tips.get(ref))
@@ -424,7 +424,7 @@ def test_status_reviews_column_and_force_all(isolated_config, tmp_path, monkeypa
     _store.cache_review_stats("feat/a", {"reviews": 2, "unresolved": 1, "resolved": 3},
                               sha="a1")
     monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: "a1" if ref == "HEAD" else None)
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     monkeypatch.setattr(cli.refs, "fetch_ci_status", lambda tool, url, cwd=None: None)
     monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
                         lambda tool, url, cwd=None: {"reviews": 0, "unresolved": 0, "resolved": 0})
@@ -444,7 +444,7 @@ def test_status_json_detail_carries_ci(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
     monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: None)
     monkeypatch.setattr(cli.refs, "fetch_pr_list_for_branch",
@@ -468,7 +468,7 @@ def test_status_ref_detail(isolated_config, tmp_path, monkeypatch):
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
     monkeypatch.setattr(cli.repos, "ahead_behind",
-                        lambda wt, db: {"behind": 1, "ahead": 2})
+                        lambda wt, db, branch="": {"behind": 1, "ahead": 2})
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
     r = _invoke("status", "IPG-929", "--json")
     out = json.loads(r.stdout)
@@ -496,7 +496,7 @@ def test_link_list_worktrees_enriched(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
     r = _invoke("link", "list", "--json")
     data = json.loads(r.stdout)
@@ -509,7 +509,7 @@ def _sync_mocks(monkeypatch, local_calls=None, rebase_calls=None, pulled=None):
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     if local_calls is not None:
         monkeypatch.setattr(cli.sync_mod, "local_merge",
-                            lambda wt, db: (local_calls.append((str(wt), db))
+                            lambda wt, db, branch="": (local_calls.append((str(wt), db))
                                             or {"status": "merged", "conflicts": []}))
     if rebase_calls is not None:
         monkeypatch.setattr(cli.sync_mod, "rebase_remote",
@@ -537,7 +537,7 @@ def test_sync_rebase_strategy_with_open_pr(isolated_config, tmp_path, monkeypatc
     rebase, local, pulled = [], [], []
     _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase,
                 pulled=pulled)
-    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db: None)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     r = _invoke("sync", "IPG-929", "--yes", "--json")
     assert r.exit_code == 0
     out = json.loads(r.stdout)
@@ -573,7 +573,7 @@ def test_sync_no_pr_falls_back_to_local(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     local = []
     monkeypatch.setattr(cli.sync_mod, "local_merge",
-                        lambda wt, db: (local.append((str(wt), db))
+                        lambda wt, db, branch="": (local.append((str(wt), db))
                                         or {"status": "merged", "conflicts": []}))
     monkeypatch.setattr(cli.sync_mod, "push", lambda wt, br: None)
     r = _invoke("sync", "IPG-929", "--yes", "--json")
@@ -597,7 +597,7 @@ def test_sync_recorded_pr_seed_uses_local_merge(isolated_config, tmp_path,
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     rebase, local = [], []
     monkeypatch.setattr(cli.sync_mod, "local_merge",
-                        lambda wt, db: (local.append((str(wt), db))
+                        lambda wt, db, branch="": (local.append((str(wt), db))
                                         or {"status": "merged", "conflicts": []}))
     monkeypatch.setattr(cli.sync_mod, "push", lambda wt, br: None)
     monkeypatch.setattr(cli.sync_mod, "rebase_remote",
@@ -2420,7 +2420,7 @@ def test_status_base_follows_mr_target_branch(isolated_config, tmp_path, monkeyp
                           branch_tip="a1", base_tip=None, behind=0, ahead=0)
     ab_calls = []
     monkeypatch.setattr(cli.repos, "ahead_behind",
-                        lambda wt, db: ab_calls.append(db) or {"behind": 0, "ahead": 3})
+                        lambda wt, db, branch="": ab_calls.append(db) or {"behind": 0, "ahead": 3})
     data = json.loads(_invoke("status", "--json").stdout)
     assert data["jira:IPG-929"]["commits"] == "0|3"
     assert ab_calls == ["develop"]
