@@ -1087,12 +1087,20 @@ def repo_list(
 @_catch_harness_errors
 def repo_remove(
     name: str = typer.Argument(..., autocompletion=_complete_repos, help="Registered repo name."),
+    force: bool = typer.Option(False, "--force", help="Remove even when linked worktrees exist (cascades them)."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Unregister a repo.
 
     Example: workagent repo remove projectx
     """
+    if store._sqlite_path() is not None:
+        from . import store_sqlite as sq
+        n = sq.worktree_count_for_repo(sq.db_path(), name)
+        if n and not force:
+            _fail(f"repo {name} still has {n} linked worktree(s) — clean them "
+                  "up first (or pass --force to remove them with the repo)",
+                  EXIT_USAGE)
     if not repos.unregister_repo(name):
         _fail(f"unknown repo: {name}", EXIT_USAGE)
     _print_result({"removed": name}, json_output)
@@ -1447,7 +1455,13 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
     wt_ok = bool(wt) and Path(wt).exists()
     if wt and not wt_ok:
         cells["commits"] = "gone"
-    if wt_ok and branch and cached and _cache_fresh(cached):
+    # Cached base must agree with the PR/MR target branch; a mismatch
+    # (e.g. base cached as `main` while the MR targets `develop`) is stale.
+    cached_target = ((cached or {}).get("pr") or {}).get("target_branch") or ""
+    use_cache = (cached and _cache_fresh(cached)
+                 and (not cached_target
+                      or cached_target == (cached.get("base_branch") or "")))
+    if wt_ok and branch and use_cache:
         base_branch = cached.get("base_branch") or ""
         branch_tip = _git_tip(wt, "HEAD")
         base_tip = _git_tip(wt, f"origin/{base_branch}") if base_branch else None
@@ -1473,15 +1487,17 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
             cells.update(pr=_fmt_pr(pr), pr_data=pr)
             return _seed_recorded_pr(cells, entry)
     if branch:
-        db = ((cached or {}).get("base_branch")
-              or _repo_default_branch(repo)) or None
-        ab = repos.ahead_behind(Path(wt), db) if (wt_ok and db) else None
         try:
             pr, used = _query_pr(repo, branch)
         except HarnessError:
             pr, used = (cached or {}).get("pr"), (cached or {}).get("tool")
         if pr is None and used is None and cached and cached.get("pr"):
             pr, used = cached["pr"], cached.get("tool")
+        target = (pr or {}).get("target_branch") or ""
+        db = (target
+              or (cached or {}).get("base_branch")
+              or _repo_default_branch(repo)) or None
+        ab = repos.ahead_behind(Path(wt), db) if (wt_ok and db) else None
         if wt_ok:
             branch_tip = _git_tip(wt, "HEAD")
             store.cache_pr_status(branch, pr, tool=used if pr else None,

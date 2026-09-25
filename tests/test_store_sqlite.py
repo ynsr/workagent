@@ -246,3 +246,36 @@ def test_migrate_v2_repairs_legacy_trackers_and_drops_column(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM tracker_repos").fetchone()[0] == 1
         cols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
         assert "tracker_key" not in cols
+
+def test_remove_repo_row_cascades_and_unlinked_register_keeps_row(tmp_path):
+    """remove_repo_row cascades joins/worktrees; register_repo_row_unlinked
+    must only refresh remote/tool — never delete the repo row."""
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    sq.register_repo_row(db, "proj", "/proj", "jira:IPG")
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'proj', '2026-01-01T00:00:00+00:00')")
+    assert sq.remove_repo_row(db, "proj") is True
+    with sq.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM repos").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM tracker_repos").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM worktrees").fetchone()[0] == 0
+    # re-register, then the unlinked refresh keeps the row
+    sq.register_repo_row(db, "proj", "/proj", "jira:IPG")
+    sq.register_repo_row_unlinked(db, "proj", "/proj", remote="https://x/y", tool="gh")
+    with sq.connect(db) as conn:
+        row = conn.execute("SELECT remote, tool FROM repos WHERE key_ref = 'proj'").fetchone()
+        assert row == ("https://x/y", "gh")
+    assert sq.remove_repo_row(db, "missing") is False
+
+
+def test_worktree_count_for_repo(tmp_path):
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    sq.register_repo_row(db, "proj", "/proj", "jira:IPG")
+    assert sq.worktree_count_for_repo(db, "proj") == 0
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'proj', '2026-01-01T00:00:00+00:00')")
+    assert sq.worktree_count_for_repo(db, "proj") == 1

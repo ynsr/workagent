@@ -82,12 +82,12 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
              "-y", "--dry-run", "--json"),
     "register": ("--yes", "-y", "--force", "--json"),
     "repo add": ("--json",),
-    "repo remove": ("--json",),
     "repo list": ("--json", "--csv"),
     "link set": ("--json",),
     "link remove": ("--json",),
     "link list": ("--worktree", "--refresh-pr", "--json", "--csv"),
     "tracker add": ("--json",),
+    "repo remove": ("--json", "--force"),
     "tracker remove": ("--json",),
     "tracker list": ("--json", "--csv"),
 }

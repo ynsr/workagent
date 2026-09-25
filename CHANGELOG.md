@@ -1,5 +1,15 @@
 # Changelog
 ## Unreleased
+- Status Behind/Ahead now uses the MR/PR target branch as the base: a
+  cached base that disagrees with the PR's `target_branch` is treated as
+  stale and recomputed, and fresh queries prefer the target branch over
+  repo default-branch detection (fixes `0|0` for GitLab MRs targeting
+  e.g. `develop`). Status rows served from a healed cache stay stable.
+- Fix `repo remove` AttributeError: missing `store_sqlite.remove_repo_row`
+  (lost in the SQLite cutover) restored; `register_repo_row_unlinked` no
+  longer deletes the repo row via a spliced-in stray body.
+- `repo remove` refuses while linked worktrees exist (exit 2, names the
+  count); `--force` cascades them. Web passes `--force` on forced runs.
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

@@ -2325,3 +2325,54 @@ def test_tracker_add_rejects_non_enum_vendor(isolated_config):
     r = _invoke("tracker", "add", "IPG", "--vendor", "Custom", "--json")
     assert r.exit_code == 2
     assert "must be one of jira, github" in r.output
+
+def test_status_base_follows_mr_target_branch(isolated_config, tmp_path, monkeypatch):
+    """Cached base disagrees with the MR target (main vs develop) → cache is
+    stale; counts recompute against the target branch and the cache heals."""
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
+    monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: "a1" if ref == "HEAD" else None)
+    store.cache_pr_status("feat/IPG-929--x", {"number": 9, "state": "open",
+                                              "title": "T", "author": "a",
+                                              "created_at": "2026-09-15",
+                                              "url": "https://x/mr/9",
+                                              "target_branch": "develop"},
+                          tool="glab", base_branch="main",
+                          branch_tip="a1", base_tip=None, behind=0, ahead=0)
+    ab_calls = []
+    monkeypatch.setattr(cli.repos, "ahead_behind",
+                        lambda wt, db: ab_calls.append(db) or {"behind": 0, "ahead": 3})
+    data = json.loads(_invoke("status", "--json").stdout)
+    assert data["jira:IPG-929"]["commits"] == "0|3"
+    assert ab_calls == ["develop"]
+    assert store.load_pr_cache()["feat/IPG-929--x"]["base_branch"] == "develop"
+    # healed cache: base now agrees with the MR target → served from cache
+    ab_calls.clear()
+    data = json.loads(_invoke("status", "--json").stdout)
+    assert data["jira:IPG-929"]["commits"] == "0|3"
+    assert ab_calls == []
+
+
+def test_repo_remove_guard_and_force(isolated_config, tmp_path):
+    """repo remove refuses while linked worktrees exist; --force cascades."""
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.register_repo_row(db, "proj", str(tmp_path / "proj"), "jira:IPG")
+    sq.register_repo_row(db, "lean", str(tmp_path / "lean"), "jira:IPG")
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'proj', '2026-01-01T00:00:00+00:00')")
+    r = _invoke("repo", "remove", "proj")
+    assert r.exit_code == 2
+    assert "linked worktree" in r.output
+    with sq.connect(db) as conn:  # untouched
+        assert conn.execute("SELECT COUNT(*) FROM repos").fetchone()[0] == 2
+    r = _invoke("repo", "remove", "lean")
+    assert r.exit_code == 0
+    r = _invoke("repo", "remove", "proj", "--force")
+    assert r.exit_code == 0
+    with sq.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM repos").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM worktrees").fetchone()[0] == 0

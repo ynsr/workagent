@@ -476,10 +476,26 @@ def register_repo_row_unlinked(path: Path, name: str, repo_path: str,
                      " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"
                      " remote=excluded.remote, tool=excluded.tool",
                      (name, norm, name, remote or "", tool or ""))
+
+
+def remove_repo_row(path: Path, name: str) -> bool:
+    """Delete the *name* registry row; True when it existed.
+
+    tracker_repos, worktrees, sessions, and runs cascade via FK
+    (ON DELETE CASCADE); caller guards against live worktrees first.
+    """
     init_db(path)
     with connect(path) as conn:
         cur = conn.execute("DELETE FROM repos WHERE key_ref = ?", (name,))
         return cur.rowcount > 0
+
+
+def worktree_count_for_repo(path: Path, name: str) -> int:
+    """Number of linked worktrees registered under repo *name*."""
+    init_db(path)
+    with connect(path) as conn:
+        return conn.execute(
+            "SELECT COUNT(*) FROM worktrees WHERE repo_key = ?", (name,)).fetchone()[0]
 
 
 def backfill_trackers_repos(path: Path, cfg: dict,
