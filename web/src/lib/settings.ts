@@ -3,8 +3,8 @@
 export type Theme = "light" | "dark" | "system"
 
 export const THEME_KEY = "theme"
-export const VERBOSE_KEY = "harness.verbose"
-export const OPTOUT_KEY = "harness.confirm.optout"
+export const VERBOSE_KEY = "workagent.verbose"
+export const OPTOUT_KEY = "workagent.confirm.optout"
 
 export type OptOutAction =
   | "cleanup"

@@ -2374,7 +2374,7 @@ def serve(
         from .webapp import run_server
     except ImportError:
         _fail("the web extra is required — install fastapi and uvicorn "
-              "(e.g. pip install 'harness[web]')", EXIT_GENERAL)
+              "(e.g. pip install 'workagent[web]')", EXIT_GENERAL)
     run_server(host, resolved_port, Path(resolved_static), list(allowed_host or []))
 
 

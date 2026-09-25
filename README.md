@@ -90,7 +90,7 @@ Exit codes: `0` success · `1` general error · `2` usage/needs human input.
 
 State lives in `~/.config/workagent/` (`config.json` registry, `links.json`
 worktree links, `pr_cache.json` PR-status cache). Override with
-`HARNESS_CONFIG_DIR`.
+`WORKAGENT_CONFIG_DIR`.
 
 ## Registering existing worktrees
 
@@ -111,7 +111,7 @@ it and attaches the issue/PR (URL included, so `status` shows it).
 main checkout; `--force` (`--yes`) overwrites an existing link for the
 same key. Registered worktrees work with `status`, `sync`, `cd`, and
 `cleanup` like any other worktree.
-`HARNESS_CONFIG_DIR`.
+`WORKAGENT_CONFIG_DIR`.
 
 ## Sync
 

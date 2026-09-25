@@ -153,7 +153,7 @@ export function Repos() {
   function handleDownloadCsv() {
     if (!repos) return
     downloadText(
-      "harness-repos.csv",
+      "workagent-repos.csv",
       toCsv(
         ["name", "path", "tracker"],
         repos.map((r) => [r.name, r.path, typeof r.tracker === "string" ? r.tracker : ""]),

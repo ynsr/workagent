@@ -15,7 +15,7 @@ if [ -z "$VERSION" ]; then
   echo "error: could not read version from pyproject.toml"
   exit 1
 fi
-echo "==> Installing harness ${VERSION}..."
+echo "==> Installing workagent ${VERSION}..."
 
 # Bootstrap git-wt from the vendored snapshot when it's missing from PATH.
 if ! command -v git-wt &>/dev/null; then
@@ -35,16 +35,15 @@ if ! command -v git-wt &>/dev/null; then
   fi
 fi
 
-# Install harness itself (canonical backend: uv preferred, pipx fallback),
+# Install workagent itself (canonical backend: uv preferred, pipx fallback),
 # including the optional `web` extra so `workagent serve` works out of the box.
 if command -v uv &>/dev/null; then
   echo "==> Installing via uv (with web extra)..."
-  uv tool install --force --with fastapi --with "uvicorn[standard]" "$DIR"
+  uv tool install --force --from "$DIR[web]" workagent
 elif command -v pipx &>/dev/null; then
   echo "==> uv not found; installing via pipx (with web extra)..."
-  pipx install --force "$DIR" --system-site-packages 2>/dev/null \
-    || pipx install --force "$DIR"
-  pipx inject workagent fastapi "uvicorn[standard]" 2>/dev/null || true
+  pipx install --force "$DIR[web]" --system-site-packages 2>/dev/null \
+    || pipx install --force "$DIR[web]"
 else
   echo "error: need uv (https://docs.astral.sh/uv/) or pipx (https://pipx.pypa.io)"
   exit 1

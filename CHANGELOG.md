@@ -80,7 +80,7 @@
   + `completions install [shell] [--rcfile] [--yes]` (idempotent marker block,
   atomic write, .bak, stale-block replace); replaces `completion`/
   `completion-install`. Repo names complete on `--repo` and `repo remove`.
-- `install.sh` installs harness itself (uv preferred, pipx fallback) and
+- `install.sh` installs workagent itself (uv preferred, pipx fallback) and
   derives the cli-hub `--version` from `pyproject.toml`.
 - Fixed `review` reading `--dry-run` without defining the flag.
 
@@ -155,7 +155,7 @@
   `tracker` column. LinkSet tracker dropdown with URL auto-ref. Candidate
   rows gain Start/Review/Register actions via the run pipeline; `register`
   runs are keyed per path (`register:<path>`).
-- SQLite sessions + cutover: `harness migrate` one-shots
+- SQLite sessions + cutover: `workagent migrate` one-shots
   `links.json`/`pr_cache.json`/`harnesses.json` into `state.db`
   (counts verified, files deleted, `config.json` kept; idempotent re-run
   is a no-op) and all link/PR-cache reads+writes delegate to SQLite
@@ -185,7 +185,7 @@
   (`refs.fetch_ci_status`; soft-fails to null with a stderr warning),
   cached 10 min per branch tip (`store.cache_ci_status` in
   `pr_cache.json`); Rich tables render ✓/✗/●, `-` otherwise.
-- New `harness open <ref>`: open the linked worktree in the OS file
+- New `workagent open <ref>`: open the linked worktree in the OS file
   manager (`xdg-open`/`open`/`explorer`, detached); prints the path on
   stdout, refuses missing/invalid worktrees. Also runnable from the web
   UI (Status table row action) via `POST /api/runs`.
@@ -196,7 +196,7 @@
   "Cleanup merged" bulk button next to "Review all" (`review --all`) and
   "Sync all".
 - **BREAKING**: `GET /api/links` renames the `sessions` key to
-  `worktrees`, and `harness link list --json` renames its `sessions` key
+  `worktrees`, and `workagent link list --json` renames its `sessions` key
   to `worktrees` — same shape, new key. Stored link state is unchanged.
 - Web UX wave: `?q=` search over the status table (URL-synced), first-seen
   `added_at` column (stamped by `store.record_link`, never bumped; default

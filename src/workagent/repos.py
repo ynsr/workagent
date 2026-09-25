@@ -191,7 +191,7 @@ def resolve_repo(explicit: str | None, cwd: Path, depth: int = 7) -> Path:
 
 def clone_url(url: str, depth: int = 7) -> Path:
     """Shallow-clone a repo URL next to other checkouts; remember it."""
-    dest_base = Path.home() / "projects" / "harness-clones"
+    dest_base = Path.home() / "projects" / "workagent-clones"
     name = url.rstrip("/").split("/")[-1].removesuffix(".git")
     dest = dest_base / name
     if not dest.is_dir():

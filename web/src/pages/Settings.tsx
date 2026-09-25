@@ -102,7 +102,7 @@ export function Settings() {
         <CardContent>
           <div className="flex items-center justify-between rounded-md border px-3 py-2">
             <Label htmlFor="verbose-switch" className="font-normal">
-              Pass <span className="font-mono text-[13px]">-v</span> to harness commands
+              Pass <span className="font-mono text-[13px]">-v</span> to workagent commands
             </Label>
             <Switch
               checked={verbose}

@@ -492,7 +492,7 @@ def _open_terminal(worktree: str, session_file: str) -> None:
 
 def create_app(static_dir: Path, host: str, port: int,
                allowed_hosts: list[str]) -> FastAPI:
-    app = FastAPI(title="harness", docs_url=None, redoc_url=None)
+    app = FastAPI(title="workagent", docs_url=None, redoc_url=None)
     registry = Registry()
     allowed = set(allowed_hosts)
     network_exposed = not _is_loopback(host)
@@ -831,8 +831,8 @@ def run_server(host: str, port: int, static_dir: Path,
         import uvicorn
     except ImportError:
         print("error: the web extra is required — install with "
-              "`pip install 'harness[web]'` or `uv tool install "
-              "--force --with fastapi --with uvicorn .`", file=sys.stderr)
+              "`pip install 'workagent[web]'` or `uv tool install "
+              "--force --from '.[web]' workagent`", file=sys.stderr)
         raise SystemExit(1)
     if not _port_free(host, port):
         print(f"error: port {port} is busy — pick another with --port",

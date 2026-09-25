@@ -288,7 +288,7 @@ export function Dashboard() {
   function handleDownloadCsv() {
     if (!worktrees) return
     downloadText(
-      "harness-status.csv",
+      "workagent-status.csv",
       toCsv(CSV_HEADERS, worktreeRows(worktrees)),
       "text/csv",
     )
