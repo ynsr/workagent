@@ -4,6 +4,8 @@
   toward unresolved/resolved — system/activity discussions ("added N
   commits", "marked as draft", individual notes) are excluded, matching
   GitLab's own UI counter.
+- cleanup: GitHub merges pass an explicit `--squash` strategy (`gh pr merge`
+  requires one non-interactively); `--no-squash` maps to `gh --merge`.
 - start/review/sync: a new PR/MR (not already registered) creates a git
   worktree on the fetched source branch and records it under the branch
   name (pr_url kept on the row). `start` accepts PR/MR refs directly;
