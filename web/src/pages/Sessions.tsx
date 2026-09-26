@@ -26,16 +26,22 @@ import {
 import { type SessionDetail, type SessionRow } from "@/lib/api"
 import { useLinks, usePath, useRepos, useResumeSession, useSession, useSessions } from "@/lib/queries"
 import { repoKeyForPath, useRepoTabs } from "@/lib/useRepoTabs"
-import { copyToClipboard, resumeCommand, shortId } from "@/lib/format"
+import { copyToClipboard, relativeTime, resumeCommand, shortId } from "@/lib/format"
 
 /** Every persisted session executed a real runtime session, so both
  * resume buttons always apply. Copy resolves the worktree path via
  * /api/path (falls back to the recorded ref). */
 
-/** Branch → human title: drop `<type>/` prefix, first 50 chars, `-`→space, Title Case. */
-export function sessionTitle(ref: string): string {
-  const branch = ref.includes("/") ? ref.slice(ref.indexOf("/") + 1) : ref
-  const words = branch.slice(0, 50).replace(/-/g, " ").split(/\s+/).filter(Boolean)
+/** Branch → human title: drop `<type>/` prefix, first 50 chars, `-`→space, Title Case.
+ * Refs shaped `<tracker>:<KEY>` (e.g. `jira:IPG-959`) carry no slug — callers
+ * pass the linked normalized branch when known so the title reads from it. */
+export function sessionTitle(ref: string, branch?: string): string {
+  const src = branch?.trim()
+    ? branch
+    : ref.includes("/")
+      ? ref.slice(ref.indexOf("/") + 1)
+      : ref.replace(/^[^:]+:/, "")
+  const words = src.slice(0, 50).replace(/-/g, " ").split(/\s+/).filter(Boolean)
   return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") || ref
 }
 
@@ -163,7 +169,7 @@ export function Sessions() {
     if (worktreeFilter) out = out.filter((r) => r.worktree_ref === worktreeFilter)
     if (titleFilter) {
       out = out.filter((r) =>
-        `${r.id} ${r.worktree_ref} ${sessionTitle(r.worktree_ref)} ${r.initiator_command} ${r.runtime_name} ${r.state}`.toLowerCase().includes(titleFilter),
+        `${r.id} ${r.worktree_ref} ${sessionTitle(r.worktree_ref, links?.worktrees?.[r.worktree_ref]?.branch ?? "")} ${r.initiator_command} ${r.runtime_name} ${r.state}`.toLowerCase().includes(titleFilter),
       )
     }
     return out
@@ -270,8 +276,8 @@ export function Sessions() {
               <TableBody>
                 {rows.map((s) => (
                   <TableRow key={s.id}>
-                    <TableCell className="max-w-64 truncate text-sm text-muted-foreground" title={sessionTitle(s.worktree_ref)}>
-                      {sessionTitle(s.worktree_ref)}
+                    <TableCell className="max-w-64 truncate text-sm text-muted-foreground" title={sessionTitle(s.worktree_ref, links?.worktrees?.[s.worktree_ref]?.branch ?? "")}>
+                      {sessionTitle(s.worktree_ref, links?.worktrees?.[s.worktree_ref]?.branch ?? "")}
                     </TableCell>
                     <TableCell className="font-mono text-[13px]">
                       <Link
@@ -386,6 +392,5 @@ function SessionRunsCard({ s }: { s: SessionDetail }) {
         )}
       </CardContent>
     </Card>
-    </div>
   )
 }

@@ -15,6 +15,7 @@ import { type Run } from "@/lib/api"
 import { useCancelRun, useRepos, useResumeRun, useRuns } from "@/lib/queries"
 import { repoKeyForPath, useRepoTabs } from "@/lib/useRepoTabs"
 import { copyToClipboard, resumeCommand, shortId } from "@/lib/format"
+import { Copy } from "lucide-react"
 
 /** Resume-in-terminal + copy-resume-command buttons; only runs that
  * executed a runtime session carry a session_file. */
