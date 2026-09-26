@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
-import { Copy, SquareTerminal, XCircle } from "lucide-react"
+import { SquareTerminal, XCircle } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
-import { RunStateBadge } from "@/components/StateBadge"
+import { RunsTable, type RunsTableRow } from "@/components/RunsTable"
 import {
   EmptyState,
   ErrorState,
@@ -11,25 +11,10 @@ import {
   errorText,
 } from "@/components/StatusFeedback"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import { type Run } from "@/lib/api"
 import { useCancelRun, useRepos, useResumeRun, useRuns } from "@/lib/queries"
 import { repoKeyForPath, useRepoTabs } from "@/lib/useRepoTabs"
-import {
-  argsText,
-  copyToClipboard,
-  relativeTime,
-  resumeCommand,
-  shortId,
-} from "@/lib/format"
+import { copyToClipboard, resumeCommand, shortId } from "@/lib/format"
 
 /** Resume-in-terminal + copy-resume-command buttons; only runs that
  * executed a runtime session carry a session_file. */
@@ -252,96 +237,27 @@ export function Runs() {
           </Button>
         </EmptyState>
       ) : (
-        <>
-          {/* Table ≥sm */}
-          <div className="hidden rounded-xl border sm:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Run</TableHead>
-                  <TableHead>Command</TableHead>
-                  <TableHead>Target</TableHead>
-                  <TableHead>State</TableHead>
-                  <TableHead className="text-right">Exit</TableHead>
-                  <TableHead>Started</TableHead>
-                  <TableHead className="w-12" aria-label="Cancel" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((run) => (
-                  <TableRow key={run.id}>
-                    <TableCell className="font-mono text-[13px]">
-                      <Link
-                        to={`/runs/${run.id}`}
-                        className="underline-offset-2 hover:underline"
-                      >
-                        {shortId(run.id)}
-                      </Link>
-                    </TableCell>
-                    <TableCell>
-                      <span className="font-medium">{run.command}</span>{" "}
-                      <span className="font-mono text-[13px] text-muted-foreground">
-                        {argsText(run.args)}
-                      </span>
-                    </TableCell>
-                    <TableCell className="font-mono text-[13px]">{run.target}</TableCell>
-                    <TableCell>
-                      <RunStateBadge state={run.state} />
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-[13px]">
-                      {run.exit_code ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {relativeTime(run.created)}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center">
-                        <SessionActions run={run} />
-                        {run.state === "running" ? <CancelButton run={run} /> : null}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-          {/* Cards <sm */}
-          <div className="space-y-3 sm:hidden">
-            {filtered.map((run) => (
-              <Card key={run.id} className="py-4">
-                <CardContent className="space-y-2 px-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <Link
-                      to={`/runs/${run.id}`}
-                      className="font-mono text-[13px] font-semibold underline-offset-2 hover:underline"
-                    >
-                      {shortId(run.id)}
-                    </Link>
-                    <RunStateBadge state={run.state} />
-                  </div>
-                  <p className="text-sm">
-                    <span className="font-medium">{run.command}</span>{" "}
-                    <span className="font-mono text-[13px] text-muted-foreground">
-                      {argsText(run.args)}
-                    </span>
-                  </p>
-                  <p className="truncate font-mono text-[13px] text-muted-foreground" title={run.target}>
-                    {run.target}
-                  </p>
-                  <div className="flex items-center justify-between border-t pt-2 text-xs text-muted-foreground">
-                    <span>
-                      exit {run.exit_code ?? "—"} · {relativeTime(run.created)}
-                    </span>
-                    <div className="flex items-center">
-                      <SessionActions run={run} />
-                      {run.state === "running" ? <CancelButton run={run} /> : null}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </>
+        <RunsTable
+          rows={filtered.map(
+            (run): RunsTableRow => ({
+              key: run.id,
+              href: `/runs/${run.id}`,
+              label: shortId(run.id),
+              command: run.command,
+              args: run.args,
+              target: run.target,
+              state: run.state,
+              exitCode: run.exit_code,
+              started: run.created,
+              actions: (
+                <>
+                  <SessionActions run={run} />
+                  {run.state === "running" ? <CancelButton run={run} /> : null}
+                </>
+              ),
+            }),
+          )}
+        />
       )}
     </div>
   )

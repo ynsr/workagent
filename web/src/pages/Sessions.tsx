@@ -4,6 +4,7 @@ import { SearchableSelect } from "@/components/SearchableSelect"
 import { toast } from "sonner"
 import { ArrowLeft, Copy, SquareTerminal } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
+import { RunsTable, type RunsTableRow } from "@/components/RunsTable"
 import {
   EmptyState,
   ErrorState,
@@ -13,7 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Table,
   TableBody,
@@ -22,15 +23,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { type SessionRow } from "@/lib/api"
+import { type SessionDetail, type SessionRow } from "@/lib/api"
 import { useLinks, usePath, useRepos, useResumeSession, useSession, useSessions } from "@/lib/queries"
 import { repoKeyForPath, useRepoTabs } from "@/lib/useRepoTabs"
-import {
-  copyToClipboard,
-  relativeTime,
-  resumeCommand,
-  shortId,
-} from "@/lib/format"
+import { copyToClipboard, resumeCommand, shortId } from "@/lib/format"
 
 /** Every persisted session executed a real runtime session, so both
  * resume buttons always apply. Copy resolves the worktree path via
@@ -358,48 +354,38 @@ export function SessionDetailPage() {
           </pre>
         </CardContent>
       </Card>
-      <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>#</TableHead>
-                <TableHead>Command</TableHead>
-                <TableHead>Args</TableHead>
-                <TableHead>Exit</TableHead>
-                <TableHead>Created</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {s.runs.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="text-muted-foreground">
-                    No session runs recorded.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                s.runs.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell>{r.id}</TableCell>
-                    <TableCell className="font-mono text-[13px]">
-                      {r.command}
-                    </TableCell>
-                    <TableCell className="font-mono text-[13px]">
-                      {r.args.join(" ")}
-                    </TableCell>
-                    <TableCell>
-                      {r.exit_code ?? "—"}
-                    </TableCell>
-                    <TableCell title={r.created_at}>
-                      {relativeTime(Date.parse(r.created_at) / 1000)}
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      <SessionRunsCard s={s} />
+    </div>
+  )
+}
+
+/** Persisted runs of one session, rendered with the shared Runs table
+ * (same rows/columns as the Runs page; no live run id to link to). */
+function SessionRunsCard({ s }: { s: SessionDetail }) {
+  const rows: RunsTableRow[] = s.runs.map((r) => ({
+    key: String(r.id),
+    label: `#${r.id}`,
+    command: r.command,
+    args: r.args,
+    target: s.worktree_ref,
+    state: r.exit_code === null ? undefined : r.exit_code === 0 ? "succeeded" : "failed",
+    exitCode: r.exit_code,
+    started: Date.parse(r.created_at) / 1000,
+    startedTitle: r.created_at,
+  }))
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Runs ({rows.length})</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No session runs recorded.</p>
+        ) : (
+          <RunsTable rows={rows} />
+        )}
+      </CardContent>
+    </Card>
     </div>
   )
 }
