@@ -144,3 +144,9 @@ def test_status_base_follows_mr_target_branch(isolated_config, tmp_path, monkeyp
     data = json.loads(_invoke("status", "--json").stdout)
     assert data["jira:IPG-929"]["commits"] == "0|3"
     assert ab_calls == []
+
+
+def test_status_detail_missing_link_errors(isolated_config):
+    r = _invoke("status", "o/r#99", "--json")
+    assert r.exit_code == 2
+    assert "no linked state" in r.output

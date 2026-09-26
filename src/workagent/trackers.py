@@ -108,6 +108,21 @@ def _guard_host_scoped_tracker(tid: str, repo: str) -> None:
 
 
 
+def resolve_repo_for_ref(parsed: dict, explicit: str | None, cwd: Path,
+                         depth: int = 7, yes: bool = False,
+                         persist: bool = True, pinned: str = "") -> tuple[Path, str, str, str]:
+    """Resolve ``(repo_dir, base_branch, tracker_id, outcome)`` for a parsed ref.
+
+    Shared by start/review/sync (B2): tracker id from the parsed ref, the
+    repo via :func:`resolve_for_tracker` (an explicit ``--repo`` always
+    wins over a worktree-pinned repo), then the repo default branch.
+    """
+    tid = tracker_id(parsed)
+    repo_dir, outcome = resolve_for_tracker(
+        tid, explicit or pinned or None, cwd, depth=depth, yes=yes, persist=persist)
+    return repo_dir, repos.default_branch(repo_dir), tid, outcome
+
+
 def check_or_record(tid: str, repo: str, yes: bool = False, persist: bool = True) -> str:
     """Enforce the tracker↔repo relation for *tid* against *repo*.
 

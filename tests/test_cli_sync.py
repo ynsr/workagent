@@ -209,3 +209,9 @@ def test_sync_pr_ref_dry_run_creates_nothing(isolated_config, tmp_path, monkeypa
     r = runner.invoke(cli.app, ["sync", url, "--dry-run", "--json"])
     assert r.exit_code == 0, r.output
     assert store.load_links() == {}
+
+
+def test_sync_missing_link_errors(isolated_config):
+    r = _invoke("sync", "o/r#99", "--json")
+    assert r.exit_code == 2
+    assert "no linked state" in r.output

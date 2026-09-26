@@ -64,23 +64,20 @@ def sync_cmd(
     if session_file and all_sessions:
         _fail("--session-file cannot be used with --all (one transcript per worktree — omit it and each conflict launch gets its own file)", EXIT_USAGE)
     if ref:
-        resolved = worktrees.resolve_worktree(ref, links)
-        if resolved is None:
-            parsed_ref = None
-            try:
-                parsed_ref = refs.parse_ref(ref)
-            except HarnessError:
-                parsed_ref = None
-            if parsed_ref is not None and parsed_ref["kind"] in ("pr", "mr"):
-                key = _sync_create_pr_worktree(ref, parsed_ref, dry_run)
-                if key is None:
-                    return
-                links = store.load_links()
-            else:
-                _fail(f"no linked state for {ref}", EXIT_USAGE)
+        try:
+            key, _entry, parsed_any = worktrees.resolve_any(ref, links)
+        except worktrees.NoLinkedState:
+            parsed_any, key = None, ""
+        if key:
+            keys = [key]
+        elif parsed_any is not None and parsed_any["kind"] in ("pr", "mr"):
+            key = _sync_create_pr_worktree(ref, parsed_any, dry_run)
+            if key is None:
+                return
+            links = store.load_links()
+            keys = [key]
         else:
-            key = worktrees.pick_worktree(ref, resolved, links)
-        keys = [key]
+            _fail(f"no linked state for {ref}", EXIT_USAGE)
     elif all_sessions:
         keys = list(links)
     else:
@@ -115,10 +112,8 @@ def _sync_create_pr_worktree(ref: str, parsed: dict, dry_run: bool) -> str | Non
     reuses an already-recorded row when one exists. Dry-run prints the
     plan without creating anything and returns None.
     """
-    tid = trackers.tracker_id(parsed)
-    repo_dir, _ = trackers.resolve_for_tracker(
-        tid, None, Path.cwd(), depth=7, yes=True, persist=not dry_run)
-    base_branch = repos.default_branch(repo_dir)
+    repo_dir, base_branch, tid, _ = trackers.resolve_repo_for_ref(
+        parsed, None, Path.cwd(), depth=7, yes=True, persist=not dry_run)
     info, head_ref = refs.require_head_ref(parsed, repo_dir, ref)
     if dry_run:
         _print_result({"dry_run": True, "repo": str(repo_dir),

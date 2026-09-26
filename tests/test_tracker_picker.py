@@ -156,3 +156,49 @@ def test_yes_does_not_adopt_unlinked_cwd(isolated_config, tmp_path, monkeypatch)
     assert Path(r) == linked.resolve()
     # The cwd repo must NOT be recorded under the tracker.
     assert str(other.resolve()) not in store.load_config()["trackers"]["jira:IPG"]["repos"]
+
+
+def test_resolve_repo_for_ref_explicit_wins(isolated_config, tmp_path, monkeypatch):
+    """B2: explicit --repo wins over a worktree-pinned repo; base branch returned."""
+    from workagent import refs, repos as _repos
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    pinned = tmp_path / "pinned"
+    pinned.mkdir()
+    monkeypatch.setattr(_repos, "resolve_repo", lambda explicit, cwd, depth=7: repo)
+    monkeypatch.setattr(_repos, "default_branch", lambda r: "main")
+    parsed = refs.parse_ref("o/r#22")
+    r, base, tid, outcome = trackers.resolve_repo_for_ref(
+        parsed, str(repo), tmp_path, yes=True, persist=False, pinned=str(pinned))
+    assert r == repo and base == "main" and tid == "github:o/r"
+
+
+def test_resolve_repo_for_ref_uses_pinned(isolated_config, tmp_path, monkeypatch):
+    """B2: without --repo the worktree-pinned repo is used (|single linked)."""
+    from workagent import refs
+    pinned = tmp_path / "pinned"
+    pinned.mkdir()
+    _seed("github:o/r", [str(pinned)], monkeypatch, tmp_path)
+    monkeypatch.setattr(trackers.repos, "default_branch", lambda r: "main")
+    parsed = refs.parse_ref("o/r#22")
+    r, base, tid, outcome = trackers.resolve_repo_for_ref(
+        parsed, None, tmp_path, yes=True, persist=False, pinned=str(pinned))
+    assert Path(r).resolve() == pinned.resolve() and base == "main"
+
+
+def test_resolve_repo_for_ref_multi_linked_errors(isolated_config, tmp_path, monkeypatch):
+    """B2: several linked repos without --repo stay a usage error (never first-pick)."""
+    from workagent import refs
+    from workagent.errors import HarnessError
+    a = tmp_path / "a"
+    a.mkdir()
+    b = tmp_path / "b"
+    b.mkdir()
+    _seed("github:o/r", [str(a), str(b)], monkeypatch, tmp_path)
+    parsed = refs.parse_ref("o/r#22")
+    try:
+        trackers.resolve_repo_for_ref(parsed, None, tmp_path, yes=True, persist=False)
+    except HarnessError as e:
+        assert e.exit_code == 2
+    else:
+        raise AssertionError("expected HarnessError")

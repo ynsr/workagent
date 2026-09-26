@@ -101,17 +101,20 @@ def cleanup(
                         empty="no linked worktrees")
         return
 
-    resolved = worktrees.resolve_worktree(ref, links)
-    if resolved is None:
+    try:
+        key, entry, _ = worktrees.resolve_any(ref, links)
+    except worktrees.NoLinkedState:
         _fail(
             f"no linked state for {ref}.\n"
             "  Run `workagent link list` to see linked worktrees.",
             EXIT_USAGE,
         )
-    key = worktrees.pick_worktree(ref, resolved, links)
-    entry = links.get(key, {})
-    if entry is None or not entry:
-        _fail(f"no linked state for {ref}.", EXIT_USAGE)
+    if not key or not entry:
+        _fail(
+            f"no linked state for {ref}.\n"
+            "  Run `workagent link list` to see linked worktrees.",
+            EXIT_USAGE,
+        )
     repo = Path(entry.get("repo", "")).expanduser()
     branch = entry.get("branch", "")
     if not branch:

@@ -23,13 +23,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { useConfirm } from "@/lib/confirm"
-import {
-  useCreateRun,
-  useInfo,
-  useRepos,
-  useStatusAll,
-} from "@/lib/queries"
+import { useConfirmedRun } from "@/components/RunActions"
 import {
   LinkRemoveDialog,
   LinkSetDialog,
@@ -39,8 +33,7 @@ import {
 
 export function Links() {
   const navigate = useNavigate()
-  const confirm = useConfirm()
-  const createRun = useCreateRun()
+  const runConfirmed = useConfirmedRun()
   const { data: worktrees, isPending, isError, error, refetch } = useStatusAll()
   const { data: info } = useInfo()
   const { data: repos } = useRepos()
@@ -108,7 +101,7 @@ export function Links() {
     }
   }
   async function handleCleanupMerged() {
-    const ok = await confirm({
+    await runConfirmed({
       action: "cleanup",
       title: "Cleanup merged worktrees",
       description:
@@ -116,26 +109,15 @@ export function Links() {
       destructive: true,
       confirmLabel: "Cleanup merged",
       details: [{ label: "Scope", value: "Merged/closed PRs only" }],
+      command: "cleanup",
+      args: ["--merged"],
+      successMessage: "Cleanup merged started",
     })
-    if (!ok) return
-    try {
-      const { run_id } = await createRun.mutateAsync({
-        command: "cleanup",
-        args: ["--merged"],
-        confirm: true,
-      })
-      toast.success("Cleanup merged started", {
-        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
-      })
-      navigate(`/runs/${run_id}`)
-    } catch (err) {
-      toast.error(errorText(err))
-    }
   }
 
   async function handleCleanup(key: string) {
     const invalid = worktrees?.[key]?.wt_valid === false
-    const ok = await confirm({
+    await runConfirmed({
       action: "cleanup",
       ref: key,
       title: invalid ? `Delete invalid worktree ${key}` : `Remove worktree ${key}`,
@@ -145,23 +127,12 @@ export function Links() {
       destructive: true,
       confirmLabel: invalid ? "Delete worktree" : "Remove worktree",
       force: invalid || undefined,
+      command: "cleanup",
+      args: invalid ? [key, "--force"] : [key],
+      successMessage: `Cleanup ${key} started`,
     })
-    if (!ok) return
-    try {
-      const { run_id } = await createRun.mutateAsync({
-        command: "cleanup",
-        args: invalid ? [key, "--force"] : [key],
-        confirm: true,
-        force: invalid || undefined,
-      })
-      toast.success(`Cleanup ${key} started`, {
-        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
-      })
-      navigate(`/runs/${run_id}`)
-    } catch (err) {
-      toast.error(errorText(err))
-    }
   }
+
 
   async function handleOpenWorktree(key: string) {
     try {

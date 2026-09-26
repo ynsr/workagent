@@ -443,14 +443,12 @@ def status(
     """
     links = store.load_links()
     if ref:
-        resolved = worktrees.resolve_worktree(ref, links)
-        if resolved is not None:
-            key = worktrees.pick_worktree(ref, resolved, links)
-            entry = links[key]
-        else:
-            try:
-                parsed = refs.parse_ref(ref)
-            except HarnessError:
+        try:
+            key, entry, parsed = worktrees.resolve_any(ref, links)
+        except worktrees.NoLinkedState:
+            _fail(f"no linked state for {ref}", EXIT_USAGE)
+        if not key or not entry:
+            if parsed is None:
                 _fail(f"no linked state for {ref}", EXIT_USAGE)
             key = refs.issue_key(parsed)
             entry = links.get(key) or links.get(f"pr:{parsed['url']}", {})

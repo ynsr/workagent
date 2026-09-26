@@ -289,18 +289,14 @@ def review(
         repo_hint = f"github.com/{parsed['repo']}/pull/NUM" if parsed["repo"] else "github.com/OWNER/REPO/pull/NUM"
         _fail(f"{ref} is ambiguous — `review` needs a PR/MR URL (e.g. "
               f"https://{repo_hint}).", EXIT_USAGE)
-    tid = trackers.tracker_id(parsed)
-    # Rule 1 for review: a worktree already linked to this ref pins the
-    # repo — never the CWD. (The head-branch reuse check below runs after
-    # fetch_pr_info; this pre-check covers worktree-ref invocations.)
-    # An explicit --repo always wins over the pinned repo.
     _pre_repo = ""
     if not repo:
         _pre = worktrees.resolve_worktree(ref, store.load_links())
         if isinstance(_pre, str):
             _pre_repo = store.load_links().get(_pre, {}).get("repo", "")
-    repo_dir, outcome = trackers.resolve_for_tracker(
-        tid, repo or _pre_repo or None, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
+    repo_dir, base_branch, tid, outcome = trackers.resolve_repo_for_ref(
+        parsed, repo, Path.cwd(), depth=depth, yes=yes,
+        persist=not dry_run, pinned=_pre_repo)
     if outcome == "recorded" and tid and not dry_run:
         eprint(f"note: linked tracker {tid} to repo {repo_dir}")
     base_branch = repos.default_branch(repo_dir)

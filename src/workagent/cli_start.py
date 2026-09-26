@@ -84,11 +84,9 @@ def start(
             return
         return _launch_in_worktree(key, existing, harness, no_tty, no_runtime,
                                    session_file, json_output)
-    tid = trackers.tracker_id(parsed)
-    r, outcome = trackers.resolve_for_tracker(
-        tid, repo, Path.cwd(), depth=depth,
+    r, detected_default, tid, outcome = trackers.resolve_repo_for_ref(
+        parsed, repo, Path.cwd(), depth=depth,
         yes=yes, persist=not dry_run)
-    detected_default = repos.default_branch(r)
     # --base naming a non-default branch: run on that existing branch (worktree
     # checked out at it, upstream origin/<branch>); no new branch is created.
     branch_mode = base is not None and base != detected_default and base not in _CORE_DEFAULTS
@@ -183,10 +181,8 @@ def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
                    dry_run: bool, yes: bool, json_output: bool,
                    session_file: str | None) -> None:
     """Start a coding session on a PR/MR source branch (branch-keyed row)."""
-    tid = trackers.tracker_id(parsed)
-    repo_dir, outcome = trackers.resolve_for_tracker(
-        tid, repo, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
-    base_branch = repos.default_branch(repo_dir)
+    repo_dir, base_branch, tid, outcome = trackers.resolve_repo_for_ref(
+        parsed, repo, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
     harness_name = harness or store.load_config().get("default_harness", "omp")
     pr_url = parsed["url"]
     try:

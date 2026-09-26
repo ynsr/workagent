@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
@@ -103,9 +103,15 @@ export function useConfirmedRun() {
     warning?: string
     confirmLabel: string
     details?: ConfirmDetailRow[]
+    extras?: ReactNode
+    ref?: string
+    force?: boolean
+    destructive?: boolean
     command: RunCommand
     args: string[]
+    confirm?: boolean
     successLabel?: string
+    successMessage?: string
     navigateToRun?: boolean
   }) {
     const ok = await confirm({
@@ -115,18 +121,24 @@ export function useConfirmedRun() {
       warning: input.warning,
       confirmLabel: input.confirmLabel,
       details: input.details,
+      extras: input.extras,
+      ref: input.ref,
+      force: input.force,
+      destructive: input.destructive,
     })
     if (!ok) return null
     try {
       const { run_id } = await createRun.mutateAsync({
         command: input.command,
         args: input.args,
-        confirm: true,
+        confirm: input.confirm ?? true,
+        ...(input.force ? { force: true } : {}),
       })
-      const label = input.successLabel ?? "started"
-      toast.success(`${input.title} ${label}`, {
+      const label = input.successMessage ?? `${input.title} ${input.successLabel ?? "started"}`
+      toast.success(label, {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
       })
+      if (input.navigateToRun ?? true) navigate(`/runs/${run_id}`)
       void qc.invalidateQueries({ queryKey: queryKeys.links })
       void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
       return run_id
