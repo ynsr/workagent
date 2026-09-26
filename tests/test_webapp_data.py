@@ -166,6 +166,7 @@ def test_mirror_run_persists_session_run(client):
               argv=["/py", "-m", "workagent", "start", "IPG-1", "--yes",
                     "--session-file", "/s/sessions/omp/2026-09-26T00-00-00-000Z-1234.jsonl"],
               session_file="/s/sessions/omp/2026-09-26T00-00-00-000Z-1234.jsonl")
+    run.append("hello log\n")
     run.exit_code = 0
     _mirror_run(run)
     detail = sq.get_session(db, sid)
@@ -173,6 +174,7 @@ def test_mirror_run_persists_session_run(client):
     row = detail["runs"][0]
     assert row["command"] == "start" and row["exit_code"] == 0
     assert "--session-file" in row["args"]
+    assert "hello log" in (row.get("output") or "")
 
 
 def test_mirror_run_skips_without_session(client):
@@ -356,3 +358,28 @@ def test_get_persisted_run_detail(client):
     assert detail["command"] == "sync" and detail["state"] == "failed"
     assert detail["lines"] == []
     assert client.get("/api/runs/db-999999").status_code == 404
+
+
+def test_persisted_run_serves_stored_log(client):
+    """GET detail + SSE replay the DB-stored log for post-restart runs."""
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute(
+            "INSERT OR IGNORE INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+            " VALUES ('k3', '/tmp/wt3', 'b3', 'r', '2026-01-01T00:00:00+00:00')")
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, worktree_ref, state, created_at)"
+            " VALUES ('sid-3', 'k3', 'finished', '2026-01-01T00:00:00+00:00')")
+    sq.insert_run(db, "sid-3", "sync", ["k3"], 0,
+                  output=["line one", "line two"], truncated=False)
+    rid = sq.list_runs(db)[0]["id"]
+    detail = client.get(f"/api/runs/db-{rid}").json()
+    assert [ln["text"] for ln in detail["lines"]] == ["line one", "line two"]
+    assert detail["truncated"] is False
+    assert detail["last_seq"] == 2
+    r = client.get(f"/api/runs/db-{rid}/events")
+    assert r.status_code == 200
+    assert '"line one"' in r.text and '"succeeded"' in r.text

@@ -206,10 +206,13 @@ once the printed command is run manually). Clients show resume buttons iff
 
 ### `GET /api/runs/{id}` → detail (adds `lines`)
 `lines`: `[{"seq": 1, "text": "syncing jira:IPG-932 …"}, …]`
-(ANSI already stripped server-side).
+(ANSI already stripped server-side). Post-restart rows (`db-<id>`) replay
+the DB-persisted output (last 2000 lines, `truncated` when the live buffer
+had dropped older lines) — the log survives `serve` restarts.
 
 ### `GET /api/runs/{id}/events` — SSE
-- `event: log`, `data: {"seq": N, "text": "…"}`, `id: N`.
+- `event: log`, `data: {"seq": N, "text": "…"}`, `id: N`. For `db-<id>`
+  rows the stream replays the stored lines then the terminal state event.
 ### `POST /api/runs/{id}/cancel` → `{"id": …, "state": "cancelled"}`
 409 when the run already finished. Server sends SIGTERM to the process
 group, SIGKILL after 10 s.

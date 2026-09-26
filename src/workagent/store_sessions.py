@@ -8,6 +8,9 @@ from pathlib import Path
 
 from .store_sqlite import connect
 
+#: Cap on persisted run output lines (mirrors the live buffer policy at a
+#: smaller scale: enough log to diagnose, bounded DB growth).
+MAX_RUN_OUTPUT_LINES = 2000
 def db_path(config_dir: Path | None = None) -> Path:
     from . import store as _store
     base = config_dir or _store.config_dir()
@@ -63,14 +66,17 @@ def finish_session(path: Path, sid: str, state: str) -> None:
 
 
 def insert_run(path: Path, session_id: str, command: str,
-               args: list[str], exit_code: int | None) -> int:
+               args: list[str], exit_code: int | None,
+               output: list[str] | None = None, truncated: bool = False) -> int:
     import json
     created = datetime.now(timezone.utc).isoformat()
+    lines = list(output or [])[-MAX_RUN_OUTPUT_LINES:]
     with connect(path) as conn:
         cur = conn.execute(
-            "INSERT INTO runs (session_id, command, args, exit_code, created_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (session_id, command, json.dumps(args), exit_code, created))
+            "INSERT INTO runs (session_id, command, args, exit_code, created_at,"
+            " output, truncated) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (session_id, command, json.dumps(args), exit_code, created,
+             "\n".join(lines), 1 if truncated else 0))
         return cur.lastrowid
 
 def list_runs(path: Path, limit: int = 200) -> list[dict]:
@@ -82,7 +88,8 @@ def list_runs(path: Path, limit: int = 200) -> list[dict]:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT r.id, r.session_id, r.command, r.args, r.exit_code,"
-            " r.created_at, s.file_path AS session_file, s.worktree_ref"
+            " r.created_at, r.output, r.truncated,"
+            " s.file_path AS session_file, s.worktree_ref"
             " FROM runs r LEFT JOIN sessions s ON s.id = r.session_id"
             " ORDER BY r.id DESC LIMIT ?", (limit,)).fetchall()
         out = []

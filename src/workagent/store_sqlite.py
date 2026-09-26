@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   command TEXT NOT NULL, args TEXT NOT NULL,
-  exit_code INTEGER, created_at TEXT NOT NULL);
+  exit_code INTEGER, created_at TEXT NOT NULL,
+  output TEXT NOT NULL DEFAULT '', truncated INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS issue_cache (
   source TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL,
   fetched_at TEXT NOT NULL);
@@ -102,6 +103,19 @@ def _tracker_meta(tid: str) -> tuple[str, str]:
         return "github", f"https://{rest}" if "/" in rest and host else tid
     return "github", tid
 
+def _migrate_runs_output(conn) -> None:
+    """Schema v3: runs gains output/truncated (persisted run log).
+
+    ALTER TABLE is enough (both columns carry defaults, so old rows read
+    back as empty/non-truncated). Idempotent: skipped when present.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+    if not cols:
+        return
+    if "output" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN output TEXT NOT NULL DEFAULT ''")
+    if "truncated" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0")
 
 def _migrate_v2(conn) -> None:
     """Schema v2: trackers gains mandatory vendor/remote_url; repos loses tracker_key.
@@ -237,6 +251,7 @@ def init_db(path: Path) -> Path:
     with connect(path) as conn:
         conn.executescript(SCHEMA)
         _migrate_v2(conn)
+        _migrate_runs_output(conn)
     return path
 def _norm(p: str) -> str:
     from pathlib import Path as _P

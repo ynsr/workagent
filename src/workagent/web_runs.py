@@ -40,9 +40,11 @@ def _mirror_run(run: Run) -> None:
 
     Only runs with a session file are session-linked; the child CLI owns
     the sessions row (created around the harness launch), so the mirror
-    targets the session id matching the transcript stem. Anything missing
-    (no db, no session row yet, e.g. --no-runtime never launched) is a
-    silent skip — the live registry remains the source of truth.
+    targets the session id matching the transcript stem. The buffered
+    output lines go with it (capped at MAX_RUN_OUTPUT_LINES) so the log
+    survives a restart. Anything missing (no db, no session row yet, e.g.
+    --no-runtime never launched) is a silent skip — the live registry
+    remains the source of truth.
     """
     if not run.session_file:
         return
@@ -61,7 +63,11 @@ def _mirror_run(run: Run) -> None:
             command, args = argv[3], argv[4:]
         else:
             command, args = run.command, list(run.args)
-        _sq.insert_run(db, sid, command, args, run.exit_code)
+        with run.lock:
+            output = [text for _, text in run.lines]
+            truncated = run.truncated
+        _sq.insert_run(db, sid, command, args, run.exit_code,
+                       output=output, truncated=truncated)
     except Exception as e:
         print(f"[web] run mirror failed: {e}", file=sys.stderr, flush=True)
 
@@ -186,8 +192,17 @@ def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
         out["lines"] = [{"seq": s, "text": t} for s, t in lines]
     return out
 
+def _persisted_lines(row: dict) -> list[dict]:
+    """Log lines for a runs-table row (seqs rebuilt in stored order)."""
+    text = str(row.get("output") or "")
+    if not text:
+        return []
+    return [{"seq": i, "text": ln} for i, ln in enumerate(text.split("\n"))]
+
+
+
 def _persisted_summary(row: dict) -> dict:
-    """Map a runs-table row to the live Run summary shape (no log lines)."""
+    """Map a runs-table row to the live Run summary shape (log included)."""
     import json
     from datetime import datetime
     args = row.get("args", [])
@@ -226,10 +241,11 @@ def _persisted_summary(row: dict) -> dict:
         target = ""
     return {"id": f"db-{row.get('id')}", "command": row.get("command"),
             "args": args if isinstance(args, list) else [], "state": state,
-            "exit_code": exit_code, "truncated": False,
+            "exit_code": exit_code, "truncated": bool(row.get("truncated")),
             "created": created, "target": target,
             "session_file": session_file, "worktree": worktree,
-            "last_seq": 0, "session_id": row.get("session_id")}
+            "last_seq": max((ln["seq"] for ln in _persisted_lines(row)), default=-1) + 1,
+            "session_id": row.get("session_id")}
 def _persisted_row(run_id: str) -> dict | None:
     """Fetch a runs-table row for a `db-<id>` run id (None otherwise)."""
     if not run_id.startswith("db-"):

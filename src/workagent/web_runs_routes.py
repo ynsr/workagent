@@ -25,6 +25,7 @@ from .web_args import (
 )
 from .web_runs import (
     _cancel,
+    _persisted_lines,
     _persisted_row,
     _persisted_summary,
     _summary,
@@ -111,14 +112,35 @@ def register_runs_routes(app, registry) -> None:
             if row is None:
                 raise
             out = _persisted_summary(row)
-            out["lines"] = []
+            out["lines"] = _persisted_lines(row)
             return out
         with run.lock:
             return _summary(run, lines=list(run.lines))
-
     @app.get("/api/runs/{run_id}/events")
     async def events(run_id: str, request: Request) -> StreamingResponse:
-        run = registry.get(run_id)
+        try:
+            run = registry.get(run_id)
+        except ApiError:
+            row = _persisted_row(run_id)
+            if row is None:
+                raise HTTPException(status_code=404,
+                                    detail={"code": "not_found",
+                                            "message": f"no such run: {run_id}"})
+            lines = _persisted_lines(row)
+            out = _persisted_summary(row)
+
+            async def _replay() -> Any:
+                for ln in lines:
+                    payload = json.dumps({"seq": ln["seq"], "text": ln["text"]})
+                    yield (f"id: {ln['seq']}\nevent: log\ndata: {payload}\n\n").encode()
+                payload = json.dumps({"state": out["state"],
+                                      "exit_code": out["exit_code"]})
+                yield (f"id: {out['last_seq']}\nevent: state\n"
+                       f"data: {payload}\n\n").encode()
+
+            return StreamingResponse(_replay(), media_type="text/event-stream",
+                                     headers={"Cache-Control": "no-cache",
+                                              "X-Accel-Buffering": "no"})
         last = request.headers.get("last-event-id", "")
         start_seq = int(last) if last.isdigit() else 0
 

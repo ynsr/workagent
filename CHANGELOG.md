@@ -1,6 +1,6 @@
 # Changelog
 ## Unreleased
-- Runs page shows persisted history: `GET /api/runs` merges the in-memory registry with the `runs` table (survives `serve` restarts as `db-<id>` rows with succeeded/failed derived from `exit_code`); `GET /api/runs/db-<id>` replays the row with empty lines and resume resolves from it. Previously the table was write-only — rows were mirrored but never read back, so the page went empty on restart.
+- Runs page shows persisted history: `GET /api/runs` merges the in-memory registry with the `runs` table (survives `serve` restarts as `db-<id>` rows with succeeded/failed derived from `exit_code`); `GET /api/runs/db-<id>` replays the DB-persisted output (last 2000 lines, `truncated` preserved) and its SSE endpoint replays the stored lines + terminal state; resume resolves from the row. Previously the table was metadata-only and detail came back with empty lines — old rows read back as empty/non-truncated via the `runs output/truncated` auto-migration.
 - Candidates: PR/MR rows whose URL or source branch already has a linked
   worktree are filtered out, and recent-issue rows whose key/URL is already
   linked are filtered out — every tab dedups against the worktrees table.
