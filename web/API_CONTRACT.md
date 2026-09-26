@@ -143,7 +143,8 @@ config key. Paths already linked are excluded server-side.
 ```json
 {"sessions": [{"id": "2026-09-22T10-00-00-123Z-4567",
   "worktree_ref": "jira:IPG-932", "harness_name": "omp",
-  "initiator_command": "start", "state": "finished",
+  "initiator_command": "start", "session_type": "start",
+  "metadata": {}, "state": "finished",
   "created_at": "2026-09-22T10:00:00.123Z",
   "file_path": "/home/x/.config/workagent/sessions/omp/2026-09-22T10-00-00-123Z-4567.jsonl"}]}
 ```

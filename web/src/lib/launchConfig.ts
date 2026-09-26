@@ -52,6 +52,7 @@ export interface LaunchForm {
   base: string
   launch: boolean
   fixComments: boolean
+  newFixSession: boolean
   merge: boolean
 }
 export const INITIAL: LaunchForm = {
@@ -63,6 +64,7 @@ export const INITIAL: LaunchForm = {
   // command for manual execution instead of auto-running (opt in with Run agent).
   launch: false,
   fixComments: false,
+  newFixSession: false,
   merge: false,
 }
 

@@ -45,8 +45,13 @@ export function sessionTitle(ref: string, branch?: string): string {
   return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") || ref
 }
 
-/** initiator_command → session kind label. */
-export function sessionKind(cmd: string): string {
+/** session_type (else initiator_command) → session kind label. */
+export function sessionKind(cmd: string, sessionType?: string | null): string {
+  const k = (sessionType ?? "").trim().toLowerCase()
+  if (k === "start") return "Start (task)"
+  if (k === "review") return "Review"
+  if (k === "sync") return "Sync"
+  if (k === "fix_comments") return "Fix comments"
   const c = cmd.trim().toLowerCase()
   if (c === "start") return "Start (task)"
   if (c === "review") return "Review"
@@ -155,7 +160,7 @@ export function Sessions() {
                   <TableHead>ID</TableHead>
                   <TableHead>Worktree</TableHead>
                   <TableHead>Harness</TableHead>
-                  <TableHead>Command</TableHead>
+                  <TableHead>Type</TableHead>
                   <TableHead>State</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead className="w-20" aria-label="Session actions" />
@@ -180,7 +185,10 @@ export function Sessions() {
                     </TableCell>
                     <TableCell>{s.harness_name}</TableCell>
                     <TableCell className="font-mono text-[13px]">
-                      {sessionKind(s.initiator_command)}
+                      {sessionKind(s.initiator_command, s.session_type)}
+                      {typeof s.metadata?.review_comments_fixed_at === "string" ? (
+                        <span title={`Fixed by run ${String(s.metadata?.fixed_by_run_id ?? "?")}`}> ✓ fixed</span>
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       <StateBadge state={s.state} />
@@ -232,6 +240,12 @@ export function SessionDetailPage() {
       />
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <StateBadge state={s.state} />
+        <Badge>{sessionKind(s.initiator_command, s.session_type)}</Badge>
+        {typeof s.metadata?.review_comments_fixed_at === "string" ? (
+          <Badge className="bg-emerald-500/15 text-emerald-300" title={`Fixed by run ${String(s.metadata?.fixed_by_run_id ?? "?")} at ${String(s.metadata?.review_comments_fixed_at)}`}>
+            ✓ review comments fixed
+          </Badge>
+        ) : null}
         {s.state === "running" && s.runs.some((r) => r.exit_code !== null && r.exit_code !== 0) ? (
           <Badge className="bg-red-500/15 text-red-300">
             run failed — session never finalized

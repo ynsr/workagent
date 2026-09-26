@@ -105,6 +105,7 @@ export function Launch() {
     ...INITIAL,
     ref: modeKnown ? refParam : "",
     fixComments: modeParam === "review" && params.get("fixComments") === "1",
+    newFixSession: false,
   }))
   const [submitting, setSubmitting] = useState(false)
   const [refreshingIssues, setRefreshingIssues] = useState(false)
@@ -185,6 +186,7 @@ export function Launch() {
     if (mode === "start") return buildStartArgs(form)
     const args = [refValue, "--no-tty"]
     if (form.fixComments) args.push("--fix-comments")
+    if (form.fixComments && form.newFixSession) args.push("--new-fix-session")
     if (repoValue) args.push("--repo", repoValue)
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
     if (form.launch) args.push("--launch")
@@ -196,6 +198,7 @@ export function Launch() {
     : [
         "headless (--no-tty)",
         mode === "review" && form.fixComments ? "--fix-comments (fix open review comments)" : null,
+        mode === "review" && form.fixComments && form.newFixSession ? "--new-fix-session (fresh fix session)" : null,
         repoValue ? `--repo ${repoValue}` : "repo: pick a repo",
         `--depth ${form.depth.trim() || "7"}`,
         mode === "start" && form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
@@ -313,6 +316,16 @@ export function Launch() {
                 label="Fix review comments"
                 flag="--fix-comments"
                 description="Fix open review comments: validate, apply, resolve/close, commit and push."
+              />
+            ) : null}
+            {mode === "review" && form.fixComments ? (
+              <CheckRow
+                id="launch-new-fix-session"
+                checked={form.newFixSession}
+                onChange={(v) => update("newFixSession", v)}
+                label="Create a new session"
+                flag="--new-fix-session"
+                description="Start a fresh fix session instead of continuing the latest review session."
               />
             ) : null}
           </div>

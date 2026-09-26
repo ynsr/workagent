@@ -141,6 +141,10 @@ export interface CandidatesResponse {
 export interface SessionRow {
   id: string; worktree_ref: string; state: string; harness_name: string;
   initiator_command: string; file_path: string; created_at: string;
+  /** Session kind: start | review | sync | fix_comments (null = pre-v6 row). */
+  session_type?: string | null;
+  /** Fix outcome etc. — review_comments_fixed_at + fixed_by_run_id on continue. */
+  metadata?: Record<string, unknown>;
 }
 
 export interface SessionRun {
@@ -322,6 +326,10 @@ export const api = {
   /** GET /api/default-repo?ref=… — linked-worktree repo else single-linked (issue #26). `repos` lists every linked repo of the ref's tracker for the picker. */
   defaultRepo: (ref: string) =>
     request<{ ref: string; repo: string; repos: string[] }>(`/api/default-repo${qs({ ref })}`),
+
+  /** GET /api/review-session?ref=... - latest non-running review session (fix-continue target). */
+  reviewSession: (ref: string) =>
+    request<{ ref: string; session_id: string | null; file_path: string | null }>(`/api/review-session${qs({ ref })}`),
 
   /** GET /api/sessions — persisted harness sessions (newest first). */
   sessions: () => request<SessionsResponse>("/api/sessions"),
