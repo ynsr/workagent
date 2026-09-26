@@ -14,17 +14,21 @@ def run_cmd(*a, **k):
     return _r.run_cmd(*a, **k)
 from .refs import _GITHUB_PR, _GITLAB_MR
 
-def _gh_bot_comment_resolved(body: str) -> bool:
-    """True when a GitHub bot `# Code Review` comment is marked resolved.
+def _bot_comment_resolved(body: str) -> bool:
+    """True when a bot `# Code Review` comment is marked resolved.
 
-    Plain PR comments carry no resolution state, so by convention (issue #32)
-    a bot review comment whose second non-empty line (directly below the
-    `# Code Review` header) is exactly `Status: RESOLVED` counts as
-    resolved; anything else is unresolved.
-    GitLab MRs keep their native resolved flags — this rule is GitHub-only.
+    Plain PR/MR comments carry no reliable resolution state across hosts, so
+    by convention a bot review comment whose second non-empty line (directly
+    below the `# Code Review` header) is exactly `Status: RESOLVED` counts
+    as resolved; anything else is unresolved.
+    This rule applies to both GitHub and GitLab.
     """
     lines = [ln.strip() for ln in str(body or "").splitlines() if ln.strip()]
     return len(lines) >= 2 and lines[1] == "Status: RESOLVED"
+
+
+# Kept for backward compatibility (tests/patches target this name).
+_gh_bot_comment_resolved = _bot_comment_resolved
 
 
 def _review_comments_gh(pr_url: str, cwd: str | None) -> dict:
@@ -34,8 +38,7 @@ def _review_comments_gh(pr_url: str, cwd: str | None) -> dict:
     (each one marks a completed harness review). Inline reviewThreads carry
     a native isResolved flag; plain (non-inline) bot comments have no
     resolution state, so a bot comment counts as resolved only when its
-    second non-empty line (below the header) is exactly `Status: RESOLVED`
-    (issue #32, GitHub-only).
+    second non-empty line (below the header) is exactly `Status: RESOLVED`.
     """
     m = _GITHUB_PR.match(pr_url or "")
     if not m:
@@ -50,7 +53,7 @@ def _review_comments_gh(pr_url: str, cwd: str | None) -> dict:
                     for c in comments
                     if str((c or {}).get("body") or "").lstrip().startswith("# Code Review")]
     reviews = len(bot_comments)
-    bot_resolved = sum(1 for b in bot_comments if _gh_bot_comment_resolved(b))
+    bot_resolved = sum(1 for b in bot_comments if _bot_comment_resolved(b))
     bot_unresolved = reviews - bot_resolved
     owner, name = m.group(1).split("/", 1)
     try:
@@ -75,9 +78,12 @@ def _review_comments_gh(pr_url: str, cwd: str | None) -> dict:
 def _review_comments_glab(pr_url: str, cwd: str | None) -> dict:
     """{reviews, unresolved, resolved} for a GitLab MR via discussions API.
 
-    reviews = notes whose body starts with `# Code Review`. A discussion is
-    resolved when every note in it is marked resolved (or the discussion
-    itself carries resolved=True).
+    reviews = notes whose body starts with `# Code Review`. Like GitHub,
+    a bot note counts as resolved only when its second non-empty line
+    (below the header) is exactly `Status: RESOLVED` — native
+    resolved/resolvable flags are ignored for bot notes. Non-bot review
+    threads keep native resolution (discussion resolved=True, or every
+    resolvable note resolved).
     """
     m = _GITLAB_MR.match(pr_url or "")
     if not m:
@@ -98,9 +104,16 @@ def _review_comments_glab(pr_url: str, cwd: str | None) -> dict:
     resolved = 0
     for disc in data or []:
         notes = (disc or {}).get("notes") or []
-        for n in notes:
-            if str((n or {}).get("body") or "").lstrip().startswith("# Code Review"):
-                reviews += 1
+        bot_notes = [str((n or {}).get("body") or "") for n in notes
+                     if str((n or {}).get("body") or "").lstrip().startswith("# Code Review")]
+        reviews += len(bot_notes)
+        if bot_notes:
+            # Bot threads: the marker decides, native flags ignored.
+            if all(_bot_comment_resolved(b) for b in bot_notes):
+                resolved += 1
+            else:
+                unresolved += 1
+            continue
         # Only review threads are resolvable; system/activity notes
         # ("added N commits", "marked as draft", …) are individual
         # discussions GitLab's UI never counts as unresolved.

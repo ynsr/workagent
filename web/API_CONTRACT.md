@@ -43,9 +43,9 @@ pipeline status for the PR — `success` | `failure` | `running` |
 display string `"R|U|R"` (done reviews | unresolved | resolved);
 `reviews_detail` is `{"reviews", "unresolved", "resolved"}` or
 `null` when there is no PR or the lookup failed (same 10-min/tip cache).
-GitHub-only (#32): plain (non-inline) `# Code Review` bot comments carry
-no native resolution state, so one counts as resolved only when its second
-non-empty line (below the header) is exactly `Status: RESOLVED`; GitLab MRs use native flags.
+Plain (non-inline) `# Code Review` bot comments carry
+no reliable cross-host resolution state, so one counts as resolved only when its second
+non-empty line (below the header) is exactly `Status: RESOLVED` — on both GitHub and GitLab; non-bot threads keep their native flags.
 Optional query:
 `?refresh=true` fetches origin (fresh remote tips for Behind/Ahead) and
 re-queries PR status (slow, hits the tracker CLI).

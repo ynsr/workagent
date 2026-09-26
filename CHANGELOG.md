@@ -36,13 +36,14 @@
   `--force` merges first; when merge is impossible the PR is left open and
   the remote branch kept while everything else is cleaned up (notified).
 - Remove-worktree modal: new live Cleanup-vs---force comparison table (mergeable / conflicted / merged / 404 rows) that follows the --force checkbox; all modal shells widened to 2xl with scroll caps to stop text overflow.
-- Issue #32: GitHub Reviews detection now counts plain (non-inline)
+- Issue #32: Reviews detection now counts plain (non-inline)
   `# Code Review` bot comments as resolved only when their second non-empty
-  line (below the header) is exactly `Status: RESOLVED` (GitHub-only; GitLab MRs keep native
-  flags). New `review --fix-comments` (per-worktree and `--all`,
+  line (below the header) is exactly `Status: RESOLVED` — on both GitHub and
+  GitLab (native flags are ignored for bot comments; non-bot threads keep
+  them). New `review --fix-comments` (per-worktree and `--all`,
   exclusive with `--fix`/`--post-comments`) launches a fix agent that
   validates each open comment against code + PR/MR description, applies,
-  resolves/closes (appending the marker line on GitHub), then commits and
+  resolves/closes (appending the marker line), then commits and
   pushes. Dashboard gains a per-row Fix action (wrench icon) and a
   "Fix all PR comments" top-bar button, both routed via Launch review
   mode (`fixComments=1` prefill) + `--fix-comments` checkbox.

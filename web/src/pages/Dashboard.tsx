@@ -244,7 +244,7 @@ export function Dashboard() {
       title: targeting ? `Fix PR comments on ${selCount} selected worktrees` : "Fix PR comments on all worktrees",
       description: targeting
         ? "Fixes open (not-resolved) PR/MR review comments on each selected worktree (non-TTY). Validates each finding against the code and PR/MR description, resolves/closes fixed comments, then commits and pushes."
-        : "Fixes open (not-resolved) PR/MR review comments on every active linked worktree with a PR/MR (non-TTY). Validates each finding against the code and PR/MR description, resolves/closes fixed comments (GitHub bot comments get a `Status: RESOLVED` second line), then commits and pushes.",
+        : "Fixes open (not-resolved) PR/MR review comments on every active linked worktree with a PR/MR (non-TTY). Validates each finding against the code and PR/MR description, resolves/closes fixed comments (bot comments get a `Status: RESOLVED` second line), then commits and pushes.",
       destructive: true,
       confirmLabel: targeting ? `Fix ${selCount}` : "Fix all",
       details: [scopeDetail("Every active linked worktree with a PR/MR")],

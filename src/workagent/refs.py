@@ -344,6 +344,7 @@ from .refs_ci import (  # noqa: F401,E402
 )
 
 from .refs_reviews import (  # noqa: F401,E402
+    _bot_comment_resolved,
     _gh_bot_comment_resolved,
     _review_comments_gh,
     _review_comments_glab,

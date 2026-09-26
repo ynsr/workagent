@@ -326,6 +326,11 @@ def test_fetch_pr_comment_stats_glab(monkeypatch):
 
     System/activity notes ("added N commits", …) are individual
     non-resolvable discussions and must not count as unresolved.
+
+    Bot `# Code Review` notes follow the same `Status: RESOLVED` second-line
+    marker as GitHub: a bot discussion counts as resolved only when every
+    bot note carries the marker — native resolved flags are ignored for bot
+    notes, non-bot threads keep native resolution.
     """
     monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: json.dumps([
         {"resolved": True, "notes": [
@@ -338,8 +343,33 @@ def test_fetch_pr_comment_stats_glab(monkeypatch):
     ]))
     assert refs.fetch_pr_comment_stats(
         "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo") == {
-            "reviews": 1, "unresolved": 1, "resolved": 1}
+            "reviews": 1, "unresolved": 2, "resolved": 0}
 
+
+def test_fetch_pr_comment_stats_glab_bot_marker(monkeypatch):
+    """Bot marker decides on GitLab too: native flags ignored for bot notes."""
+    monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: json.dumps([
+        # Marker present but native flags say unresolved → resolved anyway.
+        {"resolved": False, "notes": [
+            {"body": "# Code Review: ok\nStatus: RESOLVED", "resolved": False,
+             "resolvable": True}]},
+        # No marker but native flags say resolved → still unresolved.
+        {"resolved": True, "notes": [
+            {"body": "# Code Review: open finding", "resolved": True,
+             "resolvable": True}]},
+        # Mixed bot notes in one discussion → unresolved (all() required).
+        {"notes": [
+            {"body": "# Code Review: one\nStatus: RESOLVED",
+             "resolved": True, "resolvable": True},
+            {"body": "# Code Review: two", "resolved": True,
+             "resolvable": True}]},
+        # Non-bot thread keeps native resolution.
+        {"resolved": True, "notes": [
+            {"body": "looks good", "resolved": True, "resolvable": True}]},
+    ]))
+    assert refs.fetch_pr_comment_stats(
+        "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo") == {
+            "reviews": 4, "unresolved": 2, "resolved": 2}
 
 def test_pr_comment_stats_failure_is_soft(monkeypatch):
     def boom(*a, **k):
