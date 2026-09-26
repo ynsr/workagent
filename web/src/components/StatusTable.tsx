@@ -18,3 +18,13 @@ export interface StatusTableActions {
 
 export { StatusTable } from "@/components/StatusTableMain"
 export type { WorktreeMap }
+
+/** Optional row-selection contract (Dashboard bulk actions). */
+export interface StatusTableSelection {
+  /** Selected worktree keys (controlled). */
+  selected?: Set<string>
+  /** Called with the next selection set on toggle/select-all/clear. */
+  onSelectionChange?: (next: Set<string>) => void
+  /** Called with the filtered visible keys whenever they change. */
+  onVisibleKeys?: (keys: string[]) => void
+}

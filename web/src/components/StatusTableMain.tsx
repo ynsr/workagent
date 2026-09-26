@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { Search, XCircle } from "lucide-react"
 import type { Repo, WorktreeMap } from "@/lib/api"
@@ -6,6 +6,7 @@ import { repoKeyForItem } from "@/lib/useRepoTabs"
 import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { WorktreeDetail } from "@/components/WorktreeDetail"
 import {
@@ -19,7 +20,7 @@ import {
 import { CiBadge, PrBadge } from "@/components/StateBadge"
 import { EmptyState } from "@/components/StatusFeedback"
 import { cn } from "@/lib/utils"
-import type { StatusTableActions } from "@/components/StatusTable"
+import type { StatusTableActions, StatusTableSelection } from "@/components/StatusTable"
 
 import { RowActions } from "@/components/StatusActions"
 import { CommitsCell, ReviewsCell, formatAdded, matchesQuery } from "@/components/StatusCells"
@@ -84,6 +85,7 @@ export function StatusTable({
   networkExposed = false,
   className,
   repoTabs,
+  selection,
 }: {
   worktrees: WorktreeMap
   actions: StatusTableActions
@@ -91,11 +93,24 @@ export function StatusTable({
   networkExposed?: boolean
   className?: string
   repoTabs?: { repoFilter: string; setRepo: (v: string) => void; tabs: { names: string[]; counts: Map<string, number>; other: number }; repos: Repo[] }
+  selection?: StatusTableSelection
 }) {
   const [params, setParams] = useSearchParams()
   const q = (params.get("q") ?? "").trim()
   const [expanded, setExpanded] = useState<string | null>(null)
   const repoFilter = repoTabs?.repoFilter ?? ""
+  // Selection: controlled when the parent passes `selected`, else internal.
+  // `?sel=` carries the keys across refresh/share; unknown keys dropped.
+  const [internalSel, setInternalSel] = useState<Set<string>>(new Set<string>())
+  const sel = selection?.selected ?? internalSel
+  function writeSel(next: Set<string>) {
+    if (selection?.onSelectionChange) selection.onSelectionChange(next)
+    else setInternalSel(next)
+    const p = new URLSearchParams(params)
+    if (next.size > 0) p.set("sel", [...next].sort().join(","))
+    else p.delete("sel")
+    setParams(p, { replace: true })
+  }
 
   const keys = useMemo(() => {
     const needle = q.toLowerCase()
@@ -114,6 +129,30 @@ export function StatusTable({
         (worktrees[b]?.added_at ?? "").localeCompare(worktrees[a]?.added_at ?? ""),
       )
   }, [worktrees, q, repoFilter, repoTabs])
+  // Hydrate `?sel=` once per worktree-set (unknown keys dropped).
+  const hydratedFor = useRef<string>("")
+  useEffect(() => {
+    const known = Object.keys(worktrees).sort().join(",")
+    if (hydratedFor.current === known) return
+    hydratedFor.current = known
+    const raw = (params.get("sel") ?? "").split(",").map((s) => s.trim()).filter(Boolean)
+    const valid = raw.filter((k) => k in worktrees)
+    if (valid.length === 0) return
+    const next = new Set(valid)
+    if (selection?.onSelectionChange) selection.onSelectionChange(next)
+    else setInternalSel(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [worktrees])
+
+  // Report filtered visible keys (select-all scope); join-guard avoids loops.
+  const visibleJoined = keys.join("\0")
+  const lastVisible = useRef<string>("")
+  useEffect(() => {
+    if (lastVisible.current === visibleJoined) return
+    lastVisible.current = visibleJoined
+    selection?.onVisibleKeys?.(keys)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleJoined])
 
   function setQuery(next: string) {
     const p = new URLSearchParams(params)
@@ -161,6 +200,18 @@ export function StatusTable({
             className="pl-8"
           />
         </div>
+        {sel.size > 0 ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border bg-muted px-3 py-1 text-sm">
+            <span>{sel.size} selected</span>
+            <button
+              aria-label={`Clear selection (${sel.size} worktrees)`}
+              onClick={() => writeSel(new Set())}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <XCircle aria-hidden className="size-4" />
+            </button>
+          </span>
+        ) : null}
         {q ? (
           <span className="inline-flex items-center gap-1.5 rounded-full border bg-muted px-3 py-1 text-sm">
             <span className="font-mono text-[13px]">{q}</span>
@@ -191,6 +242,18 @@ export function StatusTable({
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={keys.length > 0 && keys.every((k) => sel.has(k)) ? true : keys.some((k) => sel.has(k)) ? "indeterminate" : false}
+                      onCheckedChange={(v) => {
+                        const next = new Set(sel)
+                        if (v === true) keys.forEach((k) => next.add(k))
+                        else keys.forEach((k) => next.delete(k))
+                        writeSel(next)
+                      }}
+                      aria-label="Select all visible worktrees"
+                    />
+                  </TableHead>
                   <TableHead>Worktree</TableHead>
                   <TableHead>Branch</TableHead>
                   <TableHead>Harness</TableHead>
@@ -210,7 +273,19 @@ export function StatusTable({
                   const invalid = entry.wt_valid === false
                   return (
                     <Fragment key={key}>
-                      <TableRow className={cn("group relative", invalid ? "bg-destructive/5" : undefined)}>
+                      <TableRow aria-selected={sel.has(key)} className={cn("group relative", sel.has(key) ? "data-[state=selected]:bg-muted/50" : undefined, invalid ? "bg-destructive/5" : undefined)}>
+                        <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            checked={sel.has(key)}
+                            onCheckedChange={() => {
+                              const next = new Set(sel)
+                              if (next.has(key)) next.delete(key)
+                              else next.add(key)
+                              writeSel(next)
+                            }}
+                            aria-label={`Select ${key}`}
+                          />
+                        </TableCell>
                         <TableCell className="font-medium">
                           <span className="flex items-center gap-2">
                             <WorktreeKeyLink worktreeKey={key} entry={entry} />
@@ -352,6 +427,16 @@ export function StatusTable({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="flex min-w-0 flex-wrap items-center gap-2">
+                      <Checkbox
+                        checked={sel.has(key)}
+                        onCheckedChange={() => {
+                          const next = new Set(sel)
+                          if (next.has(key)) next.delete(key)
+                          else next.add(key)
+                          writeSel(next)
+                        }}
+                        aria-label={`Select ${key}`}
+                      />
                       <WorktreeKeyLink worktreeKey={key} entry={entry} />
                       {invalid ? <Badge variant="destructive">invalid</Badge> : null}
                     </span>
