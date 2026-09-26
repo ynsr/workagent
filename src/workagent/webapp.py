@@ -201,9 +201,12 @@ def create_app(static_dir: Path, host: str, port: int,
     def default_repo(ref: str) -> dict:
         """Issue #26 default repo for *ref* — linked-worktree repo first,
         else the tracker's single linked repo; "" when ambiguous/unknown.
-        Never touches the CWD."""
+        Never touches the CWD. `repos` lists every linked repo of the
+        ref's tracker (plus the worktree-pinned default when outside it)
+        so a picker can offer each viable `--repo`."""
         from . import trackers as _trackers
-        return {"ref": ref, "repo": _trackers.default_repo_for_ref(ref)}
+        default, cands = _trackers.repos_for_ref(ref)
+        return {"ref": ref, "repo": default, "repos": cands}
 
     @app.get("/api/doctor")
     def doctor() -> dict:

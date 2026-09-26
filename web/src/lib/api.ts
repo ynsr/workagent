@@ -319,9 +319,9 @@ export const api = {
     request<CandidatesResponse>(
       `/api/candidates${qs({ force: opts?.force ? "true" : undefined })}`,
     ),
-  /** GET /api/default-repo?ref=… — linked-worktree repo else single-linked (issue #26). */
+  /** GET /api/default-repo?ref=… — linked-worktree repo else single-linked (issue #26). `repos` lists every linked repo of the ref's tracker for the picker. */
   defaultRepo: (ref: string) =>
-    request<{ ref: string; repo: string }>(`/api/default-repo${qs({ ref })}`),
+    request<{ ref: string; repo: string; repos: string[] }>(`/api/default-repo${qs({ ref })}`),
 
   /** GET /api/sessions — persisted harness sessions (newest first). */
   sessions: () => request<SessionsResponse>("/api/sessions"),

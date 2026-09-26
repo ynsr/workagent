@@ -18,6 +18,73 @@ import { cn } from "@/lib/utils"
 import { COPY, INITIAL, MODES } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
+import { StartFormFields, buildStartArgs } from "@/components/StartForm"
+
+/** Review/Sync fields (kept on the Launch page; Start lives in StartForm). */
+function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
+  mode: Mode
+  form: LaunchForm
+  onChange: <K extends keyof LaunchForm>(key: K, value: LaunchForm[K]) => void
+  refParam: string
+  issuesNonce: number
+  copy: (typeof COPY)[Mode]
+  repoNames: string[]
+}) {
+  if (mode === "sync") {
+    return (
+      <CheckRow
+        id="launch-merge"
+        checked={form.merge}
+        onChange={(v) => onChange("merge", v)}
+        label="Merge locally"
+        flag="--merge"
+        description="Merge locally instead of the remote rebase."
+      />
+    )
+  }
+  return (
+    <>
+      <div className="grid gap-2">
+        <Label htmlFor="launch-ref">PR/MR ref</Label>
+        <Input
+          id="launch-ref"
+          value={form.ref}
+          onChange={(e) => onChange("ref", e.target.value)}
+          placeholder={copy.refPlaceholder}
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </div>
+      <div className="grid gap-5 sm:grid-cols-2">
+        <div className="grid gap-2">
+          <Label htmlFor="launch-repo">
+            <FieldHelp label="Repository" flag="--repo" description="Registered name, local path, or clone URL. Required — prefilled from the ref when the backend knows it." />
+          </Label>
+          <SearchableSelect
+            value={form.repo}
+            options={repoNames}
+            onChange={(v) => onChange("repo", v)}
+            placeholder="Select a repo…"
+            allowCustom
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="launch-depth">
+            <FieldHelp label="Clone depth" flag="--depth" description="Git clone depth for the new worktree (default 7)." />
+          </Label>
+          <Input
+            id="launch-depth"
+            type="number"
+            min={1}
+            value={form.depth}
+            onChange={(e) => onChange("depth", e.target.value)}
+            placeholder="7"
+          />
+        </div>
+      </div>
+    </>
+  )
+}
 
 export function Launch() {
   const navigate = useNavigate()
@@ -25,8 +92,8 @@ export function Launch() {
   const confirm = useConfirm()
   const createRun = useCreateRun()
   const qc = useQueryClient()
-  const { data: repos } = useRepos()
   const { data: links } = useLinks()
+  const { data: repos } = useRepos()
   const modeParam = params.get("mode")
   const refParam = params.get("ref") ?? ""
   const modeKnown = modeParam === null || MODES.includes(modeParam as Mode)
@@ -81,37 +148,10 @@ export function Launch() {
     }
   }, [prefillChecked, modeParam, refParam, links])
   const refValue = form.ref.trim()
-  // Repo is mandatory: the debounced lookup fills the field whenever the
-  // backend returns a repo (linked worktree wins, else single linked repo);
-  // the user can always override. Never blank a manual pick.
-  useEffect(() => {
-    if (mode === "sync") return
-    const ref = refValue
-    if (!ref) {
-      return
-    }
-    let live = true
-    const t = setTimeout(() => {
-      api
-        .defaultRepo(ref)
-        .then((r) => {
-          if (!live) return
-          if (r.repo) setForm((f) => (f.repo.trim() ? f : { ...f, repo: r.repo }))
-        })
-        .catch(() => {
-          if (!live) return
-        })
-    }, 250)
-    return () => {
-      live = false
-      clearTimeout(t)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refValue, mode])
-
   function update<K extends keyof LaunchForm>(key: K, value: LaunchForm[K]) {
     setForm((f) => ({ ...f, [key]: value }))
   }
+
 
   function switchMode(next: Mode) {
     setMode(next)
@@ -128,11 +168,11 @@ export function Launch() {
     if (mode === "sync") {
       return [refValue, ...(form.merge ? ["--merge"] : [])]
     }
+    if (mode === "start") return buildStartArgs(form)
     const args = [refValue, "--no-tty"]
-    if (mode === "review" && form.fixComments) args.push("--fix-comments")
+    if (form.fixComments) args.push("--fix-comments")
     if (repoValue) args.push("--repo", repoValue)
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
-    if (mode === "start" && form.base.trim()) args.push("--base", form.base.trim())
     if (form.launch) args.push("--launch")
     return args
   }
@@ -149,7 +189,7 @@ export function Launch() {
       ].filter((v): v is string => v !== null)
   async function handleSubmit() {
     if (!refValue) return
-    if (!repoValue) {
+    if (mode !== "sync" && !repoValue) {
       toast.error("Pick a repo — none matches this ref (the server CWD is never used).")
       return
     }
@@ -234,103 +274,10 @@ export function Launch() {
           <CardDescription>{copy.refHint}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-5">
-          <div className="grid gap-2">
-            <Label htmlFor="launch-ref">
-              {mode === "start" ? "Issue ref" : mode === "review" ? "PR/MR ref" : "Worktree ref"}
-            </Label>
-            {mode === "start" && !refParam ? (
-              <>
-                <SearchableSelect
-                  key={issuesNonce}
-                  id="launch-ref"
-                  value={form.ref}
-                  options={[]}
-                  onChange={(v) => update("ref", v.trim())}
-                  placeholder={copy.refPlaceholder}
-                  allowCustom
-                  mapOption={(o) => (o.split(" — ")[0] ?? o).trim()}
-                  fetchOptions={async () => {
-                    const res = await api.issues()
-                    return {
-                      options: res.issues.map((i) =>
-                        i.title ? `${i.key} — ${i.title}` : i.key,
-                      ),
-                      warning: res.warning ?? undefined,
-                    }
-                  }}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Pick a recent issue or type any ref; free text is kept.
-                </p>
-              </>
-            ) : (
-              <Input
-                id="launch-ref"
-                value={form.ref}
-                onChange={(e) => update("ref", e.target.value)}
-                placeholder={copy.refPlaceholder}
-                autoComplete="off"
-                spellCheck={false}
-              />
-            )}
-          </div>
-
-          {mode === "sync" ? (
-            <CheckRow
-              id="launch-merge"
-              checked={form.merge}
-              onChange={(v) => update("merge", v)}
-              label="Merge locally"
-              flag="--merge"
-              description="Merge locally instead of the remote rebase."
-            />
+          {mode === "start" ? (
+            <StartFormFields form={form} onChange={update} idPrefix="launch" issuesNonce={mode === "start" && !refParam ? issuesNonce : undefined} />
           ) : (
-            <>
-              <div className="grid gap-5 sm:grid-cols-2">
-                <div className="grid gap-2">
-                  <Label htmlFor="launch-repo">
-                    <FieldHelp label="Repository" flag="--repo" description="Registered name, local path, or clone URL. Required — prefilled from the ref when the backend knows it." />
-                  </Label>
-                  <SearchableSelect
-                    value={form.repo}
-                    options={repoNames}
-                    onChange={(v) => update("repo", v)}
-                    placeholder="Select a repo…"
-                    allowCustom
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="launch-depth">
-                    <FieldHelp label="Clone depth" flag="--depth" description="Git clone depth for the new worktree (default 7)." />
-                  </Label>
-                  <Input
-                    id="launch-depth"
-                    type="number"
-                    min={1}
-                    value={form.depth}
-                    onChange={(e) => update("depth", e.target.value)}
-                    placeholder="7"
-                  />
-                </div>
-              </div>
-
-              {mode === "start" ? (
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <div className="grid gap-2">
-                    <Label htmlFor="launch-base">
-                      <FieldHelp label="Base branch" flag="--base" description="Base branch for the new worktree (default: repo default)." />
-                    </Label>
-                    <Input
-                      id="launch-base"
-                      value={form.base}
-                      onChange={(e) => update("base", e.target.value)}
-                      placeholder="repo default"
-                      spellCheck={false}
-                    />
-                  </div>
-                </div>
-              ) : null}
-            </>
+            <LaunchOtherFields mode={mode} form={form} onChange={update} refParam={refParam} issuesNonce={issuesNonce} copy={copy} repoNames={repoNames} />
           )}
 
           <div className="flex flex-wrap gap-x-6 gap-y-3">

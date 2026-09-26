@@ -31,6 +31,7 @@ def start_worktree(repo: Path, branch: str | None = None, issue: str | None = No
     _ = depth  # git-wt owns fetch depth today; kept for CLI compatibility
     if branch:
         _ensure_local_branch(repo, branch)
+    _fetch_base(repo, base)
     args = _start_args(repo, branch, issue, slug, link, base)
     try:
         result = _run_start(args, repo)
@@ -43,6 +44,20 @@ def start_worktree(repo: Path, branch: str | None = None, issue: str | None = No
         _repair_path_mismatch(repo, result, base)
     _ensure_upstream(result, base)
     return result
+
+def _fetch_base(repo: Path, base: str | None) -> None:
+    """Fetch the base branch so the new worktree branches from a fresh tip.
+
+    Best-effort: offline mirrors still work, the create just uses the
+    last-known tip (a stderr note names the stale branch).
+    """
+    if not base:
+        return
+    try:
+        run_cmd("git", "fetch", "origin", base, cwd=repo)
+    except HarnessError:
+        from .cli_core import eprint
+        eprint(f"warning: cannot fetch origin/{base} — branching from last-known tip")
 
 
 def _ensure_local_branch(repo: Path, branch: str) -> None:

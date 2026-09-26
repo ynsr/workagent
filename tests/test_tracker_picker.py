@@ -202,3 +202,25 @@ def test_resolve_repo_for_ref_multi_linked_errors(isolated_config, tmp_path, mon
         assert e.exit_code == 2
     else:
         raise AssertionError("expected HarnessError")
+
+
+def test_repos_for_ref_multi_linked_lists_candidates(isolated_config, tmp_path, monkeypatch):
+    """repos_for_ref: ambiguous tracker → no default, both repos offered."""
+    a = tmp_path / "a"
+    a.mkdir()
+    b = tmp_path / "b"
+    b.mkdir()
+    _seed("jira:IPG", [str(a), str(b)], monkeypatch, tmp_path)
+    default, cands = trackers.repos_for_ref("IPG-99")
+    assert default == ""
+    assert cands == [str(a), str(b)]
+
+
+def test_repos_for_ref_single_linked_auto(isolated_config, tmp_path, monkeypatch):
+    """repos_for_ref: single linked repo → default + sole candidate."""
+    linked = tmp_path / "proj"
+    linked.mkdir()
+    _seed("jira:IPG", [str(linked)], monkeypatch, tmp_path)
+    default, cands = trackers.repos_for_ref("IPG-99")
+    assert default == str(linked)
+    assert cands == [str(linked)]

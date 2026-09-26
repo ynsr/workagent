@@ -194,6 +194,29 @@ def default_repo_for_ref(issue_ref: str) -> str:
     return ""
 
 
+def repos_for_ref(issue_ref: str) -> tuple[str, list[str]]:
+    """``(default_repo, candidate_repos)`` for *issue_ref*.
+
+    *default_repo* follows :func:`default_repo_for_ref`; *candidate_repos*
+    is the tracker's linked-repo list (Rule 0/Rule 1 single repo folded
+    in when outside it) so a picker can offer every viable `--repo`.
+    """
+    from . import worktrees as _worktrees
+    default = default_repo_for_ref(issue_ref)
+    cands: list[str] = []
+    try:
+        tid = tracker_id(refs.parse_ref(issue_ref))
+    except Exception:
+        tid = ""
+    if tid:
+        cands = list(linked_repos(tid))
+    if default and default not in cands:
+        links = store.load_links()
+        resolved = _worktrees.resolve_worktree(issue_ref, links)
+        if isinstance(resolved, str) or issue_ref in links:
+            cands = [default, *cands]
+    return default, cands
+
 def resolve_for_tracker(tid: str, explicit: str | None, cwd: Path,
                         depth: int = 7, yes: bool = False,
                         persist: bool = True) -> tuple[Path, str]:

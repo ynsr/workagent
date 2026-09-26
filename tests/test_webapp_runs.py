@@ -97,8 +97,8 @@ def test_api_default_repo_prefers_linked_worktree(client, tmp_path, monkeypatch)
                                      "repo": str(linked)})
     r = client.get("/api/default-repo", params={"ref": "IPG-1"})
     assert r.status_code == 200, r.text
-    assert r.json() == {"ref": "IPG-1", "repo": str(linked)}
-    assert client.get("/api/default-repo", params={"ref": "IPG-99"}).json()["repo"] == str(linked)
+    assert r.json() == {"ref": "IPG-1", "repo": str(linked), "repos": [str(linked)]}
+    assert client.get("/api/default-repo", params={"ref": "IPG-99"}).json() == {"ref": "IPG-99", "repo": str(linked), "repos": [str(linked)]}
 
 
 def test_register_run_key_unique_per_path(client):
@@ -272,3 +272,19 @@ def test_resume_run_unknown_is_404_not_500(client):
     r = client.post("/api/runs/does-not-exist-123/resume")
     assert r.status_code == 404, r.text
     assert r.json()["error"]["code"] == "not_found"
+
+
+def test_api_default_repo_multi_linked_lists_repos(client, tmp_path):
+    """Ambiguous tracker → repo "" with every linked repo in `repos`."""
+    from workagent import trackers
+    a = tmp_path / "a"
+    a.mkdir()
+    b = tmp_path / "b"
+    b.mkdir()
+    trackers.check_or_record("jira:IPG", str(a), persist=True)
+    trackers.check_or_record("jira:IPG", str(b), yes=True, persist=True)
+    r = client.get("/api/default-repo", params={"ref": "IPG-99"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["repo"] == ""
+    assert body["repos"] == [str(a), str(b)]

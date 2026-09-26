@@ -1,5 +1,8 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useConfirmedRun, useCopyFeedback } from "@/components/RunActions"
+import { ActionDialog } from "@/components/LinkDialogs"
+import { StartFormFields, buildStartArgs, startFlagList, useStartForm } from "@/components/StartForm"
+import { Label } from "@/components/ui/label"
 import { useQueryClient } from "@tanstack/react-query"
 import { Copy, GitPullRequest, Play, RefreshCw, Ticket, UserPlus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -59,12 +62,20 @@ export function CandidatesCard() {
     }
   }
 
+  const [startKey, setStartKey] = useState<string | null>(null)
+
   async function handleAction(input: {
     command: "start" | "review" | "register"
     args: string[]
     label: string
     confirmText: string
   }) {
+    if (input.command === "start") {
+      // Repo picker dialog: single linked repo auto-selects, multi linked
+      // repos offer the dropdown, zero linked repos leave it blank.
+      setStartKey(input.args[0] ?? "")
+      return
+    }
     await runConfirmed({
       action: input.command === "register" ? null : input.command,
       title: input.label,
@@ -263,6 +274,70 @@ export function CandidatesCard() {
           </ul>
          )}
       </CardContent>
+      {startKey !== null ? (
+        <StartDialog issueKey={startKey} onClose={() => setStartKey(null)} />
+      ) : null}
     </Card>
+  )
+}
+
+/** Start dialog (Links → Candidates → Start): full Start form in a modal.
+ * The repo dropdown prefills from /api/default-repo (linked-worktree repo
+ * wins, else the single linked repo); an ambiguous tracker leaves it blank
+ * until the user picks one of the linked repos. Submits through the shared
+ * confirm → createRun pipeline, so no repo_ambiguous 400 can escape. */
+function StartDialog({ issueKey, onClose }: { issueKey: string; onClose: () => void }) {
+  const runConfirmed = useConfirmedRun()
+  const { form, setForm, update } = useStartForm({ ref: issueKey })
+  const refValue = form.ref.trim()
+  const repoValue = form.repo.trim()
+  // The hook seeds ref once; keep it pinned to the clicked row.
+  useEffect(() => {
+    if (!refValue) setForm((f) => ({ ...f, ref: issueKey }))
+  }, [refValue, issueKey, setForm])
+
+  async function handleStart() {
+    if (!refValue) return
+    if (!repoValue) {
+      toast.error("Pick a repo — this tracker is linked to multiple repos.")
+      return
+    }
+    const args = buildStartArgs(form)
+    onClose()
+    await runConfirmed({
+      action: "start",
+      title: `Start ${refValue}`,
+      description: "Creates a worktree from the issue and launches the coding agent.",
+      warning:
+        "The agent runs headless with auto-approve (--no-tty): it can commit, push and open MRs/PRs without further prompts. The server appends --yes.",
+      confirmLabel: "Start",
+      details: [
+        { label: "Ref", value: refValue, mono: true },
+        { label: "Repo", value: repoValue, mono: true },
+        { label: "Flags", value: startFlagList(form) },
+      ],
+      command: "start",
+      args,
+      successLabel: "started",
+    })
+  }
+
+  return (
+    <ActionDialog
+      title={`Start ${issueKey}`}
+      description="Pick the repo for this issue, then confirm to create the worktree."
+      onClose={onClose}
+      footer={
+        <Button type="button" onClick={() => void handleStart()} disabled={!refValue || !repoValue}>
+          <Play aria-hidden /> Start
+        </Button>
+      }
+    >
+      <div className="grid gap-2">
+        <Label>Ref</Label>
+        <p className="font-mono text-sm">{issueKey}</p>
+      </div>
+      <StartFormFields form={form} onChange={update} idPrefix="candidate-start" />
+    </ActionDialog>
   )
 }
