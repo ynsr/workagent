@@ -357,14 +357,19 @@ def _open_terminal(worktree: str, session_file: str) -> None:
     else:
         term = os.environ.get("TERMINAL", "")
         has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
-        candidates = ([term] if term else []) + [
-            "gnome-terminal", "konsole", "xfce4-terminal", "xterm"]
-        for t in candidates:
+        for t in ([term] if term else []) + [
+            "x-terminal-emulator", "ptyxis", "gnome-terminal", "kgx",
+            "konsole", "xfce4-terminal", "alacritty", "kitty",
+            "wezterm", "foot", "terminator", "xterm"]:
             if t and shutil.which(t):
                 if t == "gnome-terminal":
                     argv = [t, "--", "bash", "-lc", cmd]
-                elif t == "konsole":
+                elif t in ("konsole", "xfce4-terminal"):
                     argv = [t, "-e", "bash", "-lc", cmd]
+                elif t == "ptyxis":
+                    argv = [t, "-x", "bash", "-lc", cmd]
+                elif t in ("kitty", "wezterm", "foot"):
+                    argv = [t, "bash", "-lc", cmd]
                 else:
                     argv = [t, "-e", f"bash -lc {shlex.quote(cmd)}"]
                 break

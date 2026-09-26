@@ -304,6 +304,34 @@ def test_resume_session_opens_terminal(client, monkeypatch, tmp_path):
     assert opened == {"wt": "/wt", "sf": str(session)}
 
 
+def test_open_terminal_prefers_debian_alternative(monkeypatch):
+    """Ubuntu boxes expose ptyxis/x-terminal-emulator, not gnome-terminal —
+    the picker must find them instead of raising no_terminal."""
+    import os
+    from workagent import web_runs as _wr
+    monkeypatch.setattr(os, "environ", {"DISPLAY": ":0", "PATH": os.environ.get("PATH", "")})
+    monkeypatch.setattr("shutil.which",
+                        lambda t: f"/usr/bin/{t}" if t == "x-terminal-emulator" else None)
+    got: dict = {}
+    monkeypatch.setattr("subprocess.Popen",
+                        lambda argv, **kw: got.setdefault("argv", argv))
+    _wr._open_terminal("/wt", "/s.jsonl")
+    assert got["argv"][0] == "x-terminal-emulator"
+
+
+def test_open_terminal_supports_ptyxis_and_kitty(monkeypatch):
+    import os
+    from workagent import web_runs as _wr
+    for term, head in (("ptyxis", ["ptyxis", "-x"]),
+                       ("kitty", ["kitty"])):
+        monkeypatch.setattr("shutil.which",
+                            lambda t, term=term: f"/usr/bin/{t}" if t == term else None)
+        got: dict = {}
+        monkeypatch.setattr("subprocess.Popen",
+                            lambda argv, **kw: got.setdefault("argv", argv))
+        _wr._open_terminal("/wt", "/s.jsonl")
+        assert got["argv"] == [*head, "bash", "-lc", "cd /wt && omp --resume /s.jsonl"], term
+
 def test_specs_mirror_cli_flags():
     """Parity: webapp BOOL_FLAGS/VAL_FLAGS mirror the real Typer CLI (#25 checklist).
 
