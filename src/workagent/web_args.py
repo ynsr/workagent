@@ -47,7 +47,8 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "repo list": ("--json", "--csv"),
     "link set": ("--json",),
     "link remove": ("--json",),
-    "link list": ("--worktree", "--refresh-pr", "--json", "--csv"),
+    "link deactivate": ("--json",),
+    "link reactivate": ("--json",),
     "tracker add": ("--json",),
     "repo remove": ("--json", "--force"),
     "tracker remove": ("--json",),
@@ -63,7 +64,7 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "tracker add": ("--vendor", "--remote-url"),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove"},
-                                    "link": {"list", "set", "remove"},
+                                    "link": {"list", "set", "remove", "deactivate", "reactivate"},
                                     "tracker": {"add", "list", "remove"}}
 
 

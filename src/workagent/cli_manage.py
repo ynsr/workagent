@@ -279,7 +279,10 @@ def link_remove(
     repo: Optional[str] = typer.Option(None, "--repo", help="Only remove this repo from the tracker mapping."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
-    """Remove a tracker mapping or a worktree link.
+    """Remove a tracker mapping or delete a worktree DB row.
+
+    Worktree rows are deleted from the database only — files, branch and
+    PR are left untouched. This key's session history is deleted too.
 
     Example:
       workagent link remove jira:IPG
@@ -296,13 +299,42 @@ def link_remove(
             store.remove_tracker_repo(tid)
         _print_result({"removed": tid}, json_output)
         return
-    resolved = worktrees.resolve_worktree(ref, store.load_links())
+    resolved = worktrees.resolve_worktree(ref, store.load_links(include_inactive=True))
     if resolved is None:
         _fail(f"no tracker mapping or worktree link for {ref}", EXIT_USAGE)
-    links = store.load_links()
-    del links[resolved]
-    store.save_links(links)
-    _print_result({"removed": resolved}, json_output)
+    links = store.load_links(include_inactive=True)
+    if resolved in links:
+        store.delete_worktree_row(resolved)
+        _print_result({"removed": resolved}, json_output)
+        return
+
+
+@link_app.command("deactivate")
+@_catch_harness_errors
+def link_deactivate(
+    ref: str = typer.Argument(..., help="Worktree key (issue/PR ref, branch, or worktree path)."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Deactivate a worktree link (pure DB flag; files/branch/PR untouched)."""
+    resolved = worktrees.resolve_worktree(ref, store.load_links(include_inactive=True))
+    if resolved is None:
+        _fail(f"no worktree link for {ref}", EXIT_USAGE)
+    store.set_worktree_active(resolved, False)
+    _print_result({"deactivated": resolved}, json_output)
+
+
+@link_app.command("reactivate")
+@_catch_harness_errors
+def link_reactivate(
+    ref: str = typer.Argument(..., help="Worktree key (issue/PR ref, branch, or worktree path)."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Reactivate a deactivated worktree link (pure DB flag flip)."""
+    resolved = worktrees.resolve_worktree(ref, store.load_links(include_inactive=True))
+    if resolved is None:
+        _fail(f"no worktree link for {ref}", EXIT_USAGE)
+    store.set_worktree_active(resolved, True)
+    _print_result({"reactivated": resolved}, json_output)
 
 
 from .cli_repo_util import (  # noqa: F401,E402

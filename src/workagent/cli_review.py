@@ -61,6 +61,9 @@ def _reviewable_keys(links: dict, force: bool = False) -> list[tuple[str, str]]:
     """
     out = []
     for k, v in links.items():
+        if v.get("active", 1) == 0:
+            eprint(f"{k}: deactivated — skipping")
+            continue
         own_pr = v.get("pr_url", "")
         if own_pr and not k.startswith("pr:") and f"pr:{own_pr}" in links:
             continue
@@ -209,7 +212,7 @@ def review(
               "  Pass a ref, or use --all to review every not-reviewed worktree.",
               EXIT_USAGE)
     if all_wts:
-        reviewable = _reviewable_keys(store.load_links(), force=force_all)
+        reviewable = _reviewable_keys(store.load_links(include_inactive=True), force=force_all)
         if not reviewable:
             eprint("nothing to review")
             return

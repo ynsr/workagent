@@ -61,6 +61,8 @@ def sync_cmd(
     if not isinstance(session_file, str):
         session_file = None
     links = store.load_links()
+    if all_sessions:
+        links = store.load_links(include_inactive=True)
     if session_file and all_sessions:
         _fail("--session-file cannot be used with --all (one transcript per worktree — omit it and each conflict launch gets its own file)", EXIT_USAGE)
     if ref:
@@ -90,6 +92,10 @@ def sync_cmd(
     results = []
     for k in keys:
         entry = links[k]
+        if all_sessions and entry.get("active", 1) == 0:
+            eprint(f"{k}: deactivated — skipping")
+            results.append({"key": k, "status": "skipped:deactivated"})
+            continue
         eprint(f"syncing {k} …")
         if not all_sessions and not yes and not dry_run and sys.stdin.isatty():
             if not typer.confirm(f"sync {k} ({entry.get('branch', '?')})?"):

@@ -65,6 +65,8 @@ def cleanup(
               "  Re-run with --yes, or add --dry-run to preview.", EXIT_USAGE)
 
     links = store.load_links()
+    if merged:
+        links = store.load_links(include_inactive=True)
 
     if merged:
         # _status_cells(refresh_pr=True) is the merged/closed source of truth;
@@ -83,6 +85,10 @@ def cleanup(
             if store.active_harness(key):
                 rows.append({"key": key, "branch": branch,
                              "status": "skipped:live-harness"})
+                continue
+            if entry.get("active", 1) == 0:
+                rows.append({"key": key, "branch": branch,
+                             "status": "skipped:deactivated"})
                 continue
             wt = entry.get("worktree", "")
             if not wt or not worktrees.is_valid_worktree(wt):

@@ -25,7 +25,7 @@ def test_review_all_spawns_parallel_children(isolated_config, tmp_path, monkeypa
         (tmp_path / d / ".git").mkdir()  # cheap validity stand-in
     monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda p: True)
     real_load_links = store.load_links
-    monkeypatch.setattr(cli.store, "load_links", lambda: real_load_links())
+    monkeypatch.setattr(cli.store, "load_links", lambda **kw: real_load_links(**kw))
     spawns = []
 
     class FakePopen:

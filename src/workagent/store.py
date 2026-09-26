@@ -104,24 +104,44 @@ def load_links(include_inactive: bool = False) -> dict:
     for key, entry in links.items():
         if isinstance(entry, dict):
             entry.setdefault("ref_key", key)
+            entry.setdefault("active", 1)
+    if not include_inactive:
+        links = {k: v for k, v in links.items()
+                 if not isinstance(v, dict) or v.get("active", 1) != 0}
     return links
 
 
 def set_worktree_active(key: str, active: bool) -> None:
     """Flip a worktree's active flag (pure DB; no git/host side effects)."""
-    from . import store_sqlite as sq
+    from .errors import HarnessError
     db = _sqlite_path()
-    assert db is not None
-    sq.set_worktree_active(db, key, active)
+    if db is not None:
+        from . import store_sqlite as sq
+        sq.set_worktree_active(db, key, active)
+        return
+    path = config_dir() / "links.json"
+    links = _read_json(path, {})
+    if key not in links:
+        raise HarnessError(f"no worktree link for {key}", exit_code=2)
+    links[key]["active"] = 1 if active else 0
+    save_links(links)
 
 
 def delete_worktree_row(key: str) -> None:
     """Delete a worktree row only; files/branch/PR untouched."""
-    from . import store_sqlite as sq
+    from .errors import HarnessError
     db = _sqlite_path()
-    assert db is not None
-    sq.delete_worktree_row(db, key)
+    if db is not None:
+        from . import store_sqlite as sq
+        sq.delete_worktree_row(db, key)
+        return
+    links = load_links(include_inactive=True)
+    if key not in links:
+        raise HarnessError(f"no worktree link for {key}", exit_code=2)
+    del links[key]
+    save_links(links)
 
+def save_links(links: dict) -> None:
     db = _sqlite_path()
     if db is not None:
         from . import store_sqlite as sq
