@@ -213,6 +213,29 @@ def test_sync_explicit_session_file_recorded(client, monkeypatch):
     assert detail["session_file"] == "/tmp/s.jsonl"
 
 
+def test_all_runs_skip_session_file_injection(client, monkeypatch):
+    """Review/sync --all: no --session-file injected (CLI rejects it with --all)."""
+    seen: dict = {}
+
+    def fake_spawn(run, registry):
+        seen["argv"] = run.argv
+        seen["session_file"] = run.session_file
+        with run.lock:
+            run.exit_code = 0
+            run.state = "succeeded"
+        registry.release_target(run)
+
+    monkeypatch.setattr("workagent.webapp._spawn", fake_spawn)
+    for command in ("review", "sync"):
+        seen.clear()
+        r = client.post("/api/runs", json={"command": command,
+                                           "args": ["--all"],
+                                           "confirm": True})
+        assert r.status_code == 202, r.text
+        assert "--session-file" not in seen["argv"]
+        assert seen["session_file"] == ""
+
+
 def test_all_with_session_file_rejected(client):
     for command in ("review", "sync"):
         r = client.post("/api/runs", json={

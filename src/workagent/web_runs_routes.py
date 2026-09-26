@@ -71,6 +71,7 @@ def register_runs_routes(app, registry) -> None:
             tail.append("--force")
         if body.command in ("start", "review") \
                 and "--dry-run" not in body.args \
+                and "--all" not in body.args \
                 and not _has_session_file(body.command, body.args):
             # Preview (no --launch) gets a path too: the CLI preview carries it as
             # --resume (creating nothing), so resume/copy buttons work once

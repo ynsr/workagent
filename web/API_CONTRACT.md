@@ -212,7 +212,9 @@ harness session (`start`/`review`, or `sync` with an explicit
 `--session-file`); the web server injects `--session-file` for
 `start`/`review` launches — including the default preview (no `--launch`; the CLI preview
 carries it as `--resume` but creates nothing, so resume/copy buttons work
-once the printed command is run manually). Clients show resume buttons iff
+once the printed command is run manually) — except `--all` runs, which
+carry no `--session-file` (the CLI rejects it with `--all`; each
+per-worktree child generates its own transcript). Clients show resume buttons iff
 `session_file` is present.
 
 ### `GET /api/runs/{id}` → detail (adds `lines`)
