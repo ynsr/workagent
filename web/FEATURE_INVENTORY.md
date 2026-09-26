@@ -92,6 +92,9 @@ flags, `--force`-required conflicts (register), repo-picker aborts.
 - `review:<ref>` — one review per PR ref; `review:all` for bulk.
 - `cleanup:<normalized ref>` — one cleanup per session ref; `--merged`
   keys as `cleanup:all` (one bulk sweep at a time).
+- Dashboard toolbar acts on the `?sel=` selection when non-empty (N sequential
+  per-key runs under one confirm), else `--all`/`--merged`; `review --all`
+  carries no `--session-file` (each per-worktree child owns its transcript).
 - `open:<ref>` — one opener spawn per ref (harmless, but keeps the
   registry consistent).
 - `register`, `repo:add`, `repo:remove`, `link:set`, `link:remove` — config

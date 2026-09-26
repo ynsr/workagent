@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
@@ -83,6 +83,26 @@ export function Dashboard() {
   const [syncMerge, setSyncMerge] = useState(false)
   const [reviewForceAll, setReviewForceAll] = useState(false)
   const [cleanupTarget, setCleanupTarget] = useState<string | null>(null)
+  // Bulk-action selection (StatusTable `?sel=` column). Empty = all linked.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const selCount = selected.size
+  // Prune keys that vanish from the table (cleanup/deactivation).
+  useEffect(() => {
+    if (worktrees && [...selected].some((k) => !(k in worktrees))) {
+      setSelected(new Set([...selected].filter((k) => k in (worktrees ?? {}))))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [worktrees])
+  /** Scope label + confirm Scope detail for the four bulk buttons. */
+  function scopeLabel(verb: string): string {
+    return selCount > 0 ? `${verb} (${selCount})` : `${verb} all`
+  }
+  function scopeDetail(allText: string): { label: string; value: string } {
+    if (selCount === 0) return { label: "Scope", value: allText }
+    const keys = [...selected].sort()
+    const shown = keys.slice(0, 5).join(", ") + (keys.length > 5 ? ` +${keys.length - 5} more` : "")
+    return { label: "Scope", value: `${keys.length} selected: ${shown}` }
+  }
   async function handleRefreshPr() {
     setRefreshingPr(true)
     try {
@@ -109,14 +129,16 @@ export function Dashboard() {
 
   async function handleSyncAll() {
     setSyncMerge(false)
+    const targeting = selCount > 0
     const ok = await confirm({
       action: "sync",
-      title: "Sync all worktrees",
-      description:
-        "Runs sync for every active linked worktree (implies --yes). Same strategy as a single sync: remote rebase by default, local merge with -m.",
+      title: targeting ? `Sync ${selCount} selected worktrees` : "Sync all worktrees",
+      description: targeting
+        ? "Runs sync for each selected worktree (implies --yes). Same strategy as a single sync: remote rebase by default, local merge with -m."
+        : "Runs sync for every active linked worktree (implies --yes). Same strategy as a single sync: remote rebase by default, local merge with -m.",
       destructive: true,
-      confirmLabel: "Sync all",
-      details: [{ label: "Scope", value: "Every active linked worktree" }],
+      confirmLabel: targeting ? `Sync ${selCount}` : "Sync all",
+      details: [scopeDetail("Every active linked worktree")],
       extras: (
         <div className="grid gap-2.5">
           <CheckRow
@@ -131,28 +153,47 @@ export function Dashboard() {
       ),
     })
     if (!ok) return
-    try {
-      const { run_id } = await createRun.mutateAsync({
-        command: "sync",
-        args: ["--all", ...(syncMerge ? ["--merge"] : [])],
-        confirm: true,
-      })
-      runCreated(run_id, "Sync all")
-    } catch (err) {
-      toast.error(errorText(err))
+    if (!targeting) {
+      try {
+        const { run_id } = await createRun.mutateAsync({
+          command: "sync",
+          args: ["--all", ...(syncMerge ? ["--merge"] : [])],
+          confirm: true,
+        })
+        runCreated(run_id, "Sync all")
+      } catch (err) {
+        toast.error(errorText(err))
+      }
+      return
+    }
+    for (const key of [...selected].sort()) {
+      try {
+        const { run_id } = await createRun.mutateAsync({
+          command: "sync",
+          args: [key, ...(syncMerge ? ["--merge"] : [])],
+          confirm: true,
+        })
+        toast.success(`Sync ${key} started`, {
+          action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+        })
+      } catch (err) {
+        toast.error(`${key}: ${errorText(err)}`)
+      }
     }
   }
 
   async function handleReviewAll() {
     setReviewForceAll(false)
+    const targeting = selCount > 0
     const ok = await confirm({
       action: "review",
-      title: "Review all worktrees",
-      description:
-        "Reviews every not-reviewed active linked worktree in parallel (non-TTY). Skips worktrees without a PR/MR, with a live harness, or with unresolved PR comments. Reviewed worktrees whose tip moved are reviewed again.",
+      title: targeting ? `Review ${selCount} selected worktrees` : "Review all worktrees",
+      description: targeting
+        ? "Reviews each selected worktree (non-TTY). Skips worktrees without a PR/MR, with a live harness, or with unresolved PR comments."
+        : "Reviews every not-reviewed active linked worktree in parallel (non-TTY). Skips worktrees without a PR/MR, with a live harness, or with unresolved PR comments. Reviewed worktrees whose tip moved are reviewed again.",
       destructive: true,
-      confirmLabel: "Review all",
-      details: [{ label: "Scope", value: "Every active linked worktree" }],
+      confirmLabel: targeting ? `Review ${selCount}` : "Review all",
+      details: [scopeDetail("Every active linked worktree")],
       extras: (
         <div className="grid gap-2.5">
           <CheckRow
@@ -167,38 +208,74 @@ export function Dashboard() {
       ),
     })
     if (!ok) return
-    try {
-      const { run_id } = await createRun.mutateAsync({
-        command: "review",
-        args: ["--all", ...(reviewForceAll ? ["--force-all"] : [])],
-        confirm: true,
-      })
-      runCreated(run_id, "Review all")
-    } catch (err) {
-      toast.error(errorText(err))
+    if (!targeting) {
+      try {
+        const { run_id } = await createRun.mutateAsync({
+          command: "review",
+          args: ["--all", ...(reviewForceAll ? ["--force-all"] : [])],
+          confirm: true,
+        })
+        runCreated(run_id, "Review all")
+      } catch (err) {
+        toast.error(errorText(err))
+      }
+      return
+    }
+    for (const key of [...selected].sort()) {
+      try {
+        const { run_id } = await createRun.mutateAsync({
+          command: "review",
+          args: [key, ...(reviewForceAll ? ["--force-all"] : [])],
+          confirm: true,
+        })
+        toast.success(`Review ${key} started`, {
+          action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+        })
+      } catch (err) {
+        toast.error(`${key}: ${errorText(err)}`)
+      }
     }
   }
 
   async function handleFixAll() {
+    const targeting = selCount > 0
     const ok = await confirm({
       action: "review",
-      title: "Fix PR comments on all worktrees",
-      description:
-        "Fixes open (not-resolved) PR/MR review comments on every active linked worktree with a PR/MR (non-TTY). Validates each finding against the code and PR/MR description, resolves/closes fixed comments (GitHub bot comments get a `Status: RESOLVED` second line), then commits and pushes.",
+      title: targeting ? `Fix PR comments on ${selCount} selected worktrees` : "Fix PR comments on all worktrees",
+      description: targeting
+        ? "Fixes open (not-resolved) PR/MR review comments on each selected worktree (non-TTY). Validates each finding against the code and PR/MR description, resolves/closes fixed comments, then commits and pushes."
+        : "Fixes open (not-resolved) PR/MR review comments on every active linked worktree with a PR/MR (non-TTY). Validates each finding against the code and PR/MR description, resolves/closes fixed comments (GitHub bot comments get a `Status: RESOLVED` second line), then commits and pushes.",
       destructive: true,
-      confirmLabel: "Fix all",
-      details: [{ label: "Scope", value: "Every active linked worktree with a PR/MR" }],
+      confirmLabel: targeting ? `Fix ${selCount}` : "Fix all",
+      details: [scopeDetail("Every active linked worktree with a PR/MR")],
     })
     if (!ok) return
-    try {
-      const { run_id } = await createRun.mutateAsync({
-        command: "review",
-        args: ["--all", "--fix-comments"],
-        confirm: true,
-      })
-      runCreated(run_id, "Fix all PR comments")
-    } catch (err) {
-      toast.error(errorText(err))
+    if (!targeting) {
+      try {
+        const { run_id } = await createRun.mutateAsync({
+          command: "review",
+          args: ["--all", "--fix-comments"],
+          confirm: true,
+        })
+        runCreated(run_id, "Fix all PR comments")
+      } catch (err) {
+        toast.error(errorText(err))
+      }
+      return
+    }
+    for (const key of [...selected].sort()) {
+      try {
+        const { run_id } = await createRun.mutateAsync({
+          command: "review",
+          args: [key, "--fix-comments"],
+          confirm: true,
+        })
+        toast.success(`Fix ${key} started`, {
+          action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+        })
+      } catch (err) {
+        toast.error(`${key}: ${errorText(err)}`)
+      }
     }
   }
 
@@ -342,17 +419,17 @@ export function Dashboard() {
               <RefreshCw className={refreshingPr ? "animate-spin" : undefined} aria-hidden />
               Refresh PR
             </Button>
-            <Button variant="secondary" size="sm" onClick={handleSyncAll}>
-              Sync all
+            <Button variant="outline" size="sm" onClick={handleSyncAll} title={selCount > 0 ? `Sync ${selCount} selected worktrees` : "Sync every active linked worktree"}>
+              {scopeLabel("Sync")}
             </Button>
-            <Button variant="outline" size="sm" onClick={handleReviewAll}>
-              Review all
+            <Button variant="outline" size="sm" onClick={handleReviewAll} title={selCount > 0 ? `Review ${selCount} selected worktrees` : "Review every active linked worktree"}>
+              {scopeLabel("Review")}
             </Button>
-            <Button variant="outline" size="sm" onClick={handleFixAll}>
-              Fix all PR comments
+            <Button variant="outline" size="sm" onClick={handleFixAll} title={selCount > 0 ? `Fix PR comments on ${selCount} selected worktrees` : "Fix PR comments on every active linked worktree"}>
+              {selCount > 0 ? `Fix (${selCount})` : "Fix all PR comments"}
             </Button>
-            <Button variant="outline" size="sm" onClick={handleCleanupMerged}>
-              Cleanup merged
+            <Button variant="outline" size="sm" onClick={handleCleanupMerged} disabled={selCount > 0} title={selCount > 0 ? "Clear selection to clean all merged (or Delete per row)" : "Clean every merged/closed linked worktree"}>
+              {scopeLabel("Cleanup")}
             </Button>
             <Button variant="outline" size="sm" onClick={handleCopyJson}>
               <Copy aria-hidden /> JSON
@@ -415,6 +492,7 @@ export function Dashboard() {
             showWorktree={showWorktree}
             networkExposed={info?.network_exposed ?? false}
             repoTabs={repos ? { ...repoTabs, repos } : undefined}
+            selection={{ selected, onSelectionChange: setSelected }}
           />
           <DeactivatedTable
             worktrees={Object.fromEntries(
