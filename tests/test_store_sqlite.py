@@ -336,6 +336,46 @@ def test_migrate_worktrees_active_idempotent(tmp_path):
             conn.execute("UPDATE worktrees SET active=1 WHERE 0")
 
 
+def test_migrate_sessions_harness_renames_runtime_column(tmp_path):
+    """Pre-rename DBs carry sessions.runtime_name; the harness rename must
+    migrate it in place so insert_session (harness_name) keeps working."""
+    import sqlite3
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("ALTER TABLE sessions RENAME COLUMN harness_name TO runtime_name")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+        conn.execute("INSERT INTO sessions (id, worktree_ref, state, runtime_name,"
+                     " initiator_command, prompt, file_path, created_at)"
+                     " VALUES ('s1', 'k', 'running', 'omp', 'start', 'p', '/tmp/s.jsonl', '2026-01-01')")
+    sq._INIT_CACHE.pop(str(db), None)
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+        assert "harness_name" in cols
+        assert "runtime_name" not in cols
+        assert conn.execute("SELECT harness_name FROM sessions WHERE id='s1'").fetchone()[0] == "omp"
+    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
+                            initiator_command="start", prompt="p",
+                            file_path="/tmp/new.jsonl")
+    assert sq.get_session(db, sid)["harness_name"] == "omp"
+
+
+def test_init_db_repairs_legacy_runtime_column(tmp_path):
+    """init_db on a DB whose sessions table still has runtime_name must end
+    with a harness_name column and a passing _schema_current probe."""
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("ALTER TABLE sessions RENAME COLUMN harness_name TO runtime_name")
+    sq._INIT_CACHE.pop(str(db), None)
+    assert not sq._schema_current(db)
+    sq.init_db(db)
+    assert sq._schema_current(db)
+
 def test_load_links_rows_filters_inactive(tmp_path):
     from workagent import store_sqlite as sq, store_links as sl
     db = tmp_path / "state.db"

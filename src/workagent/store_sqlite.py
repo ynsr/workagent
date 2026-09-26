@@ -117,6 +117,23 @@ def _migrate_runs_output(conn) -> None:
     if "truncated" not in cols:
         conn.execute("ALTER TABLE runs ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0")
 
+def _migrate_sessions_harness(conn) -> None:
+    """Schema v5: sessions.runtime_name → harness_name (the runtime→harness rename).
+
+    Code writes ``harness_name`` but pre-rename DBs still carry
+    ``runtime_name`` — every insert_session then fails with ``no such
+    column`` and the run mirror silently skips (no session row, no runs
+    row). Idempotent: skipped when harness_name exists; renames in
+    place so existing session history survives.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+    if not cols or "harness_name" in cols:
+        return
+    if "runtime_name" in cols:
+        conn.execute("ALTER TABLE sessions RENAME COLUMN runtime_name TO harness_name")
+    else:
+        conn.execute("ALTER TABLE sessions ADD COLUMN harness_name TEXT NOT NULL DEFAULT ''")
+
 def _migrate_worktrees_active(conn) -> None:
     """Schema v4: worktrees gains active (1 = active, 0 = deactivated).
 
@@ -283,7 +300,10 @@ def _schema_current(path: Path) -> bool:
         if {"output", "truncated"} > cols:
             return False
         wcols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
-        return "active" in wcols
+        if "active" not in wcols:
+            return False
+        scols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+        return "harness_name" in scols
     except Exception:
         return False
     finally:
@@ -307,6 +327,7 @@ def init_db(path: Path) -> Path:
                 _migrate_v2(conn)
                 _migrate_runs_output(conn)
                 _migrate_worktrees_active(conn)
+                _migrate_sessions_harness(conn)
             break
         except sqlite3.OperationalError as e:
             last = e

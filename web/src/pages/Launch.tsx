@@ -139,15 +139,28 @@ export function Launch() {
       toast.warning(`Unknown launch mode "${modeParam}" — form left blank`)
       return
     }
-    if (modeParam === "sync" && refParam && links) {
+    if ((modeParam === "sync" || modeParam === "review") && refParam && links) {
       setPrefillChecked(true)
-      if (!(refParam in links.worktrees)) {
+      const entry = links.worktrees[refParam]
+      if (modeParam === "sync" && !entry) {
         setForm((f) => (f.ref === refParam ? { ...f, ref: "" } : f))
         toast.warning(`No linked worktree for "${refParam}" — form left blank`)
+      } else if (entry?.repo) {
+        // Review/Sync arrive from a worktree row: the worktree's repo wins.
+        const repo: string = entry.repo
+        setForm((f) => (f.repo ? f : { ...f, repo }))
+      } else {
+        // Review of a PR ref (no linked worktree): ask the backend, which
+        // resolves linked-worktree → single-linked-tracker repo.
+        api.defaultRepo(refParam).then(
+          (r) => {
+            if (r.repo) setForm((f) => (f.repo ? f : { ...f, repo: r.repo }))
+          },
+          () => {},
+        )
       }
     }
   }, [prefillChecked, modeParam, refParam, links])
-  const refValue = form.ref.trim()
   function update<K extends keyof LaunchForm>(key: K, value: LaunchForm[K]) {
     setForm((f) => ({ ...f, [key]: value }))
   }
@@ -161,6 +174,7 @@ export function Launch() {
   // Repo is mandatory: prefill from /api/default-repo (linked-worktree repo
   // wins, else the single linked repo) whenever it returns one; the user can
   // always override. No "auto" pseudo-option — the dropdown holds a real repo.
+  const refValue = form.ref.trim()
   const repoValue = form.repo.trim() || undefined
   const copy = COPY[mode]
   const repoNames = useMemo(() => (repos ?? []).map((r) => r.name), [repos])
