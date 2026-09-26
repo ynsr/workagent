@@ -101,8 +101,8 @@ function LogViewer({
     </div>
   )
 }
-/** Copy the full cd-prefixed runtime command parsed from the log. */
-function RunRuntimeCommandAction({ lines }: { lines: RunLine[] }) {
+/** Copy the full cd-prefixed harness command parsed from the log. */
+function RunHarnessCommandAction({ lines }: { lines: RunLine[] }) {
   const cmd = useMemo(() => {
     // The CLI preview embeds the prompt as one shlex-quoted argv element;
     // prompts contain newlines, so run.append's splitlines() breaks the
@@ -110,13 +110,13 @@ function RunRuntimeCommandAction({ lines }: { lines: RunLine[] }) {
     // quote-unbalanced) until quotes balance.
     let start = -1
     for (let i = 0; i < lines.length; i++) {
-      if (/runtime command:\s*\S/.test(lines[i]?.text ?? "")) {
+      if (/harness command:\s*\S/.test(lines[i]?.text ?? "")) {
         start = i
         break
       }
     }
     if (start < 0) return ""
-    const first = (lines[start]?.text ?? "").replace(/^.*runtime command:\s*/, "")
+    const first = (lines[start]?.text ?? "").replace(/^.*harness command:\s*/, "")
     let cmd = first.trimEnd()
     const unbalanced = (s: string) => (s.match(/'/g) ?? []).length % 2 === 1
     for (let i = start + 1; i < lines.length && unbalanced(cmd); i++) {
@@ -130,11 +130,11 @@ function RunRuntimeCommandAction({ lines }: { lines: RunLine[] }) {
       size="sm"
       onClick={() => {
         copyToClipboard(cmd)
-          .then(() => toast.success("Runtime command copied"))
+          .then(() => toast.success("Harness command copied"))
           .catch((err: unknown) => toast.error(errorText(err)))
       }}
     >
-      <Copy aria-hidden /> Copy runtime command
+      <Copy aria-hidden /> Copy harness command
     </Button>
   )
 }
@@ -265,7 +265,7 @@ export function RunDetail() {
             {run.session_file ? (
               <SessionResumeActions runId={run.id} worktree={run.worktree} sessionFile={run.session_file} variant="outline" />
             ) : null}
-            <RunRuntimeCommandAction lines={lines} />
+            <RunHarnessCommandAction lines={lines} />
             {isRunning ? (
               <Button
                 variant="destructive"

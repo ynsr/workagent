@@ -82,7 +82,7 @@ def test_repo_names_callback_missing_store_returns_empty(tmp_path, monkeypatch):
     assert cb(None, "pro") == []
 
 
-def test_runtime_completion_protocol_lists_subcommands(isolated_config):
+def test_harness_completion_protocol_lists_subcommands(isolated_config):
     """Regression: the env-var completion server must work in a fresh process.
 
     typer >= 0.27 only registers its shell completion classes while

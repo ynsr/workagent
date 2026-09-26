@@ -27,39 +27,39 @@ from tests.webapp_helpers import (
     client,
 )
 
-def test_start_accepts_and_forwards_no_runtime(client, monkeypatch):
-    """`start --no-runtime` passes validation and reaches the child argv."""
+def test_start_accepts_and_forwards_launch(client, monkeypatch):
+    """`start --launch` passes validation and reaches the child argv."""
     _stub_spawn(monkeypatch)
     r = client.post("/api/runs", json={
-        "command": "start", "args": ["IPG-1", "--no-tty", "--no-runtime"],
+        "command": "start", "args": ["IPG-1", "--no-tty", "--launch"],
         "confirm": True,
     })
     assert r.status_code == 202, r.text
     rid = r.json()["run_id"]
     run = client.app.state.registry.get(rid)
-    assert "--no-runtime" in run.argv and "--yes" in run.argv  # server appends --yes
+    assert "--launch" in run.argv and "--yes" in run.argv  # server appends --yes
     assert "--session-file" in run.argv and run.session_file.endswith(".jsonl")
     _wait_state(client, rid, {"succeeded"})
 
 
-def test_review_accepts_no_runtime_shorthand_N(client, monkeypatch):
-    """-N (CLI shorthand) passes web validation like --no-runtime."""
+def test_review_accepts_launch_shorthand_L(client, monkeypatch):
+    """-L (CLI shorthand) passes web validation like --launch."""
     _stub_spawn(monkeypatch)
     r = client.post("/api/runs", json={
-        "command": "review", "args": ["o/r#33", "-N", "--dry-run"],
+        "command": "review", "args": ["o/r#33", "-L", "--dry-run"],
     })
     assert r.status_code == 202, r.text
 
 
 def test_start_rejects_stale_no_harness_alias(client):
-    """Old `--no-harness` (pre-#14 rename) is rejected with a bad_arg hint (issue #15)."""
+    """Old `--no-harness`/`-N` are rejected with a bad_arg hint (renamed to --launch)."""
     r = client.post("/api/runs", json={
         "command": "start", "args": ["IPG-1", "--no-tty", "--no-harness"],
         "confirm": True,
     })
     assert r.status_code == 400, r.text
     body = r.json()["error"]
-    assert body["code"] == "bad_arg" and "--no-runtime" in body["message"]
+    assert body["code"] == "bad_arg" and "--launch" in body["message"]
 
 
 def test_validate_args_allows_verbose_global():

@@ -137,7 +137,7 @@ def test_api_sessions_roundtrip(client, tmp_path, monkeypatch):
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
                      " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
+    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
                             initiator_command="start", prompt="hello",
                             file_path="/tmp/x.jsonl")
     body = client.get("/api/sessions").json()
@@ -158,7 +158,7 @@ def test_mirror_run_persists_session_run(client):
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
                      " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
+    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
                             initiator_command="start", prompt="hello",
                             file_path="/tmp/x.jsonl",
                             session_id="2026-09-26T00-00-00-000Z-1234")
@@ -267,7 +267,7 @@ def test_resume_session_opens_terminal(client, monkeypatch, tmp_path):
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
                      " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
+    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
                             initiator_command="start", prompt="hello",
                             file_path=str(session))
     opened: dict = {}

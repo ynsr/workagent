@@ -72,7 +72,7 @@ def register_runs_routes(app, registry) -> None:
         if body.command in ("start", "review") \
                 and "--dry-run" not in body.args \
                 and not _has_session_file(body.command, body.args):
-            # --no-runtime gets a path too: the CLI preview carries it as
+            # Preview (no --launch) gets a path too: the CLI preview carries it as
             # --resume (creating nothing), so resume/copy buttons work once
             # the user runs the printed command manually.
             from . import store_sqlite as _sq
@@ -183,7 +183,7 @@ def register_runs_routes(app, registry) -> None:
         """Open the OS default terminal resumed on this run's session.
 
         Non-destructive (same class as `open`): no confirm needed. 404 when
-        the run executed no runtime session or the transcript is missing.
+        the run executed no harness session or the transcript is missing.
         Persisted runs (db-<id>) resolve from the runs table since the
         registry is empty after a restart.
         """
@@ -198,7 +198,7 @@ def register_runs_routes(app, registry) -> None:
                 str(row.get("command") or ""), list(args))
             if not session_file:
                 raise ApiError("no_session",
-                               f"run {run_id} executed no runtime session", 404)
+                               f"run {run_id} executed no harness session", 404)
             if not Path(session_file).exists():
                 raise ApiError("missing_session",
                                f"session transcript missing: {session_file}", 404)
@@ -213,7 +213,7 @@ def register_runs_routes(app, registry) -> None:
             or _session_file_arg(run.command, run.args)
         if not session_file:
             raise ApiError("no_session",
-                           f"run {run_id} executed no runtime session", 404)
+                           f"run {run_id} executed no harness session", 404)
         if not Path(session_file).exists():
             raise ApiError("missing_session",
                            f"session transcript missing: {session_file}", 404)

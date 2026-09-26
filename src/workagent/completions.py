@@ -49,7 +49,7 @@ START_MARKER = "# >>> {prog} completions >>>"
 END_MARKER = "# <<< {prog} completions <<<"
 
 def ensure_completion_classes() -> None:
-    """Register Typer's shell completion classes for the runtime server.
+    """Register Typer's shell completion classes for the harness server.
 
     typer >= 0.27 vendors click but only registers its bash/zsh/fish
     completion classes inside ``completion_init()``, which the env-var

@@ -55,7 +55,7 @@ export interface LaunchForm {
   depth: string
   base: string
   harness: string
-  noRuntime: boolean
+  launch: boolean
   fixComments: boolean
   merge: boolean
   dryRun: boolean
@@ -67,9 +67,9 @@ export const INITIAL: LaunchForm = {
   depth: "7",
   base: "",
   harness: DEFAULT_HARNESS,
-  // Issue #24: Start/Review launches should default to printing the
-  // runtime command for manual execution instead of auto-running.
-  noRuntime: true,
+  // Issue #24: Start/Review launches default to printing the harness
+  // command for manual execution instead of auto-running (opt in with --launch).
+  launch: false,
   fixComments: false,
   merge: false,
   dryRun: false,

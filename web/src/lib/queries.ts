@@ -118,7 +118,7 @@ export function useCancelRun() {
   })
 }
 
-/** Resume a run's runtime session in the OS terminal (fire-and-forget). */
+/** Resume a run's harness session in the OS terminal (fire-and-forget). */
 export function useResumeRun() {
   return useMutation({
     mutationFn: (id: string) => api.resumeRun(id),

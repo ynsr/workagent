@@ -19,7 +19,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `start --base BR` | mutating | — | `start` | no | unknown branch → git-wt error (exit 1) | repo-on-X note (TTY, no `--yes`) |
 | `start --harness omp` | mutating | — | `start` | no | unsupported harness name | |
 | `start --no-tty` | mutating | — | `start` | no | | none — headless mode (`omp -p --auto-approve`, `backend.command_argv(no_tty=True)`) |
-| `start -N/--no-runtime` (was `--no-harness` before #14; old name rejected) | mutating | — | `start` | no | | lands in interactive shell — **UI must not use it** (needs a TTY shell) |
+| `start --launch` (default: preview) | mutating | — | `start` | no | | without `--launch` lands in interactive shell with the printed command — **UI must not use `--launch`** (needs a TTY shell) |
 | `start --dry-run` | read-only-ish | — | `start` | no | | none |
 | `start --yes` | mutating | — | `start` | no | | skips confirmations |
 | `start --json` | mutating | — | `start` | no | | |

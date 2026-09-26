@@ -43,7 +43,7 @@ def _mirror_run(run: Run) -> None:
     targets the session id matching the transcript stem. The buffered
     output lines go with it (capped at MAX_RUN_OUTPUT_LINES) so the log
     survives a restart. Anything missing (no db, no session row yet, e.g.
-    --no-runtime never launched) is a silent skip — the live registry
+    preview (no --launch) never launched) is a silent skip — the live registry
     remains the source of truth.
     """
     if not run.session_file:

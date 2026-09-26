@@ -83,8 +83,8 @@ def test_help_shows_examples_and_exit_codes(isolated_config):
     assert "workagent start" in r.output
 
 
-def test_no_runtime_shorthand_N_on_start_and_review(isolated_config, tmp_path, monkeypatch):
-    """`-N` is accepted as shorthand for --no-runtime on both subcommands."""
+def test_launch_shorthand_L_on_start_and_review(isolated_config, tmp_path, monkeypatch):
+    """`-L` is accepted as shorthand for --launch on both subcommands."""
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     worktree = tmp_path / "wt"
@@ -98,14 +98,22 @@ def test_no_runtime_shorthand_N_on_start_and_review(isolated_config, tmp_path, m
                                             "branch": "feat/33"})
     launched = []
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
-    r = runner.invoke(cli.app, ["start", "o/r#33", "--no-tty", "-N", "--json"])
+    # preview (no --launch): prints the command, launches nothing
+    r = runner.invoke(cli.app, ["start", "o/r#33", "--no-tty", "--json"])
     assert r.exit_code == 0, r.output
     r2 = runner.invoke(cli.app, ["review", "https://github.com/o/r/pull/33",
-                                 "--no-tty", "-N", "--json"])
+                                 "--no-tty", "--json"])
     assert r2.exit_code == 0, r2.output
     assert launched == []
-    assert json.loads(r.stdout)["runtime_command"].startswith("cd ")
-    assert json.loads(r2.stdout)["runtime_command"].startswith("cd ")
+    assert json.loads(r.stdout)["harness_command"].startswith("cd ")
+    assert json.loads(r2.stdout)["harness_command"].startswith("cd ")
+    # -L shorthand launches like --launch
+    launched.clear()
+    store.record_link("jira:IPG-33", {"issue": "IPG-33", "worktree": str(worktree),
+                                      "branch": "feat/33", "repo": str(repo_dir)})
+    r3 = runner.invoke(cli.app, ["start", "o/r#33", "--no-tty", "-L", "--json"])
+    assert r3.exit_code == 0, r3.output
+    assert launched != []
 
 
 def test_base_completion_lists_cwd_git_branches(isolated_config, tmp_path, monkeypatch):

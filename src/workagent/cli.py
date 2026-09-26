@@ -345,7 +345,7 @@ def completions_install(
 
 
 def main() -> None:
-    _completions.ensure_completion_classes()  # typer 0.27: runtime server needs registered classes
+    _completions.ensure_completion_classes()  # typer 0.27: harness server needs registered classes
     argv, harness_args = _split_harness_args(sys.argv[1:])
     _HARNESS_ARGS[:] = harness_args
     warn = _doctor.dev_warning()

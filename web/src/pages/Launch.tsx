@@ -167,7 +167,7 @@ export function Launch() {
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
     if (mode === "start" && form.base.trim()) args.push("--base", form.base.trim())
     if (harnessValue) args.push("--harness", harnessValue)
-    if (form.noRuntime) args.push("--no-runtime")
+    if (form.launch) args.push("--launch")
     if (form.dryRun) args.push("--dry-run")
     if (form.json) args.push("--json")
     return args
@@ -186,7 +186,7 @@ export function Launch() {
         `--depth ${form.depth.trim() || "7"}`,
         mode === "start" && form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
         harnessValue ? `--harness ${harnessValue}` : "harness: configured default",
-        form.noRuntime ? "--no-runtime" : null,
+        form.launch ? "--launch (run the agent now)" : "preview (print command, no run)",
         form.dryRun ? "--dry-run" : null,
         form.json ? "--json" : null,
       ].filter((v): v is string => v !== null)
@@ -391,12 +391,12 @@ export function Launch() {
             {mode !== "sync" ? (
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="launch-no-runtime"
-                  checked={form.noRuntime}
-                  onCheckedChange={(v) => update("noRuntime", v === true)}
+                  id="launch-launch"
+                  checked={form.launch}
+                  onCheckedChange={(v) => update("launch", v === true)}
                 />
-                <Label htmlFor="launch-no-runtime" className="font-normal">
-                  <span className="font-mono text-[13px]">--no-runtime</span> — skip the agent: print the command and hand over the worktree
+                <Label htmlFor="launch-launch" className="font-normal">
+                  <span className="font-mono text-[13px]">--launch</span> — run the agent now (default: print the command and hand over the worktree)
                 </Label>
               </div>
             ) : null}

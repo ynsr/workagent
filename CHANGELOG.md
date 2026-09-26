@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
-- Sync pulls `origin/<branch>` (fast-forward or merge) before merging `origin/<default>` — a stale local tip no longer conflicts spuriously or fails the final push with "fetch first". A pull conflict routes to the same harness/prompt resolution as a base-merge conflict. Review pulls the reused worktree's branch the same way before launching the runtime (pull conflict aborts, exit 1); `--no-runtime`/`--dry-run` touch nothing.
+- `start`/`review`: inverted harness flag — `--launch`/`-L` now opts in to running the agent (default prints the harness command and hands over the worktree). Old `--no-harness`/`-N` rejected with a hint naming `--launch`; Launch page checkbox flipped to match.
+- Sync pulls `origin/<branch>` (fast-forward or merge) before merging `origin/<default>` — a stale local tip no longer conflicts spuriously or fails the final push with "fetch first". A pull conflict routes to the same harness/prompt resolution as a base-merge conflict. Review pulls the reused worktree's branch the same way before launching the harness (pull conflict aborts, exit 1); preview (no `--launch`)/`--dry-run` touch nothing.
 - Candidates: PR/MR rows whose URL or source branch already has a linked
   worktree are filtered out, and recent-issue rows whose key/URL is already
   linked are filtered out — every tab dedups against the worktrees table.

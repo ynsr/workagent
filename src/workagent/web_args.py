@@ -34,9 +34,9 @@ SPECS: dict[str, dict[str, Any]] = {
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
-    "start": ("-N", "--no-tty", "--no-runtime", "--dry-run", "--yes",
+    "start": ("-L", "--no-tty", "--launch", "--dry-run", "--yes",
               "--json"),
-    "review": ("-N", "--no-tty", "--no-runtime", "--dry-run", "--yes",
+    "review": ("-L", "--no-tty", "--launch", "--dry-run", "--yes",
                "--json", "--all", "--sequential", "--fix", "--fix-comments", "--force-all", "--post-comments"),
     "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--no-squash"),
     "open": (),
@@ -133,7 +133,7 @@ def _validate_args(command: str, args: list[str], body_force: bool = False) -> N
                     f"value for {a} must not start with '-': {value!r}", 400)
             i += 2
         elif a.startswith("-"):
-            hint = " (renamed to '--no-runtime' in #14)" if a == "--no-harness" else ""
+            hint = " (renamed to '--launch'; old '--no-harness'/-N removed)" if a in ("--no-harness", "-N") else ""
             raise ApiError("bad_arg", f"unknown option for {sub}: {a!r}{hint}", 400)
         else:
             i += 1

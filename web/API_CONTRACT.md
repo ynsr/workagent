@@ -132,7 +132,7 @@ config key. Paths already linked are excluded server-side.
 ### `GET /api/sessions` → list (newest first, no prompts)
 ```json
 {"sessions": [{"id": "2026-09-22T10-00-00-123Z-4567",
-  "worktree_ref": "jira:IPG-932", "runtime_name": "omp",
+  "worktree_ref": "jira:IPG-932", "harness_name": "omp",
   "initiator_command": "start", "state": "finished",
   "created_at": "2026-09-22T10:00:00.123Z",
   "file_path": "/home/x/.config/workagent/sessions/omp/2026-09-22T10-00-00-123Z-4567.jsonl"}]}
@@ -140,7 +140,7 @@ config key. Paths already linked are excluded server-side.
 
 ### `GET /api/sessions/{id}` → detail (prompt + session runs)
 ```json
-{"id": "…", "worktree_ref": "jira:IPG-932", "runtime_name": "omp",
+{"id": "…", "worktree_ref": "jira:IPG-932", "harness_name": "omp",
  "initiator_command": "start", "state": "finished", "prompt": "…",
  "created_at": "…", "file_path": "…",
  "transcript": "missing",
@@ -197,9 +197,9 @@ re-include already-reviewed and unresolved-comment worktrees),
   "worktree": "/home/x/wt", "last_seq": 42}]
 ```
 `session_file`/`worktree` are non-empty only for runs that executed a
-runtime session (`start`/`review`, or `sync` with an explicit
+harness session (`start`/`review`, or `sync` with an explicit
 `--session-file`); the web server injects `--session-file` for
-`start`/`review` launches — including `--no-runtime` (the CLI preview
+`start`/`review` launches — including the default preview (no `--launch`; the CLI preview
 carries it as `--resume` but creates nothing, so resume/copy buttons work
 once the printed command is run manually). Clients show resume buttons iff
 `session_file` is present.
@@ -223,7 +223,7 @@ the OS default terminal running
 `cd <worktree> && omp --resume <session_file>` (`$TERMINAL` →
 `xdg-terminal-exec` → gnome-terminal/konsole/xfce4-terminal/xterm;
 macOS `open -a Terminal`; Windows `cmd /k`). 404 `no_session` when the run
-executed no runtime session, `missing_session` when the transcript is
+executed no harness session, `missing_session` when the transcript is
 absent, `no_worktree` when the target has no recorded worktree.
 
 ### `POST /api/sessions/{id}/resume` → same shape

@@ -95,8 +95,8 @@ def test_prompt_push_target_mentions_origin_branch():
     assert "origin/chore/a--b" in p
 
 def test_omp_session_file_routes_via_resume():
-    from workagent.backend import OmpRuntime
-    assert OmpRuntime().session_file_flag("/tmp/x.jsonl") == ["--resume", "/tmp/x.jsonl"]
-    assert OmpRuntime().session_file_flag("") == []
-    argv = OmpRuntime().command_argv("prompt", True, ["--auto-approve"])
+    from workagent.backend import OmpHarness
+    assert OmpHarness().session_file_flag("/tmp/x.jsonl") == ["--resume", "/tmp/x.jsonl"]
+    assert OmpHarness().session_file_flag("") == []
+    argv = OmpHarness().command_argv("prompt", True, ["--auto-approve"])
     assert "--session-file" not in argv

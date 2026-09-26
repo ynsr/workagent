@@ -170,7 +170,7 @@ def review(
     depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
     no_tty: bool = typer.Option(False, "--no-tty", help="Run harness non-interactively."),
-    no_runtime: bool = typer.Option(False, "-N", "--no-runtime", help="Skip launching the runtime: print the runtime command and land in an interactive shell inside the worktree."),
+    launch: bool = typer.Option(False, "-L", "--launch", help="Launch the harness in the worktree (default: print the harness command and land in an interactive shell inside the worktree)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
@@ -180,14 +180,14 @@ def review(
     force_all: bool = typer.Option(False, "--force-all", help="With --all: include already-reviewed and unresolved-comment worktrees too (still needs a PR/MR)."),
     post_comments: bool = typer.Option(False, "--post-comments", hidden=True, help="Append the auto-comment prompt segment (set by --all)."),
     fix_comments: bool = typer.Option(False, "--fix-comments", help="Fix open PR/MR review comments instead of reviewing: validate each finding, apply, resolve/close, commit and push."),
-    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the runtime (omp --resume)."),
+    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the harness (omp --resume)."),
 ) -> None:
     """Create worktree from PR/MR and launch review.
 
     Example:
       workagent review https://github.com/OWNER/REPO/pull/33
       workagent review OWNER/REPO#33 --no-tty
-      workagent review OWNER/REPO#33 --no-runtime
+      workagent review OWNER/REPO#33 --launch
       workagent review --all [--sequential] [--fix]
     """
     if not isinstance(session_file, str):
@@ -239,7 +239,7 @@ def review(
                         title="Review plan (dry-run)",
                         empty="nothing to review")
             return
-        if no_runtime:
+        if not launch:
             rows = [{"key": k, "pr_url": pr, "command": _child_cmd(pr),
                      "exit_code": ""} for k, pr in reviewable]
             _print_rows(rows, json_output, csv_output=False,
@@ -338,12 +338,12 @@ def review(
             result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
                       "harness": harness_name}
             eprint(f"worktree: {worktree}  branch: {branch}")
-            if not no_runtime:
+            if launch:
                 # Same staleness rule as sync: review a pulled tip, never a
                 # stale local. Fast-forward/merge origin/<branch> first; a
                 # pull conflict aborts loudly (exit 1) instead of launching
-                # the runtime on half-merged state. --no-runtime prints the
-                # command without touching git, so it skips the pull.
+                # the harness on half-merged state. Without --launch (preview) the pull is skipped:
+                # the command is printed without touching git.
                 try:
                     pulled = sync_mod.pull_branch(Path(worktree), branch)
                 except HarnessError as e:
@@ -354,10 +354,10 @@ def review(
                 _mark_reviewed(review_key, worktree)
             try:
                 _run_harness(harness_name, prompt, worktree, str(repo_dir),
-                             no_tty, no_runtime, result, json_output,
+                             no_tty, launch, result, json_output,
                              run_key=review_key, session_file=session_file)
             except HarnessError:
-                if not no_runtime:
+                if launch:
                     _clear_reviewed(review_key)
                 raise
             return
@@ -380,15 +380,15 @@ def review(
     result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
               "harness": harness_name}
     eprint(f"worktree: {worktree}  branch: {branch}")
-    if not no_runtime:
+    if launch:
         _guard_harness(review_key, worktree)
         _mark_reviewed(review_key, worktree)
     try:
         _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
-                     no_runtime, result, json_output, run_key=review_key,
+                     launch, result, json_output, run_key=review_key,
                      session_file=session_file)
     except HarnessError:
-        if not no_runtime:
+        if launch:
             _clear_reviewed(review_key)
         raise
 

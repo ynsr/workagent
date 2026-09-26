@@ -17,10 +17,10 @@ def db_path(config_dir: Path | None = None) -> Path:
     return base / "state.db"
 
 
-def session_file_path(session_id: str, runtime_name: str,
+def session_file_path(session_id: str, harness_name: str,
                       config_dir: Path | None = None) -> Path:
     from . import store as _store
-    base = (config_dir or _store.config_dir()) / "sessions" / runtime_name
+    base = (config_dir or _store.config_dir()) / "sessions" / harness_name
     base.mkdir(parents=True, exist_ok=True)
     return base / f"{session_id}.jsonl"
 
@@ -31,7 +31,7 @@ def gen_session_id(now: datetime | None = None) -> str:
     return f"{ts}-{random.randint(1000, 9999):04d}"
 
 
-def insert_session(path: Path, *, worktree_ref: str, runtime_name: str,
+def insert_session(path: Path, *, worktree_ref: str, harness_name: str,
                    initiator_command: str, prompt: str,
                    file_path: str, session_id: str | None = None) -> str:
     """Insert a running session; same-ms id collision retries with a fresh
@@ -43,10 +43,10 @@ def insert_session(path: Path, *, worktree_ref: str, runtime_name: str,
             sid = session_id or gen_session_id()
             try:
                 conn.execute(
-                    "INSERT INTO sessions (id, worktree_ref, state, runtime_name,"
+                    "INSERT INTO sessions (id, worktree_ref, state, harness_name,"
                     " initiator_command, prompt, file_path, created_at)"
                     " VALUES (?, ?, 'running', ?, ?, ?, ?, ?)",
-                    (sid, worktree_ref, runtime_name, initiator_command,
+                    (sid, worktree_ref, harness_name, initiator_command,
                      prompt, file_path, created))
                 return sid
             except sqlite3.IntegrityError as e:

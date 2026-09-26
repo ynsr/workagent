@@ -50,8 +50,8 @@ def _harness_cell(key: str, worktree: str = "") -> str:
 
 
 def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool,
-                        no_runtime: bool, session_file: str | None, json_output: bool) -> None:
-    """Re-launch the runtime in an already-linked worktree (issue #26 rule 1)."""
+                        launch: bool, session_file: str | None, json_output: bool) -> None:
+    """Re-launch the harness in an already-linked worktree (issue #26 rule 1)."""
     worktree = str(entry.get("worktree", ""))
     repo = str(entry.get("repo", worktree))
     harness_name = harness or store.load_config().get("default_harness", "omp")
@@ -61,21 +61,21 @@ def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool
     result = {"worktree_path": worktree, "branch": str(entry.get("branch", "")),
               "key": key, "harness": harness_name, "reused": True}
     eprint(f"worktree: {worktree}  branch: {entry.get('branch', '')}")
-    if not no_runtime:
+    if launch:
         _guard_harness(key, worktree)
-    _run_harness(harness_name, prompt, worktree, repo, no_tty, no_runtime,
+    _run_harness(harness_name, prompt, worktree, repo, no_tty, launch,
                  result, json_output, run_key=key, session_file=session_file)
 
 def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: str,
-                 no_tty: bool, no_runtime: bool, result: dict, json_output: bool,
+                 no_tty: bool, launch: bool, result: dict, json_output: bool,
                  run_key: str | None = None, session_file: str | None = None) -> None:
-    """Launch the runtime in the worktree; with --no-runtime print the exact
+    """Launch the harness in the worktree with --launch; without it print the exact
     command instead and hand the worktree to the user (shell exec on TTY).
 
     Every real launch carries a session file: an explicit session_file
     (CLI --session-file) wins, otherwise a path is generated under
-    sessions/<runtime>/ and passed to the runtime (--resume for omp).
-    --no-runtime and --dry-run (never reaches here) write nothing.
+    sessions/<harness>/ and passed to the harness (--resume for omp).
+    Preview (no --launch) and --dry-run (never reaches here) write nothing.
     Sessions rows are recorded post-cutover (state.db exists) only.
     """
     from . import store_sqlite as _sq
@@ -83,20 +83,20 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # default object leaks through instead of None. Normalize to None.
     if not isinstance(session_file, str):
         session_file = None
-    runtime = backend.get_runtime(harness_name)
-    preview_extra = runtime.session_file_flag(session_file) if session_file else []
+    harness = backend.get_harness(harness_name)
+    preview_extra = harness.session_file_flag(session_file) if session_file else []
     preview_args = _HARNESS_ARGS + preview_extra if preview_extra else _HARNESS_ARGS
     preview_cmd = " ".join(shlex.quote(a) for a in
-                           runtime.command_argv(prompt, no_tty, preview_args))
-    if no_runtime:
-        # Copy-paste runnable: the runtime must execute inside the worktree.
+                           harness.command_argv(prompt, no_tty, preview_args))
+    if not launch:
+        # Copy-paste runnable: the harness must execute inside the worktree.
         full_cmd = f"cd {shlex.quote(worktree or fallback_dir)} && {preview_cmd}"
-        eprint(f"runtime command: {full_cmd}")
-        result["runtime_command"] = full_cmd
+        eprint(f"harness command: {full_cmd}")
+        result["harness_command"] = full_cmd
         _print_result(result, json_output)
         if sys.stdin.isatty():
             # "cd" for the user: replace this process with their shell in the
-            # worktree; the printed runtime command is theirs to run.
+            # worktree; the printed harness command is theirs to run.
             backend.cd_worktree(worktree or fallback_dir)
             shell = os.environ.get("SHELL") or "/bin/sh"
             os.execvp(shell, [shell])
@@ -104,7 +104,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     sid: str | None = None
     db = _sq.db_path()
     session_path = session_file or ""
-    if run_key and not no_runtime:
+    if run_key and launch:
         # Atomic one-harness-per-worktree lock: claim first, inside the same
         # flock that records it; launch only when we own the slot. A live
         # record (pid alive) fails here instead of spawning a second run.
@@ -126,7 +126,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     if run_key and db.exists():
         try:
             sid = _sq.insert_session(
-                db, worktree_ref=run_key, runtime_name=harness_name,
+                db, worktree_ref=run_key, harness_name=harness_name,
                 initiator_command=result.get("command", harness_name),
                 prompt=prompt, file_path=session_path,
                 session_id=Path(session_path).stem)
@@ -141,7 +141,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                 pass
             session_path = session_file or ""
     try:
-        extra = runtime.session_file_flag(session_path) if session_path else None
+        extra = harness.session_file_flag(session_path) if session_path else None
         backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty,
                        (_HARNESS_ARGS + extra) if extra else _HARNESS_ARGS)
         if sid:

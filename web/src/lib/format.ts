@@ -25,7 +25,7 @@ export function argsText(args: string[] | undefined): string {
   return args.join(" ")
 }
 
-/** Shell command that cds to the worktree then resumes the runtime session. */
+/** Shell command that cds to the worktree then resumes the harness session. */
 export function resumeCommand(worktree: string, sessionFile: string): string {
   const q = (s: string) => `'${s.replaceAll("'", "'\\''")}'`
   return `cd ${q(worktree)} && omp --resume ${q(sessionFile)}`

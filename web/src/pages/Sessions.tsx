@@ -28,7 +28,7 @@ import { useLinks, useRepos, useSession, useSessions } from "@/lib/queries"
 import { repoKeyForPath, useRepoTabs } from "@/lib/useRepoTabs"
 import { relativeTime, shortId } from "@/lib/format"
 
-/** Every persisted session executed a real runtime session, so both
+/** Every persisted session executed a real harness session, so both
  * resume buttons always apply. Copy resolves the worktree path via
  * /api/path (falls back to the recorded ref). */
 
@@ -87,7 +87,7 @@ export function Sessions() {
     if (worktreeFilter) out = out.filter((r) => r.worktree_ref === worktreeFilter)
     if (titleFilter) {
       out = out.filter((r) =>
-        `${r.id} ${r.worktree_ref} ${sessionTitle(r.worktree_ref, links?.worktrees?.[r.worktree_ref]?.branch ?? "")} ${r.initiator_command} ${r.runtime_name} ${r.state}`.toLowerCase().includes(titleFilter),
+        `${r.id} ${r.worktree_ref} ${sessionTitle(r.worktree_ref, links?.worktrees?.[r.worktree_ref]?.branch ?? "")} ${r.initiator_command} ${r.harness_name} ${r.state}`.toLowerCase().includes(titleFilter),
       )
     }
     return out
@@ -154,7 +154,7 @@ export function Sessions() {
                   <TableHead>Title</TableHead>
                   <TableHead>ID</TableHead>
                   <TableHead>Worktree</TableHead>
-                  <TableHead>Runtime</TableHead>
+                  <TableHead>Harness</TableHead>
                   <TableHead>Command</TableHead>
                   <TableHead>State</TableHead>
                   <TableHead>Created</TableHead>
@@ -178,7 +178,7 @@ export function Sessions() {
                     <TableCell className="font-mono text-[13px]">
                       {s.worktree_ref}
                     </TableCell>
-                    <TableCell>{s.runtime_name}</TableCell>
+                    <TableCell>{s.harness_name}</TableCell>
                     <TableCell className="font-mono text-[13px]">
                       {sessionKind(s.initiator_command)}
                     </TableCell>
@@ -218,7 +218,7 @@ export function SessionDetailPage() {
     <div>
       <PageHeader
         title={`Session ${shortId(s.id)}`}
-        description={`${s.worktree_ref} · ${s.runtime_name} · ${s.initiator_command}`}
+        description={`${s.worktree_ref} · ${s.harness_name} · ${s.initiator_command}`}
         actions={
           <>
             <SessionResumeActions sessionId={s.id} worktree={links?.worktrees?.[s.worktree_ref]?.worktree ?? s.worktree_ref} sessionFile={s.file_path} variant="outline" />

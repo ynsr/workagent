@@ -38,7 +38,7 @@ def test_review_all_spawns_parallel_children(isolated_config, tmp_path, monkeypa
 
     monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
     monkeypatch.setattr(cli.store, "active_harness", lambda key: None)
-    r = runner.invoke(cli.app, ["review", "--all", "--json"])
+    r = runner.invoke(cli.app, ["review", "--all", "--launch", "--json"])
     assert r.exit_code == 0, r.output
     assert len(spawns) == 2
     for argv in spawns:
@@ -73,7 +73,7 @@ def test_review_all_sequential_waits_one_by_one(isolated_config, tmp_path, monke
             return 3
 
     monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
-    r = runner.invoke(cli.app, ["review", "--all", "--sequential", "--fix", "--json"])
+    r = runner.invoke(cli.app, ["review", "--all", "--sequential", "--fix", "--launch", "--json"])
     assert r.exit_code == 0, r.output
     assert [e[0] for e in events] == ["spawn", "wait", "spawn", "wait"]
     for kind, argv in events:
@@ -174,10 +174,10 @@ def test_review_all_dry_run_prints_plan_without_spawning(isolated_config,
         assert "--no-tty" in row["command"] and "--post-comments" in row["command"]
 
 
-def test_review_all_no_runtime_prints_commands_without_spawning(isolated_config,
+def test_review_all_preview_prints_commands_without_spawning(isolated_config,
                                                                 tmp_path,
                                                                 monkeypatch):
-    """--all -N prints each child command as summary rows without spawning."""
+    """--all (preview) prints each child command as summary rows without spawning."""
     links = {
         "jira:A-1": {"branch": "feat/a", "worktree": str(tmp_path / "a"),
                      "pr_url": "https://github.com/o/r/pull/1",
@@ -195,7 +195,7 @@ def test_review_all_no_runtime_prints_commands_without_spawning(isolated_config,
             spawned.append(argv)
 
     monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
-    r = runner.invoke(cli.app, ["review", "--all", "--no-runtime", "--json"])
+    r = runner.invoke(cli.app, ["review", "--all", "--json"])
     assert r.exit_code == 0, r.output
     assert spawned == []
     out = json.loads(r.stdout)
@@ -231,7 +231,7 @@ def test_review_launch_failure_clears_reviewed(isolated_config, tmp_path,
     monkeypatch.setattr(cli.backend, "launch", boom)
     url = "https://github.com/o/r/pull/33"
     key = "feat/33"
-    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
+    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--launch", "--json"])
     assert r.exit_code == 1
     entry = store.load_links()[key]
     assert "reviewed" not in entry and "reviewed_at" not in entry
@@ -262,7 +262,7 @@ def test_review_all_jira_pr_alias_dedupes(isolated_config, tmp_path,
             return 0
 
     monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
-    r = runner.invoke(cli.app, ["review", "--all", "--json"])
+    r = runner.invoke(cli.app, ["review", "--all", "--launch", "--json"])
     assert r.exit_code == 0, r.output
     assert len(spawned) == 1  # alias deduped: one child per worktree/PR
     assert spawned[0][4] == pr  # child spawned with the pr: entry's URL
@@ -273,7 +273,7 @@ def test_review_all_jira_pr_alias_dedupes(isolated_config, tmp_path,
     links[f"pr:{pr}"]["reviewed_at"] = "tip1"
     store.save_links(links)
     spawned.clear()
-    r2 = runner.invoke(cli.app, ["review", "--all", "--json"])
+    r2 = runner.invoke(cli.app, ["review", "--all", "--launch", "--json"])
     assert r2.exit_code == 0, r2.output
     assert spawned == []
     assert "nothing to review" in r2.stderr
@@ -314,7 +314,7 @@ def test_review_all_fix_comments_reaches_child_argv(isolated_config, tmp_path, m
 
 
     monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
-    r = runner.invoke(cli.app, ["review", "--all", "--fix-comments", "--json"])
+    r = runner.invoke(cli.app, ["review", "--all", "--fix-comments", "--launch", "--json"])
     assert r.exit_code == 0, r.output
     assert seen and "--fix-comments" in seen[0]
     assert "--post-comments" not in seen[0] and "--fix" not in seen[0]

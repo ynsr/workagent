@@ -139,7 +139,7 @@ export interface CandidatesResponse {
 
 /** One persisted harness session (prompt excluded from the list; see SessionDetail). */
 export interface SessionRow {
-  id: string; worktree_ref: string; state: string; runtime_name: string;
+  id: string; worktree_ref: string; state: string; harness_name: string;
   initiator_command: string; file_path: string; created_at: string;
 }
 

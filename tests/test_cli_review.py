@@ -33,12 +33,12 @@ def test_review_rejects_shorthand_issue_ref(isolated_config, tmp_path, monkeypat
     monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
                         lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
-    r = runner.invoke(cli.app, ["review", "o/r#22", "--dry-run", "--json"])
+    r = runner.invoke(cli.app, ["review", "o/r#22", "--dry-run", "--launch", "--json"])
     assert r.exit_code == 2
     assert "needs a PR/MR URL" in r.output
 
 
-def test_review_no_runtime_prints_command_and_skips_launch(isolated_config, tmp_path, monkeypatch):
+def test_review_preview_prints_command_and_skips_launch(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     worktree = tmp_path / "wt"
@@ -54,17 +54,17 @@ def test_review_no_runtime_prints_command_and_skips_launch(isolated_config, tmp_
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
     monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     r = runner.invoke(cli.app, ["review", "https://github.com/o/r/pull/33",
-                                "--no-runtime", "--json"])
+                                "--json"])
     assert r.exit_code == 0, r.output
-    assert launched == []  # runtime must not run
+    assert launched == []  # harness must not run
     out = json.loads(r.stdout)
     assert out["worktree_path"] == str(worktree)
-    assert out["runtime_command"].startswith(f"cd {worktree} && omp ")
-    assert "runtime command: cd " in r.stderr
+    assert out["harness_command"].startswith(f"cd {worktree} && omp ")
+    assert "harness command: cd " in r.stderr
     assert str(worktree) in r.stderr
 
 
-def test_review_no_runtime_tty_lands_shell_in_worktree(isolated_config, tmp_path, monkeypatch, capsys):
+def test_review_preview_tty_lands_shell_in_worktree(isolated_config, tmp_path, monkeypatch, capsys):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     worktree = tmp_path / "wt"
@@ -89,7 +89,7 @@ def test_review_no_runtime_tty_lands_shell_in_worktree(isolated_config, tmp_path
     monkeypatch.setattr(cli.os, "execvp", fake_execvp)
     with pytest.raises(_Shell) as excinfo:
         cli.review(ref="https://github.com/o/r/pull/33", repo=None, depth=7, harness=None,
-                   no_tty=False, no_runtime=True, dry_run=False, yes=False, json_output=False,
+                   no_tty=False, launch=False, dry_run=False, yes=False, json_output=False,
                    all_wts=False, sequential=False, fix=False, force_all=False, post_comments=False)
     assert excinfo.value.args[0] == "/bin/zsh"
     assert excinfo.value.args[2] == str(worktree)
@@ -115,7 +115,7 @@ def test_review_reuses_existing_worktree_by_branch(isolated_config, tmp_path, mo
     launched = []
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
     monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
-    r = runner.invoke(cli.app, ["review", "feat/IPG-929--x", "--no-tty", "--no-runtime", "--json"])
+    r = runner.invoke(cli.app, ["review", "feat/IPG-929--x", "--no-tty", "--launch", "--json"])
     assert r.exit_code == 0, r.output
     assert started == []  # no new worktree created
     assert json.loads(r.stdout)["worktree_path"] == str(wt)
@@ -148,14 +148,14 @@ def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
     url = "https://github.com/o/r/pull/33"
     key = "feat/33"
 
-    # --no-runtime starts nothing: must not mark reviewed (Task 2 precedent).
-    r0 = runner.invoke(cli.app, ["review", url, "--no-tty", "--no-runtime", "--json"])
+    # Preview (no --launch) starts nothing: must not mark reviewed (Task 2 precedent).
+    r0 = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
     assert r0.exit_code == 0, r0.output
     assert launched == []
     assert store.load_links()[key].get("reviewed") is None
 
     # Fresh-worktree launch path: marks reviewed with the worktree tip.
-    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
+    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--launch", "--json"])
     assert r.exit_code == 0, r.output
     assert launched != []
     entry = store.load_links()[key]
@@ -163,7 +163,7 @@ def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
     assert entry["reviewed_at"] == "abc123"
 
     # Reuse-worktree launch path: marks reviewed as well (idempotent re-mark).
-    r2 = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
+    r2 = runner.invoke(cli.app, ["review", url, "--no-tty", "--launch", "--json"])
     assert r2.exit_code == 0, r2.output
     entry2 = store.load_links()[key]
     assert entry2["reviewed"] is True
@@ -199,7 +199,7 @@ def test_review_reuses_existing_worktree_row(isolated_config, tmp_path, monkeypa
         "branch": "feat/IPG-953--x",
         "repo": str(repo_dir),
     })
-    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
+    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--launch", "--json"])
     assert r.exit_code == 0, r.output
     links = store.load_links()
     assert set(links) == {"jira:IPG-953"}  # no pr:<url> alias row
@@ -241,7 +241,7 @@ def test_review_new_pr_keys_row_by_branch(isolated_config, tmp_path, monkeypatch
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
     monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     url = "https://github.com/o/r/pull/77"
-    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
+    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--launch", "--json"])
     assert r.exit_code == 0, r.output
     links = store.load_links()
     assert set(links) == {"feat/77"}

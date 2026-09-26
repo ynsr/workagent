@@ -10,8 +10,8 @@ import sys
 from .errors import HarnessError
 
 
-class Runtime:
-    """AI harness runtime: argv, launch, transcript-file flag."""
+class Harness:
+    """AI harness: argv, launch, transcript-file flag."""
     name: str = ""
 
     def command_argv(self, prompt: str, no_tty: bool,
@@ -26,7 +26,7 @@ class Runtime:
         return []
 
 
-class OmpRuntime(Runtime):
+class OmpHarness(Harness):
     name = "omp"
 
     def command_argv(self, prompt, no_tty, extra_args=None):
@@ -51,22 +51,22 @@ class OmpRuntime(Runtime):
         return ["--resume", path] if path else []
 
 
-RUNTIMES: dict[str, Runtime] = {"omp": OmpRuntime()}
+HARNESSES: dict[str, Harness] = {"omp": OmpHarness()}
 
 
-def get_runtime(name: str) -> Runtime:
+def get_harness(name: str) -> Harness:
     try:
-        return RUNTIMES[name]
+        return HARNESSES[name]
     except KeyError:
         raise HarnessError(
-            f"unsupported harness: {name} (v1 supports: {', '.join(sorted(RUNTIMES))})",
+            f"unsupported harness: {name} (v1 supports: {', '.join(sorted(HARNESSES))})",
             exit_code=2) from None
 
 
 def command_argv(harness: str, prompt: str, no_tty: bool,
                  extra_args: list[str] | None = None) -> list[str]:
-    """Full harness argv — shared by launch() and the --no-runtime preview."""
-    return get_runtime(harness).command_argv(prompt, no_tty, extra_args)
+    """Full harness argv — shared by launch() and the preview (no --launch)."""
+    return get_harness(harness).command_argv(prompt, no_tty, extra_args)
 
 
 def cd_worktree(workdir: str) -> None:
@@ -90,9 +90,9 @@ def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
     Non-TTY (--no-tty): runs `omp -p <prompt>` as a child and waits.
     The full argv is echoed to stderr first so run logs capture it.
     """
-    argv = get_runtime(harness).command_argv(prompt, no_tty, extra_args)
+    argv = get_harness(harness).command_argv(prompt, no_tty, extra_args)
     print(f"$ {' '.join(argv)}", file=sys.stderr, flush=True)
-    return get_runtime(harness).launch(prompt, workdir, no_tty, extra_args)
+    return get_harness(harness).launch(prompt, workdir, no_tty, extra_args)
 
 
 def _push_target_lines(worktree: str, branch: str) -> str:

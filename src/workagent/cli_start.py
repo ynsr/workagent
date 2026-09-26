@@ -42,11 +42,11 @@ def start(
     base: Optional[str] = typer.Option(None, "--base", autocompletion=_complete_branches, help="Base branch (default: repo default). A non-default branch runs on that branch instead of creating a new one."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
     no_tty: bool = typer.Option(False, "--no-tty", help="Run harness non-interactively (auto commit/push/MR prompt suffix)."),
-    no_runtime: bool = typer.Option(False, "-N", "--no-runtime", help="Skip launching the runtime: print the runtime command and land in an interactive shell inside the worktree."),
+    launch: bool = typer.Option(False, "-L", "--launch", help="Launch the harness in the worktree (default: print the harness command and land in an interactive shell inside the worktree)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
-    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the runtime (omp --resume)."),
+    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the harness (omp --resume)."),
 ) -> None:
     """Create worktree from issue and launch harness.
 
@@ -55,13 +55,13 @@ def start(
       workagent start OWNER/REPO#22 --repo my-checkout --no-tty
       workagent start OWNER/REPO#22 --dry-run
       workagent start OWNER/REPO#22 --base feat/22--add-login
-      workagent start OWNER/REPO#22 --no-runtime
+      workagent start OWNER/REPO#22 --launch
     """
     parsed = refs.parse_ref(ref)
     pr_mode = parsed["kind"] in ("pr", "mr")
     if pr_mode:
         return _start_from_pr(ref, parsed, repo, depth, harness, no_tty,
-                              no_runtime, dry_run, yes, json_output,
+                              launch, dry_run, yes, json_output,
                               session_file)
     key = refs.issue_key(parsed)
     links = store.load_links()
@@ -82,7 +82,7 @@ def start(
                            "tracker": trackers.tracker_id(parsed),
                            "tracker_link": "reused"}, json_output)
             return
-        return _launch_in_worktree(key, existing, harness, no_tty, no_runtime,
+        return _launch_in_worktree(key, existing, harness, no_tty, launch,
                                    session_file, json_output)
     r, detected_default, tid, outcome = trackers.resolve_repo_for_ref(
         parsed, repo, Path.cwd(), depth=depth,
@@ -170,14 +170,14 @@ def start(
               "base": detected_default if branch_mode else base_branch,
               "key": key, "harness": harness_name}
     eprint(f"worktree: {worktree}  branch: {branch}")
-    if not no_runtime:
+    if launch:
         _guard_harness(key, worktree)
-    _run_harness(harness_name, prompt, worktree, str(r), no_tty, no_runtime,
+    _run_harness(harness_name, prompt, worktree, str(r), no_tty, launch,
                  result, json_output, run_key=key, session_file=session_file)
 
 
 def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
-                   harness: str | None, no_tty: bool, no_runtime: bool,
+                   harness: str | None, no_tty: bool, launch: bool,
                    dry_run: bool, yes: bool, json_output: bool,
                    session_file: str | None) -> None:
     """Start a coding session on a PR/MR source branch (branch-keyed row)."""
@@ -205,10 +205,10 @@ def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
               "base": base_branch, "key": key, "pr_url": pr_url,
               "harness": harness_name}
     eprint(f"worktree: {worktree}  branch: {branch}")
-    if not no_runtime:
+    if launch:
         _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
-                 no_runtime, result, json_output, run_key=key,
+                 launch, result, json_output, run_key=key,
                  session_file=session_file)
 
 

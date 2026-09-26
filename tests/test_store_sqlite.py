@@ -24,7 +24,7 @@ def test_worktree_delete_cascades_sessions(tmp_path):
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
                      " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sq.insert_session(db, worktree_ref="k", runtime_name="omp",
+    sq.insert_session(db, worktree_ref="k", harness_name="omp",
                       initiator_command="start", prompt="p",
                       file_path="/tmp/x.jsonl")
     with sq.connect(db) as conn:
@@ -41,7 +41,7 @@ def test_finish_session_states(tmp_path):
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
                      " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sid = sq.insert_session(db, worktree_ref="k", runtime_name="omp",
+    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
                             initiator_command="start", prompt="p",
                             file_path="/tmp/x.jsonl")
     sq.finish_session(db, sid, "finished")

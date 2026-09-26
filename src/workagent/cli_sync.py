@@ -42,7 +42,7 @@ def sync_cmd(
     yes: bool = typer.Option(False, "--yes", "--force", "-y", help="Skip confirmations."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without touching anything."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
-    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the runtime on conflict resolution (omp --resume)."),
+    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the harness on conflict resolution (omp --resume)."),
 ) -> None:
     from . import cli as _cli  # shim: tests patch cli._sync_one
     """Bring a worktree branch up to date with its base branch.
@@ -256,7 +256,7 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
                   f"origin/{branch}, and stop.")
         _cli._guard_harness(key, wt)
         _cli._run_harness("omp", prompt, wt, wt,
-                     no_tty=bool(yes), no_runtime=False,
+                     no_tty=bool(yes), launch=True,
                      result=result, json_output=json_output, run_key=key,
                      session_file=session_file)
     elif sys.stdin.isatty():
@@ -268,7 +268,7 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
                       f"origin/{branch}, and stop.")
             _cli._guard_harness(key, wt)
             _cli._run_harness("omp", prompt, wt, wt,
-                         no_tty=False, no_runtime=False,
+                         no_tty=False, launch=True,
                          result=result, json_output=json_output, run_key=key,
                          session_file=session_file)
         else:
