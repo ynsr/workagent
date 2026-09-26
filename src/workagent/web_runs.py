@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import itertools
 import os
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -243,3 +245,55 @@ def _cancel(run: Run) -> None:
     with run.lock:
         if run.state == "running":
             run.state = "cancelled"
+
+
+def _worktree_for_session(row: dict) -> str:
+    wt = row.get("worktree", "")
+    if wt:
+        return wt
+    return _worktree_for_target(row.get("worktree_ref", ""))
+
+
+def _resume_shell_command(worktree: str, session_file: str) -> str:
+    return f"cd {shlex.quote(worktree)} && omp --resume {shlex.quote(session_file)}"
+
+
+def _open_terminal(worktree: str, session_file: str) -> None:
+    """Detached-spawn the OS default terminal resumed on the session
+    (mirrors `workagent open` detachment)."""
+    cmd = _resume_shell_command(worktree, session_file)
+    kwargs: dict = {"stdin": subprocess.DEVNULL,
+                    "stdout": subprocess.DEVNULL,
+                    "stderr": subprocess.DEVNULL}
+    if os.name == "posix":
+        kwargs["start_new_session"] = True
+    if sys.platform == "darwin":
+        argv = ["open", "-a", "Terminal", worktree, "--args",
+                "bash", "-lc", cmd]
+    elif os.name == "nt":
+        argv = ["cmd", "/c", "start", "", "cmd", "/k", cmd]
+    else:
+        term = os.environ.get("TERMINAL", "")
+        has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        candidates = ([term] if term else []) + [
+            "gnome-terminal", "konsole", "xfce4-terminal", "xterm"]
+        for t in candidates:
+            if t and shutil.which(t):
+                if t == "gnome-terminal":
+                    argv = [t, "--", "bash", "-lc", cmd]
+                elif t == "konsole":
+                    argv = [t, "-e", "bash", "-lc", cmd]
+                else:
+                    argv = [t, "-e", f"bash -lc {shlex.quote(cmd)}"]
+                break
+        else:
+            if not has_display:
+                raise ApiError("no_display",
+                               "the server has no graphical session (no $DISPLAY/"
+                               "$WAYLAND_DISPLAY) — copy the resume command instead", 500)
+            raise ApiError("no_terminal",
+                           "no terminal emulator found (set $TERMINAL)", 500)
+    try:
+        subprocess.Popen(argv, **kwargs)
+    except (FileNotFoundError, OSError, PermissionError) as e:
+        raise ApiError("no_terminal", f"terminal spawn failed: {e}", 500)
