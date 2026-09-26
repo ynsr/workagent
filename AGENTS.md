@@ -206,4 +206,6 @@ become `skipped:<reason>` rows — never torn down. Requires `--yes`
 
 ----
 
-- Commit and push on main branch, unless asked otherwise. 
+## After work:
+- Commit and push on main branch automatically, unless asked otherwise. 
+- Re-install `workagent` after work done, to ensure the latest version is used.
