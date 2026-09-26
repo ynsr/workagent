@@ -17,7 +17,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { Label } from "@/components/ui/label"
@@ -45,8 +44,6 @@ export function Trackers() {
   const [key, setKey] = useState("")
   const [vendor, setVendor] = useState("")
   const [remoteUrl, setRemoteUrl] = useState("")
-  const [addJson, setAddJson] = useState(false)
-  const [removeJson, setRemoveJson] = useState(false)
   const [adding, setAdding] = useState(false)
 
   async function handleAdd() {
@@ -61,7 +58,6 @@ export function Trackers() {
           ...(vendor.trim() ? ["--vendor", vendor.trim()] : []),
           "--remote-url",
           remoteUrl.trim(),
-          ...(addJson ? ["--json"] : []),
         ],
       })
       toast.success("Tracker add started", {
@@ -70,7 +66,6 @@ export function Trackers() {
       setKey("")
       setVendor("")
       setRemoteUrl("")
-      setAddJson(false)
     } catch (err) {
       toast.error(errorText(err))
     } finally {
@@ -90,25 +85,12 @@ export function Trackers() {
         ...(row.vendor ? [{ label: "Vendor", value: row.vendor, mono: true }] : []),
         ...(row.remote_url ? [{ label: "URL", value: row.remote_url, mono: true }] : []),
       ],
-      extras: (
-        <div className="flex items-center gap-2">
-          <Checkbox
-            id="tracker-remove-json"
-            checked={removeJson}
-            onCheckedChange={(v) => setRemoveJson(v === true)}
-          />
-          <Label htmlFor="tracker-remove-json" className="font-normal">
-            <span className="font-mono text-[13px]">--json</span> — JSON output in the run log
-          </Label>
-        </div>
-      ),
     })
     if (!ok) return
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "tracker",
-        args: ["remove", row.key, ...(removeJson ? ["--json"] : [])],
-        confirm: true,
+        args: ["remove", row.key],
       })
       toast.success("Tracker remove started", {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
@@ -305,16 +287,6 @@ export function Trackers() {
                 spellCheck={false}
                 required
               />
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="tracker-add-json"
-                checked={addJson}
-                onCheckedChange={(v) => setAddJson(v === true)}
-              />
-              <Label htmlFor="tracker-add-json" className="font-normal">
-                <span className="font-mono text-[13px]">--json</span> output
-              </Label>
             </div>
             <Button onClick={() => void handleAdd()} disabled={!key.trim() || !remoteUrl.trim() || adding}>
               <Plus aria-hidden />

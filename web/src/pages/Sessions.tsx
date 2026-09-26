@@ -260,10 +260,11 @@ export function SessionDetailPage() {
 }
 
 /** Persisted runs of one session, rendered with the shared Runs table
- * (same rows/columns as the Runs page; no live run id to link to). */
+ * (same rows/columns as the Runs page; each row links to its `/runs/db-<id>` detail). */
 function SessionRunsCard({ s }: { s: SessionDetail }) {
   const rows: RunsTableRow[] = s.runs.map((r) => ({
     key: String(r.id),
+    href: `/runs/db-${r.id}`,
     label: `#${r.id}`,
     command: r.command,
     args: r.args,

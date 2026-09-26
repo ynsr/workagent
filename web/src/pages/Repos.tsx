@@ -17,7 +17,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
+import { CheckRow } from "@/components/FieldHelp"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -43,8 +43,6 @@ export function Repos() {
   const [name, setName] = useState("")
   const [path, setPath] = useState("")
   const [tracker, setTracker] = useState("")
-  const [addJson, setAddJson] = useState(false)
-  const [removeJson, setRemoveJson] = useState(false)
   const [removeForce, setRemoveForce] = useState(false)
   const [adding, setAdding] = useState(false)
 
@@ -60,16 +58,7 @@ export function Repos() {
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "repo",
-        args: [
-          "add",
-          "--name",
-          name.trim(),
-          "--path",
-          path.trim(),
-          "--tracker",
-          tracker.trim(),
-          ...(addJson ? ["--json"] : []),
-        ],
+        args: ["add", "--name", name.trim(), "--path", path.trim(), "--tracker", tracker.trim()],
       })
       toast.success("Repo add started", {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
@@ -77,7 +66,6 @@ export function Repos() {
       setName("")
       setPath("")
       setTracker("")
-      setAddJson(false)
     } catch (err) {
       toast.error(errorText(err))
     } finally {
@@ -100,35 +88,21 @@ export function Repos() {
           : []),
       ],
       extras: (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="repo-remove-json"
-              checked={removeJson}
-              onCheckedChange={(v) => setRemoveJson(v === true)}
-            />
-            <Label htmlFor="repo-remove-json" className="font-normal">
-              <span className="font-mono text-[13px]">--json</span> — JSON output in the run log
-            </Label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="repo-remove-force"
-              checked={removeForce}
-              onCheckedChange={(v) => setRemoveForce(v === true)}
-            />
-            <Label htmlFor="repo-remove-force" className="font-normal">
-              <span className="font-mono text-[13px]">--force</span> — remove linked worktrees (and their sessions) too
-            </Label>
-          </div>
-        </div>
+        <CheckRow
+          id="repo-remove-force"
+          checked={removeForce}
+          onChange={setRemoveForce}
+          label="Remove linked worktrees too"
+          flag="--force"
+          description="Remove linked worktrees (and their sessions) too"
+        />
       ),
     })
     if (!ok) return
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "repo",
-        args: ["remove", repo.name, ...(removeJson ? ["--json"] : [])],
+        args: ["remove", repo.name],
         confirm: true,
         force: removeForce,
       })
@@ -317,16 +291,6 @@ export function Repos() {
                 aria-invalid={trackerError ? true : undefined}
               />
               {trackerError ? <p className="text-xs text-destructive">{trackerError}</p> : null}
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="repo-add-json"
-                checked={addJson}
-                onCheckedChange={(v) => setAddJson(v === true)}
-              />
-              <Label htmlFor="repo-add-json" className="font-normal">
-                <span className="font-mono text-[13px]">--json</span> output
-              </Label>
             </div>
             <Button onClick={() => void handleAdd()} disabled={!name.trim() || !path.trim() || !tracker.trim() || adding}>
               <Plus aria-hidden />

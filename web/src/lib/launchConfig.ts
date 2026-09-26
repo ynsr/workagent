@@ -1,9 +1,5 @@
 export type Mode = "start" | "review" | "sync"
 
-export const AUTO_REPO = "__auto__"
-export const AUTO_LABEL = "Registry default (auto)"
-export const DEFAULT_HARNESS = "__default__"
-export const HARNESS_DEFAULT_LABEL = "Configured default"
 /** Issue #26: Launch never defaults to the serve CWD. The backend
  * `GET /api/default-repo?ref=` returns the linked-worktree repo for the
  * typed ref, else the single-linked repo — else no default. */
@@ -54,25 +50,19 @@ export interface LaunchForm {
   repo: string
   depth: string
   base: string
-  harness: string
   launch: boolean
   fixComments: boolean
   merge: boolean
-  dryRun: boolean
-  json: boolean
 }
 export const INITIAL: LaunchForm = {
   ref: "",
-  repo: AUTO_REPO,
+  repo: "",
   depth: "7",
   base: "",
-  harness: DEFAULT_HARNESS,
   // Issue #24: Start/Review launches default to printing the harness
-  // command for manual execution instead of auto-running (opt in with --launch).
+  // command for manual execution instead of auto-running (opt in with Run agent).
   launch: false,
   fixComments: false,
   merge: false,
-  dryRun: false,
-  json: false,
 }
 

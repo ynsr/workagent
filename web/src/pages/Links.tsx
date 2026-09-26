@@ -20,8 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Label } from "@/components/ui/label"
+import { CheckRow } from "@/components/FieldHelp"
 import { Switch } from "@/components/ui/switch"
 import { useConfirmedRun } from "@/components/RunActions"
 import { useInfo, useRepos, useStatusAll } from "@/lib/queries"
@@ -72,18 +71,14 @@ export function Links() {
       confirmLabel: "Review all",
       details: [{ label: "Scope", value: "Every linked worktree" }],
       extras: (
-        <div className="flex items-start gap-2">
-          <Checkbox
-            id="reviewall-force-links"
-            checked={forceAll}
-            onCheckedChange={(v) => setForceAll(v === true)}
-            className="mt-0.5"
-          />
-          <Label htmlFor="reviewall-force-links" className="text-sm font-normal leading-snug">
-            <span className="font-mono text-[13px]">--force-all</span>
-            {" — include already-reviewed and unresolved-comment worktrees too"}
-          </Label>
-        </div>
+        <CheckRow
+          id="reviewall-force-links"
+          checked={forceAll}
+          onChange={(v) => setForceAll(v)}
+          label="Include already-reviewed worktrees"
+          flag="--force-all"
+          description="Include already-reviewed and unresolved-comment worktrees too"
+        />
       ),
       command: "review",
       args: ["--all", ...(forceAll ? ["--force-all"] : [])],

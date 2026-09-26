@@ -21,8 +21,7 @@ import {
   errorText,
 } from "@/components/StatusFeedback"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Label } from "@/components/ui/label"
+import { CheckRow } from "@/components/FieldHelp"
 import { Switch } from "@/components/ui/switch"
 import { api, type WorktreeMap } from "@/lib/api"
 import { useConfirm } from "@/lib/confirm"
@@ -79,9 +78,9 @@ export function Dashboard() {
 
   const [showWorktree, setShowWorktree] = useState(false)
   const [refreshingPr, setRefreshingPr] = useState(false)
-  const [syncOpts, setSyncOpts] = useState({ merge: false, dryRun: false, json: false })
-  const [reviewOpts, setReviewOpts] = useState({ forceAll: false })
-
+  const [syncMerge, setSyncMerge] = useState(false)
+  const [reviewForceAll, setReviewForceAll] = useState(false)
+  const [cleanupTarget, setCleanupTarget] = useState<string | null>(null)
   async function handleRefreshPr() {
     setRefreshingPr(true)
     try {
@@ -107,7 +106,7 @@ export function Dashboard() {
   }
 
   async function handleSyncAll() {
-    setSyncOpts({ merge: false, dryRun: false, json: false })
+    setSyncMerge(false)
     const ok = await confirm({
       action: "sync",
       title: "Sync all worktrees",
@@ -118,39 +117,23 @@ export function Dashboard() {
       details: [{ label: "Scope", value: "Every linked worktree" }],
       extras: (
         <div className="grid gap-2.5">
-          <OptRow
+          <CheckRow
             id="syncall-merge"
-            checked={syncOpts.merge}
-            onChange={(v) => setSyncOpts((o) => ({ ...o, merge: v }))}
-            label="-m — merge locally instead of the remote rebase"
-          />
-          <OptRow
-            id="syncall-dry"
-            checked={syncOpts.dryRun}
-            onChange={(v) => setSyncOpts((o) => ({ ...o, dryRun: v }))}
-            label="--dry-run — show what would run"
-          />
-          <OptRow
-            id="syncall-json"
-            checked={syncOpts.json}
-            onChange={(v) => setSyncOpts((o) => ({ ...o, json: v }))}
-            label="--json — JSON output in the run log"
+            checked={syncMerge}
+            onChange={setSyncMerge}
+            label="Merge locally"
+            flag="--merge (-m)"
+            description="Merge locally instead of the remote rebase"
           />
         </div>
       ),
     })
     if (!ok) return
-    const dry = syncOpts.dryRun
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "sync",
-        args: [
-          "--all",
-          ...(syncOpts.merge ? ["--merge"] : []),
-          ...(dry ? ["--dry-run"] : []),
-          ...(syncOpts.json ? ["--json"] : []),
-        ],
-        confirm: dry ? undefined : true,
+        args: ["--all", ...(syncMerge ? ["--merge"] : [])],
+        confirm: true,
       })
       runCreated(run_id, "Sync all")
     } catch (err) {
@@ -159,7 +142,7 @@ export function Dashboard() {
   }
 
   async function handleReviewAll() {
-    setReviewOpts({ forceAll: false })
+    setReviewForceAll(false)
     const ok = await confirm({
       action: "review",
       title: "Review all worktrees",
@@ -170,11 +153,13 @@ export function Dashboard() {
       details: [{ label: "Scope", value: "Every linked worktree" }],
       extras: (
         <div className="grid gap-2.5">
-          <OptRow
+          <CheckRow
             id="reviewall-force"
-            checked={reviewOpts.forceAll}
-            onChange={(v) => setReviewOpts((o) => ({ ...o, forceAll: v }))}
-            label="--force-all — include already-reviewed and unresolved-comment worktrees too"
+            checked={reviewForceAll}
+            onChange={setReviewForceAll}
+            label="Include already-reviewed worktrees"
+            flag="--force-all"
+            description="Include already-reviewed and unresolved-comment worktrees too"
           />
         </div>
       ),
@@ -183,7 +168,7 @@ export function Dashboard() {
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "review",
-        args: ["--all", ...(reviewOpts.forceAll ? ["--force-all"] : [])],
+        args: ["--all", ...(reviewForceAll ? ["--force-all"] : [])],
         confirm: true,
       })
       runCreated(run_id, "Review all")
@@ -239,26 +224,19 @@ export function Dashboard() {
     }
   }
 
-  const [cleanupTarget, setCleanupTarget] = useState<string | null>(null)
-
   async function handleCleanup(key: string) {
-    // Local dialog owns --force/--dry-run/--json state (CleanupDialog);
+    // Local dialog owns force state (CleanupDialog);
     // the shared confirm() extras snapshot would go stale on toggle.
     setCleanupTarget(key)
   }
 
-  async function submitCleanup(key: string, opts: { force: boolean; dry: boolean; json: boolean }) {
+  async function submitCleanup(key: string, opts: { force: boolean }) {
     setCleanupTarget(null)
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "cleanup",
-        args: [
-          key,
-          ...(opts.force ? ["--force"] : []),
-          ...(opts.dry ? ["--dry-run"] : []),
-          ...(opts.json ? ["--json"] : []),
-        ],
-        confirm: opts.dry ? undefined : true,
+        args: [key, ...(opts.force ? ["--force"] : [])],
+        confirm: true,
         force: opts.force || undefined,
       })
       runCreated(run_id, `Cleanup ${key}`)
@@ -442,38 +420,6 @@ export function Dashboard() {
           }}
         />
       ) : null}
-    </div>
-  )
-}
-
-function OptRow({
-  id,
-  checked,
-  onChange,
-  label,
-  disabled,
-}: {
-  id: string
-  checked: boolean
-  onChange: (v: boolean) => void
-  label: string
-  disabled?: boolean
-}) {
-  const [flag, ...rest] = label.split(" — ")
-  const description = rest.join(" — ")
-  return (
-    <div className="flex items-start gap-2">
-      <Checkbox
-        id={id}
-        checked={checked}
-        disabled={disabled}
-        onCheckedChange={(v) => onChange(v === true)}
-        className="mt-0.5"
-      />
-      <Label htmlFor={id} className="text-sm font-normal leading-snug">
-        <span className="font-mono text-[13px]">{flag}</span>
-        {description ? ` — ${description}` : ""}
-      </Label>
     </div>
   )
 }

@@ -9,12 +9,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Label } from "@/components/ui/label"
+import { CheckRow } from "@/components/FieldHelp"
 
 /**
  * Remove-worktree ("cleanup") confirmation with a live outcome table.
- * Local `force` state drives the "What happens" column, so toggling --force
+ * Local `force` state drives the "What happens" column, so toggling force
  * updates the table instantly (a shared confirm() extras node would be a
  * stale snapshot captured at open time).
  */
@@ -25,12 +24,10 @@ export function CleanupDialog({
 }: {
   worktreeKey: string
   invalid: boolean
-  onClose: (ok: false | { force: boolean; dry: boolean; json: boolean }) => void
+  onClose: (ok: false | { force: boolean }) => void
 }) {
   const [force, setForce] = useState(invalid)
-  const [dryRun, setDryRun] = useState(false)
-  const [json, setJson] = useState(false)
-  const effectiveForce = (invalid || force) && !dryRun
+  const effectiveForce = invalid || force
 
   const rows: [string, string][] = invalid
     ? [["State check", "Skipped — entry is removed either way"]]
@@ -76,7 +73,7 @@ export function CleanupDialog({
               <table className="w-full min-w-130 text-left text-sm">
                 <caption className="px-3 pt-2 text-left text-xs font-medium text-muted-foreground">
                   What will happen
-                  {effectiveForce ? " with --force" : " without --force"}
+                  {effectiveForce ? " with force" : ""}
                 </caption>
                 <thead>
                   <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
@@ -102,55 +99,21 @@ export function CleanupDialog({
             </div>
           ) : null}
           <div className="grid gap-2.5">
-            <div className="flex items-start gap-2">
-              <Checkbox
-                id="cleanup-force"
-                checked={invalid || (force && !dryRun)}
-                disabled={invalid || dryRun}
-                onCheckedChange={(v) => setForce(v === true)}
-                className="mt-0.5"
-              />
-              <Label htmlFor="cleanup-force" className="text-sm font-normal leading-snug">
-                <span className="font-mono text-[13px]">--force</span>
-                {" — skip state validation and confirmation"}
-              </Label>
-            </div>
-            <div className="flex items-start gap-2">
-              <Checkbox
-                id="cleanup-dry"
-                checked={dryRun}
-                onCheckedChange={(v) => {
-                  const d = v === true
-                  setDryRun(d)
-                  if (d) setForce(false)
-                }}
-                className="mt-0.5"
-              />
-              <Label htmlFor="cleanup-dry" className="text-sm font-normal leading-snug">
-                <span className="font-mono text-[13px]">--dry-run</span>
-                {" — print the plan without acting"}
-              </Label>
-            </div>
-            <div className="flex items-start gap-2">
-              <Checkbox
-                id="cleanup-json"
-                checked={json}
-                onCheckedChange={(v) => setJson(v === true)}
-                className="mt-0.5"
-              />
-              <Label htmlFor="cleanup-json" className="text-sm font-normal leading-snug">
-                <span className="font-mono text-[13px]">--json</span>
-                {" — JSON output in the run log"}
-              </Label>
-            </div>
+            <CheckRow
+              id="cleanup-force"
+              checked={invalid || force}
+              onChange={(v) => setForce(v)}
+              label="Skip state validation"
+              flag="--force"
+              description="Skip state validation and confirmation"
+            />
           </div>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={() => onClose(false)}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             autoFocus
-            onClick={() => onClose({ force: effectiveForce, dry: dryRun, json })}
-            className="bg-destructive text-white hover:bg-destructive/90"
+            onClick={() => onClose({ force: effectiveForce })}
           >
             {invalid ? "Delete worktree" : "Remove worktree"}
           </AlertDialogAction>

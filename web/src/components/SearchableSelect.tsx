@@ -111,7 +111,7 @@ export function SearchableSelect({ value, options, onChange, placeholder, allowC
           aria-expanded={open}
           className="w-full justify-between font-normal"
         >
-          <span className="truncate">{value ? value : (placeholder ?? "Select…")}</span>
+          <span className={value ? "truncate" : "truncate text-muted-foreground/60 italic"}>{value ? value : (placeholder ?? "Select…")}</span>
           <ChevronsUpDown aria-hidden className="ml-2 size-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>

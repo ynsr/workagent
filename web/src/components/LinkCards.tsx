@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react"
-import { Checkbox } from "@/components/ui/checkbox"
+import { CheckRow } from "@/components/FieldHelp"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Link2, Plus, Unlink, UserPlus, X } from "lucide-react"
+import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -29,7 +29,6 @@ export function TrackerMappingsCard() {
   const confirm = useConfirm()
   const createRun = useCreateRun()
   const navigate = useNavigate()
-  const [removeJson, setRemoveJson] = useState(false)
 
   async function handleRemoveRepo(tracker: string, repo: string) {
     const ok = await confirm({
@@ -42,24 +41,12 @@ export function TrackerMappingsCard() {
         { label: "Tracker", value: tracker, mono: true },
         { label: "Repo", value: repo, mono: true },
       ],
-      extras: (
-        <div className="flex items-center gap-2">
-          <Checkbox
-            id="mapping-remove-json"
-            checked={removeJson}
-            onCheckedChange={(v) => setRemoveJson(v === true)}
-          />
-          <Label htmlFor="mapping-remove-json" className="font-normal">
-            <span className="font-mono text-[13px]">--json</span> output
-          </Label>
-        </div>
-      ),
     })
     if (!ok) return
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "link",
-        args: ["remove", tracker, "--repo", repo, ...(removeJson ? ["--json"] : [])],
+        args: ["remove", tracker, "--repo", repo],
         confirm: true,
       })
       toast.success("Link remove started", {
@@ -152,7 +139,6 @@ export function LinkSetDialog({ onClose }: { onClose: () => void }) {
   const { submitting, run: runLink } = useLinkSubmit()
   const [tracker, setTracker] = useState("")
   const [repo, setRepo] = useState("")
-  const [json, setJson] = useState(false)
 
   const repoOptions = useMemo(() => (repos ?? []).map((r) => r.name), [repos])
   const trackerOptions = useMemo(() => Object.keys(links?.trackers ?? {}).sort(), [links])
@@ -167,7 +153,7 @@ export function LinkSetDialog({ onClose }: { onClose: () => void }) {
   async function handleSubmit() {
     const ok = await runLink({
       command: "link",
-      args: ["set", tracker.trim(), repo.trim(), ...(json ? ["--json"] : [])],
+      args: ["set", tracker.trim(), repo.trim()],
       label: "Link set",
     })
     if (ok) onClose()
@@ -213,16 +199,6 @@ export function LinkSetDialog({ onClose }: { onClose: () => void }) {
           </p>
         ) : null}
       </div>
-      <div className="flex items-center gap-2">
-        <Checkbox
-          id="linkset-json"
-          checked={json}
-          onCheckedChange={(v) => setJson(v === true)}
-        />
-        <Label htmlFor="linkset-json" className="font-normal">
-          <span className="font-mono text-[13px]">--json</span> output
-        </Label>
-      </div>
     </ActionDialog>
   )
 }
@@ -232,7 +208,6 @@ export function LinkRemoveDialog({ onClose }: { onClose: () => void }) {
   const { submitting, run: runLink } = useLinkSubmit()
   const [ref, setRef] = useState("")
   const [repo, setRepo] = useState("")
-  const [json, setJson] = useState(false)
 
   const repoOptions = useMemo(
     () => ["(any repo)", ...(repos ?? []).map((r) => r.name)],
@@ -242,12 +217,7 @@ export function LinkRemoveDialog({ onClose }: { onClose: () => void }) {
   async function handleSubmit() {
     const ok = await runLink({
       command: "link",
-      args: [
-        "remove",
-        ref.trim(),
-        ...(repo ? ["--repo", repo] : []),
-        ...(json ? ["--json"] : []),
-      ],
+      args: ["remove", ref.trim(), ...(repo ? ["--repo", repo] : [])],
       confirm: true,
       label: "Link remove",
     })
@@ -299,16 +269,6 @@ export function LinkRemoveDialog({ onClose }: { onClose: () => void }) {
           )}
         </p>
       </div>
-      <div className="flex items-center gap-2">
-        <Checkbox
-          id="linkremove-json"
-          checked={json}
-          onCheckedChange={(v) => setJson(v === true)}
-        />
-        <Label htmlFor="linkremove-json" className="font-normal">
-          <span className="font-mono text-[13px]">--json</span> output
-        </Label>
-      </div>
     </ActionDialog>
   )
 }
@@ -321,7 +281,6 @@ export function RegisterDialog({ onClose }: { onClose: () => void }) {
   const [issue, setIssue] = useState("")
   const [repo, setRepo] = useState("")
   const [force, setForce] = useState(false)
-  const [json, setJson] = useState(false)
 
   const repoOptions = useMemo(
     () => ["(auto)", ...(repos ?? []).map((r) => r.name)],
@@ -338,7 +297,6 @@ export function RegisterDialog({ onClose }: { onClose: () => void }) {
         ...(issue.trim() ? ["--issue", issue.trim()] : []),
         ...(repo ? ["--repo", repo] : []),
         ...(force ? ["--force"] : []),
-        ...(json ? ["--json"] : []),
       ],
       confirm: true,
       force: force || undefined,
@@ -416,26 +374,14 @@ export function RegisterDialog({ onClose }: { onClose: () => void }) {
         </p>
       </div>
       <div className="flex flex-wrap gap-x-6 gap-y-3">
-        <div className="flex items-center gap-2">
-          <Checkbox
-            id="reg-force"
-            checked={force}
-            onCheckedChange={(v) => setForce(v === true)}
-          />
-          <Label htmlFor="reg-force" className="font-normal">
-            <span className="font-mono text-[13px]">--force</span> — overwrite an existing link
-          </Label>
-        </div>
-        <div className="flex items-center gap-2">
-          <Checkbox
-            id="reg-json"
-            checked={json}
-            onCheckedChange={(v) => setJson(v === true)}
-          />
-          <Label htmlFor="reg-json" className="font-normal">
-            <span className="font-mono text-[13px]">--json</span> output
-          </Label>
-        </div>
+        <CheckRow
+          id="reg-force"
+          checked={force}
+          onChange={setForce}
+          label="Overwrite an existing link"
+          flag="--force"
+          description="Overwrite an existing link for the same key"
+        />
       </div>
     </ActionDialog>
   )

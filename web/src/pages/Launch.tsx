@@ -7,7 +7,6 @@ import { PageHeader } from "@/components/PageHeader"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useConfirm } from "@/lib/confirm"
@@ -16,8 +15,9 @@ import { queryKeys, useCreateRun, useLinks, useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
-import { AUTO_LABEL, AUTO_REPO, COPY, DEFAULT_HARNESS, HARNESS_DEFAULT_LABEL, INITIAL, MODES } from "@/lib/launchConfig"
+import { COPY, INITIAL, MODES } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
+import { CheckRow, FieldHelp } from "@/components/FieldHelp"
 
 export function Launch() {
   const navigate = useNavigate()
@@ -43,9 +43,6 @@ export function Launch() {
   const [refreshingIssues, setRefreshingIssues] = useState(false)
   const [issuesNonce, setIssuesNonce] = useState(0)
   const [prefillChecked, setPrefillChecked] = useState(false)
-  const [defaultRepo, setDefaultRepo] = useState("")
-  const [defaultRepoReady, setDefaultRepoReady] = useState(false)
-
   async function handleRefreshIssues() {
     setRefreshingIssues(true)
     try {
@@ -84,34 +81,25 @@ export function Launch() {
     }
   }, [prefillChecked, modeParam, refParam, links])
   const refValue = form.ref.trim()
-  // Issue #26 default-repo prefill: linked-worktree repo wins, else the
-  // single linked repo. For review (and start) the selected worktree's
-  // repo auto-fills here via /api/default-repo — the backend resolves
-  // worktree keys/branches/paths first. Sync takes no --repo (the linked
-  // worktree already pins it), so the lookup is skipped. Debounced on
-  // the typed ref; blanks mean "pick".
+  // Repo is mandatory: the debounced lookup fills the field whenever the
+  // backend returns a repo (linked worktree wins, else single linked repo);
+  // the user can always override. Never blank a manual pick.
   useEffect(() => {
     if (mode === "sync") return
     const ref = refValue
     if (!ref) {
-      setDefaultRepo("")
-      setDefaultRepoReady(true)
       return
     }
-    setDefaultRepoReady(false)
     let live = true
     const t = setTimeout(() => {
       api
         .defaultRepo(ref)
         .then((r) => {
           if (!live) return
-          setDefaultRepo(r.repo ?? "")
-          setDefaultRepoReady(true)
+          if (r.repo) setForm((f) => (f.repo.trim() ? f : { ...f, repo: r.repo }))
         })
         .catch(() => {
           if (!live) return
-          setDefaultRepo("")
-          setDefaultRepoReady(true)
         })
     }, 250)
     return () => {
@@ -130,73 +118,39 @@ export function Launch() {
     setForm((f) => ({ ...f, base: "" }))
   }
 
-  const autoRepo = defaultRepoReady && defaultRepo ? defaultRepo : ""
-  const repoValue = form.repo === AUTO_REPO ? (autoRepo || undefined) : form.repo
+  // Repo is mandatory: prefill from /api/default-repo (linked-worktree repo
+  // wins, else the single linked repo) whenever it returns one; the user can
+  // always override. No "auto" pseudo-option — the dropdown holds a real repo.
+  const repoValue = form.repo.trim() || undefined
   const copy = COPY[mode]
-  const repoHint =
-    mode === "sync"
-      ? ""
-      : !refValue
-        ? "Type a ref — the default repo appears once the ref matches a linked worktree or a single linked repo."
-        : !defaultRepoReady
-          ? "Looking up the default repo for this ref…"
-          : autoRepo
-            ? `Default for this ref: ${autoRepo}. Pick another repo to override, or leave auto.`
-            : "No default repo for this ref — pick a repo (the server CWD is never used)."
-  const repoOptions = useMemo(
-    () => [AUTO_LABEL, ...(repos ?? []).map((r) => r.name)],
-    [repos],
-  )
-  const repoDisplay = form.repo === AUTO_REPO ? AUTO_LABEL : form.repo
-  const harnessValue = form.harness === DEFAULT_HARNESS ? undefined : form.harness
-  const harnessOptions = useMemo(() => [HARNESS_DEFAULT_LABEL, "omp"], [])
-  const harnessDisplay = form.harness === DEFAULT_HARNESS ? HARNESS_DEFAULT_LABEL : form.harness
-
+  const repoNames = useMemo(() => (repos ?? []).map((r) => r.name), [repos])
   function buildArgs(): string[] {
     if (mode === "sync") {
-      return [
-        refValue,
-        ...(form.merge ? ["--merge"] : []),
-        ...(form.dryRun ? ["--dry-run"] : []),
-        ...(form.json ? ["--json"] : []),
-      ]
+      return [refValue, ...(form.merge ? ["--merge"] : [])]
     }
     const args = [refValue, "--no-tty"]
     if (mode === "review" && form.fixComments) args.push("--fix-comments")
     if (repoValue) args.push("--repo", repoValue)
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
     if (mode === "start" && form.base.trim()) args.push("--base", form.base.trim())
-    if (harnessValue) args.push("--harness", harnessValue)
     if (form.launch) args.push("--launch")
-    if (form.dryRun) args.push("--dry-run")
-    if (form.json) args.push("--json")
     return args
   }
 
   const flagList = mode === "sync"
-    ? [
-        form.merge ? "--merge (local merge)" : "remote rebase (default)",
-        form.dryRun ? "--dry-run" : null,
-        form.json ? "--json" : null,
-      ].filter((v): v is string => v !== null)
+    ? [form.merge ? "--merge (local merge)" : "remote rebase (default)"]
     : [
         "headless (--no-tty)",
         mode === "review" && form.fixComments ? "--fix-comments (fix open review comments)" : null,
-        repoValue ? `--repo ${repoValue}` : "repo: registry default",
+        repoValue ? `--repo ${repoValue}` : "repo: pick a repo",
         `--depth ${form.depth.trim() || "7"}`,
         mode === "start" && form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
-        harnessValue ? `--harness ${harnessValue}` : "harness: configured default",
         form.launch ? "--launch (run the agent now)" : "preview (print command, no run)",
-        form.dryRun ? "--dry-run" : null,
-        form.json ? "--json" : null,
       ].filter((v): v is string => v !== null)
-
   async function handleSubmit() {
     if (!refValue) return
-    if (!repoValue && defaultRepoReady && !autoRepo) {
-      toast.error(
-        "No default repo for this ref — pick a repo. The tracker is linked to multiple repos, or none.",
-      )
+    if (!repoValue) {
+      toast.error("Pick a repo — none matches this ref (the server CWD is never used).")
       return
     }
     const ok = await confirm({
@@ -322,34 +276,33 @@ export function Launch() {
           </div>
 
           {mode === "sync" ? (
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="launch-merge"
-                checked={form.merge}
-                onCheckedChange={(v) => update("merge", v === true)}
-              />
-              <Label htmlFor="launch-merge" className="font-normal">
-                <span className="font-mono text-[13px]">--merge</span> — merge locally instead of the remote rebase
-              </Label>
-            </div>
+            <CheckRow
+              id="launch-merge"
+              checked={form.merge}
+              onChange={(v) => update("merge", v)}
+              label="Merge locally"
+              flag="--merge"
+              description="Merge locally instead of the remote rebase."
+            />
           ) : (
             <>
               <div className="grid gap-5 sm:grid-cols-2">
                 <div className="grid gap-2">
-                  <Label htmlFor="launch-repo">Repo</Label>
+                  <Label htmlFor="launch-repo">
+                    <FieldHelp label="Repository" flag="--repo" description="Registered name, local path, or clone URL. Required — prefilled from the ref when the backend knows it." />
+                  </Label>
                   <SearchableSelect
-                    value={repoDisplay}
-                    options={repoOptions}
-                    onChange={(v) => update("repo", v === AUTO_LABEL ? AUTO_REPO : v)}
-                    placeholder="Filter repos, or type a path/URL…"
+                    value={form.repo}
+                    options={repoNames}
+                    onChange={(v) => update("repo", v)}
+                    placeholder="Select a repo…"
                     allowCustom
                   />
-                  <p className="text-xs text-muted-foreground">
-                    {repoHint || "--repo accepts a registered name, a local path, or a clone URL."}
-                  </p>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="launch-depth">Clone depth</Label>
+                  <Label htmlFor="launch-depth">
+                    <FieldHelp label="Clone depth" flag="--depth" description="Git clone depth for the new worktree (default 7)." />
+                  </Label>
                   <Input
                     id="launch-depth"
                     type="number"
@@ -364,22 +317,15 @@ export function Launch() {
               {mode === "start" ? (
                 <div className="grid gap-5 sm:grid-cols-2">
                   <div className="grid gap-2">
-                    <Label htmlFor="launch-base">Base branch</Label>
+                    <Label htmlFor="launch-base">
+                      <FieldHelp label="Base branch" flag="--base" description="Base branch for the new worktree (default: repo default)." />
+                    </Label>
                     <Input
                       id="launch-base"
                       value={form.base}
                       onChange={(e) => update("base", e.target.value)}
                       placeholder="repo default"
                       spellCheck={false}
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="launch-harness">Harness</Label>
-                    <SearchableSelect
-                      value={harnessDisplay}
-                      options={harnessOptions}
-                      onChange={(v) => update("harness", v === HARNESS_DEFAULT_LABEL ? DEFAULT_HARNESS : v)}
-                      placeholder="Filter harnesses…"
                     />
                   </div>
                 </div>
@@ -389,49 +335,25 @@ export function Launch() {
 
           <div className="flex flex-wrap gap-x-6 gap-y-3">
             {mode !== "sync" ? (
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="launch-launch"
-                  checked={form.launch}
-                  onCheckedChange={(v) => update("launch", v === true)}
-                />
-                <Label htmlFor="launch-launch" className="font-normal">
-                  <span className="font-mono text-[13px]">--launch</span> — run the agent now (default: print the command and hand over the worktree)
-                </Label>
-              </div>
+              <CheckRow
+                id="launch-launch"
+                checked={form.launch}
+                onChange={(v) => update("launch", v)}
+                label="Run agent now"
+                flag="--launch"
+                description="Run the agent now (default: print the command and hand over the worktree)."
+              />
             ) : null}
             {mode === "review" ? (
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="launch-fix-comments"
-                  checked={form.fixComments}
-                  onCheckedChange={(v) => update("fixComments", v === true)}
-                />
-                <Label htmlFor="launch-fix-comments" className="font-normal">
-                  <span className="font-mono text-[13px]">--fix-comments</span> — fix open review comments: validate, apply, resolve/close, commit and push
-                </Label>
-              </div>
+              <CheckRow
+                id="launch-fix-comments"
+                checked={form.fixComments}
+                onChange={(v) => update("fixComments", v)}
+                label="Fix review comments"
+                flag="--fix-comments"
+                description="Fix open review comments: validate, apply, resolve/close, commit and push."
+              />
             ) : null}
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="launch-dry"
-                checked={form.dryRun}
-                onCheckedChange={(v) => update("dryRun", v === true)}
-              />
-              <Label htmlFor="launch-dry" className="font-normal">
-                <span className="font-mono text-[13px]">--dry-run</span> — print the plan without acting
-              </Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="launch-json"
-                checked={form.json}
-                onCheckedChange={(v) => update("json", v === true)}
-              />
-              <Label htmlFor="launch-json" className="font-normal">
-                <span className="font-mono text-[13px]">--json</span> — JSON output in the run log
-              </Label>
-            </div>
           </div>
 
           <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200">
@@ -459,14 +381,10 @@ export function Launch() {
             <Button
               type="button"
               onClick={() => void handleSubmit()}
-              disabled={
-                !refValue ||
-                submitting ||
-                (mode !== "sync" && !repoValue && defaultRepoReady && !autoRepo)
-              }
+              disabled={!refValue || submitting || (mode !== "sync" && !repoValue)}
               title={
-                mode !== "sync" && refValue && !repoValue && defaultRepoReady && !autoRepo
-                  ? "No default repo for this ref — pick a repo (multiple or no linked repos)"
+                mode !== "sync" && refValue && !repoValue
+                  ? "Pick a repo — none matches this ref"
                   : undefined
               }
             >
