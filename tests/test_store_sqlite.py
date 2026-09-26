@@ -440,3 +440,78 @@ def test_save_links_rows_never_resets_active(tmp_path):
     sl.save_links_rows(db, rows)  # re-save must not resurrect
     assert "k1" not in sl.load_links_rows(db)
     assert sl.load_links_rows(db, include_inactive=True)["k1"]["active"] == 0
+
+def test_migrate_sessions_type_adds_columns(tmp_path):
+    """Pre-v6 sessions rows backfill session_type from the prompt; the fix
+    prompt header is the only surviving discriminator (initiator_command is
+    the harness name, never the subcommand)."""
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        for c in ("session_type", "metadata"):
+            if c in {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}:
+                conn.execute(f"ALTER TABLE sessions DROP COLUMN {c}")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+        conn.execute("INSERT INTO sessions (id, worktree_ref, state, harness_name,"
+                     " initiator_command, prompt, file_path, created_at)"
+                     " VALUES ('s1', 'k', 'finished', 'omp', 'omp', ?, '/f', '2026-01-01')",
+                     ("Fix all open (not-resolved) review comments on this PR/MR: https://x/1",))
+    sq._INIT_CACHE.pop(str(db), None)
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+        assert {"session_type", "metadata"} <= cols
+        row = conn.execute("SELECT session_type, metadata FROM sessions WHERE id = 's1'").fetchone()
+        assert row[0] == "fix_comments"
+
+
+def test_derive_session_type_matrix():
+    from workagent.store_sessions import derive_session_type
+    assert derive_session_type("start", False) == "start"
+    assert derive_session_type("sync", False) == "sync"
+    assert derive_session_type("review", False) == "review"
+    assert derive_session_type("review", True) == "fix_comments"
+    assert derive_session_type("cleanup", False) is None
+    assert derive_session_type("", False) is None
+
+def test_set_session_metadata_merges(tmp_path):
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
+                            initiator_command="review", prompt="p",
+                            file_path="/f", session_type="review")
+    out = sq.set_session_metadata(db, sid, {"review_comments_fixed_at": "2026-09-26T00:00:00+00:00"})
+    assert out["review_comments_fixed_at"] == "2026-09-26T00:00:00+00:00"
+    assert sq.get_session(db, sid)["metadata"]["review_comments_fixed_at"].startswith("2026-09-26")
+
+
+def test_latest_review_session_skips_running(tmp_path):
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="review",
+                      prompt="p", file_path="/old", session_id="old-1", session_type="review")
+    sq.finish_session(db, "old-1", "finished")
+    running = sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="review",
+                                prompt="p", file_path="/run", session_type="review")
+    assert sq.latest_review_session(db, "k")["id"] == "old-1"
+    _ = running
+
+
+def test_insert_session_rejects_bad_type(tmp_path):
+    import pytest
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with pytest.raises(ValueError):
+        sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="x",
+                          prompt="p", file_path="/f", session_type="nonsense")

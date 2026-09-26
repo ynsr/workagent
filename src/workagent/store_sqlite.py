@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY NOT NULL, worktree_ref TEXT NOT NULL REFERENCES worktrees(ref_key) ON DELETE CASCADE,
   state TEXT NOT NULL, harness_name TEXT NOT NULL DEFAULT '',
   initiator_command TEXT NOT NULL DEFAULT '', prompt TEXT NOT NULL DEFAULT '',
-  file_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+  file_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+  session_type TEXT, metadata TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   command TEXT NOT NULL, args TEXT NOT NULL,
@@ -145,6 +146,27 @@ def _migrate_worktrees_active(conn) -> None:
         return
     if "active" not in cols:
         conn.execute("ALTER TABLE worktrees ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
+
+def _migrate_sessions_type(conn) -> None:
+    """Schema v6: sessions gains session_type + metadata (session-type spec).
+
+    Backfill reads the fix-comments prompt header (the only surviving
+    discriminator — initiator_command carries the harness name, never the
+    subcommand), else the command's first word, else NULL (never guess).
+    Idempotent: skips present columns; backfills only NULL-typed rows.
+    """
+    from .store_sessions import _backfill_session_type
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+    if not cols:
+        return
+    if "session_type" not in cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN session_type TEXT")
+    if "metadata" not in cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'")
+    for sid, cmd, prompt in conn.execute(
+            "SELECT id, initiator_command, prompt FROM sessions WHERE session_type IS NULL"):
+        conn.execute("UPDATE sessions SET session_type = ? WHERE id = ?",
+                     (_backfill_session_type(cmd or "", prompt or ""), sid))
 
 def _migrate_v2(conn) -> None:
     """Schema v2: trackers gains mandatory vendor/remote_url; repos loses tracker_key.
@@ -303,7 +325,7 @@ def _schema_current(path: Path) -> bool:
         if "active" not in wcols:
             return False
         scols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
-        return "harness_name" in scols
+        return {"harness_name", "session_type", "metadata"} <= scols
     except Exception:
         return False
     finally:
@@ -328,6 +350,7 @@ def init_db(path: Path) -> Path:
                 _migrate_runs_output(conn)
                 _migrate_worktrees_active(conn)
                 _migrate_sessions_harness(conn)
+                _migrate_sessions_type(conn)
             break
         except sqlite3.OperationalError as e:
             last = e
@@ -453,18 +476,21 @@ def backfill_trackers_repos(path: Path, cfg: dict,
                     "INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
                     (tid, repo_key)).rowcount
     return counts
-
-
 from .store_sessions import (  # noqa: F401,E402
+    SESSION_TYPES,
+    _backfill_session_type,
     db_path,
+    derive_session_type,
     finish_session,
     gen_session_id,
     get_session,
     insert_run,
     insert_session,
+    latest_review_session,
     list_runs,
     list_sessions,
     session_file_path,
+    set_session_metadata,
 )
 
 from .store_links import delete_worktree_row, load_links_rows, save_links_rows, set_worktree_active  # noqa: F401,E402
