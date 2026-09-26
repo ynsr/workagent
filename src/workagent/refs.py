@@ -169,6 +169,32 @@ def fetch_pr_info(parsed: dict, cwd: str | None = None) -> dict:
             "body": data.get("description", "") or ""}
 
 
+def require_head_ref(parsed: dict, repo_dir, ref: str) -> tuple[dict, str]:
+    """fetch_pr_info + missing-branch guard shared by start/review/sync.
+
+    Returns (info, head_ref); raises HarnessError with the standard
+    "git fetch origin … check gh/glab auth" hint when the source branch
+    cannot be determined. `repo_dir` may be a Path or str.
+    """
+    pr_url = parsed["url"]
+    cwd = str(repo_dir)
+    try:
+        info = fetch_pr_info(parsed, cwd=cwd)
+    except HarnessError as e:
+        raise HarnessError(
+            f"could not determine the source branch for {pr_url}: {e}",
+            exit_code=2,
+        )
+    head_ref = (info or {}).get("head_ref", "")
+    if not head_ref:
+        raise HarnessError(
+            f"could not determine the source branch for {pr_url}.\n"
+            f"  Run `git fetch origin` in {cwd} and check `gh`/`glab` auth for that host.",
+            exit_code=2,
+        )
+    return info, head_ref
+
+
 def hostname(url: str) -> str:
     return urlparse(url).netloc.lower()
 

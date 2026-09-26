@@ -453,15 +453,9 @@ def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
     harness_name = harness or store.load_config().get("default_harness", "omp")
     pr_url = parsed["url"]
     try:
-        info = refs.fetch_pr_info(parsed, cwd=str(repo_dir))
+        info, head_ref = refs.require_head_ref(parsed, repo_dir, ref)
     except HarnessError as e:
-        _fail(f"could not determine the source branch for {pr_url}: {e}",
-              EXIT_USAGE)
-    head_ref = info.get("head_ref", "")
-    if not head_ref:
-        _fail(f"could not determine the source branch for {pr_url}.\n"
-              f"  Run `git fetch origin` in {repo_dir} and check `gh`/`glab` auth for that host.",
-              EXIT_USAGE)
+        _fail(str(e), EXIT_USAGE)
     if dry_run:
         _print_result({"dry_run": True, "repo": str(repo_dir), "pr_url": pr_url,
                        "key": head_ref, "branch": head_ref,
@@ -2261,11 +2255,13 @@ def cd_cmd(
     0.4.0) makes bare `workagent cd <ref>` change directory directly.
     """
     links = store.load_links()
-    resolved = worktrees.resolve_worktree(ref, links)
-    if resolved is None:
+    try:
+        key, entry, _ = worktrees.resolve_any(ref, links)
+    except worktrees.NoLinkedState as e:
+        _fail(str(e), EXIT_USAGE)
+    if not key:
         _fail(f"no linked state for {ref}", EXIT_USAGE)
-    key = worktrees.pick_worktree(ref, resolved, links)
-    wt = links[key].get("worktree", "")
+    wt = entry.get("worktree", "")
     if not wt or not Path(wt).exists():
         _fail(f"worktree missing for {key}: {wt or '?'}", EXIT_GENERAL)
     if json_output:
@@ -2293,12 +2289,15 @@ def open_cmd(
       workagent open IPG-929
     """
     links = store.load_links()
-    resolved = worktrees.resolve_worktree(ref, links)
-    if resolved is None:
+    try:
+        key, entry, _ = worktrees.resolve_any(ref, links)
+    except worktrees.NoLinkedState:
         _fail(f"no linked state for {ref}.\n"
               "  Run `workagent link list` to see linked worktrees.", EXIT_USAGE)
-    key = worktrees.pick_worktree(ref, resolved, links)
-    wt = links.get(key, {}).get("worktree", "")
+    if not key:
+        _fail(f"no linked state for {ref}.\n"
+              "  Run `workagent link list` to see linked worktrees.", EXIT_USAGE)
+    wt = entry.get("worktree", "")
     if not wt or not worktrees.is_valid_worktree(wt):
         _fail(f"no valid worktree for {key}: {wt or '?'}", EXIT_GENERAL)
     opener = {"darwin": "open", "win32": "explorer"}.get(sys.platform,
@@ -2506,16 +2505,7 @@ def _sync_create_pr_worktree(ref: str, parsed: dict, dry_run: bool) -> str | Non
     repo_dir, _ = trackers.resolve_for_tracker(
         tid, None, Path.cwd(), depth=7, yes=True, persist=not dry_run)
     base_branch = repos.default_branch(repo_dir)
-    try:
-        info = refs.fetch_pr_info(parsed, cwd=str(repo_dir))
-    except HarnessError as e:
-        _fail(f"could not determine the source branch for {ref}: {e}",
-              EXIT_USAGE)
-    head_ref = info.get("head_ref", "")
-    if not head_ref:
-        _fail(f"could not determine the source branch for {ref}.\n"
-              f"  Run `git fetch origin` in {repo_dir} and check `gh`/`glab` auth for that host.",
-              EXIT_USAGE)
+    info, head_ref = refs.require_head_ref(parsed, repo_dir, ref)
     if dry_run:
         _print_result({"dry_run": True, "repo": str(repo_dir),
                        "pr_url": parsed["url"], "key": head_ref,

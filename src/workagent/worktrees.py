@@ -82,6 +82,37 @@ def resolve_worktree(ref: str, links: dict) -> str | list[str] | None:
     return matches
 
 
+class NoLinkedState(HarnessError):
+    """Raised when a ref matches no linked worktree (cli maps to _fail)."""
+
+    def __init__(self, msg: str):
+        super().__init__(msg, exit_code=2)
+
+
+def resolve_any(ref: str, links: dict) -> tuple[str, dict, dict | None]:
+    """Resolve *ref* to (key, entry, parsed): linked worktree first, else parse.
+
+    Shared by cd/open/cleanup/sync/status-detail preambles. Raises
+    NoLinkedState when neither resolution succeeds; `parsed` is None when
+    the ref is a pure worktree ref (key/branch/path), else the parse_ref
+    dict. Callers needing "PR/MR-only" still check parsed["kind"].
+    """
+    resolved = resolve_worktree(ref, links)
+    if resolved is not None:
+        key = pick_worktree(ref, resolved, links)
+        entry = links.get(key, {})
+        try:
+            parsed = refs.parse_ref(ref)
+        except HarnessError:
+            parsed = None
+        return key, entry, parsed
+    try:
+        parsed = refs.parse_ref(ref)
+    except HarnessError:
+        raise NoLinkedState(f"no linked state for {ref}")
+    return "", {}, parsed
+
+
 def pick_worktree(ref: str, resolved: str | list[str], links: dict | None = None) -> str:
     """Disambiguate multiple fuzzy matches interactively."""
     import sys

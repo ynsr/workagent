@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useConfirmedRun, useCopyFeedback } from "@/components/RunActions"
 import { useQueryClient } from "@tanstack/react-query"
 import { Copy, GitPullRequest, Play, RefreshCw, Ticket, UserPlus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -11,10 +11,8 @@ import {
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
-import { useConfirm } from "@/lib/confirm"
-import { copyToClipboard } from "@/lib/format"
 import { api } from "@/lib/api"
-import { queryKeys, useCandidates, useCreateRun } from "@/lib/queries"
+import { queryKeys, useCandidates } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 
@@ -33,24 +31,15 @@ const TABS: readonly { value: Tab; label: (n: number) => string }[] = [
  * run pipeline (confirm modal for start/review). Never auto-starts or links.
  */
 export function CandidatesCard() {
-  const navigate = useNavigate()
-  const confirm = useConfirm()
-  const createRun = useCreateRun()
+  const runConfirmed = useConfirmedRun()
   const qc = useQueryClient()
   const { data, isPending, isError, error, refetch, isFetching } = useCandidates()
   const [tab, setTab] = useState<Tab>("prs")
-  const [copied, setCopied] = useState<string | null>(null)
+  const { copied, copy } = useCopyFeedback()
   const [refreshing, setRefreshing] = useState(false)
 
   async function handleCopyRef(ref: string) {
-    try {
-      await copyToClipboard(ref)
-      setCopied(ref)
-      window.setTimeout(() => setCopied((c) => (c === ref ? null : c)), 1200)
-      toast.success(`Copied ${ref}`)
-    } catch (err) {
-      toast.error(errorText(err))
-    }
+    await copy(ref, `Copied ${ref}`)
   }
 
   async function handleRefresh() {
@@ -76,28 +65,16 @@ export function CandidatesCard() {
     label: string
     confirmText: string
   }) {
-    const ok = await confirm({
+    await runConfirmed({
       action: input.command === "register" ? null : input.command,
       title: input.label,
       description: input.confirmText,
       confirmLabel: input.label,
       details: input.args.map((a, i) => ({ label: i === 0 ? "Ref" : `Arg ${i}`, value: a, mono: true })),
+      command: input.command,
+      args: input.args,
+      successLabel: "started",
     })
-    if (!ok) return
-    try {
-      const { run_id } = await createRun.mutateAsync({
-        command: input.command,
-        args: input.args,
-        confirm: true,
-      })
-      toast.success(`${input.label} started`, {
-        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
-      })
-      void qc.invalidateQueries({ queryKey: queryKeys.links })
-      void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
-    } catch (err) {
-      toast.error(errorText(err))
-    }
   }
 
   const prs = data?.prs ?? []
@@ -237,7 +214,7 @@ export function CandidatesCard() {
                     onClick={() => void handleCopyRef(issue.key)}
                     title={`Copy ref ${issue.key}`}
                   >
-                    <Copy aria-hidden /> {copied === issue.key ? "Copied" : "Copy ref"}
+                    <Copy aria-hidden /> {copied ? "Copied" : "Copy ref"}
                   </Button>
                 </li>
               ))}
@@ -279,7 +256,7 @@ export function CandidatesCard() {
                   onClick={() => void handleCopyRef(wt.path)}
                   title={`Copy path ${wt.path}`}
                 >
-                  <Copy aria-hidden /> {copied === wt.path ? "Copied" : "Copy path"}
+                  <Copy aria-hidden /> {copied ? "Copied" : "Copy path"}
                 </Button>
               </li>
             ))}

@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { ArrowLeft, Copy, SquareTerminal } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
 import { RunsTable, type RunsTableRow } from "@/components/RunsTable"
+import { SessionResumeActions } from "@/components/RunActions"
 import {
   EmptyState,
   ErrorState,
@@ -24,9 +25,9 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { type SessionDetail, type SessionRow } from "@/lib/api"
-import { useLinks, usePath, useRepos, useResumeSession, useSession, useSessions } from "@/lib/queries"
+import { useLinks, useRepos, useSession, useSessions } from "@/lib/queries"
 import { repoKeyForPath, useRepoTabs } from "@/lib/useRepoTabs"
-import { copyToClipboard, relativeTime, resumeCommand, shortId } from "@/lib/format"
+import { relativeTime, shortId } from "@/lib/format"
 
 /** Every persisted session executed a real runtime session, so both
  * resume buttons always apply. Copy resolves the worktree path via
@@ -53,98 +54,6 @@ export function sessionKind(cmd: string): string {
   if (c === "sync") return "Sync"
   return cmd || "—"
 }
-function SessionRowActions({ row }: { row: SessionRow }) {
-  const resume = useResumeSession()
-  const pathQ = usePath(row.worktree_ref)
-  const worktree = pathQ.data?.worktree || row.worktree_ref
-  return (
-    <div className="flex items-center">
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label={`Resume session ${row.id} in terminal`}
-        title="Resume session in terminal"
-        disabled={resume.isPending}
-        onClick={() => {
-          resume
-            .mutateAsync(row.id)
-            .then(() => toast.success("Terminal opened on the session"))
-            .catch((err: unknown) => toast.error(errorText(err)))
-        }}
-        className="size-9 text-muted-foreground hover:text-foreground"
-      >
-        <SquareTerminal aria-hidden />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label={`Copy resume command for session ${row.id}`}
-        title="Copy resume command"
-        onClick={() => {
-          copyToClipboard(resumeCommand(worktree, row.file_path))
-            .then(() => toast.success("Resume command copied"))
-            .catch((err: unknown) => toast.error(errorText(err)))
-        }}
-        className="size-9 text-muted-foreground hover:text-foreground"
-      >
-        <Copy aria-hidden />
-      </Button>
-    </div>
-  )
-}
-
-function StateBadge({ state }: { state: string }) {
-  const tone =
-    state === "finished"
-      ? "bg-emerald-500/15 text-emerald-300"
-      : state === "failed"
-        ? "bg-red-500/15 text-red-300"
-        : "bg-amber-500/15 text-amber-300"
-  return <Badge className={tone}>{state}</Badge>
-}
-
-function SessionDetailActions({
-  id,
-  worktreeRef,
-  filePath,
-}: {
-  id: string
-  worktreeRef: string
-  filePath: string
-}) {
-  const resume = useResumeSession()
-  const pathQ = usePath(worktreeRef)
-  const worktree = pathQ.data?.worktree || worktreeRef
-  return (
-    <>
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={resume.isPending}
-        onClick={() => {
-          resume
-            .mutateAsync(id)
-            .then(() => toast.success("Terminal opened on the session"))
-            .catch((err: unknown) => toast.error(errorText(err)))
-        }}
-      >
-        <SquareTerminal aria-hidden /> Resume in terminal
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => {
-          copyToClipboard(resumeCommand(worktree, filePath))
-            .then(() => toast.success("Resume command copied"))
-            .catch((err: unknown) => toast.error(errorText(err)))
-        }}
-      >
-        <Copy aria-hidden /> Copy resume command
-      </Button>
-    </>
-  )
-}
-
 export function Sessions() {
   const {
     data, isPending, isError, error, refetch,
@@ -301,7 +210,7 @@ export function Sessions() {
                       {relativeTime(Date.parse(s.created_at) / 1000)}
                     </TableCell>
                     <TableCell>
-                      <SessionRowActions row={s} />
+                      <SessionResumeActions sessionId={s.id} worktree={links?.worktrees?.[s.worktree_ref]?.worktree ?? s.worktree_ref} sessionFile={s.file_path} variant="icon" />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -317,6 +226,7 @@ export function Sessions() {
 export function SessionDetailPage() {
   const { sessionId = "" } = useParams()
   const sessionQ = useSession(sessionId)
+  const { data: links } = useLinks()
 
   if (sessionQ.isPending) return <TableSkeleton rows={5} />
   if (sessionQ.isError || !sessionQ.data) {
@@ -332,7 +242,7 @@ export function SessionDetailPage() {
         description={`${s.worktree_ref} · ${s.runtime_name} · ${s.initiator_command}`}
         actions={
           <>
-            <SessionDetailActions id={s.id} worktreeRef={s.worktree_ref} filePath={s.file_path} />
+            <SessionResumeActions sessionId={s.id} worktree={links?.worktrees?.[s.worktree_ref]?.worktree ?? s.worktree_ref} sessionFile={s.file_path} variant="outline" />
             <Button variant="outline" size="sm" asChild>
               <Link to="/sessions">
                 <ArrowLeft aria-hidden /> Sessions
