@@ -72,6 +72,22 @@ def test_default_repo_for_ref_prefers_linked_worktree(isolated_config, tmp_path)
     assert trackers.default_repo_for_ref("IPG-1") == str(repo)
 
 
+def test_default_repo_for_ref_worktree_key(isolated_config, tmp_path):
+    """Rule 0: a linked worktree key (Launch Review/Sync case) resolves to
+    that worktree's repo, even for a second repo on the same tracker."""
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    store.record_link("branch:feat-login", {"worktree": str(wt),
+                                            "branch": "feat/login",
+                                            "repo": str(other)})
+    assert trackers.default_repo_for_ref("branch:feat-login") == str(other)
+    assert trackers.default_repo_for_ref("feat/login") == str(other)
+
+
 def test_default_repo_for_ref_single_linked(isolated_config, tmp_path, monkeypatch):
     """Rule 2: tracker with exactly one linked repo → that repo."""
     linked = tmp_path / "proj"

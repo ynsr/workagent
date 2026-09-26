@@ -2049,12 +2049,38 @@ def _candidates(force: bool = False) -> dict:
     command and the webapp /api/candidates endpoint.
 
     PRs are collected from every registered repo (per-repo failures →
-    warning) minus any URL already linked in links.json; issues are
-    `trackers.list_my_issues` filtered to created within the last 7 days.
+    warning) minus any candidate already present in the worktrees table:
+    a PR/MR is dropped when its URL, branch name, or worktree path matches
+    a linked row. Issues are `trackers.list_my_issues` filtered to created
+    within the last 7 days, minus issues whose key/URL already has a linked
+    worktree. Scanned worktrees come from `_scan_worktrees`, which already
+    excludes linked paths.
     """
     warnings: list[str] = []
-    linked = {str(v["pr_url"]).rstrip("/")
-              for v in store.load_links().values() if v.get("pr_url")}
+    links = store.load_links()
+    linked_urls = set()
+    linked_issue_urls = set()
+    linked_branches = set()
+    linked_paths = set()
+    for v in links.values():
+        if not isinstance(v, dict):
+            continue
+        pr_url = str(v.get("pr_url", "") or "")
+        if pr_url:
+            linked_urls.add(pr_url.rstrip("/"))
+        issue_url = str(v.get("issue_url", "") or "")
+        if issue_url:
+            linked_urls.add(issue_url.rstrip("/"))
+            linked_issue_urls.add(issue_url.rstrip("/"))
+        branch = str(v.get("branch", "") or "")
+        if branch:
+            linked_branches.add(branch)
+        wt = str(v.get("worktree", "") or "")
+        if wt:
+            try:
+                linked_paths.add(str(Path(wt).expanduser().resolve()))
+            except OSError:
+                linked_paths.add(wt)
     prs: list[dict] = []
     for name, entry in store.load_repos().items():
         path = str(entry.get("path", ""))
@@ -2066,7 +2092,10 @@ def _candidates(force: bool = False) -> dict:
                 continue
             for p in refs.fetch_open_prs(tool, path):
                 url = str(p.get("url", ""))
-                if url.rstrip("/") in linked:
+                if url.rstrip("/") in linked_urls:
+                    continue
+                branch = str(p.get("branch", "") or "")
+                if branch and branch in linked_branches:
                     continue
                 key = refs.pr_key(url)
                 prs.append({**p, "url": url, "key": key,
@@ -2078,9 +2107,21 @@ def _candidates(force: bool = False) -> dict:
     prs.sort(key=lambda p: p.get("updated", ""), reverse=True)
     issues = trackers.list_my_issues(warnings, force=force)
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-    recent = [i for i in issues
-              if (dt := trackers.parse_created(str(i.get("created", ""))))
-              is not None and dt >= cutoff]
+    recent: list[dict] = []
+    for i in issues:
+        dt = trackers.parse_created(str(i.get("created", "")))
+        if dt is None or dt < cutoff:
+            continue
+        key = str(i.get("key", "") or "")
+        if key and key in links:
+            continue
+        url = str(i.get("url", "") or "")
+        if url and url.rstrip("/") in linked_issue_urls:
+            continue
+        # Repo hint: the Launch default for this ref — linked worktree's
+        # repo, else the tracker's single linked repo, else "".
+        repo_hint = trackers.default_repo_for_ref(key or url) if (key or url) else ""
+        recent.append({**i, "repo_hint": repo_hint})
     recent.sort(key=lambda i: str(i.get("created", "")), reverse=True)
     return {"prs": prs, "issues": recent, "worktrees": _scan_worktrees(),
             "warnings": warnings}
@@ -2194,7 +2235,7 @@ def candidates_cmd(
                 ["url", "title", "repo", "updated"],
                 "Unlinked PR/MRs", "(no unlinked open PR/MRs)")
     _print_rows(_esc(out["issues"]), False, False,
-                ["key", "title", "status", "created"],
+                ["key", "title", "status", "created", "repo_hint"],
                 "Recent issues (reported by me, last 7 days)",
                 "(no recent issues)")
     _print_rows(out["worktrees"], False, False,

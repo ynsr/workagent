@@ -146,16 +146,24 @@ def linked_repos(tid: str) -> list[str]:
 def default_repo_for_ref(issue_ref: str) -> str:
     """Default repo path for *issue_ref* without touching the CWD.
 
-    Rule 1: the issue is already linked to a live worktree → that
-    worktree's repo. Rule 2: the ref's tracker has exactly one linked
-    repo → that repo. Otherwise ``""`` (the caller must ask for `--repo`).
+    Rule 0: the ref is a linked worktree (key, branch name, or path —
+    the Launch Review/Sync case) → that worktree's repo. Rule 1: the
+    issue is already linked to a live worktree → that worktree's repo.
+    Rule 2: the ref's tracker has exactly one linked repo → that repo.
+    Otherwise ``""`` (the caller must ask for `--repo`).
     """
+    from . import worktrees as _worktrees
+    links = store.load_links()
+    resolved = _worktrees.resolve_worktree(issue_ref, links)
+    if isinstance(resolved, str):
+        repo = str((links.get(resolved) or {}).get("repo", ""))
+        if repo:
+            return repo
     try:
         parsed = refs.parse_ref(issue_ref)
         want = refs.issue_key(parsed)
     except Exception:
         return ""
-    links = store.load_links()
     for key, entry in links.items():
         if key != issue_ref and key != want:
             continue

@@ -102,6 +102,8 @@ export interface IssueRow {
   url: string
   status: string
   created: string
+  /** Launch default repo for this ref (candidates endpoint only). */
+  repo_hint?: string
 }
 
 export interface IssuesResponse {

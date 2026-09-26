@@ -117,7 +117,8 @@ export function CandidatesCard() {
             <CardTitle>Candidates</CardTitle>
             <CardDescription>
               Unlinked open PR/MRs across every registered repo, plus my issues
-              created in the last 7 days.
+              created in the last 7 days. Issue rows show the Launch default
+              repo when one resolves.
             </CardDescription>
           </div>
           <Button
@@ -211,7 +212,7 @@ export function CandidatesCard() {
                       {issue.title || issue.key}
                     </p>
                     <p className="truncate font-mono text-xs text-muted-foreground" title={issue.url}>
-                      {issue.key} · {issue.status}
+                      {issue.key} · {issue.status}{issue.repo_hint ? ` · ${issue.repo_hint}` : ""}
                     </p>
                   </div>
                   <Button

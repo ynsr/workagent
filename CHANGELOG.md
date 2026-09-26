@@ -1,5 +1,14 @@
 # Changelog
 ## Unreleased
+- Candidates: PR/MR rows whose URL or source branch already has a linked
+  worktree are filtered out, and recent-issue rows whose key/URL is already
+  linked are filtered out — every tab dedups against the worktrees table.
+  Issue rows carry `repo_hint` (the Launch default repo for that ref),
+  shown in the Link page and CLI table.
+- Launch: typing/selecting a linked worktree (key, branch, or path) in the
+  Review field auto-fills its repo via `GET /api/default-repo` (backend
+  resolves the worktree first). Sync takes no `--repo` — the linked
+  worktree already pins it.
 - Sessions: `serve` run completions for session-linked runs (those with a
   session file) are mirrored into the `runs` table against the child-owned
   session row, so `GET /api/sessions/{id}` keeps per-session run history

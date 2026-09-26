@@ -160,7 +160,11 @@ export function Launch() {
   }, [prefillChecked, modeParam, refParam, links])
   const refValue = form.ref.trim()
   // Issue #26 default-repo prefill: linked-worktree repo wins, else the
-  // single linked repo. Debounced on the typed ref; blanks mean "pick".
+  // single linked repo. For review (and start) the selected worktree's
+  // repo auto-fills here via /api/default-repo — the backend resolves
+  // worktree keys/branches/paths first. Sync takes no --repo (the linked
+  // worktree already pins it), so the lookup is skipped. Debounced on
+  // the typed ref; blanks mean "pick".
   useEffect(() => {
     if (mode === "sync") return
     const ref = refValue

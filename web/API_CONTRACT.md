@@ -153,6 +153,11 @@ for session-linked runs (those launched with a session file), mirrored at
 run completion — so history survives server restarts. Non-session runs are
 never mirrored (live registry only).
 
+### `GET /api/candidates` → `{prs, issues, worktrees, warnings}`
+`issues` rows carry `repo_hint`: the Launch default repo for that ref
+(linked worktree's repo, else the tracker's single linked repo, else
+`""`). Shown in the Link page issue rows.
+
 ## Runs (mutating CLI commands as child processes)
 
 ### `POST /api/runs` → 202

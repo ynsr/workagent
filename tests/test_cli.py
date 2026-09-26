@@ -1969,6 +1969,49 @@ def test_candidates_cli_linked_pr_excluded(isolated_config, tmp_path,
     assert json.loads(r.stdout)["prs"] == []
 
 
+def test_candidates_cli_branch_matched_pr_excluded(isolated_config, tmp_path,
+                                                   monkeypatch):
+    _candidates_env(monkeypatch, tmp_path)
+    store.record_link("branch:feat/1", {"branch": "feat/1",
+                                        "worktree": str(tmp_path / "wt")})
+    r = _invoke("candidates", "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["prs"] == []
+
+
+def test_candidates_cli_linked_issue_excluded(isolated_config, tmp_path,
+                                              monkeypatch):
+    _candidates_env(monkeypatch, tmp_path, issues=[
+        {"key": "jira:IPG-981", "title": "T",
+         "url": "https://jira.example/browse/IPG-981",
+         "status": "To Do", "created": "2026-09-20T10:00:00+00:00"}])
+    store.record_link("jira:IPG-981",
+                      {"branch": "IPG-981-slug",
+                       "worktree": str(tmp_path / "wt"),
+                       "issue_url": "https://jira.example/browse/IPG-981"})
+    r = _invoke("candidates", "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["issues"] == []
+
+
+def test_candidates_cli_issue_carries_repo_hint(isolated_config, tmp_path,
+                                                monkeypatch):
+    _candidates_env(monkeypatch, tmp_path, issues=[
+        {"key": "jira:IPG-981", "title": "T", "url": "u",
+         "status": "To Do", "created": "2026-09-20T10:00:00+00:00"}])
+    repo = tmp_path / "proj"
+    store.record_link("jira:IPG-1", {"worktree": str(tmp_path / "wt"),
+                                     "branch": "IPG-1-x",
+                                     "repo": str(repo)})
+    monkeypatch.setattr(
+        cli.trackers, "default_repo_for_ref",
+        lambda ref: str(repo) if ref == "jira:IPG-981" else "")
+    r = _invoke("candidates", "--json")
+    assert r.exit_code == 0, r.output
+    issues = json.loads(r.stdout)["issues"]
+    assert issues[0]["repo_hint"] == str(repo)
+
+
 def test_candidates_cli_warning_to_stderr(isolated_config, tmp_path,
                                           monkeypatch):
     repo = tmp_path / "proj"
@@ -1977,7 +2020,6 @@ def test_candidates_cli_warning_to_stderr(isolated_config, tmp_path,
     cfg["repos"] = {"proj": {"path": str(repo)}}
     empty = tmp_path / "empty-scan"
     empty.mkdir()
-    cfg["scan_root"] = str(empty)
     store.save_config(cfg)
     monkeypatch.setattr(cli, "_repo_tool", lambda path: "gh")
 
