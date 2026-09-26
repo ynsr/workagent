@@ -73,6 +73,29 @@ def insert_run(path: Path, session_id: str, command: str,
             (session_id, command, json.dumps(args), exit_code, created))
         return cur.lastrowid
 
+def list_runs(path: Path, limit: int = 200) -> list[dict]:
+    """Persisted session-linked runs, newest first (drives GET /api/runs)."""
+    import json
+    if not path.exists():
+        return []
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT r.id, r.session_id, r.command, r.args, r.exit_code,"
+            " r.created_at, s.file_path AS session_file, s.worktree_ref"
+            " FROM runs r LEFT JOIN sessions s ON s.id = r.session_id"
+            " ORDER BY r.id DESC LIMIT ?", (limit,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["args"] = json.loads(d["args"])
+            except Exception:
+                d["args"] = []
+            out.append(d)
+        return out
+
+
 def list_sessions(path: Path) -> list[dict]:
     if not path.exists():
         return []

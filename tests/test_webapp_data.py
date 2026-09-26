@@ -312,3 +312,47 @@ def test_specs_mirror_cli_flags():
         cv = {x for x in v if x.startswith("-")}
         assert cb == set(_w.BOOL_FLAGS.get(path, ())), f"BOOL drift [{path}]"
         assert cv == set(_w.VAL_FLAGS.get(path, ())), f"VAL drift [{path}]"
+
+
+def test_list_runs_includes_persisted_db_rows(client):
+    """GET /api/runs merges DB runs (post-restart) with live registry runs."""
+    import json
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = "/tmp/wt-persist"
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute(
+            "INSERT OR IGNORE INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+            " VALUES ('k', ?, 'b', 'r', '2026-01-01T00:00:00+00:00')", (wt,))
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, worktree_ref, state, created_at)"
+            " VALUES ('sid-1', 'k', 'finished', '2026-01-01T00:00:00+00:00')")
+    sid = "sid-1"
+    sq.insert_run(db, sid, "review", ["o/r#9"], 0)
+    rows = client.get("/api/runs").json()
+    assert any(r["id"] == "db-1" and r["command"] == "review"
+               and r["state"] == "succeeded" and r["args"] == ["o/r#9"]
+               and r["target"] == "review:o/r#9" for r in rows)
+
+
+def test_get_persisted_run_detail(client):
+    """GET /api/runs/db-<id> returns the persisted row with empty lines."""
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute(
+            "INSERT OR IGNORE INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+            " VALUES ('k2', '/tmp/wt2', 'b2', 'r', '2026-01-01T00:00:00+00:00')")
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, worktree_ref, state, created_at)"
+            " VALUES ('sid-2', 'k2', 'finished', '2026-01-01T00:00:00+00:00')")
+    sq.insert_run(db, "sid-2", "sync", ["k2"], 1)
+    rid = sq.list_runs(db)[0]["id"]
+    detail = client.get(f"/api/runs/db-{rid}").json()
+    assert detail["command"] == "sync" and detail["state"] == "failed"
+    assert detail["lines"] == []
+    assert client.get("/api/runs/db-999999").status_code == 404

@@ -25,6 +25,8 @@ from .web_args import (
 )
 from .web_runs import (
     _cancel,
+    _persisted_row,
+    _persisted_summary,
     _summary,
     _worktree_for_session,
     _worktree_for_target,
@@ -87,11 +89,30 @@ def register_runs_routes(app, registry) -> None:
     @app.get("/api/runs")
     def list_runs() -> list[dict]:
         runs = sorted(registry.runs.values(), key=lambda r: r.created)
-        return [_summary(r) for r in runs]
-
+        live = [_summary(r) for r in runs]
+        live_ids = {str(r["id"]) for r in live}
+        persisted: list[dict] = []
+        try:
+            from . import store_sqlite as _sq
+            db = _sq.db_path()
+            for row in _sq.list_runs(db):
+                if str(row["id"]) in live_ids:
+                    continue
+                persisted.append(_persisted_summary(row))
+        except Exception:
+            persisted = []
+        return live + persisted
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str) -> dict:
-        run = registry.get(run_id)
+        try:
+            run = registry.get(run_id)
+        except ApiError:
+            row = _persisted_row(run_id)
+            if row is None:
+                raise
+            out = _persisted_summary(row)
+            out["lines"] = []
+            return out
         with run.lock:
             return _summary(run, lines=list(run.lines))
 
@@ -141,9 +162,31 @@ def register_runs_routes(app, registry) -> None:
 
         Non-destructive (same class as `open`): no confirm needed. 404 when
         the run executed no runtime session or the transcript is missing.
+        Persisted runs (db-<id>) resolve from the runs table since the
+        registry is empty after a restart.
         """
-        # 404 not_found when unknown (e.g. server restarted since the run).
-        run = registry.get(run_id)
+        try:
+            run = registry.get(run_id)
+        except ApiError:
+            row = _persisted_row(run_id)
+            if row is None:
+                raise
+            args = row.get("args") if isinstance(row.get("args"), list) else []
+            session_file = str(row.get("session_file") or "") or _session_file_arg(
+                str(row.get("command") or ""), list(args))
+            if not session_file:
+                raise ApiError("no_session",
+                               f"run {run_id} executed no runtime session", 404)
+            if not Path(session_file).exists():
+                raise ApiError("missing_session",
+                               f"session transcript missing: {session_file}", 404)
+            worktree = _persisted_summary(row).get("worktree") or ""
+            if not worktree:
+                raise ApiError("no_worktree",
+                               f"no worktree for run {run_id!r}", 404)
+            _open_terminal(worktree, session_file)
+            return {"id": run_id, "session_file": session_file,
+                    "worktree": worktree}
         session_file = run.session_file \
             or _session_file_arg(run.command, run.args)
         if not session_file:

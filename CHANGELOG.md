@@ -1,6 +1,6 @@
 # Changelog
 ## Unreleased
-- Refactor (no behavior change): Links cleanup flows use shared `useConfirmedRun` (same dialogs/toasts/navigation); `trackers.resolve_repo_for_ref` unifies start/review/sync repo+branch resolution (explicit `--repo` wins over pinned); `worktrees.resolve_any` extended to cleanup/sync/status-detail. The `store.py` JSON fallback stays (pre-migration installs read `links.json`/`config.json` until `workagent migrate`) (issue #33).
+- Runs page shows persisted history: `GET /api/runs` merges the in-memory registry with the `runs` table (survives `serve` restarts as `db-<id>` rows with succeeded/failed derived from `exit_code`); `GET /api/runs/db-<id>` replays the row with empty lines and resume resolves from it. Previously the table was write-only — rows were mirrored but never read back, so the page went empty on restart.
 - Candidates: PR/MR rows whose URL or source branch already has a linked
   worktree are filtered out, and recent-issue rows whose key/URL is already
   linked are filtered out — every tab dedups against the worktrees table.

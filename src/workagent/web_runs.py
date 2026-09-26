@@ -186,6 +186,66 @@ def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
         out["lines"] = [{"seq": s, "text": t} for s, t in lines]
     return out
 
+def _persisted_summary(row: dict) -> dict:
+    """Map a runs-table row to the live Run summary shape (no log lines)."""
+    import json
+    from datetime import datetime
+    args = row.get("args", [])
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except Exception:
+            args = []
+    exit_code = row.get("exit_code")
+    state = "succeeded" if exit_code == 0 else "failed" if exit_code is not None else "failed"
+    created = 0.0
+    try:
+        created = datetime.fromisoformat(str(row.get("created_at", ""))).timestamp()
+    except Exception:
+        created = 0.0
+    session_file = str(row.get("session_file") or "")
+    worktree = ""
+    try:
+        from . import store as _store
+        links = _store.load_links()
+        ref = str(row.get("worktree_ref") or "")
+        if ref in links and isinstance(links[ref], dict):
+            worktree = str(links[ref].get("worktree") or "")
+        if not worktree:
+            cmd = str(row.get("command") or "")
+            if cmd in ("start", "review") and isinstance(args, list):
+                worktree = _worktree_for_target(
+                    f"{cmd}:{_first_positional(list(args), VAL_FLAGS[cmd])}") or ""
+    except Exception:
+        worktree = ""
+    target = ""
+    try:
+        from .web_args import _target_for
+        target = _target_for(str(row.get("command") or ""), list(args) if isinstance(args, list) else [])
+    except Exception:
+        target = ""
+    return {"id": f"db-{row.get('id')}", "command": row.get("command"),
+            "args": args if isinstance(args, list) else [], "state": state,
+            "exit_code": exit_code, "truncated": False,
+            "created": created, "target": target,
+            "session_file": session_file, "worktree": worktree,
+            "last_seq": 0, "session_id": row.get("session_id")}
+def _persisted_row(run_id: str) -> dict | None:
+    """Fetch a runs-table row for a `db-<id>` run id (None otherwise)."""
+    if not run_id.startswith("db-"):
+        return None
+    try:
+        from . import store_sqlite as _sq
+        db = _sq.db_path()
+        for row in _sq.list_runs(db, limit=1000):
+            if f"db-{row.get('id')}" == run_id:
+                return row
+    except Exception:
+        return None
+    return None
+
+
+
 
 def _spawn(run: Run, registry: Registry) -> None:
     def reader() -> None:
