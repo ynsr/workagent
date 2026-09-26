@@ -129,6 +129,46 @@ def test_review_without_ref_is_usage_error(isolated_config):
     assert "use --all" in r.stderr
 
 
+def test_review_new_fix_session_requires_fix_comments(isolated_config):
+    r = runner.invoke(cli.app, ["review", "o/r#1", "--new-fix-session"])
+    assert r.exit_code == 2, r.output
+    assert "--fix-comments" in r.stderr
+
+
+def test_run_harness_derives_fix_comments_type(isolated_config, tmp_path, monkeypatch):
+    """_run_harness with command=review + fix marker inserts fix_comments type."""
+    from workagent import cli_harness as _h, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    monkeypatch.setattr(_h.store, "record_harness_run", lambda *a: None)
+    monkeypatch.setattr(_h.store, "clear_harness_run", lambda *a: None)
+    monkeypatch.setattr(_h.backend, "launch", lambda *a, **k: None)
+    result = {"command": "review", "fix_comments": True}
+    _h._run_harness("omp", "Fix all open (not-resolved) review comments on this PR/MR: u",
+                    "/tmp", "/tmp", True, True, result, False, run_key="k")
+    rows = sq.list_sessions(db)
+    assert rows and rows[0]["session_type"] == "fix_comments"
+
+
+def test_review_continue_reuses_transcript(isolated_config, monkeypatch):
+    """Continue path resolves the latest finished review session for the key."""
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="review",
+                      prompt="p", file_path="/s/old.jsonl", session_id="old-9",
+                      session_type="review")
+    sq.finish_session(db, "old-9", "finished")
+    got = sq.latest_review_session(db, "k")
+    assert got and got["file_path"] == "/s/old.jsonl"
+
+
 def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()

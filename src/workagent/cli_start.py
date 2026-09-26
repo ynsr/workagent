@@ -168,7 +168,7 @@ def start(
         prompt += "\n\nAfter task done, commit, push and create an MR/PR to the default branch"
     result = {"worktree_path": worktree, "branch": branch,
               "base": detected_default if branch_mode else base_branch,
-              "key": key, "harness": harness_name}
+              "key": key, "harness": harness_name, "command": "start"}
     eprint(f"worktree: {worktree}  branch: {branch}")
     if launch:
         _guard_harness(key, worktree)
@@ -203,7 +203,7 @@ def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
         prompt += "\n\nAfter task done, commit and push to the PR/MR source branch"
     result = {"worktree_path": worktree, "branch": branch,
               "base": base_branch, "key": key, "pr_url": pr_url,
-              "harness": harness_name}
+              "harness": harness_name, "command": "start"}
     eprint(f"worktree: {worktree}  branch: {branch}")
     if launch:
         _guard_harness(key, worktree)

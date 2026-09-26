@@ -123,13 +123,18 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     Path(session_path).parent.mkdir(parents=True, exist_ok=True)
     Path(session_path).touch(exist_ok=True)
     # Post-cutover sessions row (best effort; launch continues on failure).
-    if run_key and db.exists():
+    reuse_sid = result.get("reuse_session_id")
+    stype = _sq.derive_session_type(str(result.get("command", "")),
+                                    bool(result.get("fix_comments")))
+    if run_key and db.exists() and not reuse_sid:
         try:
             sid = _sq.insert_session(
                 db, worktree_ref=run_key, harness_name=harness_name,
                 initiator_command=result.get("command", harness_name),
                 prompt=prompt, file_path=session_path,
-                session_id=Path(session_path).stem)
+                session_id=Path(session_path).stem,
+                session_type=stype,
+                metadata=result.get("session_metadata"))
         except Exception as e:
             # Post-cutover insert failure: launch continues, warn only;
             # drop the pre-created file so no orphan .jsonl remains.
@@ -140,16 +145,17 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             except OSError:
                 pass
             session_path = session_file or ""
+    finish_sid = sid or (reuse_sid if isinstance(reuse_sid, str) else None)
     try:
         extra = harness.session_file_flag(session_path) if session_path else None
         backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty,
                        (_HARNESS_ARGS + extra) if extra else _HARNESS_ARGS)
-        if sid:
-            _sq.finish_session(db, sid, "finished")
+        if finish_sid:
+            _sq.finish_session(db, finish_sid, "finished")
     except Exception:
-        if sid:
+        if finish_sid:
             try:
-                _sq.finish_session(db, sid, "failed")
+                _sq.finish_session(db, finish_sid, "failed")
             except Exception:
                 pass
         raise

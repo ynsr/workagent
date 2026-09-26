@@ -112,6 +112,30 @@ def _review_key_for(pr_url: str, worktree: str, branch: str) -> str:
             or branch)
 
 
+def _apply_fix_session(result: dict, review_key: str, fix_comments: bool,
+                       new_fix_session: bool, explicit_file: str | None) -> None:
+    """Resolve the fix-comments session strategy into *result*.
+
+    Explicit --session-file always wins. Otherwise a fix run continues the
+    latest non-running review session (reuse id + transcript) unless
+    --new-fix-session forces a fresh fix_comments row (linked back via
+    fixed_from_session_id). Non-fix runs leave result untouched.
+    """
+    if explicit_file:
+        result["session_file"] = explicit_file
+        return
+    if not fix_comments:
+        return
+    from . import store_sqlite as _sq
+    db = _sq.db_path()
+    latest = _sq.latest_review_session(db, review_key) if db.exists() else None
+    if latest and not new_fix_session:
+        result["reuse_session_id"] = latest["id"]
+        result["session_file"] = latest.get("file_path")
+    elif latest:
+        result["session_metadata"] = {"fixed_from_session_id": latest["id"]}
+
+
 def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
                             pr_url: str) -> tuple[str, str, str]:
     """Reuse or create the worktree for a PR/MR source branch.
@@ -183,6 +207,7 @@ def review(
     force_all: bool = typer.Option(False, "--force-all", help="With --all: include already-reviewed and unresolved-comment worktrees too (still needs a PR/MR)."),
     post_comments: bool = typer.Option(False, "--post-comments", hidden=True, help="Append the auto-comment prompt segment (set by --all)."),
     fix_comments: bool = typer.Option(False, "--fix-comments", help="Fix open PR/MR review comments instead of reviewing: validate each finding, apply, resolve/close, commit and push."),
+    new_fix_session: bool = typer.Option(False, "--new-fix-session", help="With --fix-comments: start a fresh fix session instead of continuing the latest review session."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the harness (omp --resume)."),
 ) -> None:
     """Create worktree from PR/MR and launch review.
@@ -207,6 +232,8 @@ def review(
         _fail("--fix cannot be used with --fix-comments", EXIT_USAGE)
     if post_comments and fix_comments:
         _fail("--post-comments cannot be used with --fix-comments", EXIT_USAGE)
+    if new_fix_session and not fix_comments:
+        _fail("--new-fix-session requires --fix-comments", EXIT_USAGE)
     if ref is None and not all_wts:
         _fail("missing PR/MR ref or worktree key\n"
               "  Pass a ref, or use --all to review every not-reviewed worktree.",
@@ -339,7 +366,8 @@ def review(
             if fix and not fix_comments:
                 prompt += "\n\nAuto-fix all identified issues after yielding and don't wait for user approval."
             result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
-                      "harness": harness_name}
+                      "harness": harness_name, "command": "review",
+                      "fix_comments": fix_comments}
             eprint(f"worktree: {worktree}  branch: {branch}")
             if launch:
                 # Same staleness rule as sync: review a pulled tip, never a
@@ -355,10 +383,11 @@ def review(
                     eprint(f"{review_key}: pulled origin/{branch} ({pulled})")
                 _guard_harness(review_key, worktree)
                 _mark_reviewed(review_key, worktree)
+            _apply_fix_session(result, review_key, fix_comments, new_fix_session, session_file)
             try:
                 _run_harness(harness_name, prompt, worktree, str(repo_dir),
                              no_tty, launch, result, json_output,
-                             run_key=review_key, session_file=session_file)
+                             run_key=review_key, session_file=result.get("session_file"))
             except HarnessError:
                 if launch:
                     _clear_reviewed(review_key)
@@ -381,15 +410,17 @@ def review(
     if fix and not fix_comments:
         prompt += "\n\nAuto-fix all identified issues after yielding and don't wait for user approval."
     result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
-              "harness": harness_name}
+              "harness": harness_name, "command": "review",
+              "fix_comments": fix_comments}
     eprint(f"worktree: {worktree}  branch: {branch}")
     if launch:
         _guard_harness(review_key, worktree)
         _mark_reviewed(review_key, worktree)
+    _apply_fix_session(result, review_key, fix_comments, new_fix_session, session_file)
     try:
         _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
                      launch, result, json_output, run_key=review_key,
-                     session_file=session_file)
+                     session_file=result.get("session_file"))
     except HarnessError:
         if launch:
             _clear_reviewed(review_key)

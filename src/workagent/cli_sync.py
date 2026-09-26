@@ -256,6 +256,7 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
     run_harness_now = use_harness or yes
     if run_harness_now:
         result["result"] = "conflict-harness"
+        result["command"] = "sync"
         prompt = (f"The branch {branch} has merge conflicts with "
                   f"{db} in files: {', '.join(conflicts)}. "
                   "Resolve them, complete the merge, commit, push to "
@@ -268,6 +269,7 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
     elif sys.stdin.isatty():
         if typer.confirm("launch the harness to resolve?"):
             result["result"] = "conflict-harness"
+            result["command"] = "sync"
             prompt = (f"The branch {branch} has merge conflicts with "
                       f"{db} in files: {', '.join(conflicts)}. "
                       "Resolve them, complete the merge, commit, push to "
