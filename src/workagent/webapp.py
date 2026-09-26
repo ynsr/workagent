@@ -282,6 +282,37 @@ def _session_file_for(sid: str) -> str:
         return str(base / f"{sid}.jsonl")
 
 
+def _mirror_run(run: Run) -> None:
+    """Best-effort mirror of a session-linked run into the runs table.
+
+    Only runs with a session file are session-linked; the child CLI owns
+    the sessions row (created around the harness launch), so the mirror
+    targets the session id matching the transcript stem. Anything missing
+    (no db, no session row yet, e.g. --no-runtime never launched) is a
+    silent skip — the live registry remains the source of truth.
+    """
+    if not run.session_file:
+        return
+    try:
+        from . import store_sqlite as _sq
+        db = _sq.db_path()
+        if not db.exists():
+            return
+        sid = Path(run.session_file).stem
+        if _sq.get_session(db, sid) is None:
+            return
+        argv = run.argv or []
+        # argv is [python, -m, workagent, <command>, ...] (see _build_argv);
+        # fall back to the body fields when the shape is unexpected.
+        if len(argv) > 3:
+            command, args = argv[3], argv[4:]
+        else:
+            command, args = run.command, list(run.args)
+        _sq.insert_run(db, sid, command, args, run.exit_code)
+    except Exception as e:
+        print(f"[web] run mirror failed: {e}", file=sys.stderr, flush=True)
+
+
 def _worktree_for_target(target: str) -> str:
     """Best-effort worktree path for a run target (review:/sync:/start: keys
     strip to the recorded worktree ref)."""
@@ -431,6 +462,7 @@ def _spawn(run: Run, registry: Registry) -> None:
                 else:
                     run.state = "failed"
         registry.release_target(run)
+        _mirror_run(run)
 
     threading.Thread(target=reader, daemon=True).start()
 

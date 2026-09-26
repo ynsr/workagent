@@ -144,11 +144,14 @@ config key. Paths already linked are excluded server-side.
  "initiator_command": "start", "state": "finished", "prompt": "…",
  "created_at": "…", "file_path": "…",
  "transcript": "missing",
- "runs": [{"id": 1, "command": "omp", "args": ["…"], "exit_code": 0,
-           "created_at": "…"}]}
+ "runs": [{"id": 1, "command": "start", "args": ["IPG-932", "--yes", "--session-file", "…"],
+           "exit_code": 0, "created_at": "…"}]}
 ```
 Unknown id → 404. `transcript` is `"missing"` when the per-session
-`.jsonl` file is absent.
+`.jsonl` file is absent. `runs` holds the serve-mirrored CLI invocations
+for session-linked runs (those launched with a session file), mirrored at
+run completion — so history survives server restarts. Non-session runs are
+never mirrored (live registry only).
 
 ## Runs (mutating CLI commands as child processes)
 

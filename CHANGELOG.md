@@ -1,5 +1,10 @@
 # Changelog
 ## Unreleased
+- Sessions: `serve` run completions for session-linked runs (those with a
+  session file) are mirrored into the `runs` table against the child-owned
+  session row, so `GET /api/sessions/{id}` keeps per-session run history
+  across server restarts. Other runs stay ephemeral in the in-memory
+  registry (live logs/SSE only).
 - Dashboard review counts on GitLab: only resolvable review threads count
   toward unresolved/resolved — system/activity discussions ("added N
   commits", "marked as draft", individual notes) are excluded, matching
