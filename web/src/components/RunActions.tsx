@@ -8,7 +8,8 @@ import { errorText } from "@/components/StatusFeedback"
 import { copyToClipboard, resumeCommand } from "@/lib/format"
 import { queryKeys, useCreateRun, useResumeRun, useResumeSession } from "@/lib/queries"
 import type { RunCommand } from "@/lib/api"
-import type { ConfirmDetailRow, OptOutAction } from "@/lib/confirm"
+import type { ConfirmDetailRow } from "@/lib/confirm"
+import type { OptOutAction } from "@/lib/settings"
 import { useConfirm } from "@/lib/confirm"
 
 /** Copy-to-clipboard with transient "Copied" feedback (replaces the three
@@ -47,7 +48,6 @@ export function SessionResumeActions({
 }) {
   const resumeRun = useResumeRun()
   const resumeSession = useResumeSession()
-  const id = runId ?? sessionId ?? ""
   const label = runId ? `run ${runId}` : `session ${sessionId}`
   const icon = variant === "icon"
   return (

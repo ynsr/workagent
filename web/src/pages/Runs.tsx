@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react"
+import { useMemo } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
-import { SquareTerminal, XCircle } from "lucide-react"
+import { Copy, SquareTerminal, XCircle } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
 import { RunsTable, type RunsTableRow } from "@/components/RunsTable"
-import { SessionResumeActions } from "@/components/RunActions"
+import { SessionResumeActions, useCopyFeedback } from "@/components/RunActions"
+import { RepoTabsRow } from "@/components/RepoTabs"
 import {
   EmptyState,
   ErrorState,
@@ -13,10 +14,9 @@ import {
 } from "@/components/StatusFeedback"
 import { Button } from "@/components/ui/button"
 import { type Run } from "@/lib/api"
-import { useCancelRun, useRepos, useResumeRun, useRuns } from "@/lib/queries"
+import { useCancelRun, useRepos, useRuns } from "@/lib/queries"
 import { repoKeyForPath, useRepoTabs } from "@/lib/useRepoTabs"
-import { copyToClipboard, resumeCommand, shortId } from "@/lib/format"
-import { Copy } from "lucide-react"
+import { shortId } from "@/lib/format"
 
 const FILTERS = [
   { value: "all", label: "All" },
@@ -28,30 +28,6 @@ const FILTERS = [
 ] as const
 
 type Filter = (typeof FILTERS)[number]["value"]
-
-function RepoTabsRow({ repoTabs }: { repoTabs: { repoFilter: string; setRepo: (v: string) => void; tabs: { names: string[]; counts: Map<string, number>; other: number } } }) {
-  const btn = (active: boolean) =>
-    active
-      ? "min-h-11 rounded-full bg-primary px-3.5 text-sm font-medium text-primary-foreground"
-      : "min-h-11 rounded-full border px-3.5 text-sm text-muted-foreground hover:text-foreground"
-  return (
-    <div role="group" aria-label="Filter by repo" className="mb-4 flex flex-wrap gap-1.5">
-      <button type="button" aria-pressed={!repoTabs.repoFilter} onClick={() => repoTabs.setRepo("")} className={btn(!repoTabs.repoFilter)}>
-        All repos
-      </button>
-      {repoTabs.tabs.names.map((n) => (
-        <button type="button" key={n} aria-pressed={repoTabs.repoFilter === n} onClick={() => repoTabs.setRepo(n)} className={btn(repoTabs.repoFilter === n)}>
-          {n} ({repoTabs.tabs.counts.get(n) ?? 0})
-        </button>
-      ))}
-      {repoTabs.tabs.other > 0 ? (
-        <button type="button" aria-pressed={repoTabs.repoFilter === "(other)"} onClick={() => repoTabs.setRepo("(other)")} className={btn(repoTabs.repoFilter === "(other)")}>
-          (other) ({repoTabs.tabs.other})
-        </button>
-      ) : null}
-    </div>
-  )
-}
 
 function filterRuns(runs: Run[] | undefined, filter: Filter, target: string, repoOf: (r: Run) => string, repo: string): Run[] {
   if (!runs) return []
@@ -117,6 +93,7 @@ export function Runs() {
     setParams(p, { replace: true })
   }
 
+  const { copied, copy } = useCopyFeedback()
   async function handleCopyJson() {
     if (!runs) return
     await copy(JSON.stringify(runs, null, 2), "Runs JSON copied")

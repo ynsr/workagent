@@ -1,16 +1,15 @@
 import { useMemo } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import { SearchableSelect } from "@/components/SearchableSelect"
-import { toast } from "sonner"
-import { ArrowLeft, Copy, SquareTerminal } from "lucide-react"
+import { ArrowLeft } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
 import { RunsTable, type RunsTableRow } from "@/components/RunsTable"
 import { SessionResumeActions } from "@/components/RunActions"
+import { RepoTabsRow } from "@/components/RepoTabs"
 import {
   EmptyState,
   ErrorState,
   TableSkeleton,
-  errorText,
 } from "@/components/StatusFeedback"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -54,6 +53,16 @@ export function sessionKind(cmd: string): string {
   if (c === "sync") return "Sync"
   return cmd || "—"
 }
+function StateBadge({ state }: { state: string }) {
+  const tone =
+    state === "finished"
+      ? "bg-emerald-500/15 text-emerald-300"
+      : state === "failed"
+        ? "bg-red-500/15 text-red-300"
+        : "bg-amber-500/15 text-amber-300"
+  return <Badge className={tone}>{state}</Badge>
+}
+
 export function Sessions() {
   const {
     data, isPending, isError, error, refetch,
@@ -102,37 +111,7 @@ export function Sessions() {
         description="Persisted AI-harness sessions — one row per real launch, newest first."
       />
       {repos && repoTabs.tabs.names.length > 0 ? (
-        <div role="group" aria-label="Filter by repo" className="mb-3 flex flex-wrap gap-1.5">
-          <button
-            type="button"
-           
-            aria-pressed={!repoFilter}
-            onClick={() => repoTabs.setRepo("")}
-            className={
-              !repoFilter
-                ? "min-h-11 rounded-full bg-primary px-3.5 text-sm font-medium text-primary-foreground"
-                : "min-h-11 rounded-full border px-3.5 text-sm text-muted-foreground hover:text-foreground"
-            }
-          >
-            All repos
-          </button>
-          {repoTabs.tabs.names.map((n) => (
-            <button
-              type="button"
-              key={n}
-             
-              aria-pressed={repoFilter === n}
-              onClick={() => repoTabs.setRepo(n)}
-              className={
-                repoFilter === n
-                  ? "min-h-11 rounded-full bg-primary px-3.5 text-sm font-medium text-primary-foreground"
-                  : "min-h-11 rounded-full border px-3.5 text-sm text-muted-foreground hover:text-foreground"
-              }
-            >
-              {n} ({repoTabs.tabs.counts.get(n) ?? 0})
-            </button>
-          ))}
-        </div>
+        <RepoTabsRow repoTabs={repoTabs} />
       ) : null}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="min-w-52 flex-1 sm:max-w-xs">

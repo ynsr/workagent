@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Refactor (no behavior change): shared `SessionResumeActions` (Runs/Sessions/RunDetail), `useCopyFeedback`, `useConfirmedRun`, and `RepoTabsRow` web components; backend `refs.require_head_ref` (start/sync fatal head-ref fetch), `worktrees.resolve_any` + `NoLinkedState` (cd/open resolution), cutting ~270 duplicated lines (issue #33).
 - Candidates: PR/MR rows whose URL or source branch already has a linked
   worktree are filtered out, and recent-issue rows whose key/URL is already
   linked are filtered out — every tab dedups against the worktrees table.
