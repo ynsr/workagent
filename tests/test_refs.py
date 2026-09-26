@@ -312,25 +312,25 @@ def test_fetch_pr_comment_stats_gh(monkeypatch):
 
 
 def test_gh_bot_comment_resolved_marker():
-    """Issue #32: only an exact `Status: RESOLVED` second line resolves."""
+    """Issue #32: `Status:\\s+RESOLVED` second line (case-insensitive) resolves."""
     assert refs._gh_bot_comment_resolved("# Code Review: ok\nStatus: RESOLVED")
     assert refs._gh_bot_comment_resolved("# Code Review: ok\n\n  Status: RESOLVED  \nbody text")
+    assert refs._gh_bot_comment_resolved("# Code Review: ok\nstatus: resolved")
+    assert refs._gh_bot_comment_resolved("# Code Review: ok\nSTATUS:   RESOLVED")
+    assert refs._gh_bot_comment_resolved("# Code Review: ok\nStatus:\tRESOLVED")
     assert not refs._gh_bot_comment_resolved("# Code Review: open finding")
     assert not refs._gh_bot_comment_resolved("# Code Review: ok\nbody\nStatus: RESOLVED")
     assert not refs._gh_bot_comment_resolved("# Code Review: only header, no second line")
+    assert not refs._gh_bot_comment_resolved("# Code Review: ok\nStatus:RESOLVED")
+    assert not refs._gh_bot_comment_resolved("# Code Review: ok\nStatus: RESOLVED extra")
     assert not refs._gh_bot_comment_resolved("")
-
 
 def test_fetch_pr_comment_stats_glab(monkeypatch):
     """Issue #28: glab counts # Code Review notes + discussion resolution.
-
-    System/activity notes ("added N commits", …) are individual
-    non-resolvable discussions and must not count as unresolved.
-
-    Bot `# Code Review` notes follow the same `Status: RESOLVED` second-line
-    marker as GitHub: a bot discussion counts as resolved only when every
-    bot note carries the marker — native resolved flags are ignored for bot
-    notes, non-bot threads keep native resolution.
+    Bot `# Code Review` notes follow the same `Status:\\s+RESOLVED` second-line
+    marker as GitHub (case-insensitive): a bot discussion counts as resolved
+    only when every bot note carries the marker — native resolved flags are
+    ignored for bot notes, non-bot threads keep native resolution.
     """
     monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: json.dumps([
         {"resolved": True, "notes": [

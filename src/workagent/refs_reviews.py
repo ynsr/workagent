@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from urllib.parse import quote
 
@@ -13,18 +14,21 @@ def run_cmd(*a, **k):
     from . import refs as _r
     return _r.run_cmd(*a, **k)
 from .refs import _GITHUB_PR, _GITLAB_MR
+# Case-insensitive `Status:<spaces>RESOLVED` second-line marker.
+_STATUS_RESOLVED_RE = re.compile(r"Status:\s+RESOLVED", re.IGNORECASE)
+
 
 def _bot_comment_resolved(body: str) -> bool:
     """True when a bot `# Code Review` comment is marked resolved.
 
     Plain PR/MR comments carry no reliable resolution state across hosts, so
     by convention a bot review comment whose second non-empty line (directly
-    below the `# Code Review` header) is exactly `Status: RESOLVED` counts
-    as resolved; anything else is unresolved.
+    below the `# Code Review` header) matches `Status:\\s+RESOLVED`
+    (case-insensitive) counts as resolved; anything else is unresolved.
     This rule applies to both GitHub and GitLab.
     """
     lines = [ln.strip() for ln in str(body or "").splitlines() if ln.strip()]
-    return len(lines) >= 2 and lines[1] == "Status: RESOLVED"
+    return len(lines) >= 2 and bool(_STATUS_RESOLVED_RE.fullmatch(lines[1]))
 
 
 # Kept for backward compatibility (tests/patches target this name).
@@ -38,7 +42,8 @@ def _review_comments_gh(pr_url: str, cwd: str | None) -> dict:
     (each one marks a completed harness review). Inline reviewThreads carry
     a native isResolved flag; plain (non-inline) bot comments have no
     resolution state, so a bot comment counts as resolved only when its
-    second non-empty line (below the header) is exactly `Status: RESOLVED`.
+    second non-empty line (below the header) matches `Status:\\s+RESOLVED`
+    (case-insensitive).
     """
     m = _GITHUB_PR.match(pr_url or "")
     if not m:
@@ -80,10 +85,10 @@ def _review_comments_glab(pr_url: str, cwd: str | None) -> dict:
 
     reviews = notes whose body starts with `# Code Review`. Like GitHub,
     a bot note counts as resolved only when its second non-empty line
-    (below the header) is exactly `Status: RESOLVED` — native
-    resolved/resolvable flags are ignored for bot notes. Non-bot review
-    threads keep native resolution (discussion resolved=True, or every
-    resolvable note resolved).
+    (below the header) matches `Status:\\s+RESOLVED` (case-insensitive) —
+    native resolved/resolvable flags are ignored for bot notes. Non-bot
+    review threads keep native resolution (discussion resolved=True, or
+    every resolvable note resolved).
     """
     m = _GITLAB_MR.match(pr_url or "")
     if not m:

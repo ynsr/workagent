@@ -38,7 +38,7 @@
 - Remove-worktree modal: new live Cleanup-vs---force comparison table (mergeable / conflicted / merged / 404 rows) that follows the --force checkbox; all modal shells widened to 2xl with scroll caps to stop text overflow.
 - Issue #32: Reviews detection now counts plain (non-inline)
   `# Code Review` bot comments as resolved only when their second non-empty
-  line (below the header) is exactly `Status: RESOLVED` — on both GitHub and
+  line (below the header) matches `Status:\\s+RESOLVED` (case-insensitive) — on both GitHub and
   GitLab (native flags are ignored for bot comments; non-bot threads keep
   them). New `review --fix-comments` (per-worktree and `--all`,
   exclusive with `--fix`/`--post-comments`) launches a fix agent that

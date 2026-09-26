@@ -45,7 +45,7 @@ display string `"R|U|R"` (done reviews | unresolved | resolved);
 `null` when there is no PR or the lookup failed (same 10-min/tip cache).
 Plain (non-inline) `# Code Review` bot comments carry
 no reliable cross-host resolution state, so one counts as resolved only when its second
-non-empty line (below the header) is exactly `Status: RESOLVED` — on both GitHub and GitLab; non-bot threads keep their native flags.
+non-empty line (below the header) matches `Status:\\s+RESOLVED` (case-insensitive) — on both GitHub and GitLab; non-bot threads keep their native flags.
 Optional query:
 `?refresh=true` fetches origin (fresh remote tips for Behind/Ahead) and
 re-queries PR status (slow, hits the tracker CLI).
