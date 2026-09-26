@@ -177,6 +177,32 @@ def test_mirror_run_persists_session_run(client):
     assert "hello log" in (row.get("output") or "")
 
 
+def test_mirror_run_finalizes_stuck_running_session(client):
+    from workagent import store_sqlite as sq
+    from workagent.webapp import _mirror_run
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
+    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
+                            initiator_command="review", prompt="p",
+                            file_path="/tmp/stuck.jsonl",
+                            session_id="2026-09-26T06-00-16-776Z-8628")
+    assert sq.get_session(db, sid)["state"] == "running"
+    run = Run(id="deadbeef", command="review", args=["MR-38"], target="review",
+              argv=["/py", "-m", "workagent", "review", "MR-38", "--yes",
+                    "--session-file", "/s/sessions/omp/2026-09-26T06-00-16-776Z-8628.jsonl"],
+              session_file="/s/sessions/omp/2026-09-26T06-00-16-776Z-8628.jsonl")
+    run.exit_code = 129
+    _mirror_run(run)
+    assert sq.get_session(db, sid)["state"] == "failed"
+    assert len(sq.get_session(db, sid)["runs"]) == 1
+
+
 def test_mirror_run_skips_without_session(client):
     from workagent.webapp import _mirror_run
     run = Run(id="abc123", command="cleanup", args=["IPG-1", "--dry-run"],

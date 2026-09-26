@@ -232,6 +232,11 @@ export function SessionDetailPage() {
       />
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <StateBadge state={s.state} />
+        {s.state === "running" && s.runs.some((r) => r.exit_code !== null && r.exit_code !== 0) ? (
+          <Badge className="bg-red-500/15 text-red-300">
+            run failed — session never finalized
+          </Badge>
+        ) : null}
         {s.transcript === "missing" ? (
           <Badge className="bg-amber-500/15 text-amber-300">
             transcript: missing

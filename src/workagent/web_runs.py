@@ -66,6 +66,12 @@ def _mirror_run(run: Run) -> None:
         with run.lock:
             output = [text for _, text in run.lines]
             truncated = run.truncated
+        final = "finished" if run.exit_code == 0 else "failed"
+        try:
+            if (_sq.get_session(db, sid) or {}).get("state") == "running":
+                _sq.finish_session(db, sid, final)
+        except Exception:
+            pass
         _sq.insert_run(db, sid, command, args, run.exit_code,
                        output=output, truncated=truncated)
     except Exception as e:
