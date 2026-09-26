@@ -13,6 +13,7 @@ from typing import Optional
 import typer
 
 from . import backend, gitwt, refs, repos, store, trackers, worktrees
+from . import sync as sync_mod
 from .cli_core import (
     EXIT_GENERAL,
     EXIT_USAGE,
@@ -338,6 +339,17 @@ def review(
                       "harness": harness_name}
             eprint(f"worktree: {worktree}  branch: {branch}")
             if not no_runtime:
+                # Same staleness rule as sync: review a pulled tip, never a
+                # stale local. Fast-forward/merge origin/<branch> first; a
+                # pull conflict aborts loudly (exit 1) instead of launching
+                # the runtime on half-merged state. --no-runtime prints the
+                # command without touching git, so it skips the pull.
+                try:
+                    pulled = sync_mod.pull_branch(Path(worktree), branch)
+                except HarnessError as e:
+                    _fail(f"{e}", EXIT_GENERAL)
+                if pulled != "up-to-date":
+                    eprint(f"{review_key}: pulled origin/{branch} ({pulled})")
                 _guard_harness(review_key, worktree)
                 _mark_reviewed(review_key, worktree)
             try:
@@ -349,7 +361,6 @@ def review(
                     _clear_reviewed(review_key)
                 raise
             return
-
     if not head_ref:
         _fail(f"could not determine the MR head branch for {pr_url}.\n"
               f"  Run `git fetch origin` in {repo_dir} and check `glab`/`gh` auth for that host.",

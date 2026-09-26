@@ -301,6 +301,7 @@ def test_sync_local_merge_pushes_automatically(isolated_config, tmp_path,
     from workagent import cli, store
     wt_dir = tmp_path / "wt"
     _cli_link(isolated_config, tmp_path, monkeypatch, cli, store, wt_dir)
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     monkeypatch.setattr(cli.sync_mod, "local_merge",
                         lambda wt, db: {"status": "merged", "conflicts": []})
     pushed = []
@@ -325,6 +326,7 @@ def test_sync_conflict_with_yes_runs_non_tty_harness(isolated_config,
     from workagent import cli, store
     wt_dir = tmp_path / "wt"
     _cli_link(isolated_config, tmp_path, monkeypatch, cli, store, wt_dir)
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     monkeypatch.setattr(cli.sync_mod, "local_merge",
                         lambda wt, db: {"status": "conflict",
                                         "conflicts": ["a.txt"]})
@@ -346,6 +348,7 @@ def test_sync_conflict_without_harness_flags_reports_conflict(
     from workagent import cli, store
     wt_dir = tmp_path / "wt"
     _cli_link(isolated_config, tmp_path, monkeypatch, cli, store, wt_dir)
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     monkeypatch.setattr(cli.sync_mod, "local_merge",
                         lambda wt, db: {"status": "conflict",
                                         "conflicts": ["a.txt"]})
@@ -374,6 +377,7 @@ def test_sync_all_continues_after_failure(isolated_config, tmp_path,
                                        "branch": "feat/IPG-932--y",
                                        "repo": str(tmp_path / "proj")})
     calls = []
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     monkeypatch.setattr(cli.sync_mod, "local_merge",
                         lambda wt, db: calls.append(str(wt))
                         or ({"status": "conflict", "conflicts": ["x.txt"]}
@@ -454,3 +458,29 @@ def test_pull_rebased_skips_genuinely_new_local_commits(tmp_path):
     head = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
                           check=True, capture_output=True, text=True).stdout
     assert (wt / "c.txt").read_text() == "n\n"  # untouched
+
+
+def test_pull_branch_ff_and_merge(tmp_path):
+    origin, wt = _seed_and_clone(tmp_path, {"f.txt": "1\n"})
+    _git("checkout", "-q", "-b", "b", cwd=wt)
+    _commit(wt, {"b.txt": "p\n"}, "p")
+    _git("push", "-q", "origin", "b", cwd=wt)
+    # sibling pushes a remote-only commit on b
+    other = tmp_path / "other"
+    import subprocess as _sp
+    _sp.run(["git", "clone", "-q", str(origin), str(other)], check=True)
+    _git("checkout", "-q", "b", cwd=other)
+    _commit(other, {"r.txt": "r\n"}, "r")
+    _git("push", "-q", "origin", "b", cwd=other)
+    # local b is behind only → fast-forward
+    assert sync.pull_branch(wt, "b") == "fast-forward"
+    assert (wt / "r.txt").read_text() == "r\n"
+    # divergent: local + remote commits → merge commit
+    _commit(wt, {"l.txt": "l\n"}, "l")
+    _commit(other, {"r2.txt": "r2\n"}, "r2")
+    _git("push", "-q", "origin", "b", cwd=other)
+    assert sync.pull_branch(wt, "b") == "merged"
+    assert (wt / "r2.txt").read_text() == "r2\n"
+    # push the merge so remote matches, then already current → up-to-date
+    _git("push", "-q", "origin", "b", cwd=wt)
+    assert sync.pull_branch(wt, "b") == "up-to-date"

@@ -71,7 +71,7 @@ def _last_merge_msg(worktree: Path) -> str:
 def _conflicted_files(worktree: Path) -> list[str]:
     try:
         out = run_cmd("git", "-C", str(worktree), "diff", "--name-only",
-                      "--diff-filter=U")
+                      "--diff-filter=U") or ""
     except HarnessError:
         return []
     return [line.strip() for line in out.splitlines() if line.strip()]
@@ -185,10 +185,38 @@ def auto_resolve_changelog(worktree: Path, conflicts: list[str]) -> bool:
     return True
 
 
+def pull_branch(worktree: Path, branch: str) -> str:
+    """Fetch origin/<branch> and integrate it into the checked-out worktree.
+
+    Returns "up-to-date" (nothing new remotely), "fast-forward" (HEAD moved
+    cleanly to the remote tip), or "merged" (a local merge commit folded the
+    remote-only commits in). A merge conflict is left in progress for the
+    caller to resolve, reported as {"status": "conflict", ...} — same
+    contract as local_merge.
+    """
+    run_cmd("git", "-C", str(worktree), "fetch", "origin", branch)
+    head = run_cmd("git", "-C", str(worktree), "rev-parse", "HEAD")
+    remote = run_cmd("git", "-C", str(worktree), "rev-parse", "--verify",
+                     "-q", f"origin/{branch}")
+    if not remote or head == remote:
+        return "up-to-date"
+    if _is_ancestor(worktree, "HEAD", f"origin/{branch}"):
+        run_cmd("git", "-C", str(worktree), "merge", "--ff-only",
+                f"origin/{branch}")
+        return "fast-forward"
+    try:
+        run_cmd("git", "-C", str(worktree), "merge", f"origin/{branch}")
+    except HarnessError:
+        conflicts = _conflicted_files(worktree)
+        if not conflicts:
+            raise
+        raise HarnessError(
+            f"conflicts pulling origin/{branch}: {', '.join(conflicts)}")
+    return "merged"
+
+
 def push(worktree: Path, branch: str) -> None:
     run_cmd("git", "-C", str(worktree), "push", "origin", branch)
-
-
 def _is_ancestor(worktree: Path, a: str, b: str) -> bool:
     try:
         run_cmd("git", "-C", str(worktree), "merge-base", "--is-ancestor", a, b)

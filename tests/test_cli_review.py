@@ -52,6 +52,7 @@ def test_review_no_runtime_prints_command_and_skips_launch(isolated_config, tmp_
                                             "branch": "feat/33"})
     launched = []
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     r = runner.invoke(cli.app, ["review", "https://github.com/o/r/pull/33",
                                 "--no-runtime", "--json"])
     assert r.exit_code == 0, r.output
@@ -113,6 +114,7 @@ def test_review_reuses_existing_worktree_by_branch(isolated_config, tmp_path, mo
                                                                   "branch": kw.get("branch")})
     launched = []
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     r = runner.invoke(cli.app, ["review", "feat/IPG-929--x", "--no-tty", "--no-runtime", "--json"])
     assert r.exit_code == 0, r.output
     assert started == []  # no new worktree created
@@ -142,6 +144,7 @@ def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
                                             "branch": "feat/33"})
     launched = []
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     url = "https://github.com/o/r/pull/33"
     key = "feat/33"
 
@@ -188,6 +191,7 @@ def test_review_reuses_existing_worktree_row(isolated_config, tmp_path, monkeypa
         raise AssertionError("must reuse the recorded worktree, not start one")
     monkeypatch.setattr(cli.gitwt, "start_worktree", _no_start)
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     db = sq.db_path()
     sq.init_db(db)  # real state.db → worktrees.branch UNIQUE is live
     store.record_link("jira:IPG-953", {
@@ -235,6 +239,7 @@ def test_review_new_pr_keys_row_by_branch(isolated_config, tmp_path, monkeypatch
                         lambda repo, **kw: {"worktree_path": str(worktree),
                                             "branch": "feat/77"})
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     url = "https://github.com/o/r/pull/77"
     r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
     assert r.exit_code == 0, r.output

@@ -1,6 +1,6 @@
 # Changelog
 ## Unreleased
-- Runs page shows persisted history: `GET /api/runs` merges the in-memory registry with the `runs` table (survives `serve` restarts as `db-<id>` rows with succeeded/failed derived from `exit_code`); `GET /api/runs/db-<id>` replays the DB-persisted output (last 2000 lines, `truncated` preserved) and its SSE endpoint replays the stored lines + terminal state; resume resolves from the row. Previously the table was metadata-only and detail came back with empty lines — old rows read back as empty/non-truncated via the `runs output/truncated` auto-migration.
+- Sync pulls `origin/<branch>` (fast-forward or merge) before merging `origin/<default>` — a stale local tip no longer conflicts spuriously or fails the final push with "fetch first". A pull conflict routes to the same harness/prompt resolution as a base-merge conflict. Review pulls the reused worktree's branch the same way before launching the runtime (pull conflict aborts, exit 1); `--no-runtime`/`--dry-run` touch nothing.
 - Candidates: PR/MR rows whose URL or source branch already has a linked
   worktree are filtered out, and recent-issue rows whose key/URL is already
   linked are filtered out — every tab dedups against the worktrees table.

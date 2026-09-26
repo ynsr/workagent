@@ -25,6 +25,7 @@ def _link_session(repo_dir, wt_dir, monkeypatch):
 def _sync_mocks(monkeypatch, local_calls=None, rebase_calls=None, pulled=None):
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     if local_calls is not None:
         monkeypatch.setattr(cli.sync_mod, "local_merge",
                             lambda wt, db, branch="": (local_calls.append((str(wt), db))

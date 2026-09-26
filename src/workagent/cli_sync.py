@@ -204,43 +204,29 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
         result["result"] = "would-merge"
         eprint(f"{key}: would merge origin/{db} into {branch} in {wt}")
         return result
+    # Pull origin/<branch> first: merge/push on a stale local tip either
+    # conflicts spuriously or gets push-rejected (fetch first). A pull
+    # conflict is left in progress for the same harness/prompt resolution
+    # path as a base-merge conflict below.
+    try:
+        pulled = sync_mod.pull_branch(Path(wt), branch)
+        if pulled != "up-to-date":
+            eprint(f"{key}: pulled origin/{branch} ({pulled})")
+            result["pulled"] = pulled
+    except HarnessError as e:
+        conflicts = sync_mod._conflicted_files(Path(wt))
+        eprint(f"{key}: {e}")
+        return _handle_merge_conflict(key, wt, branch, db, result,
+                                      use_harness, yes, json_output,
+                                      session_file, conflicts or ["<unknown>"])
     out = sync_mod.local_merge(Path(wt), db)
     if out["status"] == "conflict":
         handled = sync_mod.auto_resolve_changelog(Path(wt), out["conflicts"])
         if not handled:
             eprint(f"{key}: conflicts in: {', '.join(out['conflicts'])}")
-            run_harness_now = use_harness or yes
-            if run_harness_now:
-                result["result"] = "conflict-harness"
-                prompt = (f"The branch {branch} has merge conflicts with "
-                          f"{db} in files: {', '.join(out['conflicts'])}. "
-                          "Resolve them, complete the merge, commit, push to "
-                          f"origin/{branch}, and stop.")
-                _cli._guard_harness(key, wt)
-                _cli._run_harness("omp", prompt, wt, wt,
-                             no_tty=bool(yes), no_runtime=False,
-                             result=result, json_output=json_output, run_key=key,
-                             session_file=session_file)
-            elif sys.stdin.isatty():
-                if typer.confirm("launch the harness to resolve?"):
-                    result["result"] = "conflict-harness"
-                    prompt = (f"The branch {branch} has merge conflicts with "
-                              f"{db} in files: {', '.join(out['conflicts'])}. "
-                              "Resolve them, complete the merge, commit, push to "
-                              f"origin/{branch}, and stop.")
-                    _cli._guard_harness(key, wt)
-                    _cli._run_harness("omp", prompt, wt, wt,
-                                 no_tty=False, no_runtime=False,
-                                 result=result, json_output=json_output, run_key=key,
-                                 session_file=session_file)
-                else:
-                    _fail("aborted (merge left in progress; abort with "
-                          "`git merge --abort`)", EXIT_USAGE)
-            else:
-                result["result"] = "conflict"
-                eprint(f"{key}: conflicts need human resolution — re-run "
-                       "with --harness or --yes to auto-launch the harness")
-            return result
+            return _handle_merge_conflict(key, wt, branch, db, result,
+                                          use_harness, yes, json_output,
+                                          session_file, out["conflicts"])
         result["result"] = "merged"
     elif out["status"] == "up-to-date":
         result["result"] = "up-to-date"
@@ -252,5 +238,45 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
         sync_mod.push(Path(wt), branch)
         eprint(f"{key}: pushed {branch}")
         result["pushed"] = True
+    return result
+
+
+def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
+                           result: dict, use_harness: bool, yes: bool,
+                           json_output: bool, session_file: str | None,
+                           conflicts: list[str]) -> dict:
+    """Harness/prompt resolution for a merge left in progress."""
+    from . import cli as _cli  # shim: tests patch cli._run_harness/_guard_harness
+    run_harness_now = use_harness or yes
+    if run_harness_now:
+        result["result"] = "conflict-harness"
+        prompt = (f"The branch {branch} has merge conflicts with "
+                  f"{db} in files: {', '.join(conflicts)}. "
+                  "Resolve them, complete the merge, commit, push to "
+                  f"origin/{branch}, and stop.")
+        _cli._guard_harness(key, wt)
+        _cli._run_harness("omp", prompt, wt, wt,
+                     no_tty=bool(yes), no_runtime=False,
+                     result=result, json_output=json_output, run_key=key,
+                     session_file=session_file)
+    elif sys.stdin.isatty():
+        if typer.confirm("launch the harness to resolve?"):
+            result["result"] = "conflict-harness"
+            prompt = (f"The branch {branch} has merge conflicts with "
+                      f"{db} in files: {', '.join(conflicts)}. "
+                      "Resolve them, complete the merge, commit, push to "
+                      f"origin/{branch}, and stop.")
+            _cli._guard_harness(key, wt)
+            _cli._run_harness("omp", prompt, wt, wt,
+                         no_tty=False, no_runtime=False,
+                         result=result, json_output=json_output, run_key=key,
+                         session_file=session_file)
+        else:
+            _fail("aborted (merge left in progress; abort with "
+                  "`git merge --abort`)", EXIT_USAGE)
+    else:
+        result["result"] = "conflict"
+        eprint(f"{key}: conflicts need human resolution — re-run "
+               "with --harness or --yes to auto-launch the harness")
     return result
 

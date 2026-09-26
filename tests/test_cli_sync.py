@@ -63,6 +63,7 @@ def test_sync_no_pr_falls_back_to_local(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     local = []
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     monkeypatch.setattr(cli.sync_mod, "local_merge",
                         lambda wt, db, branch="": (local.append((str(wt), db))
                                         or {"status": "merged", "conflicts": []}))
@@ -87,6 +88,7 @@ def test_sync_recorded_pr_seed_uses_local_merge(isolated_config, tmp_path,
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     rebase, local = [], []
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     monkeypatch.setattr(cli.sync_mod, "local_merge",
                         lambda wt, db, branch="": (local.append((str(wt), db))
                                         or {"status": "merged", "conflicts": []}))
