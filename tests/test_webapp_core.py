@@ -294,6 +294,16 @@ def test_status_endpoints(client):
     assert missing.status_code == 404
 
 
+def test_status_include_inactive(client):
+    store.record_link("jira:IPG-9", {"issue": "IPG-9",
+                                     "worktree": "/tmp/wt", "branch": "b",
+                                     "repo": "/tmp/repo"})
+    store.set_worktree_active("jira:IPG-9", False)
+    assert "jira:IPG-9" not in client.get("/api/status").json()
+    body = client.get("/api/status", params={"include_inactive": "true"}).json()
+    assert "jira:IPG-9" in body
+
+
 def test_api_status_includes_harness(client):
     store.record_link("jira:IPG-1", {"issue": "IPG-1",
                                      "worktree": "/tmp/wt", "branch": "b",

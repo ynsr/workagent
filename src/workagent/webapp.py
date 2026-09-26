@@ -142,8 +142,8 @@ def create_app(static_dir: Path, host: str, port: int,
     from . import trackers as trackers_mod
 
     @app.get("/api/status")
-    def status(ref: str | None = None, refresh: bool = False):
-        links = store.load_links()
+    def status(ref: str | None = None, refresh: bool = False, include_inactive: bool = False):
+        links = store.load_links(include_inactive=include_inactive)
         if not ref:
             _fetch_origins(links, refresh)
             return {k: _enrich_entry(k, v, refresh)

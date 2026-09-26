@@ -6,7 +6,7 @@ import { getVerbose } from "./settings"
 export const queryKeys = {
   info: ["info"] as const,
   statusAll: ["status", "all"] as const,
-  statusDetail: (ref: string) => ["status-detail", ref] as const,
+  statusInactive: ["status", "inactive"] as const,
   path: (ref: string) => ["path", ref] as const,
   repos: ["repos"] as const,
   trackers: ["trackers"] as const,
@@ -25,6 +25,17 @@ export function useStatusAll(refresh?: boolean) {
   return useQuery({
     queryKey: [...queryKeys.statusAll, refresh ?? false],
     queryFn: () => api.statusAll(refresh ? { refresh: true } : undefined),
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  })
+}
+
+/** Deactivated worktrees (active-only /api/status hides them). Same 15 s poll. */
+export function useStatusInactive() {
+  return useQuery({
+    queryKey: queryKeys.statusInactive,
+    queryFn: () => api.statusAll({ includeInactive: true }),
     refetchInterval: 15_000,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,

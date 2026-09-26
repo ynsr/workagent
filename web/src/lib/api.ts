@@ -290,9 +290,9 @@ export const api = {
   info: () => request<Info>("/api/info"),
 
   /** GET /api/status — all worktrees. `refresh` re-queries PR status (slow). */
-  statusAll: (opts?: { refresh?: boolean }) =>
+  statusAll: (opts?: { refresh?: boolean; includeInactive?: boolean }) =>
     request<WorktreeMap>(
-      `/api/status${qs({ refresh: opts?.refresh ? "true" : undefined })}`,
+      `/api/status${qs({ refresh: opts?.refresh ? "true" : undefined, include_inactive: opts?.includeInactive ? "true" : undefined })}`,
     ),
 
   /** GET /api/status?ref=… — single worktree detail. */
