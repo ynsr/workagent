@@ -247,11 +247,61 @@ def _rebuild_required_columns(conn) -> list[str]:
     return rebuilt
 
 
+_INIT_CACHE: dict[str, bool] = {}
+
+
+def _schema_current(path: Path) -> bool:
+    """Read-only probe: True when all canonical tables exist with the
+    output/truncated runs columns (migrations already applied). Read-only
+    connections can never take the RESERVED write lock, so this never
+    raises ``database is locked`` no matter who holds the DB.
+    """
+    if not path.exists():
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
+    except Exception:
+        return False
+    try:
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if not {"trackers", "repos", "worktrees", "sessions", "runs"} <= tables:
+            return False
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+        return {"output", "truncated"} <= cols
+    except Exception:
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def init_db(path: Path) -> Path:
-    with connect(path) as conn:
-        conn.executescript(SCHEMA)
-        _migrate_v2(conn)
-        _migrate_runs_output(conn)
+    if _INIT_CACHE.get(str(path)) and _schema_current(path):
+        return path
+    import time
+    last: Exception | None = None
+    for attempt in range(5):
+        if attempt and _schema_current(path):
+            break
+        try:
+            with connect(path) as conn:
+                conn.executescript(SCHEMA)
+                _migrate_v2(conn)
+                _migrate_runs_output(conn)
+            break
+        except sqlite3.OperationalError as e:
+            last = e
+            if "locked" not in str(e).lower():
+                raise
+            if _schema_current(path):
+                break
+            time.sleep(0.05 * (2 ** attempt))
+    else:
+        raise last  # type: ignore[misc]
+    _INIT_CACHE[str(path)] = True
     return path
 def _norm(p: str) -> str:
     from pathlib import Path as _P
