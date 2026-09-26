@@ -428,9 +428,11 @@ export function Dashboard() {
             <Button variant="outline" size="sm" onClick={handleFixAll} title={selCount > 0 ? `Fix PR comments on ${selCount} selected worktrees` : "Fix PR comments on every active linked worktree"}>
               {selCount > 0 ? `Fix (${selCount})` : "Fix all PR comments"}
             </Button>
-            <Button variant="outline" size="sm" onClick={handleCleanupMerged} disabled={selCount > 0} title={selCount > 0 ? "Clear selection to clean all merged (or Delete per row)" : "Clean every merged/closed linked worktree"}>
-              {scopeLabel("Cleanup")}
-            </Button>
+            <span title={selCount > 0 ? "Clear selection to clean all merged (or Delete per row)" : "Clean every merged/closed linked worktree"}>
+              <Button variant="outline" size="sm" onClick={handleCleanupMerged} disabled={selCount > 0}>
+                {scopeLabel("Cleanup")}
+              </Button>
+            </span>
             <Button variant="outline" size="sm" onClick={handleCopyJson}>
               <Copy aria-hidden /> JSON
             </Button>

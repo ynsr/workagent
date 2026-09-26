@@ -273,7 +273,7 @@ export function StatusTable({
                   const invalid = entry.wt_valid === false
                   return (
                     <Fragment key={key}>
-                      <TableRow aria-selected={sel.has(key)} className={cn("group relative", sel.has(key) ? "data-[state=selected]:bg-muted/50" : undefined, invalid ? "bg-destructive/5" : undefined)}>
+                      <TableRow aria-selected={sel.has(key)} data-state={sel.has(key) ? "selected" : undefined} className={cn("group relative", sel.has(key) ? "data-[state=selected]:bg-muted/50" : undefined, invalid ? "bg-destructive/5" : undefined)}>
                         <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
                           <Checkbox
                             checked={sel.has(key)}
@@ -388,7 +388,7 @@ export function StatusTable({
                       </TableRow>
                       <TableRow className="hover:bg-transparent">
                         <TableCell
-                          colSpan={showWorktree ? 8 : 7}
+                          colSpan={showWorktree ? 9 : 8}
                           className={detailOpen ? "py-1" : "border-0 !p-0"}
                         >
                           <DetailReveal open={detailOpen}>
