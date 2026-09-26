@@ -298,7 +298,7 @@ export function Launch() {
           )}
 
           <div className="flex flex-wrap gap-x-6 gap-y-3">
-            {mode !== "sync" ? (
+            {mode === "review" ? (
               <CheckRow
                 id="launch-launch"
                 checked={form.launch}
