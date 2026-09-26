@@ -4,7 +4,8 @@
   worktree are filtered out, and recent-issue rows whose key/URL is already
   linked are filtered out — every tab dedups against the worktrees table.
   Issue rows carry `repo_hint` (the Launch default repo for that ref),
-  shown in the Link page and CLI table.
+  shown in the Link page and CLI table. Candidate PR and issue titles link
+  out to their URLs in new tabs.
 - Launch: typing/selecting a linked worktree (key, branch, or path) in the
   Review field auto-fills its repo via `GET /api/default-repo` (backend
   resolves the worktree first). Sync takes no `--repo` — the linked

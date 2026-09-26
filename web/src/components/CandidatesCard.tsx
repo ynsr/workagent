@@ -173,7 +173,9 @@ export function CandidatesCard() {
                 <li key={pr.url} className="flex items-center gap-2 px-3 py-2">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium" title={pr.title}>
-                      {pr.title || pr.url}
+                      <a href={pr.url} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
+                        {pr.title || pr.url}
+                      </a>
                     </p>
                     <p className="truncate font-mono text-xs text-muted-foreground" title={pr.url}>
                       {pr.key} · {pr.branch} · {pr.repo}
@@ -209,7 +211,9 @@ export function CandidatesCard() {
                 <li key={issue.key} className="flex items-center gap-2 px-3 py-2">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium" title={issue.title}>
-                      {issue.title || issue.key}
+                      <a href={issue.url} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
+                        {issue.title || issue.key}
+                      </a>
                     </p>
                     <p className="truncate font-mono text-xs text-muted-foreground" title={issue.url}>
                       {issue.key} · {issue.status}{issue.repo_hint ? ` · ${issue.repo_hint}` : ""}
