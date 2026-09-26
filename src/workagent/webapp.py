@@ -208,6 +208,25 @@ def create_app(static_dir: Path, host: str, port: int,
         default, cands = _trackers.repos_for_ref(ref)
         return {"ref": ref, "repo": default, "repos": cands}
 
+    @app.get("/api/review-session")
+    def review_session(ref: str) -> dict:
+        """Latest non-running review session for *ref* (fix-continue target).
+
+        Read-only, always 200: resolves the ref to its worktree key with the
+        same fuzzy resolver as cleanup/open, then returns the newest
+        finished/failed review session or nulls when none exists."""
+        from . import store_sqlite as _sq
+        links = store.load_links()
+        resolved = worktrees.resolve_worktree(ref, links)
+        if resolved is None:
+            return {"ref": ref, "session_id": None, "file_path": None}
+        key = worktrees.pick_worktree(ref, resolved, links)
+        db = _sq.db_path()
+        latest = _sq.latest_review_session(db, key) if db.exists() else None
+        if latest is None:
+            return {"ref": ref, "session_id": None, "file_path": None}
+        return {"ref": ref, "session_id": latest["id"], "file_path": latest.get("file_path")}
+
     @app.get("/api/doctor")
     def doctor() -> dict:
         from . import doctor as doctor_mod

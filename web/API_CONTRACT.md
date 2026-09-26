@@ -97,6 +97,14 @@ worktree-pinned default when outside it) for the Start repo picker:
 {"ref": "IPG-1", "repo": "/home/x/projects/projectx", "repos": ["/home/x/projects/projectx"]}
 ```
 
+### `GET /api/review-session?ref=…`
+Latest non-running `review` session for the ref's worktree key (fix-continue
+target). Read-only, always 200 — nulls when the ref is unlinked or no review
+session exists (caller falls through to a fresh `fix_comments` session):
+```json
+{"ref": "jira:IPG-1", "session_id": "2026-09-26T00-00-00-000Z-1234", "file_path": "/home/x/.config/workagent/sessions/omp/….jsonl"}
+```
+
 ### `GET /api/doctor`
 ```json
 {"status": "ok", "live_hash": "…", "recorded_hash": "…",

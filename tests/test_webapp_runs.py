@@ -101,6 +101,66 @@ def test_api_default_repo_prefers_linked_worktree(client, tmp_path, monkeypatch)
     assert client.get("/api/default-repo", params={"ref": "IPG-99"}).json() == {"ref": "IPG-99", "repo": str(linked), "repos": [str(linked)]}
 
 
+def test_mirror_run_stamps_fix_metadata(client):
+    """Exit-0 run reusing a review session stamps fixed_at + run id."""
+    from workagent import store_sqlite as sq
+    from workagent import web_runs as _wr
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w-fix1', 'b-fix1', NULL, '2026-01-01', '{}')")
+    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="review",
+                            prompt="p", file_path="/s/rev-1.jsonl", session_id="rev-1",
+                            session_type="review")
+    sq.finish_session(db, "rev-1", "finished")
+    run = client.app.state.registry.create("review", ["k", "--fix-comments"], "review:k")
+    run.session_file = "/s/rev-1.jsonl"
+    run.exit_code = 0
+    _wr._mirror_run(run)
+    md = sq.get_session(db, sid)["metadata"]
+    assert md["review_comments_fixed_at"]
+    assert md["fixed_by_run_id"] == run.id
+
+
+def test_mirror_run_failure_leaves_fix_metadata(client):
+    """Non-zero continue run leaves prior fix metadata untouched."""
+    from workagent import store_sqlite as sq
+    from workagent import web_runs as _wr
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k2', '/tmp/w-fix2', 'b-fix2', NULL, '2026-01-01', '{}')")
+    sid = sq.insert_session(db, worktree_ref="k2", harness_name="omp", initiator_command="review",
+                            prompt="p", file_path="/s/rev-9.jsonl", session_id="rev-9",
+                            session_type="review",
+                            metadata={"review_comments_fixed_at": "old", "fixed_by_run_id": "old-run"})
+    sq.finish_session(db, "rev-9", "finished")
+    run = client.app.state.registry.create("review", ["k2", "--fix-comments"], "review:k2")
+    run.session_file = "/s/rev-9.jsonl"
+    run.exit_code = 1
+    _wr._mirror_run(run)
+    md = sq.get_session(db, sid)["metadata"]
+    assert md == {"review_comments_fixed_at": "old", "fixed_by_run_id": "old-run"}
+
+
+def test_api_review_session_returns_latest(client):
+    from workagent import store_sqlite as sq
+    from workagent import store as _store
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = "/tmp/wrs2"
+    _store.record_link("rk2", {"worktree": wt, "branch": "branch-rk2", "repo": "/tmp/r"})
+    sq.insert_session(db, worktree_ref="rk2", harness_name="omp", initiator_command="review",
+                      prompt="p", file_path="/s/rev-2.jsonl", session_id="rev-2",
+                      session_type="review")
+    sq.finish_session(db, "rev-2", "finished")
+    r = client.get("/api/review-session", params={"ref": "rk2"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ref": "rk2", "session_id": "rev-2", "file_path": "/s/rev-2.jsonl"}
+
+
 def test_register_run_key_unique_per_path(client):
     r1 = client.post("/api/runs", json={"command": "register",
                                         "args": ["/tmp/wt-a"]})

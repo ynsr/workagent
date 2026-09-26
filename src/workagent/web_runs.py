@@ -74,6 +74,16 @@ def _mirror_run(run: Run) -> None:
             pass
         _sq.insert_run(db, sid, command, args, run.exit_code,
                        output=output, truncated=truncated)
+        try:
+            is_fix_continue = (command == "review" and "--fix-comments" in args
+                               and "--new-fix-session" not in args and run.exit_code == 0)
+            if is_fix_continue and (_sq.get_session(db, sid) or {}).get("session_type") == "review":
+                from datetime import datetime, timezone
+                _sq.set_session_metadata(db, sid, {
+                    "review_comments_fixed_at": datetime.now(timezone.utc).isoformat(),
+                    "fixed_by_run_id": run.id})
+        except Exception:
+            pass
     except Exception as e:
         print(f"[web] run mirror failed: {e}", file=sys.stderr, flush=True)
 
