@@ -308,3 +308,44 @@ def test_worktree_count_for_repo(tmp_path):
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
                      " VALUES ('k', '/wt', 'b', 'proj', '2026-01-01T00:00:00+00:00')")
     assert sq.worktree_count_for_repo(db, "proj") == 1
+
+
+def test_migrate_worktrees_active_defaults_to_active(tmp_path):
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+            " VALUES ('k1', '/tmp/w1', 'b1', NULL, '2026-01-01', '{}')")
+    sq._migrate_worktrees_active(sq.connect(db))
+    with sq.connect(db) as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
+        assert "active" in cols
+        assert conn.execute("SELECT active FROM worktrees WHERE ref_key='k1'").fetchone()[0] == 1
+
+
+def test_migrate_worktrees_active_idempotent(tmp_path):
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        sq._migrate_worktrees_active(conn)
+        sq._migrate_worktrees_active(conn)
+        with conn:
+            conn.execute("UPDATE worktrees SET active=1 WHERE 0")
+
+
+def test_load_links_rows_filters_inactive(tmp_path):
+    from workagent import store_sqlite as sq, store_links as sl
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload, active)"
+            " VALUES ('a', '/tmp/wa', 'ba', NULL, '2026-01-01', '{}', 1),"
+            " ('d', '/tmp/wd', 'bd', NULL, '2026-01-01', '{}', 0)")
+    assert set(sl.load_links_rows(db).keys()) == {"a"}
+    all_rows = sl.load_links_rows(db, include_inactive=True)
+    assert set(all_rows.keys()) == {"a", "d"}
+    assert all_rows["d"]["active"] == 0

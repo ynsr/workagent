@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS worktrees (
   ref_key TEXT PRIMARY KEY NOT NULL, path TEXT UNIQUE NOT NULL,
   branch TEXT UNIQUE NOT NULL, repo_key TEXT REFERENCES repos(key_ref) ON DELETE CASCADE,
   issue_url TEXT NOT NULL DEFAULT '', pr_url TEXT NOT NULL DEFAULT '',
-  added_at TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}');
+  added_at TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}',
+  active INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS pr_cache (
   branch TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, checked_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (
@@ -102,7 +103,6 @@ def _tracker_meta(tid: str) -> tuple[str, str]:
         host, _, repo = rest.partition("/")
         return "github", f"https://{rest}" if "/" in rest and host else tid
     return "github", tid
-
 def _migrate_runs_output(conn) -> None:
     """Schema v3: runs gains output/truncated (persisted run log).
 
@@ -116,6 +116,18 @@ def _migrate_runs_output(conn) -> None:
         conn.execute("ALTER TABLE runs ADD COLUMN output TEXT NOT NULL DEFAULT ''")
     if "truncated" not in cols:
         conn.execute("ALTER TABLE runs ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0")
+
+def _migrate_worktrees_active(conn) -> None:
+    """Schema v4: worktrees gains active (1 = active, 0 = deactivated).
+
+    ALTER TABLE is enough (NOT NULL DEFAULT 1, so old rows read back as
+    active). Idempotent: skipped when present.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
+    if not cols:
+        return
+    if "active" not in cols:
+        conn.execute("ALTER TABLE worktrees ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
 
 def _migrate_v2(conn) -> None:
     """Schema v2: trackers gains mandatory vendor/remote_url; repos loses tracker_key.
@@ -268,7 +280,10 @@ def _schema_current(path: Path) -> bool:
         if not {"trackers", "repos", "worktrees", "sessions", "runs"} <= tables:
             return False
         cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
-        return {"output", "truncated"} <= cols
+        if {"output", "truncated"} > cols:
+            return False
+        wcols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
+        return "active" in wcols
     except Exception:
         return False
     finally:
@@ -291,6 +306,7 @@ def init_db(path: Path) -> Path:
                 conn.executescript(SCHEMA)
                 _migrate_v2(conn)
                 _migrate_runs_output(conn)
+                _migrate_worktrees_active(conn)
             break
         except sqlite3.OperationalError as e:
             last = e

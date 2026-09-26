@@ -95,11 +95,11 @@ def _sqlite_path():
         return None
 
 
-def load_links() -> dict:
+def load_links(include_inactive: bool = False) -> dict:
     db = _sqlite_path()
     if db is not None:
         from . import store_sqlite as sq
-        return sq.load_links_rows(db)
+        return sq.load_links_rows(db, include_inactive=include_inactive)
     links = _read_json(config_dir() / "links.json", {})
     for key, entry in links.items():
         if isinstance(entry, dict):

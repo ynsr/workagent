@@ -12,7 +12,7 @@ def _upsert_tracker_conn(conn, tid, vendor="", remote_url=""):
     from . import store_sqlite as _sq
     return _sq._upsert_tracker_conn(conn, tid, vendor, remote_url)
 
-def load_links_rows(path: Path) -> dict:
+def load_links_rows(path: Path, include_inactive: bool = False) -> dict:
     """Reconstruct the legacy links.json dict from worktree rows + payloads."""
     import json
     if not path.exists():
@@ -20,15 +20,18 @@ def load_links_rows(path: Path) -> dict:
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         out = {}
-        for row in conn.execute("SELECT w.*, r.path AS repo_path FROM worktrees w"
-                                " LEFT JOIN repos r ON r.key_ref = w.repo_key"):
+        q = ("SELECT w.*, r.path AS repo_path FROM worktrees w"
+             " LEFT JOIN repos r ON r.key_ref = w.repo_key")
+        if not include_inactive:
+            q += " WHERE w.active != 0"
+        for row in conn.execute(q):
             r = dict(row)
             entry = json.loads(r.pop("payload", "{}") or "{}")
             entry.update({
                 "worktree": r["path"], "branch": r["branch"],
                 "repo": r.get("repo_path") or r["repo_key"], "issue_url": r["issue_url"],
                 "pr_url": r["pr_url"], "added_at": r["added_at"],
-                "ref_key": r["ref_key"],
+                "ref_key": r["ref_key"], "active": r.get("active", 1),
             })
             if "issue" not in entry and r["ref_key"].startswith("jira:"):
                 entry["issue"] = r["ref_key"].split(":", 1)[1]
