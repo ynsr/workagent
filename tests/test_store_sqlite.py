@@ -349,3 +349,38 @@ def test_load_links_rows_filters_inactive(tmp_path):
     all_rows = sl.load_links_rows(db, include_inactive=True)
     assert set(all_rows.keys()) == {"a", "d"}
     assert all_rows["d"]["active"] == 0
+
+
+def test_set_worktree_active_round_trip(tmp_path):
+    from workagent import store_sqlite as sq, store_links as sl
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+            " VALUES ('k1', '/tmp/w1', 'b1', NULL, '2026-01-01', '{}')")
+    sl.set_worktree_active(db, "k1", False)
+    assert "k1" not in sl.load_links_rows(db)
+    assert sl.load_links_rows(db, include_inactive=True)["k1"]["active"] == 0
+    sl.set_worktree_active(db, "k1", True)
+    assert sl.load_links_rows(db)["k1"]["active"] == 1
+
+
+def test_delete_worktree_row_leaves_disk(tmp_path):
+    from workagent import store_sqlite as sq, store_links as sl
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    wt = tmp_path / "wt1"
+    wt.mkdir()
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+            " VALUES ('k1', ?, 'b1', NULL, '2026-01-01', '{}')", (str(wt),))
+    sl.delete_worktree_row(db, "k1")
+    assert wt.exists()
+    with sq.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM worktrees WHERE ref_key='k1'").fetchone()[0] == 0
+    import pytest
+    from workagent.errors import HarnessError
+    with pytest.raises(HarnessError):
+        sl.delete_worktree_row(db, "k1")

@@ -446,7 +446,7 @@ from .store_sessions import (  # noqa: F401,E402
     session_file_path,
 )
 
-from .store_links import load_links_rows, save_links_rows  # noqa: F401,E402
+from .store_links import delete_worktree_row, load_links_rows, save_links_rows, set_worktree_active  # noqa: F401,E402
 
 def migrate_json(config_dir: Path, db_path: Path) -> dict:
     """One-shot migration: links/pr_cache/harnesses JSON → state.db.

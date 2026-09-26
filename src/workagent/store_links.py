@@ -94,3 +94,28 @@ def save_links_rows(path: Path, links: dict) -> None:
             conn.execute("DELETE FROM worktrees")
 
 
+def set_worktree_active(path: Path, key: str, active: bool) -> None:
+    """Flip a worktree's active flag (pure DB; no git/host side effects)."""
+    from .errors import HarnessError
+    init_db(path)
+    with connect(path) as conn:
+        cur = conn.execute("UPDATE worktrees SET active = ? WHERE ref_key = ?",
+                           (1 if active else 0, key))
+        if cur.rowcount == 0:
+            raise HarnessError(f"no worktree link for {key}", exit_code=2)
+
+
+def delete_worktree_row(path: Path, key: str) -> None:
+    """Delete a worktree row only; files/branch/PR untouched.
+
+    Note: sessions/runs CASCADE off the worktree row, so this key's
+    session history is deleted too.
+    """
+    from .errors import HarnessError
+    init_db(path)
+    with connect(path) as conn:
+        cur = conn.execute("DELETE FROM worktrees WHERE ref_key = ?", (key,))
+        if cur.rowcount == 0:
+            raise HarnessError(f"no worktree link for {key}", exit_code=2)
+
+

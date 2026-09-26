@@ -107,7 +107,21 @@ def load_links(include_inactive: bool = False) -> dict:
     return links
 
 
-def save_links(links: dict) -> None:
+def set_worktree_active(key: str, active: bool) -> None:
+    """Flip a worktree's active flag (pure DB; no git/host side effects)."""
+    from . import store_sqlite as sq
+    db = _sqlite_path()
+    assert db is not None
+    sq.set_worktree_active(db, key, active)
+
+
+def delete_worktree_row(key: str) -> None:
+    """Delete a worktree row only; files/branch/PR untouched."""
+    from . import store_sqlite as sq
+    db = _sqlite_path()
+    assert db is not None
+    sq.delete_worktree_row(db, key)
+
     db = _sqlite_path()
     if db is not None:
         from . import store_sqlite as sq
