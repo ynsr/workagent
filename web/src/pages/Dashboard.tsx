@@ -230,8 +230,18 @@ export function Dashboard() {
     setCleanupTarget(key)
   }
 
-  async function submitCleanup(key: string, opts: { force: boolean }) {
+  async function submitCleanup(key: string, opts: { force: boolean } | { action: "deactivate" } | { action: "deleteFromDb" }) {
     setCleanupTarget(null)
+    if ("action" in opts) {
+      try {
+        const cmd = opts.action === "deactivate" ? ["deactivate", key] : ["remove", key]
+        const { run_id } = await createRun.mutateAsync({ command: "link", args: cmd, confirm: true })
+        runCreated(run_id, opts.action === "deactivate" ? `Deactivated ${key}` : `Deleted ${key} from DB`)
+      } catch (err) {
+        toast.error(errorText(err))
+      }
+      return
+    }
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "cleanup",

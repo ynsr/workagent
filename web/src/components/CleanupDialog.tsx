@@ -24,7 +24,7 @@ export function CleanupDialog({
 }: {
   worktreeKey: string
   invalid: boolean
-  onClose: (ok: false | { force: boolean }) => void
+  onClose: (ok: false | { force: boolean } | { action: "deactivate" } | { action: "deleteFromDb" }) => void
 }) {
   const [force, setForce] = useState(invalid)
   const effectiveForce = invalid || force
@@ -111,6 +111,20 @@ export function CleanupDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={() => onClose(false)}>Cancel</AlertDialogCancel>
+          {!invalid ? (
+            <AlertDialogAction
+              title="link deactivate — hide from bulk ops; reversible, nothing on disk touched"
+              onClick={() => onClose({ action: "deactivate" })}
+            >
+              Deactivate
+            </AlertDialogAction>
+          ) : null}
+          <AlertDialogAction
+            title="link remove — drop the database row only; files/branch/PR untouched, session history deleted"
+            onClick={() => onClose({ action: "deleteFromDb" })}
+          >
+            Delete from DB
+          </AlertDialogAction>
           <AlertDialogAction
             autoFocus
             onClick={() => onClose({ force: effectiveForce })}
