@@ -24,6 +24,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { useConfirmedRun } from "@/components/RunActions"
+import { useInfo, useRepos, useStatusAll } from "@/lib/queries"
 import {
   LinkRemoveDialog,
   LinkSetDialog,
@@ -62,7 +63,7 @@ export function Links() {
 
   async function handleReviewAll() {
     setForceAll(false)
-    const ok = await confirm({
+    await runConfirmed({
       action: "review",
       title: "Review all worktrees",
       description:
@@ -84,21 +85,10 @@ export function Links() {
           </Label>
         </div>
       ),
+      command: "review",
+      args: ["--all", ...(forceAll ? ["--force-all"] : [])],
+      successMessage: "Review all started",
     })
-    if (!ok) return
-    try {
-      const { run_id } = await createRun.mutateAsync({
-        command: "review",
-        args: ["--all", ...(forceAll ? ["--force-all"] : [])],
-        confirm: true,
-      })
-      toast.success("Review all started", {
-        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
-      })
-      navigate(`/runs/${run_id}`)
-    } catch (err) {
-      toast.error(errorText(err))
-    }
   }
   async function handleCleanupMerged() {
     await runConfirmed({
@@ -133,21 +123,17 @@ export function Links() {
     })
   }
 
-
   async function handleOpenWorktree(key: string) {
-    try {
-      const { run_id } = await createRun.mutateAsync({
-        command: "open",
-        args: [key],
-        confirm: false,
-      })
-      toast.success(`Opening ${key}`, {
-        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
-      })
-      navigate(`/runs/${run_id}`)
-    } catch (err) {
-      toast.error(errorText(err))
-    }
+    await runConfirmed({
+      action: null,
+      title: `Opening ${key}`,
+      description: `Opens the worktree directory for ${key}.`,
+      confirmLabel: "Open",
+      confirm: false,
+      command: "open",
+      args: [key],
+      successMessage: `Opening ${key}`,
+    })
   }
 
   const tableActions = {
