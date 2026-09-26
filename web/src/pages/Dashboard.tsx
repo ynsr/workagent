@@ -12,6 +12,7 @@ import {
   SquareTerminal,
 } from "lucide-react"
 import { CleanupDialog } from "@/components/CleanupDialog"
+import { DeactivatedTable } from "@/components/DeactivatedTable"
 import { PageHeader } from "@/components/PageHeader"
 import { StatusTable } from "@/components/StatusTable"
 import {
@@ -26,7 +27,7 @@ import { Switch } from "@/components/ui/switch"
 import { api, type WorktreeMap } from "@/lib/api"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
-import { queryKeys, useCreateRun, useInfo, useRepos, useStatusAll } from "@/lib/queries"
+import { queryKeys, useCreateRun, useInfo, useRepos, useStatusAll, useStatusInactive } from "@/lib/queries"
 import { useRepoTabs } from "@/lib/useRepoTabs"
 
 const CSV_HEADERS = [
@@ -69,6 +70,7 @@ export function Dashboard() {
   const confirm = useConfirm()
   const createRun = useCreateRun()
   const { data: worktrees, isPending, isError, error, refetch } = useStatusAll()
+  const { data: inactiveAll } = useStatusInactive()
   const { data: info } = useInfo()
   const { data: repos } = useRepos()
   const repoTabs = useRepoTabs(
@@ -111,10 +113,10 @@ export function Dashboard() {
       action: "sync",
       title: "Sync all worktrees",
       description:
-        "Runs sync for every linked worktree (implies --yes). Same strategy as a single sync: remote rebase by default, local merge with -m.",
+        "Runs sync for every active linked worktree (implies --yes). Same strategy as a single sync: remote rebase by default, local merge with -m.",
       destructive: true,
       confirmLabel: "Sync all",
-      details: [{ label: "Scope", value: "Every linked worktree" }],
+      details: [{ label: "Scope", value: "Every active linked worktree" }],
       extras: (
         <div className="grid gap-2.5">
           <CheckRow
@@ -147,10 +149,10 @@ export function Dashboard() {
       action: "review",
       title: "Review all worktrees",
       description:
-        "Reviews every not-reviewed linked worktree in parallel (non-TTY). Skips worktrees without a PR/MR, with a live harness, or with unresolved PR comments. Reviewed worktrees whose tip moved are reviewed again.",
+        "Reviews every not-reviewed active linked worktree in parallel (non-TTY). Skips worktrees without a PR/MR, with a live harness, or with unresolved PR comments. Reviewed worktrees whose tip moved are reviewed again.",
       destructive: true,
       confirmLabel: "Review all",
-      details: [{ label: "Scope", value: "Every linked worktree" }],
+      details: [{ label: "Scope", value: "Every active linked worktree" }],
       extras: (
         <div className="grid gap-2.5">
           <CheckRow
@@ -182,10 +184,10 @@ export function Dashboard() {
       action: "review",
       title: "Fix PR comments on all worktrees",
       description:
-        "Fixes open (not-resolved) PR/MR review comments on every linked worktree with a PR/MR (non-TTY). Validates each finding against the code and PR/MR description, resolves/closes fixed comments (GitHub bot comments get a `Status: RESOLVED` second line), then commits and pushes.",
+        "Fixes open (not-resolved) PR/MR review comments on every active linked worktree with a PR/MR (non-TTY). Validates each finding against the code and PR/MR description, resolves/closes fixed comments (GitHub bot comments get a `Status: RESOLVED` second line), then commits and pushes.",
       destructive: true,
       confirmLabel: "Fix all",
-      details: [{ label: "Scope", value: "Every linked worktree with a PR/MR" }],
+      details: [{ label: "Scope", value: "Every active linked worktree with a PR/MR" }],
     })
     if (!ok) return
     try {
@@ -206,7 +208,7 @@ export function Dashboard() {
       action: "cleanup",
       title: "Cleanup merged worktrees",
       description:
-        "Removes every linked worktree whose PR/MR is merged or closed. Cleanup closes the tracker issue, removes the worktree, deletes the branch and closes the PR. Live harnesses and invalid worktrees are skipped, never torn down.",
+        "Removes every active linked worktree whose PR/MR is merged or closed. Cleanup closes the tracker issue, removes the worktree, deletes the branch and closes the PR. Live harnesses and invalid worktrees are skipped, never torn down.",
       destructive: true,
       confirmLabel: "Cleanup merged",
       details: [{ label: "Scope", value: "Merged/closed PRs only" }],
@@ -271,6 +273,19 @@ export function Dashboard() {
 
   function handleOpenRun(key: string) {
     navigate(`/runs?target=${encodeURIComponent(key)}`)
+  }
+
+  async function handleReactivate(key: string) {
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "link",
+        args: ["reactivate", key],
+        confirm: true,
+      })
+      runCreated(run_id, `Reactivated ${key}`)
+    } catch (err) {
+      toast.error(errorText(err))
+    }
   }
 
   async function handleCopyJson() {
@@ -400,6 +415,17 @@ export function Dashboard() {
             showWorktree={showWorktree}
             networkExposed={info?.network_exposed ?? false}
             repoTabs={repos ? { ...repoTabs, repos } : undefined}
+          />
+          <DeactivatedTable
+            worktrees={Object.fromEntries(
+              Object.entries(inactiveAll ?? {}).filter(([k]) => !(k in (worktrees ?? {}))),
+            )}
+            actions={{
+              onOpenWorktree: handleOpenWorktree,
+              onOpenRun: handleOpenRun,
+              onReactivate: handleReactivate,
+            }}
+            networkExposed={info?.network_exposed ?? false}
           />
           <details className="mt-3 rounded-md border px-3 py-2 text-xs text-muted-foreground">
             <summary className="cursor-pointer font-medium text-foreground">

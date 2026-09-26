@@ -20,9 +20,11 @@ def load_links_rows(path: Path, include_inactive: bool = False) -> dict:
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         out = {}
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
+        has_active = "active" in cols
         q = ("SELECT w.*, r.path AS repo_path FROM worktrees w"
              " LEFT JOIN repos r ON r.key_ref = w.repo_key")
-        if not include_inactive:
+        if not include_inactive and has_active:
             q += " WHERE w.active != 0"
         for row in conn.execute(q):
             r = dict(row)
@@ -44,7 +46,9 @@ def save_links_rows(path: Path, links: dict) -> None:
 
     Upserts only the given keys and deletes rows absent from the dict —
     never a blanket DELETE, so session rows (FK → worktrees) survive
-    ordinary link mutations.
+    ordinary link mutations. `active` is never reset by a re-save:
+    entries carrying it are honored, others keep their stored value
+    (new rows default to 1 via the column default).
     """
     import json
     init_db(path)
@@ -53,7 +57,7 @@ def save_links_rows(path: Path, links: dict) -> None:
         for key, e in links.items():
             extra = {k: v for k, v in e.items() if k not in (
                 "worktree", "branch", "repo", "issue_url", "pr_url",
-                "added_at", "ref_key", "issue")}
+                "added_at", "ref_key", "issue", "active")}
             repo = str(e.get("repo", ""))
             repo_key = ""
             if repo:
@@ -73,19 +77,21 @@ def save_links_rows(path: Path, links: dict) -> None:
                                      " VALUES (?, ?)", (with_tid, repo_key))
                 else:
                     repo_key = row[0]
+            has_active = "active" in e
             conn.execute(
                 "INSERT INTO worktrees (ref_key, path, branch, repo_key,"
-                " issue_url, pr_url, added_at, payload)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                " issue_url, pr_url, added_at, payload, active)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(ref_key) DO UPDATE SET path=excluded.path,"
                 " branch=excluded.branch, repo_key=excluded.repo_key,"
                 " issue_url=excluded.issue_url, pr_url=excluded.pr_url,"
-                " added_at=excluded.added_at, payload=excluded.payload",
+                " added_at=excluded.added_at, payload=excluded.payload"
+                + (", active=excluded.active" if has_active else ""),
                 (key, str(e.get("worktree", "")), str(e.get("branch", "")),
                  repo_key, str(e.get("issue_url", "")),
                  str(e.get("pr_url", "")), str(e.get("added_at")
                  or datetime.now(timezone.utc).isoformat()),
-                 json.dumps(extra)))
+                 json.dumps(extra), 1 if e.get("active", 1) else 0))
         if links:
             conn.execute(
                 "DELETE FROM worktrees WHERE ref_key NOT IN (%s)" %

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { FolderOpen, GitPullRequest, History, Info, RefreshCw, Rocket, Trash2, Wrench } from "lucide-react"
+import { FolderOpen, GitPullRequest, History, Info, Play, RefreshCw, Rocket, Trash2, Wrench } from "lucide-react"
 import type { WorktreeMap } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -90,6 +90,14 @@ export function RowActions({
           destructive
         >
           <Trash2 aria-hidden />
+        </ActionIcon>
+      ) : null}
+      {actions.onReactivate ? (
+        <ActionIcon
+          title={`Reactivate ${worktreeKey}`}
+          onClick={() => actions.onReactivate?.(worktreeKey)}
+        >
+          <Play aria-hidden />
         </ActionIcon>
       ) : null}
       <ActionIcon

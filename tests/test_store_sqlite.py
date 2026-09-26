@@ -384,3 +384,19 @@ def test_delete_worktree_row_leaves_disk(tmp_path):
     from workagent.errors import HarnessError
     with pytest.raises(HarnessError):
         sl.delete_worktree_row(db, "k1")
+
+
+def test_save_links_rows_never_resets_active(tmp_path):
+    from workagent import store_sqlite as sq, store_links as sl
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+            " VALUES ('k1', '/tmp/w1', 'b1', NULL, '2026-01-01', '{}')")
+    sl.set_worktree_active(db, "k1", False)
+    rows = sl.load_links_rows(db, include_inactive=True)
+    assert rows["k1"]["active"] == 0
+    sl.save_links_rows(db, rows)  # re-save must not resurrect
+    assert "k1" not in sl.load_links_rows(db)
+    assert sl.load_links_rows(db, include_inactive=True)["k1"]["active"] == 0

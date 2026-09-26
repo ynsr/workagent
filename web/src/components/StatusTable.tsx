@@ -8,7 +8,8 @@ export interface StatusTableActions {
   /** Navigate to Launch with mode=review&fixComments=1&ref=key. */
   onFixComments?: (key: string) => void
   onCleanup?: (key: string) => void
-  /** Open the worktree folder locally (`open` RunCommand; disabled when network-exposed). */
+  /** Reactivate a deactivated worktree (`link reactivate` confirmed run). */
+  onReactivate?: (key: string) => void
   onOpenWorktree: (key: string) => void
   onOpenRun: (key: string) => void
   /** Navigate to the Sessions page filtered to this worktree. */

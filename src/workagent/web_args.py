@@ -49,6 +49,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "link remove": ("--json",),
     "link deactivate": ("--json",),
     "link reactivate": ("--json",),
+    "link list": ("--worktree", "--refresh-pr", "--json", "--csv"),
     "tracker add": ("--json",),
     "repo remove": ("--json", "--force"),
     "tracker remove": ("--json",),
