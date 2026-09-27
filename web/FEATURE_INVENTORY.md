@@ -18,7 +18,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `start --depth N` | mutating | — | `start` | no | | |
 | `start --base BR` | mutating | — | `start` | no | unknown branch → git-wt error (exit 1) | repo-on-X note (TTY, no `--yes`) |
 | `start --harness omp` | mutating | — | `start` | no | unsupported harness name | |
-| `start --no-tty` | mutating | — | `start` | no | | none — headless mode (`omp -p --auto-approve`, `backend.command_argv(no_tty=True)`) |
+| `start --no-tty` | mutating | — | `start` | no | | none — headless mode (`omp -p --auto-approve`, `backend.command_argv(no_tty=True)`); the web UI sends it only with `--launch` (Run agent now), so preview `harness_command` stays TTY (`omp`, no `-p`) |
 | `start --launch` (default: preview) | mutating | — | `start` | no | | without `--launch` lands in interactive shell with the printed command — **UI must not use `--launch`** (needs a TTY shell) |
 | `start --dry-run` | read-only-ish | — | `start` | no | | none |
 | `start --yes` | mutating | — | `start` | no | | skips confirmations |

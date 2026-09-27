@@ -184,7 +184,10 @@ export function Launch() {
       return [refValue, ...(form.merge ? ["--merge"] : [])]
     }
     if (mode === "start") return buildStartArgs(form)
-    const args = [refValue, "--no-tty"]
+    const args = [refValue]
+    // Preview (no --launch) is TTY copy-paste: no -p flag. Headless
+    // (--no-tty, omp -p --auto-approve) only when actually running now.
+    if (form.launch) args.push("--no-tty")
     if (form.fixComments) args.push("--fix-comments")
     if (form.fixComments && form.newFixSession) args.push("--new-fix-session")
     if (repoValue) args.push("--repo", repoValue)
@@ -196,7 +199,7 @@ export function Launch() {
   const flagList = mode === "sync"
     ? [form.merge ? "--merge (local merge)" : "remote rebase (default)"]
     : [
-        "headless (--no-tty)",
+        form.launch ? "headless (--no-tty)" : "tty preview (no --no-tty)",
         mode === "review" && form.fixComments ? "--fix-comments (fix open review comments)" : null,
         mode === "review" && form.fixComments && form.newFixSession ? "--new-fix-session (fresh fix session)" : null,
         repoValue ? `--repo ${repoValue}` : "repo: pick a repo",
@@ -217,7 +220,9 @@ export function Launch() {
       warning:
         mode === "sync"
           ? "The server appends --yes: sync runs without prompts (AI-assisted conflict resolution if the rebase/merge conflicts)."
-          : "The agent runs headless with auto-approve (--no-tty): it can commit, push and open MRs/PRs without further prompts. The server appends --yes.",
+          : form.launch
+            ? "The agent runs headless with auto-approve (--no-tty): it can commit, push and open MRs/PRs without further prompts. The server appends --yes."
+            : "Preview only: prints the TTY harness command (no -p flag) without running the agent. The server appends --yes.",
       confirmLabel: "Launch",
       details: [
         { label: "Ref", value: refValue, mono: true },
@@ -339,12 +344,19 @@ export function Launch() {
                     The web server appends <span className="font-mono text-[13px]">--yes</span>, so sync runs
                     without prompts (AI-assisted conflict resolution if the rebase/merge conflicts).
                   </>
-                ) : (
+                ) : form.launch ? (
                   <>
-                    Headless auto-approve: the web server always runs{" "}
+                    Headless auto-approve: the web server runs{" "}
                     <span className="font-mono text-[13px]">--no-tty</span> (
                     <span className="font-mono text-[13px]">omp -p --auto-approve</span>
                     ), so the agent can commit, push and open MRs/PRs on its own.
+                  </>
+                ) : (
+                  <>
+                    Preview only: prints the TTY harness command (no{" "}
+                    <span className="font-mono text-[13px]">-p</span> flag) without running the agent.
+                    Tick “Run agent now” to run headless with{" "}
+                    <span className="font-mono text-[13px]">--no-tty</span>.
                   </>
                 )}
               </span>

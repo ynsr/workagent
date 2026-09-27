@@ -176,7 +176,10 @@ export function StartFormFields({
 export function buildStartArgs(form: StartFormValue): string[] {
   const ref = form.ref.trim()
   const repo = form.repo.trim()
-  const args = [ref, "--no-tty"]
+  const args = [ref]
+  // Preview (no --launch) is TTY copy-paste: no -p flag. Headless
+  // (--no-tty, omp -p --auto-approve) only when actually running now.
+  if (form.launch) args.push("--no-tty")
   if (repo) args.push("--repo", repo)
   if (form.depth.trim()) args.push("--depth", form.depth.trim())
   if (form.base.trim()) args.push("--base", form.base.trim())
@@ -188,7 +191,7 @@ export function buildStartArgs(form: StartFormValue): string[] {
 export function startFlagList(form: StartFormValue): string {
   const repo = form.repo.trim()
   return [
-    "headless (--no-tty)",
+    form.launch ? "headless (--no-tty)" : "tty preview (no --no-tty)",
     repo ? `--repo ${repo}` : "repo: pick a repo",
     `--depth ${form.depth.trim() || "7"}`,
     form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",

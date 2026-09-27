@@ -22,7 +22,7 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
 | `start/review --repo` | Launch "Repo" select (populated from GET /api/repos, plus "Registry default (auto)") |
 | `start/review --depth` | Launch "Clone depth" number input |
 | `start/review --base` | Launch "Base branch" input (start only) |
-| `start/review --no-tty` | always on for web launches (headless); the Launch page shows an auto-approve warning |
+| `start/review --no-tty` | sent only with `--launch` (Run agent now) for headless runs; preview omits it so `harness_command` stays TTY (`omp`, no `-p`); the Launch page shows an auto-approve warning when launching |
 | `start/review --dry-run` | Launch checkbox (POST `confirm:false`) |
 | `start/review --json` | Launch checkbox |
 | `cleanup` | Dashboard row action → confirm dialog listing issue URL, PR, worktree path, branch from /api/status?ref= |
