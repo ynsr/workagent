@@ -161,6 +161,78 @@ def test_api_review_session_returns_latest(client):
     assert r.json() == {"ref": "rk2", "session_id": "rev-2", "file_path": "/s/rev-2.jsonl"}
 
 
+def test_review_fix_comments_reuses_review_transcript(client, monkeypatch):
+    """Fix-continue runs reuse the latest review transcript, not a fresh id.
+
+    Regression: the server minted a fresh --session-file for preview
+    fix-comments runs; explicit --session-file always wins in the CLI, so
+    the minted file shadowed the finished review transcript and omp
+    resumed an empty/new session instead of the review one.
+    """
+    from workagent import store_sqlite as sq
+    from workagent import store as _store
+    db = sq.db_path()
+    sq.init_db(db)
+    _store.record_link("rk-fix", {"worktree": "/tmp/w-fix", "branch": "b-fix",
+                                  "repo": "/tmp/r"})
+    sq.insert_session(db, worktree_ref="rk-fix", harness_name="omp",
+                      initiator_command="review", prompt="p",
+                      file_path="/s/review-old.jsonl", session_id="rev-old",
+                      session_type="review")
+    sq.finish_session(db, "rev-old", "finished")
+    seen: dict = {}
+
+    def fake_spawn(run, registry):
+        seen["argv"] = run.argv
+        seen["session_file"] = run.session_file
+        with run.lock:
+            run.exit_code = 0
+            run.state = "succeeded"
+        registry.release_target(run)
+
+    monkeypatch.setattr("workagent.webapp._spawn", fake_spawn)
+    r = client.post("/api/runs", json={"command": "review",
+                                       "args": ["rk-fix", "--no-tty", "--fix-comments"],
+                                       "confirm": True})
+    assert r.status_code == 202, r.text
+    assert seen["session_file"] == "/s/review-old.jsonl"
+    assert "--session-file" in seen["argv"]
+    idx = seen["argv"].index("--session-file")
+    assert seen["argv"][idx + 1] == "/s/review-old.jsonl"
+
+
+def test_review_fix_comments_fresh_session_mints_new_file(client, monkeypatch):
+    """--new-fix-session keeps a minted path (links back via metadata)."""
+    from workagent import store_sqlite as sq
+    from workagent import store as _store
+    db = sq.db_path()
+    sq.init_db(db)
+    _store.record_link("rk-fresh", {"worktree": "/tmp/w-fresh", "branch": "b-fresh",
+                                    "repo": "/tmp/r"})
+    sq.insert_session(db, worktree_ref="rk-fresh", harness_name="omp",
+                      initiator_command="review", prompt="p",
+                      file_path="/s/review-prev.jsonl", session_id="rev-prev",
+                      session_type="review")
+    sq.finish_session(db, "rev-prev", "finished")
+    seen: dict = {}
+
+    def fake_spawn(run, registry):
+        seen["argv"] = run.argv
+        seen["session_file"] = run.session_file
+        with run.lock:
+            run.exit_code = 0
+            run.state = "succeeded"
+        registry.release_target(run)
+
+    monkeypatch.setattr("workagent.webapp._spawn", fake_spawn)
+    r = client.post("/api/runs", json={"command": "review",
+                                       "args": ["rk-fresh", "--no-tty", "--fix-comments",
+                                                "--new-fix-session"],
+                                       "confirm": True})
+    assert r.status_code == 202, r.text
+    assert seen["session_file"] != "/s/review-prev.jsonl"
+    assert seen["session_file"].endswith(".jsonl")
+
 def test_register_run_key_unique_per_path(client):
     r1 = client.post("/api/runs", json={"command": "register",
                                         "args": ["/tmp/wt-a"]})
