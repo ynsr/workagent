@@ -108,6 +108,31 @@ class TestStartTask:
         assert _git("rev-parse", "--git-dir", cwd=wt_path)
         assert _git("rev-parse", "--abbrev-ref", "HEAD", cwd=wt_path) == "feat/100-test"
 
+    def test_start_new_branch_creates_no_fake_remote_ref(self, tmp_repo):
+        """Create must not fabricate refs/remotes/origin/<branch>.
+
+        Regression: start_task used update-ref to invent a local-only
+        origin/<branch> ref, which shadows the real remote and fails git's
+        own tracking check ("starting point ... is not a branch") on later
+        resume/--track flows. Upstream intent is plain branch.*.config.
+        """
+        result = start_task(
+            repo_path=tmp_repo,
+            branch="feat/101-no-fake-ref",
+            base="main",
+            on_dirty="ignore",
+        )
+        wt_path = result["worktree_path"]
+        import subprocess as _sp
+        probe = _sp.run(["git", "rev-parse", "--verify", "--quiet",
+                         "refs/remotes/origin/feat/101-no-fake-ref"],
+                        cwd=str(tmp_repo), capture_output=True, check=False)
+        assert probe.returncode != 0, "must not fabricate a remote-tracking ref"
+        assert _git("config", "branch.feat/101-no-fake-ref.remote",
+                    cwd=wt_path) == "origin"
+        assert _git("config", "branch.feat/101-no-fake-ref.merge",
+                    cwd=wt_path) == "refs/heads/feat/101-no-fake-ref"
+
     def test_start_resume_existing_worktree(self, tmp_repo):
         """Resume a branch that already has a worktree."""
         # Create worktree first

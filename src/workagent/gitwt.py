@@ -180,12 +180,14 @@ def _extract_existing_branch(message: str) -> str | None:
 
 
 def _ensure_upstream(result: dict, base: str | None) -> None:
-    """Guarantee the worktree pushes to its feature branch, never the base.
+    """Point the worktree at its feature branch (never the base) for push.
 
-    git-wt sets this on create, but resumed/recreated worktrees can carry a
-    stale upstream (e.g. origin/<base>) or none at all. Detect, repair
-    without network, and verify — raising if the upstream still isn't the
-    feature branch.
+    Normalizes every stale shape — no upstream, origin/<base>, or a legacy
+    origin/<branch> backed by a local-only update-ref fake — to plain
+    branch.*.config intent. Never fabricates refs/remotes/origin/<branch>:
+    the fake shadows the real remote and fails git's tracking check
+    ("starting point ... is not a branch"). First `git push -u` makes a
+    genuine upstream. Refuses when the upstream points elsewhere.
     """
     wt = result.get("worktree_path")
     branch = result.get("branch")
@@ -193,27 +195,18 @@ def _ensure_upstream(result: dict, base: str | None) -> None:
         return
     bad = {None, "", base, f"origin/{base}" if base else "\0"}
     upstream = _read_upstream(wt, branch)
-    if upstream == f"origin/{branch}":
-        return  # correct already
-    if upstream not in bad:
+    if upstream is not None and upstream not in bad and upstream != f"origin/{branch}":
         raise HarnessError(
             f"worktree {wt} tracks unexpected upstream '{upstream}' "
             f"(expected origin/{branch}) — refusing to continue",
         )
-    run_cmd("git", "-C", str(wt), "update-ref", f"refs/remotes/origin/{branch}", "HEAD")
-    # Direct config (not --set-upstream-to): works with no remote, since the
-    # tracking ref above points at the worktree HEAD by construction.
+    # Drop a legacy fake ref (if any) so it can't shadow the real remote,
+    # then state push intent as plain config.
+    run_cmd("git", "-C", str(wt), "update-ref", "-d",
+            f"refs/remotes/origin/{branch}", check=False, echo=False)
     run_cmd("git", "-C", str(wt), "config", f"branch.{branch}.remote", "origin")
-    run_cmd("git", "-C", str(wt), "config", f"branch.{branch}.merge", f"refs/heads/{branch}")
-    # Verify via config (not @{u}: that shorthand follows the worktree HEAD,
-    # not <branch>, and misreads in linked worktrees).
-    remote = run_cmd("git", "-C", str(wt), "config", f"branch.{branch}.remote")
-    merge = run_cmd("git", "-C", str(wt), "config", f"branch.{branch}.merge")
-    if remote != "origin" or merge != f"refs/heads/{branch}":
-        raise HarnessError(
-            f"failed to set upstream of {wt} to origin/{branch} "
-            f"(got {remote}/{merge})",
-        )
+    run_cmd("git", "-C", str(wt), "config", f"branch.{branch}.merge",
+            f"refs/heads/{branch}")
     result["upstream_fixed"] = True
 
 

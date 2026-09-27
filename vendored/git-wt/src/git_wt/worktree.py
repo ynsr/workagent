@@ -194,11 +194,15 @@ def start_task(
             wt_path.rmdir()
         raise
 
-    # Set upstream to the feature branch on origin (no network call).
-    # Creates a local remote-tracking ref matching the current HEAD,
-    # so git push goes to the feature branch, not the base branch.
-    _run_git(wt_path, "update-ref", f"refs/remotes/origin/{branch_name}", "HEAD")
-    _run_git(wt_path, "branch", "--set-upstream-to", f"origin/{branch_name}")
+    # Set upstream to the feature branch via plain config (no network call).
+    # Never fabricate refs/remotes/origin/<branch> with update-ref: a local-
+    # only remote-tracking ref shadows the real remote and fails git's own
+    # tracking check ("starting point ... is not a branch"), breaking resume
+    # and --track flows. Plain branch.*.config documents push intent; the
+    # first `git push -u` turns it into a genuine upstream.
+    _run_git(wt_path, "config", f"branch.{branch_name}.remote", "origin")
+    _run_git(wt_path, "config", f"branch.{branch_name}.merge",
+             f"refs/heads/{branch_name}")
 
     return {
         "worktree_path": wt_path,

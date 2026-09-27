@@ -95,3 +95,29 @@ def test_ensure_local_branch_fetches_stale_mirror(tmp_path):
     gitwt._ensure_local_branch(repo, "feat/stale-mirror")
 
     assert _has_branch(repo, "feat/stale-mirror")
+
+
+def test_ensure_upstream_drops_legacy_fake_ref(tmp_path):
+    """A local-only update-ref origin/<branch> is dropped, not kept.
+
+    Regression: old git-wt creates fabricated refs/remotes/origin/<branch>;
+    keeping it shadows the real remote and breaks git's tracking check
+    ("starting point ... is not a branch"). Plain config states the intent.
+    """
+    repo = _origin_clone(tmp_path)
+    wt = tmp_path / "wt"
+    _git("worktree", "add", "-b", "feat/fake", str(wt), "main", cwd=repo)
+    # Simulate the legacy fake: local-only remote-tracking ref + upstream.
+    _git("update-ref", "refs/remotes/origin/feat/fake", "HEAD", cwd=wt)
+    _git("config", "branch.feat/fake.remote", "origin", cwd=wt)
+    _git("config", "branch.feat/fake.merge", "refs/heads/feat/fake", cwd=wt)
+
+    result = {"worktree_path": str(wt), "branch": "feat/fake"}
+    gitwt._ensure_upstream(result, "main")
+
+    assert result.get("upstream_fixed") is True
+    assert gitwt._read_upstream(str(wt), "feat/fake") == "origin/feat/fake"
+    assert subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet",
+         "refs/remotes/origin/feat/fake"],
+        cwd=str(wt), capture_output=True, check=False).returncode != 0
