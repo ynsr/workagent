@@ -13,7 +13,7 @@ inside `## Unreleased` on both sides, union the bullet lists.
 from __future__ import annotations
 
 import re
-from pathlib import Path
+from collections import Counter
 
 from .errors import HarnessError, run_cmd
 
@@ -95,6 +95,10 @@ def _split_changelog(text: str) -> tuple[list[str], dict[str, list[str]], list[s
         m = re.match(r"^(#{1,3}\s+.+)$", line)
         if m:
             current = m.group(1)
+            if current == "## Unreleased" and current in sections:
+                # Duplicate Unreleased heading (e.g. both sides added one):
+                # later bullets belong to the same logical section.
+                continue
             order.append(current)
             sections[current] = []
             continue
@@ -161,6 +165,56 @@ def unreleased_union(ours: str, theirs: str, base: str | None = None) -> str | N
         "\n" if template.endswith("\n") else "")
 
 
+def prune_released_from_unreleased(text: str) -> str | None:
+    """Remove Unreleased bullets already present in a versioned section.
+
+    Exact line match: a bullet stays under `## Unreleased` only when no
+    other section contains that exact line. Returns the pruned text, or
+    None when there is no `## Unreleased` section or nothing to prune.
+    The splice preserves the file's formatting everywhere else.
+    """
+    _, sections, _ = _split_changelog(text)
+    if not sections or "## Unreleased" not in sections:
+        return None
+    released: Counter[str] = Counter()
+    for name, bullets in sections.items():
+        if name == "## Unreleased":
+            continue
+        released.update(bullets)
+    kept: list[str] = []
+    for b in sections["## Unreleased"]:
+        if released.get(b, 0) > 0:
+            released[b] -= 1
+            continue
+        kept.append(b)
+    if len(kept) == len(sections["## Unreleased"]):
+        return None
+    # Splice every `## Unreleased` bullet block (duplicates possible when
+    # both sides added one): first block gets the kept union, later blocks
+    # are dropped with their blank-line separators.
+    lines = text.splitlines()
+    out: list[str] = []
+    i = 0
+    first = True
+    while i < len(lines):
+        if lines[i].strip() == "## Unreleased":
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            end = j
+            while end < len(lines) and lines[end].startswith("- "):
+                end += 1
+            if first:
+                out.extend(lines[i:j] + kept)
+                first = False
+            i = end
+            while i < len(lines) and not lines[i].strip():
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
 def auto_resolve_changelog(worktree: Path, conflicts: list[str]) -> bool:
     """Auto-resolve when the sole conflict is CHANGELOG.md inside Unreleased."""
     if conflicts != ["CHANGELOG.md"]:
@@ -179,9 +233,38 @@ def auto_resolve_changelog(worktree: Path, conflicts: list[str]) -> bool:
         merged += "\n"
     if merged is None:
         return False
+    pruned = prune_released_from_unreleased(merged)
+    if pruned is not None:
+        merged = pruned
     (worktree / "CHANGELOG.md").write_text(merged, encoding="utf-8")
     run_cmd("git", "-C", str(worktree), "add", "CHANGELOG.md")
     run_cmd("git", "-C", str(worktree), "commit", "--no-edit")
+    return True
+
+
+def prune_merged_changelog(worktree: Path) -> bool:
+    """Prune Unreleased bullets already released; amend when changed.
+
+    Reads the working-tree CHANGELOG.md, drops Unreleased lines that also
+    appear under a versioned section, and amends the current commit when
+    the merge is already committed. Returns True when the file changed.
+    No-ops (False) when the file is missing, unparseable, or has nothing
+    to prune. Never raises — a best-effort post-merge cleanup.
+    """
+    path = worktree / "CHANGELOG.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    pruned = prune_released_from_unreleased(text)
+    if pruned is None:
+        return False
+    try:
+        path.write_text(pruned, encoding="utf-8")
+        run_cmd("git", "-C", str(worktree), "add", "CHANGELOG.md")
+        run_cmd("git", "-C", str(worktree), "commit", "--amend", "--no-edit")
+    except (HarnessError, OSError):
+        return False
     return True
 
 

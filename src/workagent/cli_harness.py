@@ -86,8 +86,9 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     harness = backend.get_harness(harness_name)
     preview_extra = harness.session_file_flag(session_file) if session_file else []
     preview_args = _HARNESS_ARGS + preview_extra if preview_extra else _HARNESS_ARGS
+    preview_no_tty = no_tty and launch
     preview_cmd = " ".join(shlex.quote(a) for a in
-                           harness.command_argv(prompt, no_tty, preview_args))
+                           harness.command_argv(prompt, preview_no_tty, preview_args))
     if not launch:
         # Copy-paste runnable: the harness must execute inside the worktree.
         full_cmd = f"cd {shlex.quote(worktree or fallback_dir)} && {preview_cmd}"

@@ -240,12 +240,14 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
     else:
         result["result"] = "merged"
         eprint(f"{key}: merged {db} into {branch}")
+        if sync_mod.prune_merged_changelog(Path(wt)):
+            eprint(f"{key}: pruned released lines from Unreleased")
+            result["changelog_pruned"] = True
     if result["result"] == "merged":
         sync_mod.push(Path(wt), branch)
         eprint(f"{key}: pushed {branch}")
         result["pushed"] = True
     return result
-
 
 def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
                            result: dict, use_harness: bool, yes: bool,

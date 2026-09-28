@@ -211,6 +211,41 @@ def test_unreleased_union_without_base_still_strict():
         CHANGELOG_OURS, CHANGELOG_THEIRS_RELEASED) is None
 
 
+def test_prune_released_from_unreleased():
+    text = CHANGELOG_RELEASED_MERGED.replace(
+        "- theirs only\n", "- theirs only\n- new release\n", 1)
+    pruned = sync.prune_released_from_unreleased(text)
+    assert pruned is not None
+    unreleased = pruned.split("## Unreleased")[1].split("## 1.2.0")[0]
+    assert "- new release" not in unreleased
+    assert "- ours one" in unreleased and "- theirs only" in unreleased
+    assert "- new release" in pruned.split("## 1.2.0")[1]
+
+
+def test_prune_released_from_unreleased_noop():
+    assert sync.prune_released_from_unreleased(CHANGELOG_MERGED) is None
+    assert sync.prune_released_from_unreleased("# Changelog\n") is None
+
+
+def test_prune_merged_changelog_amends(tmp_path):
+    _, wt = _seed_and_clone(tmp_path, {"CHANGELOG.md": CHANGELOG_OURS})
+    _git("checkout", "-q", "-b", "feat/x", cwd=wt)
+    _commit(wt, {"CHANGELOG.md": CHANGELOG_OURS.replace(
+        "## 1.0.0", "## Unreleased\n\n- new release\n\n## 1.0.0")}, "feat")
+    _push_from_sibling(tmp_path, wt, {"CHANGELOG.md": CHANGELOG_THEIRS_RELEASED})
+    out = sync.local_merge(wt, "main")
+    assert out["status"] == "merged"
+    before = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
+                            check=True, capture_output=True, text=True).stdout.strip()
+    assert sync.prune_merged_changelog(wt) is True
+    merged = (wt / "CHANGELOG.md").read_text()
+    unreleased = merged.split("## Unreleased")[1].split("## 1.2.0")[0]
+    assert "- new release" not in unreleased
+    assert "- new release" in merged.split("## 1.2.0")[1]
+    after = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
+                           check=True, capture_output=True, text=True).stdout.strip()
+    assert after != before
+    assert sync.prune_merged_changelog(wt) is False
 def test_auto_resolve_changelog_with_released_addition(tmp_path):
     _, wt = _seed_and_clone(tmp_path, {"CHANGELOG.md": CHANGELOG_OURS})
     _git("checkout", "-q", "-b", "feat/x", cwd=wt)
