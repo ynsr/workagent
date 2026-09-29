@@ -37,7 +37,7 @@ def local_merge(worktree: Path, default_branch: str) -> dict:
     Returns {"status": "merged"|"up-to-date"|"conflict", "conflicts": [...]}.
     On conflict the merge is left in progress for the caller to resolve.
     """
-    run_cmd("git", "-C", str(worktree), "fetch", "origin", default_branch)
+    _fetch_branch(worktree, default_branch)
     # Fast-forward the local default branch to origin (ignore failure: local
     # default may not exist or may be checked out elsewhere).
     try:
@@ -277,7 +277,7 @@ def pull_branch(worktree: Path, branch: str) -> str:
     caller to resolve, reported as {"status": "conflict", ...} — same
     contract as local_merge.
     """
-    run_cmd("git", "-C", str(worktree), "fetch", "origin", branch)
+    _fetch_branch(worktree, branch)
     head = run_cmd("git", "-C", str(worktree), "rev-parse", "HEAD")
     remote = run_cmd("git", "-C", str(worktree), "rev-parse", "--verify",
                      "-q", f"origin/{branch}")
@@ -317,7 +317,7 @@ def pull_rebased(worktree: Path, branch: str) -> str:
     patch-id exists on the rebased branch (equivalent rebased commits);
     otherwise leave the worktree untouched and report.
     """
-    run_cmd("git", "-C", str(worktree), "fetch", "origin", branch)
+    _fetch_branch(worktree, branch)
     if _is_ancestor(worktree, "HEAD", f"origin/{branch}"):
         run_cmd("git", "-C", str(worktree), "merge", "--ff-only",
                 f"origin/{branch}")
@@ -336,3 +336,23 @@ def rebase_remote(tool: str, pr: dict, worktree: Path) -> None:
         run_cmd("gh", "pr", "update-branch", "--rebase", str(pr["url"]), cwd=worktree)
     else:
         run_cmd("glab", "mr", "rebase", str(pr["number"]), cwd=worktree)
+
+def _fetch_branch(worktree: Path, branch: str) -> None:
+    """Fetch origin/<branch> into its remote-tracking ref.
+
+    A bare `git fetch origin <branch>` only updates FETCH_HEAD on
+    single-branch clones (remote.origin.fetch maps just one branch),
+    leaving origin/<branch> missing/stale. The explicit refspec
+    writes the tracking ref directly; `+` allows non-fast-forward
+    updates after a server-side rebase. A deleted remote branch
+    surfaces as an actionable error naming the branch.
+    """
+    try:
+        run_cmd("git", "-C", str(worktree), "fetch", "origin",
+                f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
+    except HarnessError as e:
+        if "couldn't find remote ref" in str(e):
+            raise HarnessError(
+                f"origin/{branch} no longer exists on the remote — "
+                f"the branch was deleted (merged PR/MR?)") from e
+        raise

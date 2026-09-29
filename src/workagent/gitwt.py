@@ -54,7 +54,8 @@ def _fetch_base(repo: Path, base: str | None) -> None:
     if not base:
         return
     try:
-        run_cmd("git", "fetch", "origin", base, cwd=repo)
+        run_cmd("git", "fetch", "origin",
+                f"+refs/heads/{base}:refs/remotes/origin/{base}", cwd=repo)
     except HarnessError:
         from .cli_core import eprint
         eprint(f"warning: cannot fetch origin/{base} — branching from last-known tip")
@@ -71,7 +72,9 @@ def _ensure_local_branch(repo: Path, branch: str) -> None:
     if run_cmd("git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}",
                cwd=repo, check=False) is not None:
         return
-    run_cmd("git", "fetch", "origin", branch, cwd=repo, check=False)
+    run_cmd("git", "fetch", "origin",
+            f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+            cwd=repo, check=False)
     if run_cmd("git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}",
                cwd=repo, check=False) is not None:
         run_cmd("git", "branch", "--track", branch, f"origin/{branch}", cwd=repo)

@@ -534,3 +534,34 @@ def test_pull_branch_ff_and_merge(tmp_path):
     # push the merge so remote matches, then already current → up-to-date
     _git("push", "-q", "origin", "b", cwd=wt)
     assert sync.pull_branch(wt, "b") == "up-to-date"
+
+def test_pull_rebased_single_branch_clone(tmp_path):
+    """_fetch_branch writes origin/<branch> on single-branch clones.
+
+    Regression: bare `git fetch origin <branch>` only updates FETCH_HEAD
+    when remote.origin.fetch maps a single branch, so the follow-up
+    `git cherry origin/<branch>` failed with "unknown commit".
+    """
+    origin, wt = _seed_and_clone(tmp_path, {"f.txt": "1\n"})
+    _git("checkout", "-q", "-b", "b", cwd=wt)
+    _commit(wt, {"b.txt": "p\n"}, "p")
+    _git("push", "-q", "origin", "b", cwd=wt)
+    subprocess.run(["git", "-C", str(wt), "config", "remote.origin.fetch",
+                    "+refs/heads/main:refs/remotes/origin/main"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(wt), "update-ref", "-d",
+                    "refs/remotes/origin/b"], check=True, capture_output=True)
+    assert sync.pull_rebased(wt, "b") == "fast-forward"
+
+
+def test_fetch_branch_deleted_remote(tmp_path):
+    """A deleted remote branch surfaces an actionable error."""
+    from workagent.errors import HarnessError
+
+    _, wt = _seed_and_clone(tmp_path, {"f.txt": "1\n"})
+    try:
+        sync._fetch_branch(wt, "nope/missing")
+    except HarnessError as e:
+        assert "no longer exists" in str(e)
+    else:
+        raise AssertionError("expected HarnessError")
