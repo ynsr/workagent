@@ -69,11 +69,12 @@ export function SessionResumeActions({
       >
         <SquareTerminal aria-hidden /> {icon ? null : "Resume in terminal"}
       </Button>
+      <span title={resumeCommand(worktree, sessionFile)} className="inline-flex">
       <Button
         variant={icon ? "ghost" : "outline"}
         size={icon ? "icon" : "sm"}
         aria-label={`Copy resume command for ${label}`}
-        title="Copy resume command"
+        title={resumeCommand(worktree, sessionFile)}
         disabled={!worktree || !sessionFile}
         onClick={(e) => {
           if (icon) e.preventDefault()
@@ -85,6 +86,7 @@ export function SessionResumeActions({
       >
         <Copy aria-hidden /> {icon ? null : "Copy resume command"}
       </Button>
+      </span>
     </>
   )
 }

@@ -128,6 +128,7 @@ function RunHarnessCommandAction({ lines }: { lines: RunLine[] }) {
     <Button
       variant="outline"
       size="sm"
+      title={cmd || "Copy harness command"}
       onClick={() => {
         copyToClipboard(cmd)
           .then(() => toast.success("Harness command copied"))
