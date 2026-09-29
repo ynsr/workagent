@@ -70,7 +70,7 @@ def test_ensure_local_branch_missing_everywhere(tmp_path):
     repo = _origin_clone(tmp_path)
     with pytest.raises(HarnessError) as excinfo:
         gitwt._ensure_local_branch(repo, "nope/x")
-    assert "git fetch" in str(excinfo.value)
+    assert "not found locally or as origin/nope/x" in str(excinfo.value)
 
 
 def test_ensure_local_branch_fetches_stale_mirror(tmp_path):

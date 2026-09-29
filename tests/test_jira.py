@@ -127,7 +127,8 @@ def test_fetch_base_runs_before_create(monkeypatch, tmp_path):
     gitwt.start_worktree(_repo_with_branch(tmp_path, "feat/1--x"),
                          issue="1", slug="x", base="main")
     fetch = [c for c in calls if c[:3] == ["git", "fetch", "origin"]]
-    assert fetch and fetch[0][:4] == ["git", "fetch", "origin", "main"]
+    assert fetch and fetch[0] == ["git", "fetch", "origin",
+                                  "+refs/heads/main:refs/remotes/origin/main"]
 
 
 def test_fetch_base_failure_still_creates(monkeypatch, tmp_path):

@@ -217,3 +217,52 @@ def test_sync_missing_link_errors(isolated_config):
     r = _invoke("sync", "o/r#99", "--json")
     assert r.exit_code == 2
     assert "no linked state" in r.output
+
+def test_sync_merged_pr_deleted_branch_points_at_cleanup(
+        isolated_config, tmp_path, monkeypatch):
+    """Merged MR + gone remote branch: sync fails with a cleanup hint."""
+    from workagent import cli
+    from workagent.errors import run_cmd as _real_run_cmd
+
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    store.cache_pr_status("feat/IPG-929--x", {"number": 9, "state": "merged",
+                                              "title": "T", "author": "a",
+                                              "created_at": "2026-09-15",
+                                              "url": "https://x/mr/9",
+                                              "target_branch": "main"})
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
+
+    def _no_ref(*args, **kwargs):
+        if "ls-remote" in args:
+            return None  # empty output: no remote ref
+        return _real_run_cmd(*args, **kwargs)
+    monkeypatch.setattr("workagent.errors.run_cmd", _no_ref)
+    r = _invoke("sync", "IPG-929", "--yes", "--json")
+    assert r.exit_code == 1
+    assert "no longer exists" in r.output
+    assert "workagent cleanup" in r.output
+
+
+def test_sync_open_pr_missing_ref_still_syncs(
+        isolated_config, tmp_path, monkeypatch):
+    """Open PR: the gate stays silent even when ls-remote is empty."""
+    import subprocess
+
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    store.cache_pr_status("feat/IPG-929--x", {"number": 9, "state": "open",
+                                              "title": "T", "author": "a",
+                                              "created_at": "2026-09-15",
+                                              "url": "https://x/mr/9",
+                                              "target_branch": "main"})
+    rebase, local, pulled = [], [], []
+    _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase,
+                pulled=pulled)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
+    r = _invoke("sync", "IPG-929", "--yes", "--json")
+    assert r.exit_code == 0

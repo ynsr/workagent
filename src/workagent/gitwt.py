@@ -81,7 +81,7 @@ def _ensure_local_branch(repo: Path, branch: str) -> None:
         return
     raise HarnessError(
         f"branch {branch!r} not found locally or as origin/{branch} "
-        f"even after `git fetch origin {branch}` (repo: {repo})"
+        f"(repo: {repo})"
     )
 
 

@@ -138,6 +138,39 @@ def result_failed(result: dict) -> bool:
         or result.get("result", "").startswith("conflict-") \
         or result.get("result") is None
 
+def _fail_on_deleted_branch(key: str, entry: dict, pr: dict | None,
+                            dry_run: bool = False) -> None:
+    """Abort sync when the branch is gone on the remote and the MR is done.
+
+    Detection is two-part (per user choice): the cached PR state must be
+    merged/closed, AND `git ls-remote` must show no remote ref. Either
+    side alone is insufficient — cached state can be stale, and a missing
+    ref alone could be a fetch hiccup on a live branch.
+    """
+    state = ((pr or {}).get("state") or "").lower()
+    if state not in ("merged", "closed"):
+        return
+    wt = entry.get("worktree", "")
+    branch = entry.get("branch", "")
+    if not wt or not branch:
+        return
+    if dry_run:
+        # A dry run promises to touch nothing — no network probe. The
+        # cached terminal state alone is enough to warn here.
+        _fail(f"{key}: PR/MR is {state} and origin/{branch} looks deleted — "
+              f"nothing to sync; run `workagent cleanup {key}`", EXIT_GENERAL)
+    try:
+        from . import errors as _errors
+        out = _errors.run_cmd("git", "-C", wt, "ls-remote", "--heads",
+                              "origin", branch, echo=False)
+    except HarnessError:
+        return  # offline/unknown — let the normal sync path report it
+    if out:
+        return
+    _fail(f"{key}: PR/MR is {state} and origin/{branch} no longer exists "
+          f"on the remote — nothing to sync; "
+          f"run `workagent cleanup {key}`", EXIT_GENERAL)
+
 
 def _record_no_harness_session(key: str, result: dict, exit_code: int = 0) -> None:
     """Persist a preview session + run for sync paths that never launch.
@@ -192,8 +225,8 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
     pr = cells["pr_data"]
     tool = store.get_cached_pr_tool(branch) or _cli._repo_tool(repo)
     db = cells["base_branch"] or _cli._repo_default_branch(repo)
+    _fail_on_deleted_branch(key, entry, pr, dry_run)
     # A recorded pr_url seed (state "") is display-only: it never reached a
-    # live host query, so it must not drive the remote-rebase strategy.
     if merge or not pr or not pr.get("state"):
         if not db:
             _fail(f"{key}: cannot determine default branch for {repo}", EXIT_GENERAL)
