@@ -139,6 +139,36 @@ def result_failed(result: dict) -> bool:
         or result.get("result") is None
 
 
+def _record_no_harness_session(key: str, result: dict, exit_code: int = 0) -> None:
+    """Persist a preview session + run for sync paths that never launch.
+
+    No-harness outcomes (merged/up-to-date/rebased/conflict) run no harness,
+    so `_run_harness` never records them. Every work run must still produce a
+    record in the runs table, so stamp a preview session here (best effort;
+    sync continues on failure). Excluded from `latest_review_session`
+    (type sync, state preview) so fix-continue never reuses these.
+    Dry-run plans (would-*) record nothing: --dry-run must not touch state.
+    """
+    from . import store_sqlite as _sq
+    try:
+        db = _sq.db_path()
+        if not db.exists():
+            return
+        sid = _sq.insert_session(
+            db, worktree_ref=key, harness_name="",
+            initiator_command="sync", prompt="",
+            file_path="", session_type="sync")
+        _sq.finish_session(db, sid, "preview")
+        args = [key]
+        if result.get("strategy"):
+            args += ["-m" if result["strategy"] == "local-merge" else "--rebase"]
+        _sq.insert_run(db, sid, "sync", args, exit_code,
+                       output=[f"{key}: {result.get('result', '')}"])
+        result["session_id"] = sid
+    except Exception as e:
+        eprint(f"warning: session record failed: {e}")
+
+
 def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
               yes: bool, dry_run: bool, json_output: bool,
               session_file: str | None = None) -> dict:
@@ -152,6 +182,7 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
     if not wt or not Path(wt).exists():
         result["result"] = "missing-worktree"
         eprint(f"{key}: worktree missing — skipped")
+        _record_no_harness_session(key, result, exit_code=1)
         return result
     dirty = sync_mod.dirty_files(Path(wt))
     if dirty:
@@ -166,10 +197,13 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
     if merge or not pr or not pr.get("state"):
         if not db:
             _fail(f"{key}: cannot determine default branch for {repo}", EXIT_GENERAL)
-        return _sync_local_merge(key, wt, branch, db, result,
-                                 use_harness=use_harness, yes=yes,
-                                 dry_run=dry_run, json_output=json_output,
-                                 session_file=session_file)
+        out = _sync_local_merge(key, wt, branch, db, result,
+                                use_harness=use_harness, yes=yes,
+                                dry_run=dry_run, json_output=json_output,
+                                session_file=session_file)
+        if out.get("result") in ("merged", "up-to-date"):
+            _record_no_harness_session(key, out)
+        return out
     # Remote rebase (default): host rebases the branch on its base.
     result["strategy"] = "remote-rebase"
     if dry_run:
@@ -185,15 +219,19 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
         result["fallback"] = True
         if not db:
             _fail(f"{key}: cannot determine default branch for {repo}", EXIT_GENERAL)
-        return _sync_local_merge(key, wt, branch, db, result,
-                                 use_harness=use_harness, yes=yes,
-                                 dry_run=False, json_output=json_output,
-                                 session_file=session_file)
+        out = _sync_local_merge(key, wt, branch, db, result,
+                                use_harness=use_harness, yes=yes,
+                                dry_run=False, json_output=json_output,
+                                session_file=session_file)
+        if out.get("result") in ("merged", "up-to-date"):
+            _record_no_harness_session(key, out)
+        return out
     result["result"] = "rebased"
     eprint(f"{key}: rebased PR #{pr['number']} via {tool}")
     result["pull"] = sync_mod.pull_rebased(Path(wt), branch)
     eprint(f"{key}: worktree updated from rebased origin/{branch} "
            f"({result['pull']})")
+    _record_no_harness_session(key, result)
     return result
 
 
@@ -288,5 +326,6 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
         result["result"] = "conflict"
         eprint(f"{key}: conflicts need human resolution — re-run "
                "with --harness or --yes to auto-launch the harness")
+        _record_no_harness_session(key, result, exit_code=1)
     return result
 

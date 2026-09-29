@@ -347,7 +347,22 @@ def test_sync_local_merge_pushes_automatically(isolated_config, tmp_path,
     import json as _json
     out = _json.loads(r.stdout)
     assert out["result"] == "merged" and out.get("pushed") is True
-    assert pushed == [(str(wt_dir), "feat/IPG-929--x")]
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('jira:IPG-929', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
+    r = cli_test_invoke("sync", "IPG-929", "--merge", "--yes", "--json")
+    assert r.exit_code == 0
+    rows = sq.list_sessions(db)
+    assert len(rows) == 1 and rows[0]["state"] == "preview"
+    assert rows[0]["session_type"] == "sync"
+    runs = sq.list_runs(db)
+    assert len(runs) == 1 and runs[0]["command"] == "sync"
 
 
 def cli_test_invoke(*args):

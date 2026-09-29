@@ -48,6 +48,22 @@ def test_finish_session_states(tmp_path):
     assert sq.get_session(db, sid)["state"] == "finished"
 
 
+def test_finish_session_preview_state(tmp_path):
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
+    sid = sq.insert_session(db, worktree_ref="k", harness_name="",
+                            initiator_command="sync", prompt="p",
+                            file_path="", session_type="sync")
+    sq.finish_session(db, sid, "preview")
+    assert sq.get_session(db, sid)["state"] == "preview"
+
+
 def test_session_id_shape():
     sid = sq.gen_session_id()
     assert re.fullmatch(

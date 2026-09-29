@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Sync no-harness outcomes (merged/up-to-date/rebased/conflict/missing-worktree) now persist a `preview`-state `sync` session + `runs` row (every work run leaves a DB record). Dry-run plans (`would-*`) record nothing. Excluded from `latest_review_session` so fix-continue never reuses them.
 - `review --fix-comments` (continue mode) reuses the latest finished review transcript: the server used to mint a fresh `--session-file` for preview runs, and since explicit `--session-file` wins in the CLI the fresh empty file shadowed the real review session — omp resumed a new session instead of `2026-09-27T11-11-07-844Z-1472` (the IPG-984 case). `--new-fix-session` still mints a fresh path (linked back via `fixed_from_session_id`).
 - Sync pulls `origin/<branch>` (fast-forward or merge) before merging `origin/<default>` — a stale local tip no longer conflicts spuriously or fails the final push with "fetch first". A pull conflict routes to the same harness/prompt resolution as a base-merge conflict. Review pulls the reused worktree's branch the same way before launching the harness (pull conflict aborts, exit 1); preview (no `--launch`)/`--dry-run` touch nothing.
 - Candidates: PR/MR rows whose URL or source branch already has a linked

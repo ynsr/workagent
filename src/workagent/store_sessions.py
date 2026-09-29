@@ -114,7 +114,7 @@ def insert_session(path: Path, *, worktree_ref: str, harness_name: str,
 
 
 def finish_session(path: Path, sid: str, state: str) -> None:
-    assert state in ("finished", "failed")
+    assert state in ("finished", "failed", "preview")
     with _connect(path) as conn:
         conn.execute("UPDATE sessions SET state = ? WHERE id = ?",
                      (state, sid))
