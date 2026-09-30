@@ -21,10 +21,16 @@ _GH_RUNNING = {"IN_PROGRESS", "QUEUED", "PENDING", "STARTING"}
 _CI_RANK = {"not_started": 0, "success": 1, "running": 2, "failure": 3}
 _GLAB_RUNNING = {"running", "pending", "created", "waiting_for_resource",
                  "preparing"}
+# Maximum pipelines of an MR inspected for a job URL (newest first).
+_CI_PIPELINE_SCAN = 5
 
 
 def _ci_gh(pr_url: str, cwd: str | None) -> tuple[str, str]:
-    """(status, url): url is the worst check's details page (latest CI job)."""
+    """(status, url): url is the worst check's details page (latest CI job).
+
+    The worst check's page is preferred; when it carries no URL, any other
+    check's page is used so the badge still links somewhere real.
+    """
     out = run_cmd("gh", "pr", "view", pr_url, "--json", "statusCheckRollup",
                   cwd=cwd)
     try:
@@ -33,6 +39,7 @@ def _ci_gh(pr_url: str, cwd: str | None) -> tuple[str, str]:
         raise HarnessError(f"cannot parse gh output for {pr_url}")
     worst = "not_started"
     worst_url = ""
+    any_url = ""
     for check in rollup:
         concl = (check.get("conclusion") or "").upper()
         if concl in _GH_FAILURE:
@@ -43,12 +50,14 @@ def _ci_gh(pr_url: str, cwd: str | None) -> tuple[str, str]:
             state = "running"
         else:
             state = "not_started"
+        url = check.get("detailsUrl") or check.get("targetUrl") or ""
+        if url and not any_url:
+            any_url = url
         if _CI_RANK[state] > _CI_RANK[worst]:
             worst = state
-            worst_url = check.get("detailsUrl") or check.get("targetUrl") or ""
-    return worst, worst_url
-
-
+            if url:
+                worst_url = url
+    return worst, worst_url or any_url
 def _api_glab(api: str, host: str, cwd: str | None) -> str:
     """glab api with --hostname, falling back to no-hostname on error."""
     try:
@@ -58,7 +67,14 @@ def _api_glab(api: str, host: str, cwd: str | None) -> str:
 
 
 def _ci_glab(pr_url: str, cwd: str | None) -> tuple[str, str]:
-    """(status, url): url is the latest job's page (e.g. .../-/jobs/194493)."""
+    """(status, url): url is the latest job's page (e.g. .../-/jobs/194493).
+
+    Status comes from the newest pipeline. The URL is the newest *job* of
+    that pipeline; when it has no jobs (a ``merge_request_event`` pipeline
+    that failed before any job started), earlier pipelines of the same MR
+    are walked back so the badge still points at a real job, and the
+    newest pipeline page is the last resort.
+    """
     m = _GITLAB_MR.match(pr_url or "")
     if not m:
         raise HarnessError(f"not a GitLab MR URL: {pr_url}")
@@ -71,26 +87,46 @@ def _ci_glab(pr_url: str, cwd: str | None) -> tuple[str, str]:
         raise HarnessError(f"cannot parse glab output for {pr_url}")
     if not data:
         return "not_started", ""
-    latest = max(data, key=lambda p: p.get("id", 0))
-    status = (latest.get("status") or "").lower()
-    if status in ("success", "passed"):
-        state = "success"
-    elif status in ("failed", "canceled"):
-        state = "failure"
-    elif status in _GLAB_RUNNING:
-        state = "running"
-    else:
+    newest = max(data, key=lambda p: p.get("id", 0))
+    state = _glab_state((newest.get("status") or "").lower())
+    if state == "not_started":
         return "not_started", ""  # skipped, manual, unknown
-    jobs_api = (f"projects/{quote(path, safe='')}/pipelines/"
-                f"{latest.get('id')}/jobs")
+    ordered = sorted(data, key=lambda p: p.get("id", 0),
+                     reverse=True)[:_CI_PIPELINE_SCAN]
+    for pipeline in ordered:
+        jobs = _pipeline_jobs(path, pipeline.get("id"), host, cwd, pr_url)
+        if not jobs:
+            continue
+        job = max(jobs, key=lambda j: j.get("id", 0))
+        url = job.get("web_url") or ""
+        if url:
+            return state, url
+    # No job urls anywhere: the newest pipeline page beats a dead badge.
+    return state, newest.get("web_url") or ""
+
+
+def _glab_state(status: str) -> str:
+    """Map a GitLab pipeline/job status onto the CI cell vocabulary."""
+    if status in ("success", "passed"):
+        return "success"
+    if status in ("failed", "canceled"):
+        return "failure"
+    if status in _GLAB_RUNNING:
+        return "running"
+    return "not_started"
+
+
+def _pipeline_jobs(path: str, pipeline_id: int | None, host: str,
+                   cwd: str | None, pr_url: str) -> list:
+    """Jobs of one pipeline; [] on a missing id or a non-list response."""
+    if not pipeline_id:
+        return []
+    jobs_api = f"projects/{quote(path, safe='')}/pipelines/{pipeline_id}/jobs"
     try:
         jobs = json.loads(_api_glab(jobs_api, host, cwd) or "[]")
     except json.JSONDecodeError:
         raise HarnessError(f"cannot parse glab jobs for {pr_url}")
-    if not jobs:
-        return state, ""
-    job = max(jobs, key=lambda j: j.get("id", 0))
-    return state, job.get("web_url") or ""
+    return jobs if isinstance(jobs, list) else []
 
 
 def fetch_ci(tool: str, pr_url: str,

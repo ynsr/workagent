@@ -305,6 +305,35 @@ def test_ci_fetch_failure_is_soft(monkeypatch):
         "glab", "https://example.com/bogus", "/repo") is None
 
 
+def test_fetch_ci_glab_empty_jobs_falls_back_to_pipeline_url(monkeypatch):
+    """A pipeline with no jobs (merge_request_event that never started) still
+    yields the pipeline page so the badge never renders as a dead link."""
+    def fake_run(cmd, *args, **kw):
+        if len(args) > 1 and "/jobs" in args[1]:
+            return json.dumps([])
+        return json.dumps([{"id": 78899, "status": "failed",
+                            "web_url": "https://git.example.com/g/p/-/pipelines/78899"}])
+
+    monkeypatch.setattr(refs, "run_cmd", fake_run)
+    assert refs.fetch_ci(
+        "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo"
+    ) == ("failure", "https://git.example.com/g/p/-/pipelines/78899")
+
+
+def test_fetch_ci_glab_job_without_web_url_falls_back_to_pipeline(monkeypatch):
+    """Job rows lacking web_url degrade to the pipeline page, not ''."""
+    def fake_run(cmd, *args, **kw):
+        if len(args) > 1 and "/jobs" in args[1]:
+            return json.dumps([{"id": 60, "web_url": ""}])
+        return json.dumps([{"id": 5, "status": "success",
+                            "web_url": "https://git.example.com/g/p/-/pipelines/5"}])
+
+    monkeypatch.setattr(refs, "run_cmd", fake_run)
+    assert refs.fetch_ci(
+        "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo"
+    ) == ("success", "https://git.example.com/g/p/-/pipelines/5")
+
+
 def test_fetch_ci_glab_empty_list(monkeypatch):
     monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: json.dumps([]))
     assert refs.fetch_ci_status(

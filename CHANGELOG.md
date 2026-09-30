@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- CI links: GitLab job-URL resolution walks back to earlier MR pipelines when the newest pipeline has no jobs, and falls back to the newest pipeline page (never a bare empty `ci_url`); GitHub prefers the worst check's details URL but accepts any check URL when that one is missing.
 - Web: `data-component` tags now ship in the installed `web/dist` by default (serve + build, 90+ component names for devtools inspection). Opt out with `./install.sh --no-component-tags` (aliases `--production`, `--clean`) or `WORKAGENT_NO_COMPONENT_TAGS=1 npm run build`.
 - Web: CI badge is always a link again — the latest CI job page (`ci_url`, e.g. `.../-/jobs/194493`) when the backend knows it, else the PR/MR checks page derived from the PR URL (`.../pull/N/checks`, GitLab `.../-/pipelines`). Stale caches with status-but-no-URL (pre-refresh rows) now fall back to the checks page instead of rendering a dead badge.
 - Web dev-only: `data-component` attribute on component root elements (Vue-style `data-vue-component` equivalent) via a `vite serve`-only transform — inspect any element in devtools to see its React component name. Zero trace in `vite build` output.
