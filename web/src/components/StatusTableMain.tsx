@@ -256,14 +256,12 @@ export function StatusTable({
                     />
                   </TableHead>
                   <TableHead>Worktree</TableHead>
-                  <TableHead>Branch</TableHead>
-                  <TableHead>Harness</TableHead>
+                  <TableHead>{showWorktree ? "Path" : "Branch"}</TableHead>
                   <TableHead className="w-20">Behind|Ahead</TableHead>
                   <TableHead>PR / MR</TableHead>
                   <TableHead className="w-14 text-center">CI</TableHead>
                   <TableHead className="w-20 text-center">Reviews</TableHead>
                   <TableHead>Added</TableHead>
-                  {showWorktree ? <TableHead>Path</TableHead> : null}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -274,7 +272,7 @@ export function StatusTable({
                   const invalid = entry.wt_valid === false
                   return (
                     <Fragment key={key}>
-                      <TableRow aria-selected={sel.has(key)} data-state={sel.has(key) ? "selected" : undefined} className={cn("group relative", sel.has(key) ? "data-[state=selected]:bg-muted/50" : undefined, invalid ? "bg-destructive/5" : undefined)}>
+                      <TableRow aria-selected={sel.has(key)} data-state={sel.has(key) ? "selected" : undefined} onClick={(e) => { const t = e.target as HTMLElement; if (t.closest("a,button,[role=checkbox],input")) return; setExpanded((cur) => (cur === key ? null : key)) }} className={cn("group relative cursor-pointer", sel.has(key) ? "data-[state=selected]:bg-muted/50" : undefined, invalid ? "bg-destructive/5" : undefined)}>
                         <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
                           <Checkbox
                             checked={sel.has(key)}
@@ -288,36 +286,46 @@ export function StatusTable({
                           />
                         </TableCell>
                         <TableCell className="max-w-48 font-medium">
-                          {entry.issue_url ? (
-                            <a
-                              href={entry.issue_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="block truncate font-mono text-[13px] font-semibold underline-offset-2 hover:underline"
-                              onClick={(e) => e.stopPropagation()}
-                              title={key}
-                            >
-                              {key}
-                            </a>
-                          ) : (
-                            <CopyCell text={key} className="font-mono text-[13px] font-semibold" />
-                          )}
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="min-w-0 flex-1">
+                              {entry.issue_url ? (
+                                <a
+                                  href={entry.issue_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="block truncate font-mono text-[13px] font-semibold underline-offset-2 hover:underline"
+                                  onClick={(e) => e.stopPropagation()}
+                                  title={key}
+                                >
+                                  {key}
+                                </a>
+                              ) : (
+                                <CopyCell text={key} className="font-mono text-[13px] font-semibold" />
+                              )}
+                            </span>
+                            {entry.harness ? (
+                              <span
+                                aria-label={`Live harness: ${entry.harness}`}
+                                title={`Live harness: ${entry.harness}`}
+                                className="size-2 shrink-0 animate-pulse rounded-full bg-emerald-500"
+                              />
+                            ) : null}
+                          </span>
                           {invalid ? (
                             <Badge variant="destructive" title="Recorded path is missing or not a live git worktree">
                               invalid
                             </Badge>
                           ) : null}
                         </TableCell>
-                        <TableCell className="max-w-48 font-mono text-[13px]">
-                          <CopyCell text={entry.branch} />
-                        </TableCell>
-                        <TableCell className="max-w-40 font-mono text-[13px]">
-                          {entry.harness ? (
-                            <CopyCell text={entry.harness} title="live harness (name, pid)" />
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
+                        {showWorktree ? (
+                          <TableCell className="max-w-48 font-mono text-[13px]">
+                            <CopyCell text={entry.worktree} />
+                          </TableCell>
+                        ) : (
+                          <TableCell className="max-w-48 font-mono text-[13px]">
+                            <CopyCell text={entry.branch} />
+                          </TableCell>
+                        )}
                         <TableCell>
                           <CommitsCell entry={entry} />
                         </TableCell>
@@ -352,55 +360,35 @@ export function StatusTable({
                           title={entry.added_at ?? "first-seen stamp missing"}
                         >
                           {formatAdded(entry.added_at)}
-                          {showWorktree ? null : (
-                            <span className="pointer-events-none absolute inset-y-1 right-1 hidden items-center justify-end gap-0.5 rounded-md border bg-card/95 px-1 shadow-sm backdrop-blur transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:hover)]:flex [@media(hover:hover)]:opacity-0 [@media(hover:none)]:flex">
-                              <RowActions
-                                worktreeKey={key}
-                                entry={entry}
-                                actions={actions}
-                                detailOpen={detailOpen}
-                                onToggleDetail={() =>
-                                  setExpanded((cur) => (cur === key ? null : key))
-                                }
-                                networkExposed={networkExposed}
-                                overlay
-                              />
-                            </span>
-                          )}
+                          <span className="pointer-events-none absolute inset-y-1 right-1 hidden items-center justify-end gap-0.5 rounded-md border bg-card/95 px-1 shadow-sm backdrop-blur transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:hover)]:flex [@media(hover:hover)]:opacity-0 [@media(hover:none)]:flex">
+                            <RowActions
+                              worktreeKey={key}
+                              entry={entry}
+                              actions={actions}
+                              detailOpen={detailOpen}
+                              onToggleDetail={() =>
+                                setExpanded((cur) => (cur === key ? null : key))
+                              }
+                              overlay
+                            />
+                          </span>
                         </TableCell>
-                        {showWorktree ? (
-                          <TableCell
-                            className="relative max-w-52 pr-24 font-mono text-[13px]"
-                          >
-                            <CopyCell text={entry.worktree} />
-                            <span className="pointer-events-none absolute inset-y-1 right-1 hidden items-center justify-end gap-0.5 rounded-md border bg-card/95 px-1 shadow-sm backdrop-blur transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:hover)]:flex [@media(hover:hover)]:opacity-0 [@media(hover:none)]:flex">
-                              <RowActions
-                                worktreeKey={key}
-                                entry={entry}
-                                actions={actions}
-                                detailOpen={detailOpen}
-                                onToggleDetail={() =>
-                                  setExpanded((cur) => (cur === key ? null : key))
-                                }
-                                networkExposed={networkExposed}
-                                overlay
-                              />
-                            </span>
-                          </TableCell>
-                        ) : null}
                       </TableRow>
                       <TableRow className="hover:bg-transparent">
                         <TableCell
-                          colSpan={showWorktree ? 10 : 9}
+                          colSpan={8}
                           className={detailOpen ? "py-1" : "border-0 !p-0"}
                         >
                           <DetailReveal open={detailOpen}>
                             <div className="mx-auto w-full max-w-2xl py-1">
                               <WorktreeDetail
                                 entry={entry}
+                                worktreeKey={key}
                                 mode="view"
                                 onSave={() => undefined}
                                 onClose={() => setExpanded(null)}
+                                onOpenWorktree={actions.onOpenWorktree}
+                                networkExposed={networkExposed}
                               />
                             </div>
                           </DetailReveal>
@@ -447,36 +435,17 @@ export function StatusTable({
                   </div>
                   <dl className="mt-3 space-y-1.5 text-sm">
                     <div className="flex items-baseline gap-2">
-                      <dt className="w-16 shrink-0 text-xs text-muted-foreground">Branch</dt>
-                      <dd className="min-w-0 truncate font-mono text-[13px]" title={entry.branch}>
-                        {entry.branch ?? "—"}
+                      <dt className="w-16 shrink-0 text-xs text-muted-foreground">{showWorktree ? "Path" : "Branch"}</dt>
+                      <dd className="min-w-0 truncate font-mono text-[13px]" title={showWorktree ? entry.worktree : entry.branch}>
+                        {showWorktree ? entry.worktree ?? "—" : entry.branch ?? "—"}
                       </dd>
                     </div>
-                    {entry.harness ? (
-                      <div className="flex items-baseline gap-2">
-                        <dt className="w-16 shrink-0 text-xs text-muted-foreground">Harness</dt>
-                        <dd
-                          className="min-w-0 truncate font-mono text-[13px] text-muted-foreground"
-                          title="live harness (name, pid)"
-                        >
-                          {entry.harness}
-                        </dd>
-                      </div>
-                    ) : null}
                     <div className="flex items-baseline gap-2">
                       <dt className="w-16 shrink-0 text-xs text-muted-foreground">Commits</dt>
                       <dd>
                         <CommitsCell entry={entry} />
                       </dd>
                     </div>
-                    {showWorktree && entry.worktree ? (
-                      <div className="flex items-baseline gap-2">
-                        <dt className="w-16 shrink-0 text-xs text-muted-foreground">Path</dt>
-                        <dd className="min-w-0 truncate font-mono text-[13px]" title={entry.worktree}>
-                          {entry.worktree}
-                        </dd>
-                      </div>
-                    ) : null}
                     {prUrl(entry) ? (
                       <div className="flex items-baseline gap-2">
                         <dt className="w-16 shrink-0 text-xs text-muted-foreground">PR</dt>
@@ -516,7 +485,6 @@ export function StatusTable({
                       actions={actions}
                       detailOpen={detailOpen}
                       onToggleDetail={() => setExpanded((cur) => (cur === key ? null : key))}
-                      networkExposed={networkExposed}
                     />
                   </div>
                   <div className="mt-1">
@@ -524,9 +492,12 @@ export function StatusTable({
                       <div className="pt-2">
                         <WorktreeDetail
                           entry={entry}
+                          worktreeKey={key}
                           mode="view"
                           onSave={() => undefined}
                           onClose={() => setExpanded(null)}
+                          onOpenWorktree={actions.onOpenWorktree}
+                          networkExposed={networkExposed}
                         />
                       </div>
                     </DetailReveal>

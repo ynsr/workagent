@@ -505,7 +505,6 @@ export function Dashboard() {
               onOpenRun: handleOpenRun,
               onReactivate: handleReactivate,
             }}
-            networkExposed={info?.network_exposed ?? false}
           />
           <details className="mt-3 rounded-md border px-3 py-2 text-xs text-muted-foreground">
             <summary className="cursor-pointer font-medium text-foreground">

@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { toast } from "sonner"
-import { Copy } from "lucide-react"
+import { Copy, FolderOpen } from "lucide-react"
 import type { WorktreeEntry } from "@/lib/api"
 import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -34,14 +34,20 @@ export type WorktreeDetailMode = "view" | "edit"
  */
 export function WorktreeDetail({
   entry,
+  worktreeKey,
   mode,
   onSave,
   onClose,
+  onOpenWorktree,
+  networkExposed = false,
 }: {
   entry: WorktreeEntry
+  worktreeKey?: string
   mode: WorktreeDetailMode
   onSave: (draft: WorktreeDetailDraft) => void
   onClose: () => void
+  onOpenWorktree?: (key: string) => void
+  networkExposed?: boolean
 }) {
   const [draft, setDraft] = useState<WorktreeDetailDraft>(() => ({
     branch: entry.branch ?? "",
@@ -114,6 +120,27 @@ export function WorktreeDetail({
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="min-w-0 flex-1 truncate font-mono text-[13px]" title={entry.branch ?? undefined}>{entry.branch ?? "—"}</CardTitle>
+          {worktreeKey && onOpenWorktree ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={
+                networkExposed
+                  ? `Cannot open ${worktreeKey}: disabled while the server is network-exposed`
+                  : `Open worktree folder of ${worktreeKey}`
+              }
+              title={
+                networkExposed
+                  ? `Cannot open ${worktreeKey}: disabled while the server is network-exposed`
+                  : `Open worktree folder of ${worktreeKey}`
+              }
+              disabled={networkExposed}
+              onClick={() => onOpenWorktree(worktreeKey)}
+              className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
+            >
+              <FolderOpen aria-hidden className="size-4" />
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon"

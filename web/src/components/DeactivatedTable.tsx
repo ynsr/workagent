@@ -9,11 +9,9 @@ import { Input } from "@/components/ui/input"
 export function DeactivatedTable({
   worktrees,
   actions,
-  networkExposed = false,
 }: {
   worktrees: WorktreeMap
   actions: StatusTableActions
-  networkExposed?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState("")
@@ -48,7 +46,6 @@ export function DeactivatedTable({
           <StatusTable
             worktrees={filtered}
             actions={actions}
-            networkExposed={networkExposed}
           />
         </div>
       ) : null}

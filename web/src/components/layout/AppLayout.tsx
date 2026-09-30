@@ -1,5 +1,8 @@
+import { useState } from "react"
 import { NavLink, Outlet } from "react-router-dom"
 import {
+  ChevronsLeft,
+  ChevronsRight,
   FolderGit2,
   Tags,
   GitBranch,
@@ -36,17 +39,27 @@ function NavLinkContent({ label, icon: Icon }: { label: string; icon: typeof Roc
   )
 }
 
-function Sidebar() {
+const SIDEBAR_KEY = "workagent-sidebar-collapsed";
+
+function Sidebar({
+  collapsed,
+  onToggle,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
   return (
-    <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r bg-sidebar text-sidebar-foreground lg:flex">
-      <div className="flex items-center gap-2.5 px-5 py-5">
-        <span className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+    <aside className={cn("fixed inset-y-0 left-0 z-40 hidden flex-col border-r bg-sidebar text-sidebar-foreground lg:flex", collapsed ? "w-16" : "w-64")}>
+      <div className={cn("flex items-center gap-2.5 py-5", collapsed ? "justify-center px-3" : "px-5")}>
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
           <GitBranch aria-hidden className="size-5" />
         </span>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold leading-tight">workagent</p>
-          <p className="truncate text-xs text-muted-foreground">serve</p>
-        </div>
+        {collapsed ? null : (
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold leading-tight">workagent</p>
+            <p className="truncate text-xs text-muted-foreground">serve</p>
+          </div>
+        )}
       </div>
       <nav className="flex-1 space-y-1 px-3 py-2" aria-label="Primary">
         {NAV_ITEMS.map((item) => (
@@ -54,20 +67,37 @@ function Sidebar() {
             key={item.to}
             to={item.to}
             end={"end" in item ? item.end : false}
+            title={collapsed ? item.label : undefined}
             className={({ isActive }) =>
               cn(
                 "flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors",
+                collapsed && "justify-center px-0",
                 isActive
                   ? "bg-sidebar-accent text-sidebar-accent-foreground"
                   : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
               )
             }
           >
-            <NavLinkContent label={item.label} icon={item.icon} />
+            {collapsed ? (
+              <item.icon aria-hidden className="size-4 shrink-0" />
+            ) : (
+              <NavLinkContent label={item.label} icon={item.icon} />
+            )}
           </NavLink>
         ))}
       </nav>
-      <SidebarMeta />
+      {collapsed ? null : <SidebarMeta />}
+      <div className={cn("border-t p-3", collapsed && "flex justify-center")}>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          className="flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+        >
+          {collapsed ? <ChevronsRight aria-hidden className="size-4" /> : <ChevronsLeft aria-hidden className="size-4" />}
+        </button>
+      </div>
     </aside>
   )
 }
@@ -157,11 +187,28 @@ function Footer() {
 }
 
 export function AppLayout() {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  function toggle() {
+    setCollapsed((cur) => {
+      try {
+        localStorage.setItem(SIDEBAR_KEY, cur ? "0" : "1");
+      } catch {
+        /* storage unavailable — state still applies for the session */
+      }
+      return !cur;
+    });
+  }
   return (
     <div className="min-h-svh bg-background">
       <RunWatcher />
-      <Sidebar />
-      <div className="flex min-h-svh flex-col lg:pl-64">
+      <Sidebar collapsed={collapsed} onToggle={toggle} />
+      <div className={cn("flex min-h-svh flex-col", collapsed ? "lg:pl-16" : "lg:pl-64")}>
         <MobileHeader />
         <NetworkBanner />
         <main className="w-full max-w-none flex-1 min-w-0 overflow-x-clip px-4 pt-6 pb-28 lg:px-8 lg:pb-8">

@@ -1,5 +1,8 @@
 import type { ReactNode } from "react"
-import { FolderOpen, GitPullRequest, History, Info, Play, RefreshCw, Rocket, Trash2, Wrench } from "lucide-react"
+import { Copy, GitPullRequest, History, Info, Play, RefreshCw, Rocket, Trash2, Wrench } from "lucide-react"
+import { toast } from "sonner"
+import { copyToClipboard } from "@/lib/format"
+import { errorText } from "@/components/StatusFeedback"
 import type { WorktreeMap } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -42,7 +45,6 @@ export function RowActions({
   actions,
   detailOpen,
   onToggleDetail,
-  networkExposed,
   overlay = false,
 }: {
   worktreeKey: string
@@ -50,7 +52,7 @@ export function RowActions({
   actions: StatusTableActions
   detailOpen: boolean
   onToggleDetail: () => void
-  networkExposed: boolean
+  networkExposed?: boolean
   overlay?: boolean
 }) {
   const invalid = entry.wt_valid === false
@@ -101,15 +103,15 @@ export function RowActions({
         </ActionIcon>
       ) : null}
       <ActionIcon
-        title={
-          networkExposed
-            ? `Cannot open ${worktreeKey}: disabled while the server is network-exposed`
-            : `Open worktree folder of ${worktreeKey}`
-        }
-        onClick={() => actions.onOpenWorktree(worktreeKey)}
-        disabled={networkExposed}
+        title={entry.worktree ? `Copy worktree path ${entry.worktree}` : "Nothing to copy"}
+        onClick={() => {
+          void copyToClipboard(entry.worktree ?? "")
+            .then(() => toast.success("Worktree path copied"))
+            .catch((err: unknown) => toast.error(errorText(err)))
+        }}
+        disabled={!entry.worktree?.trim()}
       >
-        <FolderOpen aria-hidden />
+        <Copy aria-hidden />
       </ActionIcon>
       <ActionIcon
         title={`Open runs for ${worktreeKey}`}
