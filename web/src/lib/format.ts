@@ -20,6 +20,18 @@ export function shortId(id: string): string {
   return id.length > 10 ? id.slice(0, 10) : id
 }
 
+/**
+ * Display form of a worktree path: strips the default worktree root prefix
+ * (`$HOME/dev/worktrees/`) so the Path column stays readable. The frontend
+ * does not know `$HOME`, so anything up to and including `/dev/worktrees/`
+ * is stripped; paths outside that root (custom scan_root) are shown in full.
+ */
+export function shortWorktreePath(path: string | null | undefined): string {
+  if (!path) return ""
+  const m = path.match(/^.*?\/dev\/worktrees\/(.+)$/)
+  return m?.[1] ? m[1] as string : path
+}
+
 export function argsText(args: string[] | undefined): string {
   if (!args || args.length === 0) return ""
   return args.join(" ")

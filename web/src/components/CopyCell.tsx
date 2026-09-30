@@ -13,30 +13,38 @@ import { cn } from "@/lib/utils"
  */
 export function CopyCell({
   text,
+  copyText,
   title,
   className,
   children,
 }: {
   text: string | null | undefined
+  /**
+   * Actual string written to the clipboard. Defaults to `text`.
+   * Use when the displayed text is shortened (e.g. worktree path with the
+   * `$HOME/dev/worktrees/` prefix stripped) but the full value must be copied.
+   */
+  copyText?: string | null | undefined
   title?: string
   className?: string
   children?: ReactNode
 }) {
   const value = text ?? ""
-  const empty = value.trim() === ""
+  const toCopy = copyText ?? text ?? ""
+  const empty = toCopy.trim() === ""
   return (
     <span className={cn("group/copy relative flex min-w-0 items-center", className)}>
-      <span className="min-w-0 flex-1 truncate" title={title ?? (empty ? undefined : value)}>
+      <span className="min-w-0 flex-1 truncate" title={title ?? (empty ? undefined : toCopy)}>
         {children ?? (empty ? "—" : value)}
       </span>
       <button
         type="button"
-        aria-label={empty ? "Nothing to copy" : `Copy ${value}`}
-        title={empty ? "Nothing to copy" : `Copy ${value}`}
+        aria-label={empty ? "Nothing to copy" : `Copy ${toCopy}`}
+        title={empty ? "Nothing to copy" : `Copy ${toCopy}`}
         disabled={empty}
         onClick={(e) => {
           e.stopPropagation()
-          void copyToClipboard(value)
+          void copyToClipboard(toCopy)
             .then(() => toast.success("Copied to clipboard"))
             .catch((err: unknown) => toast.error(errorText(err)))
         }}

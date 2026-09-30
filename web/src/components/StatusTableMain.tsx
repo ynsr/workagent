@@ -25,6 +25,7 @@ import type { StatusTableActions, StatusTableSelection } from "@/components/Stat
 import { RowActions } from "@/components/StatusActions"
 import { CopyCell } from "@/components/CopyCell"
 import { CommitsCell, ReviewsCell, formatAdded, matchesQuery } from "@/components/StatusCells"
+import { shortWorktreePath } from "@/lib/format"
 function RepoTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
     <button
@@ -319,7 +320,7 @@ export function StatusTable({
                         </TableCell>
                         {showWorktree ? (
                           <TableCell className="max-w-48 font-mono text-[13px]">
-                            <CopyCell text={entry.worktree} />
+                            <CopyCell text={shortWorktreePath(entry.worktree)} copyText={entry.worktree} />
                           </TableCell>
                         ) : (
                           <TableCell className="max-w-48 font-mono text-[13px]">
@@ -437,7 +438,7 @@ export function StatusTable({
                     <div className="flex items-baseline gap-2">
                       <dt className="w-16 shrink-0 text-xs text-muted-foreground">{showWorktree ? "Path" : "Branch"}</dt>
                       <dd className="min-w-0 truncate font-mono text-[13px]" title={showWorktree ? entry.worktree : entry.branch}>
-                        {showWorktree ? entry.worktree ?? "—" : entry.branch ?? "—"}
+                        {showWorktree ? shortWorktreePath(entry.worktree) || "—" : entry.branch ?? "—"}
                       </dd>
                     </div>
                     <div className="flex items-baseline gap-2">
