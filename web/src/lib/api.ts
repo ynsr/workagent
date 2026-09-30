@@ -226,6 +226,20 @@ export function prUrl(entry: Pick<WorktreeEntry, "pr" | "pr_detail">): string {
   return raw.startsWith("http") ? raw : ""
 }
 
+/**
+ * CI page for a PR/MR URL: GitHub `…/pull/N/checks`, GitLab `…/-/pipelines`
+ * (works for both `…/-/merge_requests/N` and short `…/merge_requests/N`
+ * forms). Empty string when the URL is not a recognizable PR/MR link.
+ */
+export function checksUrl(pr: string | undefined): string {
+  if (!pr) return ""
+  let m = /^(https?:\/\/[^/]+\/(.+?)\/pull\/\d+)/.exec(pr)
+  if (m) return `${m[1]}/checks`
+  m = /^(https?:\/\/[^/]+\/.+?)(?:\/-)?\/merge_requests\/\d+/.exec(pr)
+  if (m) return `${m[1]}/-/pipelines`
+  return ""
+}
+
 export interface CreateRunInput {
   command: RunCommand
   args: string[]

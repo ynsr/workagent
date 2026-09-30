@@ -2,7 +2,7 @@ import { useState } from "react"
 import { toast } from "sonner"
 import { Copy, FolderOpen } from "lucide-react"
 import type { WorktreeEntry } from "@/lib/api"
-import { prLabel, prUrl } from "@/lib/api"
+import { checksUrl, prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -207,7 +207,7 @@ export function WorktreeDetail({
           <div className="flex items-baseline gap-2">
             <dt className="w-16 shrink-0 text-xs text-muted-foreground">CI</dt>
             <dd>
-              <CiBadge ci={entry.ci} />
+              <CiBadge ci={entry.ci} ciUrl={checksUrl(prUrl(entry)) || undefined} />
             </dd>
           </div>
           {entry.reviews_detail ? (

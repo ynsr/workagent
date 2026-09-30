@@ -89,14 +89,43 @@ const CI_BADGES: Record<CiState, { symbol: string; className: string }> = {
   },
 }
 
-/** CI pipeline badge; missing/unknown status renders as a gray dash. */
-export function CiBadge({ ci }: { ci?: string | null }) {
+const CI_TOOLTIPS: Record<CiState, string> = {
+  success: "CI: success",
+  failure: "CI: failure",
+  running: "CI: running",
+  not_started: "No CI status",
+}
+
+/**
+ * CI pipeline badge. When `ciUrl` is given (checks page of the PR/MR) the
+ * badge renders as a link to the CI page; clicks stop table-row toggling.
+ * Tooltip shows the status plus the CI page link (or "No CI status").
+ */
+export function CiBadge({ ci, ciUrl }: { ci?: string | null; ciUrl?: string | null }) {
   const state: CiState =
     ci === "success" || ci === "failure" || ci === "running" ? ci : "not_started"
   const badge = CI_BADGES[state]
+  const tip = ciUrl ? `${CI_TOOLTIPS[state]} — ${ciUrl}` : CI_TOOLTIPS[state]
+  if (!ciUrl) {
+    return (
+      <Badge variant="outline" className={badge.className} title={tip}>
+        {badge.symbol}
+      </Badge>
+    )
+  }
   return (
-    <Badge variant="outline" className={badge.className} title={`CI: ${ci ?? "unknown"}`}>
-      {badge.symbol}
-    </Badge>
+    <a
+      href={ciUrl}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={tip}
+      title={tip}
+      onClick={(e) => e.stopPropagation()}
+      className="inline-block"
+    >
+      <Badge variant="outline" className={cn(badge.className, "cursor-pointer hover:opacity-80")}>
+        {badge.symbol}
+      </Badge>
+    </a>
   )
 }
