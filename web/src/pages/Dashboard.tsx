@@ -29,6 +29,7 @@ import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
 import { queryKeys, useCreateRun, useInfo, useRepos, useStatusAll, useStatusInactive } from "@/lib/queries"
 import { useRepoTabs } from "@/lib/useRepoTabs"
+import { getShowWorktree, setShowWorktree as persistShowWorktree } from "@/lib/settings"
 
 const CSV_HEADERS = [
   "key",
@@ -78,7 +79,11 @@ export function Dashboard() {
     repos,
   )
 
-  const [showWorktree, setShowWorktree] = useState(false)
+  const [showWorktree, setShowWorktreeState] = useState<boolean>(getShowWorktree)
+  function setShowWorktree(value: boolean): void {
+    setShowWorktreeState(value)
+    persistShowWorktree(value)
+  }
   const [refreshingPr, setRefreshingPr] = useState(false)
   const [syncMerge, setSyncMerge] = useState(false)
   const [reviewForceAll, setReviewForceAll] = useState(false)

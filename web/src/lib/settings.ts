@@ -4,6 +4,7 @@ export type Theme = "light" | "dark" | "system"
 
 export const THEME_KEY = "theme"
 export const VERBOSE_KEY = "workagent.verbose"
+export const SHOW_WORKTREE_KEY = "workagent.showWorktree"
 export const OPTOUT_KEY = "workagent.confirm.optout"
 
 export type OptOutAction =
@@ -64,6 +65,22 @@ export function getVerbose(): boolean {
 export function setVerbose(value: boolean): void {
   try {
     localStorage.setItem(VERBOSE_KEY, value ? "1" : "0")
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+export function getShowWorktree(): boolean {
+  try {
+    return localStorage.getItem(SHOW_WORKTREE_KEY) === "1"
+  } catch {
+    return false
+  }
+}
+
+export function setShowWorktree(value: boolean): void {
+  try {
+    localStorage.setItem(SHOW_WORKTREE_KEY, value ? "1" : "0")
   } catch {
     /* storage unavailable */
   }

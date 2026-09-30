@@ -23,6 +23,7 @@ import {
 import { CheckRow } from "@/components/FieldHelp"
 import { Switch } from "@/components/ui/switch"
 import { useConfirmedRun } from "@/components/RunActions"
+import { getShowWorktree, setShowWorktree as persistShowWorktree } from "@/lib/settings"
 import { useInfo, useRepos, useStatusAll } from "@/lib/queries"
 import {
   LinkRemoveDialog,
@@ -41,7 +42,11 @@ export function Links() {
     Object.values(worktrees ?? {}),
     repos,
   )
-  const [showWorktree, setShowWorktree] = useState(false)
+  const [showWorktree, setShowWorktreeState] = useState<boolean>(getShowWorktree)
+  function setShowWorktree(value: boolean): void {
+    setShowWorktreeState(value)
+    persistShowWorktree(value)
+  }
   const [refreshing, setRefreshing] = useState(false)
   const [forceAll, setForceAll] = useState(false)
   const [activeForm, setActiveForm] = useState<null | "set" | "remove" | "register">(
