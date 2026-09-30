@@ -367,6 +367,7 @@ export function StatusTable({
                               entry={entry}
                               actions={actions}
                               overlay
+                              showRuns={false}
                             />
                           </span>
                         </TableCell>
@@ -387,6 +388,13 @@ export function StatusTable({
                                 onOpenWorktree={actions.onOpenWorktree}
                                 onOpenRun={actions.onOpenRun}
                                 onOpenSessions={actions.onOpenSessions}
+                                rowActions={
+                                  <RowActions
+                                    worktreeKey={key}
+                                    entry={entry}
+                                    actions={actions}
+                                  />
+                                }
                                 networkExposed={networkExposed}
                               />
                             </div>
@@ -482,6 +490,7 @@ export function StatusTable({
                       worktreeKey={key}
                       entry={entry}
                       actions={actions}
+                      showRuns={false}
                     />
                   </div>
                   <div className="mt-1">
@@ -496,6 +505,13 @@ export function StatusTable({
                           onOpenWorktree={actions.onOpenWorktree}
                           onOpenRun={actions.onOpenRun}
                           onOpenSessions={actions.onOpenSessions}
+                          rowActions={
+                            <RowActions
+                              worktreeKey={key}
+                              entry={entry}
+                              actions={actions}
+                            />
+                          }
                           networkExposed={networkExposed}
                         />
                       </div>

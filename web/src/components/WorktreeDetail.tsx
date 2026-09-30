@@ -41,6 +41,7 @@ export function WorktreeDetail({
   onOpenWorktree,
   onOpenRun,
   onOpenSessions,
+  rowActions,
   networkExposed = false,
 }: {
   entry: WorktreeEntry
@@ -51,6 +52,8 @@ export function WorktreeDetail({
   onOpenWorktree?: (key: string) => void
   onOpenRun?: (key: string) => void
   onOpenSessions?: (key: string) => void
+  /** Row actions rendered as the dialog "Actions" row (Sync/Review/Fix/…); omitted in edit mode. */
+  rowActions?: React.ReactNode
   networkExposed?: boolean
 }) {
   const [draft, setDraft] = useState<WorktreeDetailDraft>(() => ({
@@ -121,45 +124,9 @@ export function WorktreeDetail({
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="min-w-0 flex-1 truncate font-mono text-[13px]" title={entry.branch ?? undefined}>{entry.branch ?? "—"}</CardTitle>
-          {worktreeKey && onOpenWorktree ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={
-                networkExposed
-                  ? `Cannot open ${worktreeKey}: disabled while the server is network-exposed`
-                  : `Open worktree folder of ${worktreeKey}`
-              }
-              title={
-                networkExposed
-                  ? `Cannot open ${worktreeKey}: disabled while the server is network-exposed`
-                  : `Open worktree folder of ${worktreeKey}`
-              }
-              disabled={networkExposed}
-              onClick={() => onOpenWorktree(worktreeKey)}
-              className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
-            >
-              <FolderOpen aria-hidden className="size-4" />
-            </Button>
-          ) : null}
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={entry.worktree ? `Copy worktree path ${entry.worktree}` : "Nothing to copy"}
-            title={entry.worktree ? `Copy worktree path ${entry.worktree}` : "Nothing to copy"}
-            disabled={!entry.worktree?.trim()}
-            onClick={() => {
-              void copyToClipboard(entry.worktree ?? "")
-                .then(() => toast.success("Worktree path copied"))
-                .catch((err: unknown) => toast.error(errorText(err)))
-            }}
-            className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
-          >
-            <Copy aria-hidden className="size-4" />
-          </Button>
+      <CardHeader className="min-w-0 overflow-hidden">
+        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+          <CardTitle className="min-w-0 flex-1 truncate overflow-hidden font-mono text-[13px]" title={entry.branch ?? undefined}>{entry.branch ?? "—"}</CardTitle>
         </div>
       </CardHeader>
       <CardContent>
@@ -214,6 +181,14 @@ export function WorktreeDetail({
               <CiBadge ci={entry.ci} ciUrl={entry.ci_url} />
             </dd>
           </div>
+          {rowActions ? (
+            <div className="flex items-baseline gap-2">
+              <dt className="w-16 shrink-0 text-xs text-muted-foreground">Actions</dt>
+              <dd className="min-w-0 flex-1">
+                <div className="[&_button]:size-8">{rowActions}</div>
+              </dd>
+            </div>
+          ) : null}
           {entry.reviews_detail ? (
             <div className="flex items-baseline gap-2">
               <dt className="w-16 shrink-0 text-xs text-muted-foreground">Reviews</dt>
@@ -228,30 +203,65 @@ export function WorktreeDetail({
           ) : null}
         </dl>
       </CardContent>
-      <CardFooter className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          {worktreeKey && onOpenRun ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onOpenRun(worktreeKey)}
-            >
-              <Rocket aria-hidden className="size-4" />
-              Open runs
-            </Button>
-          ) : null}
-          {worktreeKey && onOpenSessions ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onOpenSessions(worktreeKey)}
-            >
-              <History aria-hidden className="size-4" />
-              Worktree sessions
-            </Button>
-          ) : null}
-        </div>
-        <Button variant="outline" onClick={onClose}>
+      <CardFooter className="flex flex-wrap items-center gap-2">
+        {worktreeKey && onOpenWorktree ? (
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label={
+              networkExposed
+                ? `Cannot open ${worktreeKey}: disabled while the server is network-exposed`
+                : `Open worktree folder of ${worktreeKey}`
+            }
+            title={
+              networkExposed
+                ? `Cannot open ${worktreeKey}: disabled while the server is network-exposed`
+                : `Open worktree folder of ${worktreeKey}`
+            }
+            disabled={networkExposed}
+            onClick={() => onOpenWorktree(worktreeKey)}
+          >
+            <FolderOpen aria-hidden className="size-4" />
+            Open
+          </Button>
+        ) : null}
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label={entry.worktree ? `Copy worktree path ${entry.worktree}` : "Nothing to copy"}
+          title={entry.worktree ? `Copy worktree path ${entry.worktree}` : "Nothing to copy"}
+          disabled={!entry.worktree?.trim()}
+          onClick={() => {
+            void copyToClipboard(entry.worktree ?? "")
+              .then(() => toast.success("Worktree path copied"))
+              .catch((err: unknown) => toast.error(errorText(err)))
+          }}
+        >
+          <Copy aria-hidden className="size-4" />
+          Path
+        </Button>
+        {worktreeKey && onOpenRun ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenRun(worktreeKey)}
+          >
+            <Rocket aria-hidden className="size-4" />
+            Runs
+          </Button>
+        ) : null}
+        {worktreeKey && onOpenSessions ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenSessions(worktreeKey)}
+          >
+            <History aria-hidden className="size-4" />
+            Sessions
+          </Button>
+        ) : null}
+        <span className="flex-1" />
+        <Button variant="outline" size="sm" onClick={onClose}>
           Close
         </Button>
       </CardFooter>

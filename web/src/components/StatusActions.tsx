@@ -1,8 +1,12 @@
 import type { ReactNode } from "react"
-import { GitPullRequest, History, Play, RefreshCw, Rocket, Trash2, Wrench } from "lucide-react"
+import { ClipboardCopy, GitPullRequest, History, Play, RefreshCw, Rocket, Trash2, Wrench } from "lucide-react"
+import { toast } from "sonner"
 import type { WorktreeMap } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { copyToClipboard, resumeCommand } from "@/lib/format"
+import { errorText } from "@/components/StatusFeedback"
+import { useSessions } from "@/lib/queries"
 import type { StatusTableActions } from "@/components/StatusTable"
 
 export function ActionIcon({
@@ -41,6 +45,7 @@ export function RowActions({
   entry,
   actions,
   overlay = false,
+  showRuns = true,
 }: {
   worktreeKey: string
   entry: WorktreeMap[string]
@@ -49,8 +54,11 @@ export function RowActions({
   onToggleDetail?: () => void
   networkExposed?: boolean
   overlay?: boolean
+  /** False hides the Runs/Sessions buttons (StatusTable rows — they live in the details dialog). */
+  showRuns?: boolean
 }) {
   const invalid = entry.wt_valid === false
+  const lastSession = useCopyResumeSession(worktreeKey, entry.worktree)
   return (
     <div className={overlay ? "flex items-center justify-end gap-0.5" : "flex items-center justify-end gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-within:opacity-100 [@media(hover:hover)]:hover:opacity-100"}>
       {actions.onSync ? (
@@ -91,13 +99,15 @@ export function RowActions({
           <Play aria-hidden />
         </ActionIcon>
       ) : null}
-      <ActionIcon
-        title={`Open runs for ${worktreeKey}`}
-        onClick={() => actions.onOpenRun(worktreeKey)}
-      >
-        <Rocket aria-hidden />
-      </ActionIcon>
-      {actions.onOpenSessions ? (
+      {showRuns ? (
+        <ActionIcon
+          title={`Open runs for ${worktreeKey}`}
+          onClick={() => actions.onOpenRun(worktreeKey)}
+        >
+          <Rocket aria-hidden />
+        </ActionIcon>
+      ) : null}
+      {showRuns && actions.onOpenSessions ? (
         <ActionIcon
           title={`Worktree sessions for ${worktreeKey}`}
           onClick={() => actions.onOpenSessions?.(worktreeKey)}
@@ -105,7 +115,37 @@ export function RowActions({
           <History aria-hidden />
         </ActionIcon>
       ) : null}
+      <ActionIcon
+        title={lastSession ? `Copy Resume Command: ${lastSession.cmd}` : `Copy Resume Command: no review or fix-comments session for ${worktreeKey} yet`}
+        disabled={!lastSession}
+        onClick={() => {
+          if (!lastSession) return
+          void copyToClipboard(lastSession.cmd)
+            .then(() => toast.success("Resume command copied to clipboard"))
+            .catch((err: unknown) => toast.error(errorText(err)))
+        }}
+      >
+        <ClipboardCopy aria-hidden />
+      </ActionIcon>
     </div>
   )
 }
 
+
+/** Latest non-running review/fix-comments session for a worktree key →
+ * resume bash command (`/api/sessions` is newest-first, so the first match
+ * wins). Null while loading or when no resumable session exists. */
+function useCopyResumeSession(worktreeKey: string, worktree?: string): { cmd: string } | null {
+  const { data } = useSessions()
+  const sessions = data?.sessions
+  if (!sessions || !worktree?.trim()) return null
+  const match = sessions.find(
+    (row) =>
+      row.worktree_ref === worktreeKey &&
+      (row.session_type === "review" || row.session_type === "fix_comments") &&
+      row.state !== "running" &&
+      row.file_path?.trim(),
+  )
+  if (!match?.file_path) return null
+  return { cmd: resumeCommand(worktree, match.file_path) }
+}
