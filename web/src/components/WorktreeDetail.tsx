@@ -178,7 +178,7 @@ export function WorktreeDetail({
           <div className="flex items-baseline gap-2">
             <dt className="w-16 shrink-0 text-xs text-muted-foreground">CI</dt>
             <dd>
-              <CiBadge ci={entry.ci} ciUrl={entry.ci_url} />
+              <CiBadge ci={entry.ci} ciUrl={entry.ci_url} prUrl={prUrl(entry)} />
             </dd>
           </div>
           {rowActions ? (

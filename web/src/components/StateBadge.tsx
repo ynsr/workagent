@@ -97,17 +97,19 @@ const CI_TOOLTIPS: Record<CiState, string> = {
 }
 
 /**
- * CI pipeline badge. When `ciUrl` is given (the latest CI job page from the
- * backend, e.g. GitLab `.../-/jobs/194493`) the badge links to that job;
- * clicks stop table-row toggling. Tooltip shows the status plus the job
- * link, or "No CI status" when there is no CI status.
+ * CI pipeline badge. Always a link: `ciUrl` (the latest CI job page from
+ * the backend, e.g. GitLab `.../-/jobs/194493`) when known, else the
+ * PR/MR checks page derived from `prUrl` as a fallback. Clicks stop
+ * table-row toggling. Tooltip shows the status plus the link target, or
+ * "No CI status" when the badge has no CI status at all.
  */
-export function CiBadge({ ci, ciUrl }: { ci?: string | null; ciUrl?: string | null }) {
+export function CiBadge({ ci, ciUrl, prUrl }: { ci?: string | null; ciUrl?: string | null; prUrl?: string | null }) {
   const state: CiState =
     ci === "success" || ci === "failure" || ci === "running" ? ci : "not_started"
   const badge = CI_BADGES[state]
-  const tip = ciUrl ? `${CI_TOOLTIPS[state]} — ${ciUrl}` : CI_TOOLTIPS[state]
-  if (!ciUrl) {
+  const href = ciUrl || checksUrl(prUrl) || undefined
+  const tip = href ? `${CI_TOOLTIPS[state]} — ${href}` : CI_TOOLTIPS[state]
+  if (!href) {
     return (
       <Badge variant="outline" className={badge.className} title={tip}>
         {badge.symbol}
@@ -116,7 +118,7 @@ export function CiBadge({ ci, ciUrl }: { ci?: string | null; ciUrl?: string | nu
   }
   return (
     <a
-      href={ciUrl}
+      href={href}
       target="_blank"
       rel="noreferrer"
       aria-label={tip}
@@ -129,4 +131,16 @@ export function CiBadge({ ci, ciUrl }: { ci?: string | null; ciUrl?: string | nu
       </Badge>
     </a>
   )
+}
+
+/** CI checks page for a PR/MR URL (fallback when the backend job URL is
+ * unknown): GitHub `…/pull/N/checks`, GitLab `…/-/pipelines` (handles both
+ * `/-/merge_requests/N` and legacy `/merge_requests/N`). */
+export function checksUrl(pr: string | null | undefined): string {
+  if (!pr) return ""
+  const gh = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(pr)
+  if (gh) return `https://github.com/${gh[1]}/pull/${gh[2]}/checks`
+  const gl = /^(https:\/\/[^/]+\/.*?)(?:\/-)?\/merge_requests\/\d+/.exec(pr)
+  if (gl) return `${gl[1]}/-/pipelines`
+  return ""
 }
