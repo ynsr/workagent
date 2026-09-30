@@ -74,6 +74,13 @@ def _add_wt(repo: Path, name: str, branch: str) -> Path:
     return wt
 
 
+def recent_created(days_ago: int = 1) -> str:
+    """ISO-8601 `created` stamp N days ago — keeps candidates fixtures
+    inside the rolling 7-day recency window no matter when tests run."""
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
+
+
 def _candidates_env(monkeypatch, tmp_path, issues=None, prs=None):
     repo = tmp_path / "proj"
     repo.mkdir()

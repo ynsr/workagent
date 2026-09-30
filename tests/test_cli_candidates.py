@@ -8,12 +8,12 @@ import pytest
 
 from workagent import cli, store
 
-from tests.cli_helpers import runner, _invoke, _candidates_env
+from tests.cli_helpers import recent_created, runner, _invoke, _candidates_env
 
 def test_candidates_cli_json(isolated_config, tmp_path, monkeypatch):
     _candidates_env(monkeypatch, tmp_path, issues=[
         {"key": "jira:IPG-981", "title": "T", "url": "u",
-         "status": "To Do", "created": "2026-09-20T10:00:00+00:00"}])
+         "status": "To Do", "created": recent_created(1)}])
     r = _invoke("candidates", "--json")
     assert r.exit_code == 0, r.output
     out = json.loads(r.stdout)
@@ -27,7 +27,7 @@ def test_candidates_cli_json(isolated_config, tmp_path, monkeypatch):
 def test_candidates_cli_tables(isolated_config, tmp_path, monkeypatch):
     _candidates_env(monkeypatch, tmp_path, issues=[
         {"key": "jira:IPG-981", "title": "T", "url": "u",
-         "status": "To Do", "created": "2026-09-20T10:00:00+00:00"}])
+         "status": "To Do", "created": recent_created(1)}])
     r = _invoke("candidates")
     assert r.exit_code == 0, r.output
     assert "Unlinked PR/MRs" in r.stdout
@@ -41,7 +41,7 @@ def test_candidates_cli_tables(isolated_config, tmp_path, monkeypatch):
 def test_candidates_cli_csv_pulls_only(isolated_config, tmp_path, monkeypatch):
     _candidates_env(monkeypatch, tmp_path, issues=[
         {"key": "jira:IPG-981", "title": "T", "url": "u",
-         "status": "To Do", "created": "2026-09-20T10:00:00+00:00"}])
+         "status": "To Do", "created": recent_created(1)}])
     r = _invoke("candidates", "--csv")
     assert r.exit_code == 0, r.output
     assert r.stdout.splitlines()[0] == "url,title,repo,updated"
@@ -78,7 +78,7 @@ def test_candidates_cli_linked_issue_excluded(isolated_config, tmp_path,
     _candidates_env(monkeypatch, tmp_path, issues=[
         {"key": "jira:IPG-981", "title": "T",
          "url": "https://jira.example/browse/IPG-981",
-         "status": "To Do", "created": "2026-09-20T10:00:00+00:00"}])
+         "status": "To Do", "created": recent_created(1)}])
     store.record_link("jira:IPG-981",
                       {"branch": "IPG-981-slug",
                        "worktree": str(tmp_path / "wt"),
@@ -92,7 +92,7 @@ def test_candidates_cli_issue_carries_repo_hint(isolated_config, tmp_path,
                                                 monkeypatch):
     _candidates_env(monkeypatch, tmp_path, issues=[
         {"key": "jira:IPG-981", "title": "T", "url": "u",
-         "status": "To Do", "created": "2026-09-20T10:00:00+00:00"}])
+         "status": "To Do", "created": recent_created(1)}])
     repo = tmp_path / "proj"
     store.record_link("jira:IPG-1", {"worktree": str(tmp_path / "wt"),
                                      "branch": "IPG-1-x",
