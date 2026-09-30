@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # install.sh — install workagent via uv (or pipx if uv missing)
-set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 NO_COMPONENT_TAGS=""
 for arg in "$@"; do
