@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { Copy, Download, FolderGit2, Plus, Trash2 } from "lucide-react"
+import { CopyCell } from "@/components/CopyCell"
 import { PageHeader } from "@/components/PageHeader"
 import {
   EmptyState,
@@ -186,9 +187,11 @@ export function Repos() {
                     <TableBody>
                       {repos.map((r) => (
                         <TableRow key={r.name}>
-                          <TableCell className="font-medium">{r.name}</TableCell>
-                          <TableCell className="max-w-72 truncate font-mono text-[13px]" title={r.path}>
-                            {r.path}
+                          <TableCell className="max-w-48 font-medium">
+                            <CopyCell text={r.name} />
+                          </TableCell>
+                          <TableCell className="max-w-72 font-mono text-[13px]">
+                            <CopyCell text={r.path} />
                           </TableCell>
                           <TableCell>
                             {typeof r.tracker === "string" && r.tracker ? (

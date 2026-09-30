@@ -381,7 +381,7 @@ def _open_terminal(worktree: str, session_file: str) -> None:
                 elif t in ("kitty", "wezterm", "foot"):
                     argv = [t, "bash", "-lc", cmd]
                 else:
-                    argv = [t, "-e", f"bash -lc {shlex.quote(cmd)}"]
+                    argv = [t, "-e", "bash", "-lc", cmd]
                 break
         else:
             if not has_display:

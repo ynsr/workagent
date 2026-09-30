@@ -1,4 +1,5 @@
 import { CheckCircle2, CircleAlert, Stethoscope } from "lucide-react"
+import { CopyCell } from "@/components/CopyCell"
 import { PageHeader } from "@/components/PageHeader"
 import {
   ErrorState,
@@ -131,7 +132,9 @@ export function Doctor() {
                 <TableBody>
                   {tools.map(([name, available]) => (
                     <TableRow key={name}>
-                      <TableCell className="font-mono text-[13px]">{name}</TableCell>
+                      <TableCell className="max-w-64 font-mono text-[13px]">
+                        <CopyCell text={name} />
+                      </TableCell>
                       <TableCell className="text-right">
                         {available ? (
                           <Badge variant="default">yes</Badge>

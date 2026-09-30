@@ -332,6 +332,22 @@ def test_open_terminal_supports_ptyxis_and_kitty(monkeypatch):
         _wr._open_terminal("/wt", "/s.jsonl")
         assert got["argv"] == [*head, "bash", "-lc", "cd /wt && omp --resume /s.jsonl"], term
 
+
+def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch):
+    """Issue #34: generic `-e` fallback must pass bash as argv items —
+    a single "bash -lc '…'" string makes the kernel look for that whole
+    string as the executable (ENOENT)."""
+    import os
+    from workagent import web_runs as _wr
+    monkeypatch.setattr(os, "environ", {"DISPLAY": ":0", "PATH": os.environ.get("PATH", "")})
+    monkeypatch.setattr("shutil.which",
+                        lambda t: "/usr/bin/xterm" if t == "xterm" else None)
+    got: dict = {}
+    monkeypatch.setattr("subprocess.Popen",
+                        lambda argv, **kw: got.setdefault("argv", argv))
+    _wr._open_terminal("/wt", "/s.jsonl")
+    assert got["argv"] == ["xterm", "-e", "bash", "-lc", "cd /wt && omp --resume /s.jsonl"]
+
 def test_specs_mirror_cli_flags():
     """Parity: webapp BOOL_FLAGS/VAL_FLAGS mirror the real Typer CLI (#25 checklist).
 

@@ -1,4 +1,6 @@
 import { useState } from "react"
+import { toast } from "sonner"
+import { Copy } from "lucide-react"
 import type { WorktreeEntry } from "@/lib/api"
 import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -12,7 +14,9 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { CiBadge } from "@/components/StateBadge"
-
+import { CopyCell } from "@/components/CopyCell"
+import { copyToClipboard } from "@/lib/format"
+import { errorText } from "@/components/StatusFeedback"
 /** Editable subset rendered in edit mode; strings are trimmed by the caller. */
 export interface WorktreeDetailDraft {
   branch: string
@@ -108,37 +112,51 @@ export function WorktreeDetail({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="font-mono text-[13px]">{entry.branch ?? "—"}</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="min-w-0 flex-1 truncate font-mono text-[13px]" title={entry.branch ?? undefined}>{entry.branch ?? "—"}</CardTitle>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={entry.worktree ? `Copy worktree path ${entry.worktree}` : "Nothing to copy"}
+            title={entry.worktree ? `Copy worktree path ${entry.worktree}` : "Nothing to copy"}
+            disabled={!entry.worktree?.trim()}
+            onClick={() => {
+              void copyToClipboard(entry.worktree ?? "")
+                .then(() => toast.success("Worktree path copied"))
+                .catch((err: unknown) => toast.error(errorText(err)))
+            }}
+            className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
+          >
+            <Copy aria-hidden className="size-4" />
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         <dl className="space-y-1.5 text-sm">
           <div className="flex items-baseline gap-2">
             <dt className="w-16 shrink-0 text-xs text-muted-foreground">Branch</dt>
-            <dd className="min-w-0 truncate font-mono text-[13px]" title={entry.branch}>
-              {entry.branch ?? "—"}
+            <dd className="min-w-0 flex-1 font-mono text-[13px]">
+              <CopyCell text={entry.branch} />
             </dd>
           </div>
           {entry.harness ? (
             <div className="flex items-baseline gap-2">
               <dt className="w-16 shrink-0 text-xs text-muted-foreground">Harness</dt>
-              <dd
-                className="min-w-0 truncate font-mono text-[13px] text-muted-foreground"
-                title="live harness (name, pid)"
-              >
-                {entry.harness}
+              <dd className="min-w-0 flex-1 font-mono text-[13px] text-muted-foreground">
+                <CopyCell text={entry.harness} title="live harness (name, pid)" />
               </dd>
             </div>
           ) : null}
           <div className="flex items-baseline gap-2">
             <dt className="w-16 shrink-0 text-xs text-muted-foreground">Path</dt>
-            <dd className="min-w-0 truncate font-mono text-[13px]" title={entry.worktree}>
-              {entry.worktree ?? "—"}
+            <dd className="min-w-0 flex-1 font-mono text-[13px]">
+              <CopyCell text={entry.worktree} />
             </dd>
           </div>
           <div className="flex items-baseline gap-2">
             <dt className="w-16 shrink-0 text-xs text-muted-foreground">Repo</dt>
-            <dd className="min-w-0 truncate font-mono text-[13px]" title={entry.repo}>
-              {entry.repo ?? "—"}
+            <dd className="min-w-0 flex-1 font-mono text-[13px]">
+              <CopyCell text={entry.repo} />
             </dd>
           </div>
           <div className="flex items-baseline gap-2">

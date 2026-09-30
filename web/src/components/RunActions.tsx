@@ -56,7 +56,7 @@ export function SessionResumeActions({
         variant={icon ? "ghost" : "outline"}
         size={icon ? "icon" : "sm"}
         aria-label={`Resume session for ${label} in terminal`}
-        title="Resume session in terminal"
+        title={resumeCommand(worktree, sessionFile)}
         disabled={resumeRun.isPending || resumeSession.isPending}
         onClick={(e) => {
           if (icon) e.preventDefault()
@@ -69,7 +69,6 @@ export function SessionResumeActions({
       >
         <SquareTerminal aria-hidden /> {icon ? null : "Resume in terminal"}
       </Button>
-      <span title={resumeCommand(worktree, sessionFile)} className="inline-flex">
       <Button
         variant={icon ? "ghost" : "outline"}
         size={icon ? "icon" : "sm"}
@@ -86,7 +85,6 @@ export function SessionResumeActions({
       >
         <Copy aria-hidden /> {icon ? null : "Copy resume command"}
       </Button>
-      </span>
     </>
   )
 }

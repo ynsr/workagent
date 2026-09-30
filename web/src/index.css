@@ -135,6 +135,14 @@
   }
 }
 
+/* Issue #34: all web tables span full width with ellipsis truncation. */
+table[data-slot="table"] {
+  width: 100%;
+}
+table[data-slot="table"] td[data-slot="table-cell"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 /* Run log viewer shell (fixed dark console in both themes). */
 .log-shell {
   background: oklch(0.17 0.014 267);

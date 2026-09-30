@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { Copy, Download, Plus, Tags, Trash2 } from "lucide-react"
+import { CopyCell } from "@/components/CopyCell"
 import { PageHeader } from "@/components/PageHeader"
 import {
   EmptyState,
@@ -172,7 +173,9 @@ export function Trackers() {
                     <TableBody>
                       {trackers.map((t) => (
                         <TableRow key={t.key}>
-                          <TableCell className="font-mono text-[13px]">{t.key}</TableCell>
+                          <TableCell className="max-w-48 font-mono text-[13px]">
+                            <CopyCell text={t.key} />
+                          </TableCell>
                           <TableCell>
                             {t.vendor ? (
                               <Badge variant="secondary" className="font-mono">

@@ -1,5 +1,6 @@
 import { useMemo } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
+import { CopyCell } from "@/components/CopyCell"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { ArrowLeft } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
@@ -27,7 +28,6 @@ import { type SessionDetail, type SessionRow } from "@/lib/api"
 import { useLinks, useRepos, useSession, useSessions } from "@/lib/queries"
 import { repoKeyForPath, useRepoTabs } from "@/lib/useRepoTabs"
 import { relativeTime, shortId } from "@/lib/format"
-
 /** Every persisted session executed a real harness session, so both
  * resume buttons always apply. Copy resolves the worktree path via
  * /api/path (falls back to the recorded ref). */
@@ -169,8 +169,8 @@ export function Sessions() {
               <TableBody>
                 {rows.map((s) => (
                   <TableRow key={s.id}>
-                    <TableCell className="max-w-64 truncate text-sm text-muted-foreground" title={sessionTitle(s.worktree_ref, links?.worktrees?.[s.worktree_ref]?.branch ?? "")}>
-                      {sessionTitle(s.worktree_ref, links?.worktrees?.[s.worktree_ref]?.branch ?? "")}
+                    <TableCell className="max-w-64 text-sm text-muted-foreground">
+                      <CopyCell text={sessionTitle(s.worktree_ref, links?.worktrees?.[s.worktree_ref]?.branch ?? "")} />
                     </TableCell>
                     <TableCell className="font-mono text-[13px]">
                       <Link
@@ -180,10 +180,12 @@ export function Sessions() {
                         {shortId(s.id)}
                       </Link>
                     </TableCell>
-                    <TableCell className="font-mono text-[13px]">
-                      {s.worktree_ref}
+                    <TableCell className="max-w-48 font-mono text-[13px]">
+                      <CopyCell text={s.worktree_ref} />
                     </TableCell>
-                    <TableCell>{s.harness_name}</TableCell>
+                    <TableCell className="max-w-32">
+                      <CopyCell text={s.harness_name} />
+                    </TableCell>
                     <TableCell className="font-mono text-[13px]">
                       {sessionKind(s.initiator_command, s.session_type)}
                       {typeof s.metadata?.review_comments_fixed_at === "string" ? (

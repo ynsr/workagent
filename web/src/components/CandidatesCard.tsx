@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { useConfirmedRun, useCopyFeedback } from "@/components/RunActions"
+import { CopyCell } from "@/components/CopyCell"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { StartFormFields, buildStartArgs, startFlagList, useStartForm } from "@/components/StartForm"
 import { Label } from "@/components/ui/label"
@@ -242,12 +243,8 @@ export function CandidatesCard() {
             {scanned.map((wt) => (
               <li key={wt.path} className="flex items-center gap-2 px-3 py-2">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium" title={wt.branch}>
-                    {wt.branch}
-                  </p>
-                  <p className="truncate font-mono text-xs text-muted-foreground" title={wt.path}>
-                    {wt.key_guess} · {wt.repo} · {wt.path}
-                  </p>
+                  <CopyCell text={wt.branch} className="text-sm font-medium" />
+                  <CopyCell text={`${wt.key_guess} · ${wt.repo} · ${wt.path}`} className="font-mono text-xs text-muted-foreground" />
                 </div>
                 <Button
                   variant="ghost"

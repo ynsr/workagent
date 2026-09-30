@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils"
 import type { StatusTableActions, StatusTableSelection } from "@/components/StatusTable"
 
 import { RowActions } from "@/components/StatusActions"
+import { CopyCell } from "@/components/CopyCell"
 import { CommitsCell, ReviewsCell, formatAdded, matchesQuery } from "@/components/StatusCells"
 function RepoTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
@@ -286,30 +287,34 @@ export function StatusTable({
                             aria-label={`Select ${key}`}
                           />
                         </TableCell>
-                        <TableCell className="font-medium">
-                          <span className="flex items-center gap-2">
-                            <WorktreeKeyLink worktreeKey={key} entry={entry} />
-                            {invalid ? (
-                              <Badge variant="destructive" title="Recorded path is missing or not a live git worktree">
-                                invalid
-                              </Badge>
-                            ) : null}
-                          </span>
+                        <TableCell className="max-w-48 font-medium">
+                          <CopyCell text={key} className="font-mono text-[13px] font-semibold">
+                            {entry.issue_url ? (
+                              <a
+                                href={entry.issue_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="truncate underline-offset-2 hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {key}
+                              </a>
+                            ) : (
+                              key
+                            )}
+                          </CopyCell>
+                          {invalid ? (
+                            <Badge variant="destructive" title="Recorded path is missing or not a live git worktree">
+                              invalid
+                            </Badge>
+                          ) : null}
                         </TableCell>
-                        <TableCell
-                          className="max-w-52 truncate font-mono text-[13px]"
-                          title={entry.branch}
-                        >
-                          {entry.branch ?? "—"}
+                        <TableCell className="max-w-48 font-mono text-[13px]">
+                          <CopyCell text={entry.branch} />
                         </TableCell>
-                        <TableCell className="font-mono text-[13px]">
+                        <TableCell className="max-w-40 font-mono text-[13px]">
                           {entry.harness ? (
-                            <span
-                              className="text-muted-foreground"
-                              title="live harness (name, pid)"
-                            >
-                              {entry.harness}
-                            </span>
+                            <CopyCell text={entry.harness} title="live harness (name, pid)" />
                           ) : (
                             <span className="text-muted-foreground">—</span>
                           )}
@@ -366,10 +371,9 @@ export function StatusTable({
                         </TableCell>
                         {showWorktree ? (
                           <TableCell
-                            className="relative max-w-52 truncate pr-24 font-mono text-[13px]"
-                            title={entry.worktree}
+                            className="relative max-w-52 pr-24 font-mono text-[13px]"
                           >
-                            {entry.worktree ?? "—"}
+                            <CopyCell text={entry.worktree} />
                             <span className="pointer-events-none absolute inset-y-1 right-1 hidden items-center justify-end gap-0.5 rounded-md border bg-card/95 px-1 shadow-sm backdrop-blur transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:hover)]:flex [@media(hover:hover)]:opacity-0 [@media(hover:none)]:flex">
                               <RowActions
                                 worktreeKey={key}
@@ -388,7 +392,7 @@ export function StatusTable({
                       </TableRow>
                       <TableRow className="hover:bg-transparent">
                         <TableCell
-                          colSpan={showWorktree ? 9 : 8}
+                          colSpan={showWorktree ? 10 : 9}
                           className={detailOpen ? "py-1" : "border-0 !p-0"}
                         >
                           <DetailReveal open={detailOpen}>

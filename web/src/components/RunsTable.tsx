@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
+import { CopyCell } from "@/components/CopyCell"
 import { RunStateBadge } from "@/components/StateBadge"
 import { Card, CardContent } from "@/components/ui/card"
 import {
@@ -63,13 +64,19 @@ export function RunsTable({ rows }: { rows: RunsTableRow[] }) {
                     row.label
                   )}
                 </TableCell>
-                <TableCell>
-                  <span className="font-medium">{row.command}</span>{" "}
-                  <span className="font-mono text-[13px] text-muted-foreground">
-                    {argsText(row.args)}
-                  </span>
+                <TableCell className="max-w-64">
+                  <CopyCell text={`${row.command} ${argsText(row.args)}`.trim()} className="text-sm">
+                    <span className="truncate">
+                      <span className="font-medium">{row.command}</span>{" "}
+                      <span className="font-mono text-[13px] text-muted-foreground">
+                        {argsText(row.args)}
+                      </span>
+                    </span>
+                  </CopyCell>
                 </TableCell>
-                <TableCell className="font-mono text-[13px]">{row.target}</TableCell>
+                <TableCell className="max-w-48 font-mono text-[13px]">
+                  <CopyCell text={row.target} />
+                </TableCell>
                 <TableCell>
                   {row.state ? <RunStateBadge state={row.state} /> : "—"}
                 </TableCell>

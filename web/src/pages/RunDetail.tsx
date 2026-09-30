@@ -107,9 +107,11 @@ function RunHarnessCommandAction({ lines }: { lines: RunLine[] }) {
     // The CLI preview embeds the prompt as one shlex-quoted argv element;
     // prompts contain newlines, so run.append's splitlines() breaks the
     // logged command across lines. Rejoin continuation lines (indented or
-    // quote-unbalanced) until quotes balance.
+    // quote-unbalanced) until quotes balance. Scan from the end: the last
+    // harness command is the runnable one — earlier matches may be stale
+    // previews while intermediate output (e.g. "working...") follows.
     let start = -1
-    for (let i = 0; i < lines.length; i++) {
+    for (let i = lines.length - 1; i >= 0; i--) {
       if (/harness command:\s*\S/.test(lines[i]?.text ?? "")) {
         start = i
         break
@@ -128,7 +130,8 @@ function RunHarnessCommandAction({ lines }: { lines: RunLine[] }) {
     <Button
       variant="outline"
       size="sm"
-      title={cmd || "Copy harness command"}
+      title={cmd || "Copy harness command (nothing to copy yet)"}
+      disabled={!cmd}
       onClick={() => {
         copyToClipboard(cmd)
           .then(() => toast.success("Harness command copied"))
