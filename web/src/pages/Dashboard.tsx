@@ -404,7 +404,7 @@ export function Dashboard() {
     : 0
 
   return (
-    <div>
+    <div className="min-w-0">
       <PageHeader
         title="Dashboard"
         description="Linked issue ↔ PR ↔ worktrees. Refreshes every 15 s while the tab is visible."

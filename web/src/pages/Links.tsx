@@ -139,7 +139,7 @@ export function Links() {
   }
 
   return (
-    <div className="grid gap-6">
+    <div className="grid min-w-0 gap-6">
       <PageHeader
         title="Links"
         description="Tracker ↔ repo mappings, linked worktrees, and registering existing worktrees."

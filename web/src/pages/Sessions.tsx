@@ -183,8 +183,8 @@ export function Sessions() {
                     <TableCell className="max-w-48 font-mono text-[13px]">
                       <CopyCell text={s.worktree_ref} />
                     </TableCell>
-                    <TableCell className="max-w-32">
-                      <CopyCell text={s.harness_name} />
+                    <TableCell className="max-w-32 truncate" title={s.harness_name}>
+                      {s.harness_name}
                     </TableCell>
                     <TableCell className="font-mono text-[13px]">
                       {sessionKind(s.initiator_command, s.session_type)}

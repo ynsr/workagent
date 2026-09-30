@@ -40,7 +40,7 @@ export function CopyCell({
             .then(() => toast.success("Copied to clipboard"))
             .catch((err: unknown) => toast.error(errorText(err)))
         }}
-        className="absolute left-0 hidden size-6 items-center justify-center rounded border bg-card/95 shadow-sm backdrop-blur group-hover/copy:flex focus-visible:flex disabled:cursor-not-allowed disabled:opacity-40 [@media(hover:none)]:flex"
+        className="absolute left-0 hidden size-6 items-center justify-center rounded border bg-card/95 shadow-sm backdrop-blur transition group-hover/copy:flex focus-visible:flex disabled:cursor-not-allowed disabled:opacity-40 hover:bg-accent hover:text-accent-foreground active:scale-90 [@media(hover:none)]:flex"
       >
         <Copy aria-hidden className="size-3.5" />
       </button>

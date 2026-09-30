@@ -169,7 +169,7 @@ export function StatusTable({
   }
 
   return (
-    <div className={className}>
+    <div className={cn("min-w-0", className)}>
       {repoTabs && (repoTabs.tabs.names.length > 0 || repoTabs.tabs.other > 0) ? (
         <div role="group" aria-label="Filter by repo" className="mb-3 flex flex-wrap gap-1.5">
           <RepoTab active={!repoFilter} label={`All repos (${repoTabs.tabs.names.reduce((n, name) => n + (repoTabs.tabs.counts.get(name) ?? 0), 0) + repoTabs.tabs.other})`} onClick={() => repoTabs.setRepo("")} />
@@ -239,7 +239,7 @@ export function StatusTable({
       ) : (
         <>
           {/* Desktop table */}
-          <div className="hidden sm:block">
+          <div className="hidden min-w-0 sm:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -288,21 +288,20 @@ export function StatusTable({
                           />
                         </TableCell>
                         <TableCell className="max-w-48 font-medium">
-                          <CopyCell text={key} className="font-mono text-[13px] font-semibold">
-                            {entry.issue_url ? (
-                              <a
-                                href={entry.issue_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="truncate underline-offset-2 hover:underline"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                {key}
-                              </a>
-                            ) : (
-                              key
-                            )}
-                          </CopyCell>
+                          {entry.issue_url ? (
+                            <a
+                              href={entry.issue_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="block truncate font-mono text-[13px] font-semibold underline-offset-2 hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                              title={key}
+                            >
+                              {key}
+                            </a>
+                          ) : (
+                            <CopyCell text={key} className="font-mono text-[13px] font-semibold" />
+                          )}
                           {invalid ? (
                             <Badge variant="destructive" title="Recorded path is missing or not a live git worktree">
                               invalid
@@ -322,7 +321,7 @@ export function StatusTable({
                         <TableCell>
                           <CommitsCell entry={entry} />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="max-w-64">
                           <div className="flex min-w-0 items-center gap-2">
                             <PrBadge pr={entry.pr_detail ?? null} />
                             {prUrl(entry) ? (
@@ -330,13 +329,13 @@ export function StatusTable({
                                 href={prUrl(entry)}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="truncate text-muted-foreground underline-offset-2 hover:underline"
+                                className="min-w-0 flex-1 truncate text-muted-foreground underline-offset-2 hover:underline"
                                 title={`${entry.pr_detail ? entry.pr_detail.title + "\n" : ""}${prUrl(entry)}`}
                               >
                                 {entry.pr_detail ? entry.pr_detail.title : prLabel(prUrl(entry)) || entry.pr || "—"}
                               </a>
                             ) : (
-                              <span className="truncate text-muted-foreground" title={entry.pr}>
+                              <span className="min-w-0 flex-1 truncate text-muted-foreground" title={entry.pr}>
                                 {entry.pr_detail ? entry.pr_detail.title : entry.pr || "—"}
                               </span>
                             )}
