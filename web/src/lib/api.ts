@@ -37,6 +37,8 @@ export interface WorktreeEntry {
   pr?: string
   /** CI pipeline status: success | failure | running | not_started; absent when unknown. */
   ci?: string
+  /** Latest CI job page (e.g. GitLab `.../-/jobs/194493`, GitHub check details URL); absent when unknown. */
+  ci_url?: string
   /** Review stats display "R|U|R" (done|unresolved|resolved); "-" when no PR/lookup failed. */
   reviews?: string
   /** First-seen stamp (ISO-8601); older entries may lack it. */
@@ -224,20 +226,6 @@ export function prUrl(entry: Pick<WorktreeEntry, "pr" | "pr_detail">): string {
   if (u.startsWith("http")) return u
   const raw = entry.pr ?? ""
   return raw.startsWith("http") ? raw : ""
-}
-
-/**
- * CI page for a PR/MR URL: GitHub `…/pull/N/checks`, GitLab `…/-/pipelines`
- * (works for both `…/-/merge_requests/N` and short `…/merge_requests/N`
- * forms). Empty string when the URL is not a recognizable PR/MR link.
- */
-export function checksUrl(pr: string | undefined): string {
-  if (!pr) return ""
-  let m = /^(https?:\/\/[^/]+\/(.+?)\/pull\/\d+)/.exec(pr)
-  if (m) return `${m[1]}/checks`
-  m = /^(https?:\/\/[^/]+\/.+?)(?:\/-)?\/merge_requests\/\d+/.exec(pr)
-  if (m) return `${m[1]}/-/pipelines`
-  return ""
 }
 
 export interface CreateRunInput {

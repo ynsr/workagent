@@ -52,10 +52,12 @@ def test_pr_cache_rewrite_preserves_ci(isolated_config):
     pr = {"number": 1, "state": "open", "title": "T",
           "url": "https://github.com/o/r/pull/1"}
     store.cache_pr_status("feat/x", pr)
-    store.cache_ci_status("feat/x", "success", sha="abc")
+    store.cache_ci_status("feat/x", "success", sha="abc",
+                              ci_url="https://git.example.com/g/p/-/jobs/194493")
     store.cache_pr_status("feat/x", pr)
     raw = store.load_pr_cache()["feat/x"]
     assert raw["ci"] == "success" and raw["ci_sha"] == "abc"
+    assert raw["ci_url"] == "https://git.example.com/g/p/-/jobs/194493"
     assert raw["pr"] == pr
 
 

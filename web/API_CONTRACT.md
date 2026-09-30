@@ -26,6 +26,7 @@ Map of worktree key → entry (same shape as `workagent status --json`):
     "repo": "/home/x/projectx", "issue_url": "https://…/browse/IPG-932",
     "commits": "0|1", "pr": "…",
     "ci": "success",
+    "ci_url": "https://…/-/jobs/194493",
     "added_at": "2026-09-20T10:00:00+00:00",
     "wt_valid": true,
     "commits_detail": {"behind": 0, "ahead": 1},
@@ -39,7 +40,9 @@ Map of worktree key → entry (same shape as `workagent status --json`):
 `pr_detail` is `null` when no open/known PR. `ci` is the latest CI
 pipeline status for the PR — `success` | `failure` | `running` |
 `not_started` — or `null` when there is no PR or the lookup failed
-(cached 10 min while the branch tip is unchanged). `reviews` is the
+(cached 10 min while the branch tip is unchanged). `ci_url` is the
+latest CI job page (GitLab `.../-/jobs/<id>`, GitHub check details URL)
+or `""` when unknown — the CI badge links there. `reviews` is the
 display string `"R|U|R"` (done reviews | unresolved | resolved);
 `reviews_detail` is `{"reviews", "unresolved", "resolved"}` or
 `null` when there is no PR or the lookup failed (same 10-min/tip cache).

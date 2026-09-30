@@ -340,6 +340,7 @@ def pick_branch_pr(prs: list[dict]) -> dict | None:
 from .refs_ci import (  # noqa: F401,E402
     _ci_gh,
     _ci_glab,
+    fetch_ci,
     fetch_ci_status,
 )
 

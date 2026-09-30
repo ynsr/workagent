@@ -213,22 +213,23 @@ def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
     and ride in ``reviews``/``reviews_detail``.
     """
     cells = _pr_cells(entry, refresh_pr)
-    cells["ci"] = _ci_cell(entry, cells, refresh_pr)
+    cells["ci"], cells["ci_url"] = _ci_cell(entry, cells, refresh_pr)
     cells["reviews_detail"] = _reviews_cell(entry, cells, refresh_pr)
     cells["reviews"] = _fmt_reviews(cells["reviews_detail"])
     return cells
 
 
-def _ci_cell(entry: dict, cells: dict, refresh_pr: bool) -> str | None:
-    """CI pipeline status for the resolved PR: success|failure|running|not_started.
+def _ci_cell(entry: dict, cells: dict, refresh_pr: bool) -> tuple[str | None, str]:
+    """(status, job_url) for the resolved PR's latest CI pipeline.
 
-    None when there is no PR (no url) or the lookup failed (soft failure —
-    fetch_ci_status warns on stderr and returns None; nothing is cached so
-    the next run retries).
+    Status is success|failure|running|not_started; None when there is no PR
+    (no url) or the lookup failed (soft failure — fetch_ci warns on stderr
+    and returns None; nothing is cached so the next run retries). job_url is
+    the latest job's page ("" when unknown).
     """
     pr = cells.get("pr_data")
     if not pr or not pr.get("url"):
-        return None
+        return None, ""
     branch = entry.get("branch", "")
     cached = store.load_pr_cache().get(branch) if branch else None
     branch_tip = cells.get("_tip")
@@ -237,14 +238,14 @@ def _ci_cell(entry: dict, cells: dict, refresh_pr: bool) -> str | None:
         branch_tip = _patched("_git_tip")(entry["worktree"], "HEAD")
     if not refresh_pr and cached and _ci_fresh(cached) \
             and cached.get("ci_sha") == branch_tip:
-        return cached.get("ci")
+        return cached.get("ci"), cached.get("ci_url") or ""
     url = pr["url"]
     tool = ((cached or {}).get("tool")
             or ("gh" if "github.com" in url else "glab"))
-    ci = refs.fetch_ci_status(tool, url, entry.get("repo", ""))
+    ci, ci_url = refs.fetch_ci(tool, url, entry.get("repo", ""))
     if branch:
-        store.cache_ci_status(branch, ci, sha=branch_tip or "")
-    return ci
+        store.cache_ci_status(branch, ci, sha=branch_tip or "", ci_url=ci_url)
+    return ci, ci_url
 
 def _reviews_fresh(cached: dict) -> bool:
     """Cached review-comment stats still valid: checked within _CI_TTL_SECONDS."""
@@ -303,7 +304,8 @@ def _session_rows(links: dict, show_worktree: bool, refresh: bool
         row = {"key": k, "branch": v.get("branch", "?"),
                "harness": _harness_cell(k, v.get("worktree", "")),
                "commits": cells["commits"], "pr": cells["pr"],
-               "ci": cells["ci"] or "", "reviews": cells["reviews"],
+               "ci": cells["ci"] or "", "ci_url": cells["ci_url"] or "",
+               "reviews": cells["reviews"],
                "_pr_state": (cells["pr_data"] or {}).get("state", "")}
         if show_worktree:
             row["worktree"] = v.get("worktree", "?")
@@ -335,7 +337,8 @@ def _enrich_entry(key: str, entry: dict, refresh: bool) -> dict:
     cells = _status_cells(entry, refresh)
     return {**entry, "harness": _harness_cell(key, entry.get("worktree", "")),
             "commits": cells["commits"], "pr": cells["pr"],
-            "ci": cells["ci"], "reviews": cells["reviews"],
+            "ci": cells["ci"], "ci_url": cells["ci_url"],
+            "reviews": cells["reviews"],
             "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),
             "commits_detail": cells["ab"], "pr_detail": cells["pr_data"],
             "reviews_detail": cells["reviews_detail"]}
@@ -347,7 +350,8 @@ def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
               "commits": cells["commits"],
               "pr": _fmt_pr(cells["pr_data"]), "commits_detail": cells["ab"],
               "pr_detail": cells["pr_data"], "base_branch": cells["base_branch"],
-              "ci": cells["ci"], "reviews": cells["reviews"],
+              "ci": cells["ci"], "ci_url": cells["ci_url"],
+              "reviews": cells["reviews"],
               "reviews_detail": cells["reviews_detail"],
               "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),
               "issue_url": refs.issue_url(key, entry.get("issue"))}

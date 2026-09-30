@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom"
 import { Search, XCircle } from "lucide-react"
 import type { Repo, WorktreeMap } from "@/lib/api"
 import { repoKeyForItem } from "@/lib/useRepoTabs"
-import { checksUrl, prLabel, prUrl } from "@/lib/api"
+import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -351,7 +351,7 @@ export function StatusTable({
                           </div>
                         </TableCell>
                         <TableCell className="text-center">
-                          <CiBadge ci={entry.ci} ciUrl={checksUrl(prUrl(entry)) || undefined} />
+                          <CiBadge ci={entry.ci} ciUrl={entry.ci_url} />
                         </TableCell>
                         <TableCell className="text-center">
                           <ReviewsCell entry={entry} />
@@ -366,10 +366,6 @@ export function StatusTable({
                               worktreeKey={key}
                               entry={entry}
                               actions={actions}
-                              detailOpen={detailOpen}
-                              onToggleDetail={() =>
-                                setExpanded((cur) => (cur === key ? null : key))
-                              }
                               overlay
                             />
                           </span>
@@ -389,6 +385,8 @@ export function StatusTable({
                                 onSave={() => undefined}
                                 onClose={() => setExpanded(null)}
                                 onOpenWorktree={actions.onOpenWorktree}
+                                onOpenRun={actions.onOpenRun}
+                                onOpenSessions={actions.onOpenSessions}
                                 networkExposed={networkExposed}
                               />
                             </div>
@@ -460,7 +458,7 @@ export function StatusTable({
                     <div className="flex items-baseline gap-2">
                       <dt className="w-16 shrink-0 text-xs text-muted-foreground">CI</dt>
                       <dd>
-                        <CiBadge ci={entry.ci} ciUrl={checksUrl(prUrl(entry)) || undefined} />
+                        <CiBadge ci={entry.ci} ciUrl={entry.ci_url} />
                       </dd>
                     </div>
                     <div className="flex items-baseline gap-2">
@@ -484,8 +482,6 @@ export function StatusTable({
                       worktreeKey={key}
                       entry={entry}
                       actions={actions}
-                      detailOpen={detailOpen}
-                      onToggleDetail={() => setExpanded((cur) => (cur === key ? null : key))}
                     />
                   </div>
                   <div className="mt-1">
@@ -498,6 +494,8 @@ export function StatusTable({
                           onSave={() => undefined}
                           onClose={() => setExpanded(null)}
                           onOpenWorktree={actions.onOpenWorktree}
+                          onOpenRun={actions.onOpenRun}
+                          onOpenSessions={actions.onOpenSessions}
                           networkExposed={networkExposed}
                         />
                       </div>

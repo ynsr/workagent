@@ -97,9 +97,10 @@ const CI_TOOLTIPS: Record<CiState, string> = {
 }
 
 /**
- * CI pipeline badge. When `ciUrl` is given (checks page of the PR/MR) the
- * badge renders as a link to the CI page; clicks stop table-row toggling.
- * Tooltip shows the status plus the CI page link (or "No CI status").
+ * CI pipeline badge. When `ciUrl` is given (the latest CI job page from the
+ * backend, e.g. GitLab `.../-/jobs/194493`) the badge links to that job;
+ * clicks stop table-row toggling. Tooltip shows the status plus the job
+ * link, or "No CI status" when there is no CI status.
  */
 export function CiBadge({ ci, ciUrl }: { ci?: string | null; ciUrl?: string | null }) {
   const state: CiState =

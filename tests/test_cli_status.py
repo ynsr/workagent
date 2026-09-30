@@ -211,13 +211,14 @@ def test_status_cells_ci_cache_reuse(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: tips.get(ref))
     monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     fetches = []
-    monkeypatch.setattr(cli.refs, "fetch_ci_status",
-                        lambda tool, url, cwd=None: fetches.append(url)
-                        or "success")
+    monkeypatch.setattr(cli.refs, "fetch_ci",
+                        lambda tool, url, cwd=None: (fetches.append(url)
+                        or ("success", "https://ci.example.com/jobs/7")))
     monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
                         lambda tool, url, cwd=None: {"reviews": 0, "unresolved": 0, "resolved": 0})
     c1 = cli._status_cells(entry)
     assert c1["ci"] == "success"
+    assert c1["ci_url"] == "https://ci.example.com/jobs/7"
     assert fetches == ["https://x/mr/9"]
     # same tip, fresh checked_at -> served from cache, no second fetch
     c2 = cli._status_cells(entry)
@@ -254,9 +255,9 @@ def test_status_cells_ci_reuse_stale_ttl(isolated_config, tmp_path,
     monkeypatch.setattr(cli, "_git_tip",
                         lambda wt, ref: "a1" if ref == "HEAD" else None)
     fetches = []
-    monkeypatch.setattr(cli.refs, "fetch_ci_status",
-                        lambda tool, url, cwd=None: fetches.append(url)
-                        or "failure")
+    monkeypatch.setattr(cli.refs, "fetch_ci",
+                        lambda tool, url, cwd=None: (fetches.append(url)
+                        or ("failure", "https://ci.example.com/jobs/8")))
     monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
                         lambda tool, url, cwd=None: {"reviews": 0, "unresolved": 0, "resolved": 0})
     assert cli._status_cells(entry)["ci"] == "failure"
@@ -267,6 +268,7 @@ def test_status_cells_ci_none_without_pr(isolated_config):
     cells = cli._status_cells({"worktree": "", "branch": "feat/x",
                                "repo": "/repo"})
     assert cells["ci"] is None
+    assert cells["ci_url"] == ""
 
 
 def test_status_ci_column_symbols_json_csv(isolated_config, tmp_path,
@@ -284,8 +286,8 @@ def test_status_ci_column_symbols_json_csv(isolated_config, tmp_path,
     monkeypatch.setattr(cli.refs, "fetch_pr_list_for_branch",
                         lambda tool, branch, cwd=None:
                         [] if branch == "no-pr" else pr9)
-    monkeypatch.setattr(cli.refs, "fetch_ci_status",
-                        lambda tool, url, cwd=None: "failure")
+    monkeypatch.setattr(cli.refs, "fetch_ci",
+                        lambda tool, url, cwd=None: ("failure", "https://ci.example.com/jobs/9"))
     monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
                         lambda tool, url, cwd=None: {"reviews": 1, "unresolved": 0, "resolved": 1})
     rows, columns = cli._session_rows(store.load_links(), False, False)
@@ -331,7 +333,7 @@ def test_status_reviews_column_and_force_all(isolated_config, tmp_path, monkeypa
                               sha="a1")
     monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: "a1" if ref == "HEAD" else None)
     monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
-    monkeypatch.setattr(cli.refs, "fetch_ci_status", lambda tool, url, cwd=None: None)
+    monkeypatch.setattr(cli.refs, "fetch_ci", lambda tool, url, cwd=None: (None, ""))
     monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
                         lambda tool, url, cwd=None: {"reviews": 0, "unresolved": 0, "resolved": 0})
     rows, columns = cli._session_rows(_store.load_links(), False, False)
@@ -359,8 +361,8 @@ def test_status_json_detail_carries_ci(isolated_config, tmp_path, monkeypatch):
                              "author": "a", "created_at": "2026-09-15",
                              "url": "https://x/mr/9",
                              "target_branch": "main"}])
-    monkeypatch.setattr(cli.refs, "fetch_ci_status",
-                        lambda tool, url, cwd=None: "running")
+    monkeypatch.setattr(cli.refs, "fetch_ci",
+                        lambda tool, url, cwd=None: ("running", ""))
     monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
                         lambda tool, url, cwd=None: {"reviews": 1, "unresolved": 1, "resolved": 0})
     data = json.loads(_invoke("status", "IPG-929", "--json").stdout)

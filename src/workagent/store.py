@@ -327,7 +327,7 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
         cache = load_pr_cache()
         prev = cache.get(branch) or {}
         merged = dict(entry)
-        for k in ("ci", "ci_checked_at", "ci_sha",
+        for k in ("ci", "ci_checked_at", "ci_sha", "ci_url",
                   "reviews", "unresolved", "resolved",
                   "reviews_checked_at", "reviews_sha"):
             if k in prev and k not in merged:
@@ -342,7 +342,7 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
             cache = _read_json(path, {})
             prev = cache.get(branch) or {}
             merged = dict(entry)
-            for k in ("ci", "ci_checked_at", "ci_sha",
+            for k in ("ci", "ci_checked_at", "ci_sha", "ci_url",
                       "reviews", "unresolved", "resolved",
                       "reviews_checked_at", "reviews_sha"):
                 if k in prev and k not in merged:
@@ -359,8 +359,9 @@ def get_cached_pr_status(branch: str) -> dict | None:
 def get_cached_pr_tool(branch: str) -> str | None:
     return load_pr_cache().get(branch, {}).get("tool")
 
-def cache_ci_status(branch: str, ci: str | None, sha: str | None = None) -> None:
-    """Record CI pipeline status on a branch's pr_cache entry, in place.
+def cache_ci_status(branch: str, ci: str | None, sha: str | None = None,
+                    ci_url: str | None = None) -> None:
+    """Record CI pipeline status (+ latest job URL) on a branch's entry.
 
     Reads-modifies the branch entry under the cache lock so the PR fields
     written by ``cache_pr_status`` survive. A ``None`` ci (lookup failed)
@@ -375,6 +376,8 @@ def cache_ci_status(branch: str, ci: str | None, sha: str | None = None) -> None
         entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
         if sha:
             entry["ci_sha"] = sha
+        if ci_url is not None:
+            entry["ci_url"] = ci_url
         _write_pr_cache(cache)
         return
     path = config_dir() / "pr_cache.json"
@@ -387,6 +390,8 @@ def cache_ci_status(branch: str, ci: str | None, sha: str | None = None) -> None
             entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
             if sha:
                 entry["ci_sha"] = sha
+            if ci_url is not None:
+                entry["ci_url"] = ci_url
             _atomic_replace(path, cache)
         _locked(lock, _update)
 

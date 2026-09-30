@@ -1,8 +1,5 @@
 import type { ReactNode } from "react"
-import { Copy, GitPullRequest, History, Info, Play, RefreshCw, Rocket, Trash2, Wrench } from "lucide-react"
-import { toast } from "sonner"
-import { copyToClipboard } from "@/lib/format"
-import { errorText } from "@/components/StatusFeedback"
+import { GitPullRequest, History, Play, RefreshCw, Rocket, Trash2, Wrench } from "lucide-react"
 import type { WorktreeMap } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -43,27 +40,19 @@ export function RowActions({
   worktreeKey,
   entry,
   actions,
-  detailOpen,
-  onToggleDetail,
   overlay = false,
 }: {
   worktreeKey: string
   entry: WorktreeMap[string]
   actions: StatusTableActions
-  detailOpen: boolean
-  onToggleDetail: () => void
+  detailOpen?: boolean
+  onToggleDetail?: () => void
   networkExposed?: boolean
   overlay?: boolean
 }) {
   const invalid = entry.wt_valid === false
   return (
     <div className={overlay ? "flex items-center justify-end gap-0.5" : "flex items-center justify-end gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-within:opacity-100 [@media(hover:hover)]:hover:opacity-100"}>
-      <ActionIcon
-        title={detailOpen ? `Hide details of ${worktreeKey}` : `Details of ${worktreeKey}`}
-        onClick={onToggleDetail}
-      >
-        <Info aria-hidden />
-      </ActionIcon>
       {actions.onSync ? (
         <ActionIcon title={`Sync ${worktreeKey}`} onClick={() => actions.onSync?.(worktreeKey)}>
           <RefreshCw aria-hidden />
@@ -102,17 +91,6 @@ export function RowActions({
           <Play aria-hidden />
         </ActionIcon>
       ) : null}
-      <ActionIcon
-        title={entry.worktree ? `Copy worktree path ${entry.worktree}` : "Nothing to copy"}
-        onClick={() => {
-          void copyToClipboard(entry.worktree ?? "")
-            .then(() => toast.success("Worktree path copied"))
-            .catch((err: unknown) => toast.error(errorText(err)))
-        }}
-        disabled={!entry.worktree?.trim()}
-      >
-        <Copy aria-hidden />
-      </ActionIcon>
       <ActionIcon
         title={`Open runs for ${worktreeKey}`}
         onClick={() => actions.onOpenRun(worktreeKey)}

@@ -1,8 +1,8 @@
 import { useState } from "react"
 import { toast } from "sonner"
-import { Copy, FolderOpen } from "lucide-react"
+import { Copy, FolderOpen, History, Rocket } from "lucide-react"
 import type { WorktreeEntry } from "@/lib/api"
-import { checksUrl, prLabel, prUrl } from "@/lib/api"
+import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -39,6 +39,8 @@ export function WorktreeDetail({
   onSave,
   onClose,
   onOpenWorktree,
+  onOpenRun,
+  onOpenSessions,
   networkExposed = false,
 }: {
   entry: WorktreeEntry
@@ -47,6 +49,8 @@ export function WorktreeDetail({
   onSave: (draft: WorktreeDetailDraft) => void
   onClose: () => void
   onOpenWorktree?: (key: string) => void
+  onOpenRun?: (key: string) => void
+  onOpenSessions?: (key: string) => void
   networkExposed?: boolean
 }) {
   const [draft, setDraft] = useState<WorktreeDetailDraft>(() => ({
@@ -207,7 +211,7 @@ export function WorktreeDetail({
           <div className="flex items-baseline gap-2">
             <dt className="w-16 shrink-0 text-xs text-muted-foreground">CI</dt>
             <dd>
-              <CiBadge ci={entry.ci} ciUrl={checksUrl(prUrl(entry)) || undefined} />
+              <CiBadge ci={entry.ci} ciUrl={entry.ci_url} />
             </dd>
           </div>
           {entry.reviews_detail ? (
@@ -224,7 +228,29 @@ export function WorktreeDetail({
           ) : null}
         </dl>
       </CardContent>
-      <CardFooter className="justify-end">
+      <CardFooter className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {worktreeKey && onOpenRun ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenRun(worktreeKey)}
+            >
+              <Rocket aria-hidden className="size-4" />
+              Open runs
+            </Button>
+          ) : null}
+          {worktreeKey && onOpenSessions ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenSessions(worktreeKey)}
+            >
+              <History aria-hidden className="size-4" />
+              Worktree sessions
+            </Button>
+          ) : null}
+        </div>
         <Button variant="outline" onClick={onClose}>
           Close
         </Button>

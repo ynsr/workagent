@@ -190,32 +190,40 @@ def test_fetch_ci_gh_rollup(monkeypatch):
     def fake_run(cmd, *args, **kw):
         calls.append(args)
         return json.dumps({"statusCheckRollup": [
-            {"conclusion": "SUCCESS"}, {"conclusion": "SUCCESS"}]})
+            {"conclusion": "SUCCESS", "detailsUrl": "https://github.com/o/r/actions/runs/1"},
+            {"conclusion": "SUCCESS", "detailsUrl": "https://github.com/o/r/actions/runs/2"}]})
 
     monkeypatch.setattr(refs, "run_cmd", fake_run)
+    assert refs.fetch_ci(
+        "gh", "https://github.com/o/r/pull/9", "/repo") == (
+            "success", "https://github.com/o/r/actions/runs/1")
     assert refs.fetch_ci_status(
         "gh", "https://github.com/o/r/pull/9", "/repo") == "success"
     assert calls == [("pr", "view", "https://github.com/o/r/pull/9",
-                      "--json", "statusCheckRollup")]
+                      "--json", "statusCheckRollup")] * 2
     monkeypatch.setattr(
         refs, "run_cmd",
         lambda *a, **k: json.dumps({"statusCheckRollup": [
-            {"conclusion": "FAILURE"}]}))
-    assert refs.fetch_ci_status(
-        "gh", "https://github.com/o/r/pull/9", "/repo") == "failure"
+            {"conclusion": "FAILURE", "detailsUrl": "https://github.com/o/r/actions/runs/9"}]}))
+    assert refs.fetch_ci(
+        "gh", "https://github.com/o/r/pull/9", "/repo") == (
+            "failure", "https://github.com/o/r/actions/runs/9")
 
 
 def test_fetch_ci_gh_rollup_precedence(monkeypatch):
     # any failure beats any running beats success
     monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: json.dumps(
         {"statusCheckRollup": [
-            {"conclusion": "SUCCESS"}, {"conclusion": "IN_PROGRESS"},
-            {"conclusion": "ACTION_REQUIRED"}]}))
-    assert refs.fetch_ci_status(
-        "gh", "https://github.com/o/r/pull/9", "/repo") == "failure"
+            {"conclusion": "SUCCESS", "detailsUrl": "https://github.com/o/r/actions/runs/1"},
+            {"conclusion": "IN_PROGRESS", "detailsUrl": "https://github.com/o/r/actions/runs/2"},
+            {"conclusion": "ACTION_REQUIRED", "detailsUrl": "https://github.com/o/r/actions/runs/3"}]}))
+    assert refs.fetch_ci(
+        "gh", "https://github.com/o/r/pull/9", "/repo") == (
+            "failure", "https://github.com/o/r/actions/runs/3")
     monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: json.dumps(
         {"statusCheckRollup": [
-            {"conclusion": "SUCCESS"}, {"conclusion": "QUEUED"}]}))
+            {"conclusion": "SUCCESS", "detailsUrl": "https://github.com/o/r/actions/runs/1"},
+            {"conclusion": "QUEUED", "detailsUrl": "https://github.com/o/r/actions/runs/2"}]}))
     assert refs.fetch_ci_status(
         "gh", "https://github.com/o/r/pull/9", "/repo") == "running"
     # empty rollup -> not_started
@@ -230,15 +238,21 @@ def test_fetch_ci_glab_pipeline(monkeypatch):
 
     def fake_run(*args, **kw):
         calls.append(args)
+        if len(args) > 2 and "/jobs" in args[2]:
+            return json.dumps([{"id": 10, "web_url": "https://git.jibit.cloud/g/p/-/jobs/10"},
+                               {"id": 11, "web_url": "https://git.jibit.cloud/g/p/-/jobs/11"}])
         return json.dumps([{"id": 1, "status": "failed"},
                            {"id": 2, "status": "success"}])
 
     monkeypatch.setattr(refs, "run_cmd", fake_run)
-    assert refs.fetch_ci_status(
+    assert refs.fetch_ci(
         "glab", "https://git.jibit.cloud/g/p/-/merge_requests/7", "/repo"
-    ) == "success"
+    ) == ("success", "https://git.jibit.cloud/g/p/-/jobs/11")
     assert calls == [("glab", "api",
                       "projects/g%2Fp/merge_requests/7/pipelines",
+                      "--hostname", "git.jibit.cloud"),
+                     ("glab", "api",
+                      "projects/g%2Fp/pipelines/2/jobs",
                       "--hostname", "git.jibit.cloud")]
 
 
@@ -249,24 +263,31 @@ def test_fetch_ci_glab_hostname_retry(monkeypatch):
         calls.append(args)
         if "--hostname" in args:
             raise HarnessError("unknown flag")
+        if len(args) > 1 and "/jobs" in args[1]:
+            return json.dumps([{"id": 50, "web_url": "https://git.example.com/g/p/-/jobs/50"}])
         return json.dumps([{"id": 5, "status": "running"}])
 
     monkeypatch.setattr(refs, "run_cmd", fake_run)
-    assert refs.fetch_ci_status(
-        "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo"
-    ) == "running"
-    assert len(calls) == 2
+    got = refs.fetch_ci(
+        "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo")
+    assert got == ("running", "https://git.example.com/g/p/-/jobs/50"), got
+    assert len(calls) == 4, calls
 
 
 def test_fetch_ci_glab_status_map(monkeypatch):
     for raw, want in (("canceled", "failure"), ("skipped", "not_started"),
                       ("pending", "running")):
         def fake_run(cmd, *args, r=raw, **kw):
+            if len(args) > 1 and "/jobs" in args[1]:
+                return json.dumps([{"id": 60, "web_url": "https://git.example.com/g/p/-/jobs/60"}])
             return json.dumps([{"id": 1, "status": r}])
         monkeypatch.setattr(refs, "run_cmd", fake_run)
-        assert refs.fetch_ci_status(
-            "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo"
-        ) == want
+        got = refs.fetch_ci(
+            "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo")
+        assert got[0] == want
+        # only a real (non-not_started) pipeline resolves a job URL
+        assert got[1] == ("" if want == "not_started"
+                          else "https://git.example.com/g/p/-/jobs/60")
 
 
 def test_ci_fetch_failure_is_soft(monkeypatch):
@@ -276,9 +297,9 @@ def test_ci_fetch_failure_is_soft(monkeypatch):
     monkeypatch.setattr(refs, "run_cmd", boom)
     assert refs.fetch_ci_status(
         "gh", "https://github.com/o/r/pull/9", "/repo") is None
-    assert refs.fetch_ci_status(
+    assert refs.fetch_ci(
         "glab", "https://git.jibit.cloud/g/p/-/merge_requests/7", "/repo"
-    ) is None
+    ) == (None, "")
     # unrecognized URL also degrades to None, no raise
     assert refs.fetch_ci_status(
         "glab", "https://example.com/bogus", "/repo") is None

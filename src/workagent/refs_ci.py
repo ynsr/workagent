@@ -23,7 +23,8 @@ _GLAB_RUNNING = {"running", "pending", "created", "waiting_for_resource",
                  "preparing"}
 
 
-def _ci_gh(pr_url: str, cwd: str | None) -> str:
+def _ci_gh(pr_url: str, cwd: str | None) -> tuple[str, str]:
+    """(status, url): url is the worst check's details page (latest CI job)."""
     out = run_cmd("gh", "pr", "view", pr_url, "--json", "statusCheckRollup",
                   cwd=cwd)
     try:
@@ -31,6 +32,7 @@ def _ci_gh(pr_url: str, cwd: str | None) -> str:
     except json.JSONDecodeError:
         raise HarnessError(f"cannot parse gh output for {pr_url}")
     worst = "not_started"
+    worst_url = ""
     for check in rollup:
         concl = (check.get("conclusion") or "").upper()
         if concl in _GH_FAILURE:
@@ -43,41 +45,60 @@ def _ci_gh(pr_url: str, cwd: str | None) -> str:
             state = "not_started"
         if _CI_RANK[state] > _CI_RANK[worst]:
             worst = state
-    return worst
+            worst_url = check.get("detailsUrl") or check.get("targetUrl") or ""
+    return worst, worst_url
 
 
-def _ci_glab(pr_url: str, cwd: str | None) -> str:
+def _api_glab(api: str, host: str, cwd: str | None) -> str:
+    """glab api with --hostname, falling back to no-hostname on error."""
+    try:
+        return run_cmd("glab", "api", api, "--hostname", host, cwd=cwd)
+    except HarnessError:
+        return run_cmd("glab", "api", api, cwd=cwd)
+
+
+def _ci_glab(pr_url: str, cwd: str | None) -> tuple[str, str]:
+    """(status, url): url is the latest job's page (e.g. .../-/jobs/194493)."""
     m = _GITLAB_MR.match(pr_url or "")
     if not m:
         raise HarnessError(f"not a GitLab MR URL: {pr_url}")
     host, path, iid = m.group(1), m.group(2), m.group(3)
     api = f"projects/{quote(path, safe='')}/merge_requests/{iid}/pipelines"
-    try:
-        out = run_cmd("glab", "api", api, "--hostname", host, cwd=cwd)
-    except HarnessError:
-        out = run_cmd("glab", "api", api, cwd=cwd)
+    out = _api_glab(api, host, cwd)
     try:
         data = json.loads(out or "[]")
     except json.JSONDecodeError:
         raise HarnessError(f"cannot parse glab output for {pr_url}")
     if not data:
-        return "not_started"
+        return "not_started", ""
     latest = max(data, key=lambda p: p.get("id", 0))
     status = (latest.get("status") or "").lower()
     if status in ("success", "passed"):
-        return "success"
-    if status in ("failed", "canceled"):
-        return "failure"
-    if status in _GLAB_RUNNING:
-        return "running"
-    return "not_started"  # skipped, manual, unknown
+        state = "success"
+    elif status in ("failed", "canceled"):
+        state = "failure"
+    elif status in _GLAB_RUNNING:
+        state = "running"
+    else:
+        return "not_started", ""  # skipped, manual, unknown
+    jobs_api = (f"projects/{quote(path, safe='')}/pipelines/"
+                f"{latest.get('id')}/jobs")
+    try:
+        jobs = json.loads(_api_glab(jobs_api, host, cwd) or "[]")
+    except json.JSONDecodeError:
+        raise HarnessError(f"cannot parse glab jobs for {pr_url}")
+    if not jobs:
+        return state, ""
+    job = max(jobs, key=lambda j: j.get("id", 0))
+    return state, job.get("web_url") or ""
 
 
-def fetch_ci_status(tool: str, pr_url: str, cwd: str | None = None) -> str | None:
-    """Latest CI pipeline status for a PR/MR: success|failure|running|not_started.
+def fetch_ci(tool: str, pr_url: str,
+             cwd: str | None = None) -> tuple[str | None, str]:
+    """(status, job_url) for the latest CI pipeline of a PR/MR.
 
-    Soft-failing: returns None on any lookup error (warning to stderr),
-    so status table rendering never breaks on a missing/unhappy host CLI.
+    job_url is the latest job's page (GitLab `.../-/jobs/<id>`, GitHub check
+    details URL); "" when unknown. Soft-failing like fetch_ci_status.
     """
     try:
         if tool == "gh":
@@ -87,5 +108,14 @@ def fetch_ci_status(tool: str, pr_url: str, cwd: str | None = None) -> str | Non
         raise HarnessError(f"unknown host CLI: {tool}")
     except HarnessError as e:
         print(f"warning: ci lookup failed for {pr_url}: {e}", file=sys.stderr)
-        return None
+        return None, ""
+
+
+def fetch_ci_status(tool: str, pr_url: str, cwd: str | None = None) -> str | None:
+    """Latest CI pipeline status for a PR/MR: success|failure|running|not_started.
+
+    Soft-failing: returns None on any lookup error (warning to stderr),
+    so status table rendering never breaks on a missing/unhappy host CLI.
+    """
+    return fetch_ci(tool, pr_url, cwd)[0]
 
