@@ -15,6 +15,11 @@ the initial prompt. `review` and `cleanup` close the loop.
 ./install.sh
 ```
 
+The web UI build keeps devtools `data-component` tags by default (component
+names visible in browser devtools, also in the installed app). To strip
+them: `./install.sh --no-component-tags` (`--production` / `--clean` work
+too).
+
 Uses `uv tool install` when available, falls back to `pipx install`; writes
 the install receipt (`~/.local/share/workagent/install-receipt.json`),
 bootstraps `git-wt` from the vendored snapshot when missing, registers with

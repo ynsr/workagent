@@ -2,7 +2,19 @@
 # install.sh — install workagent via uv (or pipx if uv missing)
 set -euo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NO_COMPONENT_TAGS=""
+for arg in "$@"; do
+  case "$arg" in
+    --no-component-tags | --production | --clean) NO_COMPONENT_TAGS=1 ;;
+    -h | --help)
+      echo "Usage: ./install.sh [--no-component-tags|--production|--clean]"
+      echo "  Default: web UI build keeps devtools data-component tags."
+      echo "  Opt-out: skip the componentTagger so web/dist has no extra attributes."
+      exit 0
+      ;;
+    *) echo "warning: unknown argument '$arg' (ignored)" ;;
+  esac
+done
 
 # Version from pyproject.toml (single source of truth; also passed to cli-hub).
 VERSION="$(python3 -c "import tomllib, pathlib, sys
@@ -50,6 +62,11 @@ else
 fi
 
 # Build the web UI (served by `workagent serve` from <repo>/web/dist).
+# Component tags (data-component) stay on by default for devtools inspection;
+# pass --no-component-tags (aliases: --production, --clean) to strip them.
+if [ -n "$NO_COMPONENT_TAGS" ]; then
+  export WORKAGENT_NO_COMPONENT_TAGS=1
+fi
 if [ -d "$DIR/web" ]; then
   if command -v npm &>/dev/null; then
     echo "==> Building web UI..."

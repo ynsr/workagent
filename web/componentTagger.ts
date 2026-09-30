@@ -12,13 +12,15 @@ import type { Plugin } from "vite"
 // already carry a hand-written `data-component` are skipped. The attribute
 // is inserted right after the tag name so existing props are untouched.
 //
-// Scope: only `src` tsx files under this project, only when `vite` runs the
-// dev server (apply serve — production `vite build` output has zero trace).
-// Test files are skipped so selectors never depend on the attribute.
+// Scope: only `src` tsx files under this project, in `vite dev` and in
+// `vite build` unless WORKAGENT_NO_COMPONENT_TAGS=1 is set. Test files are
+// skipped so selectors never depend on the attribute.
 export function componentTagger(): Plugin {
+  if (process.env.WORKAGENT_NO_COMPONENT_TAGS === "1") {
+    return { name: "workagent-component-tagger (disabled)" }
+  }
   return {
     name: "workagent-component-tagger",
-    apply: "serve",
     enforce: "pre",
     transform(code, id) {
       if (!id.endsWith(".tsx")) return null
