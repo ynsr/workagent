@@ -351,9 +351,8 @@ def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch):
 def test_specs_mirror_cli_flags():
     """Parity: webapp BOOL_FLAGS/VAL_FLAGS mirror the real Typer CLI (#25 checklist).
 
-    Catches drift like `--post-comments`, `sync --force/-y`, `register -y`.
     Read-only/local commands (status/cd/doctor/migrate/candidates/serve/
-    completions) are intentionally not web-exposed.
+    service/completions) are intentionally not web-exposed.
     """
     import typer.main as _tm
 
@@ -377,7 +376,7 @@ def test_specs_mirror_cli_flags():
             "serve", "doctor", "migrate", "candidates", "status", "cd",
             "repo", "link", "tracker"}  # bare groups never invoked; subcommands covered
     for path, (b, v) in sorted(inv.items()):
-        if path in skip:
+        if path in skip or path == "service" or path.startswith("service "):
             continue
         assert path in _w.BOOL_FLAGS or path in _w.VAL_FLAGS, f"{path} missing from webapp inventory"
         cb = {x for x in b if x.startswith("-")}

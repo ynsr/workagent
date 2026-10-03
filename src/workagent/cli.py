@@ -191,6 +191,8 @@ from .cli_sync import (  # noqa: F401  (test compatibility)
     _sync_local_merge,
 )
 
+from . import cli_service  # noqa: F401  (registers `service`)
+
 
 @app.command("doctor")
 def doctor(

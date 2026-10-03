@@ -196,10 +196,24 @@ workagent serve --port 3345 --allowed-host devbox.local
   returns 409; cancel sends SIGTERM, then SIGKILL after 10 s.
 - **No authentication.** The server binds to `127.0.0.1` by default and
   refuses unexpected `Host` headers plus non-same-origin JSON posts.
-  Binding `--host 0.0.0.0` exposes an unauthenticated agent runner to
-  the network — don't, unless you have another isolation layer.
 - Off-host development: run the Vite dev server (`cd web && npm run
   dev`) and add your origin host with `--allowed-host`.
+
+### Run on login (systemd user service)
+
+```bash
+workagent service install --yes        # enable + start now, linger on
+workagent service status
+workagent service logs --lines 50
+workagent service uninstall --yes
+```
+
+Writes `~/.config/systemd/user/workagent.service`
+(`serve --host 127.0.0.1 --port 3344`, `$PORT` wins), `daemon-reload`,
+`enable --now`, plus `loginctl enable-linger` so it survives logout.
+`Restart=on-failure` with `StartLimitBurst=3` retries crashes up to 3
+times. `service` is local-only: not exposed via the web API, and
+uninstall leaves linger enabled.
 
 Details: `web/API_CONTRACT.md` (HTTP/SSE API), `web/FEATURE_INVENTORY.md`
 
