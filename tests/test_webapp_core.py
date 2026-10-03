@@ -375,6 +375,30 @@ def test_doctor_endpoint(client):
     assert set(r) >= {"status", "tools", "live_hash"}
 
 
+def test_service_endpoint(client, monkeypatch):
+    """GET /api/service: read-only unit state, always 200, never raises."""
+    from workagent import service as _svc
+    monkeypatch.setattr(_svc, "_run_systemctl",
+                        lambda *a: type("R", (), {"returncode": 0, "stdout": "active", "stderr": ""})())
+    r = client.get("/api/service")
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body) == {"installed", "active", "state"}
+    assert body["active"] is True and body["state"] == "active"
+
+
+def test_service_endpoint_no_unit_no_bus(client, monkeypatch, tmp_path):
+    import os
+    from workagent import service as _svc
+    monkeypatch.setenv("HOME", str(tmp_path))
+    def _boom(*a):
+        raise FileNotFoundError("systemctl")
+    monkeypatch.setattr(_svc, "_run_systemctl", _boom)
+    body = client.get("/api/service").json()
+    assert body == {"installed": False, "active": False,
+                    "state": "unknown: systemctl"}
+
+
 # ── argv building (same-code child) ──────────────────────────────────
 
 

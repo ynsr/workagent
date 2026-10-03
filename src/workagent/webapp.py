@@ -232,6 +232,23 @@ def create_app(static_dir: Path, host: str, port: int,
         from . import doctor as doctor_mod
         return doctor_mod.check(json_output=True)
 
+    @app.get("/api/service")
+    def service_status() -> dict:
+        """User systemd unit state for `serve` (read-only, always 200).
+
+        `active`: is-active exit 0. `installed`: unit file present.
+        Never raises — unknown state surfaces as strings, not errors."""
+        from . import service as service_mod
+        installed = service_mod.unit_path().exists()
+        try:
+            cp = service_mod._run_systemctl("is-active", "workagent")
+            state = (cp.stdout or "").strip() or "unknown"
+            return {"installed": installed, "active": cp.returncode == 0,
+                    "state": state}
+        except Exception as e:  # systemctl missing/bus down
+            return {"installed": installed, "active": False,
+                    "state": f"unknown: {e}"}
+
     @app.get("/api/issues")
     def my_issues(force: bool = False) -> dict:
         """My open issues; 200 + warning even when the tracker CLIs are

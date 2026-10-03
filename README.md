@@ -212,8 +212,11 @@ Writes `~/.config/systemd/user/workagent.service`
 (`serve --host 127.0.0.1 --port 3344`, `$PORT` wins), `daemon-reload`,
 `enable --now`, plus `loginctl enable-linger` so it survives logout.
 `Restart=on-failure` with `StartLimitBurst=3` retries crashes up to 3
-times. `service` is local-only: not exposed via the web API, and
-uninstall leaves linger enabled.
+times. Lifecycle commands are CLI-only (no web run passthrough);
+`GET /api/service` is a read-only status readout
+(`{"installed", "active", "state"}`, always 200), and uninstall leaves
+linger enabled. `./uninstall.sh` reverses the unit first
+(`service uninstall --yes`).
 
 Details: `web/API_CONTRACT.md` (HTTP/SSE API), `web/FEATURE_INVENTORY.md`
 

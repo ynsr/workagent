@@ -2,6 +2,10 @@
 # uninstall.sh — reverse everything install.sh created.
 set -euo pipefail
 
+if command -v workagent &>/dev/null; then
+  workagent service uninstall --yes || true
+fi
+
 if command -v pipx &>/dev/null; then
   pipx uninstall workagent || true
 elif command -v uv &>/dev/null; then
