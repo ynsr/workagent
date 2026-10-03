@@ -95,7 +95,8 @@ def _has_unresolved_comments(entry: dict, pr_url: str) -> bool:
     via _reviews_cell and persist through cache_review_stats.
     """
     branch = str(entry.get("branch", ""))
-    cached = store.load_pr_cache().get(branch) if branch else None
+    repo = str(entry.get("repo", "") or "")
+    cached = store.lookup_pr_cache(branch, repo)
     n = (cached or {}).get("unresolved")
     return isinstance(n, int) and n > 0
 
@@ -115,8 +116,8 @@ def _review_key_for(pr_url: str, worktree: str, branch: str, repo: str = "") -> 
     worktree/branch when one exists, else the source branch name.
 
     Reviewing an already-tracked worktree must reuse its row (stamping
-    pr_url on it) — never insert a second row for the same path/branch
-    (which collides on the worktrees.branch UNIQUE key). The match is
+    pr_url on it) — never insert a second row for the same path/(repo,
+    branch) (which collides on the UNIQUE keys). The match is
     repo-scoped: the same branch name in another repo is a different
     worktree (e.g. IPG-1002 in projectx vs ipg-commons).
     """
@@ -152,15 +153,13 @@ def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
                             pr_url: str) -> tuple[str, str, str]:
     """Reuse or create the worktree for a PR/MR source branch.
 
-    Returns (key, worktree, branch): an already-recorded row wins (its key
-    is reused with pr_url stamped on it); otherwise a fresh worktree is
-    created via git-wt and recorded under the bare branch name. The match
-    is repo-scoped: the same branch name in another repo is a different
-    worktree, and the worktrees.branch UNIQUE key forbids tracking both —
-    that collision fails loudly instead of hijacking the other repo's row
-    (e.g. IPG-1002 in projectx vs ipg-commons).
+    Returns (key, worktree, branch): an already-recorded row for this
+    (repo, branch) wins (its key is reused with pr_url stamped on it);
+    otherwise a fresh worktree is created via git-wt and recorded under
+    the bare branch name. Branch names are unique per repo
+    (UNIQUE (repo_key, branch)), so the same branch in another repo is
+    simply a different row — e.g. IPG-1002 in projectx vs ipg-commons.
     """
-    from .cli import _fail, EXIT_USAGE
     links = store.load_links()
     reuse = worktrees.recorded_key("", head_ref, links, repo=str(repo_dir))
     if isinstance(reuse, str):
@@ -170,13 +169,6 @@ def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
         store.record_link(reuse, {"pr_url": pr_url, "worktree": worktree,
                                   "branch": branch, "repo": str(repo_dir)})
         return reuse, worktree, branch
-    clash = next((k for k, v in links.items() if isinstance(v, dict)
-                  and (v.get("branch", "") or "") == head_ref), None)
-    if clash is not None:
-        _fail(f"branch {head_ref} is already tracked under {clash} "
-              f"for another repo ({links[clash].get('repo', '?')}).\n"
-              f"  Rename one of the branches, or clean up {clash} first — "
-              f"workagent tracks one worktree per branch name.", EXIT_USAGE)
     wt = gitwt.start_worktree(repo_dir, branch=head_ref, base=base_branch)
     worktree = wt.get("worktree_path", "")
     branch = wt.get("branch", head_ref)
@@ -187,11 +179,6 @@ def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
     except HarnessError:
         pass
     return head_ref, worktree, branch
-
-
-def _branch_key_for_repo(branch: str, repo_dir: Path) -> str:
-    """Link key for a branch already taken by another repo's row: repo-qualified."""
-    return f"{branch}@{Path(str(repo_dir)).expanduser().resolve().name}"
 
 
 def _mark_reviewed(key: str, worktree: str) -> None:

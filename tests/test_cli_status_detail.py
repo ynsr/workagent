@@ -57,7 +57,8 @@ def test_status_detail_no_hint_when_pr_exists(isolated_config, tmp_path,
                                               "title": "T", "author": "a",
                                               "created_at": "2026-09-15",
                                               "url": "https://x/mr/9",
-                                              "target_branch": "main"})
+                                              "target_branch": "main"},
+                          repo=str(repo_dir))
     r = _invoke("status", "IPG-929", "--json")
     data = json.loads(r.stdout)
     assert "create_hint" not in data
@@ -130,7 +131,7 @@ def test_status_base_follows_mr_target_branch(isolated_config, tmp_path, monkeyp
                                               "created_at": "2026-09-15",
                                               "url": "https://x/mr/9",
                                               "target_branch": "develop"},
-                          tool="glab", base_branch="main",
+                          tool="glab", base_branch="main", repo=str(repo_dir),
                           branch_tip="a1", base_tip=None, behind=0, ahead=0)
     ab_calls = []
     monkeypatch.setattr(cli.repos, "ahead_behind",
@@ -138,7 +139,7 @@ def test_status_base_follows_mr_target_branch(isolated_config, tmp_path, monkeyp
     data = json.loads(_invoke("status", "--json").stdout)
     assert data["jira:IPG-929"]["commits"] == "0|3"
     assert ab_calls == ["develop"]
-    assert store.load_pr_cache()["feat/IPG-929--x"]["base_branch"] == "develop"
+    assert store.load_pr_cache()[store.pr_cache_key(str(repo_dir), "feat/IPG-929--x")]["base_branch"] == "develop"
     # healed cache: base now agrees with the MR target → served from cache
     ab_calls.clear()
     data = json.loads(_invoke("status", "--json").stdout)

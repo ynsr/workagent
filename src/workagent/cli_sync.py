@@ -223,7 +223,7 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
               EXIT_GENERAL)
     cells = _cli._status_cells(entry, refresh_pr=False)
     pr = cells["pr_data"]
-    tool = store.get_cached_pr_tool(branch) or _cli._repo_tool(repo)
+    tool = store.get_cached_pr_tool(branch, repo) or _cli._repo_tool(repo)
     db = cells["base_branch"] or _cli._repo_default_branch(repo)
     _fail_on_deleted_branch(key, entry, pr, dry_run)
     # A recorded pr_url seed (state "") is display-only: it never reached a

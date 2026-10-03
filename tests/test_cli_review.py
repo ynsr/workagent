@@ -212,41 +212,8 @@ def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
 
 def test_review_reuses_existing_worktree_row(isolated_config, tmp_path, monkeypatch):
     """Reviewing an already-tracked worktree stamps pr_url on its own row —
-    no second pr:<url> row for the same path/branch (UNIQUE regression on a
-    real state.db)."""
-    from workagent import store_sqlite as sq
-    repo_dir = tmp_path / "proj"
-    repo_dir.mkdir()
-    worktree = tmp_path / "wt"
-    worktree.mkdir()
-    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
-                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
-    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
-    monkeypatch.setattr(cli.repos, "branch_tip", lambda wt: "abc123")
-    url = "https://git.jibit.cloud/server/projectx/-/merge_requests/1694"
-    monkeypatch.setattr(cli.refs, "fetch_pr_info",
-                        lambda parsed, cwd=None: {"head_ref": "feat/IPG-953--x"})
-
-    def _no_start(repo, **kw):
-        raise AssertionError("must reuse the recorded worktree, not start one")
-    monkeypatch.setattr(cli.gitwt, "start_worktree", _no_start)
-    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
-    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
-    db = sq.db_path()
-    sq.init_db(db)  # real state.db → worktrees.branch UNIQUE is live
-    store.record_link("jira:IPG-953", {
-        "worktree": str(worktree),
-        "branch": "feat/IPG-953--x",
-        "repo": str(repo_dir),
-    })
-    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--launch", "--json"])
-    assert r.exit_code == 0, r.output
-    links = store.load_links()
-    assert set(links) == {"jira:IPG-953"}  # no pr:<url> alias row
-    assert links["jira:IPG-953"]["pr_url"] == url
-    assert links["jira:IPG-953"]["reviewed"] is True
-    with sq.connect(db) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM worktrees").fetchone()[0] == 1
+    no second pr:<url> row for the same path/(repo, branch) (UNIQUE
+    regression on a real state.db)."""
 
 
 def test_is_reviewed_resets_when_tip_changes(isolated_config, tmp_path, monkeypatch):
@@ -289,8 +256,8 @@ def test_review_new_pr_keys_row_by_branch(isolated_config, tmp_path, monkeypatch
     assert links["feat/77"]["reviewed"] is True
 
 
-def test_review_same_branch_other_repo_does_not_reuse_row(isolated_config, tmp_path, monkeypatch):
-    """Same branch name in another repo must not hijack its row (IPG-1002)."""
+def test_review_same_branch_other_repo_creates_own_row(isolated_config, tmp_path, monkeypatch):
+    """Same branch name in another repo gets its own row (IPG-1002 composite key)."""
     repo_dir = tmp_path / "projectx"
     repo_dir.mkdir()
     other_wt = tmp_path / "wt-commons"
@@ -305,12 +272,20 @@ def test_review_same_branch_other_repo_does_not_reuse_row(isolated_config, tmp_p
                         lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed, cwd=None: {"head_ref": "feat/IPG-1002--x"})
+    new_wt = tmp_path / "wt-projectx"
+    new_wt.mkdir()
     monkeypatch.setattr(cli.gitwt, "start_worktree",
-                        lambda repo, **kw: (_ for _ in ()).throw(AssertionError("must not create a worktree on collision")))
+                        lambda repo, **kw: {"worktree_path": str(new_wt),
+                                            "branch": "feat/IPG-1002--x"})
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
     url = "https://git.example.com/server/projectx/-/merge_requests/1737"
     r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
-    assert r.exit_code == 2, r.output
-    assert "already tracked" in r.stderr
+    assert r.exit_code == 0, r.output
     links = store.load_links()
     assert links["jira:IPG-1002"]["pr_url"].endswith("/merge_requests/127")
     assert links["jira:IPG-1002"]["repo"] == "/repos/ipg-commons"
+    fresh = [k for k in links if k != "jira:IPG-1002"]
+    assert len(fresh) == 1
+    assert links[fresh[0]]["pr_url"] == url
+    assert links[fresh[0]]["repo"] == str(repo_dir)
+    assert links[fresh[0]]["branch"] == "feat/IPG-1002--x"

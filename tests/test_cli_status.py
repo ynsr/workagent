@@ -40,7 +40,8 @@ def test_status_pr_from_cache(isolated_config, tmp_path, monkeypatch):
                                               "title": "T", "author": "a",
                                               "created_at": "2026-09-15",
                                               "url": "https://x/mr/123",
-                                              "target_branch": "main"})
+                                              "target_branch": "main"},
+                          repo=str(repo_dir))
     monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     r = _invoke("status", "--json")
     data = json.loads(r.stdout)
@@ -63,7 +64,7 @@ def test_status_pr_live_query_then_cache(isolated_config, tmp_path, monkeypatch)
     r = _invoke("status", "--json")
     assert json.loads(r.stdout)["jira:IPG-929"]["pr"] == "PR #77 (open)"
     assert calls == [("glab", "feat/IPG-929--x")]
-    assert store.get_cached_pr_status("feat/IPG-929--x")["number"] == 77
+    assert store.get_cached_pr_status("feat/IPG-929--x", str(repo_dir))["number"] == 77
 
 
 def test_status_cache_reused_until_tip_or_ttl(isolated_config, tmp_path, monkeypatch):
@@ -78,7 +79,7 @@ def test_status_cache_reused_until_tip_or_ttl(isolated_config, tmp_path, monkeyp
                                               "created_at": "2026-09-15",
                                               "url": "https://x/mr/9",
                                               "target_branch": "main"},
-                          tool="glab", base_branch="main",
+                          tool="glab", base_branch="main", repo=str(repo_dir),
                           branch_tip="a1", base_tip="b1", behind=5, ahead=1)
     ab_calls = []
     monkeypatch.setattr(cli.repos, "ahead_behind",
@@ -103,9 +104,10 @@ def test_status_cache_expired_by_ttl(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
     monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: "a1" if ref == "HEAD" else None)
     store.cache_pr_status("feat/IPG-929--x", None, tool=None, base_branch="main",
-                          branch_tip="a1", base_tip=None, behind=5, ahead=1)
+                          branch_tip="a1", base_tip=None, behind=5, ahead=1,
+                          repo=str(repo_dir))
     cache = store.load_pr_cache()
-    cache["feat/IPG-929--x"]["checked_at"] = (
+    cache[store.pr_cache_key(str(repo_dir), "feat/IPG-929--x")]["checked_at"] = (
         datetime.now(timezone.utc) - timedelta(hours=4)).isoformat()
     store.save_pr_cache(cache)
     monkeypatch.setattr(cli.repos, "ahead_behind",
@@ -126,7 +128,7 @@ def test_status_refresh_pr_requeries(isolated_config, tmp_path, monkeypatch):
                                               "created_at": "2026-09-15",
                                               "url": "https://x/mr/9",
                                               "target_branch": "main"},
-                          tool="glab", base_branch="main",
+                          tool="glab", base_branch="main", repo=str(repo_dir),
                           branch_tip="a1", base_tip="b1", behind=5, ahead=1)
     monkeypatch.setattr(cli.refs, "fetch_pr_list_for_branch",
                         lambda tool, branch, cwd=None: [
@@ -137,8 +139,8 @@ def test_status_refresh_pr_requeries(isolated_config, tmp_path, monkeypatch):
     assert data["jira:IPG-929"]["pr"] == "PR #9 (open)"  # valid cache, no re-query
     data = json.loads(_invoke("status", "--refresh-pr", "--json").stdout)
     assert data["jira:IPG-929"]["pr"] == "PR #44 (merged)"  # forced re-query
-    assert store.get_cached_pr_status("feat/IPG-929--x")["number"] == 44
-    assert store.get_cached_pr_tool("feat/IPG-929--x") == "glab"
+    assert store.get_cached_pr_status("feat/IPG-929--x", str(repo_dir))["number"] == 44
+    assert store.get_cached_pr_tool("feat/IPG-929--x", str(repo_dir)) == "glab"
 
 
 def test_status_missing_worktree_gone(isolated_config, tmp_path, monkeypatch):
@@ -152,7 +154,8 @@ def test_status_missing_worktree_gone(isolated_config, tmp_path, monkeypatch):
 def test_status_cells_recorded_pr_wins(isolated_config, tmp_path):
     # Cached negative (no PR found) must not hide the recorded pr_url.
     store.cache_pr_status("feat/x", None, tool=None, base_branch="main",
-                          branch_tip="t", base_tip="b", behind=0, ahead=0)
+                          branch_tip="t", base_tip="b", behind=0, ahead=0,
+                          repo=str(tmp_path / "repo"))
     entry = {"worktree": str(tmp_path / "gone"), "branch": "feat/x",
              "repo": str(tmp_path / "repo"),
              "pr_url": "https://git.jibit.cloud/g/p/-/merge_requests/1706"}
@@ -164,7 +167,7 @@ def test_status_cells_recorded_pr_wins(isolated_config, tmp_path):
 def test_status_cells_cached_pr_beats_recorded(isolated_config, tmp_path):
     store.cache_pr_status("feat/x", {"number": 5, "state": "open",
                                      "url": "https://x/mr/5"},
-                          base_branch="main")
+                          base_branch="main", repo=str(tmp_path / "repo"))
     entry = {"worktree": str(tmp_path / "gone"), "branch": "feat/x",
              "repo": str(tmp_path / "repo"),
              "pr_url": "https://git.jibit.cloud/g/p/-/merge_requests/1706"}
@@ -205,7 +208,7 @@ def test_status_cells_ci_cache_reuse(isolated_config, tmp_path, monkeypatch):
     entry = {"worktree": str(wt_dir), "branch": "feat/x", "repo": "/repo"}
     store.cache_pr_status("feat/x", {"number": 9, "state": "open",
                                      "url": "https://x/mr/9"},
-                          tool="glab", base_branch="main",
+                          tool="glab", base_branch="main", repo="/repo",
                           branch_tip="a1", base_tip="b1", behind=0, ahead=0)
     tips = {"HEAD": "a1", "origin/main": "b1"}
     monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: tips.get(ref))
@@ -224,7 +227,7 @@ def test_status_cells_ci_cache_reuse(isolated_config, tmp_path, monkeypatch):
     c2 = cli._status_cells(entry)
     assert c2["ci"] == "success"
     assert len(fetches) == 1
-    cached = store.load_pr_cache()["feat/x"]
+    cached = store.load_pr_cache()[store.pr_cache_key("/repo", "feat/x")]
     assert cached["ci"] == "success" and cached["ci_sha"] == "a1"
     assert "ci_checked_at" in cached
     # branch tip moved -> refetch
@@ -232,7 +235,7 @@ def test_status_cells_ci_cache_reuse(isolated_config, tmp_path, monkeypatch):
     c3 = cli._status_cells(entry)
     assert c3["ci"] == "success"
     assert len(fetches) == 2
-    assert store.load_pr_cache()["feat/x"]["ci_sha"] == "a2"
+    assert store.load_pr_cache()[store.pr_cache_key("/repo", "feat/x")]["ci_sha"] == "a2"
     # --refresh-pr forces a refetch even on an unchanged tip
     tips["HEAD"] = "a1"
     cli._status_cells(entry, refresh_pr=True)
@@ -245,11 +248,11 @@ def test_status_cells_ci_reuse_stale_ttl(isolated_config, tmp_path,
     entry = {"worktree": str(wt_dir), "branch": "feat/x", "repo": "/repo"}
     store.cache_pr_status("feat/x", {"number": 9, "state": "open",
                                      "url": "https://x/mr/9"},
-                          tool="glab", base_branch="main",
+                          tool="glab", base_branch="main", repo="/repo",
                           branch_tip="a1", base_tip="b1", behind=0, ahead=0)
-    store.cache_ci_status("feat/x", "success", "a1")
+    store.cache_ci_status("feat/x", "success", "a1", repo="/repo")
     cache = store.load_pr_cache()
-    cache["feat/x"]["ci_checked_at"] = (
+    cache[store.pr_cache_key("/repo", "feat/x")]["ci_checked_at"] = (
         datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat()
     store.save_pr_cache(cache)
     monkeypatch.setattr(cli, "_git_tip",
@@ -328,9 +331,9 @@ def test_status_reviews_column_and_force_all(isolated_config, tmp_path, monkeypa
     monkeypatch.setattr(cli, "_repo_default_branch", lambda repo: None)
     _store.cache_pr_status("feat/a", {"number": 1, "state": "open", "url": pr},
                            tool="gh", base_branch="main", branch_tip="a1",
-                           base_tip="b1", behind=0, ahead=1)
+                           base_tip="b1", behind=0, ahead=1, repo=str(tmp_path))
     _store.cache_review_stats("feat/a", {"reviews": 2, "unresolved": 1, "resolved": 3},
-                              sha="a1")
+                              sha="a1", repo=str(tmp_path))
     monkeypatch.setattr(cli, "_git_tip", lambda wt, ref: "a1" if ref == "HEAD" else None)
     monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     monkeypatch.setattr(cli.refs, "fetch_ci", lambda tool, url, cwd=None: (None, ""))

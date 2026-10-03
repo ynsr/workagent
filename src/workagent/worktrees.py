@@ -15,13 +15,14 @@ def _norm_path(p: str) -> str:
 def recorded_key(worktree: str, branch: str, links: dict, repo: str = "") -> str | None:
     """Link key already recording this worktree/branch, else None.
 
-    Branch is the worktree identity *within one repo* (exact match first);
-    the normalized path is the fallback. A branch name alone is not unique
-    across repos (e.g. feat/IPG-1002--x in both projectx and ipg-commons),
-    so a branch hit only counts when the recorded repo matches ``repo`` —
-    or when either side has no repo recorded (legacy rows, path fallback).
-    Reusing the recorded row keeps review from inserting a second row for
-    the same path/branch (which collides on the worktrees.branch UNIQUE key).
+    Branch is the worktree identity *within one repo* (exact match first,
+    mirroring UNIQUE (repo_key, branch)); the normalized path is the
+    fallback. A branch name alone is not unique across repos (e.g.
+    feat/IPG-1002--x in both projectx and ipg-commons), so a branch hit
+    only counts when the recorded repo matches ``repo`` — or when either
+    side has no repo recorded (legacy rows, path fallback). Reusing the
+    recorded row keeps review from inserting a second row for the same
+    path/(repo, branch) (which collides on the UNIQUE keys).
     """
     want_repo = _norm_path(repo)
     for k, v in links.items():

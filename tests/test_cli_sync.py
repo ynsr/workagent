@@ -24,7 +24,8 @@ def test_sync_rebase_strategy_with_open_pr(isolated_config, tmp_path, monkeypatc
                                               "title": "T", "author": "a",
                                               "created_at": "2026-09-15",
                                               "url": "https://x/mr/9",
-                                              "target_branch": "main"})
+                                              "target_branch": "main"},
+                              repo=str(repo_dir))
     rebase, local, pulled = [], [], []
     _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase,
                 pulled=pulled)
@@ -46,7 +47,8 @@ def test_sync_merge_flag_uses_local_merge(isolated_config, tmp_path, monkeypatch
                                               "title": "T", "author": "a",
                                               "created_at": "2026-09-15",
                                               "url": "https://x/mr/9",
-                                              "target_branch": "main"})
+                                              "target_branch": "main"},
+                              repo=str(repo_dir))
     rebase, local = [], []
     _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase)
     r = _invoke("sync", "IPG-929", "--merge", "--yes", "--json")
@@ -111,7 +113,8 @@ def test_sync_dry_run_touches_nothing(isolated_config, tmp_path, monkeypatch):
                                               "title": "T", "author": "a",
                                               "created_at": "2026-09-15",
                                               "url": "https://x/mr/9",
-                                              "target_branch": "main"})
+                                              "target_branch": "main"},
+                              repo=str(repo_dir))
     rebase, local = [], []
     _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase)
     r = _invoke("sync", "IPG-929", "--dry-run", "--json")
@@ -152,7 +155,8 @@ def test_sync_rebase_failure_falls_back_to_local_merge(
                                               "title": "T", "author": "a",
                                               "created_at": "2026-09-15",
                                               "url": "https://x/mr/9",
-                                              "target_branch": "main"})
+                                              "target_branch": "main"},
+                              repo=str(repo_dir))
     rebase, local = [], []
     _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase)
     monkeypatch.setattr(cli.sync_mod, "rebase_remote",
@@ -231,7 +235,8 @@ def test_sync_merged_pr_deleted_branch_points_at_cleanup(
                                               "title": "T", "author": "a",
                                               "created_at": "2026-09-15",
                                               "url": "https://x/mr/9",
-                                              "target_branch": "main"})
+                                              "target_branch": "main"},
+                          repo=str(repo_dir))
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
@@ -259,7 +264,8 @@ def test_sync_open_pr_missing_ref_still_syncs(
                                               "title": "T", "author": "a",
                                               "created_at": "2026-09-15",
                                               "url": "https://x/mr/9",
-                                              "target_branch": "main"})
+                                              "target_branch": "main"},
+                              repo=str(repo_dir))
     rebase, local, pulled = [], [], []
     _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase,
                 pulled=pulled)

@@ -24,10 +24,11 @@ CREATE TABLE IF NOT EXISTS tracker_repos (
   PRIMARY KEY (tracker_key, repo_key));
 CREATE TABLE IF NOT EXISTS worktrees (
   ref_key TEXT PRIMARY KEY NOT NULL, path TEXT UNIQUE NOT NULL,
-  branch TEXT UNIQUE NOT NULL, repo_key TEXT REFERENCES repos(key_ref) ON DELETE CASCADE,
+  branch TEXT NOT NULL, repo_key TEXT REFERENCES repos(key_ref) ON DELETE CASCADE,
   issue_url TEXT NOT NULL DEFAULT '', pr_url TEXT NOT NULL DEFAULT '',
   added_at TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}',
-  active INTEGER NOT NULL DEFAULT 1);
+  active INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (repo_key, branch));
 CREATE TABLE IF NOT EXISTS pr_cache (
   branch TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, checked_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (
@@ -134,6 +135,52 @@ def _migrate_sessions_harness(conn) -> None:
         conn.execute("ALTER TABLE sessions RENAME COLUMN runtime_name TO harness_name")
     else:
         conn.execute("ALTER TABLE sessions ADD COLUMN harness_name TEXT NOT NULL DEFAULT ''")
+
+def _migrate_worktrees_branch_scope(conn) -> None:
+    """Schema v7: worktrees.branch UNIQUE → composite UNIQUE (repo_key, branch).
+
+    Two repos can carry the same branch name (e.g. feat/IPG-1002--x in
+    projectx and ipg-commons) — branch is unique *within* a repo, not
+    globally. Rebuilds the table from the canonical DDL when the legacy
+    bare-branch UNIQUE index is still present. Idempotent: skipped once
+    the composite index exists and no bare-branch UNIQUE remains.
+    """
+    info = list(conn.execute("PRAGMA table_info(worktrees)"))
+    if not info:
+        return
+    idx = list(conn.execute("PRAGMA index_list(worktrees)"))
+    cols_of: dict[str, set] = {}
+    for entry in idx:
+        name = entry[1]
+        try:
+            cols_of[name] = {row[2] for row in conn.execute(f'PRAGMA index_info("{name}")')}
+        except Exception:
+            continue
+    has_composite = any(cols == {"repo_key", "branch"} for cols in cols_of.values())
+    bare_branch_unique = any(
+        bool(entry[2]) and cols_of.get(entry[1]) == {"branch"} for entry in idx)
+    if has_composite and not bare_branch_unique:
+        return
+    if conn.in_transaction:
+        conn.commit()
+    was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if was_on:
+        conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        ddl = _canonical_ddl()["worktrees"]
+        conn.execute('DROP TABLE IF EXISTS "worktrees_rebuild"')
+        conn.execute(ddl.replace("CREATE TABLE worktrees", 'CREATE TABLE "worktrees_rebuild"', 1))
+        new_cols = {r[1] for r in conn.execute('PRAGMA table_info("worktrees_rebuild")')}
+        old_cols = [r[1] for r in info if r[1] in new_cols]
+        cols = ", ".join(f'"{c}"' for c in old_cols)
+        conn.execute(f'INSERT INTO "worktrees_rebuild" ({cols}) SELECT {cols} FROM "worktrees"')
+        conn.execute('DROP TABLE "worktrees"')
+        conn.execute('ALTER TABLE "worktrees_rebuild" RENAME TO "worktrees"')
+        if conn.in_transaction:
+            conn.commit()
+    finally:
+        if was_on:
+            conn.execute("PRAGMA foreign_keys = ON")
 
 def _migrate_worktrees_active(conn) -> None:
     """Schema v4: worktrees gains active (1 = active, 0 = deactivated).
@@ -324,6 +371,18 @@ def _schema_current(path: Path) -> bool:
         wcols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
         if "active" not in wcols:
             return False
+        widx = list(conn.execute("PRAGMA index_list(worktrees)"))
+        idx_cols = []
+        for entry in widx:
+            try:
+                idx_cols.append({row[2] for row in
+                                 conn.execute(f'PRAGMA index_info("{entry[1]}")')})
+            except Exception:
+                continue
+        if not any(c == {"repo_key", "branch"} for c in idx_cols):
+            return False
+        if any(bool(entry[2]) and c == {"branch"} for entry, c in zip(widx, idx_cols)):
+            return False
         scols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
         return {"harness_name", "session_type", "metadata"} <= scols
     except Exception:
@@ -349,6 +408,7 @@ def init_db(path: Path) -> Path:
                 _migrate_v2(conn)
                 _migrate_runs_output(conn)
                 _migrate_worktrees_active(conn)
+                _migrate_worktrees_branch_scope(conn)
                 _migrate_sessions_harness(conn)
                 _migrate_sessions_type(conn)
             break

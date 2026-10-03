@@ -140,7 +140,7 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
     repo = entry.get("repo", "")
     cells = {"commits": "-", "ab": None, "pr": "-", "pr_data": None,
              "base_branch": None, "_tip": None, "_tool": None}
-    cached = store.load_pr_cache().get(branch) if branch else None
+    cached = store.lookup_pr_cache(branch, repo)
     wt_ok = bool(wt) and Path(wt).exists()
     if wt and not wt_ok:
         cells["commits"] = "gone"
@@ -168,7 +168,7 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
                 pr, used = _query_pr(repo, branch)
             except HarnessError:
                 return _seed_recorded_pr(cells, entry)
-            store.cache_pr_status(branch, pr, tool=used,
+            store.cache_pr_status(branch, pr, tool=used, repo=repo,
                                   base_branch=base_branch,
                                   branch_tip=branch_tip, base_tip=base_tip,
                                   behind=ab["behind"], ahead=ab["ahead"])
@@ -189,7 +189,7 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
         ab = repos.ahead_behind(Path(wt), db, branch) if (wt_ok and db) else None
         if wt_ok:
             branch_tip = _patched("_git_tip")(wt, branch) or _patched("_git_tip")(wt, "HEAD")
-            store.cache_pr_status(branch, pr, tool=used if pr else None,
+            store.cache_pr_status(branch, pr, tool=used if pr else None, repo=repo,
                                   base_branch=db,
                                   branch_tip=branch_tip,
                                   base_tip=_patched("_git_tip")(wt, f"origin/{db}") if db else None,
@@ -231,7 +231,8 @@ def _ci_cell(entry: dict, cells: dict, refresh_pr: bool) -> tuple[str | None, st
     if not pr or not pr.get("url"):
         return None, ""
     branch = entry.get("branch", "")
-    cached = store.load_pr_cache().get(branch) if branch else None
+    repo = entry.get("repo", "")
+    cached = store.lookup_pr_cache(branch, repo)
     branch_tip = cells.get("_tip")
     if branch_tip is None and entry.get("worktree") \
             and Path(entry["worktree"]).exists():
@@ -244,7 +245,7 @@ def _ci_cell(entry: dict, cells: dict, refresh_pr: bool) -> tuple[str | None, st
             or ("gh" if "github.com" in url else "glab"))
     ci, ci_url = refs.fetch_ci(tool, url, entry.get("repo", ""))
     if branch:
-        store.cache_ci_status(branch, ci, sha=branch_tip or "", ci_url=ci_url)
+        store.cache_ci_status(branch, ci, sha=branch_tip or "", ci_url=ci_url, repo=repo)
     return ci, ci_url
 
 def _reviews_fresh(cached: dict) -> bool:
@@ -270,7 +271,8 @@ def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool) -> dict | None:
     if not pr or not pr.get("url"):
         return None
     branch = entry.get("branch", "")
-    cached = store.load_pr_cache().get(branch) if branch else None
+    repo = entry.get("repo", "")
+    cached = store.lookup_pr_cache(branch, repo)
     branch_tip = cells.get("_tip")
     if branch_tip is None and entry.get("worktree") \
             and Path(entry["worktree"]).exists():
@@ -286,7 +288,7 @@ def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool) -> dict | None:
             or ("gh" if "github.com" in url else "glab"))
     stats = refs.fetch_pr_comment_stats(tool, url, entry.get("repo", ""))
     if branch:
-        store.cache_review_stats(branch, stats, sha=branch_tip or "")
+        store.cache_review_stats(branch, stats, sha=branch_tip or "", repo=repo)
     return stats
 
 

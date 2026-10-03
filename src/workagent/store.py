@@ -311,10 +311,29 @@ def save_pr_cache(cache: dict) -> None:
     _write_json(config_dir() / "pr_cache.json", cache)
 
 
+def pr_cache_key(repo: str = "", branch: str = "") -> str:
+    """pr_cache key namespaced by repo: ``<repo>\\x1f<branch>`` when both known.
+
+    Branch names repeat across repos (IPG-1002 in projectx + ipg-commons),
+    so a bare branch key would let one repo's PR/CI/review stats leak into
+    the other's status cells. Bare-branch reads stay as fallback so
+    pre-migration cache entries keep working.
+    """
+    return f"{repo}\x1f{branch}" if repo and branch else branch
+
+
+def lookup_pr_cache(branch: str, repo: str = "") -> dict | None:
+    """Cache entry for (repo, branch), falling back to the bare branch key."""
+    if not branch:
+        return None
+    cache = load_pr_cache()
+    return cache.get(pr_cache_key(repo, branch), cache.get(branch))
+
 def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
                     base_branch: str | None = None, branch_tip: str | None = None,
                     base_tip: str | None = None, behind: int | None = None,
-                    ahead: int | None = None) -> None:
+                    ahead: int | None = None, repo: str = "") -> None:
+    key = pr_cache_key(repo, branch)
     entry = {"pr": pr, "tool": tool,
              "checked_at": datetime.now(timezone.utc).isoformat()}
     if base_branch:
@@ -325,14 +344,14 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
             entry[k] = v
     if _sqlite_path() is not None:
         cache = load_pr_cache()
-        prev = cache.get(branch) or {}
+        prev = cache.get(key) or {}
         merged = dict(entry)
         for k in ("ci", "ci_checked_at", "ci_sha", "ci_url",
                   "reviews", "unresolved", "resolved",
                   "reviews_checked_at", "reviews_sha"):
             if k in prev and k not in merged:
                 merged[k] = prev[k]
-        cache[branch] = merged
+        cache[key] = merged
         _write_pr_cache(cache)
         return
     path = config_dir() / "pr_cache.json"
@@ -340,27 +359,29 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
     with open(path.parent / (path.name + ".lock"), "w") as lock:
         def _update() -> None:
             cache = _read_json(path, {})
-            prev = cache.get(branch) or {}
+            prev = cache.get(key) or {}
             merged = dict(entry)
             for k in ("ci", "ci_checked_at", "ci_sha", "ci_url",
                       "reviews", "unresolved", "resolved",
                       "reviews_checked_at", "reviews_sha"):
                 if k in prev and k not in merged:
                     merged[k] = prev[k]
-            cache[branch] = merged
+            cache[key] = merged
             _atomic_replace(path, cache)
         _locked(lock, _update)
 
 
-def get_cached_pr_status(branch: str) -> dict | None:
-    return load_pr_cache().get(branch, {}).get("pr")
+def get_cached_pr_status(branch: str, repo: str = "") -> dict | None:
+    cached = lookup_pr_cache(branch, repo)
+    return (cached or {}).get("pr")
 
 
-def get_cached_pr_tool(branch: str) -> str | None:
-    return load_pr_cache().get(branch, {}).get("tool")
+def get_cached_pr_tool(branch: str, repo: str = "") -> str | None:
+    cached = lookup_pr_cache(branch, repo)
+    return (cached or {}).get("tool")
 
 def cache_ci_status(branch: str, ci: str | None, sha: str | None = None,
-                    ci_url: str | None = None) -> None:
+                    ci_url: str | None = None, repo: str = "") -> None:
     """Record CI pipeline status (+ latest job URL) on a branch's entry.
 
     Reads-modifies the branch entry under the cache lock so the PR fields
@@ -369,9 +390,11 @@ def cache_ci_status(branch: str, ci: str | None, sha: str | None = None,
     """
     if ci is None:
         return
+    key = pr_cache_key(repo, branch)
     if _sqlite_path() is not None:
         cache = load_pr_cache()
-        entry = cache.setdefault(branch, {})
+        entry = cache.get(key) or dict(cache.get(branch) or {})
+        cache[key] = entry
         entry["ci"] = ci
         entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
         if sha:
@@ -385,7 +408,11 @@ def cache_ci_status(branch: str, ci: str | None, sha: str | None = None,
     with open(path.parent / (path.name + ".lock"), "w") as lock:
         def _update() -> None:
             cache = _read_json(path, {})
-            entry = cache.setdefault(branch, {})
+            prev = cache.get(branch) or {}
+            entry = cache.get(key)
+            if entry is None:
+                entry = dict(prev)
+                cache[key] = entry
             entry["ci"] = ci
             entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
             if sha:
@@ -395,7 +422,8 @@ def cache_ci_status(branch: str, ci: str | None, sha: str | None = None,
             _atomic_replace(path, cache)
         _locked(lock, _update)
 
-def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None) -> None:
+def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None,
+                       repo: str = "") -> None:
     """Record {reviews, unresolved, resolved} on a branch's pr_cache entry.
 
     Mirrors cache_ci_status: a None stats (lookup failed) writes nothing so
@@ -403,9 +431,11 @@ def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None) 
     """
     if stats is None:
         return
+    key = pr_cache_key(repo, branch)
     if _sqlite_path() is not None:
         cache = load_pr_cache()
-        entry = cache.setdefault(branch, {})
+        entry = cache.get(key) or dict(cache.get(branch) or {})
+        cache[key] = entry
         entry["reviews"] = int(stats.get("reviews") or 0)
         entry["unresolved"] = int(stats.get("unresolved") or 0)
         entry["resolved"] = int(stats.get("resolved") or 0)
@@ -419,7 +449,11 @@ def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None) 
     with open(path.parent / (path.name + ".lock"), "w") as lock:
         def _update() -> None:
             cache = _read_json(path, {})
-            entry = cache.setdefault(branch, {})
+            prev = cache.get(branch) or {}
+            entry = cache.get(key)
+            if entry is None:
+                entry = dict(prev)
+                cache[key] = entry
             entry["reviews"] = int(stats.get("reviews") or 0)
             entry["unresolved"] = int(stats.get("unresolved") or 0)
             entry["resolved"] = int(stats.get("resolved") or 0)
@@ -428,6 +462,8 @@ def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None) 
                 entry["reviews_sha"] = sha
             _atomic_replace(path, cache)
         _locked(lock, _update)
+
+
 
 
 def _pid_alive(pid: int) -> bool:

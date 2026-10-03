@@ -285,6 +285,44 @@ def test_remove_repo_row_cascades_and_unlinked_register_keeps_row(tmp_path):
         assert row == ("https://x/y", "gh")
     assert sq.remove_repo_row(db, "missing") is False
 
+def test_migrate_worktrees_branch_scope_allows_same_branch_per_repo(tmp_path):
+    """Legacy UNIQUE(branch) → UNIQUE(repo_key, branch): same branch in two repos."""
+    import sqlite3
+    db = tmp_path / "state.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE repos (key_ref TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL,"
+                     " name TEXT NOT NULL DEFAULT '', remote TEXT NOT NULL DEFAULT '',"
+                     " tool TEXT NOT NULL DEFAULT '')")
+        conn.execute("CREATE TABLE worktrees (ref_key TEXT PRIMARY KEY NOT NULL,"
+                     " path TEXT UNIQUE NOT NULL, branch TEXT UNIQUE NOT NULL,"
+                     " repo_key TEXT, issue_url TEXT NOT NULL DEFAULT '',"
+                     " pr_url TEXT NOT NULL DEFAULT '', added_at TEXT NOT NULL,"
+                     " payload TEXT NOT NULL DEFAULT '{}', active INTEGER NOT NULL DEFAULT 1)")
+        conn.execute("INSERT INTO repos VALUES ('a', '/r/a', 'a', '', '')")
+        conn.execute("INSERT INTO repos VALUES ('b', '/r/b', 'b', '', '')")
+        conn.execute("INSERT INTO worktrees VALUES ('k1', '/wt/a', 'feat/X', 'a', '', '', '2026-01-01T00:00:00+00:00', '{}', 1)")
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        idx_cols = [{row[2] for row in conn.execute(f'PRAGMA index_info("{r[1]}")')}
+                    for r in conn.execute("PRAGMA index_list(worktrees)")]
+        assert {"repo_key", "branch"} in idx_cols
+        assert {"branch"} not in [c for c, r in
+                                  zip(idx_cols, conn.execute("PRAGMA index_list(worktrees)")) if r[2]]
+        # second repo may now track the same branch name
+        conn.execute("INSERT INTO worktrees VALUES ('k2', '/wt/b', 'feat/X', 'b', '', '', '2026-01-01T00:00:00+00:00', '{}', 1)")
+        assert conn.execute("SELECT COUNT(*) FROM worktrees").fetchone()[0] == 2
+
+
+def test_migrate_worktrees_branch_scope_idempotent(tmp_path):
+    """Second init_db is a no-op (rows + composite index survive)."""
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        idx_cols = [{row[2] for row in conn.execute(f'PRAGMA index_info("{r[1]}")')}
+                    for r in conn.execute("PRAGMA index_list(worktrees)")]
+        assert {"repo_key", "branch"} in idx_cols
+
 
 def test_register_repo_row_same_path_rename_rekeys_children(tmp_path):
     """Issue #30: same-path re-register under a new name re-keys joins +
