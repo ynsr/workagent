@@ -12,16 +12,23 @@ def _norm_path(p: str) -> str:
     return str(Path(p).expanduser().resolve()) if p else ""
 
 
-def recorded_key(worktree: str, branch: str, links: dict) -> str | None:
+def recorded_key(worktree: str, branch: str, links: dict, repo: str = "") -> str | None:
     """Link key already recording this worktree/branch, else None.
 
-    Branch is the unique worktree identity (exact match first); the
-    normalized path is the fallback. Reusing the recorded row keeps
-    review from inserting a second row for the same path/branch (which
-    collides on the worktrees.branch UNIQUE key).
+    Branch is the worktree identity *within one repo* (exact match first);
+    the normalized path is the fallback. A branch name alone is not unique
+    across repos (e.g. feat/IPG-1002--x in both projectx and ipg-commons),
+    so a branch hit only counts when the recorded repo matches ``repo`` —
+    or when either side has no repo recorded (legacy rows, path fallback).
+    Reusing the recorded row keeps review from inserting a second row for
+    the same path/branch (which collides on the worktrees.branch UNIQUE key).
     """
+    want_repo = _norm_path(repo)
     for k, v in links.items():
         if isinstance(v, dict) and branch and branch == (v.get("branch", "") or ""):
+            recorded_repo = _norm_path(v.get("repo", "") or "")
+            if want_repo and recorded_repo and want_repo != recorded_repo:
+                continue
             return k
     want = _norm_path(worktree)
     if want:

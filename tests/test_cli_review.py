@@ -287,3 +287,30 @@ def test_review_new_pr_keys_row_by_branch(isolated_config, tmp_path, monkeypatch
     assert set(links) == {"feat/77"}
     assert links["feat/77"]["pr_url"] == url
     assert links["feat/77"]["reviewed"] is True
+
+
+def test_review_same_branch_other_repo_does_not_reuse_row(isolated_config, tmp_path, monkeypatch):
+    """Same branch name in another repo must not hijack its row (IPG-1002)."""
+    repo_dir = tmp_path / "projectx"
+    repo_dir.mkdir()
+    other_wt = tmp_path / "wt-commons"
+    other_wt.mkdir()
+    store.record_link("jira:IPG-1002", {
+        "worktree": str(other_wt),
+        "branch": "feat/IPG-1002--x",
+        "repo": "/repos/ipg-commons",
+        "pr_url": "https://git.example.com/server/ipg-commons/-/merge_requests/127",
+    })
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed, cwd=None: {"head_ref": "feat/IPG-1002--x"})
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: (_ for _ in ()).throw(AssertionError("must not create a worktree on collision")))
+    url = "https://git.example.com/server/projectx/-/merge_requests/1737"
+    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
+    assert r.exit_code == 2, r.output
+    assert "already tracked" in r.stderr
+    links = store.load_links()
+    assert links["jira:IPG-1002"]["pr_url"].endswith("/merge_requests/127")
+    assert links["jira:IPG-1002"]["repo"] == "/repos/ipg-commons"
