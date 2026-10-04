@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
-import { useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { ArrowLeft, Ban, Copy, Redo, SquareTerminal } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
@@ -101,8 +101,12 @@ function LogViewer({
     </div>
   )
 }
-/** Copy the full cd-prefixed harness command parsed from the log. */
-function RunHarnessCommandAction({ lines }: { lines: RunLine[] }) {
+/** Copy the full cd-prefixed harness command parsed from the log, plus a
+ * "Start in terminal" button executing that same command (mirrors the
+ * "Resume in terminal" button: same enabled/disabled state, backend
+ * re-parses the run log so the tooltip stays the exact command). */
+function RunHarnessCommandAction({ runId, lines }: { runId: string; lines: RunLine[] }) {
+  const startTerminal = useMutation({ mutationFn: (id: string) => api.startTerminal(id) })
   const cmd = useMemo(() => {
     // The CLI preview embeds the prompt as one shlex-quoted argv element;
     // prompts contain newlines, so run.append's splitlines() breaks the
@@ -127,19 +131,35 @@ function RunHarnessCommandAction({ lines }: { lines: RunLine[] }) {
     return cmd.trim()
   }, [lines])
   return (
-    <Button
-      variant="outline"
-      size="sm"
-      title={cmd || "Copy harness command (nothing to copy yet)"}
-      disabled={!cmd}
-      onClick={() => {
-        copyToClipboard(cmd)
-          .then(() => toast.success("Harness command copied"))
-          .catch((err: unknown) => toast.error(errorText(err)))
-      }}
-    >
-      <Copy aria-hidden /> Copy harness command
-    </Button>
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        title={cmd || "Start in terminal (nothing to start yet)"}
+        disabled={!cmd || startTerminal.isPending}
+        onClick={() => {
+          void startTerminal
+            .mutateAsync(runId)
+            .then(() => toast.success("Terminal opened on the harness command"))
+            .catch((err: unknown) => toast.error(errorText(err)))
+        }}
+      >
+        <SquareTerminal aria-hidden /> Start in terminal
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        title={cmd || "Copy harness command (nothing to copy yet)"}
+        disabled={!cmd}
+        onClick={() => {
+          copyToClipboard(cmd)
+            .then(() => toast.success("Harness command copied"))
+            .catch((err: unknown) => toast.error(errorText(err)))
+        }}
+      >
+        <Copy aria-hidden /> Copy harness command
+      </Button>
+    </>
   )
 }
 export function RunDetail() {
@@ -269,7 +289,7 @@ export function RunDetail() {
             {run.session_file ? (
               <SessionResumeActions runId={run.id} worktree={run.worktree} sessionFile={run.session_file} variant="outline" />
             ) : null}
-            <RunHarnessCommandAction lines={lines} />
+            <RunHarnessCommandAction runId={run.id} lines={lines} />
             {isRunning ? (
               <Button
                 variant="destructive"

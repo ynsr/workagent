@@ -249,6 +249,35 @@ def register_runs_routes(app, registry) -> None:
         return {"id": run.id, "session_file": session_file,
                 "worktree": worktree}
 
+    @app.post("/api/runs/{run_id}/start-terminal")
+    async def start_terminal(run_id: str) -> dict:
+        """Open the OS default terminal running this run's harness command.
+
+        Same command as the Run page "Copy harness command" button (the last
+        logged `harness command:` entry); the button's disabled state mirrors
+        the 404 `no_harness_command` case. Non-destructive (same class as
+        `open`/resume): no confirm needed.
+        """
+        from . import webapp as _w
+
+        def _lines() -> list[str]:
+            try:
+                run = registry.get(run_id)
+            except ApiError:
+                row = _persisted_row(run_id)
+                if row is None:
+                    raise
+                return [ln["text"] for ln in _persisted_lines(row)]
+            with run.lock:
+                return [text for _, text in run.lines]
+
+        cmd = _w._extract_harness_command(_lines())
+        if not cmd:
+            raise ApiError("no_harness_command",
+                           f"run {run_id} logged no harness command", 404)
+        _w._open_terminal_command(cmd)
+        return {"id": run_id}
+
     @app.post("/api/sessions/{sid}/resume")
     async def resume_session(sid: str) -> dict:
         """Open the OS default terminal resumed on a persisted session."""

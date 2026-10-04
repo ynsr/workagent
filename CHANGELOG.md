@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Web: Run page has a "Start in terminal" button running the same command as "Copy harness command" (disabled together; `POST /api/runs/{id}/start-terminal`).
 - Start `--no-tty` prompt now tells the agent: when done, commit, push to this branch, and create an MR/PR to the default branch.
 - Serve daemon now inherits the install-time PATH in its systemd unit, so `omp` and other user-bin tools resolve (`omp not found on PATH` fixed).
 - Jira link keys now carry the repo: `start`/`register` record `jira:IPG-1011@saman-ipg` (slugged checkout name after `@`), so one issue fans out to one worktree per repo instead of reusing a single row. Bare `jira:KEY` refs dual-resolve to their suffixed kin (legacy rows keep working); two live variants for one issue require `--repo` on `start`. Scripts/agents: `key.rsplit("@", 1)` → `(jira:KEY, repo)`; see `refs.split_issue_key()`.

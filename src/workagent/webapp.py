@@ -87,7 +87,9 @@ def _port_free(host: str, port: int) -> bool:
 
 
 from .web_runs import (  # noqa: F401,E402
+    _extract_harness_command,
     _open_terminal,
+    _open_terminal_command,
     _resume_shell_command,
     _worktree_for_session,
 )

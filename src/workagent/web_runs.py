@@ -350,18 +350,50 @@ def _resume_shell_command(worktree: str, session_file: str) -> str:
     return f"cd {shlex.quote(worktree)} && omp --resume {shlex.quote(session_file)}"
 
 
-def _open_terminal(worktree: str, session_file: str) -> None:
-    """Detached-spawn the OS default terminal resumed on the session
-    (mirrors `workagent open` detachment)."""
-    cmd = _resume_shell_command(worktree, session_file)
+def _extract_harness_command(texts: list[str]) -> str:
+    """Last logged `harness command:` entry, rejoining quote-continued lines.
+
+    Mirrors the RunDetail parser: the CLI preview embeds the prompt as one
+    shlex-quoted argv element, so prompts containing newlines split the
+    logged command across lines. Scan from the end — the last harness
+    command is the runnable one.
+    """
+    import re
+
+    start = -1
+    for i in range(len(texts) - 1, -1, -1):
+        if re.search(r"harness command:\s*\S", texts[i] or ""):
+            start = i
+            break
+    if start < 0:
+        return ""
+    cmd = re.sub(r"^.*harness command:\s*", "", texts[start] or "").rstrip()
+    for i in range(start + 1, len(texts)):
+        if cmd.count("'") % 2 == 0:
+            break
+        cmd += "\n" + (texts[i] or "")
+    return cmd.strip()
+
+
+def _open_terminal_command(cmd: str, cwd: str = "") -> None:
+    """Detached-spawn the OS default terminal running an arbitrary shell
+    command (mirrors `workagent open` detachment). `cwd` seeds the
+    terminal's directory — parsed from a leading `cd` when omitted."""
+    if not cwd:
+        try:
+            parts = shlex.split(cmd, posix=True)
+            if len(parts) >= 2 and parts[0] == "cd":
+                cwd = parts[1]
+        except ValueError:
+            cwd = ""
     kwargs: dict = {"stdin": subprocess.DEVNULL,
                     "stdout": subprocess.DEVNULL,
                     "stderr": subprocess.DEVNULL}
     if os.name == "posix":
         kwargs["start_new_session"] = True
     if sys.platform == "darwin":
-        argv = ["open", "-a", "Terminal", worktree, "--args",
-                "bash", "-lc", cmd]
+        argv = ["open", "-a", "Terminal", *([cwd] if cwd else []),
+                "--args", "bash", "-lc", cmd]
     elif os.name == "nt":
         argv = ["cmd", "/c", "start", "", "cmd", "/k", cmd]
     else:
@@ -387,10 +419,16 @@ def _open_terminal(worktree: str, session_file: str) -> None:
             if not has_display:
                 raise ApiError("no_display",
                                "the server has no graphical session (no $DISPLAY/"
-                               "$WAYLAND_DISPLAY) — copy the resume command instead", 500)
+                               "$WAYLAND_DISPLAY) — copy the harness command instead", 500)
             raise ApiError("no_terminal",
                            "no terminal emulator found (set $TERMINAL)", 500)
     try:
         subprocess.Popen(argv, **kwargs)
     except (FileNotFoundError, OSError, PermissionError) as e:
         raise ApiError("no_terminal", f"terminal spawn failed: {e}", 500)
+
+
+def _open_terminal(worktree: str, session_file: str) -> None:
+    """Detached-spawn the OS default terminal resumed on the session
+    (mirrors `workagent open` detachment)."""
+    _open_terminal_command(_resume_shell_command(worktree, session_file), worktree)

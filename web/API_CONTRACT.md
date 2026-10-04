@@ -244,6 +244,11 @@ macOS `open -a Terminal`; Windows `cmd /k`). 404 `no_session` when the run
 executed no harness session, `missing_session` when the transcript is
 absent, `no_worktree` when the target has no recorded worktree.
 
+### `POST /api/runs/{id}/start-terminal` → `{"id": …}`
+Same spawn running the run's last logged `harness command:` entry — the
+exact command behind the Run page "Copy harness command" button (the button
+is disabled exactly when this returns 404 `no_harness_command`).
+
 ### `POST /api/sessions/{id}/resume` → same shape
 Same terminal spawn for a persisted session row (`worktree` resolved from
 the row, else the recorded worktree ref via `/api/path`); 404

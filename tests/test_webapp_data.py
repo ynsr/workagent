@@ -280,6 +280,29 @@ def test_resume_run_opens_terminal(client, monkeypatch, tmp_path):
     assert r.status_code == 200, r.text
     assert opened == {"wt": "/tmp/wt", "sf": str(session)}
 
+def test_start_terminal_runs_harness_command(client, monkeypatch):
+    from workagent import web_runs as _wr
+    assert _wr._extract_harness_command([]) == ""
+    assert _wr._extract_harness_command(["working...", "harness command: cd /wt && omp 'a",
+                                         "b'", "later"]) == "cd /wt && omp 'a\nb'"
+    opened: dict = {}
+    monkeypatch.setattr("workagent.webapp._open_terminal_command",
+                        lambda cmd, cwd="": opened.update(cmd=cmd, cwd=cwd))
+    run = client.app.state.registry.create("start", ["IPG-1"], "start:IPG-1")
+    run.append("harness command: cd /wt && omp 'hello'\n")
+    r = client.post(f"/api/runs/{run.id}/start-terminal")
+    assert r.status_code == 200, r.text
+    assert opened == {"cmd": "cd /wt && omp 'hello'", "cwd": ""}
+
+
+def test_start_terminal_missing_command_is_404(client):
+    run = client.app.state.registry.create("start", ["IPG-2"], "start:IPG-2")
+    run.append("working...\n")
+    r = client.post(f"/api/runs/{run.id}/start-terminal")
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "no_harness_command"
+
+
 
 def test_resume_session_opens_terminal(client, monkeypatch, tmp_path):
     from workagent import store_sqlite as sq

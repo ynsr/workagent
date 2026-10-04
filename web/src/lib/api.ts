@@ -363,6 +363,13 @@ export const api = {
       { method: "POST" },
     ),
 
+  /** POST /api/runs/{id}/start-terminal — open OS terminal running the run's harness command. */
+  startTerminal: (id: string) =>
+    request<{ id: string }>(
+      `/api/runs/${encodeURIComponent(id)}/start-terminal`,
+      { method: "POST" },
+    ),
+
   /** POST /api/sessions/{id}/resume — open OS terminal resumed on the session. */
   resumeSession: (id: string) =>
     request<{ id: string; session_file: string; worktree: string }>(
