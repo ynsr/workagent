@@ -29,7 +29,20 @@ def _serve_bin() -> str:
     return sys.executable + " -m workagent"
 
 
+def _unit_path_env() -> str:
+    """PATH for the serve daemon: install-time PATH so harness/tool
+
+    binaries (omp, gh, glab, ...) resolve the same as in the shell.
+
+    systemd units get a minimal default PATH; without this, `shutil.which`
+    checks in backend/gitwt fail for tools installed in user bin dirs
+    (~/.bun/bin, linuxbrew, ...).
+    """
+    return os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+
+
 def render_unit(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> str:
+    path_env = _unit_path_env()
     return (
         "[Unit]\n"
         "Description=workagent web UI (serve)\n"
@@ -42,6 +55,7 @@ def render_unit(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> str:
         "RestartSec=5\n"
         "StartLimitBurst=3\n"
         "Environment=NO_COLOR=1\n"
+        f"Environment=PATH={path_env}\n"
         "\n"
         "[Install]\n"
         "WantedBy=default.target\n"

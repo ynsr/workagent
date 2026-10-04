@@ -16,6 +16,13 @@ def test_render_unit_defaults():
     assert "WantedBy=default.target" in text
     assert "After=network-online.target" in text
     assert "Environment=NO_COLOR=1" in text
+    assert "Environment=PATH=" in text
+
+
+def test_render_unit_embeds_install_time_path(monkeypatch):
+    monkeypatch.setenv("PATH", "/home/bs/.bun/bin:/usr/bin:/bin")
+    text = _svc.render_unit()
+    assert "Environment=PATH=/home/bs/.bun/bin:/usr/bin:/bin" in text
 
 
 def test_unit_path_home_scoped(tmp_path, monkeypatch):
