@@ -41,11 +41,23 @@ def merge_in_progress(worktree: Path) -> bool:
     return (Path(gitdir) / "MERGE_HEAD").exists()
 
 
+def _changelog_blob(worktree: Path, rev: str) -> str | None:
+    """Read CHANGELOG.md at *rev* (HEAD^1/HEAD^2 parents); None if absent."""
+    try:
+        out = run_cmd("git", "-C", str(worktree), "show", f"{rev}:CHANGELOG.md")
+    except HarnessError:
+        return None
+    return out if out else None
+
+
 def local_merge(worktree: Path, default_branch: str) -> dict:
     """Merge origin/<default> into the current branch inside *worktree*.
 
     Returns {"status": "merged"|"up-to-date"|"conflict", "conflicts": [...]}.
     On conflict the merge is left in progress for the caller to resolve.
+    A clean merge that misfiles the branch's `## Unreleased` entries under
+    a newly released `## vX` heading is repaired (amended) in place —
+    issue #36 broke auto-versioning exactly this way.
     """
     _fetch_branch(worktree, default_branch)
     # Fast-forward the local default branch to origin (ignore failure: local
@@ -68,7 +80,33 @@ def local_merge(worktree: Path, default_branch: str) -> dict:
     head = run_cmd("git", "-C", str(worktree), "rev-parse", "HEAD")
     if base == head:
         return {"status": "up-to-date", "conflicts": []}
-    return {"status": "merged", "conflicts": []}
+    # Clean merge done: repair a misfiled Unreleased entry before reporting.
+    # HEAD^1 = our pre-merge tip, HEAD^2 = the merged-in tip; their merge
+    # base is the common ancestor git itself merged. Reports back whether
+    # the file was repaired so callers can surface it.
+    changelog_fixed = False
+    try:
+        merge_base = run_cmd("git", "-C", str(worktree), "merge-base",
+                             "HEAD^1", "HEAD^2")
+    except HarnessError:
+        merge_base = None
+    if merge_base:
+        parent_ours = _changelog_blob(worktree, "HEAD^1")
+        parent_theirs = _changelog_blob(worktree, "HEAD^2")
+        try:
+            parent_base = run_cmd(
+                "git", "-C", str(worktree), "show",
+                f"{merge_base}:CHANGELOG.md")
+        except HarnessError:
+            parent_base = None
+        if parent_ours is not None and parent_theirs is not None \
+                and parent_base:
+            changelog_fixed = verify_changelog_placement(
+                worktree, parent_base, parent_ours, parent_theirs)
+    out: dict = {"status": "merged", "conflicts": []}
+    if changelog_fixed:
+        out["changelog_repaired"] = True
+    return out
 
 
 def _last_merge_msg(worktree: Path) -> str:
@@ -87,14 +125,16 @@ def _conflicted_files(worktree: Path) -> list[str]:
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
-_UNRELEASED = re.compile(r"^(#{1,3}\s+.*)$", re.MULTILINE)
+_UNRELEASED_HEADING = "## Unreleased"
 
 
 def _split_changelog(text: str) -> tuple[list[str], dict[str, list[str]], list[str]]:
     """Split CHANGELOG text into (leading lines, section→bullet lines, trailing).
 
     Sections are `#`/`##`/`###` headings; bullets are `- ` lines directly
-    under them. Any non-bullet line inside a section breaks the parse.
+    under them, with indented continuation lines folded into the preceding
+    bullet (wrapped entries are common in real changelogs). Any other
+    non-bullet, non-blank line inside a section breaks the parse.
     """
     lines = text.splitlines()
     sections: dict[str, list[str]] = {}
@@ -102,10 +142,10 @@ def _split_changelog(text: str) -> tuple[list[str], dict[str, list[str]], list[s
     current: str | None = None
     prefix: list[str] = []
     for line in lines:
-        m = re.match(r"^(#{1,3}\s+.+)$", line)
+        m = re.match(r"^(#{1,3}\s+.+?)\s*$", line)
         if m:
             current = m.group(1)
-            if current == "## Unreleased" and current in sections:
+            if current == _UNRELEASED_HEADING and current in sections:
                 # Duplicate Unreleased heading (e.g. both sides added one):
                 # later bullets belong to the same logical section.
                 continue
@@ -118,9 +158,60 @@ def _split_changelog(text: str) -> tuple[list[str], dict[str, list[str]], list[s
             continue
         if line.startswith("- "):
             sections[current].append(line)
+        elif line.strip() and sections[current] and line[0] in (" ", "\t"):
+            # Indented continuation of the previous bullet (wrapped entry).
+            sections[current][-1] += "\n" + line
         elif line.strip():
             return text, {}, ["non-bullet"]
     return "\n".join(prefix), sections, order
+
+
+_HEADING = re.compile(r"^#{1,3}\s+.+?\s*$")
+
+
+def _splice_unreleased(text: str, bullets: list[str]) -> str:
+    """Replace the `## Unreleased` bullet block with *bullets*.
+
+    Shared by the union writer, the prune writer, and the misplacement
+    repair: the block ends at a blank line, a heading, or EOF, with
+    indented continuation lines folded into the preceding bullet. A blank
+    line is kept between the block and the following section so entries
+    are never glued to a released `## vX` heading (issue #36).
+    """
+    lines = text.splitlines()
+    out: list[str] = []
+    i = 0
+    done = False
+    while i < len(lines):
+        if not done and lines[i].strip() == _UNRELEASED_HEADING:
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            end = j
+            while end < len(lines):
+                nxt = lines[end]
+                if not nxt.strip() or _HEADING.match(nxt):
+                    break
+                if nxt.startswith("- ") or (nxt[0] in (" ", "\t") and end > j):
+                    end += 1
+                    continue
+                break
+            block: list[str] = []
+            for b in bullets:
+                block.extend(b.split("\n"))
+            out.extend(lines[i:j] + block)
+            done = True
+            i = end
+            # Skip blank separators after the old block; exactly one is
+            # re-added below when content follows.
+            while i < len(lines) and not lines[i].strip():
+                i += 1
+            if i < len(lines):
+                out.append("")
+            continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
 
 def unreleased_union(ours: str, theirs: str, base: str | None = None) -> str | None:
@@ -162,17 +253,11 @@ def unreleased_union(ours: str, theirs: str, base: str | None = None) -> str | N
     for b in ours_sections["## Unreleased"] + t_sections["## Unreleased"]:
         if b not in bullets:
             bullets.append(b)
-    # Splice the union into the template, preserving its formatting elsewhere.
-    lines = template.splitlines()
-    start = next(i for i, l in enumerate(lines) if l.strip() == "## Unreleased")
-    i = start + 1
-    while i < len(lines) and not lines[i].strip():
-        i += 1
-    end = i
-    while end < len(lines) and lines[end].startswith("- "):
-        end += 1
-    return "\n".join(lines[:i] + bullets + lines[end:]) + (
-        "\n" if template.endswith("\n") else "")
+    # Splice the union into the template via the shared writer, which stops
+    # the block at the next heading/blank line so branch entries stay under
+    # `## Unreleased` instead of leaking below a released `## vX` heading
+    # (issue #36).
+    return _splice_unreleased(template, bullets)
 
 
 def prune_released_from_unreleased(text: str) -> str | None:
@@ -199,31 +284,128 @@ def prune_released_from_unreleased(text: str) -> str | None:
         kept.append(b)
     if len(kept) == len(sections["## Unreleased"]):
         return None
-    # Splice every `## Unreleased` bullet block (duplicates possible when
-    # both sides added one): first block gets the kept union, later blocks
-    # are dropped with their blank-line separators.
-    lines = text.splitlines()
+    # Splice via the shared writer (duplicate `## Unreleased` blocks, if the
+    # merge left both sides' headings in, collapse into the first).
+    merged = _splice_unreleased(text, kept)
+    # Drop any later duplicate `## Unreleased` bullet blocks the merge left.
+    lines = merged.splitlines()
     out: list[str] = []
     i = 0
-    first = True
+    seen = False
     while i < len(lines):
-        if lines[i].strip() == "## Unreleased":
+        if lines[i].strip() == _UNRELEASED_HEADING and seen:
             j = i + 1
             while j < len(lines) and not lines[j].strip():
                 j += 1
             end = j
-            while end < len(lines) and lines[end].startswith("- "):
-                end += 1
-            if first:
-                out.extend(lines[i:j] + kept)
-                first = False
+            while end < len(lines):
+                nxt = lines[end]
+                if not nxt.strip() or _HEADING.match(nxt):
+                    break
+                if nxt.startswith("- ") or (nxt[0] in (" ", "\t") and end > j):
+                    end += 1
+                    continue
+                break
             i = end
             while i < len(lines) and not lines[i].strip():
                 i += 1
             continue
+        if lines[i].strip() == _UNRELEASED_HEADING:
+            seen = True
         out.append(lines[i])
         i += 1
     return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
+def repair_misplaced_unreleased(merged: str, base: str, ours: str,
+                                theirs: str) -> str | None:
+    """Move branch-owned Unreleased bullets back under `## Unreleased`.
+
+    Git's content merge (and a careless manual/harness resolution) can file
+    a branch's `## Unreleased` entry under a newly released `## vX` heading
+    that only exists on the other side — exactly the issue #36 report
+    (entry pushed below `## v3.2.191`). The entry then rides the release
+    instead of staying unreleased, breaking auto-versioning.
+
+    A versioned-section bullet is "misplaced" when it is owned by our
+    `## Unreleased` (present in ours, absent from base Unreleased) but the
+    versioned section holding it is new in theirs (absent from base).
+    Misplaced bullets are removed from the versioned sections and
+    re-appended (deduped, ours order first) to the merged Unreleased block.
+    Returns the repaired text, or None when nothing qualifies.
+    """
+    for doc in (merged, base, ours, theirs):
+        _, sections, _ = _split_changelog(doc)
+        if not sections:
+            return None
+    _, m_sections, _ = _split_changelog(merged)
+    _, b_sections, _ = _split_changelog(base)
+    _, o_sections, _ = _split_changelog(ours)
+    _, t_sections, _ = _split_changelog(theirs)
+    if _UNRELEASED_HEADING not in m_sections:
+        return None
+    base_unreleased = set(b_sections.get(_UNRELEASED_HEADING, []))
+    ours_owned = [b for b in o_sections.get(_UNRELEASED_HEADING, [])
+                  if b not in base_unreleased]
+    if not ours_owned:
+        return None
+    owned = set(ours_owned)
+    # Versioned sections that are new in theirs (not in base at all): only
+    # bullets under those headings can be merge-misplaced branch entries.
+    # A section the branch itself created is left alone.
+    new_sections = {n for n in t_sections
+                    if n != _UNRELEASED_HEADING and n not in b_sections
+                    and n not in o_sections}
+    if not new_sections:
+        return None
+    misplaced: list[str] = []
+    for name in new_sections:
+        for b in m_sections.get(name, []):
+            if b in owned and b not in misplaced:
+                misplaced.append(b)
+    if not misplaced:
+        return None
+    # Never steal a bullet theirs also released deliberately: it must be
+    # absent from theirs' versioned sections (theirs may legitimately
+    # release the same line, e.g. a release that consumed the entry — the
+    # prune step owns that case, not the repair).
+    theirs_released: set[str] = set()
+    for name, bullets in t_sections.items():
+        if name == _UNRELEASED_HEADING:
+            continue
+        theirs_released.update(bullets)
+    misplaced = [b for b in misplaced if b not in theirs_released]
+    if not misplaced:
+        return None
+    # Strip the misplaced bullets from the new versioned sections.
+    lines = merged.splitlines()
+    out: list[str] = []
+    current: str | None = None
+    pending_cont: bool = False
+    for line in lines:
+        m = _HEADING.match(line)
+        if m:
+            current = m.group(0).strip()
+            pending_cont = False
+            out.append(line)
+            continue
+        if (current in new_sections and line.startswith("- ")
+                and line in misplaced):
+            pending_cont = True
+            continue
+        if pending_cont and line[:1] in (" ", "\t") and line.strip():
+            continue
+        pending_cont = False
+        out.append(line)
+    stripped = "\n".join(out) + ("\n" if merged.endswith("\n") else "")
+    _, s_sections, _ = _split_changelog(stripped)
+    if not s_sections:
+        return None
+    unreleased = list(s_sections.get(_UNRELEASED_HEADING, []))
+    for b in ours_owned:
+        if b in misplaced and b not in unreleased:
+            unreleased.append(b)
+    return _splice_unreleased(stripped, unreleased)
 
 def auto_resolve_changelog(worktree: Path, conflicts: list[str]) -> bool:
     """Auto-resolve when the sole conflict is CHANGELOG.md inside Unreleased."""
@@ -243,12 +425,64 @@ def auto_resolve_changelog(worktree: Path, conflicts: list[str]) -> bool:
         merged += "\n"
     if merged is None:
         return False
+    if base is not None:
+        repaired = repair_misplaced_unreleased(merged, base, ours, theirs)
+        if repaired is not None:
+            merged = repaired
     pruned = prune_released_from_unreleased(merged)
     if pruned is not None:
         merged = pruned
     (worktree / "CHANGELOG.md").write_text(merged, encoding="utf-8")
     run_cmd("git", "-C", str(worktree), "add", "CHANGELOG.md")
     run_cmd("git", "-C", str(worktree), "commit", "--no-edit")
+    return True
+
+
+def verify_changelog_placement(worktree: Path, base: str, ours: str,
+                               theirs: str) -> bool:
+    """Repair a clean merge that misfiled Unreleased bullets (issue #36).
+
+    Git can merge CHANGELOG.md without conflict yet file the branch's
+    `## Unreleased` entry under a newly released `## vX` heading from the
+    other side. The entry then ships with the release instead of staying
+    unreleased (breaks auto-versioning). When the working-tree file parses
+    and the repair moves bullets back, the fix is amended into the merge
+    commit. Returns True when the file changed. Best effort, never raises.
+    """
+    path = worktree / "CHANGELOG.md"
+    try:
+        merged = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    try:
+        repaired = repair_misplaced_unreleased(merged, base, ours, theirs)
+    except Exception:
+        return False
+    if repaired is None or repaired == merged:
+        # Still run the idempotent prune: a clean merge may have duplicated
+        # a released line into Unreleased (release consumed the entry).
+        try:
+            pruned = prune_released_from_unreleased(merged)
+        except Exception:
+            return False
+        if pruned is None:
+            return False
+        try:
+            path.write_text(pruned, encoding="utf-8")
+            run_cmd("git", "-C", str(worktree), "add", "CHANGELOG.md")
+            run_cmd("git", "-C", str(worktree), "commit", "--amend", "--no-edit")
+        except (HarnessError, OSError):
+            return False
+        return True
+    try:
+        # Repair first, then prune anything the repair left duplicated.
+        pruned = prune_released_from_unreleased(repaired)
+        final = pruned if pruned is not None else repaired
+        path.write_text(final, encoding="utf-8")
+        run_cmd("git", "-C", str(worktree), "add", "CHANGELOG.md")
+        run_cmd("git", "-C", str(worktree), "commit", "--amend", "--no-edit")
+    except (HarnessError, OSError):
+        return False
     return True
 
 
@@ -305,6 +539,24 @@ def pull_branch(worktree: Path, branch: str) -> str:
             raise
         raise HarnessError(
             f"conflicts pulling origin/{branch}: {', '.join(conflicts)}")
+    try:
+        merge_base = run_cmd("git", "-C", str(worktree), "merge-base",
+                             "HEAD^1", "HEAD^2")
+    except HarnessError:
+        merge_base = None
+    if merge_base:
+        parent_ours = _changelog_blob(worktree, "HEAD^1")
+        parent_theirs = _changelog_blob(worktree, "HEAD^2")
+        try:
+            parent_base = run_cmd(
+                "git", "-C", str(worktree), "show",
+                f"{merge_base}:CHANGELOG.md")
+        except HarnessError:
+            parent_base = None
+        if parent_ours is not None and parent_theirs is not None \
+                and parent_base:
+            verify_changelog_placement(worktree, parent_base, parent_ours,
+                                       parent_theirs)
     return "merged"
 
 

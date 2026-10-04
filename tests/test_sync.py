@@ -235,17 +235,19 @@ def test_prune_merged_changelog_amends(tmp_path):
     _push_from_sibling(tmp_path, wt, {"CHANGELOG.md": CHANGELOG_THEIRS_RELEASED})
     out = sync.local_merge(wt, "main")
     assert out["status"] == "merged"
-    before = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
-                            check=True, capture_output=True, text=True).stdout.strip()
-    assert sync.prune_merged_changelog(wt) is True
+    # local_merge already runs the post-merge verify (repair + idempotent
+    # prune, amended in place): the released duplicate is gone here.
     merged = (wt / "CHANGELOG.md").read_text()
     unreleased = merged.split("## Unreleased")[1].split("## 1.2.0")[0]
     assert "- new release" not in unreleased
     assert "- new release" in merged.split("## 1.2.0")[1]
+    before = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
+                            check=True, capture_output=True, text=True).stdout.strip()
+    # Nothing left to prune now; a second call is a no-op.
+    assert sync.prune_merged_changelog(wt) is False
     after = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
                            check=True, capture_output=True, text=True).stdout.strip()
-    assert after != before
-    assert sync.prune_merged_changelog(wt) is False
+    assert after == before
 def test_auto_resolve_changelog_with_released_addition(tmp_path):
     _, wt = _seed_and_clone(tmp_path, {"CHANGELOG.md": CHANGELOG_OURS})
     _git("checkout", "-q", "-b", "feat/x", cwd=wt)
@@ -258,6 +260,101 @@ def test_auto_resolve_changelog_with_released_addition(tmp_path):
     r = subprocess.run(["git", "diff", "--name-only", "--diff-filter=U"],
                        cwd=str(wt), capture_output=True, text=True, check=False)
     assert r.stdout.strip() == ""
+
+PX_BASE = """# Changelog
+
+## Unreleased
+
+## v3.2.190
+### 2026-09-20
+
+- old thing
+"""
+
+PX_OURS = """# Changelog
+
+## Unreleased
+
+- my feature entry
+
+## v3.2.190
+### 2026-09-20
+
+- old thing
+"""
+
+PX_THEIRS = """# Changelog
+
+## Unreleased
+
+## v3.2.191
+### 2026-09-30
+
+- other released thing
+
+## v3.2.190
+### 2026-09-20
+
+- old thing
+"""
+
+
+def test_issue36_union_keeps_branch_entry_unreleased():
+    """Issue #36: the resolver must not glue the branch entry to `## vX`."""
+    merged = sync.unreleased_union(PX_OURS, PX_THEIRS, base=PX_BASE)
+    assert merged is not None
+    assert "## Unreleased\n\n- my feature entry\n\n## v3.2.191" in merged
+    assert "- my feature entry\n## v3.2.191" not in merged
+
+
+def test_issue36_repair_moves_misfiled_entry_back():
+    """Issue #36: a clean merge that files the entry under the new release
+    is repaired — the entry returns to Unreleased, the release keeps its own."""
+    misfiled = ("# Changelog\n\n## Unreleased\n\n## v3.2.191\n### 2026-09-30\n\n"
+                "- my feature entry\n- other released thing\n\n"
+                "## v3.2.190\n### 2026-09-20\n\n- old thing\n")
+    fixed = sync.repair_misplaced_unreleased(misfiled, PX_BASE, PX_OURS, PX_THEIRS)
+    assert fixed is not None
+    assert "## Unreleased\n\n- my feature entry\n\n## v3.2.191" in fixed
+    assert "- other released thing" in fixed.split("## v3.2.191")[1]
+
+
+def test_issue36_repair_ignores_consumed_release():
+    """A release that legitimately consumed the entry is prune's case, not
+    repair's: theirs released the same line, so the repair must not steal."""
+    consumed_theirs = PX_THEIRS.replace("- other released thing",
+                                        "- my feature entry")
+    merged = ("# Changelog\n\n## Unreleased\n\n## v3.2.191\n### 2026-09-30\n\n"
+              "- my feature entry\n\n## v3.2.190\n### 2026-09-20\n\n- old thing\n")
+    assert sync.repair_misplaced_unreleased(
+        merged, PX_BASE, PX_OURS, consumed_theirs) is None
+
+
+def test_issue36_wrapped_bullets_survive_union():
+    """Indented continuation lines belong to the bullet, not a parse break."""
+    wrapped = ("# Changelog\n\n## Unreleased\n\n- my feature entry\n"
+               "  continued detail\n\n## v3.2.190\n\n- old\n")
+    _, sections, _ = sync._split_changelog(wrapped)
+    assert sections["## Unreleased"] == ["- my feature entry\n  continued detail"]
+    assert sync.unreleased_union(wrapped, wrapped) == wrapped
+
+
+def test_issue36_clean_merge_repairs_misplacement(tmp_path):
+    """End to end: force git's clean-merge misfile, verify the guard heals."""
+    _, wt = _seed_and_clone(tmp_path, {"CHANGELOG.md": PX_BASE})
+    _git("checkout", "-q", "-b", "feat/x", cwd=wt)
+    _commit(wt, {"CHANGELOG.md": PX_OURS}, "feat")
+    _push_from_sibling(tmp_path, wt, {"CHANGELOG.md": PX_THEIRS})
+    out = sync.local_merge(wt, "main")
+    assert out["status"] in ("merged", "conflict")
+    if out["status"] == "conflict":
+        assert sync.auto_resolve_changelog(wt, out["conflicts"]) is True
+    text = (wt / "CHANGELOG.md").read_text()
+    assert "## Unreleased\n\n- my feature entry\n" in text
+    assert "- my feature entry\n## v3.2.191" not in text
+    # The branch entry must not sit under the new versioned heading.
+    versioned = text.split("## v3.2.191")[1]
+    assert "- my feature entry" not in versioned
 
 
 def test_auto_resolve_changelog(tmp_path):
