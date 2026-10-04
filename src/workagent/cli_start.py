@@ -181,7 +181,7 @@ def start(
     prompt = backend.prompt_for_issue(issue["title"], issue["body"], ref,
                                       worktree=worktree, branch=branch)
     if no_tty:
-        prompt += "\n\nAfter task done, commit, push and create an MR/PR to the default branch"
+        prompt += "\n\nWhen done: commit, push to this branch, and create an MR/PR to the default branch."
     result = {"worktree_path": worktree, "branch": branch,
               "base": detected_default if branch_mode else base_branch,
               "key": key, "harness": harness_name, "command": "start"}
