@@ -56,6 +56,37 @@ def test_issue_key_stable():
     assert refs.issue_key(p) == "github:o/r#22"
 
 
+def test_issue_key_jira_repo_suffix():
+    p = refs.parse_ref("IPG-1011")
+    assert refs.issue_key(p) == "jira:IPG-1011"
+    assert refs.issue_key(p, "saman-ipg") == "jira:IPG-1011@saman-ipg"
+    assert refs.issue_key(p, "/home/x/My Repo!") == "jira:IPG-1011@my-repo"
+    # GitHub keys already embed the repo — suffix ignored.
+    g = refs.parse_ref("https://github.com/o/r/issues/22")
+    assert refs.issue_key(g, "other") == "github:o/r#22"
+
+
+def test_split_issue_key_round_trip():
+    assert refs.split_issue_key("jira:IPG-1011@saman-ipg") == ("jira:IPG-1011", "saman-ipg")
+    assert refs.split_issue_key("jira:IPG-1011") == ("jira:IPG-1011", None)
+    assert refs.split_issue_key("github:o/r#22") == ("github:o/r#22", None)
+
+
+def test_matching_issue_keys_dual_resolve():
+    links = {"jira:IPG-1011@saman-ipg": {}, "jira:IPG-999": {}}
+    assert refs.matching_issue_keys("jira:IPG-1011@saman-ipg", links) == ["jira:IPG-1011@saman-ipg"]
+    assert refs.matching_issue_keys("jira:IPG-1011", links) == ["jira:IPG-1011@saman-ipg"]
+    assert refs.matching_issue_keys("jira:IPG-999@other", links) == ["jira:IPG-999"]
+    assert refs.matching_issue_keys("jira:IPG-404", links) == []
+
+
+def test_issue_url_strips_repo_suffix(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.json"
+    cfg.write_text('{"url": "https://jira.example.com"}')
+    monkeypatch.setattr(refs, "_JIRA_CONFIGS", (cfg,))
+    assert refs.issue_url("jira:IPG-1011@saman-ipg") == "https://jira.example.com/browse/IPG-1011"
+
+
 def test_fetch_pr_list_gh(monkeypatch):
     gh_json = json.dumps([
         {"number": 12, "state": "OPEN", "title": "B", "createdAt": "2026-09-02",

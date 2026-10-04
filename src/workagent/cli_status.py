@@ -456,7 +456,9 @@ def status(
         if not key or not entry:
             if parsed is None:
                 _fail(f"no linked state for {ref}", EXIT_USAGE)
-            key = refs.issue_key(parsed)
+            want = refs.issue_key(parsed)
+            kin = [k for k in refs.matching_issue_keys(want, links) if links.get(k)]
+            key = kin[0] if len(kin) == 1 else want
             entry = links.get(key) or links.get(f"pr:{parsed['url']}", {})
             if not entry:
                 _fail(f"no linked state for {ref}", EXIT_USAGE)

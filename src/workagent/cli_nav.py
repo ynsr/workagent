@@ -161,7 +161,7 @@ def register(
         elif parsed["tool"] == "jira-cli" and (site := refs.jira_site()):
             issue_url = f"{site}/browse/{parsed['number']}"
         if key is None:
-            key = refs.issue_key(parsed)
+            key = refs.issue_key(parsed, Path(main_repo).name) if main_repo else refs.issue_key(parsed)
     if key is None:
         m = re.match(r"(?:feat/)?([A-Z][A-Z0-9]+)-(\d+)", branch)
         key = f"jira:{m.group(0).split('/')[-1]}" if m else f"branch:{branch}"

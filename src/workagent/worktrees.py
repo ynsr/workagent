@@ -61,6 +61,13 @@ def resolve_worktree(ref: str, links: dict) -> str | list[str] | None:
             exact = key
         elif pr_key in links:
             exact = pr_key
+        else:
+            kin = [k for k in refs.matching_issue_keys(key, links)
+                   if (links.get(k) or {}).get("worktree")]
+            if len(kin) == 1:
+                exact = kin[0]
+            elif kin:
+                return sorted(kin)
         needle = parsed.get("number", "") or ref
     for k, v in links.items():
         if needle and needle == (v.get("branch", "") or ""):

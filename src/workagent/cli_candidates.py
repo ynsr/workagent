@@ -93,7 +93,7 @@ def _candidates(force: bool = False) -> dict:
         if dt is None or dt < cutoff:
             continue
         key = str(i.get("key", "") or "")
-        if key and key in links:
+        if key and refs.matching_issue_keys(key, links):
             continue
         url = str(i.get("url", "") or "")
         if url and url.rstrip("/") in linked_issue_urls:

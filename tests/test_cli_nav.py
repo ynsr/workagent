@@ -251,9 +251,9 @@ def test_register_issue_ref_sets_key_and_url(isolated_config, tmp_path, monkeypa
     r = _invoke("register", str(wt), "--issue", "IPG-555", "--json")
     assert r.exit_code == 0, r.stdout + r.stderr
     data = json.loads(r.stdout)
-    assert data["key"] == "jira:IPG-555"
+    assert data["key"] == "jira:IPG-555@proj"
     assert data["issue_url"] == "https://jira.example.com/browse/IPG-555"
-    assert store.lookup_link("jira:IPG-555")["branch"] == "some-branch"
+    assert store.lookup_link("jira:IPG-555@proj")["branch"] == "some-branch"
 
 
 def test_register_persists_tracker_repo_relation(isolated_config, tmp_path):

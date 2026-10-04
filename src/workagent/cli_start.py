@@ -63,9 +63,24 @@ def start(
         return _start_from_pr(ref, parsed, repo, depth, harness, no_tty,
                               launch, dry_run, yes, json_output,
                               session_file)
-    key = refs.issue_key(parsed)
     links = store.load_links()
-    existing = links.get(key, {})
+    bare = refs.issue_key(parsed)
+    if parsed["tool"] == "jira-cli" and repo:
+        # Explicit --repo pins the worktree: suffix first so each repo gets
+        # its own row (dual-resolve keeps the bare legacy row reachable).
+        key = refs.issue_key(parsed, repos.resolve_repo(repo, Path.cwd(), depth=depth).name)
+        existing = links.get(key, {})
+    else:
+        key = bare
+        kin = [k for k in refs.matching_issue_keys(bare, links)
+               if (links.get(k) or {}).get("worktree")
+               and Path(str((links.get(k) or {}).get("worktree", ""))).is_dir()]
+        existing = links.get(kin[0], {}) if len(kin) == 1 else {}
+        if len(kin) > 1:
+            _fail(f"{bare} has {len(kin)} linked worktrees ({', '.join(sorted(kin))})"
+                  f" — re-run with --repo <name|path> to pick one", EXIT_USAGE)
+        if kin:
+            key = kin[0]
     if existing.get("worktree") and Path(str(existing["worktree"])).is_dir():
         # Rule 1: the issue is already linked — reuse that worktree (never
         # create a second one, never touch the CWD). Its repo wins; an
@@ -108,7 +123,8 @@ def start(
         eprint(f"note: continuing on existing branch '{cwd_branch}' (current worktree); no new branch created.")
 
     issue = refs.fetch_issue(parsed)
-    key = refs.issue_key(parsed)
+    if parsed["tool"] == "jira-cli":
+        key = refs.issue_key(parsed, Path(r).name)
     harness_name = harness or store.load_config().get("default_harness", "omp")
 
     # git-wt detects the tracker from a URL (--link must be a URL, never a

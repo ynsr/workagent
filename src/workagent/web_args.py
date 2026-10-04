@@ -181,7 +181,9 @@ def _validate_args(command: str, args: list[str], body_force: bool = False) -> N
                         key = _refs.issue_key(parsed)
                     except Exception:
                         key = ""
-                    pinned = bool(key and str((links.get(key) or {}).get("repo", "")))
+                    pinned = bool(key and any(
+                        str((links.get(k) or {}).get("repo", ""))
+                        for k in _refs.matching_issue_keys(key, links)))
                 else:
                     pinned = isinstance(_worktrees.resolve_worktree(ref, links), str)
             if tid and not pinned:

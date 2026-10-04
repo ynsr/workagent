@@ -17,10 +17,12 @@ same-origin check passes).
 ```
 
 ### `GET /api/status` → all worktrees
-Map of worktree key → entry (same shape as `workagent status --json`):
+Map of worktree key → entry (same shape as `workagent status --json`).
+Jira rows are keyed `jira:KEY@repo` (e.g. `jira:IPG-932@projectx`); bare
+`jira:KEY` rows are pre-suffix legacy and still resolve.
 ```json
 {
-  "jira:IPG-932": {
+  "jira:IPG-932@projectx": {
     "issue": "IPG-932", "worktree": "/home/x/wt", "branch": "feat/…",
     "harness": "omp 4242",
     "repo": "/home/x/projectx", "issue_url": "https://…/browse/IPG-932",

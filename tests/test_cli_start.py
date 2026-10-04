@@ -69,6 +69,62 @@ def test_start_reuses_linked_worktree(isolated_config, tmp_path, monkeypatch):
     assert '"reused": true' in r.output
 
 
+def test_start_jira_suffixes_key_with_repo(isolated_config, tmp_path, monkeypatch):
+    """Jira start records one suffixed row per repo: jira:KEY@repo."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    calls = {}
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: calls.update({"repo": repo}) or {"worktree_path": str(worktree),
+                                                                           "branch": "feat/IPG-1011--x"})
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    r = runner.invoke(cli.app, ["start", "IPG-1011", "--launch", "--json"])
+    assert r.exit_code == 0, r.output
+    entry = store.load_links()["jira:IPG-1011@proj"]
+    assert entry["branch"] == "feat/IPG-1011--x"
+
+
+def test_start_jira_reuses_bare_legacy_row(isolated_config, tmp_path, monkeypatch):
+    """Dual-resolve: a pre-suffix bare jira:KEY row still reuses on start."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: (_ for _ in ()).throw(AssertionError("must reuse, not start")))
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    store.record_link("jira:IPG-1011", {"worktree": str(worktree), "branch": "b",
+                                        "repo": str(repo_dir)})
+    r = runner.invoke(cli.app, ["start", "IPG-1011", "--launch", "--json"])
+    assert r.exit_code == 0, r.output
+    assert '"reused": true' in r.output
+
+
+def test_start_jira_two_variants_need_repo(isolated_config, tmp_path, monkeypatch):
+    """Two suffixed rows for one issue → bare start errors, naming --repo."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    wt1 = tmp_path / "wt1"
+    wt1.mkdir()
+    wt2 = tmp_path / "wt2"
+    wt2.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: (_ for _ in ()).throw(AssertionError("must not start")))
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    store.record_link("jira:IPG-1011@saman-ipg", {"worktree": str(wt1), "branch": "b1",
+                                                  "repo": str(repo_dir)})
+    store.record_link("jira:IPG-1011@sepehr-ipg", {"worktree": str(wt2), "branch": "b2",
+                                                    "repo": str(repo_dir)})
+    r = runner.invoke(cli.app, ["start", "IPG-1011", "--launch", "--json"])
+    assert r.exit_code == 2, r.output
+    assert "--repo" in r.output
+
+
 def test_start_base_existing_branch_reuses_branch(isolated_config, tmp_path, monkeypatch):
     """--base <non-default> runs on that branch: worktree for it, no new branch."""
     repo_dir = tmp_path / "proj"

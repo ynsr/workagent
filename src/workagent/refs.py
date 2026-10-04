@@ -62,13 +62,58 @@ def parse_ref(ref: str) -> dict:
     )
 
 
-def issue_key(parsed: dict) -> str:
-    """Stable key for links.json, e.g. 'jira:IPG-980' or 'github:owner/repo#22'."""
+_KEY_REPO_SEP = "@"
+
+
+def slugify_repo(name: str) -> str:
+    """Slug a repo/checkout name for use as a key suffix (branch-slug rule)."""
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", (name or "").lower()).strip("-")
+    return re.sub(r"-{2,}", "-", slug)
+
+
+def issue_key(parsed: dict, repo: str = "") -> str:
+    """Stable key for links.json, e.g. 'jira:IPG-980' or 'github:owner/repo#22'.
+
+    Jira keys take an optional repo suffix — ``jira:IPG-980@saman-ipg`` —
+    so one issue can fan out to one worktree per repo. The suffix is a
+    branch-style slug of the repo/checkout name. GitHub/GitLab keys already
+    embed the repo, so *repo* is ignored for them.
+    """
     if parsed["tool"] == "jira-cli":
-        return f"jira:{parsed['number']}"
+        base = f"jira:{parsed['number']}"
+        suffix = slugify_repo(Path(repo).name if "/" in repo else repo) if repo else ""
+        return f"{base}{_KEY_REPO_SEP}{suffix}" if suffix else base
     host = "gitlab" if parsed["tool"] == "glab" else "github"
-    repo = parsed["repo"] or "local"
-    return f"{host}:{repo}#{parsed['number']}"
+    r = parsed["repo"] or "local"
+    return f"{host}:{r}#{parsed['number']}"
+
+
+def split_issue_key(key: str) -> tuple[str, str | None]:
+    """Split a link key into ``(base_key, repo_suffix | None)``."""
+    host, _, ident = key.partition(":")
+    if host != "jira" or not ident or _KEY_REPO_SEP not in ident:
+        return key, None
+    issue, _, suffix = ident.rpartition(_KEY_REPO_SEP)
+    if not issue or not suffix:
+        return key, None
+    return f"{host}:{issue}", suffix
+
+def matching_issue_keys(want: str, links: dict) -> list[str]:
+    """Keys in *links* for issue *want* (exact hit, else bare/suffixed kin).
+
+    Dual-resolve: a suffixed query also matches its bare legacy row and
+    vice versa, so pre-suffix worktrees keep resolving.
+    """
+    if want in links:
+        return [want]
+    base, _ = split_issue_key(want)
+    kin = [k for k in links
+           if k == base or split_issue_key(k)[0] == base]
+    if base in kin:
+        kin.sort(key=lambda k: (k != base, k))
+    else:
+        kin.sort()
+    return kin
 
 
 _JIRA_CONFIGS = (
@@ -93,7 +138,8 @@ def jira_site() -> str | None:
 def issue_url(key: str, stored: str | None = None) -> str | None:
     """Full issue URL for a session key; a stored http URL wins.
 
-    jira:KEY   → <site>/browse/KEY (site from jira-cli config)
+    jira:KEY[@repo] → <site>/browse/KEY (repo suffix stripped; site from
+    jira-cli config)
     github:r#N → https://github.com/r/issues/N
     gitlab:…#N → None (the key does not carry the host)
     """
@@ -101,6 +147,7 @@ def issue_url(key: str, stored: str | None = None) -> str | None:
         return stored
     host, _, ident = key.partition(":")
     if host == "jira" and ident:
+        ident = split_issue_key(key)[0].partition(":")[2] or ident
         site = jira_site()
         return f"{site}/browse/{ident}" if site else None
     if host == "github" and "#" in ident:

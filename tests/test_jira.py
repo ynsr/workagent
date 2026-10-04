@@ -104,7 +104,7 @@ def test_start_dry_run_jira(isolated_config, tmp_path, monkeypatch):
     r = CliRunner().invoke(cli.app, ["start", "IPG-980", "--dry-run", "--json"])
     assert r.exit_code == 0, r.output
     out = json.loads(r.stdout)
-    assert out["key"] == "jira:IPG-980"
+    assert out["key"] == "jira:IPG-980@proj"
     assert out["dry_run"] is True
 
 

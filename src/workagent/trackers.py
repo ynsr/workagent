@@ -179,10 +179,8 @@ def default_repo_for_ref(issue_ref: str) -> str:
         want = refs.issue_key(parsed)
     except Exception:
         return ""
-    for key, entry in links.items():
-        if key != issue_ref and key != want:
-            continue
-        repo = str((entry or {}).get("repo", ""))
+    for key in refs.matching_issue_keys(want, links):
+        repo = str(((links.get(key)) or {}).get("repo", ""))
         if repo:
             return repo
     tid = tracker_id(parsed)
