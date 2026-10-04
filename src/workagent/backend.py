@@ -121,6 +121,7 @@ def prompt_for_fix_comments(pr_url: str, worktree: str = "", branch: str = "") -
     """Apply/fix open PR/MR review findings (issue #32)."""
     prompt = (
         f"Fix all open (not-resolved) review comments on this PR/MR: {pr_url}\n\n"
+        "Use the receiving-code-review skill before implementing any feedback.\n\n"
         "Fetch every open/unresolved thread and every plain PR comment that is not "
         "marked resolved. Review each comment and validate it against the code and "
         "the PR/MR description — apply only the findings that hold up; briefly note "

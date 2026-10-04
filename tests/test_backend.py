@@ -86,6 +86,7 @@ def test_prompt_for_fix_comments_rules():
     assert "https://x/pull/1" in p
     assert "Resolve/close" in p
     assert "Status: RESOLVED" in p
+    assert "receiving-code-review skill" in p
     assert "validate" in p and "commit and push" in p
     assert "Never create or push a different branch" in p
 
