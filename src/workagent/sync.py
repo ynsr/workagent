@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from pathlib import Path
 
 from .errors import HarnessError, run_cmd
 
@@ -29,6 +30,15 @@ def dirty_files(worktree: Path) -> list[str]:
         if m:
             files.append(m.group(1).strip('"'))
     return files
+
+def merge_in_progress(worktree: Path) -> bool:
+    """True when a merge is left in progress (MERGE_HEAD present)."""
+    try:
+        gitdir = run_cmd("git", "-C", str(worktree), "rev-parse",
+                         "--path-format=absolute", "--git-dir")
+    except HarnessError:
+        return False
+    return (Path(gitdir) / "MERGE_HEAD").exists()
 
 
 def local_merge(worktree: Path, default_branch: str) -> dict:

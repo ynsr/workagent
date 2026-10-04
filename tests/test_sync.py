@@ -535,6 +535,29 @@ def test_pull_branch_ff_and_merge(tmp_path):
     _git("push", "-q", "origin", "b", cwd=wt)
     assert sync.pull_branch(wt, "b") == "up-to-date"
 
+
+def test_sync_local_merge_pushes_pull_created_merge_commit(
+        isolated_config, tmp_path, monkeypatch):
+    """pull_branch merged remote-only commits, base merge is a no-op:
+    the pull-created merge commit must still be pushed (was: result
+    overwritten to up-to-date, push gate skipped, remote never updated)."""
+    from workagent import cli, store
+    wt_dir = tmp_path / "wt"
+    _cli_link(isolated_config, tmp_path, monkeypatch, cli, store, wt_dir)
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "merged")
+    monkeypatch.setattr(cli.sync_mod, "local_merge",
+                        lambda wt, db: {"status": "up-to-date", "conflicts": []})
+    pushed = []
+    monkeypatch.setattr(cli.sync_mod, "push",
+                        lambda wt, br: pushed.append((str(wt), br)))
+    r = cli_test_invoke("sync", "IPG-929", "--merge", "--yes", "--json")
+    assert r.exit_code == 0
+    import json as _json
+    out = _json.loads(r.stdout)
+    assert pushed == [(str(wt_dir), "feat/IPG-929--x")]
+    assert out.get("pushed") is True
+
+
 def test_pull_rebased_single_branch_clone(tmp_path):
     """_fetch_branch writes origin/<branch> on single-branch clones.
 

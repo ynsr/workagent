@@ -134,6 +134,22 @@ def test_sync_dirty_worktree_aborts(isolated_config, tmp_path, monkeypatch):
     assert r.exit_code == 1
     assert "dirty.txt" in r.output
 
+def test_sync_dirty_abort_names_merge_in_progress(
+        isolated_config, tmp_path, monkeypatch):
+    """A leftover conflicted merge must say so: the dirty abort names the
+    in-progress merge and the commit+push step (was: bare file list)."""
+    from workagent import sync as sync_mod
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    (wt_dir / "dirty.txt").write_text("x\n")
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli.sync_mod, "dirty_files", lambda p: ["dirty.txt"])
+    monkeypatch.setattr(sync_mod, "merge_in_progress", lambda p: True)
+    r = _invoke("sync", "IPG-929", "--yes")
+    assert r.exit_code == 1
+    assert "merge is in progress" in r.output
+
+
 
 def test_sync_all_missing_worktree_skipped(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"

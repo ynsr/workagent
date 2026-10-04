@@ -219,8 +219,10 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
         return result
     dirty = sync_mod.dirty_files(Path(wt))
     if dirty:
-        _fail(f"{key}: worktree has uncommitted changes: {', '.join(dirty)}",
-              EXIT_GENERAL)
+        hint = (" — a merge is in progress; resolve conflicts, commit the "
+                "merge, and push") if sync_mod.merge_in_progress(Path(wt)) else ""
+        _fail(f"{key}: worktree has uncommitted changes: {', '.join(dirty)}"
+              f"{hint}", EXIT_GENERAL)
     cells = _cli._status_cells(entry, refresh_pr=False)
     pr = cells["pr_data"]
     tool = store.get_cached_pr_tool(branch, repo) or _cli._repo_tool(repo)
@@ -305,6 +307,9 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
                                           use_harness, yes, json_output,
                                           session_file, out["conflicts"])
         result["result"] = "merged"
+    elif out["status"] == "up-to-date" and result.get("pulled") == "merged":
+        result["result"] = "merged"
+        eprint(f"{key}: pulled origin/{branch} (merged) — pushing")
     elif out["status"] == "up-to-date":
         result["result"] = "up-to-date"
         eprint(f"{key}: already up to date")
