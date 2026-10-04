@@ -25,7 +25,7 @@ from .cli_core import (
     app,
     eprint,
 )
-from .cli_harness import _guard_harness, _run_harness
+from .cli_harness import _guard_harness, _run_harness, append_extra_prompt
 from .errors import HarnessError
 
 _COMP = _init_completions()
@@ -225,6 +225,7 @@ def review(
     fix_comments: bool = typer.Option(False, "--fix-comments", help="Fix open PR/MR review comments instead of reviewing: validate each finding, apply, resolve/close, commit and push."),
     new_fix_session: bool = typer.Option(False, "--new-fix-session", help="With --fix-comments: start a fresh fix session instead of continuing the latest review session."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the harness (omp --resume)."),
+    extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
 ) -> None:
     """Create worktree from PR/MR and launch review.
 
@@ -385,6 +386,7 @@ def review(
                 prompt += "\n\nAuto add all comments to the PR/MR at yielding and don't wait for user approval"
             if fix and not fix_comments:
                 prompt += "\n\nAuto-fix all identified issues after yielding and don't wait for user approval."
+            prompt = append_extra_prompt(prompt, extra_prompt)
             result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
                       "harness": harness_name, "command": "review",
                       "fix_comments": fix_comments}
@@ -429,6 +431,7 @@ def review(
         prompt += "\n\nAuto add all comments to the PR/MR at yielding and don't wait for user approval"
     if fix and not fix_comments:
         prompt += "\n\nAuto-fix all identified issues after yielding and don't wait for user approval."
+    prompt = append_extra_prompt(prompt, extra_prompt)
     result = {"worktree_path": worktree, "branch": branch, "pr_url": pr_url,
               "harness": harness_name, "command": "review",
               "fix_comments": fix_comments}

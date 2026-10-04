@@ -185,7 +185,7 @@ Request:
 - `command`: one of `start | review | cleanup | sync | open | register |
   repo | link` (subcommand goes first in `args`: `["add", "--name", …]`).
 - Global `-v` may be passed as `args[0]`.
-- Values must not start with `-`; unknown options → 400.
+- Values must not start with `-` (except `--extra-prompt`, rewritten to `--extra-prompt=<text>` so free text may start with `-`); unknown options → 400.
 - Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`) need
   `confirm: true` → the server appends `--yes`. `force: true` requires
   `confirm: true` and appends `--force` (cleanup, register, repo remove).

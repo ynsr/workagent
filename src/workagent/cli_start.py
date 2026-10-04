@@ -23,7 +23,7 @@ from .cli_core import (
     app,
     eprint,
 )
-from .cli_harness import _guard_harness, _launch_in_worktree, _run_harness
+from .cli_harness import _guard_harness, _launch_in_worktree, _run_harness, append_extra_prompt
 from .cli_review import _ensure_branch_worktree
 from .errors import HarnessError
 
@@ -47,6 +47,7 @@ def start(
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the harness (omp --resume)."),
+    extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
 ) -> None:
     """Create worktree from issue and launch harness.
 
@@ -62,7 +63,7 @@ def start(
     if pr_mode:
         return _start_from_pr(ref, parsed, repo, depth, harness, no_tty,
                               launch, dry_run, yes, json_output,
-                              session_file)
+                              session_file, extra_prompt)
     links = store.load_links()
     bare = refs.issue_key(parsed)
     if parsed["tool"] == "jira-cli" and repo:
@@ -98,7 +99,7 @@ def start(
                            "tracker_link": "reused"}, json_output)
             return
         return _launch_in_worktree(key, existing, harness, no_tty, launch,
-                                   session_file, json_output)
+                                   session_file, json_output, extra_prompt)
     r, detected_default, tid, outcome = trackers.resolve_repo_for_ref(
         parsed, repo, Path.cwd(), depth=depth,
         yes=yes, persist=not dry_run)
@@ -182,6 +183,7 @@ def start(
                                       worktree=worktree, branch=branch)
     if no_tty:
         prompt += "\n\nWhen done: commit, push to this branch, and create an MR/PR to the default branch."
+    prompt = append_extra_prompt(prompt, extra_prompt)
     result = {"worktree_path": worktree, "branch": branch,
               "base": detected_default if branch_mode else base_branch,
               "key": key, "harness": harness_name, "command": "start"}
@@ -195,7 +197,7 @@ def start(
 def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
                    harness: str | None, no_tty: bool, launch: bool,
                    dry_run: bool, yes: bool, json_output: bool,
-                   session_file: str | None) -> None:
+                   session_file: str | None, extra_prompt: str | None = None) -> None:
     """Start a coding session on a PR/MR source branch (branch-keyed row)."""
     repo_dir, base_branch, tid, outcome = trackers.resolve_repo_for_ref(
         parsed, repo, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
@@ -217,6 +219,7 @@ def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
                                       pr_url, worktree=worktree, branch=branch)
     if no_tty:
         prompt += "\n\nAfter task done, commit and push to the PR/MR source branch"
+    prompt = append_extra_prompt(prompt, extra_prompt)
     result = {"worktree_path": worktree, "branch": branch,
               "base": base_branch, "key": key, "pr_url": pr_url,
               "harness": harness_name, "command": "start"}

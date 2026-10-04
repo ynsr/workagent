@@ -130,19 +130,27 @@ function RunHarnessCommandAction({ runId, lines }: { runId: string; lines: RunLi
     }
     return cmd.trim()
   }, [lines])
+  const hasCmd = Boolean(cmd)
+  const start = () => {
+    void startTerminal
+      .mutateAsync(runId)
+      .then(() => toast.success("Terminal opened on the harness command"))
+      .catch((err: unknown) => toast.error(errorText(err)))
+  }
+  const copy = () => {
+    void copyToClipboard(cmd)
+      .then(() => toast.success("Harness command copied"))
+      .catch((err: unknown) => toast.error(errorText(err)))
+  }
   return (
-    <>
+    <div className="inline-flex items-stretch" role="group" aria-label="Harness command">
       <Button
         variant="outline"
         size="sm"
         title={cmd || "Start in terminal (nothing to start yet)"}
-        disabled={!cmd || startTerminal.isPending}
-        onClick={() => {
-          void startTerminal
-            .mutateAsync(runId)
-            .then(() => toast.success("Terminal opened on the harness command"))
-            .catch((err: unknown) => toast.error(errorText(err)))
-        }}
+        disabled={!hasCmd || startTerminal.isPending}
+        onClick={start}
+        className="rounded-r-none"
       >
         <SquareTerminal aria-hidden /> Start in terminal
       </Button>
@@ -150,16 +158,13 @@ function RunHarnessCommandAction({ runId, lines }: { runId: string; lines: RunLi
         variant="outline"
         size="sm"
         title={cmd || "Copy harness command (nothing to copy yet)"}
-        disabled={!cmd}
-        onClick={() => {
-          copyToClipboard(cmd)
-            .then(() => toast.success("Harness command copied"))
-            .catch((err: unknown) => toast.error(errorText(err)))
-        }}
+        disabled={!hasCmd}
+        onClick={copy}
+        className="rounded-l-none border-l-0"
       >
-        <Copy aria-hidden /> Copy harness command
+        <Copy aria-hidden /> Copy
       </Button>
-    </>
+    </div>
   )
 }
 export function RunDetail() {

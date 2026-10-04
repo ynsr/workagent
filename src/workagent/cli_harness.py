@@ -15,6 +15,14 @@ from . import backend, store
 from .cli_core import _HARNESS_ARGS, _fail, _print_result, eprint
 
 
+def append_extra_prompt(prompt: str, extra_prompt: str | None) -> str:
+    """Append user-supplied extra instructions to a harness prompt."""
+    if not isinstance(extra_prompt, str):
+        return prompt
+    extra = extra_prompt.strip()
+    return prompt if not extra else f"{prompt}\n\n{extra}"
+
+
 def _guard_harness(key: str | None, worktree: str) -> None:
     """Advisory pre-check: one live harness per worktree (issue #6).
 
@@ -30,7 +38,6 @@ def _guard_harness(key: str | None, worktree: str) -> None:
         for k, v in store.load_harnesses().items():
             if k != key and v.get("worktree") == worktree:
                 rec = v
-                break
     if rec is not None:
         _fail(f"worktree {worktree} already has a live harness "
               f"({rec['harness']}, pid {rec['pid']}) — wait for it to "
@@ -50,14 +57,15 @@ def _harness_cell(key: str, worktree: str = "") -> str:
 
 
 def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool,
-                        launch: bool, session_file: str | None, json_output: bool) -> None:
+                        launch: bool, session_file: str | None, json_output: bool,
+                        extra_prompt: str | None = None) -> None:
     """Re-launch the harness in an already-linked worktree (issue #26 rule 1)."""
     worktree = str(entry.get("worktree", ""))
     repo = str(entry.get("repo", worktree))
     harness_name = harness or store.load_config().get("default_harness", "omp")
-    prompt = backend.prompt_for_issue(
+    prompt = append_extra_prompt(backend.prompt_for_issue(
         str(entry.get("issue", key)), "", key,
-        worktree=worktree, branch=str(entry.get("branch", "")))
+        worktree=worktree, branch=str(entry.get("branch", ""))), extra_prompt)
     result = {"worktree_path": worktree, "branch": str(entry.get("branch", "")),
               "key": key, "harness": harness_name, "reused": True}
     eprint(f"worktree: {worktree}  branch: {entry.get('branch', '')}")

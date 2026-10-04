@@ -49,23 +49,33 @@ export function SessionResumeActions({
   const resumeRun = useResumeRun()
   const resumeSession = useResumeSession()
   const label = runId ? `run ${runId}` : `session ${sessionId}`
+  const cmd = resumeCommand(worktree, sessionFile)
   const icon = variant === "icon"
+  const resumePending = resumeRun.isPending || resumeSession.isPending
+  const canResume = Boolean(!resumePending && worktree && sessionFile)
+  const resume = (e: React.MouseEvent) => {
+    if (icon) e.preventDefault()
+    const done = () => toast.success("Terminal opened on the session")
+    const fail = (err: unknown) => toast.error(errorText(err))
+    if (runId) void resumeRun.mutateAsync(runId).then(done).catch(fail)
+    else if (sessionId) void resumeSession.mutateAsync(sessionId).then(done).catch(fail)
+  }
+  const copy = (e: React.MouseEvent) => {
+    if (icon) e.preventDefault()
+    void copyToClipboard(cmd)
+      .then(() => toast.success("Resume command copied"))
+      .catch((err: unknown) => toast.error(errorText(err)))
+  }
   return (
-    <>
+    <div className="inline-flex items-stretch" role="group" aria-label={`Resume ${label}`}>
       <Button
         variant={icon ? "ghost" : "outline"}
         size={icon ? "icon" : "sm"}
         aria-label={`Resume session for ${label} in terminal`}
-        title={resumeCommand(worktree, sessionFile)}
-        disabled={resumeRun.isPending || resumeSession.isPending}
-        onClick={(e) => {
-          if (icon) e.preventDefault()
-          const done = () => toast.success("Terminal opened on the session")
-          const fail = (err: unknown) => toast.error(errorText(err))
-          if (runId) void resumeRun.mutateAsync(runId).then(done).catch(fail)
-          else if (sessionId) void resumeSession.mutateAsync(sessionId).then(done).catch(fail)
-        }}
-        className={icon ? "size-9 text-muted-foreground hover:text-foreground" : undefined}
+        title={cmd || `Resume ${label} in terminal (nothing to resume yet)`}
+        disabled={!canResume}
+        onClick={resume}
+        className={icon ? "size-9 rounded-r-none text-muted-foreground hover:text-foreground" : "rounded-r-none"}
       >
         <SquareTerminal aria-hidden /> {icon ? null : "Resume in terminal"}
       </Button>
@@ -73,19 +83,14 @@ export function SessionResumeActions({
         variant={icon ? "ghost" : "outline"}
         size={icon ? "icon" : "sm"}
         aria-label={`Copy resume command for ${label}`}
-        title={resumeCommand(worktree, sessionFile)}
-        disabled={!worktree || !sessionFile}
-        onClick={(e) => {
-          if (icon) e.preventDefault()
-          void copyToClipboard(resumeCommand(worktree, sessionFile))
-            .then(() => toast.success("Resume command copied"))
-            .catch((err: unknown) => toast.error(errorText(err)))
-        }}
-        className={icon ? "size-9 text-muted-foreground hover:text-foreground" : undefined}
+        title={cmd || `Copy resume command for ${label} (nothing to copy yet)`}
+        disabled={!canResume}
+        onClick={copy}
+        className={icon ? "size-9 rounded-l-none border-l-0 text-muted-foreground hover:text-foreground" : "rounded-l-none border-l-0"}
       >
-        <Copy aria-hidden /> {icon ? null : "Copy resume command"}
+        <Copy aria-hidden /> {icon ? null : "Copy"}
       </Button>
-    </>
+    </div>
   )
 }
 

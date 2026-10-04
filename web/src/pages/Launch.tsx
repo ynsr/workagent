@@ -15,10 +15,33 @@ import { queryKeys, useCreateRun, useLinks, useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
-import { COPY, INITIAL, MODES } from "@/lib/launchConfig"
+import { COPY, INITIAL, MODES, extraPromptArgs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
 import { StartFormFields, buildStartArgs } from "@/components/StartForm"
+
+/** Review/Sync fields (kept on the Launch page; Start lives in StartForm). */
+function ExtraPromptField({ form, onChange, id = "launch-extra-prompt" }: {
+  form: LaunchForm
+  onChange: <K extends keyof LaunchForm>(key: K, value: LaunchForm[K]) => void
+  id?: string
+}) {
+  return (
+    <div className="grid gap-2">
+      <Label htmlFor={id}>
+        <FieldHelp label="Extra prompt" flag="--extra-prompt" description="Extra instructions appended to the agent prompt." />
+      </Label>
+      <Input
+        id={id}
+        value={form.extraPrompt}
+        onChange={(e) => onChange("extraPrompt", e.target.value)}
+        placeholder="e.g. keep the diff minimal"
+        autoComplete="off"
+        spellCheck={false}
+      />
+    </div>
+  )
+}
 
 /** Review/Sync fields (kept on the Launch page; Start lives in StartForm). */
 function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
@@ -82,6 +105,7 @@ function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
           />
         </div>
       </div>
+      <ExtraPromptField form={form} onChange={onChange} />
     </>
   )
 }
@@ -181,7 +205,7 @@ export function Launch() {
   const repoNames = useMemo(() => (repos ?? []).map((r) => r.name), [repos])
   function buildArgs(): string[] {
     if (mode === "sync") {
-      return [refValue, ...(form.merge ? ["--merge"] : [])]
+      return [refValue, ...(form.merge ? ["--merge"] : []), ...extraPromptArgs(form)]
     }
     if (mode === "start") return buildStartArgs(form)
     const args = [refValue]
@@ -193,11 +217,13 @@ export function Launch() {
     if (repoValue) args.push("--repo", repoValue)
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
     if (form.launch) args.push("--launch")
+    args.push(...extraPromptArgs(form))
     return args
   }
 
+  const extra = form.extraPrompt.trim()
   const flagList = mode === "sync"
-    ? [form.merge ? "--merge (local merge)" : "remote rebase (default)"]
+    ? [form.merge ? "--merge (local merge)" : "remote rebase (default)", extra ? `--extra-prompt ${extra}` : null].filter((v): v is string => v !== null)
     : [
         form.launch ? "headless (--no-tty)" : "tty preview (no --no-tty)",
         mode === "review" && form.fixComments ? "--fix-comments (fix open review comments)" : null,
@@ -206,6 +232,7 @@ export function Launch() {
         `--depth ${form.depth.trim() || "7"}`,
         mode === "start" && form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
         form.launch ? "--launch (run the agent now)" : "preview (print command, no run)",
+        extra ? `--extra-prompt ${extra}` : null,
       ].filter((v): v is string => v !== null)
   async function handleSubmit() {
     if (!refValue) return
@@ -334,6 +361,7 @@ export function Launch() {
               />
             ) : null}
           </div>
+          {mode === "sync" ? <ExtraPromptField form={form} onChange={update} /> : null}
 
           <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200">
             <p className="flex items-start gap-2">

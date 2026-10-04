@@ -56,9 +56,9 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "tracker list": ("--json", "--csv"),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
-    "start": ("--repo", "--depth", "--base", "--harness", "--session-file"),
-    "review": ("--repo", "--depth", "--harness", "--session-file"),
-    "sync": ("--session-file",),
+    "start": ("--repo", "--depth", "--base", "--harness", "--session-file", "--extra-prompt"),
+    "review": ("--repo", "--depth", "--harness", "--session-file", "--extra-prompt"),
+    "sync": ("--session-file", "--extra-prompt"),
     "register": ("--key", "--issue", "--repo"),
     "repo add": ("--name", "--path", "--tracker"),
     "link remove": ("--repo",),
@@ -123,17 +123,23 @@ def _validate_args(command: str, args: list[str], body_force: bool = False) -> N
     i = 0
     while i < len(rest):
         a = rest[i]
+        name = a.split("=", 1)[0] if a.startswith("--") and "=" in a else a
         if a in bools:
             i += 1
-        elif a in vals:
-            if i + 1 >= len(rest):
-                raise ApiError("bad_arg", f"{a} needs a value", 400)
-            value = rest[i + 1]
-            if value.startswith("-"):
-                raise ApiError(
-                    "bad_arg",
-                    f"value for {a} must not start with '-': {value!r}", 400)
-            i += 2
+        elif name in vals:
+            if "=" not in a:
+                if i + 1 >= len(rest):
+                    raise ApiError("bad_arg", f"{a} needs a value", 400)
+                value = rest[i + 1]
+                # Free-text prompt may start with '-'; require the = form so the
+                # value can't be mistaken for the next flag.
+                if value.startswith("-") and a != "--extra-prompt":
+                    raise ApiError(
+                        "bad_arg",
+                        f"value for {a} must not start with '-': {value!r}", 400)
+                i += 2
+            else:
+                i += 1
         elif a.startswith("-"):
             hint = " (renamed to '--launch'; old '--no-harness'/-N removed)" if a in ("--no-harness", "-N") else ""
             raise ApiError("bad_arg", f"unknown option for {sub}: {a!r}{hint}", 400)
@@ -167,6 +173,8 @@ def _validate_args(command: str, args: list[str], body_force: bool = False) -> N
         for i, a in enumerate(rest):
             if a == "--repo" and i + 1 < len(rest):
                 repo = rest[i + 1]
+            elif a.startswith("--repo="):
+                repo = a.split("=", 1)[1]
         if ref and not repo:
             try:
                 parsed = _refs.parse_ref(ref)
@@ -215,7 +223,19 @@ def _build_argv(command: str, args: list[str]) -> list[str]:
     if verbose:
         argv.append("-v")
     argv.append(command)
-    argv.extend(a for a in args if a not in ("-v", "--verbose"))
+    out: list[str] = []
+    i = 0
+    rest = [a for a in args if a not in ("-v", "--verbose")]
+    while i < len(rest):
+        # Click parses `--extra-prompt value` fine, but a value starting
+        # with '-' would be read as the next flag — always use the = form.
+        if rest[i] == "--extra-prompt" and i + 1 < len(rest):
+            out.append(f"--extra-prompt={rest[i + 1]}")
+            i += 2
+        else:
+            out.append(rest[i])
+            i += 1
+    argv.extend(out)
     return argv
 
 

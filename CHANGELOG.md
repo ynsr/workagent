@@ -1,5 +1,7 @@
 # Changelog
 ## Unreleased
+- Run page terminal/copy pairs are single split buttons (`Resume in terminal | Copy`, `Start in terminal | Copy`) sharing state with exact-command tooltips.
+- Launch Start/Review/Sync forms take an extra prompt box (`--extra-prompt`) appended to the agent prompt.
 - Web: Run page has a "Start in terminal" button running the same command as "Copy harness command" (disabled together; `POST /api/runs/{id}/start-terminal`).
 - Start `--no-tty` prompt now tells the agent: when done, commit, push to this branch, and create an MR/PR to the default branch.
 - Serve daemon now inherits the install-time PATH in its systemd unit, so `omp` and other user-bin tools resolve (`omp not found on PATH` fixed).

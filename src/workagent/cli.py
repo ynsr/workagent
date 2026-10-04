@@ -189,6 +189,7 @@ from .cli_sync import (  # noqa: F401  (test compatibility)
     result_failed,
     _sync_one,
     _sync_local_merge,
+    _handle_merge_conflict,
 )
 
 from . import cli_service  # noqa: F401  (registers `service`)

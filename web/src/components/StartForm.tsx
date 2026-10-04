@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label"
 import { errorText } from "@/components/StatusFeedback"
 import { useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
-import { INITIAL } from "@/lib/launchConfig"
+import { INITIAL, extraPromptArgs } from "@/lib/launchConfig"
 import type { LaunchForm } from "@/lib/launchConfig"
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
 
@@ -168,10 +168,23 @@ export function StartFormFields({
           description="Run the agent now (default: print the command and hand over the worktree)."
         />
       </div>
+
+      <div className="grid gap-2">
+        <Label htmlFor={`${idPrefix}-extra-prompt`}>
+          <FieldHelp label="Extra prompt" flag="--extra-prompt" description="Extra instructions appended to the agent prompt." />
+        </Label>
+        <Input
+          id={`${idPrefix}-extra-prompt`}
+          value={form.extraPrompt}
+          onChange={(e) => onChange("extraPrompt", e.target.value)}
+          placeholder="e.g. keep the diff minimal"
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </div>
     </>
   )
 }
-
 /** Build `start` args from the shared form (Launch page + dialog agree). */
 export function buildStartArgs(form: StartFormValue): string[] {
   const ref = form.ref.trim()
@@ -184,19 +197,21 @@ export function buildStartArgs(form: StartFormValue): string[] {
   if (form.depth.trim()) args.push("--depth", form.depth.trim())
   if (form.base.trim()) args.push("--base", form.base.trim())
   if (form.launch) args.push("--launch")
+  args.push(...extraPromptArgs(form))
   return args
 }
-
 /** Confirm-dialog detail rows for a start run. */
 export function startFlagList(form: StartFormValue): string {
   const repo = form.repo.trim()
+  const extra = form.extraPrompt.trim()
   return [
     form.launch ? "headless (--no-tty)" : "tty preview (no --no-tty)",
     repo ? `--repo ${repo}` : "repo: pick a repo",
     `--depth ${form.depth.trim() || "7"}`,
     form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
     form.launch ? "--launch (run the agent now)" : "preview (print command, no run)",
-  ].join(", ")
+    extra ? `--extra-prompt ${extra}` : null,
+  ].filter((v): v is string => v !== null).join(", ")
 }
 
 export function useStartForm(initial?: Partial<StartFormValue>) {

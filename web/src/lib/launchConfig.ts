@@ -54,6 +54,7 @@ export interface LaunchForm {
   fixComments: boolean
   newFixSession: boolean
   merge: boolean
+  extraPrompt: string
 }
 export const INITIAL: LaunchForm = {
   ref: "",
@@ -66,5 +67,12 @@ export const INITIAL: LaunchForm = {
   fixComments: false,
   newFixSession: false,
   merge: false,
+  extraPrompt: "",
+}
+
+/** Extra user instructions appended via --extra-prompt (all modes). */
+export function extraPromptArgs(form: Pick<LaunchForm, "extraPrompt">): string[] {
+  const extra = form.extraPrompt.trim()
+  return extra ? [`--extra-prompt=${extra}`] : []
 }
 
