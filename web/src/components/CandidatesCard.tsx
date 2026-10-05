@@ -305,9 +305,11 @@ function StartDialog({ issueKey, onClose }: { issueKey: string; onClose: () => v
       action: "start",
       title: `Start ${refValue}`,
       description: "Creates a worktree from the issue and launches the coding agent.",
-      warning: form.launch
+      warning: form.runMode === "headless"
         ? "The agent runs headless with auto-approve (--no-tty): it can commit, push and open MRs/PRs without further prompts. The server appends --yes."
-        : "Preview only: prints the TTY harness command (no -p flag) without running the agent. The server appends --yes.",
+        : form.runMode === "terminal"
+          ? "The agent runs in an OS terminal opened on your desktop (workagent --terminal). The server appends --yes."
+          : "Preview only: prints the TTY harness command (no -p flag) without running the agent. The server appends --yes.",
       confirmLabel: "Start",
       details: [
         { label: "Ref", value: refValue, mono: true },

@@ -6,11 +6,55 @@ import { Label } from "@/components/ui/label"
 import { errorText } from "@/components/StatusFeedback"
 import { useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
-import { INITIAL, extraPromptArgs } from "@/lib/launchConfig"
-import type { LaunchForm } from "@/lib/launchConfig"
-import { CheckRow, FieldHelp } from "@/components/FieldHelp"
+import { RUN_MODE_OPTIONS, INITIAL, extraPromptArgs, runModeArgs } from "@/lib/launchConfig"
+import type { LaunchForm, RunMode } from "@/lib/launchConfig"
+import { FieldHelp } from "@/components/FieldHelp"
 
 export interface StartFormValue extends LaunchForm {}
+
+/** Three-option segmented run-mode control (replaces the "Run agent now"
+ * checkbox): Preview prints the command, Headless launches it now, Terminal
+ * opens it in the OS terminal (workagent --terminal). */
+export function RunModeSelect({ idPrefix, value, onChange }: {
+  idPrefix: string
+  value: RunMode
+  onChange: (v: RunMode) => void
+}) {
+  return (
+    <div className="grid gap-1">
+      <Label>
+        <FieldHelp
+          label="Run mode"
+          flag="--launch | --terminal"
+          description="Preview prints the harness command; Run headless launches it now (auto-approve); Run in terminal opens it in the OS terminal."
+        />
+      </Label>
+      <div
+        role="radiogroup"
+        aria-label="Run mode"
+        className="flex w-fit divide-x overflow-hidden rounded-md border text-sm"
+      >
+        {RUN_MODE_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            id={`${idPrefix}-runmode-${opt.value}`}
+            role="radio"
+            aria-checked={value === opt.value}
+            title={opt.hint}
+            onClick={() => onChange(opt.value)}
+            className={value === opt.value
+              ? "bg-primary px-3 py-1.5 font-medium text-primary-foreground"
+              : "bg-transparent px-3 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 
 /** Shared Start-form fields (Launch page + candidate Start dialog). */
 export function StartFormFields({
@@ -159,13 +203,10 @@ export function StartFormFields({
       </div>
 
       <div className="flex flex-wrap gap-x-6 gap-y-3">
-        <CheckRow
-          id={`${idPrefix}-launch`}
-          checked={form.launch}
-          onChange={(v) => onChange("launch", v)}
-          label="Run agent now"
-          flag="--launch"
-          description="Run the agent now (default: print the command and hand over the worktree)."
+        <RunModeSelect
+          idPrefix={idPrefix}
+          value={form.runMode}
+          onChange={(v) => onChange("runMode", v)}
         />
       </div>
 
@@ -190,13 +231,13 @@ export function buildStartArgs(form: StartFormValue): string[] {
   const ref = form.ref.trim()
   const repo = form.repo.trim()
   const args = [ref]
-  // Preview (no --launch) is TTY copy-paste: no -p flag. Headless
+  // Preview/terminal are TTY copy-paste: no -p flag. Headless
   // (--no-tty, omp -p --auto-approve) only when actually running now.
-  if (form.launch) args.push("--no-tty")
+  if (form.runMode === "headless") args.push("--no-tty")
   if (repo) args.push("--repo", repo)
   if (form.depth.trim()) args.push("--depth", form.depth.trim())
   if (form.base.trim()) args.push("--base", form.base.trim())
-  if (form.launch) args.push("--launch")
+  args.push(...runModeArgs(form.runMode))
   args.push(...extraPromptArgs(form))
   return args
 }
@@ -205,11 +246,13 @@ export function startFlagList(form: StartFormValue): string {
   const repo = form.repo.trim()
   const extra = form.extraPrompt.trim()
   return [
-    form.launch ? "headless (--no-tty)" : "tty preview (no --no-tty)",
+    form.runMode === "headless" ? "headless (--no-tty)" : form.runMode === "terminal" ? "terminal (--terminal)" : "tty preview (no --no-tty)",
     repo ? `--repo ${repo}` : "repo: pick a repo",
     `--depth ${form.depth.trim() || "7"}`,
     form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
-    form.launch ? "--launch (run the agent now)" : "preview (print command, no run)",
+    form.runMode === "headless" ? "--launch (run the agent now)"
+      : form.runMode === "terminal" ? "--terminal (open the agent in the OS terminal)"
+      : "preview (print command, no run)",
     extra ? `--extra-prompt ${extra}` : null,
   ].filter((v): v is string => v !== null).join(", ")
 }

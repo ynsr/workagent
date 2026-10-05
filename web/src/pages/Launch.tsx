@@ -15,10 +15,10 @@ import { queryKeys, useCreateRun, useLinks, useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
-import { COPY, INITIAL, MODES, extraPromptArgs } from "@/lib/launchConfig"
+import { COPY, INITIAL, MODES, extraPromptArgs, isPrShaped, runModeArgs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
-import { StartFormFields, buildStartArgs } from "@/components/StartForm"
+import { RunModeSelect, StartFormFields, buildStartArgs } from "@/components/StartForm"
 
 /** Review/Sync fields (kept on the Launch page; Start lives in StartForm). */
 function ExtraPromptField({ form, onChange, id = "launch-extra-prompt" }: {
@@ -187,6 +187,12 @@ export function Launch() {
     }
   }, [prefillChecked, modeParam, refParam, links])
   function update<K extends keyof LaunchForm>(key: K, value: LaunchForm[K]) {
+    // PR/MR-shaped ref typed into the Start tab: switch to Review (toast +
+    // keep the text; the user can tab back — never auto-switched back).
+    if (mode === "start" && key === "ref" && typeof value === "string" && isPrShaped(value)) {
+      setMode("review")
+      toast.info("PR/MR ref detected — switched to Review")
+    }
     setForm((f) => ({ ...f, [key]: value }))
   }
 
@@ -209,14 +215,14 @@ export function Launch() {
     }
     if (mode === "start") return buildStartArgs(form)
     const args = [refValue]
-    // Preview (no --launch) is TTY copy-paste: no -p flag. Headless
+    // Preview/terminal are TTY copy-paste: no -p flag. Headless
     // (--no-tty, omp -p --auto-approve) only when actually running now.
-    if (form.launch) args.push("--no-tty")
+    if (form.runMode === "headless") args.push("--no-tty")
     if (form.fixComments) args.push("--fix-comments")
     if (form.fixComments && form.newFixSession) args.push("--new-fix-session")
     if (repoValue) args.push("--repo", repoValue)
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
-    if (form.launch) args.push("--launch")
+    args.push(...runModeArgs(form.runMode))
     args.push(...extraPromptArgs(form))
     return args
   }
@@ -225,13 +231,15 @@ export function Launch() {
   const flagList = mode === "sync"
     ? [form.merge ? "--merge (local merge)" : "remote rebase (default)", extra ? `--extra-prompt ${extra}` : null].filter((v): v is string => v !== null)
     : [
-        form.launch ? "headless (--no-tty)" : "tty preview (no --no-tty)",
+        form.runMode === "headless" ? "headless (--no-tty)" : form.runMode === "terminal" ? "terminal (--terminal)" : "tty preview (no --no-tty)",
         mode === "review" && form.fixComments ? "--fix-comments (fix open review comments)" : null,
         mode === "review" && form.fixComments && form.newFixSession ? "--new-fix-session (fresh fix session)" : null,
         repoValue ? `--repo ${repoValue}` : "repo: pick a repo",
         `--depth ${form.depth.trim() || "7"}`,
         mode === "start" && form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
-        form.launch ? "--launch (run the agent now)" : "preview (print command, no run)",
+        form.runMode === "headless" ? "--launch (run the agent now)"
+          : form.runMode === "terminal" ? "--terminal (open the agent in the OS terminal)"
+          : "preview (print command, no run)",
         extra ? `--extra-prompt ${extra}` : null,
       ].filter((v): v is string => v !== null)
   async function handleSubmit() {
@@ -247,9 +255,11 @@ export function Launch() {
       warning:
         mode === "sync"
           ? "The server appends --yes: sync runs without prompts (AI-assisted conflict resolution if the rebase/merge conflicts)."
-          : form.launch
+          : form.runMode === "headless"
             ? "The agent runs headless with auto-approve (--no-tty): it can commit, push and open MRs/PRs without further prompts. The server appends --yes."
-            : "Preview only: prints the TTY harness command (no -p flag) without running the agent. The server appends --yes.",
+            : form.runMode === "terminal"
+              ? "The agent runs in an OS terminal opened on your desktop (workagent --terminal). The server appends --yes."
+              : "Preview only: prints the TTY harness command (no -p flag) without running the agent. The server appends --yes.",
       confirmLabel: "Launch",
       details: [
         { label: "Ref", value: refValue, mono: true },
@@ -331,13 +341,10 @@ export function Launch() {
 
           <div className="flex flex-wrap gap-x-6 gap-y-3">
             {mode === "review" ? (
-              <CheckRow
-                id="launch-launch"
-                checked={form.launch}
-                onChange={(v) => update("launch", v)}
-                label="Run agent now"
-                flag="--launch"
-                description="Run the agent now (default: print the command and hand over the worktree)."
+              <RunModeSelect
+                idPrefix="launch"
+                value={form.runMode}
+                onChange={(v) => update("runMode", v)}
               />
             ) : null}
             {mode === "review" ? (
@@ -372,18 +379,24 @@ export function Launch() {
                     The web server appends <span className="font-mono text-[13px]">--yes</span>, so sync runs
                     without prompts (AI-assisted conflict resolution if the rebase/merge conflicts).
                   </>
-                ) : form.launch ? (
+                ) : form.runMode === "headless" ? (
                   <>
                     Headless auto-approve: the web server runs{" "}
                     <span className="font-mono text-[13px]">--no-tty</span> (
                     <span className="font-mono text-[13px]">omp -p --auto-approve</span>
                     ), so the agent can commit, push and open MRs/PRs on its own.
                   </>
+                ) : form.runMode === "terminal" ? (
+                  <>
+                    The web server opens an OS terminal running the agent command
+                    (<span className="font-mono text-[13px]">--terminal</span>); the
+                    agent runs with your desktop's environment.
+                  </>
                 ) : (
                   <>
                     Preview only: prints the TTY harness command (no{" "}
                     <span className="font-mono text-[13px]">-p</span> flag) without running the agent.
-                    Tick “Run agent now” to run headless with{" "}
+                    Pick “Run headless” to run now with{" "}
                     <span className="font-mono text-[13px]">--no-tty</span>.
                   </>
                 )}
