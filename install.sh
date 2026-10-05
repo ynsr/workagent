@@ -95,6 +95,15 @@ receipt.write_text(json.dumps({'source_hash': d.hexdigest()[:12], 'installed_at'
 print('  -> install receipt:', d.hexdigest()[:12])
 "
 
+# Restart the user service when it is already running, so the daemon picks
+# up the just-installed code (stale daemons 405 on routes added since start).
+if command -v workagent &>/dev/null && command -v systemctl &>/dev/null; then
+  if systemctl --user is-active --quiet workagent 2>/dev/null; then
+    echo "==> Restarting workagent service..."
+    workagent service restart || echo "warning: service restart failed — run 'workagent service restart' manually."
+  fi
+fi
+
 # Verify installation (and the receipt self-check).
 echo "==> Verifying..."
 if command -v workagent &>/dev/null; then

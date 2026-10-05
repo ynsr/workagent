@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- install.sh restarts the running user service after reinstall so the daemon picks up new routes (stale daemons 405).
 - Run page terminal/copy pairs are single split buttons (`Resume in terminal | Copy`, `Start in terminal | Copy`) sharing state with exact-command tooltips.
 - Launch Start/Review/Sync forms take an extra prompt box (`--extra-prompt`) appended to the agent prompt.
 - Web: Run page has a "Start in terminal" button running the same command as "Copy harness command" (disabled together; `POST /api/runs/{id}/start-terminal`).
