@@ -183,25 +183,15 @@ def _record_no_harness_session(key: str, result: dict, exit_code: int = 0) -> No
     (type sync, state preview) so fix-continue never reuses these.
     Dry-run plans (would-*) record nothing: --dry-run must not touch state.
     """
-    from . import store_sqlite as _sq
-    try:
-        db = _sq.db_path()
-        if not db.exists():
-            return
-        sid = _sq.insert_session(
-            db, worktree_ref=key, harness_name="",
-            initiator_command="sync", prompt="",
-            file_path="", session_type="sync")
-        _sq.finish_session(db, sid, "preview")
-        args = [key]
-        if result.get("strategy"):
-            args += ["-m" if result["strategy"] == "local-merge" else "--rebase"]
-        _sq.insert_run(db, sid, "sync", args, exit_code,
-                       output=[f"{key}: {result.get('result', '')}"])
+    from .cli_harness import record_preview_session
+    args = [key]
+    if result.get("strategy"):
+        args += ["-m" if result["strategy"] == "local-merge" else "--rebase"]
+    sid = record_preview_session(key, "sync", "", "",
+                                 f"{key}: {result.get('result', '')}",
+                                 exit_code, args=args)
+    if sid:
         result["session_id"] = sid
-    except Exception as e:
-        eprint(f"warning: session record failed: {e}")
-
 
 def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
               yes: bool, dry_run: bool, json_output: bool,

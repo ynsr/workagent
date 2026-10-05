@@ -172,3 +172,33 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         if run_key:
             store.clear_harness_run(run_key)
     _print_result(result, json_output)
+
+def record_preview_session(key: str, command: str, prompt: str,
+                           harness_name: str, output: str,
+                           exit_code: int = 0,
+                           args: list[str] | None = None) -> str | None:
+    """Persist a preview (no-launch) session + run; None when pre-cutover.
+
+    Preview = DB row + full prompt stored, state='preview', empty
+    file_path, plus a runs row (every work run must produce a runs
+    record). session_type is derived from the command (start/review/sync;
+    unknown → NULL, never guessed). Never raises: warns to stderr so
+    callers keep their own result flow.
+    """
+    from . import store_sqlite as _sq
+    try:
+        db = _sq.db_path()
+        if not db.exists():
+            return None
+        sid = _sq.insert_session(
+            db, worktree_ref=key, harness_name=harness_name,
+            initiator_command=command, prompt=prompt,
+            file_path="", session_type=_sq.derive_session_type(command),
+            metadata={"origin": "preview"})
+        _sq.finish_session(db, sid, "preview")
+        _sq.insert_run(db, sid, command, args if args is not None else [key],
+                       exit_code, output=[output])
+        return sid
+    except Exception as e:
+        eprint(f"warning: session record failed: {e}")
+        return None

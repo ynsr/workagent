@@ -331,6 +331,27 @@ def test_run_harness_preview_writes_nothing(isolated_config, tmp_path, monkeypat
                      False, result, True, run_key="k")
     assert sq.list_sessions(sq.db_path()) == []
 
+def test_preview_session_helper_stores_full_prompt(isolated_config):
+    from workagent import cli_harness as ch
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('jira:IPG-1', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
+    sid = ch.record_preview_session("jira:IPG-1", "start", "PROMPT-BODY",
+                                    "omp", "jira:IPG-1: preview")
+    assert sid
+    row = sq.get_session(db, sid)
+    assert row["state"] == "preview"
+    assert row["prompt"] == "PROMPT-BODY"
+    assert row["file_path"] == ""
+    runs = sq.list_runs(db)
+    assert len(runs) == 1 and runs[0]["command"] == "start"
+
 
 def test_cutover_link_write_preserves_sessions(isolated_config):
     import json
