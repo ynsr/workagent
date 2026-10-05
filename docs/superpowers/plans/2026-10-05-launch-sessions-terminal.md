@@ -72,17 +72,17 @@ Expected: FAIL with "has no attribute 'record_preview_session'"
 def record_preview_session(key: str, command: str, prompt: str,
                            harness_name: str, output: str,
                            exit_code: int = 0) -> str | None:
-    """Persist a preview (no-launch) session + run; None when pre-cutover."""
+    """Persist a preview (no-launch) session + run; None when pre-cutover (no state.db)."""
     from . import store_sqlite as _sq
     from .cli_core import eprint
     try:
         db = _sq.db_path()
         if not db.exists():
             return None
-        sid = _sq.insert_session(
-            db, worktree_ref=key, harness_name=harness_name,
-            initiator_command=command, prompt=prompt,
-            file_path="", session_type=command)
+        sid = _sq.insert_session(db, worktree_ref=key, command=command,
+                                 harness=harness_name, prompt=prompt,
+                                 file_path="", state="preview",
+                                 metadata={"origin": "preview"})
         _sq.finish_session(db, sid, "preview")
         _sq.insert_run(db, sid, command, [key], exit_code, output=[output])
         return sid
@@ -90,12 +90,6 @@ def record_preview_session(key: str, command: str, prompt: str,
         eprint(f"warning: session record failed: {e}")
         return None
 ```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cd /home/bs/projects/personal/harness && uv run pytest tests/test_cli_start.py::test_preview_session_helper_stores_full_prompt -v`
-Expected: PASS
-
 - [ ] **Step 5: Refactor sync to use the helper**
 
 Replace the body of `_record_no_harness_session` in `src/workagent/cli_sync.py:176-204` with a call to `record_preview_session` (import from `cli_harness`), preserving the `-m`/`--rebase` args nuance by passing the args through. Keep the function name as a thin wrapper so existing call sites are untouched.
@@ -236,8 +230,7 @@ git commit -m "Persist preview sessions for start/review with full prompt"
 
 **Interfaces:**
 - Consumes: existing `_sweep`, `_pid_alive`, `_locked` helpers.
-- Produces: `record_harness_run(key, harness, worktree="", origin="headless", pid=None)` (pid defaults to `os.getpid()`); `stop_terminal_run(key) -> bool` (SIGTERM→SIGKILL the terminal PID after a start-time guard, clear lock; False when no live terminal lock); `_harness_cell` renders `"terminal <pid>"` for terminal origins. The start-time guard compares `/proc/<pid>` start time against the recorded `started_at` (Linux; non-Linux falls back to kill with no guard) and refuses the kill on mismatch.
-
+- Produces: `record_harness_run(key, harness, worktree="", origin="headless", pid=None)` (pid defaults to `os.getpid()`); `stop_terminal_run(key) -> bool` (SIGTERM→SIGKILL the terminal PID after a start-time guard, clear lock; False when no live terminal lock); `_harness_cell` renders `"terminal <pid>"` for terminal origins. The start-time guard compares the process start time in clock ticks read from `/proc/<pid>` at record and read time (Linux only; on other systems both reads return None and the guard is skipped — falls back to kill with no guard) and refuses the kill on mismatch. The tick comparison replaces the previously sketched `time.time()`-vs-`started_at` check: absolute boot-time deltas would make the guard brittle (page tests spawn both sides), while ticks are comparable as integers.
 - [ ] **Step 1: Write the failing test**
 
 ```python
