@@ -53,6 +53,8 @@ def _harness_cell(key: str, worktree: str = "") -> str:
             if v.get("worktree") == worktree:
                 rec = v
                 break
+    if rec is not None and rec.get("origin") == "terminal":
+        return f"terminal {rec['pid']}"
     return f"{rec['harness']} {rec['pid']}" if rec else ""
 
 

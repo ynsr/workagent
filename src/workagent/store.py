@@ -507,21 +507,26 @@ def load_harnesses() -> dict:
     return alive
 
 
-def record_harness_run(key: str, harness: str, worktree: str = "") -> dict | None:
+def record_harness_run(key: str, harness: str, worktree: str = "",
+                       origin: str = "headless", pid: int | None = None) -> dict | None:
     """Claim the per-key harness slot; returns the live record that blocks us.
 
     A stale record whose pid is dead is reclaimed silently (crash-orphan
     fix); a live record on the same key — or the same worktree path under
     a different key — blocks the claim and is returned so callers can
-    report it without a second lookup.
+    report it without a second lookup. `origin` is 'headless' (the CLI/
+    web spawn this process owns) or 'terminal' (a detached terminal run;
+    stoppable via stop_terminal_run).
     """
     path = _harness_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path.parent / (path.name + ".lock"), "w") as lock:
-        return _locked(lock, lambda: _record_harness_locked(path, key, harness, worktree))
+        return _locked(lock, lambda: _record_harness_locked(
+            path, key, harness, worktree, origin, pid))
 
 
-def _record_harness_locked(path: Path, key: str, harness: str, worktree: str) -> dict | None:
+def _record_harness_locked(path: Path, key: str, harness: str, worktree: str,
+                           origin: str = "headless", pid: int | None = None) -> dict | None:
     data, _ = _sweep(_read_json(path, {}))
     live = _live_rec(data.get(key))
     if live is None and worktree:
@@ -532,10 +537,44 @@ def _record_harness_locked(path: Path, key: str, harness: str, worktree: str) ->
                     break
     if live is not None:
         return live
-    data[key] = {"harness": harness, "pid": os.getpid(),
-                 "started_at": time.time(), "worktree": worktree}
+    data[key] = {"harness": harness, "pid": pid if isinstance(pid, int) else os.getpid(),
+                 "started_at": time.time(), "worktree": worktree,
+                 "origin": origin or "headless"}
     _atomic_replace(path, data)
     return None
+
+
+def stop_terminal_run(key: str) -> bool:
+    """SIGTERM→SIGKILL the terminal PID behind *key*; False when no live terminal lock.
+
+    PID-reuse guard note: on Linux, /proc/<pid> start-time comparison vs
+    started_at is added at the serve boot reap (Task 5); this helper
+    relies on the lock file's short lifetime.
+    """
+    import signal as _signal
+    rec = load_harnesses().get(key)
+    if not isinstance(rec, dict) or rec.get("origin") != "terminal":
+        return False
+    pid = rec.get("pid", -1)
+    if not isinstance(pid, int) or pid <= 1 or not _pid_alive(pid):
+        clear_harness_run(key)
+        return False
+    try:
+        os.kill(pid, _signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        clear_harness_run(key)
+        return False
+    for _ in range(50):
+        if not _pid_alive(pid):
+            break
+        time.sleep(0.2)
+    else:
+        try:
+            os.kill(pid, _signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    clear_harness_run(key)
+    return True
 
 
 def clear_harness_run(key: str) -> None:

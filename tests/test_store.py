@@ -136,3 +136,29 @@ def test_harness_claim_reclaims_dead_pid(isolated_config):
                                            "started_at": 0.0, "worktree": "/tmp/wt-a"}})
     assert store.record_harness_run("jira:OLD", "omp", "/tmp/wt-a") is None
     store.clear_harness_run("jira:OLD")
+
+
+def test_harness_terminal_origin_blocks_headless(isolated_config):
+    assert store.record_harness_run("jira:T", "omp", "/tmp/wt-t",
+                                    origin="terminal") is None
+    rec = store.active_harness("jira:T")
+    assert rec["origin"] == "terminal"
+    blocker = store.record_harness_run("jira:T2", "omp", "/tmp/wt-t")
+    assert blocker is not None and blocker["origin"] == "terminal"
+    store.clear_harness_run("jira:T")
+
+
+def test_stop_terminal_run_kills_and_clears(isolated_config):
+    import signal
+    p = subprocess.Popen(["sleep", "30"])
+    try:
+        store.record_harness_run("jira:S", "omp", "/tmp/wt-s",
+                                 origin="terminal", pid=p.pid)
+        assert store.stop_terminal_run("jira:S") is True
+        assert store.active_harness("jira:S") is None
+        assert p.poll() is not None
+    finally:
+        try:
+            p.kill()
+        except OSError:
+            pass
