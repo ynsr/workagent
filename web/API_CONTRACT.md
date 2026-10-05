@@ -195,6 +195,11 @@ Request:
   `start`/`review` with no `--repo` when the ref's tracker is linked to
   multiple repos → 400 `{code: "repo_ambiguous"}` naming the candidates
   (never a run — the Launch form also blocks submit until a repo is picked).
+- `start`/`review` `--terminal` is XOR `--launch` (child CLI exits 2 when
+  both are passed). `--terminal` persists a preview session row, claims
+  the harness lock with `origin=terminal` (pid = spawned terminal
+  emulator), and prints `terminal_pid` in the run's JSON output; the
+  agent is stopped via `POST /api/terminal/stop` with the worktree ref.
 
 Response 202: `{"run_id": "abc123"}` — `409 {code:"conflict"}` when
 another run holds the same target key.

@@ -221,6 +221,56 @@ def test_start_preview_prints_command_and_skips_launch(isolated_config, tmp_path
     assert str(worktree) in r.stderr
 
 
+def test_start_terminal_xor_launch(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": "/tmp/wt",
+                                            "branch": "feat/22--x"})
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--launch", "--terminal",
+                                "--json"])
+    assert r.exit_code == 2
+    assert "--terminal" in r.output
+
+
+def test_start_terminal_claims_lock_and_persists_preview(isolated_config, tmp_path, monkeypatch):
+    """--terminal persists a preview row, claims the terminal lock, and spawns."""
+    from workagent import store_sqlite
+    from workagent import cli_harness as ch
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    store_sqlite.init_db(store_sqlite.db_path())
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/22--x"})
+    spawned = []
+    p = subprocess.Popen(["sleep", "30"])
+    try:
+        monkeypatch.setattr(ch, "spawn_in_terminal",
+                            lambda cmd, cwd="": spawned.append((cmd, cwd)) or p.pid)
+        r = runner.invoke(cli.app, ["start", "o/r#22", "--terminal", "--json"])
+        assert r.exit_code == 0, r.output
+        out = json.loads(r.stdout)
+        assert out["terminal_pid"] == p.pid
+        assert spawned and spawned[0][1] == str(worktree)
+        rec = store.active_harness("github:o/r#22")
+        assert rec is not None and rec["origin"] == "terminal"
+        assert rec["pid"] == p.pid
+        rows = store_sqlite.list_sessions(store_sqlite.db_path())
+        assert len(rows) == 1 and rows[0]["state"] == "preview"
+        assert out["session_id"] == rows[0]["id"]
+    finally:
+        store.clear_harness_run("github:o/r#22")
+        try:
+            p.kill()
+        except OSError:
+            pass
+
+
 def test_start_preview_persists_session_row(isolated_config, tmp_path, monkeypatch):
     from workagent import store_sqlite
     repo_dir = tmp_path / "proj"

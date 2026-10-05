@@ -214,6 +214,7 @@ def review(
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
     no_tty: bool = typer.Option(False, "--no-tty", help="Run harness non-interactively."),
     launch: bool = typer.Option(False, "-L", "--launch", help="Launch the harness in the worktree (default: print the harness command and land in an interactive shell inside the worktree)."),
+    terminal: bool = typer.Option(False, "--terminal", help="Open the harness command in the OS terminal instead of running headless (mutually exclusive with --launch)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
@@ -237,6 +238,8 @@ def review(
     """
     if not isinstance(session_file, str):
         session_file = None
+    if terminal and launch:
+        _fail("--terminal cannot be used with --launch (pick one run mode)", EXIT_USAGE)
     if sequential and not all_wts:
         _fail("--sequential requires --all", EXIT_USAGE)
     if fix and not all_wts:
@@ -409,7 +412,8 @@ def review(
             try:
                 _run_harness(harness_name, prompt, worktree, str(repo_dir),
                              no_tty, launch, result, json_output,
-                             run_key=review_key, session_file=result.get("session_file"))
+                             run_key=review_key, session_file=result.get("session_file"),
+                             terminal=terminal)
             except HarnessError:
                 if launch:
                     _clear_reviewed(review_key)
@@ -443,7 +447,7 @@ def review(
     try:
         _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
                      launch, result, json_output, run_key=review_key,
-                     session_file=result.get("session_file"))
+                     session_file=result.get("session_file"), terminal=terminal)
     except HarnessError:
         if launch:
             _clear_reviewed(review_key)

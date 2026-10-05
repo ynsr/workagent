@@ -327,6 +327,12 @@ def test_resume_session_opens_terminal(client, monkeypatch, tmp_path):
     assert opened == {"wt": "/wt", "sf": str(session)}
 
 
+class _FakeProc:
+    """Stand-in Popen for spawn_in_terminal: caller only reads `.pid`."""
+
+    pid = 1
+
+
 def test_open_terminal_prefers_debian_alternative(monkeypatch):
     """Ubuntu boxes expose ptyxis/x-terminal-emulator, not gnome-terminal —
     the picker must find them instead of raising no_terminal."""
@@ -337,7 +343,7 @@ def test_open_terminal_prefers_debian_alternative(monkeypatch):
                         lambda t: f"/usr/bin/{t}" if t == "x-terminal-emulator" else None)
     got: dict = {}
     monkeypatch.setattr("subprocess.Popen",
-                        lambda argv, **kw: got.setdefault("argv", argv))
+                        lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
     _wr._open_terminal("/wt", "/s.jsonl")
     assert got["argv"][0] == "x-terminal-emulator"
 
@@ -351,7 +357,7 @@ def test_open_terminal_supports_ptyxis_and_kitty(monkeypatch):
                             lambda t, term=term: f"/usr/bin/{t}" if t == term else None)
         got: dict = {}
         monkeypatch.setattr("subprocess.Popen",
-                            lambda argv, **kw: got.setdefault("argv", argv))
+                            lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
         _wr._open_terminal("/wt", "/s.jsonl")
         assert got["argv"] == [*head, "bash", "-lc", "cd /wt && omp --resume /s.jsonl"], term
 
@@ -367,7 +373,7 @@ def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch):
                         lambda t: "/usr/bin/xterm" if t == "xterm" else None)
     got: dict = {}
     monkeypatch.setattr("subprocess.Popen",
-                        lambda argv, **kw: got.setdefault("argv", argv))
+                        lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
     _wr._open_terminal("/wt", "/s.jsonl")
     assert got["argv"] == ["xterm", "-e", "bash", "-lc", "cd /wt && omp --resume /s.jsonl"]
 

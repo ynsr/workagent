@@ -8,7 +8,6 @@ from __future__ import annotations
 import itertools
 import os
 import shlex
-import shutil
 import signal
 import subprocess
 import sys
@@ -377,55 +376,11 @@ def _extract_harness_command(texts: list[str]) -> str:
 
 def _open_terminal_command(cmd: str, cwd: str = "") -> None:
     """Detached-spawn the OS default terminal running an arbitrary shell
-    command (mirrors `workagent open` detachment). `cwd` seeds the
-    terminal's directory — parsed from a leading `cd` when omitted."""
-    if not cwd:
-        try:
-            parts = shlex.split(cmd, posix=True)
-            if len(parts) >= 2 and parts[0] == "cd":
-                cwd = parts[1]
-        except ValueError:
-            cwd = ""
-    kwargs: dict = {"stdin": subprocess.DEVNULL,
-                    "stdout": subprocess.DEVNULL,
-                    "stderr": subprocess.DEVNULL}
-    if os.name == "posix":
-        kwargs["start_new_session"] = True
-    if sys.platform == "darwin":
-        argv = ["open", "-a", "Terminal", *([cwd] if cwd else []),
-                "--args", "bash", "-lc", cmd]
-    elif os.name == "nt":
-        argv = ["cmd", "/c", "start", "", "cmd", "/k", cmd]
-    else:
-        term = os.environ.get("TERMINAL", "")
-        has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
-        for t in ([term] if term else []) + [
-            "x-terminal-emulator", "ptyxis", "gnome-terminal", "kgx",
-            "konsole", "xfce4-terminal", "alacritty", "kitty",
-            "wezterm", "foot", "terminator", "xterm"]:
-            if t and shutil.which(t):
-                if t == "gnome-terminal":
-                    argv = [t, "--", "bash", "-lc", cmd]
-                elif t in ("konsole", "xfce4-terminal"):
-                    argv = [t, "-e", "bash", "-lc", cmd]
-                elif t == "ptyxis":
-                    argv = [t, "-x", "bash", "-lc", cmd]
-                elif t in ("kitty", "wezterm", "foot"):
-                    argv = [t, "bash", "-lc", cmd]
-                else:
-                    argv = [t, "-e", "bash", "-lc", cmd]
-                break
-        else:
-            if not has_display:
-                raise ApiError("no_display",
-                               "the server has no graphical session (no $DISPLAY/"
-                               "$WAYLAND_DISPLAY) — copy the harness command instead", 500)
-            raise ApiError("no_terminal",
-                           "no terminal emulator found (set $TERMINAL)", 500)
-    try:
-        subprocess.Popen(argv, **kwargs)
-    except (FileNotFoundError, OSError, PermissionError) as e:
-        raise ApiError("no_terminal", f"terminal spawn failed: {e}", 500)
+    command (core moved to `cli_harness.spawn_in_terminal`; kept here as
+    the web-side alias). `cwd` seeds the terminal's directory — parsed
+    from a leading `cd` when omitted."""
+    from .cli_harness import spawn_in_terminal
+    spawn_in_terminal(cmd, cwd)
 
 
 def _open_terminal(worktree: str, session_file: str) -> None:

@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 from . import backend, store
 from .cli_core import _HARNESS_ARGS, _fail, _print_result, eprint
+from .web_args import ApiError
 
 
 def append_extra_prompt(prompt: str, extra_prompt: str | None) -> str:
@@ -58,9 +61,65 @@ def _harness_cell(key: str, worktree: str = "") -> str:
     return f"{rec['harness']} {rec['pid']}" if rec else ""
 
 
+def spawn_in_terminal(cmd: str, cwd: str = "") -> int | None:
+    """Detached-spawn the OS default terminal running *cmd*; returns the
+    terminal process pid (mirrors `workagent open` detachment). `cwd`
+    seeds the terminal's directory — parsed from a leading `cd` when
+    omitted. Shared by the CLI `--terminal` run-mode and the web Run page.
+    """
+    if not cwd:
+        try:
+            parts = shlex.split(cmd, posix=True)
+            if len(parts) >= 2 and parts[0] == "cd":
+                cwd = parts[1]
+        except ValueError:
+            cwd = ""
+    kwargs: dict = {"stdin": subprocess.DEVNULL,
+                    "stdout": subprocess.DEVNULL,
+                    "stderr": subprocess.DEVNULL}
+    if os.name == "posix":
+        kwargs["start_new_session"] = True
+    if sys.platform == "darwin":
+        argv = ["open", "-a", "Terminal", *([cwd] if cwd else []),
+                "--args", "bash", "-lc", cmd]
+    elif os.name == "nt":
+        argv = ["cmd", "/c", "start", "", "cmd", "/k", cmd]
+    else:
+        term = os.environ.get("TERMINAL", "")
+        has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        for t in ([term] if term else []) + [
+            "x-terminal-emulator", "ptyxis", "gnome-terminal", "kgx",
+            "konsole", "xfce4-terminal", "alacritty", "kitty",
+            "wezterm", "foot", "terminator", "xterm"]:
+            if t and shutil.which(t):
+                if t == "gnome-terminal":
+                    argv = [t, "--", "bash", "-lc", cmd]
+                elif t in ("konsole", "xfce4-terminal"):
+                    argv = [t, "-e", "bash", "-lc", cmd]
+                elif t == "ptyxis":
+                    argv = [t, "-x", "bash", "-lc", cmd]
+                elif t in ("kitty", "wezterm", "foot"):
+                    argv = [t, "bash", "-lc", cmd]
+                else:
+                    argv = [t, "-e", "bash", "-lc", cmd]
+                break
+        else:
+            if not has_display:
+                raise ApiError("no_display",
+                               "the server has no graphical session (no $DISPLAY/"
+                               "$WAYLAND_DISPLAY) — copy the harness command instead", 500)
+            raise ApiError("no_terminal",
+                           "no terminal emulator found (set $TERMINAL)", 500)
+    try:
+        return subprocess.Popen(argv, **kwargs).pid
+    except (FileNotFoundError, OSError, PermissionError) as e:
+        raise ApiError("no_terminal", f"terminal spawn failed: {e}", 500)
+
+
 def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool,
                         launch: bool, session_file: str | None, json_output: bool,
-                        extra_prompt: str | None = None) -> None:
+                        extra_prompt: str | None = None,
+                        terminal: bool = False) -> None:
     """Re-launch the harness in an already-linked worktree (issue #26 rule 1)."""
     worktree = str(entry.get("worktree", ""))
     repo = str(entry.get("repo", worktree))
@@ -74,7 +133,9 @@ def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool
     if launch:
         _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, repo, no_tty, launch,
-                 result, json_output, run_key=key, session_file=session_file)
+                 result, json_output, run_key=key, session_file=session_file,
+                 terminal=terminal)
+
 
 def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: str,
                  no_tty: bool, launch: bool, result: dict, json_output: bool,
@@ -86,10 +147,15 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     Every real launch carries a session file: an explicit session_file
     (CLI --session-file) wins, otherwise a path is generated under
     sessions/<harness>/ and passed to the harness (--resume for omp).
-    Preview (no --launch) and --dry-run (never reaches here) write nothing.
+    Preview (no --launch, no --terminal) and --dry-run (never reaches
+    here) write no transcript file; both persist a state='preview'
+    session row + runs row via record_preview_session. --terminal spawns
+    the harness command in the OS terminal and claims a terminal lock.
     Sessions rows are recorded post-cutover (state.db exists) only.
     """
     from . import store_sqlite as _sq
+    if not isinstance(terminal, bool):
+        terminal = False
     # Direct python-level calls (tests) bypass Typer/Click: the OptionInfo
     # default object leaks through instead of None. Normalize to None.
     if not isinstance(session_file, str):
@@ -100,18 +166,38 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     preview_no_tty = no_tty and launch
     preview_cmd = " ".join(shlex.quote(a) for a in
                            harness.command_argv(prompt, preview_no_tty, preview_args))
+    # Copy-paste runnable: the harness must execute inside the worktree.
+    full_cmd = f"cd {shlex.quote(worktree or fallback_dir)} && {preview_cmd}"
+    if terminal:
+        sid = record_preview_session(
+            run_key or str(result.get("key", "")) or fallback_dir,
+            str(result.get("command", harness_name)),
+            prompt, harness_name, full_cmd)
+        if sid:
+            result["session_id"] = sid
+        tpid = spawn_in_terminal(full_cmd, worktree or fallback_dir)
+        key_t = run_key or str(result.get("key", "")) or ""
+        if key_t:
+            blocker = store.record_harness_run(
+                key_t, harness_name, worktree or fallback_dir,
+                origin="terminal", pid=tpid if isinstance(tpid, int) else None)
+            if blocker is not None:
+                _fail(f"worktree {worktree or fallback_dir} already has a live harness "
+                      f"({blocker['harness']}, pid {blocker['pid']}) — wait for it to "
+                      "finish or kill it", 1)
+        result["terminal_pid"] = tpid
+        eprint(f"terminal agent pid: {tpid}")
+        _print_result(result, json_output)
+        return
     if not launch:
-        # Copy-paste runnable: the harness must execute inside the worktree.
-        full_cmd = f"cd {shlex.quote(worktree or fallback_dir)} && {preview_cmd}"
         eprint(f"harness command: {full_cmd}")
         result["harness_command"] = full_cmd
-        if not terminal:
-            sid = record_preview_session(
-                run_key or str(result.get("key", "")) or fallback_dir,
-                str(result.get("command", harness_name)),
-                prompt, harness_name, full_cmd)
-            if sid:
-                result["session_id"] = sid
+        sid = record_preview_session(
+            run_key or str(result.get("key", "")) or fallback_dir,
+            str(result.get("command", harness_name)),
+            prompt, harness_name, full_cmd)
+        if sid:
+            result["session_id"] = sid
         _print_result(result, json_output)
         if sys.stdin.isatty():
             # "cd" for the user: replace this process with their shell in the
