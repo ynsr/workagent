@@ -64,6 +64,37 @@ def test_review_preview_prints_command_and_skips_launch(isolated_config, tmp_pat
     assert str(worktree) in r.stderr
 
 
+def test_review_preview_persists_session_row(isolated_config, tmp_path, monkeypatch):
+    from workagent import store_sqlite
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    store_sqlite.init_db(store_sqlite.db_path())
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed, cwd=None: {"head_ref": "feat/33"})
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/33"})
+    launched = []
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
+    r = runner.invoke(cli.app, ["review", "https://github.com/o/r/pull/33",
+                                "--json"])
+    assert r.exit_code == 0, r.output
+    assert launched == []
+    rows = store_sqlite.list_sessions(store_sqlite.db_path())
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["state"] == "preview"
+    assert row["session_type"] == "review"
+    assert row["file_path"] == ""
+    assert row["worktree_ref"] == "feat/33"
+    assert "https://github.com/o/r/pull/33" in row["prompt"]
+
+
 def test_review_preview_tty_lands_shell_in_worktree(isolated_config, tmp_path, monkeypatch, capsys):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()

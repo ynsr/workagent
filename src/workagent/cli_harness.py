@@ -76,7 +76,8 @@ def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool
 
 def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: str,
                  no_tty: bool, launch: bool, result: dict, json_output: bool,
-                 run_key: str | None = None, session_file: str | None = None) -> None:
+                 run_key: str | None = None, session_file: str | None = None,
+                 terminal: bool = False) -> None:
     """Launch the harness in the worktree with --launch; without it print the exact
     command instead and hand the worktree to the user (shell exec on TTY).
 
@@ -102,6 +103,13 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         full_cmd = f"cd {shlex.quote(worktree or fallback_dir)} && {preview_cmd}"
         eprint(f"harness command: {full_cmd}")
         result["harness_command"] = full_cmd
+        if not terminal:
+            sid = record_preview_session(
+                run_key or str(result.get("key", "")) or fallback_dir,
+                str(result.get("command", harness_name)),
+                prompt, harness_name, full_cmd)
+            if sid:
+                result["session_id"] = sid
         _print_result(result, json_output)
         if sys.stdin.isatty():
             # "cd" for the user: replace this process with their shell in the

@@ -221,6 +221,38 @@ def test_start_preview_prints_command_and_skips_launch(isolated_config, tmp_path
     assert str(worktree) in r.stderr
 
 
+def test_start_preview_persists_session_row(isolated_config, tmp_path, monkeypatch):
+    from workagent import store_sqlite
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    store_sqlite.init_db(store_sqlite.db_path())
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/22--add-login"})
+    launched = []
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--json"])
+    assert r.exit_code == 0, r.output
+    assert launched == []
+    out = json.loads(r.stdout)
+    assert out["session_id"], out
+    db = store_sqlite.db_path()
+    row = store_sqlite.get_session(db, out["session_id"])
+    assert row["state"] == "preview"
+    assert row["worktree_ref"] == "github:o/r#22"
+    assert row["session_type"] == "start"
+    assert "Add login" in row["prompt"]
+    assert row["file_path"] == ""
+    runs = store_sqlite.list_runs(db)
+    assert len(runs) == 1 and runs[0]["command"] == "start"
+    assert runs[0]["session_id"] == out["session_id"]
+    # stdout stays data-only: no session-row chatter on stdout
+    assert "preview session recorded" not in r.stdout
+
+
 def test_start_preview_tty_lands_shell_in_worktree(isolated_config, tmp_path, monkeypatch, capsys):
     """TTY preview (no --launch) replaces the process with the user's shell in the worktree."""
     repo_dir = tmp_path / "proj"
@@ -324,12 +356,24 @@ def test_run_harness_writes_session_row(isolated_config, tmp_path, monkeypatch):
     assert rows[0]["file_path"].endswith(".jsonl")
 
 
-def test_run_harness_preview_writes_nothing(isolated_config, tmp_path, monkeypatch):
+def test_run_harness_preview_persists_row(isolated_config, tmp_path):
+    """Preview `_run_harness` records a preview session row (no transcript file)."""
     from workagent import store_sqlite as sq
-    result = {"key": "k"}
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
+    result = {"key": "k", "command": "start"}
     cli._run_harness("omp", "prompt", "/tmp/wt", "/tmp", False,
                      False, result, True, run_key="k")
-    assert sq.list_sessions(sq.db_path()) == []
+    rows = sq.list_sessions(db)
+    assert len(rows) == 1 and rows[0]["state"] == "preview"
+    assert result["session_id"] == rows[0]["id"]
+
 
 def test_preview_session_helper_stores_full_prompt(isolated_config):
     from workagent import cli_harness as ch
