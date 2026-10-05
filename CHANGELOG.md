@@ -1,5 +1,7 @@
 # Changelog
 ## Unreleased
+- Launch Preview/Headless/Terminal run modes (`--terminal` opens the agent in the OS terminal, stoppable from the Dashboard) [no-issue]
+- Launch runs persist a preview session (full prompt + runs row) in state.db even without "Run headless"; PR-shaped refs auto-switch Start→Review.
 - install.sh restarts the running user service after reinstall so the daemon picks up new routes (stale daemons 405).
 - Run page terminal/copy pairs are single split buttons (`Resume in terminal | Copy`, `Start in terminal | Copy`) sharing state with exact-command tooltips.
 - Launch Start/Review/Sync forms take an extra prompt box (`--extra-prompt`) appended to the agent prompt.
