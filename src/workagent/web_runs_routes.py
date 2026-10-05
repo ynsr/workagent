@@ -278,6 +278,20 @@ def register_runs_routes(app, registry) -> None:
         _w._open_terminal_command(cmd)
         return {"id": run_id}
 
+    @app.post("/api/terminal/stop")
+    async def terminal_stop(body: dict) -> dict:
+        """SIGTERM→SIGKILL the terminal-origin agent running for a worktree
+        ref (the `--terminal` run mode's spawned process). Headless and
+        preview runs are not stoppable here — 404. Read the worktree's
+        live lock via Dashboard status (`harness` column = `terminal <pid>`)."""
+        from . import store as _store
+        ref = str((body or {}).get("worktree_ref", ""))
+        if not ref:
+            raise ApiError("bad_arg", "worktree_ref is required", 400)
+        if not _store.stop_terminal_run(ref):
+            raise ApiError("not_found", f"no live terminal agent for {ref}", 404)
+        return {"worktree_ref": ref, "stopped": True}
+
     @app.post("/api/sessions/{sid}/resume")
     async def resume_session(sid: str) -> dict:
         """Open the OS default terminal resumed on a persisted session."""

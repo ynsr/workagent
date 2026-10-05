@@ -254,6 +254,12 @@ Same spawn running the run's last logged `harness command:` entry — the
 exact command behind the Run page "Copy harness command" button (the button
 is disabled exactly when this returns 404 `no_harness_command`).
 
+### `POST /api/terminal/stop` → `{"worktree_ref", "stopped": true}`
+SIGTERM→SIGKILL the terminal-origin agent behind a worktree ref (the
+`--terminal` run mode). Body: `{"worktree_ref": "<key>"}`. 404
+`not_found` when no live terminal lock (missing, dead-pid swept, or
+headless origin — headless runs are never stoppable here).
+
 ### `POST /api/sessions/{id}/resume` → same shape
 Same terminal spawn for a persisted session row (`worktree` resolved from
 the row, else the recorded worktree ref via `/api/path`); 404

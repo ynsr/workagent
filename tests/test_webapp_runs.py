@@ -443,3 +443,92 @@ def test_api_default_repo_multi_linked_lists_repos(client, tmp_path):
     body = r.json()
     assert body["repo"] == ""
     assert body["repos"] == [str(a), str(b)]
+
+
+def test_terminal_stop_endpoint_kills_and_clears(client, isolated_config):
+    """POST /api/terminal/stop SIGTERMs the terminal-origin lock holder."""
+    import subprocess as sp
+    p = sp.Popen(["sleep", "30"])
+    store.record_harness_run("jira:T-9", "omp", "", origin="terminal", pid=p.pid)
+    try:
+        r = client.post("/api/terminal/stop", json={"worktree_ref": "jira:T-9"})
+        assert r.status_code == 200, r.text
+        assert r.json() == {"worktree_ref": "jira:T-9", "stopped": True}
+        p.wait(timeout=10)
+        assert store.active_harness("jira:T-9") is None
+    finally:
+        try:
+            p.kill()
+        except OSError:
+            pass
+
+
+def test_terminal_stop_endpoint_unknown_ref_is_404(client):
+    r = client.post("/api/terminal/stop", json={"worktree_ref": "jira:NOPE"})
+    assert r.json()["error"]["code"] == "not_found"
+
+
+def test_terminal_stop_endpoint_headless_lock_is_404(client, isolated_config):
+    """A headless (non-terminal) lock is never stoppable via this endpoint."""
+    import subprocess as sp
+    p = sp.Popen(["sleep", "30"])
+    store.record_harness_run("jira:T-8", "omp", "", pid=p.pid)
+    try:
+        r = client.post("/api/terminal/stop", json={"worktree_ref": "jira:T-8"})
+        assert r.status_code == 404, r.text
+        assert p.poll() is None  # untouched
+    finally:
+        try:
+            p.kill()
+        except OSError:
+            pass
+
+
+def test_record_harness_run_stamps_start_ticks(isolated_config):
+    """Claims record /proc start-ticks so pid reuse can't resurrect a dead agent."""
+    import os
+    store.record_harness_run("jira:T-7", "omp")
+    rec = store.active_harness("jira:T-7")
+    assert rec is not None and rec["pid"] == os.getpid()
+    ticks = rec.get("start_ticks")
+    assert isinstance(ticks, int) and ticks > 0
+
+
+def test_live_rec_rejects_start_ticks_mismatch(isolated_config):
+    """A recorded pid now owned by another process is dead for the lock."""
+    import os
+    store.save_harnesses_raw({"jira:T-6": {"harness": "omp",
+                                           "pid": os.getpid(),
+                                           "started_at": 1.0,
+                                           "start_ticks": 1,
+                                           "worktree": "/wt",
+                                           "origin": "terminal"}})
+    assert store.active_harness("jira:T-6") is None
+
+
+def test_stop_terminal_run_refuses_pid_reuse(isolated_config):
+    """stop_terminal_run refuses to kill a recycled pid (start-ticks mismatch)."""
+    import os
+    import subprocess as sp
+    p = sp.Popen(["sleep", "30"])
+    try:
+        store.save_harnesses_raw({"jira:T-5": {"harness": "omp",
+                                               "pid": p.pid,
+                                               "started_at": 1.0,
+                                               "start_ticks": 1,
+                                               "worktree": "/wt",
+                                               "origin": "terminal"}})
+        assert store.stop_terminal_run("jira:T-5") is False
+        assert p.poll() is None  # untouched
+    finally:
+        try:
+            p.kill()
+        except OSError:
+            pass
+
+
+def test_boot_reaps_dead_terminal_lock(isolated_config):
+    store.save_harnesses_raw({"jira:OLD": {"harness": "omp", "pid": 999999999,
+                                           "started_at": 0.0, "worktree": "/wt",
+                                           "origin": "terminal"}})
+    assert store.active_harness("jira:OLD") is None

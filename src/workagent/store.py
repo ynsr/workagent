@@ -489,6 +489,22 @@ def _sweep(data: dict) -> tuple[dict, bool]:
     return alive, len(alive) != len(data)
 
 
+def _proc_start_ticks(pid: int) -> int | None:
+    """Process start time in clock ticks since boot (/proc/<pid>/stat
+    field 22); None on non-Linux or unreadable pid. Pairs with the
+    recorded `start_ticks` to detect pid reuse."""
+    try:
+        text = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return None
+    # comm (field 2) may contain spaces/parens — parse after the last ')'.
+    fields = text.rpartition(")")[2].split()
+    try:
+        return int(fields[19])  # field 22 overall = index 19 after ')'
+    except (IndexError, ValueError):
+        return None
+
+
 def _live_rec(rec: object) -> dict | None:
     """Return the record if it describes a live harness, else None."""
     if not isinstance(rec, dict):
@@ -496,6 +512,13 @@ def _live_rec(rec: object) -> dict | None:
     pid = rec.get("pid", -1)
     if not isinstance(pid, int) or not _pid_alive(pid):
         return None
+    ticks = rec.get("start_ticks")
+    if isinstance(ticks, int) and ticks > 0:
+        # Linux pid-reuse guard: a live /proc entry whose start time
+        # differs from the recorded one is a different process — the
+        # agent behind this lock is gone. Non-Linux (None) skips the guard.
+        if _proc_start_ticks(pid) not in (None, ticks):
+            return None
     return rec
 
 
@@ -537,9 +560,14 @@ def _record_harness_locked(path: Path, key: str, harness: str, worktree: str,
                     break
     if live is not None:
         return live
-    data[key] = {"harness": harness, "pid": pid if isinstance(pid, int) else os.getpid(),
-                 "started_at": time.time(), "worktree": worktree,
-                 "origin": origin or "headless"}
+    pid = pid if isinstance(pid, int) else os.getpid()
+    rec = {"harness": harness, "pid": pid,
+           "started_at": time.time(), "worktree": worktree,
+           "origin": origin or "headless"}
+    ticks = _proc_start_ticks(pid)
+    if ticks is not None:
+        rec["start_ticks"] = ticks
+    data[key] = rec
     _atomic_replace(path, data)
     return None
 
@@ -547,9 +575,10 @@ def _record_harness_locked(path: Path, key: str, harness: str, worktree: str,
 def stop_terminal_run(key: str) -> bool:
     """SIGTERM→SIGKILL the terminal PID behind *key*; False when no live terminal lock.
 
-    PID-reuse guard note: on Linux, /proc/<pid> start-time comparison vs
-    started_at is added at the serve boot reap (Task 5); this helper
-    relies on the lock file's short lifetime.
+    PID-reuse guard: a live /proc entry whose start-ticks differ from the
+    recorded ones is a different process — refuse to kill it and drop
+    the stale lock. Non-Linux (no start-ticks) relies on the lock's short
+    lifetime.
     """
     import signal as _signal
     rec = load_harnesses().get(key)
@@ -557,6 +586,11 @@ def stop_terminal_run(key: str) -> bool:
         return False
     pid = rec.get("pid", -1)
     if not isinstance(pid, int) or pid <= 1 or not _pid_alive(pid):
+        clear_harness_run(key)
+        return False
+    ticks = rec.get("start_ticks")
+    if isinstance(ticks, int) and ticks > 0 and _proc_start_ticks(pid) not in (None, ticks):
+        # Pid reused by an unrelated process: never kill it.
         clear_harness_run(key)
         return False
     try:
