@@ -176,6 +176,21 @@ def default_repo_for_ref(issue_ref: str) -> str:
             return repo
     try:
         parsed = refs.parse_ref(issue_ref)
+        if parsed.get("kind") in ("pr", "mr"):
+            # PR/MR ref not resolvable via a worktree key/branch/path:
+            # fetch the head branch and resolve a linked worktree on it
+            # (Review prefill). Fetch failure falls through to the rules
+            # below — never raises.
+            try:
+                head = (refs.fetch_pr_info(parsed) or {}).get("head_ref", "")
+            except Exception:
+                head = ""
+            if head:
+                resolved_head = _worktrees.resolve_worktree(head, links)
+                if isinstance(resolved_head, str):
+                    repo = str((links.get(resolved_head) or {}).get("repo", ""))
+                    if repo:
+                        return repo
         want = refs.issue_key(parsed)
     except Exception:
         return ""
