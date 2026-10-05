@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { ClipboardCopy, GitPullRequest, History, Play, RefreshCw, Rocket, Trash2, Wrench } from "lucide-react"
+import { ClipboardCopy, GitPullRequest, History, Play, RefreshCw, Rocket, Square, Trash2, Wrench } from "lucide-react"
 import { toast } from "sonner"
 import type { WorktreeMap } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -89,6 +89,15 @@ export function RowActions({
           destructive
         >
           <Trash2 aria-hidden />
+        </ActionIcon>
+      ) : null}
+      {actions.onStopTerminal && entry.harness?.startsWith("terminal ") ? (
+        <ActionIcon
+          title={`Stop terminal agent ${entry.harness} on ${worktreeKey}`}
+          onClick={() => actions.onStopTerminal?.(worktreeKey)}
+          destructive
+        >
+          <Square aria-hidden />
         </ActionIcon>
       ) : null}
       {actions.onReactivate ? (

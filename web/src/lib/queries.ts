@@ -136,6 +136,17 @@ export function useResumeRun() {
   })
 }
 
+/** Stop a terminal-origin agent on a worktree (SIGTERM→SIGKILL). */
+export function useStopTerminal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (worktreeRef: string) => api.stopTerminal(worktreeRef),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
+    },
+  })
+}
+
 /** Resume a persisted session in the OS terminal (fire-and-forget). */
 export function useResumeSession() {
   return useMutation({

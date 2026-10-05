@@ -14,6 +14,8 @@ export interface StatusTableActions {
   onOpenRun: (key: string) => void
   /** Navigate to the Sessions page filtered to this worktree. */
   onOpenSessions?: (key: string) => void
+  /** Stop the terminal-origin agent running on this worktree (404 when none). */
+  onStopTerminal?: (key: string) => void
 }
 
 export { StatusTable } from "@/components/StatusTableMain"

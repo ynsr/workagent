@@ -376,4 +376,12 @@ export const api = {
       `/api/sessions/${encodeURIComponent(id)}/resume`,
       { method: "POST" },
     ),
+
+  /** POST /api/terminal/stop — SIGTERM→SIGKILL the terminal agent on a worktree. */
+  stopTerminal: (worktreeRef: string) =>
+    request<{ worktree_ref: string; stopped: boolean }>(
+      "/api/terminal/stop",
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ worktree_ref: worktreeRef }) },
+    ),
 }

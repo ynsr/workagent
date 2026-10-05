@@ -308,7 +308,9 @@ export function StatusTable({
                               <span
                                 aria-label={`Live harness: ${entry.harness}`}
                                 title={`Live harness: ${entry.harness}`}
-                                className="size-2 shrink-0 animate-pulse rounded-full bg-emerald-500"
+                                className={entry.harness.startsWith("terminal ")
+                                  ? "size-2 shrink-0 animate-pulse rounded-full bg-sky-500"
+                                  : "size-2 shrink-0 animate-pulse rounded-full bg-emerald-500"}
                               />
                             ) : null}
                           </span>

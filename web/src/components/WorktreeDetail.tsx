@@ -141,7 +141,10 @@ export function WorktreeDetail({
             <div className="flex items-baseline gap-2">
               <dt className="w-16 shrink-0 text-xs text-muted-foreground">Harness</dt>
               <dd className="min-w-0 flex-1 font-mono text-[13px] text-muted-foreground">
-                <CopyCell text={entry.harness} title="live harness (name, pid)" />
+                <CopyCell text={entry.harness}
+                  title={entry.harness.startsWith("terminal ")
+                    ? "terminal agent (pid) — stoppable from the Dashboard row"
+                    : "live harness (name, pid)"} />
               </dd>
             </div>
           ) : null}

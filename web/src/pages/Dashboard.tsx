@@ -27,7 +27,7 @@ import { Switch } from "@/components/ui/switch"
 import { api, type WorktreeMap } from "@/lib/api"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
-import { queryKeys, useCreateRun, useInfo, useRepos, useStatusAll, useStatusInactive } from "@/lib/queries"
+import { queryKeys, useCreateRun, useInfo, useRepos, useStatusAll, useStatusInactive, useStopTerminal } from "@/lib/queries"
 import { useRepoTabs } from "@/lib/useRepoTabs"
 import { getShowWorktree, setShowWorktree as persistShowWorktree } from "@/lib/settings"
 
@@ -388,10 +388,20 @@ export function Dashboard() {
       "text/csv",
     )
   }
-
+  const stopTerminal = useStopTerminal()
   // Row Sync/Review go to Launch, which renders the flow prefilled with this
   // worktree key (exact query contract Launch reads back).
   const tableActions = {
+    onStopTerminal: (key: string) => {
+      stopTerminal.mutate(key, {
+        onSuccess: (res) => {
+          toast.success(`Stopped terminal agent on ${res.worktree_ref}`)
+        },
+        onError: (err) => {
+          toast.error(errorText(err))
+        },
+      })
+    },
     onSync: (key: string) =>
       navigate("/launch?mode=sync&ref=" + encodeURIComponent(key)),
     onReview: (key: string) =>
