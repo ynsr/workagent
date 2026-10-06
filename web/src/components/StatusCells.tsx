@@ -26,7 +26,7 @@ export function CommitsCell({ entry }: { entry: WorktreeMap[string] }) {
     </span>
   )
 }
-/** Reviews badge `<reviews>|<resolved> of <total threads>`; "—" when no PR or lookup failed. */
+/** Reviews badge `<reviews> · <resolved> of <total threads>`; "—" when no PR or lookup failed. */
 export function ReviewsCell({ entry }: { entry: WorktreeMap[string] }) {
   const rd = entry.reviews_detail
   if (!rd) return <span className="font-mono text-[13px] text-muted-foreground">—</span>
@@ -41,8 +41,11 @@ export function ReviewsCell({ entry }: { entry: WorktreeMap[string] }) {
       className="cursor-default rounded-full font-mono font-normal"
     >
       <MessagesSquare data-testid="comments-icon" aria-hidden className="size-3" />
+      <span className="text-muted-foreground">{rd.reviews}</span>
+      <span aria-hidden className="text-muted-foreground/60">·</span>
       <span>
-        {rd.reviews}|{label}
+        <span className="text-emerald-600 dark:text-emerald-400">{rd.resolved}</span>
+        <span className="text-muted-foreground"> of {total}</span>
       </span>
     </Badge>
   )
