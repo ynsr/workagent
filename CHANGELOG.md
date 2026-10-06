@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Web: Reviews cell is a pill badge `<reviews>|<resolved> of <total>` with comments icon, tooltip `<n> completed review passes, <r> of <t> threads resolved` [no-issue]
 - Launch Preview/Headless/Terminal run modes (`--terminal` opens the agent in the OS terminal, stoppable from the Dashboard) [no-issue]
 - Launch runs persist a preview session (full prompt + runs row) in state.db even without "Run headless"; PR-shaped refs auto-switch Start→Review.
 - install.sh restarts the running user service after reinstall so the daemon picks up new routes (stale daemons 405).

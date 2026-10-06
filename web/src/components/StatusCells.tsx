@@ -1,4 +1,6 @@
+import { MessagesSquare } from "lucide-react"
 import type { WorktreeMap } from "@/lib/api"
+import { Badge } from "@/components/ui/badge"
 
 export function CommitsCell({ entry }: { entry: WorktreeMap[string] }) {
   const behind = entry.commits_detail?.behind
@@ -24,23 +26,25 @@ export function CommitsCell({ entry }: { entry: WorktreeMap[string] }) {
     </span>
   )
 }
-/** Reviews R|U|R (completed review passes|unresolved comments|resolved comments); "-" when no PR or lookup failed. */
+/** Reviews badge `<reviews>|<resolved> of <total threads>`; "—" when no PR or lookup failed. */
 export function ReviewsCell({ entry }: { entry: WorktreeMap[string] }) {
   const rd = entry.reviews_detail
   if (!rd) return <span className="font-mono text-[13px] text-muted-foreground">—</span>
+  const total = rd.resolved + rd.unresolved
+  const label = `${rd.resolved} of ${total}`
+  const title = `${rd.reviews} completed review passes, ${label} threads resolved`
   return (
-    <span
-      className="font-mono text-[13px]"
-      title={`${rd.reviews} completed review passes, ${rd.unresolved} unresolved comments, ${rd.resolved} resolved comments`}
+    <Badge
+      variant="secondary"
+      title={title}
+      aria-label={title}
+      className="cursor-default rounded-full font-mono font-normal"
     >
-      <span className="text-muted-foreground">{rd.reviews}</span>
-      <span className="text-muted-foreground">|</span>
-      <span className={rd.unresolved > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}>
-        {rd.unresolved}
+      <MessagesSquare data-testid="comments-icon" aria-hidden className="size-3" />
+      <span>
+        {rd.reviews}|{label}
       </span>
-      <span className="text-muted-foreground">|</span>
-      <span className="text-sky-600 dark:text-sky-400">{rd.resolved}</span>
-    </span>
+    </Badge>
   )
 }
 

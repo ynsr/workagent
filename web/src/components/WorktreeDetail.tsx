@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { CiBadge } from "@/components/StateBadge"
 import { CopyCell } from "@/components/CopyCell"
+import { ReviewsCell } from "@/components/StatusCells"
 import { copyToClipboard } from "@/lib/format"
 import { errorText } from "@/components/StatusFeedback"
 /** Editable subset rendered in edit mode; strings are trimmed by the caller. */
@@ -195,12 +196,8 @@ export function WorktreeDetail({
           {entry.reviews_detail ? (
             <div className="flex items-baseline gap-2">
               <dt className="w-16 shrink-0 text-xs text-muted-foreground">Reviews</dt>
-              <dd
-                className="font-mono text-[13px]"
-                title={`${entry.reviews_detail.reviews} completed review passes, ${entry.reviews_detail.unresolved} unresolved comments, ${entry.reviews_detail.resolved} resolved comments`}
-              >
-                {entry.reviews_detail.reviews} done / {entry.reviews_detail.unresolved} unresolved /{" "}
-                {entry.reviews_detail.resolved} resolved
+              <dd>
+                <ReviewsCell entry={entry} />
               </dd>
             </div>
           ) : null}
