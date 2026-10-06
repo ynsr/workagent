@@ -57,3 +57,29 @@ def test_sync_all_skips_deactivated(isolated_config, tmp_path, monkeypatch):
     import json as _j
     end = r.output.rindex(chr(10)+']') + 2
     assert _j.loads(r.output[:end])[0]["status"] == "skipped:deactivated"
+
+def test_record_link_preserves_deactivated(isolated_config, tmp_path, monkeypatch):
+    """A link write after deactivation must not purge the inactive row (restart-safe)."""
+    repo_dir = tmp_path / "proj"
+    wt_dir = tmp_path / "wt"
+    wt_dir.mkdir()
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    r = _invoke("link", "deactivate", "jira:IPG-929")
+    assert r.exit_code == 0, r.output
+    store.record_link("jira:IPG-930", {"issue": "IPG-930", "worktree": str(wt_dir),
+                                       "branch": "feat/x", "repo": str(repo_dir)})
+    inactive = store.load_links(include_inactive=True)
+    assert inactive["jira:IPG-929"]["active"] == 0
+    assert "jira:IPG-929" not in store.load_links()
+
+
+def test_clear_reviewed_preserves_deactivated(isolated_config, tmp_path, monkeypatch):
+    from workagent import cli_review
+    repo_dir = tmp_path / "proj"
+    wt_dir = tmp_path / "wt"
+    wt_dir.mkdir()
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    r = _invoke("link", "deactivate", "jira:IPG-929")
+    assert r.exit_code == 0, r.output
+    cli_review._clear_reviewed("jira:IPG-929")
+    assert store.load_links(include_inactive=True)["jira:IPG-929"]["active"] == 0

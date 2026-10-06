@@ -383,7 +383,7 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
             remote_deleted = True
         except HarnessError as e:
             eprint(f"warning: remote branch delete failed: {e}")
-    remaining = {k: v for k, v in store.load_links().items() if k != key}
+    remaining = {k: v for k, v in store.load_links(include_inactive=True).items() if k != key}
     store.save_links(remaining)
     if not json_output:
         tail = " (remote branch deleted)" if remote_deleted \

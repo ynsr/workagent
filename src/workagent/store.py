@@ -151,7 +151,9 @@ def save_links(links: dict) -> None:
 
 def record_link(issue_key: str, entry: dict) -> None:
     if _sqlite_path() is not None:
-        links = load_links()
+        # include_inactive: save_links_rows deletes absent rows, so an
+        # active-only snapshot would purge every deactivated worktree.
+        links = load_links(include_inactive=True)
         merged = {**links.get(issue_key, {}), **entry}
         merged.setdefault("added_at", _now_iso())
         links[issue_key] = merged

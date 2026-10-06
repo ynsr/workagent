@@ -122,6 +122,34 @@ def test_candidates_shape_and_warnings(client, monkeypatch, tmp_path):
     assert any("proj" in w for w in body["warnings"])
 
 
+def test_candidates_per_source_endpoints(client, monkeypatch, tmp_path):
+    """Per-tab endpoints return their slice; tabs load independently."""
+    _register_repo(tmp_path)
+    store.record_link("github:o/r#1",
+                      {"pr_url": "https://github.com/o/r/pull/1"})
+    monkeypatch.setattr(cli, "_repo_tool", lambda path: "gh")
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", lambda tool, cwd: [
+        {"number": 1, "title": "linked", "branch": "feat/1",
+         "updated": "2026-09-20T10:00:00Z",
+         "url": "https://github.com/o/r/pull/1", "state": "OPEN"},
+        {"number": 2, "title": "open", "branch": "feat/2",
+         "updated": "2026-09-21T10:00:00Z",
+         "url": "https://github.com/o/r/pull/2", "state": "OPEN"},
+    ])
+    monkeypatch.setattr(trackers, "list_my_issues", lambda *a, **k: [
+        _issue_row(2, "jira:IPG-NEW"),
+    ])
+    prs = client.get("/api/candidates/prs").json()
+    assert set(prs) == {"prs", "warnings"}
+    assert [p["url"] for p in prs["prs"]] == ["https://github.com/o/r/pull/2"]
+    issues = client.get("/api/candidates/issues").json()
+    assert set(issues) == {"issues", "warnings"}
+    assert [i["key"] for i in issues["issues"]] == ["jira:IPG-NEW"]
+    wts = client.get("/api/candidates/worktrees").json()
+    assert set(wts) == {"worktrees", "warnings"}
+    assert wts["worktrees"] == []
+
+
 def test_api_sessions_empty(client):
     body = client.get("/api/sessions").json()
     assert body == {"sessions": []}

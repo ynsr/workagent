@@ -267,6 +267,26 @@ def create_app(static_dir: Path, host: str, port: int,
         return {"prs": out["prs"], "issues": out["issues"],
                 "worktrees": out["worktrees"], "warnings": out["warnings"]}
 
+    @app.get("/api/candidates/prs")
+    def candidates_prs() -> dict:
+        """Unlinked open PR/MRs (live host-CLI fetch; slowest source). Read-only."""
+        from . import cli_candidates as _cand
+        prs, warnings = _cand._candidate_prs()
+        return {"prs": prs, "warnings": warnings}
+
+    @app.get("/api/candidates/issues")
+    def candidates_issues(force: bool = False) -> dict:
+        """My recent issues, 7-day filter (cached 1h; force re-queries). Read-only."""
+        from . import cli_candidates as _cand
+        issues, warnings = _cand._candidate_issues(force=force)
+        return {"issues": issues, "warnings": warnings}
+
+    @app.get("/api/candidates/worktrees")
+    def candidates_worktrees() -> dict:
+        """Unregistered on-disk worktrees (fs scan). Read-only."""
+        from . import cli_candidates as _cand
+        return {"worktrees": _cand._scan_worktrees(), "warnings": []}
+
     @app.get("/api/sessions")
     def sessions_list() -> dict:
         """Persisted harness sessions (newest first); [] pre-migration."""

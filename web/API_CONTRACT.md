@@ -141,8 +141,13 @@ live instead of the 1h issue cache (slow). Read-only:
                "key_guess": "branch:feat/x"}],
  "warnings": ["proj: gh pr list failed: …"]}
 ```
-Scan root defaults to `~/dev/worktrees`, overridable via the `scan_root`
-config key. Paths already linked are excluded server-side.
+
+Per-tab slices (each loads independently so the slow live-PR fetch never
+blocks the others; the Dashboard Candidates card queries all three in
+parallel with per-tab skeletons):
+- `GET /api/candidates/prs` → `{prs, warnings}`
+- `GET /api/candidates/issues[?force=true]` → `{issues, warnings}` (same 1h cache/force semantics)
+- `GET /api/candidates/worktrees` → `{worktrees, warnings: []}`
 
 ### `GET /api/sessions` → list (newest first, no prompts)
 ```json

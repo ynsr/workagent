@@ -1,5 +1,7 @@
 # Changelog
 ## Unreleased
+- Candidates split into per-tab endpoints (`/api/candidates/prs|issues|worktrees`) and moved onto the Dashboard under the deactivated table; each tab loads independently with its own skeleton so the slow PR fetch never blocks issues/worktrees [no-issue]
+- Deactivated worktrees survive link writes: `record_link`/`_clear_reviewed`/`cleanup` rewrote an active-only snapshot, purging inactive rows (looked like restart loss). All three now merge with inactive rows; regression tests cover it [no-issue]
 - Web: Reviews cell is a pill badge `<reviews> · <resolved> of <total>` with comments icon (resolved count green), tooltip `<n> completed review passes, <r> of <t> threads resolved` [no-issue]
 - Launch Preview/Headless/Terminal run modes (`--terminal` opens the agent in the OS terminal, stoppable from the Dashboard) [no-issue]
 - Launch runs persist a preview session (full prompt + runs row) in state.db even without "Run headless"; PR-shaped refs auto-switch Start→Review.

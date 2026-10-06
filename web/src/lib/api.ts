@@ -132,6 +132,21 @@ export interface CandidateWorktree {
   key_guess: string
 }
 
+export interface CandidatesPrsResponse {
+  prs: CandidatePr[]
+  warnings: string[]
+}
+
+export interface CandidatesIssuesResponse {
+  issues: IssueRow[]
+  warnings: string[]
+}
+
+export interface CandidatesWorktreesResponse {
+  worktrees: CandidateWorktree[]
+  warnings: string[]
+}
+
 export interface CandidatesResponse {
   prs: CandidatePr[]
   issues: IssueRow[]
@@ -325,6 +340,15 @@ export const api = {
     request<CandidatesResponse>(
       `/api/candidates${qs({ force: opts?.force ? "true" : undefined })}`,
     ),
+  /** GET /api/candidates/prs — unlinked PR/MRs only (slowest source; loads independently). */
+  candidatesPrs: () => request<CandidatesPrsResponse>("/api/candidates/prs"),
+  /** GET /api/candidates/issues — recent issues only (`force` bypasses the 1h cache). */
+  candidatesIssues: (opts?: { force?: boolean }) =>
+    request<CandidatesIssuesResponse>(
+      `/api/candidates/issues${qs({ force: opts?.force ? "true" : undefined })}`,
+    ),
+  /** GET /api/candidates/worktrees — unregistered on-disk worktrees only. */
+  candidatesWorktrees: () => request<CandidatesWorktreesResponse>("/api/candidates/worktrees"),
   /** GET /api/default-repo?ref=… — linked-worktree repo else single-linked (issue #26). `repos` lists every linked repo of the ref's tracker for the picker. */
   defaultRepo: (ref: string) =>
     request<{ ref: string; repo: string; repos: string[] }>(`/api/default-repo${qs({ ref })}`),

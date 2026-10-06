@@ -11,6 +11,7 @@ import {
   SearchX,
   SquareTerminal,
 } from "lucide-react"
+import { CandidatesCard } from "@/components/CandidatesCard"
 import { CleanupDialog } from "@/components/CleanupDialog"
 import { DeactivatedTable } from "@/components/DeactivatedTable"
 import { PageHeader } from "@/components/PageHeader"
@@ -521,6 +522,9 @@ export function Dashboard() {
               onReactivate: handleReactivate,
             }}
           />
+          <div className="mt-6">
+            <CandidatesCard />
+          </div>
           <details className="mt-3 rounded-md border px-3 py-2 text-xs text-muted-foreground">
             <summary className="cursor-pointer font-medium text-foreground">
               Remote calls &amp; cache TTLs

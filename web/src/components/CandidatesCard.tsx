@@ -16,7 +16,7 @@ import {
   errorText,
 } from "@/components/StatusFeedback"
 import { api } from "@/lib/api"
-import { queryKeys, useCandidates } from "@/lib/queries"
+import { queryKeys, useCandidatesIssues, useCandidatesPrs, useCandidatesWorktrees } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 
@@ -37,7 +37,13 @@ const TABS: readonly { value: Tab; label: (n: number) => string }[] = [
 export function CandidatesCard() {
   const runConfirmed = useConfirmedRun()
   const qc = useQueryClient()
-  const { data, isPending, isError, error, refetch, isFetching } = useCandidates()
+  // Per-tab queries: each source loads independently, so the slow live-PR
+  // fetch never blocks issues/worktrees; switching tabs shows ready data
+  // immediately while the rest streams in (per-tab skeletons below).
+  // Unmount-safe: react-query cancels in-flight fetches on unmount.
+  const prsQuery = useCandidatesPrs()
+  const issuesQuery = useCandidatesIssues()
+  const worktreesQuery = useCandidatesWorktrees()
   const [tab, setTab] = useState<Tab>("prs")
   const { copied, copy } = useCopyFeedback()
   const [refreshing, setRefreshing] = useState(false)
@@ -49,12 +55,15 @@ export function CandidatesCard() {
   async function handleRefresh() {
     setRefreshing(true)
     try {
-      const fresh = await qc.fetchQuery({
-        queryKey: [...queryKeys.candidates, true],
-        queryFn: () => api.candidates({ force: true }),
-        staleTime: 0,
-      })
-      qc.setQueryData(queryKeys.candidates, fresh)
+      await Promise.all([
+        qc.fetchQuery({ queryKey: queryKeys.candidatesPrs, queryFn: () => api.candidatesPrs() }),
+        qc.fetchQuery({
+          queryKey: queryKeys.candidatesIssues(true),
+          queryFn: () => api.candidatesIssues({ force: true }),
+          staleTime: 0,
+        }),
+        qc.fetchQuery({ queryKey: queryKeys.candidatesWorktrees, queryFn: () => api.candidatesWorktrees() }),
+      ])
       toast.success("Candidates re-fetched live")
     } catch (err) {
       toast.error(errorText(err))
@@ -89,10 +98,14 @@ export function CandidatesCard() {
     })
   }
 
-  const prs = data?.prs ?? []
-  const issues = data?.issues ?? []
-  const scanned = data?.worktrees ?? []
-  const warnings = data?.warnings ?? []
+  const prs = prsQuery.data?.prs ?? []
+  const issues = issuesQuery.data?.issues ?? []
+  const scanned = worktreesQuery.data?.worktrees ?? []
+  const warnings = [
+    ...(prsQuery.data?.warnings ?? []),
+    ...(issuesQuery.data?.warnings ?? []),
+    ...(worktreesQuery.data?.warnings ?? []),
+  ]
   const counts: Record<Tab, number> = {
     prs: prs.length,
     issues: issues.length,
@@ -114,9 +127,9 @@ export function CandidatesCard() {
             variant="outline"
             size="sm"
             onClick={() => void handleRefresh()}
-            disabled={isFetching || refreshing}
+            disabled={refreshing || prsQuery.isFetching || issuesQuery.isFetching || worktreesQuery.isFetching}
           >
-            <RefreshCw className={isFetching || refreshing ? "animate-spin" : undefined} aria-hidden />
+            <RefreshCw className={refreshing || prsQuery.isFetching || issuesQuery.isFetching || worktreesQuery.isFetching ? "animate-spin" : undefined} aria-hidden />
             Refresh
           </Button>
         </div>
@@ -145,12 +158,12 @@ export function CandidatesCard() {
             {warnings.join("; ")}
           </p>
         ) : null}
-        {isPending ? (
-          <TableSkeleton rows={3} />
-        ) : isError ? (
-          <ErrorState error={error} onRetry={() => void refetch()} />
-        ) : tab === "prs" ? (
-          prs.length === 0 ? (
+        {tab === "prs" ? (
+          prsQuery.isPending ? (
+            <TableSkeleton rows={3} />
+          ) : prsQuery.isError ? (
+            <ErrorState error={prsQuery.error} onRetry={() => void prsQuery.refetch()} />
+          ) : prs.length === 0 ? (
             <EmptyState
               icon={<GitPullRequest className="size-10" aria-hidden />}
               title="No unlinked PRs"
@@ -188,7 +201,11 @@ export function CandidatesCard() {
             </ul>
           )
         ) : tab === "issues" ? (
-          issues.length === 0 ? (
+          issuesQuery.isPending ? (
+            <TableSkeleton rows={3} />
+          ) : issuesQuery.isError ? (
+            <ErrorState error={issuesQuery.error} onRetry={() => void issuesQuery.refetch()} />
+          ) : issues.length === 0 ? (
             <EmptyState
               icon={<Ticket className="size-10" aria-hidden />}
               title="No recent issues"
@@ -232,6 +249,10 @@ export function CandidatesCard() {
               ))}
             </ul>
           )
+        ) : worktreesQuery.isPending ? (
+          <TableSkeleton rows={3} />
+        ) : worktreesQuery.isError ? (
+          <ErrorState error={worktreesQuery.error} onRetry={() => void worktreesQuery.refetch()} />
         ) : scanned.length === 0 ? (
           <EmptyState
             icon={<GitPullRequest className="size-10" aria-hidden />}

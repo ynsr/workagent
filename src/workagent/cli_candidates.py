@@ -23,20 +23,8 @@ from .cli_core import (
 # ── candidates ────────────────────────────────────────────────────────
 
 
-def _candidates(force: bool = False) -> dict:
-    """Unlinked open PR/MRs + my recent issues; shared by the `candidates`
-    command and the webapp /api/candidates endpoint.
-
-    PRs are collected from every registered repo (per-repo failures →
-    warning) minus any candidate already present in the worktrees table:
-    a PR/MR is dropped when its URL, branch name, or worktree path matches
-    a linked row. Issues are `trackers.list_my_issues` filtered to created
-    within the last 7 days, minus issues whose key/URL already has a linked
-    worktree. Scanned worktrees come from `_scan_worktrees`, which already
-    excludes linked paths.
-    """
-    from . import cli as _cli  # shim: tests patch cli._repo_tool
-    warnings: list[str] = []
+def _linked_sets() -> tuple[set, set, set, set, dict]:
+    """Linked URL/branch/path sets shared by the per-source candidate fetchers."""
     links = store.load_links()
     linked_urls = set()
     linked_issue_urls = set()
@@ -61,6 +49,14 @@ def _candidates(force: bool = False) -> dict:
                 linked_paths.add(str(Path(wt).expanduser().resolve()))
             except OSError:
                 linked_paths.add(wt)
+    return linked_urls, linked_issue_urls, linked_branches, linked_paths, links
+
+
+def _candidate_prs() -> tuple[list[dict], list[str]]:
+    """Unlinked open PR/MRs across registered repos (slowest source: live host-CLI calls)."""
+    from . import cli as _cli  # shim: tests patch cli._repo_tool
+    warnings: list[str] = []
+    linked_urls, _, linked_branches, _, _ = _linked_sets()
     prs: list[dict] = []
     for name, entry in store.load_repos().items():
         path = str(entry.get("path", ""))
@@ -85,6 +81,13 @@ def _candidates(force: bool = False) -> dict:
         except Exception as e:  # one bad repo must not kill the listing
             warnings.append(f"{name}: {e}")
     prs.sort(key=lambda p: p.get("updated", ""), reverse=True)
+    return prs, warnings
+
+
+def _candidate_issues(force: bool = False) -> tuple[list[dict], list[str]]:
+    """My recent issues (cached 1h); the `force` bypass re-queries the tracker CLIs."""
+    warnings: list[str] = []
+    _, linked_issue_urls, _, _, links = _linked_sets()
     issues = trackers.list_my_issues(warnings, force=force)
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     recent: list[dict] = []
@@ -103,8 +106,25 @@ def _candidates(force: bool = False) -> dict:
         repo_hint = trackers.default_repo_for_ref(key or url) if (key or url) else ""
         recent.append({**i, "repo_hint": repo_hint})
     recent.sort(key=lambda i: str(i.get("created", "")), reverse=True)
+    return recent, warnings
+
+
+def _candidates(force: bool = False) -> dict:
+    """Unlinked open PR/MRs + my recent issues; shared by the `candidates`
+    command and the webapp /api/candidates endpoint.
+
+    PRs are collected from every registered repo (per-repo failures →
+    warning) minus any candidate already present in the worktrees table:
+    a PR/MR is dropped when its URL, branch name, or worktree path matches
+    a linked row. Issues are `trackers.list_my_issues` filtered to created
+    within the last 7 days, minus issues whose key/URL already has a linked
+    worktree. Scanned worktrees come from `_scan_worktrees`, which already
+    excludes linked paths.
+    """
+    prs, pr_warnings = _candidate_prs()
+    recent, issue_warnings = _candidate_issues(force=force)
     return {"prs": prs, "issues": recent, "worktrees": _scan_worktrees(),
-            "warnings": warnings}
+            "warnings": pr_warnings + issue_warnings}
 
 
 def _scan_root() -> Path:

@@ -195,7 +195,7 @@ def _clear_reviewed(key: str) -> None:
     record_link merges, which cannot drop keys — rewrite the entry without
     them instead (other fields preserved), same as `link remove`.
     """
-    links = store.load_links()
+    links = store.load_links(include_inactive=True)
     entry = links.get(key)
     if not entry:
         return

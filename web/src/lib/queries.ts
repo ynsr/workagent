@@ -16,6 +16,9 @@ export const queryKeys = {
   run: (id: string) => ["runs", "detail", id] as const,
   issues: ["issues"] as const,
   candidates: ["candidates"] as const,
+  candidatesPrs: ["candidates", "prs"] as const,
+  candidatesIssues: (force?: boolean) => ["candidates", "issues", force ? "force" : "cached"] as const,
+  candidatesWorktrees: ["candidates", "worktrees"] as const,
   sessions: ["sessions"] as const,
   session: (id: string) => ["sessions", "detail", id] as const,
 }
@@ -67,6 +70,24 @@ export function useIssues() {
 
 export function useCandidates() {
   return useQuery({ queryKey: queryKeys.candidates, queryFn: () => api.candidates(), staleTime: 3600_000 })
+}
+
+/** Per-tab candidates queries: each tab loads independently so the slow
+ * PR fetch never blocks issues/worktrees (incremental tab rendering). */
+export function useCandidatesPrs() {
+  return useQuery({ queryKey: queryKeys.candidatesPrs, queryFn: () => api.candidatesPrs() })
+}
+
+export function useCandidatesIssues(force?: boolean) {
+  return useQuery({
+    queryKey: queryKeys.candidatesIssues(force),
+    queryFn: () => api.candidatesIssues({ force }),
+    staleTime: 3600_000,
+  })
+}
+
+export function useCandidatesWorktrees() {
+  return useQuery({ queryKey: queryKeys.candidatesWorktrees, queryFn: () => api.candidatesWorktrees() })
 }
 
 export function useSessions() {
