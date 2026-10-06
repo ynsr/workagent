@@ -172,7 +172,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         sid = record_preview_session(
             run_key or str(result.get("key", "")) or fallback_dir,
             str(result.get("command", harness_name)),
-            prompt, harness_name, full_cmd)
+            prompt, harness_name, f"harness command: {full_cmd}")
         if sid:
             result["session_id"] = sid
         tpid = spawn_in_terminal(full_cmd, worktree or fallback_dir)
@@ -195,7 +195,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         sid = record_preview_session(
             run_key or str(result.get("key", "")) or fallback_dir,
             str(result.get("command", harness_name)),
-            prompt, harness_name, full_cmd)
+            prompt, harness_name, f"harness command: {full_cmd}")
         if sid:
             result["session_id"] = sid
         _print_result(result, json_output)
@@ -280,6 +280,12 @@ def record_preview_session(key: str, command: str, prompt: str,
     record). session_type is derived from the command (start/review/sync;
     unknown → NULL, never guessed). Never raises: warns to stderr so
     callers keep their own result flow.
+
+    Contract: preview callers (start/review/terminal) MUST pass output
+    starting with the literal ``harness command: `` prefix — the
+    RunDetail parser and ``/api/runs/{id}/start-terminal`` only find the
+    command through it. Bare-command output renders as terminal output
+    after a reload.
     """
     from . import store_sqlite as _sq
     try:

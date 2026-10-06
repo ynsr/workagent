@@ -298,7 +298,9 @@ def test_start_preview_persists_session_row(isolated_config, tmp_path, monkeypat
     assert row["file_path"] == ""
     runs = store_sqlite.list_runs(db)
     assert len(runs) == 1 and runs[0]["command"] == "start"
-    assert runs[0]["session_id"] == out["session_id"]
+    # RunDetail/start-terminal find the command via the log prefix; a bare
+    # command would render as terminal output after a DB reload (db-37 bug).
+    assert runs[0]["output"].startswith("harness command: cd ")
     # stdout stays data-only: no session-row chatter on stdout
     assert "preview session recorded" not in r.stdout
 
