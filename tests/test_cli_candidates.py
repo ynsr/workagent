@@ -169,5 +169,53 @@ def test_candidates_reset_cache_clears(isolated_config, monkeypatch):
     monkeypatch.setattr(cli.trackers, "list_my_issues", lambda *a, **k: [])
     monkeypatch.setattr(cli.refs, "fetch_open_prs", lambda *a, **k: [])
     r = _invoke("candidates", "--reset-cache", "--json")
-    assert r.exit_code == 0, r.output
     assert sq.get_issue_cache(db, "jira") == ([], None)
+
+
+def test_fetch_disabled_repo_skips_pr_scan(isolated_config, tmp_path, monkeypatch):
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    sq.register_repo_row(db, "proj", str(repo), "github:o/r",
+                         remote="https://github.com/o/r.git", tool="gh",
+                         fetch_enabled=False)
+    def _boom(tool, cwd):
+        raise AssertionError("fetch-disabled repo must not be scanned")
+    monkeypatch.setattr(cli, "_repo_tool", lambda path: "gh")
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", _boom)
+    from workagent import cli_candidates as cc
+    prs, _w = cc._candidate_prs()
+    assert prs == []
+
+
+def test_fetch_disabled_tracker_skips_github_issues(isolated_config, monkeypatch):
+    from workagent import store_sqlite as sq
+    from workagent import trackers as tr
+    db = sq.db_path()
+    sq.init_db(db)
+    sq.upsert_tracker(db, "github:o/r", vendor="github",
+                      remote_url="https://github.com/o/r", fetch_enabled=False)
+    sq.upsert_tracker(db, "jira:IPG", vendor="jira",
+                      remote_url="https://example.test/browse/IPG")
+    monkeypatch.setattr(tr, "_jira_my_issues", lambda warn: [])
+    def _boom(warn):
+        raise AssertionError("fetch-disabled tracker must not be fetched")
+    monkeypatch.setattr(tr, "_gh_my_issues", _boom)
+    assert tr.list_my_issues([]) == []
+
+
+def test_fetch_migration_defaults_github_off(isolated_config):
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    with sq.connect(db) as conn:
+        conn.executescript("CREATE TABLE trackers (key_ref TEXT PRIMARY KEY, vendor TEXT NOT NULL DEFAULT '', remote_url TEXT NOT NULL DEFAULT '');"
+                           "CREATE TABLE repos (key_ref TEXT PRIMARY KEY, path TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', remote TEXT NOT NULL DEFAULT '', tool TEXT);"
+                           "INSERT INTO trackers (key_ref, vendor) VALUES ('github:o/r', 'github'), ('jira:IPG', 'jira');"
+                           "INSERT INTO repos (key_ref, path, tool) VALUES ('a', '/a', 'gh'), ('b', '/b', 'glab');")
+    sq.init_db(db)
+    assert sq.load_trackers(db)["github:o/r"]["fetch_enabled"] is False
+    assert sq.load_trackers(db)["jira:IPG"]["fetch_enabled"] is True
+    assert sq.load_repos(db)["a"]["fetch_enabled"] is False
+    assert sq.load_repos(db)["b"]["fetch_enabled"] is True

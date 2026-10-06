@@ -37,6 +37,8 @@ def repo_add(
     name: str = typer.Option(..., "--name", help="Name to register the repo under."),
     path: Path = typer.Option(..., "--path", help="Local path of the repo."),
     tracker: Optional[str] = typer.Option(None, "--tracker", help="Issue tracker project key/URL to map."),
+    fetch: Optional[bool] = typer.Option(None, "--fetch/--no-fetch",
+        help="Fetch this repo's MRs/PRs for Candidates (default: on, except GitHub gh-tooled repos which default off)."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Register an offline repo.
@@ -54,7 +56,7 @@ def repo_add(
     tid = trackers.normalize_id(tracker) if tracker else trackers.default_tracker_for_repo(p)
     if not tid:
         _fail("cannot derive tracker from origin remote: pass --tracker IPG|github:O/R|GitLab URL", EXIT_USAGE)
-    repos.register_repo(name, p, tracker_key=tid)
+    repos.register_repo(name, p, tracker_key=tid, fetch_enabled=fetch)
     _print_result({"registered": name, "path": str(p), "tracker": tid}, json_output)
 
 
@@ -138,6 +140,8 @@ def tracker_add(
     tracker: str = typer.Argument(..., help="Tracker id (e.g. jira:IPG, github:OWNER/REPO, gitlab:host/group/repo)."),
     vendor: str = typer.Option("", "--vendor", help="Tracker vendor: jira or github (default: derived from the id)."),
     remote_url: str = typer.Option("", "--remote-url", help="Tracker web URL (required; e.g. https://github.com/OWNER/REPO)."),
+    fetch: Optional[bool] = typer.Option(None, "--fetch/--no-fetch",
+        help="Fetch this tracker's issues for Candidates/Launch (default: on, except github: ids which default off)."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Create (or update) an issue tracker.
@@ -169,10 +173,13 @@ def tracker_add(
         else:
             entry.setdefault("vendor", v)
         entry["remote_url"] = remote_url
+        if fetch is not None:
+            entry["fetch_enabled"] = bool(fetch)
         store.save_config(cfg)
         _print_result({"tracker": tid, "repos": entry.get("repos", [])}, json_output)
         return
-    row = sq.upsert_tracker(sq.db_path(), tid, vendor=vendor, remote_url=remote_url)
+    row = sq.upsert_tracker(sq.db_path(), tid, vendor=vendor, remote_url=remote_url,
+                            fetch_enabled=fetch)
     _print_result(row, json_output)
 
 

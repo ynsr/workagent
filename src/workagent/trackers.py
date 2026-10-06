@@ -488,6 +488,26 @@ def _cached_source(source: str, fetch, warn: list,
     return rows
 
 
+def _source_enabled(source: str) -> bool:
+    """Fetch gate for an issue source: off only when a linked tracker of
+    that vendor has fetch disabled; no linked tracker → on (unchanged
+    pre-registration behavior for both sources)."""
+    try:
+        from . import store as _store
+        trackers = _store.load_trackers()
+    except Exception:
+        return True
+    for tid, v in trackers.items():
+        vendor = str((v or {}).get("vendor", "") or "").lower()
+        match = (vendor == source) or (source == "github" and str(tid).startswith("gitlab:"))
+        if source == "jira" and str(tid).startswith("jira:") and not vendor:
+            match = True
+        if not match:
+            continue
+        if not (v or {}).get("fetch_enabled", True):
+            return False
+    return True
+
 def list_my_issues(warnings: list[str] | None = None,
                    force: bool = False) -> list[dict]:
     """My open issues across sources as {key, title, url, status, created}.
@@ -495,13 +515,18 @@ def list_my_issues(warnings: list[str] | None = None,
     jira (reporter=me, To Do/In Progress, last 2 months) + GitHub issues
     authored by me (state=open). GitLab issues are intentionally omitted
     (Jira covers work tracking; GitLab surfaces via PR/MR candidates).
+    A source is skipped when every linked tracker of that vendor has
+    fetch disabled (GitHub off by default, opt-in per tracker).
     Per-source failure contributes [] plus a warning — to stderr when
     *warnings* is None, else appended to the caller's list; never raises.
     Fresh per-source cache rows (<1h) win unless *force* is set.
     """
     warn = warnings if warnings is not None else []
-    rows = (_cached_source("jira", _jira_my_issues, warn, force)
-            + _cached_source("github", _gh_my_issues, warn, force))
+    rows: list[dict] = []
+    if _source_enabled("jira"):
+        rows += _cached_source("jira", _jira_my_issues, warn, force)
+    if _source_enabled("github"):
+        rows += _cached_source("github", _gh_my_issues, warn, force)
     rows.sort(key=lambda r: r["created"], reverse=True)
     if warnings is None:
         for w in warn:

@@ -71,19 +71,23 @@ worktree), and `create_hint`
 ### `GET /api/repos`
 ```json
 [{"name": "projectx", "path": "/home/x/projects/projectx",
-  "tracker": "jira:IPG", "trackers": ["jira:IPG"]}]
+  "tracker": "jira:IPG", "trackers": ["jira:IPG"], "fetch_enabled": true}]
 ```
 (`tracker` = first linked tracker; `trackers` = all linked tracker ids
-from the tracker_repos join; any extra registry keys pass through).
+from the tracker_repos join; any extra registry keys pass through.
+`fetch_enabled` (bool) gates the Candidates PR scan per repo — `repo add
+--fetch/--no-fetch`; GitHub (`gh`-tooled) repos default off.)
 
 ### `GET /api/trackers`
 ```json
 {"trackers": [{"key": "jira:IPG", "vendor": "jira",
-  "remote_url": "https://jira/…", "repos": 2}]}
+  "remote_url": "https://jira/…", "repos": 2, "fetch_enabled": true}]}
 ```
 (CRUD page source: `tracker add/list/remove` run as runs; `repos` is the
 linked-repo count. `vendor` is an enum: `jira` | `github`; `remote_url` is mandatory —
-`tracker add` runs require `--remote-url`.)
+`tracker add` runs require `--remote-url`. `fetch_enabled` gates the
+Candidates/Launch issue fetch per tracker — `tracker add
+--fetch/--no-fetch`; `github:` ids default off.)
 
 ### `GET /api/links`
 ```json

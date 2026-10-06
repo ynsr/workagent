@@ -13,11 +13,13 @@ from pathlib import Path
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS trackers (
-  key_ref TEXT PRIMARY KEY NOT NULL, remote_url TEXT NOT NULL, vendor TEXT NOT NULL);
+  key_ref TEXT PRIMARY KEY NOT NULL, remote_url TEXT NOT NULL, vendor TEXT NOT NULL,
+  fetch_enabled INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS repos (
   key_ref TEXT PRIMARY KEY NOT NULL, path TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL,
-  remote TEXT NOT NULL DEFAULT '', tool TEXT NOT NULL DEFAULT '');
+  remote TEXT NOT NULL DEFAULT '', tool TEXT NOT NULL DEFAULT '',
+  fetch_enabled INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS tracker_repos (
   tracker_key TEXT NOT NULL REFERENCES trackers(key_ref) ON DELETE CASCADE,
   repo_key TEXT NOT NULL REFERENCES repos(key_ref) ON DELETE CASCADE,
@@ -194,6 +196,41 @@ def _migrate_worktrees_active(conn) -> None:
     if "active" not in cols:
         conn.execute("ALTER TABLE worktrees ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
 
+def _default_fetch_enabled(tid: str = "", tool: str = "") -> int:
+    """Default fetch gate: GitHub off (slow/rate-limited, opt-in), else on.
+
+    GitLab-backed rows stay on: gitlab: tracker ids and glab-tooled repos
+    are detected explicitly because they share vendor='github'.
+    """
+    if (tool or "").strip().lower() == "gh":
+        return 0
+    t = (tid or "").strip().lower()
+    if t.startswith("github:"):
+        return 0
+    return 1
+
+def _migrate_fetch_enabled(conn) -> None:
+    """Schema v8: trackers/repos gain fetch_enabled (1 = fetch, 0 = skip).
+
+    ALTER TABLE backfills new rows via DEFAULT 1; existing rows take the
+    vendor-aware default (GitHub off, Jira/GitLab on). Idempotent.
+    """
+    for table in ("trackers", "repos"):
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if not cols or "fetch_enabled" in cols:
+            continue
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN fetch_enabled INTEGER NOT NULL DEFAULT 1")
+    tcols = {r[1] for r in conn.execute("PRAGMA table_info(trackers)")}
+    if tcols and "fetch_enabled" in tcols:
+        for (tid,) in conn.execute("SELECT key_ref FROM trackers WHERE fetch_enabled = 1"):
+            if _default_fetch_enabled(tid=tid) == 0:
+                conn.execute("UPDATE trackers SET fetch_enabled = 0 WHERE key_ref = ?", (tid,))
+    rcols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
+    if rcols and "fetch_enabled" in rcols:
+        for key_ref, tool in conn.execute("SELECT key_ref, tool FROM repos WHERE fetch_enabled = 1"):
+            if _default_fetch_enabled(tool=tool or "") == 0:
+                conn.execute("UPDATE repos SET fetch_enabled = 0 WHERE key_ref = ?", (key_ref,))
+
 def _migrate_sessions_type(conn) -> None:
     """Schema v6: sessions gains session_type + metadata (session-type spec).
 
@@ -366,7 +403,7 @@ def _schema_current(path: Path) -> bool:
         if not {"trackers", "repos", "worktrees", "sessions", "runs"} <= tables:
             return False
         cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
-        if {"output", "truncated"} > cols:
+        if not {"output", "truncated"} <= cols:
             return False
         wcols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
         if "active" not in wcols:
@@ -384,7 +421,13 @@ def _schema_current(path: Path) -> bool:
         if any(bool(entry[2]) and c == {"branch"} for entry, c in zip(widx, idx_cols)):
             return False
         scols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
-        return {"harness_name", "session_type", "metadata"} <= scols
+        if not {"harness_name", "session_type", "metadata"} <= scols:
+            return False
+        for table in ("trackers", "repos"):
+            fcols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if "fetch_enabled" not in fcols:
+                return False
+        return True
     except Exception:
         return False
     finally:
@@ -411,6 +454,7 @@ def init_db(path: Path) -> Path:
                 _migrate_worktrees_branch_scope(conn)
                 _migrate_sessions_harness(conn)
                 _migrate_sessions_type(conn)
+                _migrate_fetch_enabled(conn)
             break
         except sqlite3.OperationalError as e:
             last = e

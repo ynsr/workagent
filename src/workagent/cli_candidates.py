@@ -59,9 +59,9 @@ def _candidate_prs() -> tuple[list[dict], list[str]]:
     linked_urls, _, linked_branches, _, _ = _linked_sets()
     prs: list[dict] = []
     for name, entry in store.load_repos().items():
-        path = str(entry.get("path", ""))
-        if not path or not Path(path).exists():
+        if not entry.get("fetch_enabled", True):
             continue
+        path = str(entry.get("path", ""))
         try:
             tool = _cli._repo_tool(path)
             if tool not in ("gh", "glab"):

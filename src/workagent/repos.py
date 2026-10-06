@@ -210,13 +210,16 @@ def clone_url(url: str, depth: int = 7) -> Path:
     register_repo(name, dest)
     return dest
 
-def register_repo(name: str, path: Path, tracker_key: str = "") -> None:
+def register_repo(name: str, path: Path, tracker_key: str = "",
+                  fetch_enabled: bool | None = None) -> None:
     """Register *name* → *path* (+ mandatory tracker derivation).
 
     Post-migration the SQLite repos row is the registry (``tracker_key``
     NOT NULL): an explicit key wins, else the origin remote is derived
-    via ``trackers.default_tracker_for_repo``. Pre-migration both the
-    config.json registry and the tracker mapping are updated (dual-write).
+    via ``trackers.default_tracker_for_repo``. fetch_enabled None keeps
+    the stored/vendor-aware default; explicit bool sets it.
+    Pre-migration both the config.json registry and the tracker mapping
+    are updated (dual-write).
     """
     from . import trackers as _trackers
     tid = tracker_key or _trackers.default_tracker_for_repo(path)
@@ -226,7 +229,8 @@ def register_repo(name: str, path: Path, tracker_key: str = "") -> None:
     if store._sqlite_path() is not None:
         from . import store_sqlite as sq
         sq.register_repo_row(sq.db_path(), name, str(path), tid,
-                             remote=remote_url(path), tool=_detect_host_cli(path))
+                             remote=remote_url(path), tool=_detect_host_cli(path),
+                             fetch_enabled=fetch_enabled)
         return
     cfg = store.load_config()
     repos = cfg.setdefault("repos", {})

@@ -19,8 +19,9 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { SearchableSelect } from "@/components/SearchableSelect"
+import { CheckRow } from "@/components/FieldHelp"
 import { Label } from "@/components/ui/label"
+import { SearchableSelect } from "@/components/SearchableSelect"
 import {
   Table,
   TableBody,
@@ -45,6 +46,7 @@ export function Trackers() {
   const [key, setKey] = useState("")
   const [vendor, setVendor] = useState("")
   const [remoteUrl, setRemoteUrl] = useState("")
+  const [fetchEnabled, setFetchEnabled] = useState(true)
   const [adding, setAdding] = useState(false)
 
   async function handleAdd() {
@@ -59,6 +61,7 @@ export function Trackers() {
           ...(vendor.trim() ? ["--vendor", vendor.trim()] : []),
           "--remote-url",
           remoteUrl.trim(),
+          ...(fetchEnabled ? [] : ["--no-fetch"]),
         ],
       })
       toast.success("Tracker add started", {
@@ -67,6 +70,7 @@ export function Trackers() {
       setKey("")
       setVendor("")
       setRemoteUrl("")
+      setFetchEnabled(true)
     } catch (err) {
       toast.error(errorText(err))
     } finally {
@@ -291,6 +295,14 @@ export function Trackers() {
                 required
               />
             </div>
+            <CheckRow
+              id="tracker-fetch"
+              checked={fetchEnabled}
+              onChange={setFetchEnabled}
+              label="Fetch issues for Candidates"
+              flag="--no-fetch"
+              description="Uncheck to skip this tracker's issue scan (github: trackers default off)"
+            />
             <Button onClick={() => void handleAdd()} disabled={!key.trim() || !remoteUrl.trim() || adding}>
               <Plus aria-hidden />
               {adding ? "Adding…" : "Add tracker"}

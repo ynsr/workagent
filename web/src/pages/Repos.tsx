@@ -44,6 +44,7 @@ export function Repos() {
   const [name, setName] = useState("")
   const [path, setPath] = useState("")
   const [tracker, setTracker] = useState("")
+  const [fetchEnabled, setFetchEnabled] = useState(true)
   const [removeForce, setRemoveForce] = useState(false)
   const [adding, setAdding] = useState(false)
 
@@ -59,7 +60,8 @@ export function Repos() {
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "repo",
-        args: ["add", "--name", name.trim(), "--path", path.trim(), "--tracker", tracker.trim()],
+        args: ["add", "--name", name.trim(), "--path", path.trim(), "--tracker", tracker.trim(),
+          ...(fetchEnabled ? [] : ["--no-fetch"])],
       })
       toast.success("Repo add started", {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
@@ -67,6 +69,7 @@ export function Repos() {
       setName("")
       setPath("")
       setTracker("")
+      setFetchEnabled(true)
     } catch (err) {
       toast.error(errorText(err))
     } finally {
@@ -295,6 +298,14 @@ export function Repos() {
               />
               {trackerError ? <p className="text-xs text-destructive">{trackerError}</p> : null}
             </div>
+            <CheckRow
+              id="repo-fetch"
+              checked={fetchEnabled}
+              onChange={setFetchEnabled}
+              label="Fetch MRs/PRs for Candidates"
+              flag="--no-fetch"
+              description="Uncheck to skip this repo's live host-CLI scan (GitHub repos default off)"
+            />
             <Button onClick={() => void handleAdd()} disabled={!name.trim() || !path.trim() || !tracker.trim() || adding}>
               <Plus aria-hidden />
               {adding ? "Adding…" : "Add repo"}

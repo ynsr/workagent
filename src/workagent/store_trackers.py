@@ -14,14 +14,15 @@ def load_trackers(path: Path) -> dict:
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         out: dict = {}
-        for t in conn.execute("SELECT key_ref, vendor, remote_url FROM trackers ORDER BY key_ref"):
+        for t in conn.execute("SELECT key_ref, vendor, remote_url, fetch_enabled FROM trackers ORDER BY key_ref"):
             tid = t["key_ref"]
             rows = conn.execute(
                 "SELECT r.path FROM tracker_repos tr JOIN repos r"
                 " ON r.key_ref = tr.repo_key WHERE tr.tracker_key = ?"
                 " ORDER BY r.path", (tid,))
             out[tid] = {"repos": [r["path"] for r in rows],
-                        "vendor": t["vendor"], "remote_url": t["remote_url"]}
+                        "vendor": t["vendor"], "remote_url": t["remote_url"],
+                        "fetch_enabled": bool(t["fetch_enabled"])}
         return out
 
 
@@ -33,17 +34,20 @@ def load_tracker_rows(path: Path) -> list[dict]:
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         return [dict(r) for r in conn.execute(
-            "SELECT t.key_ref AS key, t.vendor, t.remote_url,"
+            "SELECT t.key_ref AS key, t.vendor, t.remote_url, t.fetch_enabled,"
             " COUNT(tr.repo_key) AS repos"
             " FROM trackers t LEFT JOIN tracker_repos tr"
             " ON tr.tracker_key = t.key_ref GROUP BY t.key_ref ORDER BY t.key_ref")]
 
 
-def upsert_tracker(path: Path, tid: str, vendor: str = "", remote_url: str = "") -> dict:
+def upsert_tracker(path: Path, tid: str, vendor: str = "", remote_url: str = "",
+                   fetch_enabled: bool | None = None) -> dict:
     """Create/update a tracker row; blank vendor derives from the key.
 
     remote_url is mandatory and stored as given (no key fallback);
-    blank raises ValueError. Returns the stored row.
+    blank raises ValueError. fetch_enabled None keeps the existing value
+    (or the vendor-aware default for new rows); explicit bool sets it.
+    Returns the stored row.
     """
     init_db(path)
     vendor = normalize_vendor(vendor)
@@ -52,12 +56,19 @@ def upsert_tracker(path: Path, tid: str, vendor: str = "", remote_url: str = "")
     remote_url = (remote_url or "").strip()
     if not remote_url:
         raise ValueError(f"remote_url is required for tracker {tid!r}")
+    from .store_sqlite import _default_fetch_enabled
     with connect(path) as conn:
-        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES (?, ?, ?)"
+        cur = conn.execute("SELECT fetch_enabled FROM trackers WHERE key_ref = ?", (tid,)).fetchone()
+        default = _default_fetch_enabled(tid=tid)
+        fe = default if cur is None else cur[0]
+        if fetch_enabled is not None:
+            fe = 1 if fetch_enabled else 0
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url, fetch_enabled) VALUES (?, ?, ?, ?)"
                      " ON CONFLICT(key_ref) DO UPDATE SET vendor=excluded.vendor,"
-                     " remote_url=excluded.remote_url", (tid, vendor, remote_url))
+                     " remote_url=excluded.remote_url, fetch_enabled=excluded.fetch_enabled",
+                     (tid, vendor, remote_url, fe))
         conn.row_factory = sqlite3.Row
-        return dict(conn.execute("SELECT key_ref AS key, vendor, remote_url FROM trackers"
+        return dict(conn.execute("SELECT key_ref AS key, vendor, remote_url, fetch_enabled FROM trackers"
                                  " WHERE key_ref = ?", (tid,)).fetchone())
 
 
@@ -108,14 +119,15 @@ def load_repos(path: Path) -> dict:
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         out: dict = {}
-        for r in conn.execute("SELECT key_ref, name, path, remote, tool FROM repos ORDER BY name"):
+        for r in conn.execute("SELECT key_ref, name, path, remote, tool, fetch_enabled FROM repos ORDER BY name"):
             d = dict(r)
             tids = [x["tracker_key"] for x in conn.execute(
                 "SELECT tracker_key FROM tracker_repos WHERE repo_key = ? ORDER BY tracker_key",
                 (d["key_ref"],))]
             out[d["name"] or d["key_ref"]] = {
                 "path": d["path"], "trackers": tids, "tracker": tids[0] if tids else "",
-                "remote": d["remote"], "tool": d["tool"] or None}
+                "remote": d["remote"], "tool": d["tool"] or None,
+                "fetch_enabled": bool(d.get("fetch_enabled", 1))}
         return out
 
 
@@ -180,7 +192,8 @@ def remove_tracker_repo(path: Path, tid: str, repo_path: str | None = None) -> b
 
 
 def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
-                      remote: str = "", tool: str | None = None) -> None:
+                      remote: str = "", tool: str | None = None,
+                      fetch_enabled: bool | None = None) -> None:
     """Upsert a named registry row and link it to *tracker_key* (join-only).
 
     tracker_key stays mandatory: an explicit key wins, else the caller
@@ -210,11 +223,17 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
             conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
                          " WHERE key_ref = ?",
                          (name, name, remote or "", tool or "", hit[0]))
-        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool)"
-                     " VALUES (?, ?, ?, ?, ?)"
+        fe_cur = conn.execute("SELECT fetch_enabled FROM repos WHERE key_ref = ? OR path = ?",
+                              (name, norm)).fetchone()
+        from .store_sqlite import _default_fetch_enabled
+        fe = fe_cur[0] if fe_cur is not None else _default_fetch_enabled(tool=tool or "")
+        if fetch_enabled is not None:
+            fe = 1 if fetch_enabled else 0
+        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, fetch_enabled)"
+                     " VALUES (?, ?, ?, ?, ?, ?)"
                      " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"
-                     " remote=excluded.remote, tool=excluded.tool",
-                     (name, norm, name, remote or "", tool or ""))
+                     " remote=excluded.remote, tool=excluded.tool, fetch_enabled=excluded.fetch_enabled",
+                     (name, norm, name, remote or "", tool or "", fe))
         conn.execute("INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
                      (tracker_key, name))
 
