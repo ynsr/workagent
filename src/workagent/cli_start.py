@@ -12,7 +12,7 @@ from typing import Optional
 
 import typer
 
-from . import backend, gitwt, refs, repos, store, trackers
+from . import backend, gitwt, refs, repos, store, trackers, worktrees
 from .cli_core import (
     EXIT_GENERAL,
     EXIT_USAGE,
@@ -26,6 +26,15 @@ from .cli_core import (
 from .cli_harness import _guard_harness, _launch_in_worktree, _run_harness, append_extra_prompt
 from .cli_review import _ensure_branch_worktree
 from .errors import HarnessError
+
+def _same_repo_path(a: str, b: str) -> bool:
+    """True when two repo paths name the same directory (no false disagree)."""
+    if not a or not b:
+        return False
+    try:
+        return Path(a).expanduser().resolve() == Path(b).expanduser().resolve()
+    except OSError:
+        return str(a) == str(b)
 
 _COMP = _init_completions()
 _complete_repos = _COMP["repos"]
@@ -77,9 +86,25 @@ def start(
     bare = refs.issue_key(parsed)
     if parsed["tool"] == "jira-cli" and repo:
         # Explicit --repo pins the worktree: suffix first so each repo gets
-        # its own row (dual-resolve keeps the bare legacy row reachable).
-        key = refs.issue_key(parsed, repos.resolve_repo(repo, Path.cwd(), depth=depth).name)
+        # its own row. Dual-resolve: a bare legacy row for the same issue
+        # in the SAME repo still reuses — else git-wt --resume returns the
+        # same branch and record_link crashes on UNIQUE(repo_key, branch).
+        explicit_path = repos.resolve_repo(repo, Path.cwd(), depth=depth)
+        key = refs.issue_key(parsed, explicit_path.name)
         existing = links.get(key, {})
+        if not (existing.get("worktree")
+                and Path(str(existing.get("worktree", ""))).is_dir()):
+            kin = [k for k in refs.matching_issue_keys(bare, links)
+                   if (links.get(k) or {}).get("worktree")
+                   and Path(str((links.get(k) or {}).get("worktree", ""))).is_dir()
+                   and _same_repo_path(str((links.get(k) or {}).get("repo", "")),
+                                       str(explicit_path))]
+            if len(kin) == 1:
+                key = kin[0]
+                existing = links.get(key, {})
+            elif len(kin) > 1:
+                _fail(f"{bare} has {len(kin)} linked worktrees in {explicit_path}"
+                      f" ({', '.join(sorted(kin))}) — re-run with --repo <name|path> to pick one", EXIT_USAGE)
     else:
         key = bare
         kin = [k for k in refs.matching_issue_keys(bare, links)
@@ -95,7 +120,7 @@ def start(
         # Rule 1: the issue is already linked — reuse that worktree (never
         # create a second one, never touch the CWD). Its repo wins; an
         # explicit --repo that disagrees is a usage error, not a silent drop.
-        if repo and str(existing.get("repo", "")) and str(repo) != str(existing.get("repo", "")):
+        if repo and str(existing.get("repo", "")) and not _same_repo_path(str(repo), str(existing.get("repo", ""))):
             _fail(f"--repo {repo} disagrees with the linked worktree repo"
                   f" {existing.get('repo', '')} for {key}", EXIT_USAGE)
         eprint(f"note: reusing linked worktree {existing['worktree']} for {key}")
@@ -180,6 +205,12 @@ def start(
         wt = gitwt.start_worktree(r, issue=issue_id, slug=slug, link=link_url, base=base_branch)
     worktree = wt.get("worktree_path", "")
     branch = wt.get("branch", "")
+    # Last-resort guard: git-wt --resume can hand back an already-recorded
+    # (repo, branch) under a different key (e.g. suffixed vs bare legacy).
+    # Reusing that row beats a UNIQUE(repo_key, branch) crash.
+    prior = worktrees.recorded_key(worktree, branch, store.load_links(include_inactive=True), repo=str(r))
+    if isinstance(prior, str) and prior != key:
+        key = prior
     rec = {"issue": ref, "worktree": worktree, "branch": branch, "repo": str(r)}
     if link_url and link_url.startswith("http"):
         rec["issue_url"] = link_url

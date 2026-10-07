@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- `start <issue> --repo <same-path>` reuses a bare legacy row instead of crashing on UNIQUE(repo_key, branch) after git-wt --resume [no-issue]
 - Terminal/headless launches source `<config_dir>/env.sh` first (`--env-file` overrides; auto-created with VISUAL/EDITOR/NO_PROXY/PI_EDIT_VARIANT defaults) [no-issue]
 - Fresh `start`/`review`/`sync` use `--session-dir` (omp v18 rejects `--resume` on empty/missing transcripts); only real ones resume [no-issue]
 - Fetch gating: `repo add`/`tracker add` take `--fetch/--no-fetch`; `fetch_enabled` (schema v8, GitHub/gh off by default, others on) skips slow host-CLI scans in Candidates PR/issues tabs [no-issue]

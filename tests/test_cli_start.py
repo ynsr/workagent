@@ -104,6 +104,26 @@ def test_start_jira_reuses_bare_legacy_row(isolated_config, tmp_path, monkeypatc
     assert '"reused": true' in r.output
 
 
+def test_start_jira_explicit_repo_reuses_bare_legacy_row(isolated_config, tmp_path, monkeypatch):
+    """Repro: `start IPG --repo <same path>` with a bare legacy row reused,
+    never git-wt --resume + UNIQUE(repo_key, branch) crash (runs/4b7ccb75783d)."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: (_ for _ in ()).throw(AssertionError("must reuse, not start")))
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    store.record_link("jira:IPG-1011", {"worktree": str(worktree), "branch": "b",
+                                        "repo": str(repo_dir)})
+    r = runner.invoke(cli.app, ["start", "IPG-1011", "--repo", str(repo_dir),
+                                "--launch", "--json"])
+    assert r.exit_code == 0, r.output
+    assert '"reused": true' in r.output
+
+
+
 def test_start_jira_two_variants_need_repo(isolated_config, tmp_path, monkeypatch):
     """Two suffixed rows for one issue → bare start errors, naming --repo."""
     repo_dir = tmp_path / "proj"
