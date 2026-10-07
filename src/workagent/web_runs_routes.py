@@ -34,6 +34,21 @@ from .web_runs import (
 )
 
 
+def _transcript_ready(session_file: str) -> bool:
+    """True when the path is a non-empty transcript resumable via --resume.
+
+    omp v18+ rejects --resume on missing AND empty files, so both count
+    as missing here (callers 404 with missing_session; the user can still
+    start fresh via --session-dir from the copy button).
+    """
+    if not session_file:
+        return False
+    try:
+        p = Path(session_file)
+        return p.is_file() and p.stat().st_size > 0
+    except OSError:
+        return False
+
 def _open_terminal(worktree: str, session_file: str) -> None:
     """Open terminal via the webapp namespace so tests patching workagent.webapp._open_terminal apply."""
     from . import webapp as _w
@@ -218,10 +233,7 @@ def register_runs_routes(app, registry) -> None:
             args = row.get("args") if isinstance(row.get("args"), list) else []
             session_file = str(row.get("session_file") or "") or _session_file_arg(
                 str(row.get("command") or ""), list(args))
-            if not session_file:
-                raise ApiError("no_session",
-                               f"run {run_id} executed no harness session", 404)
-            if not Path(session_file).exists():
+            if not _transcript_ready(session_file):
                 raise ApiError("missing_session",
                                f"session transcript missing: {session_file}", 404)
             worktree = _persisted_summary(row).get("worktree") or ""
@@ -236,7 +248,7 @@ def register_runs_routes(app, registry) -> None:
         if not session_file:
             raise ApiError("no_session",
                            f"run {run_id} executed no harness session", 404)
-        if not Path(session_file).exists():
+        if not _transcript_ready(session_file):
             raise ApiError("missing_session",
                            f"session transcript missing: {session_file}", 404)
         worktree = run.worktree or _worktree_for_target(run.target)
@@ -300,8 +312,8 @@ def register_runs_routes(app, registry) -> None:
         row = _sq.get_session(db, sid) if db.exists() else None
         if row is None:
             raise ApiError("not_found", f"no session {sid}", 404)
-        session_file = row.get("file_path", "")
-        if not session_file or not Path(session_file).exists():
+        session_file = str(row.get("file_path") or "")
+        if not _transcript_ready(session_file):
             raise ApiError("missing_session",
                            f"session transcript missing: {session_file}", 404)
         worktree = _worktree_for_session(row) or ""

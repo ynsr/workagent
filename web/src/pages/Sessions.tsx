@@ -231,7 +231,7 @@ export function SessionDetailPage() {
         description={`${s.worktree_ref} · ${s.harness_name} · ${s.initiator_command}`}
         actions={
           <>
-            <SessionResumeActions sessionId={s.id} worktree={links?.worktrees?.[s.worktree_ref]?.worktree ?? s.worktree_ref} sessionFile={s.file_path} variant="outline" />
+            <SessionResumeActions sessionId={s.id} worktree={links?.worktrees?.[s.worktree_ref]?.worktree ?? s.worktree_ref} sessionFile={s.file_path} transcript={s.transcript} variant="outline" />
             <Button variant="outline" size="sm" asChild>
               <Link to="/sessions">
                 <ArrowLeft aria-hidden /> Sessions

@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Fresh `start`/`review`/`sync` use `--session-dir` (omp v18 rejects `--resume` on empty/missing transcripts); only real ones resume [no-issue]
 - Fetch gating: `repo add`/`tracker add` take `--fetch/--no-fetch`; `fetch_enabled` (schema v8, GitHub/gh off by default, others on) skips slow host-CLI scans in Candidates PR/issues tabs [no-issue]
 - Candidates split into per-tab endpoints (`/api/candidates/prs|issues|worktrees`) and moved onto the Dashboard under the deactivated table; each tab loads independently with its own skeleton so the slow PR fetch never blocks issues/worktrees [no-issue]
 - Deactivated worktrees survive link writes: `record_link`/`_clear_reviewed`/`cleanup` rewrote an active-only snapshot, purging inactive rows (looked like restart loss). All three now merge with inactive rows; regression tests cover it [no-issue]

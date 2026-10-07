@@ -346,6 +346,23 @@ def _worktree_for_session(row: dict) -> str:
 
 
 def _resume_shell_command(worktree: str, session_file: str) -> str:
+    """Shell command that cds to the worktree then continues the session.
+
+    A non-empty existing transcript resumes via omp --resume; anything
+    else (missing/empty/preview path) starts fresh scoped by
+    --session-dir on the parent dir — omp v18+ rejects --resume on
+    those (`Session ... not found` / `holds no entries`).
+    """
+    from pathlib import Path as _Path
+    fresh = True
+    try:
+        p = _Path(session_file)
+        fresh = not (p.is_file() and p.stat().st_size > 0)
+    except OSError:
+        fresh = True
+    if fresh:
+        return (f"cd {shlex.quote(worktree)} && omp --session-dir "
+                f"{shlex.quote(str(_Path(session_file).parent))}")
     return f"cd {shlex.quote(worktree)} && omp --resume {shlex.quote(session_file)}"
 
 

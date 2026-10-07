@@ -218,15 +218,18 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             _fail(f"worktree {worktree or fallback_dir} already has a live harness "
                   f"({blocker['harness']}, pid {blocker['pid']}) — wait for it to "
                   "finish or kill it", 1)
-    # Every real launch gets a session file: explicit --session-file wins,
-    # otherwise generate one (touched below so omp --resume can write it).
-    # Pre-cutover (no state.db) there is no sessions row — the file alone
-    # still lets the user resume the exact session later.
+    # Every real launch gets a session path: explicit --session-file wins,
+    # otherwise generate one under sessions/<harness>/. Fresh (missing or
+    # empty) paths are passed as --session-dir (omp v18+ rejects --resume
+    # on them); only non-empty transcripts resume via --resume (see
+    # backend.session_file_flag). The parent dir is created; the file
+    # itself must NOT be pre-touched — omp also rejects empty transcripts
+    # (`holds no entries`). Pre-cutover (no state.db) there is no
+    # sessions row — the dir alone still scopes the transcript location.
     if not session_path:
         session_path = str(_sq.session_file_path(_sq.gen_session_id(),
                                                  harness_name))
     Path(session_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(session_path).touch(exist_ok=True)
     # Post-cutover sessions row (best effort; launch continues on failure).
     reuse_sid = result.get("reuse_session_id")
     stype = _sq.derive_session_type(str(result.get("command", "")),
@@ -241,14 +244,11 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                 session_type=stype,
                 metadata=result.get("session_metadata"))
         except Exception as e:
-            # Post-cutover insert failure: launch continues, warn only;
-            # drop the pre-created file so no orphan .jsonl remains.
+            # Post-cutover insert failure: launch continues, warn only.
+            # No transcript file is pre-created (omp owns the filename
+            # under --session-dir), so there is nothing to clean up.
             eprint(f"warning: session record failed: {e}")
             sid = None
-            try:
-                Path(session_path).unlink(missing_ok=True)
-            except OSError:
-                pass
             session_path = session_file or ""
     finish_sid = sid or (reuse_sid if isinstance(reuse_sid, str) else None)
     try:

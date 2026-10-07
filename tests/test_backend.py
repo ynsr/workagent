@@ -95,9 +95,20 @@ def test_prompt_push_target_mentions_origin_branch():
     p = backend.prompt_for_issue("T", "B", "o/r#22", worktree="/w", branch="chore/a--b")
     assert "origin/chore/a--b" in p
 
-def test_omp_session_file_routes_via_resume():
+def test_omp_session_file_routes_via_resume(tmp_path):
     from workagent.backend import OmpHarness
-    assert OmpHarness().session_file_flag("/tmp/x.jsonl") == ["--resume", "/tmp/x.jsonl"]
+    real = tmp_path / "x.jsonl"
+    real.write_text('{"type":"session"}\n')
+    assert OmpHarness().session_file_flag(str(real)) == ["--resume", str(real)]
     assert OmpHarness().session_file_flag("") == []
+    # Fresh paths (missing or empty) route via --session-dir: omp v18+
+    # rejects --resume on those (Session not found / holds no entries).
+    missing = str(tmp_path / "missing.jsonl")
+    assert OmpHarness().session_file_flag(missing) == [
+        "--session-dir", str(tmp_path)]
+    empty = tmp_path / "empty.jsonl"
+    empty.touch()
+    assert OmpHarness().session_file_flag(str(empty)) == [
+        "--session-dir", str(tmp_path)]
     argv = OmpHarness().command_argv("prompt", True, ["--auto-approve"])
     assert "--session-file" not in argv

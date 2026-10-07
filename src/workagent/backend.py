@@ -23,7 +23,24 @@ class Harness:
         raise NotImplementedError
 
     def session_file_flag(self, path: str) -> list[str]:
-        return []
+        """Argv fragment routing a transcript path to the harness.
+
+        Fresh (missing/empty) paths MUST NOT use --resume: omp v18+
+        requires an existing non-empty transcript there and errors
+        (`Session ... not found` / `holds no entries`). Use
+        --session-dir on the parent dir instead; omp mints the file.
+        Only a non-empty existing transcript resumes via --resume.
+        """
+        if not path:
+            return []
+        from pathlib import Path
+        try:
+            p = Path(path)
+            if p.is_file() and p.stat().st_size > 0:
+                return ["--resume", path]
+        except OSError:
+            pass
+        return ["--session-dir", str(Path(path).parent)]
 
 
 class OmpHarness(Harness):
@@ -46,9 +63,9 @@ class OmpHarness(Harness):
         return 0  # unreachable; keeps type checkers quiet
 
     def session_file_flag(self, path: str) -> list[str]:
-        # omp resumes/writes the given transcript path: --resume <path>
-        # creates it when missing, appends when present (verified).
-        return ["--resume", path] if path else []
+        # Fresh (missing/empty) paths route via --session-dir (omp v18+
+        # rejects --resume on those); non-empty transcripts resume.
+        return super().session_file_flag(path)
 
 
 HARNESSES: dict[str, Harness] = {"omp": OmpHarness()}

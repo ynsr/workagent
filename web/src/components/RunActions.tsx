@@ -38,18 +38,25 @@ export function SessionResumeActions({
   sessionId,
   worktree,
   sessionFile,
+  transcript = "ready",
   variant = "icon",
 }: {
   runId?: string
   sessionId?: string
   worktree: string
   sessionFile: string
+  /** "missing" when the backend reports no resumable transcript (detail view). */
+  transcript?: string
   variant?: "icon" | "outline"
 }) {
   const resumeRun = useResumeRun()
   const resumeSession = useResumeSession()
   const label = runId ? `run ${runId}` : `session ${sessionId}`
-  const cmd = resumeCommand(worktree, sessionFile)
+  // Copy button mirrors the backend rule: --resume only for a known-good
+  // transcript, else fresh via --session-dir (omp v18+ rejects --resume
+  // on missing/empty files). Row lists assume ready; the detail view
+  // passes transcript="missing" through.
+  const cmd = resumeCommand(worktree, sessionFile, transcript !== "missing")
   const icon = variant === "icon"
   const resumePending = resumeRun.isPending || resumeSession.isPending
   const canResume = Boolean(!resumePending && worktree && sessionFile)

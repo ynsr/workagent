@@ -47,7 +47,7 @@ def start(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
-    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the harness (omp --resume)."),
+    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path: resumed via omp --resume when non-empty, otherwise used as --session-dir scope for a fresh session."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
 ) -> None:
     """Create worktree from issue and launch harness.

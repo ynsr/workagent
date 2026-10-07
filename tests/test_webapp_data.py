@@ -362,24 +362,28 @@ class _FakeProc:
     pid = 1
 
 
-def test_open_terminal_prefers_debian_alternative(monkeypatch):
+def test_open_terminal_prefers_debian_alternative(monkeypatch, tmp_path):
     """Ubuntu boxes expose ptyxis/x-terminal-emulator, not gnome-terminal —
     the picker must find them instead of raising no_terminal."""
     import os
     from workagent import web_runs as _wr
+    session = tmp_path / "s.jsonl"
+    session.write_text('{"type":"session"}\n')
     monkeypatch.setattr(os, "environ", {"DISPLAY": ":0", "PATH": os.environ.get("PATH", "")})
     monkeypatch.setattr("shutil.which",
                         lambda t: f"/usr/bin/{t}" if t == "x-terminal-emulator" else None)
     got: dict = {}
     monkeypatch.setattr("subprocess.Popen",
                         lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
-    _wr._open_terminal("/wt", "/s.jsonl")
+    _wr._open_terminal("/wt", str(session))
     assert got["argv"][0] == "x-terminal-emulator"
 
 
-def test_open_terminal_supports_ptyxis_and_kitty(monkeypatch):
+def test_open_terminal_supports_ptyxis_and_kitty(monkeypatch, tmp_path):
     import os
     from workagent import web_runs as _wr
+    session = tmp_path / "s.jsonl"
+    session.write_text('{"type":"session"}\n')
     for term, head in (("ptyxis", ["ptyxis", "-x"]),
                        ("kitty", ["kitty"])):
         monkeypatch.setattr("shutil.which",
@@ -387,24 +391,42 @@ def test_open_terminal_supports_ptyxis_and_kitty(monkeypatch):
         got: dict = {}
         monkeypatch.setattr("subprocess.Popen",
                             lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
-        _wr._open_terminal("/wt", "/s.jsonl")
-        assert got["argv"] == [*head, "bash", "-lc", "cd /wt && omp --resume /s.jsonl"], term
+        _wr._open_terminal("/wt", str(session))
+        assert got["argv"] == [*head, "bash", "-lc", f"cd /wt && omp --resume {session}"], term
 
 
-def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch):
+def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch, tmp_path):
     """Issue #34: generic `-e` fallback must pass bash as argv items —
     a single "bash -lc '…'" string makes the kernel look for that whole
     string as the executable (ENOENT)."""
     import os
     from workagent import web_runs as _wr
+    session = tmp_path / "s.jsonl"
+    session.write_text('{"type":"session"}\n')
     monkeypatch.setattr(os, "environ", {"DISPLAY": ":0", "PATH": os.environ.get("PATH", "")})
     monkeypatch.setattr("shutil.which",
                         lambda t: "/usr/bin/xterm" if t == "xterm" else None)
     got: dict = {}
     monkeypatch.setattr("subprocess.Popen",
                         lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
-    _wr._open_terminal("/wt", "/s.jsonl")
-    assert got["argv"] == ["xterm", "-e", "bash", "-lc", "cd /wt && omp --resume /s.jsonl"]
+    _wr._open_terminal("/wt", str(session))
+    assert got["argv"] == ["xterm", "-e", "bash", "-lc", f"cd /wt && omp --resume {session}"]
+
+def test_resume_shell_command_splits_fresh_and_real(tmp_path):
+    """omp v18+ rejects --resume on missing/empty transcripts: fresh
+    paths route via --session-dir, real ones via --resume."""
+    from workagent import web_runs as _wr
+    missing = str(tmp_path / "2026-10-07T10-06-39-103Z-6317.jsonl")
+    assert _wr._resume_shell_command("/wt", missing) == \
+        f"cd /wt && omp --session-dir {tmp_path}"
+    empty = tmp_path / "empty.jsonl"
+    empty.touch()
+    assert _wr._resume_shell_command("/wt", str(empty)) == \
+        f"cd /wt && omp --session-dir {tmp_path}"
+    real = tmp_path / "real.jsonl"
+    real.write_text('{"type":"session"}\n')
+    assert _wr._resume_shell_command("/wt", str(real)) == \
+        f"cd /wt && omp --resume {real}"
 
 def test_specs_mirror_cli_flags():
     """Parity: webapp BOOL_FLAGS/VAL_FLAGS mirror the real Typer CLI (#25 checklist).

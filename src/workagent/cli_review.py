@@ -225,7 +225,7 @@ def review(
     post_comments: bool = typer.Option(False, "--post-comments", hidden=True, help="Append the auto-comment prompt segment (set by --all)."),
     fix_comments: bool = typer.Option(False, "--fix-comments", help="Fix open PR/MR review comments instead of reviewing: validate each finding, apply, resolve/close, commit and push."),
     new_fix_session: bool = typer.Option(False, "--new-fix-session", help="With --fix-comments: start a fresh fix session instead of continuing the latest review session."),
-    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the harness (omp --resume)."),
+    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path: resumed via omp --resume when non-empty, otherwise used as --session-dir scope for a fresh session."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
 ) -> None:
     """Create worktree from PR/MR and launch review.

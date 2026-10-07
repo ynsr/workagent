@@ -42,7 +42,7 @@ def sync_cmd(
     yes: bool = typer.Option(False, "--yes", "--force", "-y", help="Skip confirmations."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without touching anything."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
-    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path passed to the harness on conflict resolution (omp --resume)."),
+    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path: resumed via omp --resume when non-empty, otherwise used as --session-dir scope for a fresh session."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the conflict-resolution prompt."),
 ) -> None:
     from . import cli as _cli  # shim: tests patch cli._sync_one
