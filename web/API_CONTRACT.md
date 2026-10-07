@@ -194,7 +194,7 @@ Request:
 - `command`: one of `start | review | cleanup | sync | open | register |
   repo | link` (subcommand goes first in `args`: `["add", "--name", …]`).
 - Global `-v` may be passed as `args[0]`.
-- Values must not start with `-` (except `--extra-prompt`, rewritten to `--extra-prompt=<text>` so free text may start with `-`); unknown options → 400.
+- `start`/`review`/`sync` take `--env-file <script>`: a shell script sourced before every terminal/headless harness command (`source <file> && …`; headless children also get it parsed into their environment). Default: `env_file` in `config.json` (auto-created as `<config_dir>/env.sh` on first launch with `VISUAL`/`EDITOR`/`NO_PROXY`/`PI_EDIT_VARIANT` defaults). Delete the file to opt out; resume endpoints reuse the run's explicit `--env-file` or the configured default.
 - Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`) need
   `confirm: true` → the server appends `--yes`. `force: true` requires
   `confirm: true` and appends `--force` (cleanup, register, repo remove).

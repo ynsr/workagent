@@ -226,6 +226,7 @@ def review(
     fix_comments: bool = typer.Option(False, "--fix-comments", help="Fix open PR/MR review comments instead of reviewing: validate each finding, apply, resolve/close, commit and push."),
     new_fix_session: bool = typer.Option(False, "--new-fix-session", help="With --fix-comments: start a fresh fix session instead of continuing the latest review session."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path: resumed via omp --resume when non-empty, otherwise used as --session-dir scope for a fresh session."),
+    env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before terminal/headless harness commands (default: env_file in config.json, auto-created)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
 ) -> None:
     """Create worktree from PR/MR and launch review.
@@ -266,6 +267,8 @@ def review(
 
         def _child_argv(pr: str) -> list[str]:
             argv = [sys.executable, "-m", "workagent", "review", pr, "--no-tty"]
+            if env_file:
+                argv += ["--env-file", env_file]
             if fix_comments:
                 return argv + ["--fix-comments"]
             return argv + ["--post-comments"] + (["--fix"] if fix else [])
@@ -413,7 +416,7 @@ def review(
                 _run_harness(harness_name, prompt, worktree, str(repo_dir),
                              no_tty, launch, result, json_output,
                              run_key=review_key, session_file=result.get("session_file"),
-                             terminal=terminal)
+                             terminal=terminal, env_file=env_file)
             except HarnessError:
                 if launch:
                     _clear_reviewed(review_key)
@@ -447,7 +450,8 @@ def review(
     try:
         _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
                      launch, result, json_output, run_key=review_key,
-                     session_file=result.get("session_file"), terminal=terminal)
+                     session_file=result.get("session_file"), terminal=terminal,
+                     env_file=env_file)
     except HarnessError:
         if launch:
             _clear_reviewed(review_key)

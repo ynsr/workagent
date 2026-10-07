@@ -48,6 +48,7 @@ def start(
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path: resumed via omp --resume when non-empty, otherwise used as --session-dir scope for a fresh session."),
+    env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before terminal/headless harness commands (default: env_file in config.json, auto-created)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
 ) -> None:
     """Create worktree from issue and launch harness.
@@ -66,11 +67,12 @@ def start(
     if pr_mode:
         return _start_from_pr(ref, parsed, repo, depth, harness, no_tty,
                               launch, dry_run, yes, json_output,
-                              session_file, extra_prompt, terminal=terminal)
+                              session_file, extra_prompt, terminal=terminal,
+                              env_file=env_file)
     if pr_mode:
         return _start_from_pr(ref, parsed, repo, depth, harness, no_tty,
                               launch, dry_run, yes, json_output,
-                              session_file, extra_prompt)
+                              session_file, extra_prompt, env_file=env_file)
     links = store.load_links()
     bare = refs.issue_key(parsed)
     if parsed["tool"] == "jira-cli" and repo:
@@ -107,7 +109,7 @@ def start(
             return
         return _launch_in_worktree(key, existing, harness, no_tty, launch,
                                    session_file, json_output, extra_prompt,
-                                   terminal=terminal)
+                                   terminal=terminal, env_file=env_file)
     r, detected_default, tid, outcome = trackers.resolve_repo_for_ref(
         parsed, repo, Path.cwd(), depth=depth,
         yes=yes, persist=not dry_run)
@@ -200,14 +202,14 @@ def start(
         _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, str(r), no_tty, launch,
                  result, json_output, run_key=key, session_file=session_file,
-                 terminal=terminal)
+                 terminal=terminal, env_file=env_file)
 
 
 def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
                    harness: str | None, no_tty: bool, launch: bool,
                    dry_run: bool, yes: bool, json_output: bool,
                    session_file: str | None, extra_prompt: str | None = None,
-                   terminal: bool = False) -> None:
+                   terminal: bool = False, env_file: str | None = None) -> None:
     """Start a coding session on a PR/MR source branch (branch-keyed row)."""
     repo_dir, base_branch, tid, outcome = trackers.resolve_repo_for_ref(
         parsed, repo, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
@@ -238,6 +240,7 @@ def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
         _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
                  launch, result, json_output, run_key=key,
-                 session_file=session_file, terminal=terminal)
+                 session_file=session_file, terminal=terminal,
+                 env_file=env_file)
 
 

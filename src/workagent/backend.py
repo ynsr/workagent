@@ -19,7 +19,8 @@ class Harness:
         raise NotImplementedError
 
     def launch(self, prompt: str, workdir: str, no_tty: bool,
-               extra_args: list[str] | None = None) -> int:
+               extra_args: list[str] | None = None,
+               env_file: str | None = None) -> int:
         raise NotImplementedError
 
     def session_file_flag(self, path: str) -> list[str]:
@@ -51,17 +52,20 @@ class OmpHarness(Harness):
             return ["omp", "-p", "--auto-approve", *(extra_args or []), prompt]
         return ["omp", *(extra_args or []), prompt]
 
-    def launch(self, prompt, workdir, no_tty, extra_args=None):
+    def launch(self, prompt, workdir, no_tty, extra_args=None, env_file=None):
         argv = self.command_argv(prompt, no_tty, extra_args)
         if shutil.which(argv[0]) is None:
             raise HarnessError(f"`{argv[0]}` not found on PATH")
         if no_tty:
-            proc = subprocess.run(argv, cwd=workdir)
+            from . import env as _env
+            overlay = _env.launch_env(env_file)
+            merged = dict(os.environ)
+            merged.update(overlay)
+            proc = subprocess.run(argv, cwd=workdir, env=merged)
             return proc.returncode
         cd_worktree(workdir)
         os.execvp(argv[0], argv)
         return 0  # unreachable; keeps type checkers quiet
-
     def session_file_flag(self, path: str) -> list[str]:
         # Fresh (missing/empty) paths route via --session-dir (omp v18+
         # rejects --resume on those); non-empty transcripts resume.
@@ -99,17 +103,21 @@ def cd_worktree(workdir: str) -> None:
 
 
 def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
-           extra_args: list[str] | None = None) -> int:
+           extra_args: list[str] | None = None,
+           env_file: str | None = None) -> int:
     """Exec the harness in the worktree. Returns its exit code.
 
     TTY mode: chdirs into the worktree and replaces this process (os.execvp)
-    so the user gets a real interactive session rooted in the worktree.
-    Non-TTY (--no-tty): runs `omp -p <prompt>` as a child and waits.
+    so the user gets a real interactive session rooted in the worktree
+    (env already sourced by the caller into the shell command).
+    Non-TTY (--no-tty): runs `omp -p <prompt>` as a child and waits, with
+    the env file parsed into the child environment.
     The full argv is echoed to stderr first so run logs capture it.
     """
     argv = get_harness(harness).command_argv(prompt, no_tty, extra_args)
     print(f"$ {' '.join(argv)}", file=sys.stderr, flush=True)
-    return get_harness(harness).launch(prompt, workdir, no_tty, extra_args)
+    return get_harness(harness).launch(prompt, workdir, no_tty, extra_args,
+                                       env_file=env_file)
 
 
 def _push_target_lines(worktree: str, branch: str) -> str:

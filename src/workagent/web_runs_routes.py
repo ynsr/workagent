@@ -49,11 +49,30 @@ def _transcript_ready(session_file: str) -> bool:
     except OSError:
         return False
 
-def _open_terminal(worktree: str, session_file: str) -> None:
+def _open_terminal(worktree: str, session_file: str,
+                   env_file: str | None = None) -> None:
     """Open terminal via the webapp namespace so tests patching workagent.webapp._open_terminal apply."""
     from . import webapp as _w
-    return _w._open_terminal(worktree, session_file)
+    return _w._open_terminal(worktree, session_file, env_file)
 
+
+def _env_file_arg(args: list[str]) -> str:
+    """Explicit --env-file passthrough from run args ("" when absent)."""
+    for i, a in enumerate(args):
+        if a == "--env-file" and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith("--env-file="):
+            return a.split("=", 1)[1]
+    return ""
+
+
+def _session_file_env(run) -> str | None:
+    """Explicit --env-file from a live run's args (None when absent)."""
+    try:
+        explicit = _env_file_arg(list(getattr(run, "args", []) or []))
+    except Exception:
+        return None
+    return explicit or None
 
 def _spawn(run, registry) -> None:
     """Spawn via the webapp namespace so tests patching workagent.webapp._spawn apply."""
@@ -240,7 +259,8 @@ def register_runs_routes(app, registry) -> None:
             if not worktree:
                 raise ApiError("no_worktree",
                                f"no worktree for run {run_id!r}", 404)
-            _open_terminal(worktree, session_file)
+            _open_terminal(worktree, session_file,
+                           _env_file_arg(list(args)) or None)
             return {"id": run_id, "session_file": session_file,
                     "worktree": worktree}
         session_file = run.session_file \
@@ -257,7 +277,8 @@ def register_runs_routes(app, registry) -> None:
         if not worktree:
             raise ApiError("no_worktree",
                            f"no worktree for target {run.target!r}", 404)
-        _open_terminal(worktree, session_file)
+        _open_terminal(worktree, session_file,
+                       _session_file_env(run))
         return {"id": run.id, "session_file": session_file,
                 "worktree": worktree}
 

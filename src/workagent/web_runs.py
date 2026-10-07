@@ -345,15 +345,19 @@ def _worktree_for_session(row: dict) -> str:
     return _worktree_for_target(row.get("worktree_ref", ""))
 
 
-def _resume_shell_command(worktree: str, session_file: str) -> str:
+def _resume_shell_command(worktree: str, session_file: str,
+                          env_file: str | None = None) -> str:
     """Shell command that cds to the worktree then continues the session.
 
     A non-empty existing transcript resumes via omp --resume; anything
     else (missing/empty/preview path) starts fresh scoped by
     --session-dir on the parent dir — omp v18+ rejects --resume on
-    those (`Session ... not found` / `holds no entries`).
+    those (`Session ... not found` / `holds no entries`). The env file
+    (explicit or configured default) is sourced first so terminal
+    launches see the same env as login shells.
     """
     from pathlib import Path as _Path
+    from . import env as _env
     fresh = True
     try:
         p = _Path(session_file)
@@ -361,9 +365,13 @@ def _resume_shell_command(worktree: str, session_file: str) -> str:
     except OSError:
         fresh = True
     if fresh:
-        return (f"cd {shlex.quote(worktree)} && omp --session-dir "
-                f"{shlex.quote(str(_Path(session_file).parent))}")
-    return f"cd {shlex.quote(worktree)} && omp --resume {shlex.quote(session_file)}"
+        cmd = (f"cd {shlex.quote(worktree)} && omp --session-dir "
+               f"{shlex.quote(str(_Path(session_file).parent))}")
+    else:
+        cmd = (f"cd {shlex.quote(worktree)} && omp --resume "
+               f"{shlex.quote(session_file)}")
+    resolved = _env.resolve_env_file(env_file)
+    return _env.wrap_command(cmd, resolved)
 
 
 def _extract_harness_command(texts: list[str]) -> str:
@@ -400,7 +408,9 @@ def _open_terminal_command(cmd: str, cwd: str = "") -> None:
     spawn_in_terminal(cmd, cwd)
 
 
-def _open_terminal(worktree: str, session_file: str) -> None:
+def _open_terminal(worktree: str, session_file: str,
+                   env_file: str | None = None) -> None:
     """Detached-spawn the OS default terminal resumed on the session
     (mirrors `workagent open` detachment)."""
-    _open_terminal_command(_resume_shell_command(worktree, session_file), worktree)
+    _open_terminal_command(
+        _resume_shell_command(worktree, session_file, env_file), worktree)

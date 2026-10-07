@@ -43,6 +43,7 @@ def sync_cmd(
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without touching anything."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path: resumed via omp --resume when non-empty, otherwise used as --session-dir scope for a fresh session."),
+    env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before terminal/headless harness commands (default: env_file in config.json, auto-created)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the conflict-resolution prompt."),
 ) -> None:
     from . import cli as _cli  # shim: tests patch cli._sync_one
@@ -104,7 +105,8 @@ def sync_cmd(
         results.append(_cli._sync_one(k, entry, merge=merge,
                                  use_harness=harness, yes=yes or all_sessions,
                                  dry_run=dry_run, json_output=json_output,
-                                 session_file=session_file, extra_prompt=extra_prompt))
+                                 session_file=session_file, extra_prompt=extra_prompt,
+                                 env_file=env_file))
         if all_sessions and result_failed(results[-1]):
             eprint(f"{k}: sync failed — continuing with remaining worktrees (--all)")
     if json_output:
@@ -195,7 +197,8 @@ def _record_no_harness_session(key: str, result: dict, exit_code: int = 0) -> No
 
 def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
               yes: bool, dry_run: bool, json_output: bool,
-              session_file: str | None = None, extra_prompt: str | None = None) -> dict:
+              session_file: str | None = None, extra_prompt: str | None = None,
+              env_file: str | None = None) -> dict:
     from . import cli as _cli  # shim: tests patch cli.*
     if not isinstance(session_file, str):
         session_file = None
@@ -226,7 +229,8 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
         out = _sync_local_merge(key, wt, branch, db, result,
                                 use_harness=use_harness, yes=yes,
                                 dry_run=dry_run, json_output=json_output,
-                                session_file=session_file, extra_prompt=extra_prompt)
+                                session_file=session_file, extra_prompt=extra_prompt,
+                                env_file=env_file)
         if out.get("result") in ("merged", "up-to-date"):
             _record_no_harness_session(key, out)
         return out
@@ -248,7 +252,8 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
         out = _sync_local_merge(key, wt, branch, db, result,
                                 use_harness=use_harness, yes=yes,
                                 dry_run=False, json_output=json_output,
-                                session_file=session_file, extra_prompt=extra_prompt)
+                                session_file=session_file, extra_prompt=extra_prompt,
+                                env_file=env_file)
         if out.get("result") in ("merged", "up-to-date"):
             _record_no_harness_session(key, out)
         return out
@@ -263,7 +268,8 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
 
 def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
                       use_harness: bool, yes: bool, dry_run: bool,
-                      json_output: bool, session_file: str | None = None, extra_prompt: str | None = None) -> dict:
+                      json_output: bool, session_file: str | None = None, extra_prompt: str | None = None,
+                      env_file: str | None = None) -> dict:
     """Local-merge flow shared by --merge, no-PR fallback, and rebase
     failure fallback."""
     from . import cli as _cli  # shim: tests patch cli._run_harness/_guard_harness
@@ -288,7 +294,8 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
         eprint(f"{key}: {e}")
         return _handle_merge_conflict(key, wt, branch, db, result,
                                       use_harness, yes, json_output,
-                                      session_file, conflicts or ["<unknown>"], extra_prompt)
+                                      session_file, conflicts or ["<unknown>"], extra_prompt,
+                                      env_file)
     out = sync_mod.local_merge(Path(wt), db)
     if out["status"] == "conflict":
         handled = sync_mod.auto_resolve_changelog(Path(wt), out["conflicts"])
@@ -296,7 +303,8 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
             eprint(f"{key}: conflicts in: {', '.join(out['conflicts'])}")
             return _handle_merge_conflict(key, wt, branch, db, result,
                                           use_harness, yes, json_output,
-                                          session_file, out["conflicts"], extra_prompt)
+                                          session_file, out["conflicts"], extra_prompt,
+                                          env_file)
         result["result"] = "merged"
     elif out["status"] == "up-to-date" and result.get("pulled") == "merged":
         result["result"] = "merged"
@@ -330,7 +338,8 @@ _CHANGELOG_RULE = (" If CHANGELOG.md conflicts: keep every not-yet-released"
 def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
                            result: dict, use_harness: bool, yes: bool,
                            json_output: bool, session_file: str | None,
-                           conflicts: list[str], extra_prompt: str | None = None) -> dict:
+                           conflicts: list[str], extra_prompt: str | None = None,
+                           env_file: str | None = None) -> dict:
     """Harness/prompt resolution for a merge left in progress."""
     from . import cli as _cli  # shim: tests patch cli._run_harness/_guard_harness
     run_harness_now = use_harness or yes
@@ -345,7 +354,7 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
         _cli._run_harness("omp", prompt, wt, wt,
                      no_tty=bool(yes), launch=True,
                      result=result, json_output=json_output, run_key=key,
-                     session_file=session_file)
+                     session_file=session_file, env_file=env_file)
     elif sys.stdin.isatty():
         if typer.confirm("launch the harness to resolve?"):
             result["result"] = "conflict-harness"
@@ -358,7 +367,7 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
             _cli._run_harness("omp", prompt, wt, wt,
                          no_tty=False, launch=True,
                          result=result, json_output=json_output, run_key=key,
-                         session_file=session_file)
+                         session_file=session_file, env_file=env_file)
         else:
             _fail("aborted (merge left in progress; abort with "
                   "`git merge --abort`)", EXIT_USAGE)

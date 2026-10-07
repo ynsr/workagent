@@ -119,7 +119,7 @@ def spawn_in_terminal(cmd: str, cwd: str = "") -> int | None:
 def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool,
                         launch: bool, session_file: str | None, json_output: bool,
                         extra_prompt: str | None = None,
-                        terminal: bool = False) -> None:
+                        terminal: bool = False, env_file: str | None = None) -> None:
     """Re-launch the harness in an already-linked worktree (issue #26 rule 1)."""
     worktree = str(entry.get("worktree", ""))
     repo = str(entry.get("repo", worktree))
@@ -134,13 +134,13 @@ def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool
         _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, repo, no_tty, launch,
                  result, json_output, run_key=key, session_file=session_file,
-                 terminal=terminal)
+                 terminal=terminal, env_file=env_file)
 
 
 def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: str,
                  no_tty: bool, launch: bool, result: dict, json_output: bool,
                  run_key: str | None = None, session_file: str | None = None,
-                 terminal: bool = False) -> None:
+                 terminal: bool = False, env_file: str | None = None) -> None:
     """Launch the harness in the worktree with --launch; without it print the exact
     command instead and hand the worktree to the user (shell exec on TTY).
 
@@ -160,6 +160,14 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # default object leaks through instead of None. Normalize to None.
     if not isinstance(session_file, str):
         session_file = None
+    if not isinstance(env_file, str):
+        env_file = None
+    from . import env as _env
+    # Env file for terminal/headless launches: explicit --env-file wins,
+    # else the configured default (auto-created with sane defaults on
+    # first launch). Terminal spinners source it in-shell; headless
+    # children get it parsed into their environment.
+    env_path = _env.ensure_env_file(env_file) if (launch or terminal) else None
     harness = backend.get_harness(harness_name)
     preview_extra = harness.session_file_flag(session_file) if session_file else []
     preview_args = _HARNESS_ARGS + preview_extra if preview_extra else _HARNESS_ARGS
@@ -167,7 +175,10 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     preview_cmd = " ".join(shlex.quote(a) for a in
                            harness.command_argv(prompt, preview_no_tty, preview_args))
     # Copy-paste runnable: the harness must execute inside the worktree.
-    full_cmd = f"cd {shlex.quote(worktree or fallback_dir)} && {preview_cmd}"
+    # Terminal/headless commands source the env file first; the preview
+    # shows the exact same command the user (or terminal) will run.
+    full_cmd = _env.wrap_command(
+        f"cd {shlex.quote(worktree or fallback_dir)} && {preview_cmd}", env_path)
     if terminal:
         sid = record_preview_session(
             run_key or str(result.get("key", "")) or fallback_dir,
@@ -254,7 +265,8 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     try:
         extra = harness.session_file_flag(session_path) if session_path else None
         backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty,
-                       (_HARNESS_ARGS + extra) if extra else _HARNESS_ARGS)
+                       (_HARNESS_ARGS + extra) if extra else _HARNESS_ARGS,
+                       env_file=str(env_path) if env_path else None)
         if finish_sid:
             _sq.finish_session(db, finish_sid, "finished")
     except Exception:

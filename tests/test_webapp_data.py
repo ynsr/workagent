@@ -300,7 +300,7 @@ def test_resume_run_opens_terminal(client, monkeypatch, tmp_path):
     session.write_text("{}\n")
     opened: dict = {}
     monkeypatch.setattr("workagent.webapp._open_terminal",
-                        lambda wt, sf: opened.update(wt=wt, sf=sf))
+                        lambda wt, sf, env=None: opened.update(wt=wt, sf=sf))
     run = client.app.state.registry.create("review", ["o/r#1"],
                                            "review:o/r#1")
     run.session_file = str(session)
@@ -350,7 +350,7 @@ def test_resume_session_opens_terminal(client, monkeypatch, tmp_path):
                             file_path=str(session))
     opened: dict = {}
     monkeypatch.setattr("workagent.webapp._open_terminal",
-                        lambda wt, sf: opened.update(wt=wt, sf=sf))
+                        lambda wt, sf, env=None: opened.update(wt=wt, sf=sf))
     r = client.post(f"/api/sessions/{sid}/resume")
     assert r.status_code == 200, r.text
     assert opened == {"wt": "/wt", "sf": str(session)}
@@ -379,7 +379,7 @@ def test_open_terminal_prefers_debian_alternative(monkeypatch, tmp_path):
     assert got["argv"][0] == "x-terminal-emulator"
 
 
-def test_open_terminal_supports_ptyxis_and_kitty(monkeypatch, tmp_path):
+def test_open_terminal_supports_ptyxis_and_kitty(monkeypatch, tmp_path, isolated_config):
     import os
     from workagent import web_runs as _wr
     session = tmp_path / "s.jsonl"
@@ -391,11 +391,12 @@ def test_open_terminal_supports_ptyxis_and_kitty(monkeypatch, tmp_path):
         got: dict = {}
         monkeypatch.setattr("subprocess.Popen",
                             lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
+        # No env.sh in the isolated config → no source prefix.
         _wr._open_terminal("/wt", str(session))
         assert got["argv"] == [*head, "bash", "-lc", f"cd /wt && omp --resume {session}"], term
 
 
-def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch, tmp_path):
+def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch, tmp_path, isolated_config):
     """Issue #34: generic `-e` fallback must pass bash as argv items —
     a single "bash -lc '…'" string makes the kernel look for that whole
     string as the executable (ENOENT)."""
@@ -403,19 +404,21 @@ def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch, tmp_path):
     from workagent import web_runs as _wr
     session = tmp_path / "s.jsonl"
     session.write_text('{"type":"session"}\n')
-    monkeypatch.setattr(os, "environ", {"DISPLAY": ":0", "PATH": os.environ.get("PATH", "")})
+    monkeypatch.setattr(os, "environ", {"DISPLAY": ":0", "PATH": os.environ.get("PATH", ""), "WORKAGENT_CONFIG_DIR": os.environ.get("WORKAGENT_CONFIG_DIR", "")})
     monkeypatch.setattr("shutil.which",
                         lambda t: "/usr/bin/xterm" if t == "xterm" else None)
     got: dict = {}
     monkeypatch.setattr("subprocess.Popen",
                         lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
+    # No env.sh in the isolated config → no source prefix.
     _wr._open_terminal("/wt", str(session))
     assert got["argv"] == ["xterm", "-e", "bash", "-lc", f"cd /wt && omp --resume {session}"]
 
-def test_resume_shell_command_splits_fresh_and_real(tmp_path):
+def test_resume_shell_command_splits_fresh_and_real(tmp_path, isolated_config):
     """omp v18+ rejects --resume on missing/empty transcripts: fresh
     paths route via --session-dir, real ones via --resume."""
     from workagent import web_runs as _wr
+    # No env.sh in the isolated config → no source prefix.
     missing = str(tmp_path / "2026-10-07T10-06-39-103Z-6317.jsonl")
     assert _wr._resume_shell_command("/wt", missing) == \
         f"cd /wt && omp --session-dir {tmp_path}"

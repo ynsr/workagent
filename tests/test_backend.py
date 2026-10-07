@@ -43,7 +43,7 @@ def test_launch_no_tty_runs_child_in_worktree(tmp_path, monkeypatch):
     _fake_omp(monkeypatch)
     seen = {}
 
-    def fake_run(argv, cwd):
+    def fake_run(argv, cwd, **kw):
         seen["argv"], seen["cwd"] = argv, cwd
 
         class Proc:
