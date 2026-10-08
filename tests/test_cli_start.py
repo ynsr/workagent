@@ -428,6 +428,78 @@ def test_run_harness_writes_session_row(isolated_config, tmp_path, monkeypatch):
     assert rows[0]["file_path"].endswith(".jsonl")
 
 
+def test_branch_slug_normalizes():
+    from workagent import store_sqlite as sq
+    assert sq.branch_slug("feature/new-feature") == "feature-new-feature"
+    assert sq.branch_slug("feat/IPG-1--Some_Title!") == "feat-ipg-1-some-title"
+    assert sq.branch_slug("") == ""
+    assert sq.branch_slug("main") == "main"
+
+
+def test_run_harness_scopes_generated_path_by_branch(isolated_config, tmp_path, monkeypatch):
+    """Generated session paths live under sessions/<harness>/<branch-slug>/."""
+    from workagent import store_sqlite as sq
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('jira:IPG-930', '/wt', 'feature/new-feature', 'r', '2026-01-01T00:00:00+00:00')")
+    result = {"key": "jira:IPG-930", "branch": "feature/new-feature"}
+    cli._run_harness("omp", "prompt", str(wt_dir), str(repo_dir), True,
+                     True, result, True, run_key="jira:IPG-930")
+    rows = sq.list_sessions(sq.db_path())
+    assert len(rows) == 1
+    assert "/sessions/omp/feature-new-feature/" in rows[0]["file_path"]
+
+
+def test_run_harness_records_minted_transcript(isolated_config, tmp_path, monkeypatch):
+    """A .jsonl minted by the harness during launch replaces the guessed path."""
+    from workagent import store_sqlite as sq
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    minted_holder: dict = {}
+
+    def fake_launch(name, prompt, workdir, no_tty, extra_args=None, env_file=None):
+        d = minted_holder["dir"]
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "minted-by-omp.jsonl").write_text('{"t":1}\n')
+        return 0
+
+    monkeypatch.setattr(cli.backend, "launch", fake_launch)
+    orig_path = sq.session_file_path
+
+    def spy_path(sid, harness, config_dir=None, branch=None):
+        p = orig_path(sid, harness, config_dir, branch=branch)
+        minted_holder["dir"] = p.parent
+        return p
+
+    monkeypatch.setattr(sq, "session_file_path", spy_path)
+    # cli_harness imported the facade module object, so the patch applies.
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('jira:IPG-931', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
+    result = {"key": "jira:IPG-931", "branch": "b"}
+    cli._run_harness("omp", "prompt", str(wt_dir), str(repo_dir), True,
+                     True, result, True, run_key="jira:IPG-931")
+    rows = sq.list_sessions(sq.db_path())
+    assert len(rows) == 1
+    assert rows[0]["file_path"].endswith("minted-by-omp.jsonl")
+
+
+
 def test_run_harness_preview_persists_row(isolated_config, tmp_path):
     """Preview `_run_harness` records a preview session row (no transcript file)."""
     from workagent import store_sqlite as sq

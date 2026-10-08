@@ -18,13 +18,28 @@ def db_path(config_dir: Path | None = None) -> Path:
     base = config_dir or _store.config_dir()
     return base / "state.db"
 
-
 def session_file_path(session_id: str, harness_name: str,
-                      config_dir: Path | None = None) -> Path:
+                      config_dir: Path | None = None,
+                      branch: str | None = None) -> Path:
     from . import store as _store
     base = (config_dir or _store.config_dir()) / "sessions" / harness_name
+    slug = branch_slug(branch or "")
+    if slug:
+        base = base / slug
     base.mkdir(parents=True, exist_ok=True)
     return base / f"{session_id}.jsonl"
+
+
+def branch_slug(branch: str) -> str:
+    """Normalize a git branch name to one path-safe segment.
+
+    `feature/new-feature` → `feature-new-feature` (same rule as
+    `refs.slugify_repo`, duplicated to avoid a store→refs import cycle).
+    Empty/blank → "".
+    """
+    import re
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", (branch or "").lower()).strip("-")
+    return re.sub(r"-{2,}", "-", slug)
 
 
 def gen_session_id(now: datetime | None = None) -> str:
@@ -118,6 +133,40 @@ def finish_session(path: Path, sid: str, state: str) -> None:
     with _connect(path) as conn:
         conn.execute("UPDATE sessions SET state = ? WHERE id = ?",
                      (state, sid))
+
+
+def set_session_file_path(path: Path, sid: str, file_path: str) -> None:
+    """Point a session row at the harness-minted transcript (best effort).
+
+    omp mints its own filename under --session-dir, so the pre-launch
+    guessed path is only a scope hint. After a blocking launch returns,
+    the real .jsonl is known — this records it. Never raises.
+    """
+    try:
+        with _connect(path) as conn:
+            conn.execute("UPDATE sessions SET file_path = ? WHERE id = ?",
+                         (file_path, sid))
+    except Exception:
+        pass
+
+
+def newest_transcript(session_dir: Path) -> Path | None:
+    """Newest .jsonl directly under *session_dir* (the harness-minted file).
+
+    None when the dir holds no transcripts yet. Never raises.
+    """
+    try:
+        files = [p for p in session_dir.iterdir()
+                 if p.is_file() and p.suffix == ".jsonl"]
+    except OSError:
+        return None
+    if not files:
+        return None
+    try:
+        return max(files, key=lambda p: p.stat().st_mtime_ns)
+    except OSError:
+        return None
+
 
 def set_session_metadata(path: Path, sid: str, patch: dict) -> dict:
     """Merge *patch* into the session's metadata JSON; return the merged dict."""

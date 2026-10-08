@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Generated session paths are branch-scoped (`sessions/<harness>/<branch-slug>/`, e.g. `feature-new-feature`); headless launches watch the scope dir and record the harness-minted .jsonl ASAP instead of waiting for exit [no-issue]
 - `start <issue> --repo <same-path>` reuses a bare legacy row instead of crashing on UNIQUE(repo_key, branch) after git-wt --resume [no-issue]
 - Terminal/headless launches source `<config_dir>/env.sh` first (`--env-file` overrides; auto-created with VISUAL/EDITOR/NO_PROXY/PI_EDIT_VARIANT defaults) [no-issue]
 - Fresh `start`/`review`/`sync` use `--session-dir` (omp v18 rejects `--resume` on empty/missing transcripts); only real ones resume [no-issue]

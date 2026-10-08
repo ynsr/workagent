@@ -180,10 +180,29 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     full_cmd = _env.wrap_command(
         f"cd {shlex.quote(worktree or fallback_dir)} && {preview_cmd}", env_path)
     if terminal:
+        # Terminal spawns detach: the harness mints its .jsonl seconds after
+        # we return, so no post-launch detection is possible here. Record the
+        # branch-scoped dir in the preview metadata; the next status/serve
+        # read can resolve the minted file via newest_transcript.
+        # Best effort — preview continues regardless.
+        session_dir = ""
+        slug = ""
+        try:
+            from . import store as _store
+            from . import store_sqlite as _sq
+            slug = _sq.branch_slug(str(result.get("branch", "") or ""))
+            d = _store.config_dir() / "sessions" / harness_name
+            if slug:
+                d = d / slug
+            d.mkdir(parents=True, exist_ok=True)
+            session_dir = str(d)
+        except Exception:
+            session_dir = ""
         sid = record_preview_session(
             run_key or str(result.get("key", "")) or fallback_dir,
             str(result.get("command", harness_name)),
-            prompt, harness_name, f"harness command: {full_cmd}")
+            prompt, harness_name, f"harness command: {full_cmd}",
+            metadata={"session_dir": session_dir, "branch_slug": slug} if session_dir else None)
         if sid:
             result["session_id"] = sid
         tpid = spawn_in_terminal(full_cmd, worktree or fallback_dir)
@@ -230,16 +249,17 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                   f"({blocker['harness']}, pid {blocker['pid']}) — wait for it to "
                   "finish or kill it", 1)
     # Every real launch gets a session path: explicit --session-file wins,
-    # otherwise generate one under sessions/<harness>/. Fresh (missing or
-    # empty) paths are passed as --session-dir (omp v18+ rejects --resume
-    # on them); only non-empty transcripts resume via --resume (see
-    # backend.session_file_flag). The parent dir is created; the file
-    # itself must NOT be pre-touched — omp also rejects empty transcripts
-    # (`holds no entries`). Pre-cutover (no state.db) there is no
-    # sessions row — the dir alone still scopes the transcript location.
+    # otherwise generate one under sessions/<harness>/<branch-slug>/.
+    # Fresh (missing or empty) paths are passed as --session-dir (omp v18+
+    # rejects --resume on them); only non-empty transcripts resume via
+    # --resume (see backend.session_file_flag). The parent dir is created;
+    # the file itself must NOT be pre-touched — omp also rejects empty
+    # transcripts (`holds no entries`). Pre-cutover (no state.db) there is
+    # no sessions row — the dir alone still scopes the transcript location.
+    branch = str(result.get("branch", "") or "")
     if not session_path:
         session_path = str(_sq.session_file_path(_sq.gen_session_id(),
-                                                 harness_name))
+                                                 harness_name, branch=branch or None))
     Path(session_path).parent.mkdir(parents=True, exist_ok=True)
     # Post-cutover sessions row (best effort; launch continues on failure).
     reuse_sid = result.get("reuse_session_id")
@@ -262,11 +282,27 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             sid = None
             session_path = session_file or ""
     finish_sid = sid or (reuse_sid if isinstance(reuse_sid, str) else None)
+    # omp mints its own .jsonl under --session-dir seconds after start, so
+    # the pre-launch guessed path is only a scope hint. A daemon watcher
+    # polls the scope dir DURING the blocking headless launch and records
+    # the minted file ASAP (state='running' row updated, no wait for exit).
+    # Interactive launches execvp (never return) and terminal spawns detach
+    # (return instantly) — neither gets a watcher; the post-launch check
+    # below still applies wherever control returns.
+    scope_dir = Path(session_path).parent if session_path else None
+    before = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
+    stop_watch = (_watch_minted_transcript(db, scope_dir, before, finish_sid, result)
+                  if no_tty and finish_sid and scope_dir is not None else None)
     try:
         extra = harness.session_file_flag(session_path) if session_path else None
         backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty,
                        (_HARNESS_ARGS + extra) if extra else _HARNESS_ARGS,
                        env_file=str(env_path) if env_path else None)
+        minted = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
+        if minted is not None and minted != before:
+            if finish_sid:
+                _sq.set_session_file_path(db, finish_sid, str(minted))
+            result["session_file"] = str(minted)
         if finish_sid:
             _sq.finish_session(db, finish_sid, "finished")
     except Exception:
@@ -277,14 +313,58 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                 pass
         raise
     finally:
+        if stop_watch is not None:
+            stop_watch.set()
         if run_key:
             store.clear_harness_run(run_key)
     _print_result(result, json_output)
 
+
+def _watch_minted_transcript(db, scope_dir, before, finish_sid, result):
+    """Poll *scope_dir* for the harness-minted .jsonl; record it ASAP.
+
+    Returns a threading.Event the caller sets when the launch returns
+    (stops the daemon). First poll at ~1s, then every ~2s; first new file
+    wins and the watcher exits. Never raises; all DB writes best-effort.
+    Only started for blocking headless launches (returning control).
+    """
+    import threading
+    stop = threading.Event()
+    if scope_dir is None or finish_sid is None:
+        return stop
+
+    def _poll() -> None:
+        import time
+        from . import store_sqlite as _sq
+        time.sleep(1.0)
+        while not stop.is_set():
+            try:
+                minted = _sq.newest_transcript(scope_dir)
+            except Exception:
+                return
+            if minted is not None and minted != before:
+                try:
+                    _sq.set_session_file_path(db, finish_sid, str(minted))
+                except Exception:
+                    pass
+                try:
+                    result["session_file"] = str(minted)
+                except Exception:
+                    pass
+                return
+            if stop.wait(2.0):
+                return
+
+    t = threading.Thread(target=_poll, name="workagent-minted-watch",
+                         daemon=True)
+    t.start()
+    return stop
+
 def record_preview_session(key: str, command: str, prompt: str,
                            harness_name: str, output: str,
                            exit_code: int = 0,
-                           args: list[str] | None = None) -> str | None:
+                           args: list[str] | None = None,
+                           metadata: dict | None = None) -> str | None:
     """Persist a preview (no-launch) session + run; None when pre-cutover.
 
     Preview = DB row + full prompt stored, state='preview', empty
@@ -304,11 +384,14 @@ def record_preview_session(key: str, command: str, prompt: str,
         db = _sq.db_path()
         if not db.exists():
             return None
+        meta = {"origin": "preview"}
+        if metadata:
+            meta.update(metadata)
         sid = _sq.insert_session(
             db, worktree_ref=key, harness_name=harness_name,
             initiator_command=command, prompt=prompt,
             file_path="", session_type=_sq.derive_session_type(command),
-            metadata={"origin": "preview"})
+            metadata=meta)
         _sq.finish_session(db, sid, "preview")
         _sq.insert_run(db, sid, command, args if args is not None else [key],
                        exit_code, output=[output])
