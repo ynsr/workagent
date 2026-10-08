@@ -364,6 +364,25 @@ def test_merge_pr_verified_merged_passes(isolated_config, monkeypatch, capsys):
                   squash=True, cwd="/tmp")
     assert "merged https://git.jibit.cloud" in capsys.readouterr().err
 
+
+def test_merge_pr_github_accepted_but_still_open_raises(isolated_config, monkeypatch):
+    """Same queued-merge guard via `gh`: exit-0 + host still `OPEN` raises.
+
+    The verify in `_merge_pr` sits after the gh/glab branch, so both
+    hosts re-query; GitHub reports OPEN (vs GitLab opened) — the gate
+    lowercases, so both spellings are caught.
+    """
+    import workagent.cli_cleanup as _cc
+    from workagent.errors import HarnessError
+    seen: list = []
+    monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    monkeypatch.setattr(_cc, "_fresh_pr_state",
+                        lambda url, cwd: {"state": "OPEN",
+                                          "mergeable": "UNKNOWN",
+                                          "merge_state": "BLOCKED"})
+    with pytest.raises(HarnessError, match="still 'OPEN' on the host"):
+        cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp")
+    assert seen[0][:3] == ("gh", "pr", "merge")
 def test_cleanup_merged_state_skips_remote_close(isolated_config, monkeypatch, capsys):
     """Known-merged PR state skips the host close call entirely (no-op)."""
     store.record_link("jira:IPG-11", {"issue": "IPG-11", "worktree": "/tmp/wt",
