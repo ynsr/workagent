@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Interactive launches exec through a `watch-and-exec` shim that records the harness-minted .jsonl in the DB seconds after start, then execs the harness (same UX, native signal semantics) [no-issue]
 - Generated session paths are branch-scoped (`sessions/<harness>/<branch-slug>/`, e.g. `feature-new-feature`); headless launches watch the scope dir and record the harness-minted .jsonl ASAP instead of waiting for exit [no-issue]
 - `start <issue> --repo <same-path>` reuses a bare legacy row instead of crashing on UNIQUE(repo_key, branch) after git-wt --resume [no-issue]
 - Terminal/headless launches source `<config_dir>/env.sh` first (`--env-file` overrides; auto-created with VISUAL/EDITOR/NO_PROXY/PI_EDIT_VARIANT defaults) [no-issue]

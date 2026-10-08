@@ -467,7 +467,7 @@ def test_run_harness_records_minted_transcript(isolated_config, tmp_path, monkey
     _link_session(repo_dir, wt_dir, monkeypatch)
     minted_holder: dict = {}
 
-    def fake_launch(name, prompt, workdir, no_tty, extra_args=None, env_file=None):
+    def fake_launch(name, prompt, workdir, no_tty, extra_args=None, env_file=None, watch=None):
         d = minted_holder["dir"]
         d.mkdir(parents=True, exist_ok=True)
         (d / "minted-by-omp.jsonl").write_text('{"t":1}\n')
@@ -498,6 +498,32 @@ def test_run_harness_records_minted_transcript(isolated_config, tmp_path, monkey
     assert len(rows) == 1
     assert rows[0]["file_path"].endswith("minted-by-omp.jsonl")
 
+
+def test_interactive_launch_routes_through_watch_shim(tmp_path, monkeypatch):
+    """Interactive exec goes via watch-and-exec so the minted file lands ASAP."""
+    from workagent import backend as _b
+    seen: dict = {}
+    monkeypatch.setattr(_b.os, "execvp", lambda p, a: seen.update(path=p, argv=a))
+    _b.launch("omp", "prompt", str(tmp_path), False, ["--session-dir", "/s"],
+              watch={"sid": "sid-1", "scope_dir": "/s", "before": ""})
+    argv = seen["argv"]
+    assert argv[1:4] == ["-m", "workagent", "watch-and-exec"]
+    assert "--sid" in argv and "sid-1" in argv
+    assert "--" in argv
+    assert argv[argv.index("--") + 1] == "omp"
+
+
+def test_headless_launch_ignores_watch(tmp_path, monkeypatch):
+    """Headless runs never exec the shim (child subprocess path)."""
+    from workagent import backend as _b
+    monkeypatch.setattr(_b.shutil, "which", lambda c: "/usr/bin/omp")
+    ran: dict = {}
+    monkeypatch.setattr(_b.subprocess, "run",
+                        lambda argv, cwd=None, env=None: ran.update(argv=argv) or type("P", (), {"returncode": 0})())
+    rc = _b.launch("omp", "prompt", str(tmp_path), True, [],
+                   watch={"sid": "sid-1", "scope_dir": "/s", "before": ""})
+    assert rc == 0
+    assert "watch-and-exec" not in ran["argv"]
 
 
 def test_run_harness_preview_persists_row(isolated_config, tmp_path):

@@ -104,18 +104,32 @@ def cd_worktree(workdir: str) -> None:
 
 def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
            extra_args: list[str] | None = None,
-           env_file: str | None = None) -> int:
+           env_file: str | None = None,
+           watch: dict | None = None) -> int:
     """Exec the harness in the worktree. Returns its exit code.
 
     TTY mode: chdirs into the worktree and replaces this process (os.execvp)
     so the user gets a real interactive session rooted in the worktree
-    (env already sourced by the caller into the shell command).
+    (env already sourced by the caller into the shell command). With
+    *watch* ({"sid": ..., "scope_dir": ..., "before": ...}), exec goes
+    through the `watch-and-exec` shim instead: it records the minted
+    transcript ASAP, then execs the harness — same UX, signals forwarded
+    by exec semantics.
     Non-TTY (--no-tty): runs `omp -p <prompt>` as a child and waits, with
     the env file parsed into the child environment.
     The full argv is echoed to stderr first so run logs capture it.
     """
     argv = get_harness(harness).command_argv(prompt, no_tty, extra_args)
     print(f"$ {' '.join(argv)}", file=sys.stderr, flush=True)
+    if watch and not no_tty:
+        shim = [sys.executable, "-m", "workagent", "watch-and-exec",
+                "--sid", str(watch["sid"]),
+                "--scope-dir", str(watch["scope_dir"]),
+                "--before", str(watch.get("before") or ""),
+                "--", *argv]
+        cd_worktree(workdir)
+        os.execvp(shim[0], shim)
+        return 0  # unreachable; keeps type checkers quiet
     return get_harness(harness).launch(prompt, workdir, no_tty, extra_args,
                                        env_file=env_file)
 

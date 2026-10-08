@@ -14,8 +14,10 @@ import sys
 from pathlib import Path
 
 from . import backend, store
-from .cli_core import _HARNESS_ARGS, _fail, _print_result, eprint
+from .cli_core import _HARNESS_ARGS, _fail, _print_result, app, eprint
 from .web_args import ApiError
+
+import typer
 
 
 def append_extra_prompt(prompt: str, extra_prompt: str | None) -> str:
@@ -283,21 +285,24 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             session_path = session_file or ""
     finish_sid = sid or (reuse_sid if isinstance(reuse_sid, str) else None)
     # omp mints its own .jsonl under --session-dir seconds after start, so
-    # the pre-launch guessed path is only a scope hint. A daemon watcher
-    # polls the scope dir DURING the blocking headless launch and records
-    # the minted file ASAP (state='running' row updated, no wait for exit).
-    # Interactive launches execvp (never return) and terminal spawns detach
-    # (return instantly) — neither gets a watcher; the post-launch check
-    # below still applies wherever control returns.
+    # the pre-launch guessed path is only a scope hint.
+    # Headless (blocking): daemon watcher thread records the minted file
+    # ASAP during the run. Interactive (execvp, never returns): exec goes
+    # through the watch-and-exec shim, which watches then execs the harness
+    # — same UX, full path in DB seconds after start. Terminal spawns detach
+    # (return instantly): no watcher; metadata carries the scope dir.
     scope_dir = Path(session_path).parent if session_path else None
     before = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
     stop_watch = (_watch_minted_transcript(db, scope_dir, before, finish_sid, result)
                   if no_tty and finish_sid and scope_dir is not None else None)
+    watch = ({"sid": finish_sid, "scope_dir": str(scope_dir),
+              "before": str(before) if before else ""}
+             if not no_tty and finish_sid and scope_dir is not None else None)
     try:
         extra = harness.session_file_flag(session_path) if session_path else None
         backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty,
                        (_HARNESS_ARGS + extra) if extra else _HARNESS_ARGS,
-                       env_file=str(env_path) if env_path else None)
+                       env_file=str(env_path) if env_path else None, watch=watch)
         minted = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
         if minted is not None and minted != before:
             if finish_sid:
@@ -399,3 +404,45 @@ def record_preview_session(key: str, command: str, prompt: str,
     except Exception as e:
         eprint(f"warning: session record failed: {e}")
         return None
+
+
+@app.command("watch-and-exec", hidden=True)
+def watch_and_exec(
+    sid: str = typer.Option(..., "--sid", help="Session row id to update."),
+    scope_dir: str = typer.Option(..., "--scope-dir", help="Branch-scoped session dir to watch."),
+    before: str = typer.Option("", "--before", help="Pre-launch newest transcript (empty = none)."),
+    argv: list[str] = typer.Argument(..., help="Harness argv after --."),
+) -> None:
+    """Watch *scope_dir* for the harness-minted .jsonl, record it ASAP, exec *argv*.
+
+    Hidden shim: `backend.launch` execs through here for interactive runs so
+    the minted transcript lands in the DB seconds after start even though the
+    parent process is replaced. Signals need no forwarding — exec replaces
+    this process with the harness, restoring native semantics.
+    """
+    import threading
+    import time
+    from . import store_sqlite as _sq
+    scope = Path(scope_dir)
+    before_p = Path(before) if before else None
+    stop = threading.Event()
+
+    def _poll() -> None:
+        time.sleep(1.0)
+        while not stop.is_set():
+            try:
+                minted = _sq.newest_transcript(scope)
+            except Exception:
+                return
+            if minted is not None and minted != before_p:
+                try:
+                    _sq.set_session_file_path(_sq.db_path(), sid, str(minted))
+                except Exception:
+                    pass
+                return
+            if stop.wait(2.0):
+                return
+
+    t = threading.Thread(target=_poll, name="workagent-minted-watch", daemon=True)
+    t.start()
+    os.execvp(argv[0], argv)
