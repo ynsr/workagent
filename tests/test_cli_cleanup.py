@@ -333,6 +333,37 @@ def test_merge_pr_treats_merged_mr_as_success(isolated_config, monkeypatch, caps
     assert "already merged/closed" in capsys.readouterr().err
 
 
+def test_merge_pr_accepted_but_still_open_raises(isolated_config, monkeypatch):
+    """glab exit-0 + host still `opened` (IPG-1017): raise, keep the branch.
+
+    `glab mr merge` printed a merged summary while the MR stayed opened
+    (auto-merge queued: detailed_merge_status commits_status). Cleanup
+    trusted the exit code, deleted the remote branch, and orphaned the
+    work — develop never got the commits.
+    """
+    import workagent.cli_cleanup as _cc
+    from workagent.errors import HarnessError
+    monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: "")
+    monkeypatch.setattr(_cc, "_fresh_pr_state",
+                        lambda url, cwd: {"state": "opened",
+                                          "mergeable": "commits_status",
+                                          "merge_state": ""})
+    with pytest.raises(HarnessError, match="still 'opened' on the host"):
+        cli._merge_pr("https://git.jibit.cloud/x/-/merge_requests/1",
+                      squash=True, cwd="/tmp")
+
+
+def test_merge_pr_verified_merged_passes(isolated_config, monkeypatch, capsys):
+    """glab exit-0 + host reports merged: the normal path still succeeds."""
+    import workagent.cli_cleanup as _cc
+    monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: "")
+    monkeypatch.setattr(_cc, "_fresh_pr_state",
+                        lambda url, cwd: {"state": "merged",
+                                          "mergeable": "", "merge_state": ""})
+    cli._merge_pr("https://git.jibit.cloud/x/-/merge_requests/1",
+                  squash=True, cwd="/tmp")
+    assert "merged https://git.jibit.cloud" in capsys.readouterr().err
+
 def test_cleanup_merged_state_skips_remote_close(isolated_config, monkeypatch, capsys):
     """Known-merged PR state skips the host close call entirely (no-op)."""
     store.record_link("jira:IPG-11", {"issue": "IPG-11", "worktree": "/tmp/wt",

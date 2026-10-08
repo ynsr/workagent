@@ -212,7 +212,7 @@ def _resolve_branch_pr(branch: str, recorded_url: str, host_cwd: str,
 
 
 def _merge_pr(pr_url: str, squash: bool, cwd: str | None = None) -> None:
-    """Merge an open PR/MR (squash default); raise HarnessError on failure.
+    """Merge an open PR/MR (squash default); verify host state; raise on failure.
 
     Already-merged/closed is tolerated (returns with a note) since callers
     may decide on cached PR state up to the 3d status TTL: the host PR can
@@ -222,6 +222,14 @@ def _merge_pr(pr_url: str, squash: bool, cwd: str | None = None) -> None:
     host/remote — without it they probe the server's cwd (often an
     unrelated checkout) and fail with "no git remote points to a known
     host" or act on the wrong repo.
+
+    glab quirk (IPG-1017): `glab mr merge` can exit 0 printing a merged
+    summary while the MR stays `opened` — e.g. `merge_when_pipeline_succeeds`
+    or `detailed_merge_status: commits_status` (auto-merge queued, not
+    executed). The caller set merged_now from our silent return, deleted
+    the remote branch, and orphaned the work: `develop` never got the
+    commits. So after a clean CLI exit we re-query the host and raise
+    unless the MR reports merged (or already-merged/closed tolerance).
     """
     from . import cli as _cli  # shim: tests patch workagent.cli.run_cmd
     try:
@@ -240,6 +248,15 @@ def _merge_pr(pr_url: str, squash: bool, cwd: str | None = None) -> None:
             eprint(f"note: {pr_url} already merged/closed; skipping merge.")
             return
         raise
+    verified = _fresh_pr_state(pr_url, str(cwd) if cwd else "")
+    if verified is not None and (verified.get("state") or "").lower() not in (
+            "merged", "closed"):
+        raise HarnessError(
+            f"{pr_url} merge accepted by the host CLI but the MR is still "
+            f"{verified.get('state')!r} on the host "
+            f"(mergeable={verified.get('mergeable')!r}) — remote branch kept.\n"
+            "  The merge may be queued (e.g. merge-when-pipeline-succeeds). "
+            "Re-run cleanup after the host reports merged.")
     eprint(f"merged {pr_url}")
 
 
