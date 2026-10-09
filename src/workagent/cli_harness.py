@@ -130,7 +130,7 @@ def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool
         str(entry.get("issue", key)), "", key,
         worktree=worktree, branch=str(entry.get("branch", ""))), extra_prompt)
     result = {"worktree_path": worktree, "branch": str(entry.get("branch", "")),
-              "key": key, "harness": harness_name, "reused": True}
+              "key": key, "harness": harness_name, "reused": True, "command": "start"}
     eprint(f"worktree: {worktree}  branch: {entry.get('branch', '')}")
     if launch:
         _guard_harness(key, worktree)
@@ -139,8 +139,23 @@ def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool
                  terminal=terminal, env_file=env_file)
 
 
-def _rescope_session_path(session_path: str, harness_name: str, branch: str) -> str:
-    """Move a branch-less pinned path under sessions/<harness>/<branch-slug>/.
+def _session_action(result: dict) -> str | None:
+    """Session-type dir for a result: start/review/sync/fix_comments.
+
+    Derived from result["command"] (+ result["fix_comments"]) — the same
+    rule as store.derive_session_type. Unknown → None (no action segment).
+    """
+    try:
+        from . import store_sqlite as _sq
+        return _sq.derive_session_type(str(result.get("command", "")),
+                                       bool(result.get("fix_comments")))
+    except Exception:
+        return None
+
+
+def _rescope_session_path(session_path: str, harness_name: str, branch: str,
+                          session_type: str | None = None) -> str:
+    """Move a branch-less pinned path under sessions/<harness>/<branch>/<action>/.
 
     The web server mints --session-file before the branch is known (Review
     learns the MR head branch only after fetching it). The CLI child knows
@@ -151,10 +166,17 @@ def _rescope_session_path(session_path: str, harness_name: str, branch: str) -> 
     if not session_path or not branch:
         return session_path
     try:
+        from pathlib import Path as _Path
+        if _Path(session_path).is_file() and _Path(session_path).stat().st_size > 0:
+            return session_path
+    except OSError:
+        pass
+    try:
         from . import store_sqlite as _sq
-        rescoped = str(_sq.session_file_path(Path(session_path).stem,
+        rescoped = str(_sq.session_file_path(_Path(session_path).stem,
                                              harness_name,
-                                             branch=branch or None))
+                                             branch=branch or None,
+                                             session_type=session_type))
         return rescoped if rescoped != session_path else session_path
     except Exception:
         return session_path
@@ -169,7 +191,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
 
     Every real launch carries a session file: an explicit session_file
     (CLI --session-file) wins, otherwise a path is generated under
-    sessions/<harness>/ and passed to the harness (--resume for omp).
+    sessions/<harness>/<branch>/<action>/ and passed to the harness (--resume for omp).
     Preview (no --launch, no --terminal) and --dry-run (never reaches
     here) write no transcript file; both persist a state='preview'
     session row + runs row via record_preview_session. --terminal spawns
@@ -192,12 +214,26 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # children get it parsed into their environment.
     env_path = _env.ensure_env_file(env_file) if (launch or terminal) else None
     harness = backend.get_harness(harness_name)
-    if isinstance(session_file, str) and session_file:
+    action = _session_action(result)
+    branch0 = str(result.get("branch", "") or "")
+    if result.get("reuse_session_id"):
+        # Fix-continue reuses the review transcript as-is: rescoping it
+        # into fix_comments/ would split one session across two dirs.
+        pass
+    elif isinstance(session_file, str) and session_file:
         rescoped = _rescope_session_path(session_file, harness_name,
-                                         str(result.get("branch", "") or ""))
+                                         branch0, action)
         if rescoped != session_file:
             session_file = rescoped
             result["session_file"] = rescoped
+    elif branch0:
+        try:
+            session_file = str(_sq.session_file_path(
+                _sq.gen_session_id(), harness_name,
+                branch=branch0 or None, session_type=action))
+            result["session_file"] = session_file
+        except Exception:
+            pass
     preview_extra = harness.session_file_flag(session_file) if session_file else []
     preview_args = _HARNESS_ARGS + preview_extra if preview_extra else _HARNESS_ARGS
     preview_no_tty = no_tty and launch
@@ -215,14 +251,18 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         # read can resolve the minted file via newest_transcript.
         # Best effort — preview continues regardless.
         session_dir = ""
-        slug = ""
+        bpath = ""
         try:
-            from . import store as _store
-            from . import store_sqlite as _sq
-            slug = _sq.branch_slug(str(result.get("branch", "") or ""))
-            d = _store.config_dir() / "sessions" / harness_name
-            if slug:
-                d = d / slug
+            from . import store_sqlite as _sq2
+            bpath = _sq2.branch_path(branch0)
+            d = Path(session_file).parent if session_file else None
+            if d is None:
+                from . import store as _store
+                d = _store.config_dir() / "sessions" / harness_name
+                if bpath:
+                    d = d / bpath
+                if action:
+                    d = d / action
             d.mkdir(parents=True, exist_ok=True)
             session_dir = str(d)
         except Exception:
@@ -231,7 +271,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             run_key or str(result.get("key", "")) or fallback_dir,
             str(result.get("command", harness_name)),
             prompt, harness_name, f"harness command: {full_cmd}",
-            metadata={"session_dir": session_dir, "branch_slug": slug} if session_dir else None,
+            metadata={"session_dir": session_dir, "branch_path": bpath} if session_dir else None,
             session_file=session_file if isinstance(session_file, str) else None)
         if sid:
             result["session_id"] = sid
@@ -280,7 +320,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                   f"({blocker['harness']}, pid {blocker['pid']}) — wait for it to "
                   "finish or kill it", 1)
     # Every real launch gets a session path: explicit --session-file wins,
-    # otherwise generate one under sessions/<harness>/<branch-slug>/.
+    # otherwise generate one under sessions/<harness>/<branch>/<action>/.
     # Fresh (missing or empty) paths are passed as --session-dir (omp v18+
     # rejects --resume on them); only non-empty transcripts resume via
     # --resume (see backend.session_file_flag). The parent dir is created;
@@ -288,14 +328,16 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # transcripts (`holds no entries`). Pre-cutover (no state.db) there is
     # no sessions row — the dir alone still scopes the transcript location.
     branch = str(result.get("branch", "") or "")
-    rescoped_launch = _rescope_session_path(session_path, harness_name, branch)
+    rescoped_launch = (session_path if result.get("reuse_session_id")
+                       else _rescope_session_path(session_path, harness_name, branch, action))
     if rescoped_launch != session_path:
         session_path = rescoped_launch
         if isinstance(session_file, str):
             session_file = rescoped_launch
     if not session_path:
         session_path = str(_sq.session_file_path(_sq.gen_session_id(),
-                                                 harness_name, branch=branch or None))
+                                                 harness_name, branch=branch or None,
+                                                 session_type=action))
     Path(session_path).parent.mkdir(parents=True, exist_ok=True)
     if isinstance(session_file, str) and session_file != session_path and branch:
         # Report the rescoped path back so run summaries / resume buttons
@@ -305,8 +347,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # A pinned --session-file may already have a preview row (web minted it
     # on the first run): adopt it instead of colliding on the PK.
     reuse_sid = result.get("reuse_session_id")
-    stype = _sq.derive_session_type(str(result.get("command", "")),
-                                    bool(result.get("fix_comments")))
+    stype = action
     if run_key and db.exists() and not reuse_sid and session_file:
         try:
             existing = _sq.get_session(db, Path(session_file).stem)

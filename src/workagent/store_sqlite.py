@@ -583,6 +583,7 @@ def backfill_trackers_repos(path: Path, cfg: dict,
 from .store_sessions import (  # noqa: F401,E402
     SESSION_TYPES,
     _backfill_session_type,
+    branch_path,
     branch_slug,
     db_path,
     derive_session_type,

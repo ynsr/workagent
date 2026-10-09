@@ -588,8 +588,8 @@ def test_preview_launch_collision_adopts_existing(isolated_config, tmp_path, mon
     result = {"key": "k", "command": "start", "branch": "b"}
     _h._run_harness("omp", "P", "/wt", "/r", True, True, result, True,
                     run_key="k", session_file=pinned)
-    # branch "b" rescopes the pinned path under sessions/omp/b/ (same sid)
-    rescoped = str(sq.session_file_path(sid, "omp", branch="b"))
+    # branch "b" rescopes the pinned path under sessions/omp/b/<action>/ (same sid)
+    rescoped = str(sq.session_file_path(sid, "omp", branch="b", session_type="start"))
     assert result.get("session_file") == rescoped
     assert warned == []
     assert sq.get_session(db, sid) is not None
@@ -658,15 +658,15 @@ def test_launch_rescopes_branchless_pinned_path(isolated_config, tmp_path, monke
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
                      " VALUES ('k5', '/wt5', 'feat/my-branch', 'r', '2026-01-01T00:00:00+00:00')")
     sid = "2026-10-09T11-24-01-825Z-4557"
-    pinned = str(sq.session_file_path(sid, "omp"))  # branch-less, as the web mints it
-    assert "/feat-my-branch/" not in pinned
+    pinned = str(sq.session_file_path(sid, "omp", session_type="review"))  # branch-less, as the web mints it
+    assert "/feat/my-branch/" not in pinned
     monkeypatch.setattr(_h.backend, "launch", lambda *a, **k: 0)
     result = {"key": "k5", "command": "review", "branch": "feat/my-branch"}
     _h._run_harness("omp", "P", "/wt5", "/r", True, True, result, True,
                     run_key="k5", session_file=pinned)
-    rescoped = str(sq.session_file_path(sid, "omp", branch="feat/my-branch"))
+    rescoped = str(sq.session_file_path(sid, "omp", branch="feat/my-branch", session_type="review"))
     assert result.get("session_file") == rescoped
-    assert "/feat-my-branch/" in rescoped
+    assert "/feat/my-branch/" in rescoped
     row = sq.get_session(db, sid)
     assert row is not None and row["file_path"] == rescoped
 def test_preview_command_carries_branch_scoped_session_dir(isolated_config, monkeypatch):
@@ -684,11 +684,11 @@ def test_preview_command_carries_branch_scoped_session_dir(isolated_config, monk
     _store.record_link("rk-prev", {"worktree": "/tmp/w-prev", "branch": "feat/my-branch",
                                    "repo": "/tmp/r"})
     sid = "2026-10-09T11-24-01-825Z-4557"
-    pinned = str(sq.session_file_path(sid, "omp"))  # branch-less, as the web mints it
+    pinned = str(sq.session_file_path(sid, "omp", session_type="review"))  # branch-less, as the web mints it
     result = {"key": "rk-prev", "command": "review", "branch": "feat/my-branch"}
     _h._run_harness("omp", "PROMPT", "/tmp/w-prev", "/tmp/r", False, False,
                     result, True, run_key="rk-prev", session_file=pinned)
-    rescoped = str(sq.session_file_path(sid, "omp", branch="feat/my-branch"))
+    rescoped = str(sq.session_file_path(sid, "omp", branch="feat/my-branch", session_type="review"))
     assert result.get("harness_command", "").find(f"--session-dir {rescoped.rsplit('/', 1)[0]}") >= 0         or f"--session-dir '{rescoped.rsplit('/', 1)[0]}'" in result.get("harness_command", "")
     row = sq.get_session(db, sid)
     assert row is not None and row["file_path"] == rescoped

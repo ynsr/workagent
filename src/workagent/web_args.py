@@ -258,12 +258,20 @@ def _session_file_arg(command: str, args: list[str]) -> str:
     return ""
 
 
-def _session_file_for(sid: str) -> str:
+def _session_file_for(sid: str, command: str = "", args: list[str] | None = None) -> str:
     from . import store_sqlite as _sq
+    action: str | None = None
     try:
-        return str(_sq.session_file_path(sid, "omp"))
+        fix = bool(args) and "--fix-comments" in list(args)
+        action = _sq.derive_session_type(command, fix)
+    except Exception:
+        action = None
+    try:
+        return str(_sq.session_file_path(sid, "omp", session_type=action))
     except Exception:
         from . import store as _store
         base = _store.config_dir() / "sessions" / "omp"
+        if action:
+            base = base / action
         base.mkdir(parents=True, exist_ok=True)
         return str(base / f"{sid}.jsonl")

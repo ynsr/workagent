@@ -18,14 +18,36 @@ def db_path(config_dir: Path | None = None) -> Path:
     base = config_dir or _store.config_dir()
     return base / "state.db"
 
+def _slug_segment(segment: str) -> str:
+    """Slugify one path segment (branch parts stay nested, never flattened)."""
+    import re
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", (segment or "").lower()).strip("-")
+    return re.sub(r"-{2,}", "-", slug)
+
+
+def branch_path(branch: str) -> str:
+    """Branch name → nested path: `fix/a-b` stays `fix/a-b` (slugs per part).
+
+    Empty/blank → "". Segments that slug to "" are dropped; a branch of
+    only separators yields "".
+    """
+    parts = [p for p in (branch or "").split("/") if p.strip()]
+    slugged = [_slug_segment(p) for p in parts]
+    return "/".join(p for p in slugged if p)
+
+
 def session_file_path(session_id: str, harness_name: str,
                       config_dir: Path | None = None,
-                      branch: str | None = None) -> Path:
+                      branch: str | None = None,
+                      session_type: str | None = None) -> Path:
     from . import store as _store
     base = (config_dir or _store.config_dir()) / "sessions" / harness_name
-    slug = branch_slug(branch or "")
-    if slug:
-        base = base / slug
+    bpath = branch_path(branch or "")
+    if bpath:
+        base = base / bpath
+    stype = (session_type or "").strip().lower().replace("-", "_")
+    if stype in SESSION_TYPES:
+        base = base / stype
     base.mkdir(parents=True, exist_ok=True)
     return base / f"{session_id}.jsonl"
 

@@ -160,7 +160,7 @@ def register_runs_routes(app, registry) -> None:
             tail.append("--yes")
         if body.force and spec["force"]:
             tail.append("--force")
-        if body.command in ("start", "review") \
+        if body.command in ("start", "review", "sync") \
                 and "--dry-run" not in body.args \
                 and "--all" not in body.args \
                 and not _has_session_file(body.command, body.args):
@@ -189,7 +189,7 @@ def register_runs_routes(app, registry) -> None:
                     if latest and latest.get("file_path"):
                         session_file = str(latest["file_path"])
             if not session_file:
-                session_file = _session_file_for(_sq.gen_session_id())
+                session_file = _session_file_for(_sq.gen_session_id(), body.command, body.args)
             tail += ["--session-file", session_file]
             run.session_file = session_file
         else:

@@ -315,7 +315,7 @@ def test_start_preview_persists_session_row(isolated_config, tmp_path, monkeypat
     assert row["worktree_ref"] == "github:o/r#22"
     assert row["session_type"] == "start"
     assert "Add login" in row["prompt"]
-    assert row["file_path"] == ""
+    assert "/sessions/omp/feat/22-add-login/start/" in row["file_path"]
     runs = store_sqlite.list_runs(db)
     assert len(runs) == 1 and runs[0]["command"] == "start"
     # RunDetail/start-terminal find the command via the log prefix; a bare
@@ -437,7 +437,7 @@ def test_branch_slug_normalizes():
 
 
 def test_run_harness_scopes_generated_path_by_branch(isolated_config, tmp_path, monkeypatch):
-    """Generated session paths live under sessions/<harness>/<branch-slug>/."""
+    """Generated session paths live under sessions/<harness>/<branch>/<action>/."""
     from workagent import store_sqlite as sq
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
@@ -451,12 +451,12 @@ def test_run_harness_scopes_generated_path_by_branch(isolated_config, tmp_path, 
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
                      " VALUES ('jira:IPG-930', '/wt', 'feature/new-feature', 'r', '2026-01-01T00:00:00+00:00')")
-    result = {"key": "jira:IPG-930", "branch": "feature/new-feature"}
+    result = {"key": "jira:IPG-930", "branch": "feature/new-feature", "command": "start"}
     cli._run_harness("omp", "prompt", str(wt_dir), str(repo_dir), True,
                      True, result, True, run_key="jira:IPG-930")
     rows = sq.list_sessions(sq.db_path())
     assert len(rows) == 1
-    assert "/sessions/omp/feature-new-feature/" in rows[0]["file_path"]
+    assert "/sessions/omp/feature/new-feature/" in rows[0]["file_path"]
 
 
 def test_run_harness_records_minted_transcript(isolated_config, tmp_path, monkeypatch):
@@ -476,8 +476,8 @@ def test_run_harness_records_minted_transcript(isolated_config, tmp_path, monkey
     monkeypatch.setattr(cli.backend, "launch", fake_launch)
     orig_path = sq.session_file_path
 
-    def spy_path(sid, harness, config_dir=None, branch=None):
-        p = orig_path(sid, harness, config_dir, branch=branch)
+    def spy_path(sid, harness, config_dir=None, branch=None, session_type=None):
+        p = orig_path(sid, harness, config_dir, branch=branch, session_type=session_type)
         minted_holder["dir"] = p.parent
         return p
 

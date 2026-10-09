@@ -90,7 +90,7 @@ def test_review_preview_persists_session_row(isolated_config, tmp_path, monkeypa
     row = rows[0]
     assert row["state"] == "preview"
     assert row["session_type"] == "review"
-    assert row["file_path"] == ""
+    assert "/sessions/omp/feat/33/review/" in row["file_path"]
     assert row["worktree_ref"] == "feat/33"
     assert "https://github.com/o/r/pull/33" in row["prompt"]
 
