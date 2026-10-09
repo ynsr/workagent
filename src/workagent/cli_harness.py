@@ -139,6 +139,27 @@ def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool
                  terminal=terminal, env_file=env_file)
 
 
+def _rescope_session_path(session_path: str, harness_name: str, branch: str) -> str:
+    """Move a branch-less pinned path under sessions/<harness>/<branch-slug>/.
+
+    The web server mints --session-file before the branch is known (Review
+    learns the MR head branch only after fetching it). The CLI child knows
+    the branch — rescope there so transcripts land branch-scoped like Start.
+    The session id (transcript stem, DB PK) is unchanged. No-op when the
+    branch is empty or the path is already scoped.
+    """
+    if not session_path or not branch:
+        return session_path
+    try:
+        from . import store_sqlite as _sq
+        rescoped = str(_sq.session_file_path(Path(session_path).stem,
+                                             harness_name,
+                                             branch=branch or None))
+        return rescoped if rescoped != session_path else session_path
+    except Exception:
+        return session_path
+
+
 def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: str,
                  no_tty: bool, launch: bool, result: dict, json_output: bool,
                  run_key: str | None = None, session_file: str | None = None,
@@ -171,6 +192,12 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # children get it parsed into their environment.
     env_path = _env.ensure_env_file(env_file) if (launch or terminal) else None
     harness = backend.get_harness(harness_name)
+    if isinstance(session_file, str) and session_file:
+        rescoped = _rescope_session_path(session_file, harness_name,
+                                         str(result.get("branch", "") or ""))
+        if rescoped != session_file:
+            session_file = rescoped
+            result["session_file"] = rescoped
     preview_extra = harness.session_file_flag(session_file) if session_file else []
     preview_args = _HARNESS_ARGS + preview_extra if preview_extra else _HARNESS_ARGS
     preview_no_tty = no_tty and launch
@@ -261,22 +288,11 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # transcripts (`holds no entries`). Pre-cutover (no state.db) there is
     # no sessions row — the dir alone still scopes the transcript location.
     branch = str(result.get("branch", "") or "")
-    if session_path and branch:
-        # Rescope a branch-less pinned path (web-minted --session-file can't
-        # know the branch yet: Review discovers it after fetching the MR):
-        # keep the session id (transcript stem), move the scope under
-        # sessions/<harness>/<branch-slug>/ so the transcript layout matches
-        # the branch-scoped convention. Same sid => DB PK unchanged.
-        try:
-            rescoped = str(_sq.session_file_path(Path(session_path).stem,
-                                                 harness_name,
-                                                 branch=branch or None))
-            if rescoped != session_path:
-                session_path = rescoped
-                if isinstance(session_file, str):
-                    session_file = rescoped
-        except Exception:
-            pass
+    rescoped_launch = _rescope_session_path(session_path, harness_name, branch)
+    if rescoped_launch != session_path:
+        session_path = rescoped_launch
+        if isinstance(session_file, str):
+            session_file = rescoped_launch
     if not session_path:
         session_path = str(_sq.session_file_path(_sq.gen_session_id(),
                                                  harness_name, branch=branch or None))

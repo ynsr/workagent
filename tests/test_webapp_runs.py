@@ -669,3 +669,26 @@ def test_launch_rescopes_branchless_pinned_path(isolated_config, tmp_path, monke
     assert "/feat-my-branch/" in rescoped
     row = sq.get_session(db, sid)
     assert row is not None and row["file_path"] == rescoped
+def test_preview_command_carries_branch_scoped_session_dir(isolated_config, monkeypatch):
+    """Printed/copied Review command is branch-scoped from the very first run.
+
+    The user runs the printed command manually (or via Run-in-terminal), so
+    the --session-dir in the preview text itself must carry the branch slug
+    — not just the launch path the web child never reaches.
+    """
+    from workagent import cli_harness as _h
+    from workagent import store_sqlite as sq
+    from workagent import store as _store
+    db = sq.db_path()
+    sq.init_db(db)
+    _store.record_link("rk-prev", {"worktree": "/tmp/w-prev", "branch": "feat/my-branch",
+                                   "repo": "/tmp/r"})
+    sid = "2026-10-09T11-24-01-825Z-4557"
+    pinned = str(sq.session_file_path(sid, "omp"))  # branch-less, as the web mints it
+    result = {"key": "rk-prev", "command": "review", "branch": "feat/my-branch"}
+    _h._run_harness("omp", "PROMPT", "/tmp/w-prev", "/tmp/r", False, False,
+                    result, True, run_key="rk-prev", session_file=pinned)
+    rescoped = str(sq.session_file_path(sid, "omp", branch="feat/my-branch"))
+    assert result.get("harness_command", "").find(f"--session-dir {rescoped.rsplit('/', 1)[0]}") >= 0         or f"--session-dir '{rescoped.rsplit('/', 1)[0]}'" in result.get("harness_command", "")
+    row = sq.get_session(db, sid)
+    assert row is not None and row["file_path"] == rescoped
