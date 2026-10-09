@@ -261,10 +261,30 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # transcripts (`holds no entries`). Pre-cutover (no state.db) there is
     # no sessions row — the dir alone still scopes the transcript location.
     branch = str(result.get("branch", "") or "")
+    if session_path and branch:
+        # Rescope a branch-less pinned path (web-minted --session-file can't
+        # know the branch yet: Review discovers it after fetching the MR):
+        # keep the session id (transcript stem), move the scope under
+        # sessions/<harness>/<branch-slug>/ so the transcript layout matches
+        # the branch-scoped convention. Same sid => DB PK unchanged.
+        try:
+            rescoped = str(_sq.session_file_path(Path(session_path).stem,
+                                                 harness_name,
+                                                 branch=branch or None))
+            if rescoped != session_path:
+                session_path = rescoped
+                if isinstance(session_file, str):
+                    session_file = rescoped
+        except Exception:
+            pass
     if not session_path:
         session_path = str(_sq.session_file_path(_sq.gen_session_id(),
                                                  harness_name, branch=branch or None))
     Path(session_path).parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(session_file, str) and session_file != session_path and branch:
+        # Report the rescoped path back so run summaries / resume buttons
+        # carry the branch-scoped path from the very first run.
+        result["session_file"] = session_path
     # Post-cutover sessions row (best effort; launch continues on failure).
     # A pinned --session-file may already have a preview row (web minted it
     # on the first run): adopt it instead of colliding on the PK.
