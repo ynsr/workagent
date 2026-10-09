@@ -37,15 +37,19 @@ def _strip_ansi(text: str) -> str:
 def _mirror_run(run: Run) -> None:
     """Best-effort mirror of a session-linked run into the runs table.
 
-    Only runs with a session file are session-linked; the child CLI owns
-    the sessions row (created around the harness launch), so the mirror
-    targets the session id matching the transcript stem. The buffered
-    output lines go with it (capped at MAX_RUN_OUTPUT_LINES) so the log
-    survives a restart. Anything missing (no db, no session row yet, e.g.
-    preview (no --launch) never launched) is a silent skip — the live registry
-    remains the source of truth.
+    Only headless-launched runs mirror: their child CLI owns the sessions
+    row (created around the harness launch), so the mirror targets the
+    session id matching the transcript stem. The buffered output lines go
+    with it (capped at MAX_RUN_OUTPUT_LINES) so the log survives a
+    restart. Preview/terminal runs already record their own runs row via
+    record_preview_session — mirroring them would duplicate it. Anything
+    missing (no db, no session row yet) is a silent skip — the live
+    registry remains the source of truth.
     """
     if not run.session_file:
+        return
+    argv = run.argv or []
+    if "--launch" not in argv:
         return
     try:
         from . import store_sqlite as _sq
@@ -55,7 +59,6 @@ def _mirror_run(run: Run) -> None:
         sid = Path(run.session_file).stem
         if _sq.get_session(db, sid) is None:
             return
-        argv = run.argv or []
         # argv is [python, -m, workagent, <command>, ...] (see _build_argv);
         # fall back to the body fields when the shape is unexpected.
         if len(argv) > 3:
@@ -201,6 +204,7 @@ def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
                            "truncated": run.truncated,
                            "created": run.created, "target": run.target,
                            "session_file": run.session_file,
+                           "session_id": (Path(run.session_file).stem if run.session_file else None),
                            "worktree": worktree,
                            "last_seq": run.last_seq}
     if lines is not None:

@@ -229,11 +229,13 @@ re-include already-reviewed and unresolved-comment worktrees),
 `session_file`/`worktree` are non-empty only for runs that executed a
 harness session (`start`/`review`, or `sync` with an explicit
 `--session-file`); the web server injects `--session-file` for
-`start`/`review` launches — including the default preview (no `--launch`; the CLI preview
-carries it as `--resume` but creates nothing, so resume/copy buttons work
-once the printed command is run manually) — except `--all` runs, which
+`start`/`review` launches — including the default preview (no `--launch`;
+the CLI preview pins the path as the session row id (transcript stem) and
+`file_path`, so the first run command already carries the full path and
+future runs of the same session reuse it) — except `--all` runs, which
 carry no `--session-file` (the CLI rejects it with `--all`; each
-per-worktree child generates its own transcript). Clients show resume buttons iff
+per-worktree child generates its own transcript). Live summaries also carry
+`session_id` (pinned transcript stem). Clients show resume buttons iff
 `session_file` is present.
 
 ### `GET /api/runs/{id}` → detail (adds `lines`)
@@ -250,6 +252,11 @@ had dropped older lines) — the log survives `serve` restarts.
 group, SIGKILL after 10 s.
 
 ### `POST /api/runs/{id}/resume` → `{"id": …, "session_file": …, "worktree": …}`
+When the pinned `--session-file` path is missing/empty (first command run
+manually outside the web server), the endpoint adopts the newest non-empty
+`.jsonl` in the scope dir minted after the session row was created, persists
+it on the session, and resumes that transcript — so the first run stays
+resumable and later runs reuse the full path.
 Non-destructive (same class as `open`): no confirm needed. Detached-spawns
 the OS default terminal running
 `cd <worktree> && omp --resume <session_file>` (`$TERMINAL` →

@@ -116,6 +116,8 @@ def test_mirror_run_stamps_fix_metadata(client):
     sq.finish_session(db, "rev-1", "finished")
     run = client.app.state.registry.create("review", ["k", "--fix-comments"], "review:k")
     run.session_file = "/s/rev-1.jsonl"
+    run.argv = ["python", "-m", "workagent", "review", "k", "--fix-comments",
+                "--launch", "--session-file", "/s/rev-1.jsonl"]
     run.exit_code = 0
     _wr._mirror_run(run)
     md = sq.get_session(db, sid)["metadata"]
@@ -139,6 +141,8 @@ def test_mirror_run_failure_leaves_fix_metadata(client):
     sq.finish_session(db, "rev-9", "finished")
     run = client.app.state.registry.create("review", ["k2", "--fix-comments"], "review:k2")
     run.session_file = "/s/rev-9.jsonl"
+    run.argv = ["python", "-m", "workagent", "review", "k2", "--fix-comments",
+                "--launch", "--session-file", "/s/rev-9.jsonl"]
     run.exit_code = 1
     _wr._mirror_run(run)
     md = sq.get_session(db, sid)["metadata"]
@@ -532,3 +536,104 @@ def test_boot_reaps_dead_terminal_lock(isolated_config):
                                            "started_at": 0.0, "worktree": "/wt",
                                            "origin": "terminal"}})
     assert store.active_harness("jira:OLD") is None
+def test_preview_run_pins_session_file_and_id(client, monkeypatch):
+    """Preview child pins the web-minted --session-file: same id + full path.
+
+    Regression: the first run (preview) minted a fresh session row with an
+    empty file_path, so /runs/db-<id> showed no session link and future
+    runs of the same session could not reuse the path.
+    """
+    from workagent import cli_harness as _h
+    from workagent import store_sqlite as sq
+    from workagent import store as _store
+    db = sq.db_path()
+    sq.init_db(db)
+    _store.record_link("rk-pin", {"worktree": "/tmp/w-pin", "branch": "b-pin",
+                                  "repo": "/tmp/r"})
+    sid = "2026-10-09T09-01-45-289Z-9100"
+    pinned = str(sq.session_file_path(sid, "omp"))
+    got = _h.record_preview_session("rk-pin", "start", "PROMPT", "omp",
+                                    "harness command: cd /tmp/w-pin && omp 'x'",
+                                    session_file=pinned)
+    assert got == sid
+    row = sq.get_session(db, sid)
+    assert row["file_path"] == pinned
+
+
+def test_preview_launch_collision_adopts_existing(isolated_config, tmp_path, monkeypatch):
+    """Headless rerun with a pinned --session-file adopts the preview row.
+
+    Same PK (transcript stem) must not warn/fail — the launch continues on
+    the existing session id.
+    """
+    from workagent import cli_harness as _h
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
+    sid = "2026-10-09T09-01-45-289Z-9100"
+    pinned = str(sq.session_file_path(sid, "omp"))
+    first = _h.record_preview_session("k", "start", "P", "omp",
+                                      "harness command: cd /wt && omp 'x'",
+                                      session_file=pinned)
+    assert first == sid
+    warned = []
+    monkeypatch.setattr(_h, "eprint", lambda *a: warned.append(a))
+    monkeypatch.setattr(_h.backend, "launch", lambda *a, **k: 0)
+    result = {"key": "k", "command": "start", "branch": "b"}
+    _h._run_harness("omp", "P", "/wt", "/r", True, True, result, True,
+                    run_key="k", session_file=pinned)
+    assert result.get("session_file") == pinned
+    assert warned == []
+    assert sq.get_session(db, sid) is not None
+
+
+def test_mirror_skips_preview_self_recorded_runs(client):
+    """Preview/terminal children self-record their runs row: no mirror dup."""
+    from workagent import store_sqlite as sq
+    from workagent import web_runs as _wr
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k3', '/tmp/w3', 'b3', NULL, '2026-01-01', '{}')")
+    sid = sq.insert_session(db, worktree_ref="k3", harness_name="omp",
+                            initiator_command="start", prompt="p",
+                            file_path="/s/prev.jsonl", session_id="prev-3",
+                            session_type="start")
+    sq.finish_session(db, "prev-3", "preview")
+    before = len(sq.list_runs(db))
+    run = client.app.state.registry.create("start", ["k3"], "start:k3")
+    run.session_file = "/s/prev.jsonl"
+    run.argv = ["python", "-m", "workagent", "start", "k3", "--yes",
+                "--session-file", "/s/prev.jsonl"]
+    run.exit_code = 0
+    _wr._mirror_run(run)
+    assert len(sq.list_runs(db)) == before
+
+
+def test_resolve_session_file_adopts_minted(client, tmp_path, monkeypatch):
+    """Pinned-but-missing path adopts the omp-minted .jsonl and persists it."""
+    from workagent import store_sqlite as sq
+    from workagent import web_runs_routes as _rr
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k4', '/tmp/w4', 'b4', NULL, '2026-01-01', '{}')")
+    sid = "2026-10-09T09-01-45-289Z-9100"
+    pinned = str(tmp_path / f"{sid}.jsonl")
+    sq.insert_session(db, worktree_ref="k4", harness_name="omp",
+                      initiator_command="start", prompt="p", file_path=pinned,
+                      session_id=sid, session_type="start")
+    sq.finish_session(db, sid, "preview")
+    minted = tmp_path / "2026-10-09T09-01-47-227Z_abc.jsonl"
+    minted.write_text('{"type":"session"}\n')
+    got = _rr._resolve_session_file(pinned, sid)
+    assert got == str(minted)
+    assert sq.get_session(db, sid)["file_path"] == str(minted)

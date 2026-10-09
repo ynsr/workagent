@@ -34,6 +34,64 @@ from .web_runs import (
 )
 
 
+def _resolve_session_file(session_file: str, session_id: str = "") -> str:
+    """Best-effort session file: pinned path wins, else adopt the minted one.
+
+    omp mints its own filename: the pinned --session-file path (web-minted
+    id) is only the scope hint — after the user runs the printed command
+    manually the real .jsonl lands nearby (same dir, or a same-stem
+    sibling). When the pinned path is missing/empty, adopt the newest
+    non-empty .jsonl under the scope dir (created after the session row)
+    and persist it on the session so future runs reuse the full path.
+    Returns "" when nothing resumable is found.
+    """
+    if _transcript_ready(session_file):
+        return session_file
+    try:
+        from . import store_sqlite as _sq
+        from datetime import datetime
+        db = _sq.db_path()
+        scope = Path(session_file).parent if session_file else None
+        if scope is None or not scope.is_dir():
+            return ""
+        created = ""
+        if session_id and db.exists():
+            try:
+                row = _sq.get_session(db, session_id)
+                created = str((row or {}).get("created_at") or "")
+            except Exception:
+                created = ""
+        try:
+            created_ts = datetime.fromisoformat(created).timestamp() if created else 0.0
+        except Exception:
+            created_ts = 0.0
+        best = ""
+        best_mtime = -1.0
+        try:
+            entries = list(scope.iterdir())
+        except OSError:
+            return ""
+        for p in entries:
+            try:
+                if not (p.is_file() and p.suffix == ".jsonl" and p.stat().st_size > 0):
+                    continue
+                mt = p.stat().st_mtime
+            except OSError:
+                continue
+            if mt < created_ts:
+                continue
+            if mt > best_mtime:
+                best_mtime = mt
+                best = str(p)
+        if best and session_id and db.exists():
+            try:
+                _sq.set_session_file_path(db, session_id, best)
+            except Exception:
+                pass
+        return best
+    except Exception:
+        return ""
+
 def _transcript_ready(session_file: str) -> bool:
     """True when the path is a non-empty transcript resumable via --resume.
 
@@ -51,7 +109,6 @@ def _transcript_ready(session_file: str) -> bool:
 
 def _open_terminal(worktree: str, session_file: str,
                    env_file: str | None = None) -> None:
-    """Open terminal via the webapp namespace so tests patching workagent.webapp._open_terminal apply."""
     from . import webapp as _w
     return _w._open_terminal(worktree, session_file, env_file)
 
@@ -252,6 +309,7 @@ def register_runs_routes(app, registry) -> None:
             args = row.get("args") if isinstance(row.get("args"), list) else []
             session_file = str(row.get("session_file") or "") or _session_file_arg(
                 str(row.get("command") or ""), list(args))
+            session_file = _resolve_session_file(session_file, str(row.get("session_id") or ""))
             if not _transcript_ready(session_file):
                 raise ApiError("missing_session",
                                f"session transcript missing: {session_file}", 404)
@@ -268,6 +326,7 @@ def register_runs_routes(app, registry) -> None:
         if not session_file:
             raise ApiError("no_session",
                            f"run {run_id} executed no harness session", 404)
+        session_file = _resolve_session_file(session_file, Path(session_file).stem)
         if not _transcript_ready(session_file):
             raise ApiError("missing_session",
                            f"session transcript missing: {session_file}", 404)
@@ -334,6 +393,7 @@ def register_runs_routes(app, registry) -> None:
         if row is None:
             raise ApiError("not_found", f"no session {sid}", 404)
         session_file = str(row.get("file_path") or "")
+        session_file = _resolve_session_file(session_file, sid)
         if not _transcript_ready(session_file):
             raise ApiError("missing_session",
                            f"session transcript missing: {session_file}", 404)

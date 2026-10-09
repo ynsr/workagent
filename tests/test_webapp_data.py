@@ -191,7 +191,7 @@ def test_mirror_run_persists_session_run(client):
                             file_path="/tmp/x.jsonl",
                             session_id="2026-09-26T00-00-00-000Z-1234")
     run = Run(id="abc123", command="start", args=["IPG-1"], target="start",
-              argv=["/py", "-m", "workagent", "start", "IPG-1", "--yes",
+              argv=["/py", "-m", "workagent", "start", "IPG-1", "--launch", "--yes",
                     "--session-file", "/s/sessions/omp/2026-09-26T00-00-00-000Z-1234.jsonl"],
               session_file="/s/sessions/omp/2026-09-26T00-00-00-000Z-1234.jsonl")
     run.append("hello log\n")
@@ -222,7 +222,7 @@ def test_mirror_run_finalizes_stuck_running_session(client):
                             session_id="2026-09-26T06-00-16-776Z-8628")
     assert sq.get_session(db, sid)["state"] == "running"
     run = Run(id="deadbeef", command="review", args=["MR-38"], target="review",
-              argv=["/py", "-m", "workagent", "review", "MR-38", "--yes",
+              argv=["/py", "-m", "workagent", "review", "MR-38", "--launch", "--yes",
                     "--session-file", "/s/sessions/omp/2026-09-26T06-00-16-776Z-8628.jsonl"],
               session_file="/s/sessions/omp/2026-09-26T06-00-16-776Z-8628.jsonl")
     run.exit_code = 129

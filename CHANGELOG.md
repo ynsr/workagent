@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- First run keeps its session link: preview pins the web `--session-file` as session id + `file_path` (same id on headless reruns, no PK-collision warn), resume adopts the omp-minted `.jsonl` and persists it, mirror skips self-recorded preview runs [no-issue]
 - `cleanup` verifies host MR/PR state is merged after `glab mr merge` exit-0 before deleting the remote branch — a queued auto-merge (IPG-1017: still `opened`, `detailed_merge_status commits_status`) now fails loud with the branch kept instead of orphaning the work [no-issue]
 - Interactive launches exec through a `watch-and-exec` shim that records the harness-minted .jsonl in the DB seconds after start, then execs the harness (same UX, native signal semantics) [no-issue]
 - Generated session paths are branch-scoped (`sessions/<harness>/<branch-slug>/`, e.g. `feature-new-feature`); headless launches watch the scope dir and record the harness-minted .jsonl ASAP instead of waiting for exit [no-issue]
