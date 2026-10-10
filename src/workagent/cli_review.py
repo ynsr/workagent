@@ -125,17 +125,61 @@ def _review_key_for(pr_url: str, worktree: str, branch: str, repo: str = "") -> 
             or branch)
 
 
+def _adopt_fix_reuse(result: dict, review_key: str) -> bool:
+    """Point *result* at the latest finished review transcript when the
+    pinned session file already names that session id.
+
+    The web server passes the saved `sessions.file_path` as explicit
+    --session-file (absolute review/... path). When its stem matches the
+    latest review session id, mark the reuse so the harness layer treats
+    the path as a resume target verbatim instead of rescoping it under
+    fix_comments/ (same stem, wrong dir → omp starts a fresh session).
+    Returns True when the reuse was adopted.
+    """
+    try:
+        from pathlib import Path as _Path
+        from . import store_sqlite as _sq
+        pinned = str(result.get("session_file", "") or "")
+        if not pinned:
+            return False
+        db = _sq.db_path()
+        if not db.exists():
+            return False
+        existing = _sq.get_session(db, _Path(pinned).stem)
+        if existing is None:
+            return False
+        if str(existing.get("worktree_ref", "")) != review_key:
+            return False
+        if str(existing.get("session_type", "") or "") != "review":
+            return False
+        latest = _sq.latest_review_session(db, review_key)
+        if latest is not None and str(latest.get("id", "")) != str(existing.get("id", "")):
+            return False
+        if str(existing.get("state", "")) == "running":
+            return False
+        result["reuse_session_id"] = str(existing.get("id", ""))
+        result["session_file"] = str(existing.get("file_path", "") or pinned)
+        return True
+    except Exception:
+        return False
+
+
 def _apply_fix_session(result: dict, review_key: str, fix_comments: bool,
                        new_fix_session: bool, explicit_file: str | None) -> None:
     """Resolve the fix-comments session strategy into *result*.
 
-    Explicit --session-file always wins. Otherwise a fix run continues the
-    latest non-running review session (reuse id + transcript) unless
-    --new-fix-session forces a fresh fix_comments row (linked back via
-    fixed_from_session_id). Non-fix runs leave result untouched.
+    Explicit --session-file always wins. When it names the latest
+    finished review session (the web passes the saved file_path), the
+    reuse is adopted so the transcript is resumed verbatim. Otherwise a
+    fix run continues the latest non-running review session (reuse id +
+    transcript) unless --new-fix-session forces a fresh fix_comments row
+    (linked back via fixed_from_session_id). Non-fix runs leave result
+    untouched.
     """
     if explicit_file:
         result["session_file"] = explicit_file
+        if fix_comments and not new_fix_session:
+            _adopt_fix_reuse(result, review_key)
         return
     if not fix_comments:
         return

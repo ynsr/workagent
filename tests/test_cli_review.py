@@ -199,6 +199,71 @@ def test_review_continue_reuses_transcript(isolated_config, monkeypatch):
     got = sq.latest_review_session(db, "k")
     assert got and got["file_path"] == "/s/old.jsonl"
 
+def test_fix_comments_explicit_file_adopts_review_reuse(isolated_config):
+    """Explicit review transcript path adopts the reuse (no fix_comments rescope)."""
+    from workagent import cli_review as _r, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    review_path = str(sq.session_file_path("rev-1896", "omp", branch="feat/x", session_type="review"))
+    sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="review",
+                      prompt="p", file_path=review_path, session_id="rev-1896",
+                      session_type="review")
+    sq.finish_session(db, "rev-1896", "finished")
+    result: dict = {}
+    _r._apply_fix_session(result, "k", True, False, review_path)
+    assert result["reuse_session_id"] == "rev-1896"
+    assert result["session_file"] == review_path
+    assert "/review/" in result["session_file"]
+    assert "/fix_comments/" not in result["session_file"]
+
+
+def test_fix_comments_preview_adopts_existing_session(isolated_config):
+    """Preview rerun on a recorded transcript adopts the row (no PK warning)."""
+    from workagent import cli_harness as _h, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="review",
+                      prompt="p", file_path="/s/rev-1896.jsonl", session_id="rev-1896",
+                      session_type="review")
+    sq.finish_session(db, "rev-1896", "finished")
+    sid = _h.record_preview_session("k", "review", "p", "omp",
+                                    "harness command: cd /tmp/w && omp 'x'",
+                                    session_file="/s/rev-1896.jsonl")
+    assert sid == "rev-1896"
+    assert sq.get_session(db, "rev-1896")["state"] == "finished"
+    assert len(sq.list_sessions(db)) == 1
+
+
+def test_fix_comments_launch_keeps_review_path(isolated_config, monkeypatch):
+    """_run_harness with a reuse id never rescopes the review path to fix_comments/."""
+    from workagent import cli_harness as _h, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    review_path = str(sq.session_file_path("rev-1896", "omp", branch="feat/x", session_type="review"))
+    sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="review",
+                      prompt="p", file_path=review_path, session_id="rev-1896",
+                      session_type="review")
+    sq.finish_session(db, "rev-1896", "finished")
+    monkeypatch.setattr(_h.store, "record_harness_run", lambda *a: None)
+    monkeypatch.setattr(_h.store, "clear_harness_run", lambda *a: None)
+    monkeypatch.setattr(_h.backend, "launch", lambda *a, **k: None)
+    result = {"command": "review", "fix_comments": True, "branch": "feat/x",
+              "reuse_session_id": "rev-1896", "session_file": review_path}
+    _h._run_harness("omp", "Fix all open (not-resolved) review comments on this PR/MR: u",
+                    "/tmp", "/tmp", True, True, result, False, run_key="k",
+                    session_file=review_path)
+    assert result["session_file"] == review_path
+    assert sq.get_session(db, "rev-1896")["file_path"] == review_path
+
 
 def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"

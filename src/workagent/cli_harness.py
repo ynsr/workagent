@@ -483,6 +483,10 @@ def record_preview_session(key: str, command: str, prompt: str,
     file_path, so the first run command already carries the full path and
     later runs of the same session reuse it. Without it the row id is
     generated and file_path stays "" until the harness mints a transcript.
+    A pinned path that names an already-recorded session (fix-continue
+    reusing the review transcript) adopts that row: the runs row still
+    records this run, but the session row is left untouched (a finished
+    review row must not flip back to preview).
     """
     from . import store_sqlite as _sq
     from pathlib import Path as _Path
@@ -495,6 +499,16 @@ def record_preview_session(key: str, command: str, prompt: str,
             meta.update(metadata)
         pinned = session_file if isinstance(session_file, str) and session_file else ""
         sid_arg = _Path(pinned).stem if pinned else None
+        if sid_arg:
+            try:
+                existing = _sq.get_session(db, sid_arg)
+            except Exception:
+                existing = None
+            if existing is not None:
+                _sq.insert_run(db, str(existing.get("id", sid_arg)), command,
+                               args if args is not None else [key],
+                               exit_code, output=[output])
+                return str(existing.get("id", sid_arg))
         sid = _sq.insert_session(
             db, worktree_ref=key, harness_name=harness_name,
             initiator_command=command, prompt=prompt,
