@@ -51,13 +51,6 @@ export function ReviewsCell({ entry }: { entry: WorktreeMap[string] }) {
   )
 }
 
-/** First-seen stamp → locale date; missing/unparseable → "—". */
-export function formatAdded(addedAt: string | undefined): string {
-  if (!addedAt) return "—"
-  const d = new Date(addedAt)
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString()
-}
-
 export function matchesQuery(key: string, entry: WorktreeMap[string], q: string): boolean {
   const hay = [
     key,

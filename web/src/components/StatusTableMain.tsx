@@ -24,8 +24,8 @@ import type { StatusTableActions, StatusTableSelection } from "@/components/Stat
 
 import { RowActions } from "@/components/StatusActions"
 import { CopyCell } from "@/components/CopyCell"
-import { CommitsCell, ReviewsCell, formatAdded, matchesQuery } from "@/components/StatusCells"
-import { shortWorktreePath } from "@/lib/format"
+import { CommitsCell, ReviewsCell, matchesQuery } from "@/components/StatusCells"
+import { exactDateTime, relativeDate, shortWorktreePath } from "@/lib/format"
 function RepoTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
     <button
@@ -360,9 +360,9 @@ export function StatusTable({
                         </TableCell>
                         <TableCell
                           className="whitespace-nowrap text-[13px] text-muted-foreground"
-                          title={entry.added_at ?? "first-seen stamp missing"}
+                          title={exactDateTime(entry.added_at) || "first-seen stamp missing"}
                         >
-                          {formatAdded(entry.added_at)}
+                          {relativeDate(entry.added_at)}
                           <span className="pointer-events-none absolute inset-y-1 right-1 hidden items-center justify-end gap-0.5 rounded-md border bg-card/95 px-1 shadow-sm backdrop-blur transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:hover)]:flex [@media(hover:hover)]:opacity-0 [@media(hover:none)]:flex">
                             <RowActions
                               worktreeKey={key}
@@ -481,9 +481,9 @@ export function StatusTable({
                       <dt className="w-16 shrink-0 text-xs text-muted-foreground">Added</dt>
                       <dd
                         className="text-[13px] text-muted-foreground"
-                        title={entry.added_at ?? "first-seen stamp missing"}
+                        title={exactDateTime(entry.added_at) || "first-seen stamp missing"}
                       >
-                        {formatAdded(entry.added_at)}
+                        {relativeDate(entry.added_at)}
                       </dd>
                     </div>
                   </dl>

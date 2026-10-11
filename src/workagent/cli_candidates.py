@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -134,6 +135,26 @@ def _scan_root() -> Path:
     raw = str(store.load_config().get("scan_root", "") or "")
     return Path(raw).expanduser() if raw else Path.home() / "dev" / "worktrees"
 
+def _dir_mtime(path: Path) -> str:
+    """Newest mtime under *path* as an ISO-8601 UTC stamp; "" on any error."""
+    latest = 0.0
+    try:
+        for root, _dirs, files in os.walk(path, followlinks=False):
+            try:
+                latest = max(latest, os.path.getmtime(root))
+            except OSError:
+                continue
+            for name in files:
+                try:
+                    latest = max(latest, os.path.getmtime(os.path.join(root, name)))
+                except OSError:
+                    continue
+    except OSError:
+        return ""
+    if not latest:
+        return ""
+    return datetime.fromtimestamp(latest, tz=timezone.utc).isoformat()
+
 
 def _scan_worktrees() -> list[dict]:
     """Unregistered on-disk worktrees under <scan_root>/<repo>/: two shapes —
@@ -194,7 +215,8 @@ def _scan_worktrees() -> list[dict]:
                 m = re.match(r"(?:.*/)?([A-Z][A-Z0-9]+-\d+.*)", branch)
                 key = f"jira:{m.group(1)}" if m else f"branch:{branch}"
                 found.append({"path": str(wt), "repo": repo_dir.name,
-                              "branch": branch, "key_guess": key})
+                              "branch": branch, "key_guess": key,
+                              "mtime": _dir_mtime(wt)})
     found.sort(key=lambda r: r["path"])
     return found
 

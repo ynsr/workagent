@@ -17,6 +17,7 @@ import {
 } from "@/components/StatusFeedback"
 import { api } from "@/lib/api"
 import { queryKeys, useCandidatesIssues, useCandidatesPrs, useCandidatesWorktrees } from "@/lib/queries"
+import { exactDateTime, relativeDate } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 
@@ -179,8 +180,8 @@ export function CandidatesCard() {
                         {pr.title || pr.url}
                       </a>
                     </p>
-                    <p className="truncate font-mono text-xs text-muted-foreground" title={pr.url}>
-                      {pr.key} · {pr.branch} · {pr.repo}
+                    <p className="truncate font-mono text-xs text-muted-foreground" title={`${pr.key} · ${pr.branch} · ${pr.repo}${exactDateTime(pr.updated) ? ` · updated ${exactDateTime(pr.updated)}` : ""}`}>
+                      {pr.key} · {pr.branch} · {pr.repo} · {relativeDate(pr.updated)}
                     </p>
                   </div>
                   <Badge variant="outline">{pr.state}</Badge>
@@ -221,8 +222,8 @@ export function CandidatesCard() {
                         {issue.title || issue.key}
                       </a>
                     </p>
-                    <p className="truncate font-mono text-xs text-muted-foreground" title={issue.url}>
-                      {issue.key} · {issue.status}{issue.repo_hint ? ` · ${issue.repo_hint}` : ""}
+                    <p className="truncate font-mono text-xs text-muted-foreground" title={`${issue.key} · ${issue.status}${issue.repo_hint ? ` · ${issue.repo_hint}` : ""}${exactDateTime(issue.created) ? ` · created ${exactDateTime(issue.created)}` : ""}`}>
+                      {issue.key} · {issue.status}{issue.repo_hint ? ` · ${issue.repo_hint}` : ""} · {relativeDate(issue.created)}
                     </p>
                   </div>
                   <Button
@@ -265,7 +266,7 @@ export function CandidatesCard() {
               <li key={wt.path} className="flex items-center gap-2 px-3 py-2">
                 <div className="min-w-0 flex-1">
                   <CopyCell text={wt.branch} className="text-sm font-medium" />
-                  <CopyCell text={`${wt.key_guess} · ${wt.repo} · ${wt.path}`} className="font-mono text-xs text-muted-foreground" />
+                  <CopyCell text={`${wt.key_guess} · ${wt.repo} · ${wt.path}${wt.mtime ? ` · ${relativeDate(wt.mtime)}` : ""}`} title={`${wt.key_guess} · ${wt.repo} · ${wt.path}${exactDateTime(wt.mtime) ? ` · modified ${exactDateTime(wt.mtime)}` : ""}`} className="font-mono text-xs text-muted-foreground" />
                 </div>
                 <Button
                   variant="ghost"

@@ -142,7 +142,7 @@ live instead of the 1h issue cache (slow). Read-only:
              "status": "To Do", "created": "2026-09-20T10:00:00.000+0000"}],
  "worktrees": [{"path": "/home/x/dev/worktrees/proj/feat/x",
                "repo": "proj", "branch": "feat/x",
-               "key_guess": "branch:feat/x"}],
+               "key_guess": "branch:feat/x", "mtime": "2026-09-20T10:00:00+00:00"}],
  "warnings": ["proj: gh pr list failed: …"]}
 ```
 

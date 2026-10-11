@@ -130,6 +130,8 @@ export interface CandidateWorktree {
   repo: string
   branch: string
   key_guess: string
+  /** Newest mtime under the worktree dir (ISO-8601); "" when unknown. */
+  mtime?: string
 }
 
 export interface CandidatesPrsResponse {

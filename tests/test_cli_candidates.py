@@ -148,6 +148,7 @@ def test_scan_worktrees_both_patterns(isolated_config, tmp_path, monkeypatch):
     assert [(r["branch"], r["repo"]) for r in found] == [
         ("feat/IPG-1--x", "proj"), ("feat/IPG-2--y", "proj")]
     assert found[0]["key_guess"] == "jira:IPG-1--x"
+    assert all(r["mtime"] for r in found)
     # Linked paths are excluded on the next scan.
     store.record_link("jira:IPG-1", {"worktree": str(flat),
                                      "branch": "feat/IPG-1--x"})
