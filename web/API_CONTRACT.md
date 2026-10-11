@@ -122,8 +122,8 @@ session exists (caller falls through to a fresh `fix_comments` session):
 ```
 
 ### `GET /api/issues`
-My open issues (jira To Do/In Progress reported by me in the last two
-months + GitHub issues authored by me, state=open). Per-source rows are
+My open issues (jira To Do/In Progress reported by me in the last 30 days
++ GitHub issues authored by me, state=open). Per-source rows are
 cached 1h server-side; `?force=true` bypasses the cache and re-queries
 the tracker CLIs live (slow). Always 200 — a
 missing/failing host CLI yields `[]` plus a `warning`:
@@ -131,7 +131,7 @@ missing/failing host CLI yields `[]` plus a `warning`:
 ### `GET /api/candidates`
 Unlinked open PR/MRs across every registered repo (PR/MR URLs already
 present in `links.json` are excluded server-side) plus my issues created
-within the last 7 days (server-side filter) plus unregistered on-disk
+within the last 30 days (server-side filter) plus unregistered on-disk
 worktrees under the scan root. `?force=true` re-queries the tracker CLIs
 live instead of the 1h issue cache (slow). Read-only:
 {"prs": [{"key": "github:o/r#33", "number": 33, "title": "…",

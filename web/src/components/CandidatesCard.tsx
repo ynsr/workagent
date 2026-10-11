@@ -119,7 +119,7 @@ export function CandidatesCard() {
             <CardTitle>Candidates</CardTitle>
             <CardDescription>
               Unlinked open PR/MRs across every registered repo, plus my issues
-              created in the last 7 days. Issue rows show the Launch default
+              created in the last 30 days. Issue rows show the Launch default
               repo when one resolves.
             </CardDescription>
           </div>
@@ -209,7 +209,7 @@ export function CandidatesCard() {
             <EmptyState
               icon={<Ticket className="size-10" aria-hidden />}
               title="No recent issues"
-              description="No issues created in the last 7 days."
+              description="No issues created in the last 30 days."
             />
           ) : (
             <ul className="divide-y rounded-md border">

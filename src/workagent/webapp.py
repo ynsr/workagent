@@ -261,7 +261,7 @@ def create_app(static_dir: Path, host: str, port: int,
 
     @app.get("/api/candidates")
     def candidates(force: bool = False) -> dict:
-        """Unlinked open PR/MRs + my recent issues (server-side 7-day
+        """Unlinked open PR/MRs + my recent issues (server-side 30-day
         filter) + unregistered on-disk worktrees; read-only."""
         out = _candidates(force=force)
         return {"prs": out["prs"], "issues": out["issues"],
@@ -276,7 +276,7 @@ def create_app(static_dir: Path, host: str, port: int,
 
     @app.get("/api/candidates/issues")
     def candidates_issues(force: bool = False) -> dict:
-        """My recent issues, 7-day filter (cached 1h; force re-queries). Read-only."""
+        """My recent issues, 30-day filter (cached 1h; force re-queries). Read-only."""
         from . import cli_candidates as _cand
         issues, warnings = _cand._candidate_issues(force=force)
         return {"issues": issues, "warnings": warnings}

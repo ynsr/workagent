@@ -170,7 +170,7 @@ def test_list_my_issues_jira_search_fallback(isolated_config, monkeypatch):
     assert rows[0]["key"] == "jira:IPG-7" and rows[0]["status"] == "To Do"
     assert calls[1][1] == "search"
     assert calls[1][2] == ('reporter = currentUser() AND status in '
-                           '("To Do", "In Progress") AND created >= -60d '
+                           '("To Do", "In Progress") AND created >= -30d '
                            'ORDER BY created DESC')
 
 

@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Recent issues window widened 7d → 30d (JQL `created >= -30d` + server-side cutoff; CLI/web copy updated) [no-issue]
 - Fix-comments resumes the saved review transcript verbatim: an explicit `--session-file` naming the latest finished review session adopts the reuse (no more rescope to `fix_comments/<id>.jsonl`), and preview reruns adopt the existing session row instead of failing with `UNIQUE constraint failed: sessions.id` [no-issue]
 - First run keeps its session link: preview pins the web `--session-file` as session id + `file_path` (same id on headless reruns, no PK-collision warn), resume adopts the omp-minted `.jsonl` and persists it, mirror skips self-recorded preview runs [no-issue]
 - Review rescopes the web-minted `--session-file` under `sessions/omp/<branch-slug>/` once the MR head branch is known (same session id) — transcripts land branch-scoped like Start [no-issue]

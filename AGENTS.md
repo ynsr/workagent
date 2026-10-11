@@ -62,9 +62,9 @@ cleanup/register). Frontend: `web/` (Vite + React + TS), build →
 **`workagent candidates`**: two Rich tables — "Unlinked PR/MRs" (open
 PR/MRs of every registered repo, minus URLs already linked in
 `links.json`; per-repo CLI failures → stderr warning) and "Recent
-issues (reported by me, last 7 days)" (jira `list_my_issues`: reporter
-= me, To Do/In Progress, last 2 months — plus GitHub issues authored by
-me; server-side 7-day filter). `--json` prints `{"prs": […],
+issues (reported by me, last 30 days)" (jira `list_my_issues`: reporter
+= me, To Do/In Progress, last 30 days — plus GitHub issues authored by
+me; server-side 30-day filter). `--json` prints `{"prs": […],
 "issues": […]}` (stdout-only); `--csv` renders the PR/MR table as CSV.
 The web endpoints `/api/issues` (all my issues + `warning`) and
 `/api/candidates` (same data as the CLI) share `_candidates()` /

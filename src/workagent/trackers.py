@@ -329,9 +329,9 @@ def _confirm(tid: str, known: list[str], repo: str) -> bool:
 
 # Corrected from the task brief against the live Jira (tribe.jibit.cloud):
 # its status is "To Do" (not "To-Do"), and JQL "-2m" means 2 minutes
-# (no month unit) — the intended window is two months.
+# (no month unit) — the intended window is thirty days.
 _MY_ISSUES_JQL = ('reporter = currentUser() AND status in ("To Do", "In Progress") '
-                  'AND created >= -60d ORDER BY created DESC')
+                  'AND created >= -30d ORDER BY created DESC')
 
 
 def parse_created(value: str) -> datetime | None:
@@ -512,7 +512,7 @@ def list_my_issues(warnings: list[str] | None = None,
                    force: bool = False) -> list[dict]:
     """My open issues across sources as {key, title, url, status, created}.
 
-    jira (reporter=me, To Do/In Progress, last 2 months) + GitHub issues
+    jira (reporter=me, To Do/In Progress, last 30 days) + GitHub issues
     authored by me (state=open). GitLab issues are intentionally omitted
     (Jira covers work tracking; GitLab surfaces via PR/MR candidates).
     A source is skipped when every linked tracker of that vendor has

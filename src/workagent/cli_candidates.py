@@ -89,7 +89,7 @@ def _candidate_issues(force: bool = False) -> tuple[list[dict], list[str]]:
     warnings: list[str] = []
     _, linked_issue_urls, _, _, links = _linked_sets()
     issues = trackers.list_my_issues(warnings, force=force)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
     recent: list[dict] = []
     for i in issues:
         dt = trackers.parse_created(str(i.get("created", "")))
@@ -117,7 +117,7 @@ def _candidates(force: bool = False) -> dict:
     warning) minus any candidate already present in the worktrees table:
     a PR/MR is dropped when its URL, branch name, or worktree path matches
     a linked row. Issues are `trackers.list_my_issues` filtered to created
-    within the last 7 days, minus issues whose key/URL already has a linked
+    within the last 30 days, minus issues whose key/URL already has a linked
     worktree. Scanned worktrees come from `_scan_worktrees`, which already
     excludes linked paths.
     """
@@ -206,7 +206,7 @@ def candidates_cmd(
     csv_output: bool = typer.Option(False, "--csv", help="Output the PR/MR table as CSV (stdout; logs go to stderr)."),
     reset_cache: bool = typer.Option(False, "--reset-cache", help="Clear the cached issue rows and re-fetch live."),
 ) -> None:
-    """List unlinked open PR/MRs and my recent issues (last 7 days).
+    """List unlinked open PR/MRs and my recent issues (last 30 days).
 
     Example:
       workagent candidates
@@ -237,7 +237,7 @@ def candidates_cmd(
                 "Unlinked PR/MRs", "(no unlinked open PR/MRs)")
     _print_rows(_esc(out["issues"]), False, False,
                 ["key", "title", "status", "created", "repo_hint"],
-                "Recent issues (reported by me, last 7 days)",
+                "Recent issues (reported by me, last 30 days)",
                 "(no recent issues)")
     _print_rows(out["worktrees"], False, False,
                 ["path", "repo", "branch", "key_guess"],
