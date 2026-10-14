@@ -23,13 +23,14 @@ export const queryKeys = {
   candidatesWorktrees: ["candidates", "worktrees"] as const,
   sessions: ["sessions"] as const,
   session: (id: string) => ["sessions", "detail", id] as const,
+  release: (name: string) => ["release", name] as const,
 }
 
 /** Stale-while-revalidate: cached rows render instantly; a background
  * refetch refreshes them (overlay badge) — max(cache max-age * 10, 1 day). */
 const SWR_STATUS_MS = 30 * 24 * 3600 * 1000   // PR cache: 3d * 10
 const SWR_DAY_MS = 24 * 3600 * 1000           // issue/CI cache: 1h/10min * 10 → floor 1d
-
+const RELEASE_SWR_MS = 3600 * 1000            // release diff: 1h fresh
 /** Poll /api/status every 15 s while the tab is visible (contract). */
 export function useStatusAll(refresh?: boolean) {
   return useQuery({
@@ -121,10 +122,20 @@ export function useCandidatesWorktrees() {
   return useQuery({ queryKey: queryKeys.candidatesWorktrees, queryFn: () => api.candidatesWorktrees(), staleTime: SWR_DAY_MS })
 }
 
+/** Release releasability for one repo (1h SWR; retention matches). */
+export function useReleaseStatus(name: string) {
+  return useQuery({
+    queryKey: queryKeys.release(name),
+    queryFn: () => api.releaseStatus(name),
+    staleTime: RELEASE_SWR_MS,
+    gcTime: RELEASE_SWR_MS,
+    enabled: !!name,
+  })
+}
+
 export function useSessions() {
   return useQuery({ queryKey: queryKeys.sessions, queryFn: api.sessions })
 }
-
 export function useSession(id: string) {
   return useQuery({ queryKey: queryKeys.session(id), queryFn: () => api.session(id) })
 }

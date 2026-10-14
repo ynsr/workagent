@@ -82,6 +82,8 @@ export interface Repo {
   path: string
   tracker?: string
   trackers?: string[]
+  default_branch?: string
+  release_branch?: string
   [key: string]: unknown
 }
 
@@ -127,6 +129,17 @@ export interface IssuesResponse {
   warning?: string | null
 }
 
+/** Releasability of GET /api/release/status. */
+export interface ReleaseStatus {
+  repo: string
+  path: string
+  default_branch: string
+  release_branch: string
+  diff_count: number
+  releasable: boolean
+  reason: string
+  stale?: boolean
+}
 /** One unlinked open PR/MR of GET /api/candidates. */
 export interface CandidatePr {
   key: string
@@ -238,6 +251,7 @@ export type RunCommand =
   | "start"
   | "review"
   | "cleanup"
+  | "release"
   | "sync"
   | "open"
   | "register"
@@ -370,6 +384,9 @@ export const api = {
     ),
   /** GET /api/candidates/prs — unlinked PR/MRs only (slowest source; loads independently). */
   candidatesPrs: () => request<CandidatesPrsResponse>("/api/candidates/prs"),
+  /** GET /api/release/status?name= — releasability for one repo (SWR). */
+  releaseStatus: (name: string) =>
+    request<ReleaseStatus>(`/api/release/status${qs({ name })}`),
   /** GET /api/candidates/issues — issues only (`force` bypasses the variant cache). */
   candidatesIssues: (opts?: { force?: boolean; days?: number; mine?: boolean }) =>
     request<CandidatesIssuesResponse>(
