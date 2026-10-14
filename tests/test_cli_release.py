@@ -86,3 +86,30 @@ def test_fetch_branch_ci_gh_remote(monkeypatch):
     st, url = _ci.fetch_branch_ci("gh", "git@github.com:o/r.git", "master")
     assert st == "success"
     assert "--repo" in seen["argv"] and "o/r" in seen["argv"]
+def test_repo_update_roundtrip(isolated_config, tmp_path):
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    r = CliRunner().invoke(_cli.app, ["repo", "add", "--name", "proj",
+                                      "--path", str(repo_dir), "--tracker", "IPG",
+                                      "--release-branch", "main"])
+    assert r.exit_code == 0, r.output
+    r = CliRunner().invoke(_cli.app, ["repo", "list", "--json"])
+    import json
+    rows = json.loads(r.stdout)
+    assert rows[0]["release_branch"] == "main"
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--release-branch", "", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["release_branch"] == ""
+
+
+def test_release_status_same_branch_guard(monkeypatch):
+    from workagent import repos as _repos
+    monkeypatch.setattr(_repos.store, "load_repos", lambda: {
+        "rx": {"path": "/r", "default_branch": "main", "release_branch": "main",
+               "tool": "", "remote": ""}})
+    st = _repos.release_status("rx")
+    assert st["releasable"] is False
+    assert "same" in st["reason"]

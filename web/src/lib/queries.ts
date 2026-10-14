@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import type { QueryClient } from "@tanstack/react-query"
 import { api, type CreateRunInput } from "./api"
 import { getVerbose } from "./settings"
@@ -130,6 +130,18 @@ export function useReleaseStatus(name: string) {
     staleTime: RELEASE_SWR_MS,
     gcTime: RELEASE_SWR_MS,
     enabled: !!name,
+  })
+}
+
+/** Release releasability for several repos (one query each). */
+export function useReleaseStatuses(names: string[]) {
+  return useQueries({
+    queries: names.map((name) => ({
+      queryKey: queryKeys.release(name),
+      queryFn: () => api.releaseStatus(name),
+      staleTime: RELEASE_SWR_MS,
+      gcTime: RELEASE_SWR_MS,
+    })),
   })
 }
 

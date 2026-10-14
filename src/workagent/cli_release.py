@@ -109,8 +109,17 @@ def run_release(repo: str, *, yes: bool, dry_run: bool, json_output: bool) -> di
     registry = _store.load_repos()
     name = repo if repo in registry else ""
     if not name:
+        from pathlib import Path as _P
+        try:
+            want = str(_P(repo).expanduser().resolve())
+        except Exception:
+            want = ""
         for n, info in registry.items():
-            if str(info.get("path", "")) == repo:
+            try:
+                got = str(_P(str(info.get("path", ""))).expanduser().resolve())
+            except Exception:
+                continue
+            if got and got == want:
                 name = n
                 break
     if not name:
@@ -133,7 +142,8 @@ def run_release(repo: str, *, yes: bool, dry_run: bool, json_output: bool) -> di
         return {**plan, "dry_run": True, "merged": False, "mr_url": ""}
     if not yes and sys.stdin.isatty():
         try:
-            answer = input(f"Open release MR {plan['mr_title']}? [y/N] ").strip().lower()
+            print(f"Open release MR {plan['mr_title']}? [y/N] ", file=sys.stderr, end="")
+            answer = sys.stdin.readline().strip().lower()
         except EOFError:
             answer = ""
         if answer not in ("y", "yes"):

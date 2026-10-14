@@ -141,7 +141,7 @@ export interface ReleaseStatus {
   stale?: boolean
   ci?: string
   ci_url?: string
-  fetched_at?: string
+  fetched_at?: string | null
 }
 /** One unlinked open PR/MR of GET /api/candidates. */
 export interface CandidatePr {

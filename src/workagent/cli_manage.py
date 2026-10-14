@@ -121,6 +121,19 @@ def repo_update(
         _fail(f"unknown repo: {name}", EXIT_USAGE)
     if default_branch is None and release_branch is None:
         _fail("nothing to update: pass --default-branch and/or --release-branch.", EXIT_USAGE)
+    if store._sqlite_path() is None:
+        cfg = store.load_config()
+        entry = cfg.get("repos", {}).get(name)
+        if entry is None:
+            _fail(f"unknown repo: {name}", EXIT_USAGE)
+        if default_branch is not None:
+            entry["default_branch"] = default_branch
+        if release_branch is not None:
+            entry["release_branch"] = release_branch
+        store.save_config(cfg)
+        _print_result({"updated": name, "default_branch": entry.get("default_branch", ""),
+                       "release_branch": entry.get("release_branch", "")}, json_output)
+        return
     from . import store_sqlite as _sq
     db = _sq.db_path()
     _sq.init_db(db)
@@ -131,8 +144,11 @@ def repo_update(
         if release_branch is not None:
             conn.execute("UPDATE repos SET release_branch = ? WHERE key_ref = ?",
                          (release_branch, name))
-    _print_result({"updated": name, "default_branch": default_branch or "",
-                   "release_branch": release_branch or ""}, json_output)
+        row = conn.execute("SELECT default_branch, release_branch FROM repos WHERE key_ref = ?",
+                           (name,)).fetchone()
+    stored = {"updated": name, "default_branch": (row[0] if row else "") or "",
+              "release_branch": (row[1] if row else "") or ""}
+    _print_result(stored, json_output)
 
 
 @repo_app.command("remove")

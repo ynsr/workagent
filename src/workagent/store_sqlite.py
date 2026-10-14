@@ -509,7 +509,14 @@ def init_db(path: Path) -> Path:
     else:
         raise last  # type: ignore[misc]
     _INIT_CACHE[str(path)] = True
+    try:
+        from . import repos_release as _rel
+        _rel.backfill_release_branches()
+    except Exception:
+        pass
     return path
+
+
 def _norm(p: str) -> str:
     from pathlib import Path as _P
     return str(_P(p).expanduser().resolve()) if p else ""

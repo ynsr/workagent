@@ -2,7 +2,7 @@ import { Rocket } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { CiBadge } from "@/components/StateBadge"
 import { EmptyState, ErrorState, RefreshOverlay } from "@/components/StatusFeedback"
-import { useRepos, useReleaseStatus } from "@/lib/queries"
+import { useRepos, useReleaseStatus, useReleaseStatuses } from "@/lib/queries"
 import { ReleaseButton } from "@/components/ReleaseButton"
 
 function relativeFetchMs(iso: string | null | undefined): string {
@@ -55,23 +55,50 @@ export function ReleaseCard() {
       </Card>
     )
   }
-  const ready = repos.filter((r) => r.release_branch)
+  const branched = repos.filter((r) => r.release_branch)
+  if (branched.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Ready to release</CardTitle>
+          <CardDescription>
+            No registered repo has a release branch yet.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <EmptyState
+            icon={<Rocket aria-hidden />}
+            title="No release branches"
+            description="Set one via repo update NAME --release-branch X."
+          />
+        </CardContent>
+      </Card>
+    )
+  }
   return (
     <Card className="relative">
       <CardHeader>
-        <CardTitle>Ready to release {ready.length ? `(${ready.length})` : ""}</CardTitle>
+        <CardTitle>
+          Ready to release <ReleaseReadyCount names={branched.map((r) => r.name)} />
+        </CardTitle>
         <CardDescription>
           Repos with commits on the default branch ahead of the release branch.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {repos.map((r) => (
+        {branched.map((r) => (
           <ReleaseRow key={r.name} name={r.name} />
         ))}
       </CardContent>
       {isFetching ? <RefreshOverlay label="Checking repos…" /> : null}
     </Card>
   )
+}
+
+function ReleaseReadyCount({ names }: { names: string[] }) {
+  const statuses = useReleaseStatuses(names)
+  const n = statuses.filter((s) => s.data?.releasable).length
+  return n ? <span>({n})</span> : null
 }
 
 function ReleaseRow({ name }: { name: string }) {

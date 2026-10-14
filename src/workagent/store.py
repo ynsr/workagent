@@ -226,7 +226,9 @@ def load_repos() -> dict:
             key = ""
         out[name] = {"path": raw, "tracker": tmap.get(key, ""),
                      "remote": str((v or {}).get("remote", "") or ""),
-                     "tool": (v or {}).get("tool")}
+                     "tool": (v or {}).get("tool"),
+                     "default_branch": str((v or {}).get("default_branch", "") or ""),
+                     "release_branch": str((v or {}).get("release_branch", "") or "")}
     return out
 
 
