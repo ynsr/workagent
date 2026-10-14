@@ -105,16 +105,50 @@ def _ci_glab(pr_url: str, cwd: str | None) -> tuple[str, str]:
     return state, newest.get("web_url") or ""
 
 
-def _glab_state(status: str) -> str:
-    """Map a GitLab pipeline/job status onto the CI cell vocabulary."""
-    if status in ("success", "passed"):
-        return "success"
-    if status in ("failed", "canceled"):
-        return "failure"
-    if status in _GLAB_RUNNING:
-        return "running"
-    return "not_started"
+def _ci_branch_glab(host: str, path: str, branch: str,
+                    cwd: str | None) -> tuple[str, str]:
+    """(status, url) for the newest pipeline of *branch* (glab)."""
+    api = (f"projects/{quote(path, safe='')}/pipelines"
+           f"?ref={quote(branch, safe='')}&per_page=1")
+    out = _api_glab(api, host, cwd)
+    try:
+        data = json.loads(out or "[]")
+    except json.JSONDecodeError:
+        raise HarnessError(f"cannot parse glab pipelines for {branch}")
+    if not data:
+        return "not_started", ""
+    newest = max(data, key=lambda p: p.get("id", 0))
+    state = _glab_state((newest.get("status") or "").lower())
+    if state == "not_started":
+        return "not_started", ""
+    jobs = _pipeline_jobs(path, newest.get("id"), host, cwd, branch)
+    if jobs:
+        job = max(jobs, key=lambda j: j.get("id", 0))
+        if job.get("web_url"):
+            return state, job["web_url"]
+    return state, newest.get("web_url") or ""
 
+
+def _ci_branch_gh(repo: str, branch: str, cwd: str | None) -> tuple[str, str]:
+    """(status, url) for the newest run of *branch* (gh)."""
+    out = run_cmd("gh", "run", "list", "--repo", repo, "--branch", branch,
+                  "--limit", "1", "--json", "conclusion,status,url", cwd=cwd)
+    try:
+        data = json.loads(out or "[]")
+    except json.JSONDecodeError:
+        raise HarnessError(f"cannot parse gh runs for {branch}")
+    if not data:
+        return "not_started", ""
+    run = data[0]
+    concl = (run.get("conclusion") or "").upper()
+    status = (run.get("status") or "").upper()
+    if concl in _GH_FAILURE or status == "FAILED":
+        return "failure", run.get("url") or ""
+    if concl in _GH_SUCCESS and status in ("COMPLETED", ""):
+        return "success", run.get("url") or ""
+    if concl in _GH_RUNNING or status in ("IN_PROGRESS", "QUEUED", "PENDING"):
+        return "running", run.get("url") or ""
+    return "not_started", run.get("url") or ""
 
 def _pipeline_jobs(path: str, pipeline_id: int | None, host: str,
                    cwd: str | None, pr_url: str) -> list:
@@ -130,13 +164,29 @@ def _pipeline_jobs(path: str, pipeline_id: int | None, host: str,
 
 
 def fetch_ci(tool: str, pr_url: str,
-             cwd: str | None = None) -> tuple[str | None, str]:
+             cwd: str | None = None, branch: str | None = None) -> tuple[str | None, str]:
     """(status, job_url) for the latest CI pipeline of a PR/MR.
 
     job_url is the latest job's page (GitLab `.../-/jobs/<id>`, GitHub check
     details URL); "" when unknown. Soft-failing like fetch_ci_status.
+    ``branch`` scopes the lookup to a branch's newest pipeline instead of
+    the PR/MR (used by the release card); None preserves PR/MR behavior.
     """
     try:
+        if branch:
+            if tool == "gh":
+                from .refs import _GITHUB_PR
+                m = _GITHUB_PR.match(pr_url or "")
+                repo = m.group(1) if m else ""
+                if not repo:
+                    raise HarnessError(f"cannot derive repo for branch CI: {pr_url}")
+                return _ci_branch_gh(repo, branch, cwd)
+            if tool == "glab":
+                m = _GITLAB_MR.match(pr_url or "")
+                if not m:
+                    raise HarnessError(f"not a GitLab MR URL: {pr_url}")
+                return _ci_branch_glab(m.group(1), m.group(2), branch, cwd)
+            raise HarnessError(f"unknown host CLI: {tool}")
         if tool == "gh":
             return _ci_gh(pr_url, cwd)
         if tool == "glab":
@@ -147,11 +197,13 @@ def fetch_ci(tool: str, pr_url: str,
         return None, ""
 
 
-def fetch_ci_status(tool: str, pr_url: str, cwd: str | None = None) -> str | None:
+def fetch_ci_status(tool: str, pr_url: str, cwd: str | None = None,
+                    branch: str | None = None) -> str | None:
     """Latest CI pipeline status for a PR/MR: success|failure|running|not_started.
 
     Soft-failing: returns None on any lookup error (warning to stderr),
     so status table rendering never breaks on a missing/unhappy host CLI.
+    ``branch`` scopes to that branch's newest pipeline (release card).
     """
-    return fetch_ci(tool, pr_url, cwd)[0]
+    return fetch_ci(tool, pr_url, cwd, branch)[0]
 

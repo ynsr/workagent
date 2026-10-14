@@ -58,3 +58,7 @@ def test_release_dry_run_runs_nothing(monkeypatch):
     monkeypatch.setattr(_rel.repos, "release_status",
                         lambda name, force=False: _status(diff_count=2))
     _rel.run_release("rx", yes=True, dry_run=True, json_output=False)
+def test_fetch_ci_status_branch_param():
+    import inspect
+    from workagent import refs as _refs
+    assert "branch" in inspect.signature(_refs.fetch_ci_status).parameters
