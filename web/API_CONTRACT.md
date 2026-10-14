@@ -122,21 +122,24 @@ session exists (caller falls through to a fresh `fix_comments` session):
 ```
 
 ### `GET /api/issues`
-My issues (jira reported by me, all statuses, last year + GitHub issues
-authored by me, any state, last year — the Recent-issues filter slices
-range/status/scope client-side). Per-source rows are cached server-side
-and served within max(1h * 10, 1 day); `?force=true` bypasses the cache
-and re-queries the tracker CLIs live (slow). Always 200 — a
-missing/failing host CLI yields `[]` plus a `warning`:
+Issues for the (window, scope) selection: `?days=1..365` (default 90),
+`?mine=false` for the all-scope (default mine: jira `(reporter =
+currentUser() OR assignee = currentUser())` any status + gh
+author=@me ∪ assignee=@me deduped; all = unqualified search). The
+initial (90d, mine) variant warms on page load; selections outside it
+(Last year / All) requery under their own variant server-cache key —
+one remote round max per selection. Per-source rows are cached
+server-side and served within max(1h * 10, 1 day); `?force=true`
+bypasses the cache and re-queries the tracker CLIs live (slow).
+Always 200 — a missing/failing host CLI yields `[]` plus a `warning`:
 
 ### `GET /api/candidates`
 Unlinked open PR/MRs across every registered repo (PR/MR URLs already
-present in `links.json` are excluded server-side) plus my issues (jira
-reported by me / GitHub authored by me, all statuses, last year — the
-Recent-issues filter slices range/status/scope client-side) plus
-unregistered on-disk worktrees under the scan root. `?force=true`
-re-queries the tracker CLIs live instead of the served cache window
-(slow). Read-only:
+present in `links.json` are excluded server-side) plus issues for the
+(window, scope) selection (same query as `/api/issues`; days/mine
+params accepted) plus unregistered on-disk worktrees under the scan
+root. `?force=true` re-queries the tracker CLIs live instead of the
+served cache window (slow). Read-only:
 {"prs": [{"key": "github:o/r#33", "number": 33, "title": "…",
           "url": "https://github.com/o/r/pull/33", "branch": "feat/x",
           "updated": "2026-09-20T10:00:00Z", "state": "OPEN",

@@ -15,10 +15,11 @@ export const queryKeys = {
   doctor: ["doctor"] as const,
   runs: ["runs"] as const,
   run: (id: string) => ["runs", "detail", id] as const,
-  issues: ["issues"] as const,
-  candidates: ["candidates"] as const,
+  candidates: (days?: number, mine?: boolean) => ["candidates", days ?? 90, mine ?? true] as const,
   candidatesPrs: ["candidates", "prs"] as const,
-  candidatesIssues: (force?: boolean) => ["candidates", "issues", force ? "force" : "cached"] as const,
+  issues: (days?: number, mine?: boolean) => ["issues", days ?? 90, mine ?? true] as const,
+  candidatesIssues: (force?: boolean, days?: number, mine?: boolean) =>
+    ["candidates", "issues", force ? "force" : "cached", days ?? 90, mine ?? true] as const,
   candidatesWorktrees: ["candidates", "worktrees"] as const,
   sessions: ["sessions"] as const,
   session: (id: string) => ["sessions", "detail", id] as const,
@@ -76,12 +77,12 @@ export function useDoctor() {
   return useQuery({ queryKey: queryKeys.doctor, queryFn: api.doctor })
 }
 
-export function useIssues() {
-  return useQuery({ queryKey: queryKeys.issues, queryFn: () => api.issues(), staleTime: SWR_DAY_MS })
+export function useIssues(days?: number, mine?: boolean) {
+  return useQuery({ queryKey: queryKeys.issues(days, mine), queryFn: () => api.issues({ days, mine }), staleTime: SWR_DAY_MS })
 }
 
-export function useCandidates() {
-  return useQuery({ queryKey: queryKeys.candidates, queryFn: () => api.candidates(), staleTime: SWR_DAY_MS })
+export function useCandidates(days?: number, mine?: boolean) {
+  return useQuery({ queryKey: queryKeys.candidates(days, mine), queryFn: () => api.candidates({ days, mine }), staleTime: SWR_DAY_MS })
 }
 
 /** Per-tab candidates queries: each tab loads independently so the slow
@@ -90,11 +91,17 @@ export function useCandidatesPrs() {
   return useQuery({ queryKey: queryKeys.candidatesPrs, queryFn: () => api.candidatesPrs(), staleTime: SWR_DAY_MS })
 }
 
-export function useCandidatesIssues(force?: boolean) {
+export function useCandidatesIssues(
+  force?: boolean,
+  days: number = 90,
+  mine: boolean = true,
+  enabled: boolean = true,
+) {
   return useQuery({
-    queryKey: queryKeys.candidatesIssues(force),
-    queryFn: () => api.candidatesIssues({ force }),
+    queryKey: queryKeys.candidatesIssues(force, days, mine),
+    queryFn: () => api.candidatesIssues({ force, days, mine }),
     staleTime: SWR_DAY_MS,
+    enabled,
   })
 }
 

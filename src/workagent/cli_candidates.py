@@ -85,12 +85,18 @@ def _candidate_prs() -> tuple[list[dict], list[str]]:
     return prs, warnings
 
 
-def _candidate_issues(force: bool = False) -> tuple[list[dict], list[str]]:
-    """My issues (last year, all statuses — the Recent-issues filter slices
-    them client-side); the `force` bypass re-queries the tracker CLIs."""
+def _candidate_issues(force: bool = False, days: int = 90,
+                      mine: bool = True) -> tuple[list[dict], list[str]]:
+    """Issues for the user's (window, scope) selection: the initial
+    superset (assigned/created by me, 90d) comes from its cache key
+    instantly; selections outside it (longer window, "all issues") requery
+    the tracker under their own cache key — one network round max per
+    variant. `force` bypasses every cache and re-queries live."""
+    from . import trackers as _tr
+    days = max(1, int(days or _tr._INITIAL_ISSUES_DAYS))
     warnings: list[str] = []
     _, linked_issue_urls, _, _, links = _linked_sets()
-    issues = trackers.list_my_issues(warnings, force=force)
+    issues = trackers.list_my_issues(warnings, force=force, days=days, mine=mine)
     recent: list[dict] = []
     for i in issues:
         key = str(i.get("key", "") or "")
@@ -107,20 +113,21 @@ def _candidate_issues(force: bool = False) -> tuple[list[dict], list[str]]:
     return recent, warnings
 
 
-def _candidates(force: bool = False) -> dict:
-    """Unlinked open PR/MRs + my recent issues; shared by the `candidates`
-    command and the webapp /api/candidates endpoint.
+def _candidates(force: bool = False, days: int = 90, mine: bool = True) -> dict:
+    """Unlinked open PR/MRs + issues for the user's (window, scope)
+    selection; shared by the `candidates` command and the webapp
+    /api/candidates endpoint.
 
     PRs are collected from every registered repo (per-repo failures →
     warning) minus any candidate already present in the worktrees table:
     a PR/MR is dropped when its URL, branch name, or worktree path matches
-    a linked row. Issues are `trackers.list_my_issues` (last year, all
-    statuses) minus issues whose key/URL already has a linked worktree.
-    Scanned worktrees come from `_scan_worktrees`, which already excludes
-    linked paths.
+    a linked row. Issues are `trackers.list_my_issues` for the selection
+    minus issues whose key/URL already has a linked worktree. Scanned
+    worktrees come from `_scan_worktrees`, which already excludes linked
+    paths.
     """
     prs, pr_warnings = _candidate_prs()
-    recent, issue_warnings = _candidate_issues(force=force)
+    recent, issue_warnings = _candidate_issues(force=force, days=days, mine=mine)
     return {"prs": prs, "issues": recent, "worktrees": _scan_worktrees(),
             "warnings": pr_warnings + issue_warnings}
 
@@ -224,17 +231,23 @@ def candidates_cmd(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
     csv_output: bool = typer.Option(False, "--csv", help="Output the PR/MR table as CSV (stdout; logs go to stderr)."),
     reset_cache: bool = typer.Option(False, "--reset-cache", help="Clear the cached issue rows and re-fetch live."),
+    issues_days: int = typer.Option(90, "--issues-days", help="Issues window in days (default 90; longer windows re-query the tracker)."),
+    issues_scope: str = typer.Option("mine", "--issues-scope", help="Issues scope: mine (assigned/created by me) or all."),
 ) -> None:
-    """List unlinked open PR/MRs and my issues (last year, all statuses).
+    """List unlinked open PR/MRs and my issues (assigned/created by me, last 90 days).
 
     Example:
       workagent candidates
       workagent candidates --json
     """
+    if issues_scope not in ("mine", "all"):
+        from .cli_core import _fail as _scope_fail, EXIT_USAGE
+        _scope_fail("--issues-scope must be mine or all", EXIT_USAGE)
     if reset_cache:
         from . import store_sqlite as _sq
         _sq.clear_issue_cache(_sq.db_path())
-    out = _candidates(force=reset_cache)
+    out = _candidates(force=reset_cache, days=issues_days,
+                      mine=issues_scope == "mine")
     for w in out["warnings"]:
         eprint(f"warning: {w}")
     if json_output:
@@ -256,7 +269,7 @@ def candidates_cmd(
                 "Unlinked PR/MRs", "(no unlinked open PR/MRs)")
     _print_rows(_esc(out["issues"]), False, False,
                 ["key", "title", "status", "created", "repo_hint"],
-                "Recent issues (reported by me, last year)",
+                "Recent issues (assigned/created by me, last 90 days)",
                 "(no recent issues)")
     _print_rows(out["worktrees"], False, False,
                 ["path", "repo", "branch", "key_guess"],

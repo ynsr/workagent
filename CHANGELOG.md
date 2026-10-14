@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Recent issues now fetch the assigned-or-created-by-me 90-day superset and requery per selection: `candidates --issues-days 1..365 --issues-scope mine|all`, `/api/issues?days=&mine=`, Launch `Last year` + `All` requery under variant server-cache keys (one remote round max) while common filters stay client-side instant [no-issue]
 - Worktrees `Added` + Candidates rows show relative dates (`5 min ago`, `Yesterday`, `3 weeks ago`) with the exact date on hover [no-issue]
 - Candidates issues widen to the max client-filterable scope: jira `reporter=me` all statuses last year, gh authored-by-me last year any state (server-side 30-day cutoff dropped) [no-issue]
 - Dashboard tables are stale-while-revalidate: cached PR/CI/issue rows render instantly and refresh in the background — cache windows are now max(fresh TTL * 10, 1 day) (PR 30d, no-PR/CI/issues 1d), tips-unchanged still gates reuse [no-issue]

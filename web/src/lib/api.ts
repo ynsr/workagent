@@ -345,24 +345,25 @@ export const api = {
   links: () => request<Links>("/api/links"),
   doctor: () => request<DoctorInfo>("/api/doctor"),
 
-  /** GET /api/issues — my open issues; always 200 with an optional warning.
-   * `force` bypasses the 1h server cache and re-queries the tracker CLIs live. */
-  issues: (opts?: { force?: boolean }) =>
+  /** GET /api/issues — issues for the user's (window, scope) selection;
+   * always 200 with an optional warning. `force` bypasses the variant
+   * server cache and re-queries the tracker CLIs live. */
+  issues: (opts?: { force?: boolean; days?: number; mine?: boolean }) =>
     request<IssuesResponse>(
-      `/api/issues${qs({ force: opts?.force ? "true" : undefined })}`,
+      `/api/issues${qs({ force: opts?.force ? "true" : undefined, days: opts?.days === undefined ? undefined : String(opts.days), mine: opts?.mine === false ? "false" : undefined })}`,
     ),
-  /** GET /api/candidates — unlinked PR/MRs + recent issues.
-   * `force` re-queries the tracker CLIs live instead of the 1h issue cache. */
-  candidates: (opts?: { force?: boolean }) =>
+  /** GET /api/candidates — unlinked PR/MRs + issues for the selection.
+   * `force` re-queries the tracker CLIs live instead of the variant cache. */
+  candidates: (opts?: { force?: boolean; days?: number; mine?: boolean }) =>
     request<CandidatesResponse>(
-      `/api/candidates${qs({ force: opts?.force ? "true" : undefined })}`,
+      `/api/candidates${qs({ force: opts?.force ? "true" : undefined, days: opts?.days === undefined ? undefined : String(opts.days), mine: opts?.mine === false ? "false" : undefined })}`,
     ),
   /** GET /api/candidates/prs — unlinked PR/MRs only (slowest source; loads independently). */
   candidatesPrs: () => request<CandidatesPrsResponse>("/api/candidates/prs"),
-  /** GET /api/candidates/issues — recent issues only (`force` bypasses the 1h cache). */
-  candidatesIssues: (opts?: { force?: boolean }) =>
+  /** GET /api/candidates/issues — issues only (`force` bypasses the variant cache). */
+  candidatesIssues: (opts?: { force?: boolean; days?: number; mine?: boolean }) =>
     request<CandidatesIssuesResponse>(
-      `/api/candidates/issues${qs({ force: opts?.force ? "true" : undefined })}`,
+      `/api/candidates/issues${qs({ force: opts?.force ? "true" : undefined, days: opts?.days === undefined ? undefined : String(opts.days), mine: opts?.mine === false ? "false" : undefined })}`,
     ),
   /** GET /api/candidates/worktrees — unregistered on-disk worktrees only. */
   candidatesWorktrees: () => request<CandidatesWorktreesResponse>("/api/candidates/worktrees"),

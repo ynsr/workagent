@@ -169,9 +169,8 @@ def test_list_my_issues_jira_search_fallback(isolated_config, monkeypatch):
     rows = trackers.list_my_issues()
     assert rows[0]["key"] == "jira:IPG-7" and rows[0]["status"] == "To Do"
     assert calls[1][1] == "search"
-    assert calls[1][2] == ('reporter = currentUser() AND created >= -365d '
-                           'ORDER BY created DESC')
-
+    assert calls[1][2] == ('(reporter = currentUser() OR assignee = currentUser()) '
+                           'AND created >= -90d ORDER BY created DESC')
 
 def test_list_my_issues_jira_plain_fallback(isolated_config, monkeypatch):
     """Stock jira-cli without request/search: plain issue list, 2+ space
@@ -261,17 +260,18 @@ def test_parse_created_offsets():
 
 
 def test_my_issues_uses_cache_within_ttl(monkeypatch, tmp_path):
+    """The initial (assigned/created, 90d) variant serves from its own key."""
     from workagent import trackers
     from workagent import store_sqlite as sq
     import workagent.store as store
     monkeypatch.setattr(store, "config_dir", lambda: tmp_path)
     rows = [{"key": "IPG-1", "title": "t", "url": "u", "status": "To Do",
              "created": "2026-09-01"}]
-    sq.set_issue_cache(sq.db_path(), "jira", rows)
-    def _boom(warn):
+    sq.set_issue_cache(sq.db_path(), trackers._cache_key("jira", 90, True), rows)
+    def _boom(warn, *a, **k):
         raise AssertionError("must use cache")
     monkeypatch.setattr(trackers, "_jira_my_issues", _boom)
-    monkeypatch.setattr(trackers, "_gh_my_issues", lambda warn: [])
+    monkeypatch.setattr(trackers, "_gh_my_issues", lambda warn, *a, **k: [])
     got = trackers.list_my_issues([])
     assert [r["key"] for r in got] == ["IPG-1"]
 
@@ -281,11 +281,65 @@ def test_my_issues_force_skips_cache(monkeypatch, tmp_path):
     from workagent import store_sqlite as sq
     import workagent.store as store
     monkeypatch.setattr(store, "config_dir", lambda: tmp_path)
-    sq.set_issue_cache(sq.db_path(), "jira", [{"key": "STALE"}])
-    monkeypatch.setattr(trackers, "_jira_my_issues", lambda warn: [])
-    monkeypatch.setattr(trackers, "_gh_my_issues", lambda warn: [])
+    sq.set_issue_cache(sq.db_path(), trackers._cache_key("jira", 90, True), [{"key": "STALE"}])
+    monkeypatch.setattr(trackers, "_jira_my_issues", lambda warn, *a, **k: [])
+    monkeypatch.setattr(trackers, "_gh_my_issues", lambda warn, *a, **k: [])
     got = trackers.list_my_issues([], force=True)
     assert got == []
+
+
+def test_issue_variant_cache_keys_are_distinct(monkeypatch, tmp_path):
+    """A broader selection ((window, scope) outside the initial superset)
+    lands on its own key — one network round max per variant."""
+    from workagent import trackers
+    from workagent import store_sqlite as sq
+    import workagent.store as store
+    monkeypatch.setattr(store, "config_dir", lambda: tmp_path)
+    rows = [{"key": "IPG-1", "title": "t", "url": "u", "status": "To Do",
+             "created": "2025-12-01"}]
+    sq.set_issue_cache(sq.db_path(), trackers._cache_key("jira", 365, True), rows)
+    seen: list = []
+    def _boom(warn, *a, **k):
+        seen.append((a, k))
+        raise AssertionError("must use variant cache")
+    monkeypatch.setattr(trackers, "_jira_my_issues", _boom)
+    monkeypatch.setattr(trackers, "_gh_my_issues", lambda warn, *a, **k: [])
+    got = trackers.list_my_issues([], days=365, mine=True)
+    assert [r["key"] for r in got] == ["IPG-1"]
+    assert seen == []
+
+
+def test_initial_query_is_assigned_or_created_90d():
+    """The default fetcher query covers assigned-to-me or created-by-me,
+    all statuses, last 90 days."""
+    from workagent import trackers
+    jql = trackers._issues_jql()
+    assert jql == ("(reporter = currentUser() OR assignee = currentUser()) "
+                   "AND created >= -90d ORDER BY created DESC")
+    assert trackers._issues_jql(365, False) == "created >= -365d ORDER BY created DESC"
+
+
+def test_gh_query_unions_author_and_assignee(monkeypatch):
+    """The mine path unions author + assignee searches (deduped); the all
+    path makes a single unqualified call."""
+    from workagent import trackers
+    calls = []
+    payload = [{"repository": {"nameWithOwner": "o/r"}, "number": 7,
+                "title": "T", "body": "", "author": {"login": "me"},
+                "state": "closed", "url": "u", "createdAt": "2026-10-01T00:00:00Z"}]
+    def fake(*a, **k):
+        calls.append(a)
+        import json as _json
+        return _json.dumps(payload)
+    monkeypatch.setattr(trackers, "run_cmd", fake)
+    rows = trackers._gh_my_issues([], days=90, mine=True)
+    assert len(calls) == 2  # author search + assignee search
+    assert rows[0]["key"] == "github:o/r#7" and rows[0]["status"] == "closed"
+    calls.clear()
+    rows = trackers._gh_my_issues([], days=365, mine=False)
+    assert len(calls) == 1  # unqualified search
+    assert all("--author" not in a and "--assignee" not in a for a in calls[0])
+    assert "created:>=2025-10-14" in calls[0]  # 365d back from today 2026-10-14
 
 
 def test_my_issues_fetch_exception_never_raises(monkeypatch, tmp_path):

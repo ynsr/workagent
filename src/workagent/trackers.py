@@ -327,11 +327,18 @@ def _confirm(tid: str, known: list[str], repo: str) -> bool:
 
 # ── my issues / candidates listing (issue #7 task 5) ──────────────────
 
-# Broadest scope the Candidates filter can slice client-side: every issue
-# I reported in the last year (all statuses — the Recent-issues filter's
-# status dropdown narrows it). JQL "-365d" is a relative day offset.
-_MY_ISSUES_JQL = ('reporter = currentUser() AND created >= -365d '
-                  'ORDER BY created DESC')
+# Initial (default) fetcher query: assigned to me OR created by me, all
+# statuses, last 90 days — the widest slice the Recent-issues filter can
+# serve from cache. Selections outside it (longer range, "all issues"
+# scope) re-query the tracker with the user's own query.
+_INITIAL_ISSUES_DAYS = 90
+
+
+def _issues_jql(days: int = _INITIAL_ISSUES_DAYS, mine: bool = True) -> str:
+    """JQL for the issues listing: *days*-day window, optionally limited to
+    issues assigned to or reported by me. JQL relative offsets are days."""
+    who = "(reporter = currentUser() OR assignee = currentUser()) AND " if mine else ""
+    return f"{who}created >= -{days}d ORDER BY created DESC"
 
 
 def parse_created(value: str) -> datetime | None:
@@ -404,19 +411,21 @@ def _parse_jira_plain(out: str) -> list[dict] | None:
     return rows or None
 
 
-def _jira_my_issues(warnings: list[str]) -> list[dict]:
+def _jira_my_issues(warnings: list[str], days: int = _INITIAL_ISSUES_DAYS,
+                    mine: bool = True) -> list[dict]:
     """Jira rows via the first working seam: raw `request GET`, then
     jira-cli's `search --format json` (shim installs), then stock
     `issue list --plain`. All failing → [] + one collected warning."""
+    jql = _issues_jql(days, mine)
     attempts = (
         ("request", ("jira-cli", "request", "GET",
-                     f"search?jql={quote(_MY_ISSUES_JQL)}"
+                     f"search?jql={quote(jql)}"
                      "&maxResults=1000&fields=key,summary,status,created,reporter,description")),
-        ("search", ("jira-cli", "search", _MY_ISSUES_JQL,
+        ("search", ("jira-cli", "search", jql,
                     "--limit", "1000", "--format", "json")),
         ("issue list", ("jira-cli", "issue", "list", "--plain", "--no-headers",
                         "--no-truncate", "--columns", "key,summary,status,created",
-                        "--jql", _MY_ISSUES_JQL)),
+                        "--jql", jql)),
     )
     errors = []
     for kind, args in attempts:
@@ -434,31 +443,46 @@ def _jira_my_issues(warnings: list[str]) -> list[dict]:
     return []
 
 
-def _gh_my_issues(warnings: list[str]) -> list[dict]:
-    """All GitHub issues authored by me in the last year (any state — the
-    Recent-issues filter's status dropdown narrows it)."""
+def _gh_my_issues(warnings: list[str], days: int = _INITIAL_ISSUES_DAYS,
+                  mine: bool = True) -> list[dict]:
+    """GitHub issues in the last *days* (any state): authored or assigned
+    to me by default (*mine*), any author otherwise. gh search cannot OR
+    across qualifiers, so the mine path unions the author and assignee
+    searches (deduped by key) — the only place that costs 2 remote calls."""
     from datetime import datetime, timedelta, timezone
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=365)).date().isoformat()
-    try:
-        out = run_cmd("gh", "search", "issues", "--author=@me",
-                      f"created:>={cutoff}",
-                      "--limit", "1000", "--json",
-                      "repository,number,title,body,author,state,updatedAt,url,createdAt")
-    except HarnessError as e:
-        warnings.append(f"github: {e}")
-        return []
-    try:
-        data = json.loads(out or "[]")
-    except json.JSONDecodeError:
-        warnings.append("github: cannot parse gh search output")
-        return []
+    fields = "repository,number,title,body,author,state,updatedAt,url,createdAt"
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    scopes = (("--author=@me", "--assignee=@me") if mine else (None,))
+    data: list = []
+    for scope in scopes:
+        args = ["gh", "search", "issues",
+                f"created:>={cutoff}", "--limit", "1000", "--json", fields]
+        if scope:
+            args.insert(3, scope)
+        try:
+            out = run_cmd(*args)
+        except HarnessError as e:
+            warnings.append(f"github: {e}")
+            continue
+        try:
+            items = json.loads(out or "[]")
+        except json.JSONDecodeError:
+            warnings.append("github: cannot parse gh search output")
+            continue
+        if isinstance(items, list):
+            data += items
     rows = []
-    for it in data if isinstance(data, list) else []:
+    seen: set[str] = set()
+    for it in data:
         repo = (it.get("repository") or {}).get("nameWithOwner") or ""
         num = it.get("number")
         if not repo or num is None:
             continue
-        rows.append({"key": f"github:{repo}#{num}", "title": it.get("title", ""),
+        key = f"github:{repo}#{num}"
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({"key": key, "title": it.get("title", ""),
                      "url": it.get("url", ""),
                      "status": str(it.get("state") or "open").lower(),
                      "created": it.get("createdAt", ""),
@@ -472,8 +496,15 @@ _CACHE_TTL_SECONDS = 3600
 _CACHE_SWR_SECONDS = max(_CACHE_TTL_SECONDS * 10, 24 * 3600)
 
 
+def _cache_key(source: str, days: int, mine: bool) -> str:
+    """Cache variant for a (source, window, scope) query — selections
+    outside the initial superset land on their own key, so a broad
+    requery only ever hits the network once per variant."""
+    return f"{source}:{'mine' if mine else 'all'}{max(1, int(days))}"
+
+
 def _cached_source(source: str, fetch, warn: list,
-                   force: bool) -> list[dict]:
+                   force: bool, cache_key: str | None = None) -> list[dict]:
     """Per-source issue rows: cached rows are served within
     max(1h * 10, 1 day); older/absent entries trigger a live fetch that
     refreshes the cache (the next call serves the fresh rows, so a stale
@@ -484,9 +515,10 @@ def _cached_source(source: str, fetch, warn: list,
     from datetime import datetime, timezone
     from . import store_sqlite as sq
     db = sq.db_path()
+    key = cache_key or source
     if not force and db.exists():
         try:
-            rows, fetched_at = sq.get_issue_cache(db, source)
+            rows, fetched_at = sq.get_issue_cache(db, key)
             if rows and fetched_at:
                 age = (datetime.now(timezone.utc)
                        - datetime.fromisoformat(fetched_at)).total_seconds()
@@ -501,7 +533,7 @@ def _cached_source(source: str, fetch, warn: list,
         return []
     try:
         if db.exists():
-            sq.set_issue_cache(db, source, rows)
+            sq.set_issue_cache(db, key, rows)
     except Exception:
         pass
     return rows
@@ -556,13 +588,21 @@ def _source_enabled(source: str) -> bool:
     return True
 
 def list_my_issues(warnings: list[str] | None = None,
-                   force: bool = False) -> list[dict]:
+                   force: bool = False,
+                   days: int = _INITIAL_ISSUES_DAYS,
+                   mine: bool = True) -> list[dict]:
     """My issues across sources as {key, title, url, status, created,
     reporter, author, description}.
 
-    jira (reporter=me, all statuses, last year) + GitHub issues authored
-    by me (last year, any state). GitLab issues are intentionally omitted
-    (Jira covers work tracking; GitLab surfaces via PR/MR candidates).
+    Default (*days*=90, *mine*=True) serves the initial superset from the
+    variant cache: jira issues assigned to or reported by me (all
+    statuses, last 90 days) + GitHub issues authored or assigned to me
+    (any state, last 90 days). A caller whose selection is not covered by
+    it (longer window, "all issues" scope) re-queries with its own
+    *days*/*mine* — each variant caches under its own key, so a broad
+    requery costs at most one network round per (window, scope).
+    GitLab issues are intentionally omitted (Jira covers work tracking;
+    GitLab surfaces via PR/MR candidates).
     A source is skipped when every linked tracker of that vendor has
     fetch disabled (GitHub off by default, opt-in per tracker).
     Per-source failure contributes [] plus a warning — to stderr when
@@ -570,12 +610,15 @@ def list_my_issues(warnings: list[str] | None = None,
     Cached rows are served within max(1h * 10, 1 day); older entries
     trigger a live fetch unless *force* is set.
     """
+    days = max(1, int(days or _INITIAL_ISSUES_DAYS))
     warn = warnings if warnings is not None else []
     rows: list[dict] = []
     if _source_enabled("jira"):
-        rows += _cached_source("jira", _jira_my_issues, warn, force)
+        rows += _cached_source("jira", lambda w: _jira_my_issues(w, days, mine),
+                               warn, force, _cache_key("jira", days, mine))
     if _source_enabled("github"):
-        rows += _cached_source("github", _gh_my_issues, warn, force)
+        rows += _cached_source("github", lambda w: _gh_my_issues(w, days, mine),
+                               warn, force, _cache_key("github", days, mine))
     rows.sort(key=lambda r: r["created"], reverse=True)
     if warnings is None:
         for w in warn:

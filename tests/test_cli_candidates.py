@@ -31,7 +31,7 @@ def test_candidates_cli_tables(isolated_config, tmp_path, monkeypatch):
     r = _invoke("candidates")
     assert r.exit_code == 0, r.output
     assert "Unlinked PR/MRs" in r.stdout
-    assert "Recent issues (reported by me, last year)" in r.stdout
+    assert "Recent issues (assigned/created by me, last 90 days)" in r.stdout
     assert "(no unregistered worktrees)" in r.stdout
     # Title user content is Rich-escaped in the table path: the literal
     # "[beta]" must survive rendering (unescaped markup would be eaten).
@@ -46,11 +46,33 @@ def test_candidates_cli_csv_pulls_only(isolated_config, tmp_path, monkeypatch):
     assert r.exit_code == 0, r.output
     assert r.stdout.splitlines()[0] == "url,title,repo,updated"
     # CSV applies to the PR/MR table; the issues table stays a Rich table.
-    assert "Recent issues (reported by me, last year)" in r.stdout
+    assert "Recent issues (assigned/created by me, last 90 days)" in r.stdout
     assert "jira:IPG-981" in r.stdout
     # Titles stay raw for machine-readable output (no Rich escaping).
     assert "Add [beta] flag" in r.stdout
     assert "\\[beta]" not in r.stdout
+
+def test_candidates_issues_scope_flags(isolated_config, tmp_path, monkeypatch):
+    """--issues-days/--issues-scope requery with the selection; bad scope is a usage error."""
+    from workagent import trackers as tr
+    seen = {}
+
+    def fake(warnings=None, force=False, days=90, mine=True):
+        seen.update(force=force, days=days, mine=mine)
+        return [{"key": "jira:IPG-1", "title": "T", "url": "u",
+                 "status": "Done", "created": recent_created(200)}]
+
+    monkeypatch.setattr(tr, "list_my_issues", fake)
+    from workagent import cli_candidates as _cc
+    monkeypatch.setattr(_cc, "_candidate_prs", lambda: ([], []))
+    monkeypatch.setattr(_cc, "_scan_worktrees", lambda: [])
+    r = _invoke("candidates", "--json", "--issues-days", "365", "--issues-scope", "all")
+    assert r.exit_code == 0, r.output
+    assert seen == {"force": False, "days": 365, "mine": False}
+    # A 200-day-old Done issue is now served (was: 30-day cutoff dropped it).
+    assert json.loads(r.stdout)["issues"][0]["key"] == "jira:IPG-1"
+    r = _invoke("candidates", "--issues-scope", "bogus")
+    assert r.exit_code == 2
 
 
 def test_candidates_cli_linked_pr_excluded(isolated_config, tmp_path,

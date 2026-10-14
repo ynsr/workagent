@@ -50,10 +50,10 @@ export function rangeCutoff(range: IssuesRange): string {
 
 /**
  * Client-side filter over loaded issue rows. Scope derives from the
- * existing server queries, so no fetch change is needed:
- * - `mine`: rows reported/assigned to me — jira rows carry reporter=me
- *   (the server JQL is `reporter = currentUser()`); github rows authored
- *   by me also qualify. Off by default.
+ * server selection, so it stays correct as the fetcher requeries:
+ * - `mine`: rows I authored/reported/assigned — key prefix (jira:/github:
+ *   are me-scoped by construction) or an explicit author/reporter value.
+ *   Off by default.
  * - `all`: every loaded row, ignoring scope. Off by default, wins when on.
  * - `createdByMe`: rows I authored/reported — jira (reporter) + github
  *   (author). On by default. This is what the server returned before any
@@ -72,11 +72,10 @@ export function filterIssues(
   const q = query.trim().toLowerCase()
   const afterMs = after ? Date.parse(`${after}T00:00:00Z`) : NaN
   return rows.filter((issue) => {
-    // Both server queries are me-scoped by construction (jira JQL
-    // `reporter = currentUser()`, gh `--author=@me`), so key prefix is the
-    // reliable me-signal — field presence fails for old plain-seam jira
-    // rows that carry no reporter. Non-me rows (if any) qualify only via
-    // an explicit author/reporter value.
+    // The fetcher's mine-scoped queries (jira reporter/assignee=me, gh
+    // author/assignee=me) make the key prefix the reliable me-signal —
+    // field presence fails for old plain-seam jira rows that carry no
+    // reporter.
     const lk = issue.key.toLowerCase()
     const meScoped = lk.startsWith("jira:") || lk.startsWith("github:")
       || Boolean((issue.author || issue.reporter || "").trim())
@@ -109,7 +108,19 @@ export function filterIssues(
 }
 
 /** Filter form + filtered count for the Recent issues tab. */
-export function useIssuesFilter(rows: IssueRow[]) {
+export interface IssuesFilterState {
+  scope: IssuesScope
+  setScope: React.Dispatch<React.SetStateAction<IssuesScope>>
+  range: IssuesRange
+  setRange: React.Dispatch<React.SetStateAction<IssuesRange>>
+  after: string
+  query: string
+  setQuery: React.Dispatch<React.SetStateAction<string>>
+  status: IssuesStatusFilter
+  setStatus: React.Dispatch<React.SetStateAction<IssuesStatusFilter>>
+  filtered: IssueRow[]
+}
+export function useIssuesFilter(rows: IssueRow[]): IssuesFilterState {
   const [scope, setScope] = useState<IssuesScope>(DEFAULT_ISSUES_SCOPE)
   const [range, setRange] = useState<IssuesRange>(DEFAULT_ISSUES_RANGE)
   const after = rangeCutoff(range)

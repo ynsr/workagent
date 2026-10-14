@@ -17,7 +17,7 @@ import {
   errorText,
 } from "@/components/StatusFeedback"
 import { api, type IssueRow } from "@/lib/api"
-import { IssuesFilterForm, NoFilteredIssues, useIssuesFilter } from "@/components/IssuesFilter"
+import { IssuesFilterForm, NoFilteredIssues, useIssuesFilter, type IssuesFilterState } from "@/components/IssuesFilter"
 import type { UseQueryResult } from "@tanstack/react-query"
 import { queryKeys, useCandidatesIssues, useCandidatesPrs, useCandidatesWorktrees } from "@/lib/queries"
 import { exactDateTime, relativeDate } from "@/lib/format"
@@ -46,12 +46,24 @@ export function CandidatesCard() {
   // immediately while the rest streams in (per-tab skeletons below).
   // Unmount-safe: react-query cancels in-flight fetches on unmount.
   const prsQuery = useCandidatesPrs()
-  const issuesQuery = useCandidatesIssues()
+  // The initial fetcher query (assigned/created by me, last 90 days) is
+  // always warming its cache key. The client-side filter rides on it —
+  // plus, when the user's selection is NOT covered by it (range "Last
+  // year", scope "all"), a second gated query requeries the tracker with
+  // the selection's own query under its own cache key. The table prefers
+  // the broad rows the moment they land, but keeps showing the initial
+  // rows (with the overlay badge) while they load — no blocking.
+  const initialIssuesQuery = useCandidatesIssues(false, 90, true)
+  const filterProbe = useIssuesFilter(initialIssuesQuery.data?.issues ?? [])
+  const broadRange = filterProbe.range === "365" ? 365 : 90
+  const broadMine = !filterProbe.scope.all
+  const needsBroad = filterProbe.range === "365" || filterProbe.scope.all
+  const broadIssuesQuery = useCandidatesIssues(needsBroad, broadRange, broadMine, needsBroad)
+  const issuesQuery = broadIssuesQuery.data ? broadIssuesQuery : initialIssuesQuery
   const worktreesQuery = useCandidatesWorktrees()
   const [tab, setTab] = useState<Tab>("prs")
   const { copied, copy } = useCopyFeedback()
   const [refreshing, setRefreshing] = useState(false)
-
   async function handleCopyRef(ref: string) {
     await copy(ref, `Copied ${ref}`)
   }
@@ -62,10 +74,15 @@ export function CandidatesCard() {
       await Promise.all([
         qc.fetchQuery({ queryKey: queryKeys.candidatesPrs, queryFn: () => api.candidatesPrs() }),
         qc.fetchQuery({
-          queryKey: queryKeys.candidatesIssues(true),
-          queryFn: () => api.candidatesIssues({ force: true }),
+          queryKey: queryKeys.candidatesIssues(true, 90, true),
+          queryFn: () => api.candidatesIssues({ force: true, days: 90, mine: true }),
           staleTime: 0,
         }),
+        ...(needsBroad ? [qc.fetchQuery({
+          queryKey: queryKeys.candidatesIssues(true, broadRange, broadMine),
+          queryFn: () => api.candidatesIssues({ force: true, days: broadRange, mine: broadMine }),
+          staleTime: 0,
+        })] : []),
         qc.fetchQuery({ queryKey: queryKeys.candidatesWorktrees, queryFn: () => api.candidatesWorktrees() }),
       ])
       toast.success("Candidates re-fetched live")
@@ -221,6 +238,7 @@ export function CandidatesCard() {
           <IssuesTab
             query={issuesQuery}
             issues={issues}
+            filter={filterProbe}
             onStart={(issue) => void handleAction({
               command: "start", args: [issue.key],
               label: `Start ${issue.key}`,
@@ -294,17 +312,18 @@ export function CandidatesCard() {
 function IssuesTab({
   query,
   issues,
+  filter: f,
   onStart,
   onCopyRef,
   copied,
 }: {
   query: UseQueryResult<{ issues: IssueRow[]; warnings: string[] }, unknown>
   issues: IssueRow[]
+  filter: IssuesFilterState
   onStart: (issue: IssueRow) => void
   onCopyRef: (key: string) => void
   copied: boolean
 }) {
-  const f = useIssuesFilter(issues)
   if (query.isPending && !query.data) {
     return <TableSkeleton rows={3} />
   }

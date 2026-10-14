@@ -62,18 +62,23 @@ cleanup/register). Frontend: `web/` (Vite + React + TS), build →
 **`workagent candidates`**: two Rich tables — "Unlinked PR/MRs" (open
 PR/MRs of every registered repo, minus URLs already linked in
 `links.json`; per-repo CLI failures → stderr warning) and "Recent
-issues (reported by me, last year)" (jira `list_my_issues`: reporter
-= me, all statuses, last year — plus GitHub issues authored by me, any
-state, last year; the Recent-issues web filter slices range/status/scope
-client-side). `--json` prints `{"prs": […],
+issues (assigned/created by me, last 90 days)" (initial superset: jira
+`(reporter = currentUser() OR assignee = currentUser())` any status,
+gh author=@me ∪ assignee=@me deduped; `candidates --issues-days
+1..365 --issues-scope mine|all` and `/api/issues?days=&mine=&force=`
+requery under per-(window, scope) variant server-cache keys; the
+Recent-issues web filter warms the initial variant always and lazily
+fetches a broad variant only for selections outside it (Last year /
+All), filtering client-side). `--json` prints `{"prs": […],
 "issues": […]}` (stdout-only); `--csv` renders the PR/MR table as CSV.
-The web endpoints `/api/issues` (all my issues + `warning`) and
-`/api/candidates` (same data as the CLI) share `_candidates()` /
-`trackers.list_my_issues()` and are read-only GETs that always return
-200. `refs.fetch_open_prs(tool, cwd)` raises (caller decides);
-`trackers.list_my_issues()` never raises. glab issues are intentionally
-omitted (Jira covers work tracking). `store.record_link` stamps
-`added_at` on first sight and never bumps it (Task 7's sort).
+The web endpoints `/api/issues` (issues for the (window, scope)
+selection + `warning`) and `/api/candidates` (same data as the CLI)
+share `_candidates()` / `trackers.list_my_issues()` and are read-only
+GETs that always return 200. `refs.fetch_open_prs(tool, cwd)` raises
+(caller decides); `trackers.list_my_issues()` never raises. glab issues
+are intentionally omitted (Jira covers work tracking).
+`store.record_link` stamps `added_at` on first sight and never bumps it
+(Task 7's sort).
 
 
 **`workagent start <issue>`**: parse ref → `trackers.resolve_for_tracker`

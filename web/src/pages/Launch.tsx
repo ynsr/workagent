@@ -139,11 +139,11 @@ export function Launch() {
     setRefreshingIssues(true)
     try {
       const fresh = await qc.fetchQuery({
-        queryKey: [...queryKeys.issues, true],
+        queryKey: [...queryKeys.issues(), true],
         queryFn: () => api.issues({ force: true }),
         staleTime: 0,
       })
-      qc.setQueryData(queryKeys.issues, fresh)
+      qc.setQueryData(queryKeys.issues(), fresh)
       // Remount the Issue ref dropdown so its first-open fetch reloads
       // the now-fresh server cache immediately.
       setIssuesNonce((n) => n + 1)

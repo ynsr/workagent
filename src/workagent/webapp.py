@@ -268,18 +268,22 @@ def create_app(static_dir: Path, host: str, port: int,
                     "state": f"unknown: {e}"}
 
     @app.get("/api/issues")
-    def my_issues(force: bool = False) -> dict:
-        """My open issues; 200 + warning even when the tracker CLIs are
-        missing (read-only, never raises)."""
+    def my_issues(force: bool = False, days: int = 90, mine: bool = True) -> dict:
+        """Issues for the user's (window, scope) selection (mine =
+        assigned/created by me; 200 + warning even when the tracker CLIs
+        are missing — read-only, never raises)."""
+        days = max(1, min(365, int(days or 90)))
         warnings: list[str] = []
-        return {"issues": trackers_mod.list_my_issues(warnings, force=force),
+        return {"issues": trackers_mod.list_my_issues(warnings, force=force,
+                                                      days=days, mine=mine),
                 "warning": "; ".join(warnings) or None}
 
     @app.get("/api/candidates")
-    def candidates(force: bool = False) -> dict:
-        """Unlinked open PR/MRs + my recent issues (server-side 30-day
-        filter) + unregistered on-disk worktrees; read-only."""
-        out = _candidates(force=force)
+    def candidates(force: bool = False, days: int = 90, mine: bool = True) -> dict:
+        """Unlinked open PR/MRs + issues for the user's (window, scope)
+        selection + unregistered on-disk worktrees; read-only."""
+        days = max(1, min(365, int(days or 90)))
+        out = _candidates(force=force, days=days, mine=mine)
         return {"prs": out["prs"], "issues": out["issues"],
                 "worktrees": out["worktrees"], "warnings": out["warnings"]}
 
@@ -291,10 +295,12 @@ def create_app(static_dir: Path, host: str, port: int,
         return {"prs": prs, "warnings": warnings}
 
     @app.get("/api/candidates/issues")
-    def candidates_issues(force: bool = False) -> dict:
-        """My recent issues, 30-day filter (cached 1h; force re-queries). Read-only."""
+    def candidates_issues(force: bool = False, days: int = 90, mine: bool = True) -> dict:
+        """Issues for the user's (window, scope) selection (served by
+        variant cache key; out-of-superset selections requery). Read-only."""
+        days = max(1, min(365, int(days or 90)))
         from . import cli_candidates as _cand
-        issues, warnings = _cand._candidate_issues(force=force)
+        issues, warnings = _cand._candidate_issues(force=force, days=days, mine=mine)
         return {"issues": issues, "warnings": warnings}
 
     @app.get("/api/candidates/worktrees")

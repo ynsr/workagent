@@ -43,15 +43,29 @@ def test_api_issues_force_bypasses_cache(client, monkeypatch):
     """?force=true reaches list_my_issues with force=True (live re-fetch)."""
     seen = {}
 
-    def fake(warnings, force=False):
-        seen["force"] = force
+    def fake(warnings, force=False, days=90, mine=True):
+        seen.update(force=force, days=days, mine=mine)
         return []
 
     monkeypatch.setattr(trackers, "list_my_issues", fake)
     assert client.get("/api/issues").json()["issues"] == []
-    assert seen["force"] is False
+    assert seen == {"force": False, "days": 90, "mine": True}
     assert client.get("/api/issues?force=true").json()["issues"] == []
     assert seen["force"] is True
+
+
+def test_api_issues_selection_params_requery(client, monkeypatch):
+    """?days=&mine= reach list_my_issues — selections outside the initial
+    superset requery under their own cache key."""
+    seen = {}
+
+    def fake(warnings, force=False, days=90, mine=True):
+        seen.update(force=force, days=days, mine=mine)
+        return []
+
+    monkeypatch.setattr(trackers, "list_my_issues", fake)
+    assert client.get("/api/candidates/issues?days=365&mine=false").json()["issues"] == []
+    assert seen == {"force": False, "days": 365, "mine": False}
 
 
 def test_api_issues_jira_ok(client, monkeypatch, tmp_path):
@@ -94,14 +108,14 @@ def test_candidates_exclude_linked(client, monkeypatch, tmp_path):
     assert body["prs"][0]["repo"] == "o/r"
 
 
-def test_candidates_issues_year_all_statuses(client, monkeypatch, tmp_path):
-    """Every issue within the year (any status) is served — the Recent-issues
-    filter slices the range/status client-side."""
+def test_candidates_issues_initial_superset_window(client, monkeypatch, tmp_path):
+    """The initial (assigned/created, 90d) slice is served in full — only
+    selections outside it (e.g. Last year) requery the tracker."""
     _register_repo(tmp_path)
     monkeypatch.setattr(cli, "_repo_tool", lambda path: None)
     monkeypatch.setattr(cli.refs, "fetch_open_prs", lambda tool, cwd: [])
     monkeypatch.setattr(trackers, "list_my_issues", lambda *a, **k: [
-        _issue_row(300, "jira:IPG-OLD"),
+        _issue_row(80, "jira:IPG-OLD"),
         _issue_row(20, "jira:IPG-MID"),
         _issue_row(2, "jira:IPG-NEW"),
     ])
