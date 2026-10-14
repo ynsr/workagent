@@ -249,6 +249,7 @@ def release_status(repo_name: str, force: bool = False) -> dict:
     if db is not None:
         try:
             _sq.set_release_diff_cache(db, repo_name, count)
+            _, fetched_at = _sq.get_release_diff_cache(db, repo_name)
         except Exception:
             pass
     return _finish(count, False)

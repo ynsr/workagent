@@ -131,8 +131,8 @@ def repo_update(
         if release_branch is not None:
             conn.execute("UPDATE repos SET release_branch = ? WHERE key_ref = ?",
                          (release_branch, name))
-    _print_result({"updated": name, "default_branch": default_branch,
-                   "release_branch": release_branch}, json_output)
+    _print_result({"updated": name, "default_branch": default_branch or "",
+                   "release_branch": release_branch or ""}, json_output)
 
 
 @repo_app.command("remove")
