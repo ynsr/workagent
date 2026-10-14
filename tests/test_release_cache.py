@@ -35,3 +35,20 @@ def test_register_repo_seeds_branches(tmp_path, monkeypatch):
     _repos.register_repo("rx", tmp_path, tracker_key="jira:RX")
     rows = {r[1] for r in _sq.connect(db).execute("PRAGMA table_info(repos)")}
     assert {"default_branch", "release_branch"} <= rows
+def test_release_status_serves_stale_without_fetch(tmp_path, monkeypatch):
+    from workagent import repos as _repos
+    from workagent import store_sqlite as _sq
+    from workagent import store as _store
+    db = tmp_path / "state.db"
+    _sq.init_db(db)
+    monkeypatch.setattr(_sq, "db_path", lambda: db)
+    _sq.register_repo_row(db, "rx", "/r/rx", "jira:RX")
+    with _sq.connect(db) as _c:
+        _c.execute("UPDATE repos SET default_branch='main', release_branch='master' WHERE key_ref='rx'")
+        _c.execute("INSERT INTO release_diff_cache VALUES ('rx', 4, '2020-01-01T00:00:00+00:00')")
+    def _boom(*a, **k):
+        raise AssertionError("must not fetch")
+    monkeypatch.setattr(_repos, "release_diff_count", _boom)
+    monkeypatch.setattr(_store, "load_repos", lambda: {"rx": {"path": "/r/rx", "default_branch": "main", "release_branch": "master"}})
+    st = _repos.release_status("rx")
+    assert st["diff_count"] == 4 and st["stale"] is True and st["releasable"] is True

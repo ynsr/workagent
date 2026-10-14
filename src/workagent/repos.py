@@ -155,6 +155,92 @@ def backfill_release_branches() -> None:
         except Exception as e:
             print(f"warning: cannot persist branches for {name}: {e}", file=sys.stderr)
 
+_RELEASE_DIFF_TTL_SECONDS = 3600
+_RELEASE_DIFF_SWR_SECONDS = max(_RELEASE_DIFF_TTL_SECONDS * 10, 24 * 3600)
+
+
+def release_status(repo_name: str, force: bool = False) -> dict:
+    """Read-only releasability for *repo_name* (SWR over release_diff_cache).
+
+    Fresh (<1h) serves instantly; expired-but-present (<1d) serves stale +
+    one background revalidation; empty/force fetches live. Offline fetch
+    with stale rows serves stale + reason; offline with no rows reports
+    reason "cannot reach remote". Never raises for unknown repo — returns
+    releasable False with reason.
+    """
+    from datetime import datetime, timezone
+    from . import swr as _swr
+    info = store.load_repos().get(repo_name)
+    if not info:
+        return {"repo": repo_name, "path": "", "default_branch": "", "release_branch": "",
+                "diff_count": 0, "releasable": False, "reason": "unknown repo", "stale": False}
+    default = str(info.get("default_branch", "") or "")
+    release = str(info.get("release_branch", "") or "")
+    base = {"repo": repo_name, "path": str(info.get("path", "")), "default_branch": default,
+            "release_branch": release, "diff_count": 0, "releasable": False, "reason": "", "stale": False}
+    if not release:
+        base["reason"] = "no release branch"
+        return base
+    if not default:
+        base["reason"] = "no default branch"
+        return base
+    from . import store_sqlite as _sq
+    try:
+        db = _sq.db_path()
+    except Exception:
+        db = None
+    cached, fetched_at = (None, "")
+    if db is not None and not force:
+        try:
+            cached, fetched_at = _sq.get_release_diff_cache(db, repo_name)
+        except Exception:
+            cached, fetched_at = (None, "")
+    def _live() -> int:
+        return release_diff_count(Path(str(info["path"])).expanduser(), default, release)
+    def _finish(count: int, stale: bool, reason: str = "") -> dict:
+        base.update(diff_count=count, releasable=count > 0, stale=stale,
+                    reason="" if count > 0 else "already in sync")
+        if reason:
+            base["reason"] = reason
+        return base
+    if cached is not None and not force:
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(fetched_at)).total_seconds()
+        except Exception:
+            age = float("inf")
+        if age < _RELEASE_DIFF_TTL_SECONDS:
+            return _finish(cached, False)
+        if age < _RELEASE_DIFF_SWR_SECONDS:
+            def _refresh() -> None:
+                try:
+                    _sq.set_release_diff_cache(db, repo_name, _live())
+                except Exception:
+                    pass
+            _swr.serve_stale_or_refresh(stale=True, is_fresh=False, refresh=_refresh,
+                                        key=f"release:{repo_name}")
+            return _finish(cached, True)
+    try:
+        count = _live()
+    except HarnessError as e:
+        if cached is not None:
+            base.update(diff_count=cached, releasable=cached > 0, stale=True,
+                        reason=f"cannot reach remote ({e}); showing cached count")
+            return base
+        base["reason"] = f"cannot reach remote ({e})"
+        return base
+    except Exception as e:
+        if cached is not None:
+            base.update(diff_count=cached, releasable=cached > 0, stale=True,
+                        reason=f"cannot reach remote ({e}); showing cached count")
+            return base
+        base["reason"] = f"cannot reach remote ({e})"
+        return base
+    if db is not None:
+        try:
+            _sq.set_release_diff_cache(db, repo_name, count)
+        except Exception:
+            pass
+    return _finish(count, False)
 
 def current_branch(path: Path) -> str | None:
     try:
