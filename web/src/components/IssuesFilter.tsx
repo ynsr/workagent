@@ -49,18 +49,19 @@ export function rangeCutoff(range: IssuesRange): string {
 }
 
 /**
- * Client-side filter over loaded issue rows. Scope derives from the
- * server selection, so it stays correct as the fetcher requeries:
- * - `mine`: rows I authored/reported/assigned — key prefix (jira:/github:
- *   are me-scoped by construction) or an explicit author/reporter value.
- *   Off by default.
+ * Client-side filter over loaded issue rows. Scope splits by query origin:
+ * - `mine` ("Assigned to me"): rows that matched the assignee-me search
+ *   (`assigned_to_me`; jira assignee / github assignee search). Off by default.
  * - `all`: every loaded row, ignoring scope. Off by default, wins when on.
- * - `createdByMe`: rows I authored/reported — jira (reporter) + github
- *   (author). On by default. This is what the server returned before any
- *   filter existed, so default-on preserves the old table contents.
- * `all` wins when combined with the others. Status matches loosely
- * (Open matches "open"/"to do", In Progress matches jira variants);
- * Closed matches "closed"/"done"/"resolved".
+ * - `createdByMe` ("Created by me"): rows that matched the reporter/author
+ *   search (`created_by_me`). On by default — this is what the server
+ *   returned before any filter existed, so default-on preserves the old
+ *   table contents.
+ * Rows from old caches carry neither flag and count as me-scoped for both
+ * (they came from the union query either way). `all` wins when combined
+ * with the others. Status matches loosely (Open matches "open"/"to do",
+ * In Progress matches jira variants); Closed matches
+ * "closed"/"done"/"resolved".
  */
 export function filterIssues(
   rows: IssueRow[],
@@ -72,16 +73,16 @@ export function filterIssues(
   const q = query.trim().toLowerCase()
   const afterMs = after ? Date.parse(`${after}T00:00:00Z`) : NaN
   return rows.filter((issue) => {
-    // The fetcher's mine-scoped queries (jira reporter/assignee=me, gh
-    // author/assignee=me) make the key prefix the reliable me-signal —
-    // field presence fails for old plain-seam jira rows that carry no
-    // reporter.
-    const lk = issue.key.toLowerCase()
-    const meScoped = lk.startsWith("jira:") || lk.startsWith("github:")
-      || Boolean((issue.author || issue.reporter || "").trim())
+    // Query-origin flags are the reliable signal — the fetcher tags each
+    // row with the search it matched, so no login comparison is needed.
+    // Old-cache rows carry neither flag: they matched the union query, so
+    // they count for both scopes.
+    const hasFlags = issue.assigned_to_me !== undefined || issue.created_by_me !== undefined
+    const assigned = hasFlags ? issue.assigned_to_me === true : true
+    const created = hasFlags ? issue.created_by_me === true : true
     const inScope = scope.all
       ? true
-      : (scope.mine && meScoped) || (scope.createdByMe && meScoped)
+      : (scope.mine && assigned) || (scope.createdByMe && created)
     if (!inScope) return false
     if (!Number.isNaN(afterMs) && after) {
       const createdMs = Date.parse(issue.created || "")
@@ -167,9 +168,9 @@ export function IssuesFilterForm({
           id="issues-scope-mine"
           checked={scope.mine}
           onChange={(v) => setScope({ ...scope, mine: v })}
-          label="My Issues"
+          label="Assigned to me"
           flag="scope"
-          description="Issues reported to me (jira)"
+          description="Issues where I am the assignee"
         />
         <CheckRow
           id="issues-scope-all"
@@ -183,9 +184,9 @@ export function IssuesFilterForm({
           id="issues-scope-created"
           checked={scope.createdByMe}
           onChange={(v) => setScope({ ...scope, createdByMe: v })}
-          label="My Created Issues"
+          label="Created by me"
           flag="scope"
-          description="Issues I authored (github)"
+          description="Issues I reported (jira) or authored (github)"
         />
       </div>
       <div className="grid gap-3 sm:grid-cols-3">

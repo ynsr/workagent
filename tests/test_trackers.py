@@ -169,8 +169,8 @@ def test_list_my_issues_jira_search_fallback(isolated_config, monkeypatch):
     rows = trackers.list_my_issues()
     assert rows[0]["key"] == "jira:IPG-7" and rows[0]["status"] == "To Do"
     assert calls[1][1] == "search"
-    assert calls[1][2] == ('(reporter = currentUser() OR assignee = currentUser()) '
-                           'AND created >= -90d ORDER BY created DESC')
+    assert calls[1][2] == ('assignee = currentUser() AND '
+                           'created >= -90d ORDER BY created DESC')
 
 def test_list_my_issues_jira_plain_fallback(isolated_config, monkeypatch):
     """Stock jira-cli without request/search: plain issue list, 2+ space
@@ -318,6 +318,58 @@ def test_initial_query_is_assigned_or_created_90d():
                    "AND created >= -90d ORDER BY created DESC")
     assert trackers._issues_jql(365, False) == "created >= -365d ORDER BY created DESC"
 
+
+def test_jql_split_tags_assignee_and_reporter():
+    """Mine scope runs two origin-tagged JQL queries (assignee-me +
+    reporter-me); their union still covers the old OR query's slice."""
+    from workagent import trackers
+    split = trackers._issues_jql_split()
+    assert split == [("assigned_to_me", "assignee = currentUser() AND created >= -90d ORDER BY created DESC"),
+                     ("created_by_me", "reporter = currentUser() AND created >= -90d ORDER BY created DESC")]
+
+
+def test_jira_rows_carry_query_origin(monkeypatch):
+    """A row from the assignee query tags assigned only; a row from both
+    queries tags both (dedup keeps one row with OR-ed flags)."""
+    import json
+    from workagent import trackers
+    def payload(key):
+        return json.dumps([{"key": key, "fields": {
+            "summary": "S", "status": {"name": "To Do"},
+            "created": "2026-09-20T10:00:00.000+0000",
+            "reporter": {"name": "someone"}, "assignee": {"name": "me"}}}])
+    def fake(*a, **k):
+        if a[:2] == ("jira-cli", "request"):
+            jql = a[3]
+            if jql.startswith("assignee"):
+                return payload("IPG-1")
+            return payload("IPG-1") if "reporter" in jql else "Unknown: request"
+        raise HarnessError("command not found: gh")
+    monkeypatch.setattr(trackers, "run_cmd", fake)
+    rows = trackers._jira_my_issues([], days=90, mine=True)
+    assert len(rows) == 1
+    assert rows[0]["assigned_to_me"] is True and rows[0]["created_by_me"] is True
+
+
+def test_gh_rows_carry_search_origin(monkeypatch):
+    """Author-only match tags created; a match in both searches tags both."""
+    import json
+    from workagent import trackers
+    mine_only = {"repository": {"nameWithOwner": "o/r"}, "number": 7,
+                 "title": "T", "body": "", "author": {"login": "me"},
+                 "state": "open", "url": "u", "createdAt": "2026-10-01T00:00:00Z"}
+    shared = dict(mine_only, number=8)
+    def fake(*a, **k):
+        import json as _json
+        if "--author=@me" in a:
+            return _json.dumps([mine_only, shared])
+        return _json.dumps([shared])
+    monkeypatch.setattr(trackers, "run_cmd", fake)
+    rows = {r["key"]: r for r in trackers._gh_my_issues([], days=90, mine=True)}
+    assert rows["github:o/r#7"]["created_by_me"] is True
+    assert rows["github:o/r#7"]["assigned_to_me"] is False
+    assert rows["github:o/r#8"]["created_by_me"] is True
+    assert rows["github:o/r#8"]["assigned_to_me"] is True
 
 def test_gh_query_unions_author_and_assignee(monkeypatch):
     """The mine path unions author + assignee searches (deduped); the all

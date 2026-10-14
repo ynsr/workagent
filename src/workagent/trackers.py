@@ -341,6 +341,15 @@ def _issues_jql(days: int = _INITIAL_ISSUES_DAYS, mine: bool = True) -> str:
     return f"{who}created >= -{days}d ORDER BY created DESC"
 
 
+def _issues_jql_split(days: int = _INITIAL_ISSUES_DAYS) -> list[tuple[str, str]]:
+    """Mine-scoped JQL as two origin-tagged queries: assignee-me and
+    reporter-me. The tag becomes the row's `assigned_to_me` /
+    `created_by_me` flag, so the UI can split "assigned to me" from
+    "reported by me" without knowing my login."""
+    base = f"created >= -{days}d ORDER BY created DESC"
+    return [("assigned_to_me", f"assignee = currentUser() AND {base}"),
+            ("created_by_me", f"reporter = currentUser() AND {base}")]
+
 def parse_created(value: str) -> datetime | None:
     """Parse an ISO-8601 `created` stamp (jira `+0000`, gh/glab `Z`) to an
     aware UTC datetime; None when unparseable."""
@@ -358,12 +367,19 @@ def parse_created(value: str) -> datetime | None:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
+def _jira_name(person) -> str:
+    """Display/name login of a Jira user object (name preferred, display fallback)."""
+    if not isinstance(person, dict):
+        return ""
+    return str(person.get("name") or person.get("displayName") or "")
+
+
 def _jira_row(key: str, title: str, status: str, created: str,
-              reporter: str = "", description: str = "") -> dict:
+              reporter: str = "", description: str = "", assignee: str = "") -> dict:
     return {"key": f"jira:{key}", "title": title, "status": status,
             "created": created,
             "url": refs.issue_url(f"jira:{key}") or "",
-            "reporter": reporter, "description": description}
+            "reporter": reporter, "assignee": assignee, "description": description}
 
 
 def _parse_jira_payload(out: str | None) -> list[dict] | None:
@@ -386,10 +402,9 @@ def _parse_jira_payload(out: str | None) -> list[dict] | None:
         rows.append(_jira_row(key, str(fields.get("summary") or ""),
                               str((fields.get("status") or {}).get("name") or ""),
                               str(fields.get("created") or ""),
-                              str((fields.get("reporter") or {}).get("name")
-                                  or (fields.get("reporter") or {}).get("displayName")
-                                  or ""),
-                              str(fields.get("description") or "")))
+                              _jira_name(fields.get("reporter")),
+                              str(fields.get("description") or ""),
+                              _jira_name(fields.get("assignee"))))
     return rows
 
 
@@ -415,32 +430,65 @@ def _jira_my_issues(warnings: list[str], days: int = _INITIAL_ISSUES_DAYS,
                     mine: bool = True) -> list[dict]:
     """Jira rows via the first working seam: raw `request GET`, then
     jira-cli's `search --format json` (shim installs), then stock
-    `issue list --plain`. All failing → [] + one collected warning."""
-    jql = _issues_jql(days, mine)
-    attempts = (
-        ("request", ("jira-cli", "request", "GET",
-                     f"search?jql={quote(jql)}"
-                     "&maxResults=1000&fields=key,summary,status,created,reporter,description")),
-        ("search", ("jira-cli", "search", jql,
-                    "--limit", "1000", "--format", "json")),
-        ("issue list", ("jira-cli", "issue", "list", "--plain", "--no-headers",
-                        "--no-truncate", "--columns", "key,summary,status,created",
-                        "--jql", jql)),
-    )
+    `issue list --plain`. All failing → [] + one collected warning.
+
+    Mine-scoped rows carry their query origin: `assigned_to_me` /
+    `created_by_me` (True when the row came back from the assignee /
+    reporter query; both when it matched both — your PAN-1095 case).
+    The *issue list* seam carries no user fields, so its rows tag both
+    True (they matched the union JQL either way)."""
+    jqls = (_issues_jql_split(days) if mine else [(None, _issues_jql(days, False))])
+    out_rows: dict[str, dict] = {}
     errors = []
-    for kind, args in attempts:
-        try:
-            out = run_cmd(*args)
-        except HarnessError as e:
-            errors.append(f"{kind}: {e}")
+    for tag, jql in jqls:
+        attempts = (
+            ("request", ("jira-cli", "request", "GET",
+                         f"search?jql={quote(jql)}"
+                         "&maxResults=1000&fields=key,summary,status,created,reporter,assignee,description")),
+            ("search", ("jira-cli", "search", jql,
+                        "--limit", "1000", "--format", "json")),
+            ("issue list", ("jira-cli", "issue", "list", "--plain", "--no-headers",
+                            "--no-truncate", "--columns", "key,summary,status,created",
+                            "--jql", jql)),
+        )
+        got: list[dict] | None = None
+        used_plain = False
+        for kind, args in attempts:
+            try:
+                out = run_cmd(*args)
+            except HarnessError as e:
+                errors.append(f"{kind}: {e}")
+                continue
+            got = _parse_jira_payload(out) if kind != "issue list" \
+                else _parse_jira_plain(out or "")
+            used_plain = (kind == "issue list")
+            if got is not None:
+                break
+            errors.append(f"{kind}: unavailable/invalid output")
+        if got is None:
             continue
-        rows = _parse_jira_payload(out) if kind != "issue list" \
-            else _parse_jira_plain(out or "")
-        if rows is not None:
-            return rows
-        errors.append(f"{kind}: unavailable/invalid output")
-    warnings.append("jira: " + "; ".join(errors))
-    return []
+        for row in got:
+            key = row["key"]
+            if tag is None:
+                # All-scope / plain-seam: origin unknown → both True.
+                row["assigned_to_me"] = True
+                row["created_by_me"] = True
+            elif used_plain:
+                row["assigned_to_me"] = True
+                row["created_by_me"] = True
+            else:
+                row[tag] = True
+            if key in out_rows:
+                prev = out_rows[key]
+                prev["assigned_to_me"] = prev.get("assigned_to_me") or row.get("assigned_to_me")
+                prev["created_by_me"] = prev.get("created_by_me") or row.get("created_by_me")
+            else:
+                row.setdefault("assigned_to_me", False)
+                row.setdefault("created_by_me", False)
+                out_rows[key] = row
+    if not out_rows and errors:
+        warnings.append("jira: " + "; ".join(errors))
+    return list(out_rows.values())
 
 
 def _gh_my_issues(warnings: list[str], days: int = _INITIAL_ISSUES_DAYS,
@@ -448,13 +496,17 @@ def _gh_my_issues(warnings: list[str], days: int = _INITIAL_ISSUES_DAYS,
     """GitHub issues in the last *days* (any state): authored or assigned
     to me by default (*mine*), any author otherwise. gh search cannot OR
     across qualifiers, so the mine path unions the author and assignee
-    searches (deduped by key) — the only place that costs 2 remote calls."""
+    searches (deduped by key) — the only place that costs 2 remote calls.
+
+    Mine-scoped rows carry their search origin: `assigned_to_me` /
+    `created_by_me` (author search → created, assignee search → assigned;
+    both when the row matched both). All-scope rows tag both True."""
     from datetime import datetime, timedelta, timezone
-    fields = "repository,number,title,body,author,state,updatedAt,url,createdAt"
+    fields = "repository,number,title,body,author,assignees,state,updatedAt,url,createdAt"
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
-    scopes = (("--author=@me", "--assignee=@me") if mine else (None,))
-    data: list = []
-    for scope in scopes:
+    scopes = ((("--author=@me", "created_by_me"), ("--assignee=@me", "assigned_to_me")) if mine else ((None, None),))
+    data: list[tuple] = []
+    for scope, tag in scopes:
         args = ["gh", "search", "issues",
                 f"created:>={cutoff}", "--limit", "1000", "--json", fields]
         if scope:
@@ -470,26 +522,32 @@ def _gh_my_issues(warnings: list[str], days: int = _INITIAL_ISSUES_DAYS,
             warnings.append("github: cannot parse gh search output")
             continue
         if isinstance(items, list):
-            data += items
-    rows = []
-    seen: set[str] = set()
-    for it in data:
+            data += [(it, tag) for it in items]
+    rows: dict[str, dict] = {}
+    for it, tag in data:
         repo = (it.get("repository") or {}).get("nameWithOwner") or ""
         num = it.get("number")
         if not repo or num is None:
             continue
         key = f"github:{repo}#{num}"
-        if key in seen:
-            continue
-        seen.add(key)
-        rows.append({"key": key, "title": it.get("title", ""),
-                     "url": it.get("url", ""),
-                     "status": str(it.get("state") or "open").lower(),
-                     "created": it.get("createdAt", ""),
-                     "author": (it.get("author") or {}).get("login", "") or "",
-                     "reporter": (it.get("author") or {}).get("login", "") or "",
-                     "description": it.get("body", "") or ""})
-    return rows
+        row = rows.get(key)
+        if row is None:
+            row = {"key": key, "title": it.get("title", ""),
+                   "url": it.get("url", ""),
+                   "status": str(it.get("state") or "open").lower(),
+                   "created": it.get("createdAt", ""),
+                   "author": (it.get("author") or {}).get("login", "") or "",
+                   "reporter": (it.get("author") or {}).get("login", "") or "",
+                   "assignees": [str(a.get("login") or "") for a in (it.get("assignees") or []) if a.get("login")],
+                   "assigned_to_me": False, "created_by_me": False,
+                   "description": it.get("body", "") or ""}
+            rows[key] = row
+        if tag is None:
+            row["assigned_to_me"] = True
+            row["created_by_me"] = True
+        else:
+            row[tag] = True
+    return list(rows.values())
 
 
 _CACHE_TTL_SECONDS = 3600

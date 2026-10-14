@@ -112,10 +112,16 @@ export interface IssueRow {
   /** Reporter login (jira) / author login (github); absent on old caches. */
   reporter?: string
   author?: string
+  /** Assignee login (jira) / assignee logins (github); absent on old caches. */
+  assignee?: string
+  assignees?: string[]
+  /** Query origin: True when the row matched the assignee-me / reporter-me
+   * search. Absent on old caches (treated as me-scoped either way). */
+  assigned_to_me?: boolean
+  created_by_me?: boolean
   /** Issue body/description for client-side search; absent on old caches. */
   description?: string
 }
-
 export interface IssuesResponse {
   issues: IssueRow[]
   warning?: string | null
