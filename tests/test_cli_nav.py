@@ -432,6 +432,30 @@ def test_tracker_add_rejects_non_enum_vendor(isolated_config):
     assert r.exit_code == 2
     assert "must be one of jira, github" in r.output
 
+def test_tracker_update_changes_fields_and_disables(isolated_config):
+    """tracker update edits remote_url/vendor/fetch/enabled on an existing row."""
+    from workagent import store_sqlite as sq
+    sq.init_db(sq.db_path())
+    r = _invoke("tracker", "add", "IPG", "--remote-url", "https://jira.example/browse/IPG", "--json")
+    assert r.exit_code == 0, r.output
+    r = _invoke("tracker", "update", "IPG", "--remote-url", "https://jira.example/browse/NEW",
+                "--disable", "--json")
+    assert r.exit_code == 0, r.output
+    row = json.loads(r.stdout)
+    assert row["remote_url"] == "https://jira.example/browse/NEW"
+    assert row["is_enabled"] == 0
+    rows = sq.load_tracker_rows(sq.db_path())
+    assert rows[0]["is_enabled"] == 0
+    r = _invoke("tracker", "update", "IPG", "--enable", "--json")
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["is_enabled"] == 1
+
+
+def test_tracker_update_unknown_tracker_fails(isolated_config):
+    """tracker update on a missing key is a usage error (exit 2)."""
+    r = _invoke("tracker", "update", "IPG", "--disable", "--json")
+    assert r.exit_code != 0
+
 
 def test_repo_remove_guard_and_force(isolated_config, tmp_path):
     """repo remove refuses while linked worktrees exist; --force cascades."""

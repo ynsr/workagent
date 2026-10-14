@@ -342,6 +342,46 @@ def test_jira_payload_carries_reporter_and_description(monkeypatch):
     assert rows[0]["description"] == "details here"
 
 
+def test_source_disabled_tracker_skips_fetch(isolated_config, monkeypatch):
+    """A tracker with is_enabled=0 turns its source gate off."""
+    from workagent import trackers
+    monkeypatch.setattr(trackers.store, "load_trackers", lambda: {
+        "jira:IPG": {"vendor": "jira", "remote_url": "https://jira/x",
+                     "fetch_enabled": True, "is_enabled": False, "repos": []}})
+    monkeypatch.setattr(trackers.store, "load_config", lambda: {"disabled_tracker_domains": []})
+    assert trackers._source_enabled("jira") is False
+    assert trackers._source_enabled("github") is True
+
+
+def test_source_disabled_domain_skips_fetch(isolated_config, monkeypatch):
+    """A tracker on a disabled domain turns its source gate off (subdomains match)."""
+    from workagent import trackers
+    monkeypatch.setattr(trackers.store, "load_trackers", lambda: {
+        "jira:IPG": {"vendor": "jira", "remote_url": "https://tribe.jibit.cloud/browse/IPG",
+                     "fetch_enabled": True, "is_enabled": True, "repos": []}})
+    monkeypatch.setattr(trackers.store, "load_config", lambda: {"disabled_tracker_domains": ["jibit.cloud"]})
+    assert trackers._source_enabled("jira") is False
+
+
+def test_source_other_domain_stays_on(isolated_config, monkeypatch):
+    """An unrelated domain leaves the gate on."""
+    from workagent import trackers
+    monkeypatch.setattr(trackers.store, "load_trackers", lambda: {
+        "jira:IPG": {"vendor": "jira", "remote_url": "https://tribe.jibit.cloud/browse/IPG",
+                     "fetch_enabled": True, "is_enabled": True, "repos": []}})
+    monkeypatch.setattr(trackers.store, "load_config", lambda: {"disabled_tracker_domains": ["example.com"]})
+    assert trackers._source_enabled("jira") is True
+
+
+def test_disabled_domains_roundtrip(isolated_config):
+    """Config accessors normalize (lowercase, dedupe, sorted), default empty."""
+    from workagent import store
+    assert store.load_disabled_tracker_domains() == []
+    assert store.save_disabled_tracker_domains(["Example.COM ", "example.com", "sub.example.com"]) == [
+        "example.com", "sub.example.com"]
+    assert store.load_disabled_tracker_domains() == ["example.com", "sub.example.com"]
+
+
 def test_default_repo_for_pr_url_resolves_head_worktree(isolated_config, tmp_path, monkeypatch):
     """Branch name without the PR number: only a head_ref fetch can find it."""
     wt = tmp_path / "wt"

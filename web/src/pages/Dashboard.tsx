@@ -19,7 +19,7 @@ import { StatusTable } from "@/components/StatusTable"
 import {
   EmptyState,
   ErrorState,
-  RefreshIndicator,
+  RefreshOverlay,
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
@@ -490,8 +490,8 @@ export function Dashboard() {
           </Button>
         </EmptyState>
       ) : (
-        <>
-          {isFetching && !isPending ? <RefreshIndicator /> : null}
+        <div className="relative">
+          {isFetching && !isPending ? <RefreshOverlay /> : null}
           {isError ? (
             <p role="alert" className="mb-3 text-sm text-destructive">
               {errorText(error)}{" "}
@@ -549,7 +549,7 @@ export function Dashboard() {
             <SquareTerminal className="size-3.5" aria-hidden />
             Sync, Review and Cleanup run as child processes — follow them under Runs.
           </p>
-        </>
+        </div>
       )}
       {cleanupTarget ? (
         <CleanupDialog

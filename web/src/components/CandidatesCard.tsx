@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import {
   EmptyState,
   ErrorState,
-  RefreshIndicator,
+  RefreshOverlay,
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
@@ -168,8 +168,8 @@ export function CandidatesCard() {
           ) : (prsQuery.isError && !prsQuery.data) ? (
             <ErrorState error={prsQuery.error} onRetry={() => void prsQuery.refetch()} />
           ) : (
-            <>
-              {prsQuery.isFetching && !prsQuery.isPending ? <RefreshIndicator /> : null}
+            <div className="relative">
+              {prsQuery.isFetching && !prsQuery.isPending ? <RefreshOverlay /> : null}
               {prsQuery.isError ? (
                 <p role="alert" className="mb-3 text-sm text-destructive">
                   {errorText(prsQuery.error)}{" "}
@@ -215,7 +215,7 @@ export function CandidatesCard() {
                   ))}
                 </ul>
               )}
-            </>
+            </div>
           )
         ) : tab === "issues" ? (
           <IssuesTab
@@ -234,8 +234,8 @@ export function CandidatesCard() {
         ) : (worktreesQuery.isError && !worktreesQuery.data) ? (
           <ErrorState error={worktreesQuery.error} onRetry={() => void worktreesQuery.refetch()} />
         ) : (
-          <>
-            {worktreesQuery.isFetching && !worktreesQuery.isPending ? <RefreshIndicator /> : null}
+          <div className="relative">
+            {worktreesQuery.isFetching && !worktreesQuery.isPending ? <RefreshOverlay /> : null}
             {worktreesQuery.isError ? (
               <p role="alert" className="mb-3 text-sm text-destructive">
                 {errorText(worktreesQuery.error)}{" "}
@@ -282,7 +282,7 @@ export function CandidatesCard() {
                 ))}
               </ul>
             )}
-          </>
+          </div>
         )}
       </CardContent>
       {startKey !== null ? (
@@ -312,8 +312,8 @@ function IssuesTab({
     return <ErrorState error={query.error} onRetry={() => void query.refetch()} />
   }
   return (
-    <>
-      {query.isFetching && !query.isPending ? <RefreshIndicator /> : null}
+    <div className="relative">
+      {query.isFetching && !query.isPending ? <RefreshOverlay /> : null}
       {query.isError ? (
         <p role="alert" className="mb-3 text-sm text-destructive">
           {errorText(query.error)}{" "}
@@ -325,8 +325,8 @@ function IssuesTab({
       <IssuesFilterForm
         scope={f.scope}
         setScope={f.setScope}
-        after={f.after}
-        setAfter={f.setAfter}
+        range={f.range}
+        setRange={f.setRange}
         query={f.query}
         setQuery={f.setQuery}
         status={f.status}
@@ -344,9 +344,9 @@ function IssuesTab({
         <NoFilteredIssues
           onClear={() => {
             f.setScope({ mine: false, all: false, createdByMe: true })
-            f.setAfter("")
+            f.setRange("30")
             f.setQuery("")
-            f.setStatus("")
+            f.setStatus("not done")
           }}
         />
       ) : (
@@ -383,7 +383,7 @@ function IssuesTab({
           ))}
         </ul>
       )}
-    </>
+    </div>
   )
 }
 

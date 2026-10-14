@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/PageHeader"
 import {
   EmptyState,
   ErrorState,
-  RefreshIndicator,
+  RefreshOverlay,
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
@@ -176,8 +176,8 @@ export function Repos() {
                 description="Add one with the form — name, local path, optional tracker mapping."
               />
             ) : (
-              <>
-                {isFetching && !isPending ? <RefreshIndicator /> : null}
+              <div className="relative">
+                {isFetching && !isPending ? <RefreshOverlay /> : null}
                 {isError ? (
                   <p role="alert" className="mb-3 text-sm text-destructive">
                     {errorText(error)}{" "}
@@ -260,7 +260,7 @@ export function Repos() {
                     </div>
                   ))}
                 </div>
-              </>
+              </div>
             )}
           </CardContent>
         </Card>

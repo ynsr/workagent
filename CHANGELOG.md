@@ -166,6 +166,8 @@
 - Web cleanup follows the CLI squash rule (non-long-lived sources squash-merge; `dev/develop/main/master` merge with a merge commit) — the Cleanup dialog shows the effective strategy for the row's branch; the UI never sends `--no-squash` [no-issue]
 - Dashboard never blocks on refetch: every table/tab keeps stale rows with an inline Updating indicator (skeletons only on first load; stale+error shows an inline retry) — StatusTable, Candidates tabs, Links, Runs, Sessions, Repos, Trackers, Doctor [no-issue]
 - Candidates Recent issues tab gains a client-side filter form: My Issues / All Issues / My Created Issues toggles (independent, All wins; My Created on by default), Created-after date (default 30d ago), title/description search, status dropdown (Open/In Progress/Closed); issue rows now carry reporter/author + description [no-issue]
+- Recent-issues filter fixed (My Created Issues shows jira + github rows again), Created-after is now a Last 7/30/90 days / Last year dropdown (default 30), Status defaults to Not Done (open or in progress); reload indicators overlay the content instead of shifting layout [no-issue]
+- Issue trackers gain enable/disable (`tracker update KEY --enable/--disable`, per-row toggle in the Trackers page) plus an editable disabled-domains list (config + Trackers page card) that skips matching tracker hosts during fetching [no-issue]
 ## 0.2.1 — 2026-09-18
 
 - Fix Tab completion: typer 0.27 never registers its shell completion

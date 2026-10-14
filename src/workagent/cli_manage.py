@@ -183,6 +183,61 @@ def tracker_add(
     _print_result(row, json_output)
 
 
+@tracker_app.command("update")
+@_catch_harness_errors
+def tracker_update(
+    tracker: str = typer.Argument(..., help="Tracker id to update (must already exist)."),
+    vendor: str = typer.Option("", "--vendor", help="New vendor: jira or github (blank keeps current)."),
+    remote_url: str = typer.Option("", "--remote-url", help="New tracker web URL (blank keeps current)."),
+    fetch: Optional[bool] = typer.Option(None, "--fetch/--no-fetch",
+        help="Fetch this tracker's issues for Candidates/Launch."),
+    enabled: Optional[bool] = typer.Option(None, "--enable/--disable",
+        help="Enable or disable this tracker (disabled trackers are skipped by fetch)."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Update an existing issue tracker (remote URL, vendor, fetch, enabled).
+
+    Only the flags given change; everything else keeps its stored value.
+    Disabled trackers (--disable) are skipped when fetching issues/PRs.
+    Example:
+
+      workagent tracker update jira:IPG --remote-url https://tribe.jibit.cloud/browse/IPG --disable
+    """
+    from . import store_sqlite as sq
+    tid = trackers.normalize_id(tracker)
+    if vendor:
+        try:
+            vendor = sq.normalize_vendor(vendor)
+        except ValueError as e:
+            raise HarnessError(str(e), exit_code=2) from e
+    if store._sqlite_path() is None:
+        cfg = store.load_config()
+        entry = (cfg.get("trackers", {}) or {}).get(tid)
+        if entry is None:
+            _fail(f"unknown tracker: {tid}", EXIT_USAGE)
+        if vendor:
+            entry["vendor"] = vendor
+        if remote_url.strip():
+            entry["remote_url"] = remote_url.strip()
+        if fetch is not None:
+            entry["fetch_enabled"] = bool(fetch)
+        if enabled is not None:
+            entry["is_enabled"] = bool(enabled)
+        store.save_config(cfg)
+        _print_result({"tracker": tid, **entry}, json_output)
+        return
+    db = sq.db_path()
+    cur = sq.load_trackers(db).get(tid)
+    if cur is None:
+        _fail(f"unknown tracker: {tid}", EXIT_USAGE)
+    row = sq.upsert_tracker(db, tid,
+                            vendor=vendor or str(cur.get("vendor", "") or ""),
+                            remote_url=remote_url.strip() or str(cur.get("remote_url", "") or ""),
+                            fetch_enabled=fetch if fetch is not None else bool(cur.get("fetch_enabled", True)),
+                            is_enabled=enabled if enabled is not None else bool(cur.get("is_enabled", True)))
+    _print_result(row, json_output)
+
+
 @tracker_app.command("list")
 def tracker_list(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
@@ -195,11 +250,12 @@ def tracker_list(
     from . import store_sqlite as sq
     if store._sqlite_path() is None:
         items = [{"key": t, "vendor": "", "remote_url": "",
-                  "repos": len((v or {}).get("repos", []))}
+                  "repos": len((v or {}).get("repos", [])),
+                  "is_enabled": bool((v or {}).get("is_enabled", True))}
                  for t, v in store.load_trackers().items()]
     else:
         items = sq.load_tracker_rows(sq.db_path())
-    _print_rows(items, json_output, csv_output, ["key", "vendor", "remote_url", "repos"],
+    _print_rows(items, json_output, csv_output, ["key", "vendor", "remote_url", "repos", "is_enabled"],
                 "Issue trackers", "(no trackers)")
 
 

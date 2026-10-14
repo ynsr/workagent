@@ -90,6 +90,9 @@ export interface TrackerRow {
   vendor: string
   remote_url: string
   repos: number
+  /** 1/0 from the DB; absent on old payloads (treat as enabled). */
+  fetch_enabled?: number | boolean
+  is_enabled?: number | boolean
 }
 
 export interface Links {
@@ -332,6 +335,13 @@ export const api = {
 
   repos: () => request<Repo[]>("/api/repos"),
   trackers: () => request<{ trackers: TrackerRow[] }>("/api/trackers"),
+  trackerDomains: () => request<{ disabled_domains: string[] }>("/api/tracker-domains"),
+  setTrackerDomains: (domains: string[]) =>
+    request<{ disabled_domains: string[] }>("/api/tracker-domains", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ domains }),
+    }),
   links: () => request<Links>("/api/links"),
   doctor: () => request<DoctorInfo>("/api/doctor"),
 

@@ -10,6 +10,7 @@ export const queryKeys = {
   path: (ref: string) => ["path", ref] as const,
   repos: ["repos"] as const,
   trackers: ["trackers"] as const,
+  trackerDomains: ["trackers", "domains"] as const,
   links: ["links"] as const,
   doctor: ["doctor"] as const,
   runs: ["runs"] as const,
@@ -54,6 +55,10 @@ export function useRepos() {
 
 export function useTrackers() {
   return useQuery({ queryKey: queryKeys.trackers, queryFn: api.trackers })
+}
+
+export function useTrackerDomains() {
+  return useQuery({ queryKey: queryKeys.trackerDomains, queryFn: api.trackerDomains })
 }
 
 export function useLinks() {

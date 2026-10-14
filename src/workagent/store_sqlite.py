@@ -14,7 +14,7 @@ from pathlib import Path
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS trackers (
   key_ref TEXT PRIMARY KEY NOT NULL, remote_url TEXT NOT NULL, vendor TEXT NOT NULL,
-  fetch_enabled INTEGER NOT NULL DEFAULT 1);
+  fetch_enabled INTEGER NOT NULL DEFAULT 1, is_enabled INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS repos (
   key_ref TEXT PRIMARY KEY NOT NULL, path TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL,
@@ -231,9 +231,20 @@ def _migrate_fetch_enabled(conn) -> None:
             if _default_fetch_enabled(tool=tool or "") == 0:
                 conn.execute("UPDATE repos SET fetch_enabled = 0 WHERE key_ref = ?", (key_ref,))
 
+def _migrate_tracker_enabled(conn) -> None:
+    """Schema v9: trackers gain is_enabled (1 = active, 0 = disabled).
+
+    ALTER TABLE backfills DEFAULT 1 — every existing tracker stays enabled.
+    Disabled trackers are skipped by the issue/PR fetch gates and by the
+    domain blocklist below. Idempotent: skipped when present.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(trackers)")}
+    if not cols or "is_enabled" in cols:
+        return
+    conn.execute("ALTER TABLE trackers ADD COLUMN is_enabled INTEGER NOT NULL DEFAULT 1")
+
 def _migrate_sessions_type(conn) -> None:
     """Schema v6: sessions gains session_type + metadata (session-type spec).
-
     Backfill reads the fix-comments prompt header (the only surviving
     discriminator — initiator_command carries the harness name, never the
     subcommand), else the command's first word, else NULL (never guess).
@@ -427,6 +438,9 @@ def _schema_current(path: Path) -> bool:
             fcols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
             if "fetch_enabled" not in fcols:
                 return False
+        tcols = {r[1] for r in conn.execute("PRAGMA table_info(trackers)")}
+        if "is_enabled" not in tcols:
+            return False
         return True
     except Exception:
         return False
@@ -455,6 +469,7 @@ def init_db(path: Path) -> Path:
                 _migrate_sessions_harness(conn)
                 _migrate_sessions_type(conn)
                 _migrate_fetch_enabled(conn)
+                _migrate_tracker_enabled(conn)
             break
         except sqlite3.OperationalError as e:
             last = e

@@ -3,7 +3,7 @@ import { CopyCell } from "@/components/CopyCell"
 import { PageHeader } from "@/components/PageHeader"
 import {
   ErrorState,
-  RefreshIndicator,
+  RefreshOverlay,
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
@@ -57,12 +57,12 @@ export function Doctor() {
   const tools = Object.entries(data.tools).sort(([a], [b]) => a.localeCompare(b))
 
   return (
-    <>
+    <div className="relative">
       <PageHeader
         title="Doctor"
         description="Environment status, config drift, and external tool availability."
       />
-      {isFetching && !isPending ? <RefreshIndicator /> : null}
+      {isFetching && !isPending ? <RefreshOverlay /> : null}
       {isError ? (
         <p role="alert" className="mb-3 text-sm text-destructive">
           {errorText(error)}{" "}
@@ -176,6 +176,6 @@ export function Doctor() {
           </CardHeader>
         </Card>
       ) : null}
-    </>
+    </div>
   )
 }

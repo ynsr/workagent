@@ -43,6 +43,24 @@ export function RefreshIndicator({ label = "Updating…" }: { label?: string }) 
   )
 }
 
+/**
+ * Overlay variant: absolutely positioned in a `relative` parent so showing
+ * it never shifts layout (no padding/reserve needed — it floats above the
+ * top-right corner). Pointer-events none so rows stay clickable.
+ */
+export function RefreshOverlay({ label = "Updating…" }: { label?: string }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none absolute right-2 top-2 z-10 flex items-center gap-1.5 rounded-full border bg-background/90 px-2.5 py-1 text-xs text-muted-foreground shadow-sm"
+    >
+      <RefreshCw className="size-3.5 animate-spin" aria-hidden />
+      {label}
+    </div>
+  )
+}
+
 export function ErrorState({
   error,
   onRetry,

@@ -86,6 +86,20 @@ def save_config(cfg: dict) -> None:
     _write_json(config_dir() / "config.json", cfg)
 
 
+def load_disabled_tracker_domains() -> list[str]:
+    """Lowercased disabled-tracker domains (default: empty = none disabled)."""
+    raw = load_config().get("disabled_tracker_domains", []) or []
+    return sorted({str(d).lower().strip().lstrip(".") for d in raw if str(d).strip()})
+
+
+def save_disabled_tracker_domains(domains: list[str]) -> list[str]:
+    """Replace the disabled-tracker domain list (normalized, sorted, deduped)."""
+    clean = sorted({str(d).lower().strip().lstrip(".") for d in domains if str(d).strip()})
+    cfg = load_config()
+    cfg["disabled_tracker_domains"] = clean
+    save_config(cfg)
+    return clean
+
 def _sqlite_path():
     try:
         from . import store_sqlite as sq

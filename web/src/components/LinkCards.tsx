@@ -16,7 +16,7 @@ import { useConfirm } from "@/lib/confirm"
 import {
   EmptyState,
   ErrorState,
-  RefreshIndicator,
+  RefreshOverlay,
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
@@ -79,8 +79,8 @@ export function TrackerMappingsCard() {
             description="Link a tracker to a repo with the Link tracker action."
           />
         ) : (
-          <>
-            {isFetching && !isPending ? <RefreshIndicator /> : null}
+          <div className="relative">
+            {isFetching && !isPending ? <RefreshOverlay /> : null}
             {isError ? (
               <p role="alert" className="mb-3 text-sm text-destructive">
                 {errorText(error)}{" "}
@@ -118,7 +118,7 @@ export function TrackerMappingsCard() {
               </div>
             ))}
             </div>
-          </>
+          </div>
         )}
       </CardContent>
     </Card>

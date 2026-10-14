@@ -191,8 +191,24 @@ def create_app(static_dir: Path, host: str, port: int,
             return {"trackers": _sq.load_tracker_rows(db)}
         return {"trackers": [
             {"key": t, "vendor": "", "remote_url": "",
-             "repos": len((v or {}).get("repos", []))}
+             "repos": len((v or {}).get("repos", [])),
+             "is_enabled": bool((v or {}).get("is_enabled", True))}
             for t, v in store.load_trackers().items()]}
+
+    @app.get("/api/tracker-domains")
+    def tracker_domains() -> dict:
+        """Disabled tracker domains (domain-level disable list)."""
+        return {"disabled_domains": store.load_disabled_tracker_domains()}
+
+    @app.post("/api/tracker-domains")
+    def tracker_domains_set(payload: dict) -> dict:
+        """Replace the disabled-tracker domain list (normalized, sorted)."""
+        domains = payload.get("domains", []) if isinstance(payload, dict) else []
+        if not isinstance(domains, list) or any(not isinstance(d, str) for d in domains):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="domains must be a list of strings")
+        return {"disabled_domains": store.save_disabled_tracker_domains(domains)}
+
     @app.get("/api/links")
     def links_list() -> dict:
         return {"trackers": store.load_trackers(),

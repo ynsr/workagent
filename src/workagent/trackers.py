@@ -497,15 +497,39 @@ def _cached_source(source: str, fetch, warn: list,
     return rows
 
 
+def _tracker_host(url: str) -> str:
+    """Lowercased host of a tracker remote_url ("" when unparseable)."""
+    try:
+        from urllib.parse import urlparse
+        return (urlparse(url or "").hostname or "").lower()
+    except Exception:
+        return ""
+
+
+def _domain_blocked(host: str, blocked: list[str]) -> bool:
+    """True when *host* equals or is a subdomain of any blocked domain."""
+    h = (host or "").lower().strip()
+    if not h:
+        return False
+    for d in blocked:
+        dd = (d or "").lower().strip().lstrip(".")
+        if dd and (h == dd or h.endswith("." + dd)):
+            return True
+    return False
+
+
 def _source_enabled(source: str) -> bool:
-    """Fetch gate for an issue source: off only when a linked tracker of
-    that vendor has fetch disabled; no linked tracker → on (unchanged
+    """Fetch gate for an issue source: off when a linked tracker of that
+    vendor is disabled (is_enabled=0), has fetch disabled, or sits on a
+    disabled-tracker domain; no linked tracker → on (unchanged
     pre-registration behavior for both sources)."""
     try:
         from . import store as _store
         trackers = _store.load_trackers()
+        cfg = _store.load_config()
     except Exception:
         return True
+    blocked = list((cfg or {}).get("disabled_tracker_domains", []) or [])
     for tid, v in trackers.items():
         vendor = str((v or {}).get("vendor", "") or "").lower()
         match = (vendor == source) or (source == "github" and str(tid).startswith("gitlab:"))
@@ -513,7 +537,11 @@ def _source_enabled(source: str) -> bool:
             match = True
         if not match:
             continue
+        if not (v or {}).get("is_enabled", True):
+            return False
         if not (v or {}).get("fetch_enabled", True):
+            return False
+        if _domain_blocked(_tracker_host(str((v or {}).get("remote_url", "") or "")), blocked):
             return False
     return True
 

@@ -27,22 +27,37 @@ export const DEFAULT_ISSUES_SCOPE: IssuesScope = {
   createdByMe: true,
 }
 
-export type IssuesStatusFilter = "" | "open" | "closed" | "in progress"
+export type IssuesStatusFilter = "" | "not done" | "open" | "closed" | "in progress"
 
-/** Default `created after` cutoff: 30 days ago, as `YYYY-MM-DD`. */
-export function defaultIssuesAfter(): string {
+/** Predefined Created-after ranges; default Last 30 days. */
+export const ISSUES_RANGES = [
+  { value: "7", label: "Last 7 days", days: 7 },
+  { value: "30", label: "Last 30 days", days: 30 },
+  { value: "90", label: "Last 90 days", days: 90 },
+  { value: "365", label: "Last year", days: 365 },
+] as const
+export type IssuesRange = (typeof ISSUES_RANGES)[number]["value"]
+export const DEFAULT_ISSUES_RANGE: IssuesRange = "30"
+
+/** Cutoff `YYYY-MM-DD` for a range value (days back from today). */
+export function rangeCutoff(range: IssuesRange): string {
+  const entry = ISSUES_RANGES.find((r) => r.value === range)
+  const days = entry ? entry.days : 30
   const d = new Date()
-  d.setDate(d.getDate() - 30)
+  d.setDate(d.getDate() - days)
   return d.toISOString().slice(0, 10)
 }
 
 /**
  * Client-side filter over loaded issue rows. Scope derives from the
- * existing server queries (jira rows are reporter=me, github rows are
- * author=@me), so no fetch change is needed:
- * - `mine`: jira rows (reported to me) — off by default
- * - `all`: every other row (not mine, not created by me) — off by default
- * - `createdByMe`: github rows (I authored them) — on by default
+ * existing server queries, so no fetch change is needed:
+ * - `mine`: rows reported/assigned to me — jira rows carry reporter=me
+ *   (the server JQL is `reporter = currentUser()`); github rows authored
+ *   by me also qualify. Off by default.
+ * - `all`: every loaded row, ignoring scope. Off by default, wins when on.
+ * - `createdByMe`: rows I authored/reported — jira (reporter) + github
+ *   (author). On by default. This is what the server returned before any
+ *   filter existed, so default-on preserves the old table contents.
  * `all` wins when combined with the others. Status matches loosely
  * (Open matches "open"/"to do", In Progress matches jira variants);
  * Closed matches "closed"/"done"/"resolved".
@@ -57,13 +72,17 @@ export function filterIssues(
   const q = query.trim().toLowerCase()
   const afterMs = after ? Date.parse(`${after}T00:00:00Z`) : NaN
   return rows.filter((issue) => {
-    const isJira = issue.key.toLowerCase().startsWith("jira:")
-    const isGh = issue.key.toLowerCase().startsWith("github:")
-    const mine = isJira
-    const created = isGh
+    // Both server queries are me-scoped by construction (jira JQL
+    // `reporter = currentUser()`, gh `--author=@me`), so key prefix is the
+    // reliable me-signal — field presence fails for old plain-seam jira
+    // rows that carry no reporter. Non-me rows (if any) qualify only via
+    // an explicit author/reporter value.
+    const lk = issue.key.toLowerCase()
+    const meScoped = lk.startsWith("jira:") || lk.startsWith("github:")
+      || Boolean((issue.author || issue.reporter || "").trim())
     const inScope = scope.all
       ? true
-      : (scope.mine && mine) || (scope.createdByMe && created) || (!mine && !created)
+      : (scope.mine && meScoped) || (scope.createdByMe && meScoped)
     if (!inScope) return false
     if (!Number.isNaN(afterMs) && after) {
       const createdMs = Date.parse(issue.created || "")
@@ -81,6 +100,8 @@ export function filterIssues(
         if (!(st.includes("progress") || st.includes("in progress"))) return false
       } else if (status === "closed") {
         if (!(st === "closed" || st === "done" || st === "resolved")) return false
+      } else if (status === "not done") {
+        if (st === "closed" || st === "done" || st === "resolved") return false
       }
     }
     return true
@@ -90,21 +111,22 @@ export function filterIssues(
 /** Filter form + filtered count for the Recent issues tab. */
 export function useIssuesFilter(rows: IssueRow[]) {
   const [scope, setScope] = useState<IssuesScope>(DEFAULT_ISSUES_SCOPE)
-  const [after, setAfter] = useState<string>(defaultIssuesAfter)
+  const [range, setRange] = useState<IssuesRange>(DEFAULT_ISSUES_RANGE)
+  const after = rangeCutoff(range)
   const [query, setQuery] = useState("")
-  const [status, setStatus] = useState<IssuesStatusFilter>("")
+  const [status, setStatus] = useState<IssuesStatusFilter>("not done")
   const filtered = useMemo(
     () => filterIssues(rows, scope, after, query, status),
     [rows, scope, after, query, status],
   )
-  return { scope, setScope, after, setAfter, query, setQuery, status, setStatus, filtered }
+  return { scope, setScope, range, setRange, after, query, setQuery, status, setStatus, filtered }
 }
 
 export function IssuesFilterForm({
   scope,
   setScope,
-  after,
-  setAfter,
+  range,
+  setRange,
   query,
   setQuery,
   status,
@@ -114,8 +136,8 @@ export function IssuesFilterForm({
 }: {
   scope: IssuesScope
   setScope: (s: IssuesScope) => void
-  after: string
-  setAfter: (v: string) => void
+  range: IssuesRange
+  setRange: (v: IssuesRange) => void
   query: string
   setQuery: (v: string) => void
   status: IssuesStatusFilter
@@ -157,14 +179,22 @@ export function IssuesFilterForm({
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="grid gap-1">
-          <Label htmlFor="issues-after">Created after</Label>
-          <Input
-            id="issues-after"
-            type="date"
-            value={after}
-            max={new Date().toISOString().slice(0, 10)}
-            onChange={(e) => setAfter(e.target.value)}
-          />
+          <Label htmlFor="issues-range">Created within</Label>
+          <Select
+            value={range}
+            onValueChange={(v) => setRange(v as IssuesRange)}
+          >
+            <SelectTrigger id="issues-range">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ISSUES_RANGES.map((r) => (
+                <SelectItem key={r.value} value={r.value}>
+                  {r.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="grid gap-1">
           <Label htmlFor="issues-search">Search title or description</Label>
@@ -186,9 +216,15 @@ export function IssuesFilterForm({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {["(any status)", "open", "in progress", "closed"].map((s) => (
-                <SelectItem key={s} value={s}>
-                  {s === "(any status)" ? "Any status" : s.charAt(0).toUpperCase() + s.slice(1)}
+              {(Object.entries({
+                "(any status)": "Any status",
+                "not done": "Not Done",
+                "open": "Open",
+                "in progress": "In Progress",
+                "closed": "Closed",
+              }) as [IssuesStatusFilter | "(any status)", string][]).map(([v, label]) => (
+                <SelectItem key={v} value={v}>
+                  {label}
                 </SelectItem>
               ))}
             </SelectContent>

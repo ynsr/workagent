@@ -148,14 +148,17 @@ live instead of the 1h issue cache (slow). Read-only:
  ```
 
 Issue rows also carry `reporter` (jira) / `author` (github login) plus
-`description` for the Recent-issues client-side filter (scope toggles,
-created-after date, title/description search, status dropdown — all
-client-side over the loaded rows).
- 
- Per-tab slices (each loads independently so the slow live-PR fetch never
+`description` for the Recent-issues client-side filter: scope toggles
+(My / All / My-Created, default My-Created on, All wins), Created-within
+range dropdown (Last 7/30/90 days, Last year; default Last 30 days),
+title/description search, status dropdown (default Not Done = open or in
+progress) — all client-side over the loaded rows.
+
+Per-tab slices (each loads independently so the slow live-PR fetch never
 blocks the others; the Dashboard Candidates card queries all three in
 parallel, never blocking on refetch — stale rows stay visible with an
-inline Updating indicator; skeletons render only on first load):
+overlay Updating badge in the top-right corner; skeletons render only on
+first load):
 
 ### `GET /api/sessions` → list (newest first, no prompts)
 ```json
@@ -187,8 +190,12 @@ never mirrored (live registry only).
 (linked worktree's repo, else the tracker's single linked repo, else
 `""`). Shown in the Link page issue rows.
 
-## Runs (mutating CLI commands as child processes)
+### `GET /api/trackers` → `{trackers: [{key, vendor, remote_url, fetch_enabled, is_enabled, repos}]}`
+`is_enabled` 0 = disabled (skipped by issue/PR fetching); updates run
+through `POST /api/runs` with `tracker update KEY [--vendor] [--remote-url] [--fetch/--no-fetch] [--enable/--disable]`.
+### `GET /api/tracker-domains` → `{disabled_domains: [...]}`; `POST /api/tracker-domains` `{domains: [...]}` replaces the list (normalized lowercase/sorted; empty = all enabled). Trackers on a listed host (or subdomain) are skipped by fetching.
 
+## Runs (mutating CLI commands as child processes)
 ### `POST /api/runs` → 202
 Request:
 ```json

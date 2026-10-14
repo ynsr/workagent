@@ -7,14 +7,14 @@ from pathlib import Path
 from .store_sqlite import _norm, _tracker_meta, connect, init_db, normalize_vendor
 
 def load_trackers(path: Path) -> dict:
-    """{tracker_id: {"repos", "vendor", "remote_url}} — SQLite source of truth."""
+    """{tracker_id: {"repos", "vendor", "remote_url, "fetch_enabled", "is_enabled"}} — SQLite source of truth."""
     if not path.exists():
         return {}
     init_db(path)
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         out: dict = {}
-        for t in conn.execute("SELECT key_ref, vendor, remote_url, fetch_enabled FROM trackers ORDER BY key_ref"):
+        for t in conn.execute("SELECT key_ref, vendor, remote_url, fetch_enabled, is_enabled FROM trackers ORDER BY key_ref"):
             tid = t["key_ref"]
             rows = conn.execute(
                 "SELECT r.path FROM tracker_repos tr JOIN repos r"
@@ -22,31 +22,32 @@ def load_trackers(path: Path) -> dict:
                 " ORDER BY r.path", (tid,))
             out[tid] = {"repos": [r["path"] for r in rows],
                         "vendor": t["vendor"], "remote_url": t["remote_url"],
-                        "fetch_enabled": bool(t["fetch_enabled"])}
+                        "fetch_enabled": bool(t["fetch_enabled"]),
+                        "is_enabled": bool(t["is_enabled"])}
         return out
 
 
 def load_tracker_rows(path: Path) -> list[dict]:
-    """Flat tracker rows for CRUD UIs: key/vendor/remote_url + repo count."""
+    """Flat tracker rows for CRUD UIs: key/vendor/remote_url/fetch/is_enabled + repo count."""
     if not path.exists():
         return []
     init_db(path)
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         return [dict(r) for r in conn.execute(
-            "SELECT t.key_ref AS key, t.vendor, t.remote_url, t.fetch_enabled,"
+            "SELECT t.key_ref AS key, t.vendor, t.remote_url, t.fetch_enabled, t.is_enabled,"
             " COUNT(tr.repo_key) AS repos"
             " FROM trackers t LEFT JOIN tracker_repos tr"
             " ON tr.tracker_key = t.key_ref GROUP BY t.key_ref ORDER BY t.key_ref")]
 
-
 def upsert_tracker(path: Path, tid: str, vendor: str = "", remote_url: str = "",
-                   fetch_enabled: bool | None = None) -> dict:
+                   fetch_enabled: bool | None = None,
+                   is_enabled: bool | None = None) -> dict:
     """Create/update a tracker row; blank vendor derives from the key.
 
     remote_url is mandatory and stored as given (no key fallback);
-    blank raises ValueError. fetch_enabled None keeps the existing value
-    (or the vendor-aware default for new rows); explicit bool sets it.
+    blank raises ValueError. fetch_enabled/is_enabled None keep the
+    existing value (or the default for new rows); explicit bool sets it.
     Returns the stored row.
     """
     init_db(path)
@@ -58,19 +59,22 @@ def upsert_tracker(path: Path, tid: str, vendor: str = "", remote_url: str = "",
         raise ValueError(f"remote_url is required for tracker {tid!r}")
     from .store_sqlite import _default_fetch_enabled
     with connect(path) as conn:
-        cur = conn.execute("SELECT fetch_enabled FROM trackers WHERE key_ref = ?", (tid,)).fetchone()
+        cur = conn.execute("SELECT fetch_enabled, is_enabled FROM trackers WHERE key_ref = ?", (tid,)).fetchone()
         default = _default_fetch_enabled(tid=tid)
         fe = default if cur is None else cur[0]
+        ie = 1 if cur is None else cur[1]
         if fetch_enabled is not None:
             fe = 1 if fetch_enabled else 0
-        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url, fetch_enabled) VALUES (?, ?, ?, ?)"
+        if is_enabled is not None:
+            ie = 1 if is_enabled else 0
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url, fetch_enabled, is_enabled) VALUES (?, ?, ?, ?, ?)"
                      " ON CONFLICT(key_ref) DO UPDATE SET vendor=excluded.vendor,"
-                     " remote_url=excluded.remote_url, fetch_enabled=excluded.fetch_enabled",
-                     (tid, vendor, remote_url, fe))
+                     " remote_url=excluded.remote_url, fetch_enabled=excluded.fetch_enabled,"
+                     " is_enabled=excluded.is_enabled",
+                     (tid, vendor, remote_url, fe, ie))
         conn.row_factory = sqlite3.Row
-        return dict(conn.execute("SELECT key_ref AS key, vendor, remote_url, fetch_enabled FROM trackers"
+        return dict(conn.execute("SELECT key_ref AS key, vendor, remote_url, fetch_enabled, is_enabled FROM trackers"
                                  " WHERE key_ref = ?", (tid,)).fetchone())
-
 
 def _upsert_tracker_conn(conn, tid: str, vendor: str = "", remote_url: str = "") -> None:
     """Conn-scoped ensure (no nested connect → no lock).

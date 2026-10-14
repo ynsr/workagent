@@ -45,13 +45,14 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "register": ("--yes", "-y", "--force", "--json"),
     "repo add": ("--json", "--fetch", "--no-fetch"),
     "repo list": ("--json", "--csv"),
+    "repo remove": ("--json", "--force"),
     "link set": ("--json",),
     "link remove": ("--json",),
     "link deactivate": ("--json",),
     "link reactivate": ("--json",),
     "link list": ("--worktree", "--refresh-pr", "--json", "--csv"),
     "tracker add": ("--json", "--fetch", "--no-fetch"),
-    "repo remove": ("--json", "--force"),
+    "tracker update": ("--json", "--fetch", "--no-fetch", "--enable", "--disable"),
     "tracker remove": ("--json",),
     "tracker list": ("--json", "--csv"),
 }
@@ -63,10 +64,11 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "repo add": ("--name", "--path", "--tracker"),
     "link remove": ("--repo",),
     "tracker add": ("--vendor", "--remote-url"),
+    "tracker update": ("--vendor", "--remote-url"),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove"},
                                     "link": {"list", "set", "remove", "deactivate", "reactivate"},
-                                    "tracker": {"add", "list", "remove"}}
+                                    "tracker": {"add", "list", "remove", "update"}}
 
 
 def _first_positional(args: list[str], vals: tuple[str, ...] = ()) -> str:

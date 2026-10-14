@@ -56,11 +56,18 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
 5. **Runs page state filter** (`?state=`) and **target filter** (`?target=`) are
    client-side; the contract's GET /api/runs returns all runs.
 6. **Loading convention (all pages):** tables/tabs never block on refetch —
-   stale rows stay visible with an inline Updating indicator (`RefreshIndicator`);
+   stale rows stay visible with an overlay Updating badge (top-right,
+   `RefreshOverlay` in a `relative` parent — zero layout shift);
    skeletons render only on first load; a refetch error over stale data shows
    an inline retry line. Applies to Dashboard StatusTable, Candidates tabs,
    Links, Runs, Sessions, Repos, Trackers, Doctor.
 7. **Candidates Recent-issues filter** is client-side over the loaded rows
-   (scope toggles My/All/My-Created, created-after date, title/description
-   search, status dropdown); issue rows carry `reporter`/`author` +
-   `description` for it. No server query params.
+   (scope toggles My/All/My-Created with My-Created default-on; created
+   range dropdown Last 7/30/90 days / Last year defaulting to Last 30 days;
+   title/description search; status dropdown defaulting to Not Done = open
+   or in progress); issue rows carry `reporter`/`author` + `description`
+   for it. No server query params.
+8. **Trackers:** per-row enable checkbox + Edit (preloads the add form;
+   submitting an existing key runs `tracker update`), disabled-domains card
+   (`GET/POST /api/tracker-domains`). Disabled trackers and disabled-domain
+   hosts are skipped by issue/PR fetching.

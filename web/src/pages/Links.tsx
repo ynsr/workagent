@@ -9,7 +9,7 @@ import { useRepoTabs } from "@/lib/useRepoTabs"
 import {
   EmptyState,
   ErrorState,
-  RefreshIndicator,
+  RefreshOverlay,
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
@@ -216,8 +216,8 @@ export function Links() {
               description="Worktrees appear once linked to a tracker."
             />
           ) : (
-            <>
-              {isFetching && !isPending ? <RefreshIndicator /> : null}
+            <div className="relative">
+              {isFetching && !isPending ? <RefreshOverlay /> : null}
               {isError ? (
                 <p role="alert" className="mb-3 text-sm text-destructive">
                   {errorText(error)}{" "}
@@ -233,7 +233,7 @@ export function Links() {
                 networkExposed={info?.network_exposed ?? false}
                 repoTabs={repos ? { ...repoTabs, repos } : undefined}
               />
-            </>
+            </div>
           )}
         </CardContent>
       </Card>

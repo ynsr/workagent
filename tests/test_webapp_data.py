@@ -269,7 +269,7 @@ def test_api_trackers_lists_rows(client, tmp_path, monkeypatch):
     assert r.status_code == 200, r.text
     assert r.json() == {"trackers": [{"key": "jira:IPG", "vendor": "jira",
                                        "remote_url": "https://jira/browse/IPG",
-                                       "fetch_enabled": 1, "repos": 1}]}
+                                       "fetch_enabled": 1, "is_enabled": 1, "repos": 1}]}
 
 
 def test_api_repos_includes_trackers_array(client, tmp_path, monkeypatch):

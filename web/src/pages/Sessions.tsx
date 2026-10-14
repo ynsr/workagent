@@ -10,7 +10,7 @@ import { RepoTabsRow } from "@/components/RepoTabs"
 import {
   EmptyState,
   ErrorState,
-  RefreshIndicator,
+  RefreshOverlay,
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
@@ -148,8 +148,8 @@ export function Sessions() {
       ) : (isError && !data) ? (
         <ErrorState error={error} onRetry={() => void refetch()} />
       ) : (
-        <>
-          {isFetching && !isPending ? <RefreshIndicator /> : null}
+        <div className="relative">
+          {isFetching && !isPending ? <RefreshOverlay /> : null}
           {isError ? (
             <p role="alert" className="mb-3 text-sm text-destructive">
               {errorText(error)}{" "}
@@ -221,7 +221,7 @@ export function Sessions() {
             </CardContent>
           </Card>
           )}
-        </>
+        </div>
       )}
     </div>
   )
