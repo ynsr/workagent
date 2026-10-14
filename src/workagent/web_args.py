@@ -37,7 +37,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "start": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
               "--yes", "--json"),
     "review": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
-               "--yes", "--json", "--all", "--sequential", "--fix", "--fix-comments", "--new-fix-session", "--force-all", "--post-comments"),
+               "--yes", "--json", "--all", "--sequential", "--fix", "--fix-comments", "--then-fix-comments", "--new-fix-session", "--force-all", "--post-comments"),
     "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--no-squash"),
     "open": (),
     "sync": ("-m", "--merge", "--harness", "--all", "--yes", "--force",

@@ -569,3 +569,24 @@ def test_default_repo_for_pr_url_fetch_failure_falls_through(isolated_config, mo
         raise Exception("no auth")
     monkeypatch.setattr(refs, "fetch_pr_info", _boom)
     assert trackers.default_repo_for_ref("https://github.com/o/r/pull/33") == ""
+def test_default_repo_for_mr_url_exact_remote_match(isolated_config, monkeypatch):
+    """Pasted MR URL auto-selects the repo whose remote matches exactly."""
+    from workagent import store as _store
+    monkeypatch.setattr(_store, "load_repos", lambda: {
+        "projectx": {"path": "/r/projectx", "remote": "https://git.jibit.cloud/server/projectx.git"},
+        "other": {"path": "/r/other", "remote": "https://git.jibit.cloud/server/other.git"},
+    })
+    monkeypatch.setattr(trackers.refs, "fetch_pr_info", lambda parsed, cwd=None: {})
+    got = trackers.default_repo_for_ref("https://git.jibit.cloud/server/projectx/-/merge_requests/1766")
+    assert got == "/r/projectx"
+
+
+def test_default_repo_for_mr_url_no_substring_match(isolated_config, monkeypatch):
+    """Similar names never collide: projectx-fork URL must not match projectx."""
+    from workagent import store as _store
+    monkeypatch.setattr(_store, "load_repos", lambda: {
+        "projectx": {"path": "/r/projectx", "remote": "https://git.jibit.cloud/server/projectx.git"},
+    })
+    monkeypatch.setattr(trackers.refs, "fetch_pr_info", lambda parsed, cwd=None: {})
+    assert trackers.default_repo_for_ref("https://git.jibit.cloud/server/projectx-fork/-/merge_requests/1") == ""
+

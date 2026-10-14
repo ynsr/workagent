@@ -121,7 +121,8 @@ def test_review_preview_tty_lands_shell_in_worktree(isolated_config, tmp_path, m
     with pytest.raises(_Shell) as excinfo:
         cli.review(ref="https://github.com/o/r/pull/33", repo=None, depth=7, harness=None,
                    no_tty=False, launch=False, dry_run=False, yes=False, json_output=False,
-                   all_wts=False, sequential=False, fix=False, force_all=False, post_comments=False)
+                   all_wts=False, sequential=False, fix=False, force_all=False, post_comments=False,
+                   fix_comments=False, then_fix_comments=False, new_fix_session=False)
     assert excinfo.value.args[0] == "/bin/zsh"
     assert excinfo.value.args[2] == str(worktree)
 
@@ -165,6 +166,42 @@ def test_review_new_fix_session_requires_fix_comments(isolated_config):
     assert r.exit_code == 2, r.output
     assert "--fix-comments" in r.stderr
 
+
+def test_then_fix_comments_rejects_fix_comments_combo(isolated_config):
+    """--then-fix-comments chains its own fix: combining with --fix-comments is usage error."""
+    r = runner.invoke(cli.app, ["review", "o/r#1", "--then-fix-comments", "--fix-comments"])
+    assert r.exit_code == 2, r.output
+    assert "--then-fix-comments cannot be used with --fix-comments" in r.stderr
+
+
+def test_then_fix_comments_rejects_all_combo(isolated_config):
+    """--then-fix-comments is per-PR: --all fan-out cannot chain per child."""
+    r = runner.invoke(cli.app, ["review", "--all", "--then-fix-comments"])
+    assert r.exit_code == 2, r.output
+    assert "--all" in r.stderr
+
+
+def test_then_fix_headless_chains_child_on_success(monkeypatch):
+    """Headless _run_then_fix spawns the fix child; non-zero propagates."""
+    from workagent import cli_review as _r
+    calls: list = []
+    class _Proc:
+        returncode = 0
+    monkeypatch.setattr(_r.subprocess, "run", lambda argv: (calls.append(argv), _Proc())[1])
+    _r._run_then_fix("k", "https://github.com/o/r/pull/1", "omp", False, None, None, True, True, False)
+    assert len(calls) == 1
+    assert "--fix-comments" in calls[0]
+    assert "--then-fix-comments" not in calls[0]
+
+
+def test_then_fix_preview_prints_hint_not_spawn(monkeypatch, capsys):
+    """Preview/terminal never spawns: prints the manual follow-up instead."""
+    from workagent import cli_review as _r
+    def _boom(argv):
+        raise AssertionError("preview must not spawn a child")
+    monkeypatch.setattr(_r.subprocess, "run", _boom)
+    _r._run_then_fix("k", "https://github.com/o/r/pull/1", "omp", False, None, None, True, False, False)
+    assert "then-fix" in capsys.readouterr().err
 
 def test_run_harness_derives_fix_comments_type(isolated_config, tmp_path, monkeypatch):
     """_run_harness with command=review + fix marker inserts fix_comments type."""

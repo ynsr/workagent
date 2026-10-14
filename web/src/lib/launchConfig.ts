@@ -51,7 +51,9 @@ export interface LaunchForm {
   depth: string
   base: string
   runMode: RunMode
+  reviewAction: ReviewAction
   fixComments: boolean
+  thenFixComments: boolean
   newFixSession: boolean
   merge: boolean
   extraPrompt: string
@@ -64,7 +66,9 @@ export const INITIAL: LaunchForm = {
   // Issue #24: Start/Review launches default to printing the harness
   // command for manual execution (Preview); running is opt-in per run mode.
   runMode: "preview",
+  reviewAction: "review",
   fixComments: false,
+  thenFixComments: false,
   newFixSession: false,
   merge: false,
   extraPrompt: "",
@@ -88,6 +92,14 @@ export const RUN_MODE_OPTIONS: readonly { value: RunMode; label: string; hint: s
   { value: "terminal", label: "Run in terminal", hint: "--terminal — open the command in the OS terminal" },
 ]
 
+/** Review-tab action selector: Review vs Fix comments. Fix maps to the
+ * existing standalone `review --fix-comments` action (same-session reuse);
+ * Review optionally chains it via --then-fix-comments. */
+export type ReviewAction = "review" | "fix"
+export const REVIEW_ACTION_OPTIONS: readonly { value: ReviewAction; label: string; hint: string }[] = [
+  { value: "review", label: "Review", hint: "review the PR/MR" },
+  { value: "fix", label: "Fix comments", hint: "--fix-comments — fix open review comments" },
+]
 /** True when the ref looks like a PR/MR (mirrors refs.py URL shapes). */
 export function isPrShaped(ref: string): boolean {
   const t = ref.trim()

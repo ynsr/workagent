@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils"
 import { COPY, INITIAL, MODES, extraPromptArgs, isPrShaped, runModeArgs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
-import { RunModeSelect, StartFormFields, buildStartArgs } from "@/components/StartForm"
+import { ReviewActionSelect, RunModeSelect, StartFormFields, buildStartArgs } from "@/components/StartForm"
 
 /** Review/Sync fields (kept on the Launch page; Start lives in StartForm). */
 function ExtraPromptField({ form, onChange, id = "launch-extra-prompt" }: {
@@ -78,32 +78,17 @@ function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
           spellCheck={false}
         />
       </div>
-      <div className="grid gap-5 sm:grid-cols-2">
-        <div className="grid gap-2">
-          <Label htmlFor="launch-repo">
-            <FieldHelp label="Repository" flag="--repo" description="Registered name, local path, or clone URL. Required — prefilled from the ref when the backend knows it." />
-          </Label>
-          <SearchableSelect
-            value={form.repo}
-            options={repoNames}
-            onChange={(v) => onChange("repo", v)}
-            placeholder="Select a repo…"
-            allowCustom
-          />
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor="launch-depth">
-            <FieldHelp label="Clone depth" flag="--depth" description="Git clone depth for the new worktree (default 7)." />
-          </Label>
-          <Input
-            id="launch-depth"
-            type="number"
-            min={1}
-            value={form.depth}
-            onChange={(e) => onChange("depth", e.target.value)}
-            placeholder="7"
-          />
-        </div>
+      <div className="grid gap-2">
+        <Label htmlFor="launch-repo">
+          <FieldHelp label="Repository" flag="--repo" description="Registered name, local path, or clone URL. Required — prefilled from the ref when the backend knows it." />
+        </Label>
+        <SearchableSelect
+          value={form.repo}
+          options={repoNames}
+          onChange={(v) => onChange("repo", v)}
+          placeholder="Select a repo…"
+          allowCustom
+        />
       </div>
       <ExtraPromptField form={form} onChange={onChange} />
     </>
@@ -218,7 +203,8 @@ export function Launch() {
     // Preview/terminal are TTY copy-paste: no -p flag. Headless
     // (--no-tty, omp -p --auto-approve) only when actually running now.
     if (form.runMode === "headless") args.push("--no-tty")
-    if (form.fixComments) args.push("--fix-comments")
+    if (form.reviewAction === "fix" || form.fixComments) args.push("--fix-comments")
+    if (form.reviewAction === "review" && form.thenFixComments) args.push("--then-fix-comments")
     if (form.fixComments && form.newFixSession) args.push("--new-fix-session")
     if (repoValue) args.push("--repo", repoValue)
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
@@ -232,8 +218,8 @@ export function Launch() {
     ? [form.merge ? "--merge (local merge)" : "remote rebase (default)", extra ? `--extra-prompt ${extra}` : null].filter((v): v is string => v !== null)
     : [
         form.runMode === "headless" ? "headless (--no-tty)" : form.runMode === "terminal" ? "terminal (--terminal)" : "tty preview (no --no-tty)",
-        mode === "review" && form.fixComments ? "--fix-comments (fix open review comments)" : null,
-        mode === "review" && form.fixComments && form.newFixSession ? "--new-fix-session (fresh fix session)" : null,
+        mode === "review" && form.reviewAction === "fix" ? "--fix-comments (fix open review comments)" : null,
+        mode === "review" && form.reviewAction === "review" && form.thenFixComments ? "--then-fix-comments (chain fix after review)" : null,
         repoValue ? `--repo ${repoValue}` : "repo: pick a repo",
         `--depth ${form.depth.trim() || "7"}`,
         mode === "start" && form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
@@ -291,17 +277,15 @@ export function Launch() {
       <PageHeader
         title="Launch"
         description="Start an agent from an issue ref/URL, review a PR/MR ref/URL, or sync a linked worktree. Runs headless as a child process of workagent serve."
-        actions={
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void handleRefreshIssues()}
-              disabled={refreshingIssues}
-            >
-              <RefreshCw className={refreshingIssues ? "animate-spin" : undefined} aria-hidden />
-              Refresh issues
-            </Button>
+        actions={null}
+      />
+      <Card className="mx-auto max-w-2xl">
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <CardTitle>{copy.title}</CardTitle>
+              <CardDescription>{copy.refHint}</CardDescription>
+            </div>
             <div
               role="tablist"
               aria-label="Launch mode"
@@ -324,13 +308,7 @@ export function Launch() {
                 </button>
               ))}
             </div>
-          </>
-        }
-      />
-      <Card className="mx-auto max-w-2xl">
-        <CardHeader>
-          <CardTitle>{copy.title}</CardTitle>
-          <CardDescription>{copy.refHint}</CardDescription>
+          </div>
         </CardHeader>
         <CardContent className="grid gap-5">
           {mode === "start" ? (
@@ -348,13 +326,24 @@ export function Launch() {
               />
             ) : null}
             {mode === "review" ? (
+              <ReviewActionSelect
+                idPrefix="launch"
+                value={form.reviewAction}
+                onChange={(v) => {
+                  update("reviewAction", v)
+                  update("fixComments", v === "fix")
+                  if (v === "review") update("thenFixComments", false)
+                }}
+              />
+            ) : null}
+            {mode === "review" && form.reviewAction === "review" ? (
               <CheckRow
-                id="launch-fix-comments"
-                checked={form.fixComments}
-                onChange={(v) => update("fixComments", v)}
-                label="Fix review comments"
-                flag="--fix-comments"
-                description="Fix open review comments: validate, apply, resolve/close, commit and push."
+                id="launch-then-fix-comments"
+                checked={form.thenFixComments}
+                onChange={(v) => update("thenFixComments", v)}
+                label="Then fix comments"
+                flag="--then-fix-comments"
+                description="After a successful review, chain a fix-comments run in the same session (headless runs it; preview/terminal print the follow-up)."
               />
             ) : null}
             {mode === "review" && form.fixComments ? (
@@ -404,7 +393,16 @@ export function Launch() {
             </p>
           </div>
 
-          <div className="flex justify-end gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleRefreshIssues()}
+              disabled={refreshingIssues}
+            >
+              <RefreshCw className={refreshingIssues ? "animate-spin" : undefined} aria-hidden />
+              Refresh issues
+            </Button>
             <Button
               type="button"
               onClick={() => void handleSubmit()}

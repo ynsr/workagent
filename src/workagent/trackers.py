@@ -158,14 +158,58 @@ def linked_repos(tid: str) -> list[str]:
     return list(store.load_trackers().get(tid, {}).get("repos", []))
 
 
+def _normalize_repo_url(url: str) -> str:
+    """Lowercased (host, path) for exact repo matching: strips scheme,
+    trailing slashes, and `.git`. ``/-/<kind>/<n>`` tails are stripped by
+    the caller via parse_ref — here only normalization, never guessing."""
+    from urllib.parse import urlparse
+    try:
+        p = urlparse((url or "").strip())
+    except Exception:
+        return ""
+    host = (p.hostname or "").lower()
+    path = (p.path or "").rstrip("/").lower()
+    if path.endswith(".git"):
+        path = path[:-4]
+    if not host or not path:
+        return ""
+    return f"{host}{path}"
+
+
+def _repo_by_exact_url(host: str, repo_path: str) -> str:
+    """Registered repo path whose stored `remote` normalizes to exactly
+    (host, repo_path). No substring matching — forks and similar names
+    (projectx vs projectx-fork) must never collide. Returns "" on zero or
+    2+ matches (ambiguity defers to manual pick)."""
+    want = f"{(host or '').lower()}/{(repo_path or '').strip('/').lower()}"
+    if want == "/":
+        return ""
+    hits: list[str] = []
+    try:
+        repos = store.load_repos()
+    except Exception:
+        return ""
+    for _name, info in (repos or {}).items():
+        norm = _normalize_repo_url(str((info or {}).get("remote", "") or ""))
+        if norm and norm == want:
+            rp = str((info or {}).get("path", "") or "")
+            if rp:
+                hits.append(rp)
+    if len(hits) == 1:
+        return hits[0]
+    return ""
+
+
 def default_repo_for_ref(issue_ref: str) -> str:
     """Default repo path for *issue_ref* without touching the CWD.
 
     Rule 0: the ref is a linked worktree (key, branch name, or path —
     the Launch Review/Sync case) → that worktree's repo. Rule 1: the
     issue is already linked to a live worktree → that worktree's repo.
-    Rule 2: the ref's tracker has exactly one linked repo → that repo.
-    Otherwise ``""`` (the caller must ask for `--repo`).
+    Rule 1b: a PR/MR URL whose (host, repo path) exactly matches one
+    registered repo remote → that repo (no substring guessing; ambiguity
+    defers to manual pick). Rule 2: the ref's tracker has exactly one
+    linked repo → that repo. Otherwise ``""``.
     """
     from . import worktrees as _worktrees
     links = store.load_links()
@@ -191,6 +235,27 @@ def default_repo_for_ref(issue_ref: str) -> str:
                     repo = str((links.get(resolved_head) or {}).get("repo", ""))
                     if repo:
                         return repo
+            # Rule 1b: PR/MR URL → exactly one registered repo remote.
+            # Pure (host, path) equality against stored remotes — never
+            # substring matching. Zero or 2+ hits fall through; the MR
+            # head fetch above stays the preferred signal when it hits.
+            url = str(parsed.get("url", "") or "")
+            tool = str(parsed.get("tool", "") or "")
+            host, repo_path = "", ""
+            if tool == "gh" and parsed.get("repo"):
+                host, repo_path = "github.com", str(parsed["repo"])
+            else:
+                m = refs._GITLAB_MR.match(url)
+                if m:
+                    host, repo_path = m.group(1), m.group(2)
+                else:
+                    m2 = refs._GITHUB_PR.match(url)
+                    if m2:
+                        host, repo_path = "github.com", m2.group(1)
+            if host and repo_path:
+                by_url = _repo_by_exact_url(host, repo_path)
+                if by_url:
+                    return by_url
         want = refs.issue_key(parsed)
     except Exception:
         return ""

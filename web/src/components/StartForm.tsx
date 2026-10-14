@@ -6,10 +6,9 @@ import { Label } from "@/components/ui/label"
 import { errorText } from "@/components/StatusFeedback"
 import { useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
-import { RUN_MODE_OPTIONS, INITIAL, extraPromptArgs, runModeArgs } from "@/lib/launchConfig"
-import type { LaunchForm, RunMode } from "@/lib/launchConfig"
+import { RUN_MODE_OPTIONS, REVIEW_ACTION_OPTIONS, INITIAL, extraPromptArgs, runModeArgs } from "@/lib/launchConfig"
+import type { LaunchForm, RunMode, ReviewAction } from "@/lib/launchConfig"
 import { FieldHelp } from "@/components/FieldHelp"
-
 export interface StartFormValue extends LaunchForm {}
 
 /** Three-option segmented run-mode control (replaces the "Run agent now"
@@ -39,6 +38,51 @@ export function RunModeSelect({ idPrefix, value, onChange }: {
             key={opt.value}
             type="button"
             id={`${idPrefix}-runmode-${opt.value}`}
+            role="radio"
+            aria-checked={value === opt.value}
+            title={opt.hint}
+            onClick={() => onChange(opt.value)}
+            className={value === opt.value
+              ? "bg-primary px-3 py-1.5 font-medium text-primary-foreground"
+              : "bg-transparent px-3 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+
+/** Two-option Review/Fix segmented control for the Review tab. Review
+ * runs the normal review (optionally chaining the fix via the checkrow
+ * below); Fix runs the standalone `review --fix-comments` fix action in
+ * the same review session. */
+export function ReviewActionSelect({ idPrefix, value, onChange }: {
+  idPrefix: string
+  value: ReviewAction
+  onChange: (v: ReviewAction) => void
+}) {
+  return (
+    <div className="grid gap-1">
+      <Label>
+        <FieldHelp
+          label="Action"
+          flag="review | --fix-comments"
+          description="Review the PR/MR, or fix its open review comments in the same session."
+        />
+      </Label>
+      <div
+        role="radiogroup"
+        aria-label="Review action"
+        className="flex w-fit divide-x overflow-hidden rounded-md border text-sm"
+      >
+        {REVIEW_ACTION_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            id={`${idPrefix}-action-${opt.value}`}
             role="radio"
             aria-checked={value === opt.value}
             title={opt.hint}
@@ -154,52 +198,35 @@ export function StartFormFields({
         )}
       </div>
 
-      <div className="grid gap-5 sm:grid-cols-2">
-        <div className="grid gap-2">
-          <Label htmlFor={`${idPrefix}-repo`}>
-            <FieldHelp label="Repository" flag="--repo" description="Registered name, local path, or clone URL. Required — prefilled from the ref when the backend knows it." />
-          </Label>
-          <SearchableSelect
-            value={form.repo}
-            options={options}
-            onChange={(v) => onChange("repo", v)}
-            placeholder="Select a repo…"
-            allowCustom
-          />
-          {candidates.length > 1 ? (
-            <p className="text-xs text-muted-foreground">
-              {candidates.length} repos linked to this tracker — pick one.
-            </p>
-          ) : null}
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor={`${idPrefix}-depth`}>
-            <FieldHelp label="Clone depth" flag="--depth" description="Git clone depth for the new worktree (default 7)." />
-          </Label>
-          <Input
-            id={`${idPrefix}-depth`}
-            type="number"
-            min={1}
-            value={form.depth}
-            onChange={(e) => onChange("depth", e.target.value)}
-            placeholder="7"
-          />
-        </div>
+      <div className="grid gap-2">
+        <Label htmlFor={`${idPrefix}-repo`}>
+          <FieldHelp label="Repository" flag="--repo" description="Registered name, local path, or clone URL. Required — prefilled from the ref when the backend knows it." />
+        </Label>
+        <SearchableSelect
+          value={form.repo}
+          options={options}
+          onChange={(v) => onChange("repo", v)}
+          placeholder="Select a repo…"
+          allowCustom
+        />
+        {candidates.length > 1 ? (
+          <p className="text-xs text-muted-foreground">
+            {candidates.length} repos linked to this tracker — pick one.
+          </p>
+        ) : null}
       </div>
 
-      <div className="grid gap-5 sm:grid-cols-2">
-        <div className="grid gap-2">
-          <Label htmlFor={`${idPrefix}-base`}>
-            <FieldHelp label="Base branch" flag="--base" description="Base branch for the new worktree (default: repo default)." />
-          </Label>
-          <Input
-            id={`${idPrefix}-base`}
-            value={form.base}
-            onChange={(e) => onChange("base", e.target.value)}
-            placeholder="repo default"
-            spellCheck={false}
-          />
-        </div>
+      <div className="grid gap-2">
+        <Label htmlFor={`${idPrefix}-base`}>
+          <FieldHelp label="Base branch" flag="--base" description="Base branch for the new worktree (default: repo default)." />
+        </Label>
+        <Input
+          id={`${idPrefix}-base`}
+          value={form.base}
+          onChange={(e) => onChange("base", e.target.value)}
+          placeholder="repo default"
+          spellCheck={false}
+        />
       </div>
 
       <div className="flex flex-wrap gap-x-6 gap-y-3">

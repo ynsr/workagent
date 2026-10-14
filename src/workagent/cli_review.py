@@ -197,6 +197,60 @@ def _apply_fix_session(result: dict, review_key: str, fix_comments: bool,
         result["session_metadata"] = {"fixed_from_session_id": latest["id"]}
 
 
+def _chain_fix_command(review_key: str, pr_url: str, harness_name: str,
+                       new_fix_session: bool, env_file: str | None,
+                       extra_prompt: str | None) -> list[str]:
+    """Headless follow-up argv for --then-fix-comments: a second review
+    invocation in pure fix mode against the same ref. Same-session reuse
+    is resolved inside the child via latest_review_session (the review
+    just finished, so it is latest) unless --new-fix-session forces fresh.
+    Exit-code gating lives with the caller: only chain on review exit 0.
+    """
+    argv = [sys.executable, "-m", "workagent", "review", pr_url,
+            "--fix-comments", "--no-tty", "--launch"]
+    if new_fix_session:
+        argv.append("--new-fix-session")
+    if harness_name:
+        argv += ["--harness", harness_name]
+    if env_file:
+        argv += ["--env-file", env_file]
+    if extra_prompt:
+        argv += ["--extra-prompt", extra_prompt]
+    return argv
+
+
+def _print_then_fix_hint(pr_url: str, harness_name: str,
+                         new_fix_session: bool) -> None:
+    """Preview/terminal follow-up: these modes return instantly (no exit
+    code to gate on), so print the exact manual command instead of
+    chaining. The user runs it after the review yields."""
+    cmd = " ".join(shlex.quote(a) for a in
+                   _chain_fix_command(pr_url, pr_url, harness_name,
+                                      new_fix_session, None, None)[3:])
+    eprint(f"then-fix: after the review yields, run: workagent {cmd}")
+
+
+def _run_then_fix(review_key: str, pr_url: str, harness_name: str,
+                  new_fix_session: bool, env_file: str | None,
+                  extra_prompt: str | None, then_fix: bool,
+                  launch: bool, terminal: bool) -> None:
+    """--then-fix-comments dispatcher. No-op unless requested. Headless
+    (--launch) chains the fix child in-process after review exit 0 (the
+    review returning at all means success — failures raise before we get
+    here); its exit code propagates. Preview/terminal print the manual
+    follow-up instead — they detach instantly with nothing to gate on."""
+    if not then_fix:
+        return
+    if not launch or terminal:
+        _print_then_fix_hint(pr_url, harness_name, new_fix_session)
+        return
+    argv = _chain_fix_command(review_key, pr_url, harness_name,
+                              new_fix_session, env_file, extra_prompt)
+    eprint(f"then-fix: review done, chaining: {' '.join(shlex.quote(a) for a in argv)}")
+    proc = subprocess.run(argv)
+    if proc.returncode != 0:
+        _fail(f"then-fix child exited {proc.returncode}", proc.returncode)
+
 def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
                             pr_url: str) -> tuple[str, str, str]:
     """Reuse or create the worktree for a PR/MR source branch.
@@ -272,7 +326,8 @@ def review(
     force_all: bool = typer.Option(False, "--force-all", help="With --all: include already-reviewed and unresolved-comment worktrees too (still needs a PR/MR)."),
     post_comments: bool = typer.Option(False, "--post-comments", hidden=True, help="Append the auto-comment prompt segment (set by --all)."),
     fix_comments: bool = typer.Option(False, "--fix-comments", help="Fix open PR/MR review comments instead of reviewing: validate each finding, apply, resolve/close, commit and push."),
-    new_fix_session: bool = typer.Option(False, "--new-fix-session", help="With --fix-comments: start a fresh fix session instead of continuing the latest review session."),
+    then_fix_comments: bool = typer.Option(False, "--then-fix-comments", help="After a successful review run (exit 0), chain a fix-comments run in the same harness session. Headless runs it automatically; preview/terminal print the follow-up command for manual use."),
+    new_fix_session: bool = typer.Option(False, "--new-fix-session", help="With --fix-comments or --then-fix-comments: start a fresh fix session instead of continuing the latest review session."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path: resumed via omp --resume when non-empty, otherwise used as --session-dir scope for a fresh session."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before terminal/headless harness commands (default: env_file in config.json, auto-created)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
@@ -299,10 +354,14 @@ def review(
         _fail("--session-file cannot be used with --all (one transcript per worktree — omit it and each launch gets its own file)", EXIT_USAGE)
     if fix and fix_comments:
         _fail("--fix cannot be used with --fix-comments", EXIT_USAGE)
+    if then_fix_comments and fix_comments:
+        _fail("--then-fix-comments cannot be used with --fix-comments (it already chains a fix after the review)", EXIT_USAGE)
+    if then_fix_comments and all_wts:
+        _fail("--then-fix-comments cannot be used with --all (chain per-PR instead: review <pr> --then-fix-comments)", EXIT_USAGE)
     if post_comments and fix_comments:
         _fail("--post-comments cannot be used with --fix-comments", EXIT_USAGE)
-    if new_fix_session and not fix_comments:
-        _fail("--new-fix-session requires --fix-comments", EXIT_USAGE)
+    if new_fix_session and not (fix_comments or then_fix_comments):
+        _fail("--new-fix-session requires --fix-comments or --then-fix-comments", EXIT_USAGE)
     if ref is None and not all_wts:
         _fail("missing PR/MR ref or worktree key\n"
               "  Pass a ref, or use --all to review every not-reviewed worktree.",
@@ -469,6 +528,9 @@ def review(
                 if launch:
                     _clear_reviewed(review_key)
                 raise
+            _run_then_fix(review_key, pr_url, harness_name, new_fix_session,
+                          env_file, extra_prompt, then_fix_comments,
+                          launch, terminal)
             return
     if not head_ref:
         _fail(f"could not determine the MR head branch for {pr_url}.\n"
@@ -504,5 +566,8 @@ def review(
         if launch:
             _clear_reviewed(review_key)
         raise
+    _run_then_fix(review_key, pr_url, harness_name, new_fix_session,
+                  env_file, extra_prompt, then_fix_comments,
+                  launch, terminal)
 
 

@@ -1,6 +1,8 @@
 # Changelog
 ## Unreleased
 - Dashboard StatusTable and Candidates Unlinked PR/MRs no longer block on expired caches: stale rows render instantly with the refresh overlay while one background thread revalidates (new `pr_candidates_cache` table, `swr.serve_stale_or_refresh` primitive, frontend `gcTime` matching the SWR window so idle tabs keep their rows); Recent issues filter persists in localStorage across tabs and restarts [no-issue]
+- Review chains a fix via `--then-fix-comments`: headless runs the fix child automatically after review exit 0 in the same session (exit-code gate; comment triage stays inside the fix prompt), preview/terminal print the manual follow-up; Launch Review tab gains a Review|Fix segmented control with per-action flags, and pasted MR/PR URLs auto-select the repo by exact (host, path) remote match [no-issue]
+- Launch cleanup: clone-depth inputs hidden (default 7 still passed), mode tabs + Refresh issues moved into the Launch card [no-issue]
 - Recent issues tab badge now shows the filtered count (what the persisted filter displays), not the unfiltered total [no-issue]
 - Recent issues scopes now split correctly: `Assigned to me` (assignee-me query) vs `Created by me` (reporter/author query), relabeled from the misleading `My Issues`/`My Created Issues`; rows carry their query origin (`assigned_to_me`/`created_by_me`) so no login comparison is needed; GitLab stays MR-only by design (Jira covers work tracking) [no-issue]
 - Recent issues no longer blank when one tracker is disabled: the issue-source gate is any-usable per vendor (disabling `jira:PAN` keeps `jira:IPG` rows), and a fully-disabled vendor reports `skipped disabled issue source(s)` above the table instead of silently emptying it [no-issue]
