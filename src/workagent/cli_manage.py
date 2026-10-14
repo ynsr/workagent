@@ -39,6 +39,7 @@ def repo_add(
     tracker: Optional[str] = typer.Option(None, "--tracker", help="Issue tracker project key/URL to map."),
     fetch: Optional[bool] = typer.Option(None, "--fetch/--no-fetch",
         help="Fetch this repo's MRs/PRs for Candidates (default: on, except GitHub gh-tooled repos which default off)."),
+    release_branch: Optional[str] = typer.Option(None, "--release-branch", help="Release branch (default: auto-detect master on Jibit repos, else none)."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Register an offline repo.
@@ -56,7 +57,7 @@ def repo_add(
     tid = trackers.normalize_id(tracker) if tracker else trackers.default_tracker_for_repo(p)
     if not tid:
         _fail("cannot derive tracker from origin remote: pass --tracker IPG|github:O/R|GitLab URL", EXIT_USAGE)
-    repos.register_repo(name, p, tracker_key=tid, fetch_enabled=fetch)
+    repos.register_repo(name, p, tracker_key=tid, fetch_enabled=fetch, release_branch=release_branch)
     _print_result({"registered": name, "path": str(p), "tracker": tid}, json_output)
 
 
@@ -94,10 +95,44 @@ def repo_list(
       workagent repo list --json | jq '.[].name'
     """
     items = [{"name": n, "path": v.get("path", ""),
-              "trackers": ",".join(v.get("trackers", []) or ([v["tracker"]] if v.get("tracker") else []))}
+              "trackers": ",".join(v.get("trackers", []) or ([v["tracker"]] if v.get("tracker") else [])),
+              "default_branch": v.get("default_branch", ""),
+              "release_branch": v.get("release_branch", "")}
              for n, v in store.load_repos().items()]
-    _print_rows(items, json_output, csv_output, ["name", "path", "trackers"],
+    _print_rows(items, json_output, csv_output,
+                ["name", "path", "trackers", "default_branch", "release_branch"],
                 "Registered repos", "(no repos registered)")
+
+
+@repo_app.command("update")
+@_catch_harness_errors
+def repo_update(
+    name: str = typer.Argument(..., autocompletion=_complete_repos, help="Registered repo name."),
+    default_branch: Optional[str] = typer.Option(None, "--default-branch", help="Default branch (empty string clears)."),
+    release_branch: Optional[str] = typer.Option(None, "--release-branch", help="Release branch (empty string clears release support)."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Update a registered repo's default/release branches.
+
+    Example: workagent repo update projectx --release-branch master
+    """
+    registry = store.load_repos()
+    if name not in registry:
+        _fail(f"unknown repo: {name}", EXIT_USAGE)
+    if default_branch is None and release_branch is None:
+        _fail("nothing to update: pass --default-branch and/or --release-branch.", EXIT_USAGE)
+    from . import store_sqlite as _sq
+    db = _sq.db_path()
+    _sq.init_db(db)
+    with _sq.connect(db) as conn:
+        if default_branch is not None:
+            conn.execute("UPDATE repos SET default_branch = ? WHERE key_ref = ?",
+                         (default_branch, name))
+        if release_branch is not None:
+            conn.execute("UPDATE repos SET release_branch = ? WHERE key_ref = ?",
+                         (release_branch, name))
+    _print_result({"updated": name, "default_branch": default_branch,
+                   "release_branch": release_branch}, json_output)
 
 
 @repo_app.command("remove")
