@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useConfirmedRun, useCopyFeedback } from "@/components/RunActions"
 import { CopyCell } from "@/components/CopyCell"
 import { ActionDialog } from "@/components/LinkDialogs"
@@ -17,13 +17,12 @@ import {
   errorText,
 } from "@/components/StatusFeedback"
 import { api, type IssueRow } from "@/lib/api"
-import { IssuesFilterForm, NoFilteredIssues, useIssuesFilter, type IssuesFilterState } from "@/components/IssuesFilter"
+import { IssuesFilterForm, NoFilteredIssues, filterIssues, useIssuesFilter, type IssuesFilterState } from "@/components/IssuesFilter"
 import type { UseQueryResult } from "@tanstack/react-query"
 import { queryKeys, useCandidatesIssues, useCandidatesPrs, useCandidatesWorktrees } from "@/lib/queries"
 import { exactDateTime, relativeDate } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
-
 type Tab = "prs" | "issues" | "worktrees"
 
 const TABS: readonly { value: Tab; label: (n: number) => string }[] = [
@@ -65,12 +64,25 @@ export function CandidatesCard() {
       queryFn: () => api.candidatesIssues({ days: 365, mine: true }),
     })
   }, [initialIssuesQuery.data, qc])
+  // The filter state (scope/range/search/status) lives in filterProbe,
+  // probed against the initial rows — but the FILTERED list must ride the
+  // DISPLAYED rows (initial or broad), not the initial rows. Filtering the
+  // stale initial set while showing "of <broad total>" produced impossible
+  // counts (e.g. "Showing 28 of 999" with an unchanged 28 across scopes).
   const filterProbe = useIssuesFilter(initialIssuesQuery.data?.issues ?? [])
   const broadRange = filterProbe.range === "365" ? 365 : 90
   const broadMine = !filterProbe.scope.all
   const needsBroad = filterProbe.range === "365" || filterProbe.scope.all
   const broadIssuesQuery = useCandidatesIssues(needsBroad, broadRange, broadMine, needsBroad)
   const issuesQuery = broadIssuesQuery.data ? broadIssuesQuery : initialIssuesQuery
+  const issues = issuesQuery.data?.issues ?? []
+  const filter: IssuesFilterState = {
+    ...filterProbe,
+    filtered: useMemo(
+      () => filterIssues(issues, filterProbe.scope, filterProbe.after, filterProbe.query, filterProbe.status),
+      [issues, filterProbe.scope, filterProbe.after, filterProbe.query, filterProbe.status],
+    ),
+  }
   const worktreesQuery = useCandidatesWorktrees()
   const [tab, setTab] = useState<Tab>("prs")
   const { copied, copy } = useCopyFeedback()
@@ -131,7 +143,6 @@ export function CandidatesCard() {
   }
 
   const prs = prsQuery.data?.prs ?? []
-  const issues = issuesQuery.data?.issues ?? []
   const scanned = worktreesQuery.data?.worktrees ?? []
   const warnings = [
     ...(prsQuery.data?.warnings ?? []),
@@ -249,7 +260,7 @@ export function CandidatesCard() {
           <IssuesTab
             query={issuesQuery}
             issues={issues}
-            filter={filterProbe}
+            filter={filter}
             onStart={(issue) => void handleAction({
               command: "start", args: [issue.key],
               label: `Start ${issue.key}`,
