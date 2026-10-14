@@ -200,8 +200,8 @@ never mirrored (live registry only).
 `is_enabled` 0 = disabled (skipped by issue/PR fetching); updates run
 through `POST /api/runs` with `tracker update KEY [--vendor] [--remote-url] [--fetch/--no-fetch] [--enable/--disable]`.
 ### `GET /api/tracker-domains` → `{disabled_domains: [...]}`; `POST /api/tracker-domains` `{domains: [...]}` replaces the list (normalized lowercase/sorted; empty = all enabled). Trackers on a listed host (or subdomain) are skipped by fetching.
-### `GET /api/release/status?name=` → `{repo, path, default_branch, release_branch, diff_count, releasable, reason, stale}`
-Read-only releasability for one repo (1h fresh / 1d SWR diff cache). `releasable` = release branch set + diff > 0. `POST /api/runs` `{command: "release", args: [repo, "--yes"]}` runs the release (confirm dialog appends `--yes`).
+### `GET /api/release/status?name=` → `{repo, path, default_branch, release_branch, diff_count, releasable, reason, stale, ci, ci_url, fetched_at}`
+Read-only releasability for one repo (1h fresh / 1d SWR diff cache). `releasable` = release branch set + diff > 0. `ci`/`ci_url` are the release branch's newest pipeline (`success|failure|running|not_started`, empty when the lookup soft-fails); `fetched_at` is the diff-cache stamp. `POST /api/runs` `{command: "release", args: [repo, "--yes"]}` runs the release (confirm dialog appends `--yes`).
 ## Runs (mutating CLI commands as child processes)
 ### `POST /api/runs` → 202
 Request:

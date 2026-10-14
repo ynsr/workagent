@@ -139,6 +139,9 @@ export interface ReleaseStatus {
   releasable: boolean
   reason: string
   stale?: boolean
+  ci?: string
+  ci_url?: string
+  fetched_at?: string
 }
 /** One unlinked open PR/MR of GET /api/candidates. */
 export interface CandidatePr {

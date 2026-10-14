@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from urllib.parse import quote
 
@@ -105,6 +106,16 @@ def _ci_glab(pr_url: str, cwd: str | None) -> tuple[str, str]:
     return state, newest.get("web_url") or ""
 
 
+def _glab_state(status: str) -> str:
+    """Map a GitLab pipeline/job status onto the CI cell vocabulary."""
+    if status in ("success", "passed"):
+        return "success"
+    if status in ("failed", "canceled"):
+        return "failure"
+    if status in _GLAB_RUNNING:
+        return "running"
+    return "not_started"
+
 def _ci_branch_glab(host: str, path: str, branch: str,
                     cwd: str | None) -> tuple[str, str]:
     """(status, url) for the newest pipeline of *branch* (glab)."""
@@ -206,4 +217,35 @@ def fetch_ci_status(tool: str, pr_url: str, cwd: str | None = None,
     ``branch`` scopes to that branch's newest pipeline (release card).
     """
     return fetch_ci(tool, pr_url, cwd, branch)[0]
+def _split_remote(url: str) -> tuple[str, str]:
+    """(host, path) from an https/ssh git remote URL; ("", "") when unknown."""
+    u = (url or "").strip()
+    m = re.match(r"^[a-z][a-z0-9+.-]*://(?:[^/@]+@)?([^/:?#]+)/(.+?)(?:\.git)?/*$", u, re.IGNORECASE)
+    if m:
+        return m.group(1).lower(), m.group(2)
+    m = re.match(r"^[^/@]+@([^/:]+):(.+?)(?:\.git)?/*$", u)
+    if m:
+        return m.group(1).lower(), m.group(2)
+    return "", ""
+
+
+def fetch_branch_ci(tool: str, remote_url: str, branch: str,
+                    cwd: str | None = None) -> tuple[str | None, str]:
+    """(status, url) for *branch*'s newest pipeline, from a repo remote URL.
+
+    Used by the release card's release-branch CI badge. Soft-failing like
+    fetch_ci: None on any lookup error (warning to stderr).
+    """
+    try:
+        host, path = _split_remote(remote_url)
+        if not path:
+            raise HarnessError(f"cannot parse remote URL: {remote_url}")
+        if tool == "gh":
+            return _ci_branch_gh(path, branch, cwd)
+        if tool == "glab":
+            return _ci_branch_glab(host or "gitlab.com", path, branch, cwd)
+        raise HarnessError(f"unknown host CLI: {tool}")
+    except HarnessError as e:
+        print(f"warning: branch ci lookup failed for {branch}: {e}", file=sys.stderr)
+        return None, ""
 

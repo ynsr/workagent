@@ -62,3 +62,27 @@ def test_fetch_ci_status_branch_param():
     import inspect
     from workagent import refs as _refs
     assert "branch" in inspect.signature(_refs.fetch_ci_status).parameters
+def test_fetch_branch_ci_parses_remote(monkeypatch):
+    from workagent import refs_ci as _ci
+    calls = []
+    def _fake(*a, **k):
+        calls.append(a)
+        return '[{"status":"success","id":7,"web_url":"https://h/-/pipelines/7"}]'
+    monkeypatch.setattr(_ci, "run_cmd", _fake)
+    st, url = _ci.fetch_branch_ci("glab", "https://git.jibit.cloud/server/projectx.git",
+                                  "master")
+    assert st == "success"
+    assert any("projects/server%2Fprojectx/pipelines" in " ".join(c) for c in calls)
+    assert any("ref=master" in " ".join(c) for c in calls)
+
+
+def test_fetch_branch_ci_gh_remote(monkeypatch):
+    from workagent import refs_ci as _ci
+    seen = {}
+    def _fake(*a, **k):
+        seen["argv"] = a
+        return '[{"conclusion":"SUCCESS","status":"COMPLETED","url":"https://gh/run/1"}]'
+    monkeypatch.setattr(_ci, "run_cmd", _fake)
+    st, url = _ci.fetch_branch_ci("gh", "git@github.com:o/r.git", "master")
+    assert st == "success"
+    assert "--repo" in seen["argv"] and "o/r" in seen["argv"]

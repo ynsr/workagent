@@ -177,13 +177,23 @@ def release_status(repo_name: str, force: bool = False) -> dict:
     default = str(info.get("default_branch", "") or "")
     release = str(info.get("release_branch", "") or "")
     base = {"repo": repo_name, "path": str(info.get("path", "")), "default_branch": default,
-            "release_branch": release, "diff_count": 0, "releasable": False, "reason": "", "stale": False}
+            "release_branch": release, "diff_count": 0, "releasable": False, "reason": "", "stale": False,
+            "ci": "", "ci_url": ""}
     if not release:
         base["reason"] = "no release branch"
         return base
     if not default:
         base["reason"] = "no default branch"
         return base
+    try:
+        from . import refs_ci as _ci
+        tool = str(info.get("tool", "") or "")
+        remote = str(info.get("remote", "") or "")
+        ci, ci_url = _ci.fetch_branch_ci(tool, remote, release,
+                                        str(info.get("path", "")))
+        base["ci"], base["ci_url"] = ci or "", ci_url or ""
+    except Exception:
+        pass
     from . import store_sqlite as _sq
     try:
         db = _sq.db_path()
@@ -199,7 +209,8 @@ def release_status(repo_name: str, force: bool = False) -> dict:
         return release_diff_count(Path(str(info["path"])).expanduser(), default, release)
     def _finish(count: int, stale: bool, reason: str = "") -> dict:
         base.update(diff_count=count, releasable=count > 0, stale=stale,
-                    reason="" if count > 0 else "already in sync")
+                    reason="" if count > 0 else "already in sync",
+                    fetched_at=base.get("fetched_at") or (fetched_at or "") or None)
         if reason:
             base["reason"] = reason
         return base
