@@ -157,6 +157,27 @@ def finish_session(path: Path, sid: str, state: str) -> None:
                      (state, sid))
 
 
+def session_by_file_path(path: Path, file_path: str) -> dict | None:
+    """Session row whose file_path equals *file_path* (the web-pinned
+    transcript), newest first. Stem lookup misses omp-minted filenames;
+    the pinned path itself is the reliable join key."""
+    if not file_path or not path.exists():
+        return None
+    with _connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute(
+                "SELECT * FROM sessions WHERE file_path = ?"
+                " ORDER BY created_at DESC LIMIT 1",
+                (file_path,)).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        if row is None:
+            return None
+        out = dict(row)
+        out["metadata"] = _parse_metadata(out.get("metadata"))
+        return out
+
 def set_session_file_path(path: Path, sid: str, file_path: str) -> None:
     """Point a session row at the harness-minted transcript (best effort).
 

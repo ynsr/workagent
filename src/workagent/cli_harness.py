@@ -345,12 +345,13 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         result["session_file"] = session_path
     # Post-cutover sessions row (best effort; launch continues on failure).
     # A pinned --session-file may already have a preview row (web minted it
-    # on the first run): adopt it instead of colliding on the PK.
+    # on the first run): adopt it instead of colliding on the PK. Match by
+    # exact file_path — omp-minted filenames never match their stem.
     reuse_sid = result.get("reuse_session_id")
     stype = action
     if run_key and db.exists() and not reuse_sid and session_file:
         try:
-            existing = _sq.get_session(db, Path(session_file).stem)
+            existing = _sq.session_by_file_path(db, session_file) or _sq.get_session(db, Path(session_file).stem)
         except Exception:
             existing = None
         if existing is not None:
@@ -499,9 +500,11 @@ def record_preview_session(key: str, command: str, prompt: str,
             meta.update(metadata)
         pinned = session_file if isinstance(session_file, str) and session_file else ""
         sid_arg = _Path(pinned).stem if pinned else None
-        if sid_arg:
+        if pinned:
             try:
-                existing = _sq.get_session(db, sid_arg)
+                existing = _sq.session_by_file_path(db, pinned)
+                if existing is None and sid_arg:
+                    existing = _sq.get_session(db, sid_arg)
             except Exception:
                 existing = None
             if existing is not None:

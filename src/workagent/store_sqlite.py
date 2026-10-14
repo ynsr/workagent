@@ -611,6 +611,7 @@ from .store_sessions import (  # noqa: F401,E402
     list_runs,
     list_sessions,
     newest_transcript,
+    session_by_file_path,
     session_file_path,
     set_session_file_path,
     set_session_metadata,

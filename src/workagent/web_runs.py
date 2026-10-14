@@ -56,9 +56,12 @@ def _mirror_run(run: Run) -> None:
         db = _sq.db_path()
         if not db.exists():
             return
-        sid = Path(run.session_file).stem
-        if _sq.get_session(db, sid) is None:
+        row = _sq.session_by_file_path(db, run.session_file)
+        if row is None and (sid := Path(run.session_file).stem):
+            row = _sq.get_session(db, sid)
+        if row is None:
             return
+        sid = str(row.get("id", ""))
         # argv is [python, -m, workagent, <command>, ...] (see _build_argv);
         # fall back to the body fields when the shape is unexpected.
         if len(argv) > 3:

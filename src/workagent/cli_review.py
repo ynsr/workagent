@@ -126,15 +126,17 @@ def _review_key_for(pr_url: str, worktree: str, branch: str, repo: str = "") -> 
 
 
 def _adopt_fix_reuse(result: dict, review_key: str) -> bool:
-    """Point *result* at the latest finished review transcript when the
-    pinned session file already names that session id.
+    """Point *result* at the review session owning the pinned transcript.
 
     The web server passes the saved `sessions.file_path` as explicit
-    --session-file (absolute review/... path). When its stem matches the
-    latest review session id, mark the reuse so the harness layer treats
-    the path as a resume target verbatim instead of rescoping it under
-    fix_comments/ (same stem, wrong dir → omp starts a fresh session).
-    Returns True when the reuse was adopted.
+    --session-file. The owning row is found by exact file_path match (the
+    pinned path itself — omp-minted filenames never match their stem, so
+    stem lookup silently misses). When it is the latest non-running
+    review session for the key, mark the reuse so the harness layer
+    treats the path as a resume target verbatim instead of rescoping it
+    under fix_comments/ (same stem, wrong dir → omp starts fresh).
+    Falls back to stem lookup for legacy rows whose file_path was never
+    updated to the minted name. Returns True when the reuse was adopted.
     """
     try:
         from pathlib import Path as _Path
@@ -145,7 +147,9 @@ def _adopt_fix_reuse(result: dict, review_key: str) -> bool:
         db = _sq.db_path()
         if not db.exists():
             return False
-        existing = _sq.get_session(db, _Path(pinned).stem)
+        existing = _sq.session_by_file_path(db, pinned)
+        if existing is None:
+            existing = _sq.get_session(db, _Path(pinned).stem)
         if existing is None:
             return False
         if str(existing.get("worktree_ref", "")) != review_key:

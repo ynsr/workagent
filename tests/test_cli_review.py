@@ -220,6 +220,63 @@ def test_fix_comments_explicit_file_adopts_review_reuse(isolated_config):
     assert "/fix_comments/" not in result["session_file"]
 
 
+def test_fix_comments_minted_filename_resumes_in_all_modes(isolated_config, tmp_path, monkeypatch):
+    """omp-minted transcript (id != file stem) still resumes: preview prints
+    --resume, headless launches with --resume, terminal spawns with --resume."""
+    from workagent import cli_review as _r, cli_harness as _h, store_sqlite as sq
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    wt = tmp_path / "wt-fix"
+    wt.mkdir()
+    store.record_link("feat/fix", {"branch": "feat/fix", "worktree": str(wt),
+                                   "repo": str(repo_dir)})
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('feat/fix', ?, 'feat/fix', NULL, '2026-01-01', '{}')", (str(wt),))
+    minted = wt / "sessions" / "omp" / "feat" / "fix" / "review"
+    minted.mkdir(parents=True)
+    transcript = minted / "2026-10-14T07-00-00-123Z-4242.jsonl"
+    transcript.write_text('{"a": 1}\n')
+    sq.insert_session(db, worktree_ref="feat/fix", harness_name="omp",
+                      initiator_command="review", prompt="p",
+                      file_path=str(transcript), session_id="rev-minted",
+                      session_type="review")
+    sq.finish_session(db, "rev-minted", "finished")
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed, cwd=None: {"head_ref": "feat/fix"})
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda w, b: "up-to-date")
+    PR = "https://github.com/o/r/pull/33"
+    # preview: printed command resumes the minted transcript
+    r = runner.invoke(cli.app, ["review", PR, "--fix-comments", "--json"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert out["session_file"] == str(transcript)
+    assert f"--resume {transcript}" in out["harness_command"]
+    assert out.get("reuse_session_id") == "rev-minted"
+    # headless: launch argv carries --resume on the minted file
+    seen: dict = {}
+    def _fake_launch(harness, prompt, workdir, no_tty, args, env_file=None, watch=None):
+        seen["args"] = list(args)
+    monkeypatch.setattr(cli.backend, "launch", _fake_launch)
+    monkeypatch.setattr(_h.store, "record_harness_run", lambda *a, **k: None)
+    monkeypatch.setattr(_h.store, "clear_harness_run", lambda *a, **k: None)
+    r = runner.invoke(cli.app, ["review", PR, "--fix-comments",
+                                "--no-tty", "--launch", "--yes", "--json"])
+    assert r.exit_code == 0, r.output
+    assert "--resume" in seen["args"] and str(transcript) in seen["args"]
+    # terminal: spawned shell command carries --resume on the minted file
+    spawned: dict = {}
+    monkeypatch.setattr(_h, "spawn_in_terminal",
+                        lambda cmd, wd: (spawned.update(cmd=cmd), 4242)[1])
+    r = runner.invoke(cli.app, ["review", PR, "--fix-comments",
+                                "--terminal", "--yes", "--json"])
+    assert r.exit_code == 0, r.output
+    assert f"--resume {transcript}" in spawned["cmd"]
+
 def test_fix_comments_preview_adopts_existing_session(isolated_config):
     """Preview rerun on a recorded transcript adopts the row (no PK warning)."""
     from workagent import cli_harness as _h, store_sqlite as sq

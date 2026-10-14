@@ -78,3 +78,9 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
    submitting an existing key runs `tracker update`), disabled-domains card
    (`GET/POST /api/tracker-domains`). Disabled trackers and disabled-domain
    hosts are skipped by issue/PR fetching.
+10. **Issues variant cache:** the server keys issue rows per (window, scope)
+    — e.g. `jira:mine90` for the initial (assigned/created by me, 90d)
+    superset that warms on page load, plus one key per out-of-superset
+    selection (`days`, `mine=false`). The UI prefetches the (365d, mine)
+    variant in the background once the initial rows land (one idle remote
+    round), so switching to Last year is instant; All-scope stays lazy.

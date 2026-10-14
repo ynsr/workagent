@@ -54,6 +54,17 @@ export function CandidatesCard() {
   // the broad rows the moment they land, but keeps showing the initial
   // rows (with the overlay badge) while they load — no blocking.
   const initialIssuesQuery = useCandidatesIssues(false, 90, true)
+  // Background-warm the broad (Last year, mine) variant once the initial
+  // rows land: one idle remote round now, so switching to Last year later
+  // is instant. The All-scope variant stays lazy — it is a wider search
+  // most users never pick, and its key is fetched on demand.
+  useEffect(() => {
+    if (!initialIssuesQuery.data) return
+    void qc.prefetchQuery({
+      queryKey: queryKeys.candidatesIssues(false, 365, true),
+      queryFn: () => api.candidatesIssues({ days: 365, mine: true }),
+    })
+  }, [initialIssuesQuery.data, qc])
   const filterProbe = useIssuesFilter(initialIssuesQuery.data?.issues ?? [])
   const broadRange = filterProbe.range === "365" ? 365 : 90
   const broadMine = !filterProbe.scope.all
