@@ -85,6 +85,61 @@ def _candidate_prs() -> tuple[list[dict], list[str]]:
     return prs, warnings
 
 
+_PRS_CACHE_TTL_SECONDS = 600  # 10min fresh — mirrors the per-PR lookup TTL
+_PRS_CACHE_SWR_SECONDS = max(_PRS_CACHE_TTL_SECONDS * 10, 24 * 3600)  # 1d floor
+
+
+def _candidate_prs_cached(force: bool = False) -> tuple[list[dict], list[str], bool]:
+    """(prs, warnings, stale): stale-while-revalidate over the PR cache.
+
+    Fresh cache (< 10min) or `force` → live fetch inline (and the cache is
+    refreshed). Expired-but-present cache → served instantly with
+    `stale=True` while one background thread revalidates (exactly-once per
+    key, see `swr`). Empty cache → live fetch inline (first load has
+    nothing to show yet). Pre-cutover (no state.db) → live fetch.
+    """
+    from datetime import datetime, timezone
+    from . import store_sqlite as sq, swr as _swr
+    db = sq.db_path()
+    if force or not db.exists():
+        prs, warnings = _candidate_prs()
+        if db.exists():
+            try:
+                sq.set_pr_candidates_cache(db, prs)
+            except Exception:
+                pass
+        return prs, warnings, False
+    try:
+        cached, fetched_at = sq.get_pr_candidates_cache(db)
+    except Exception:
+        cached, fetched_at = [], None
+    fresh = False
+    if cached and fetched_at:
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(fetched_at)).total_seconds()
+            fresh = age < _PRS_CACHE_TTL_SECONDS
+        except ValueError:
+            pass
+    if fresh:
+        return cached, [], False
+
+    def _refresh() -> tuple[list[dict], list[str]]:
+        prs, warnings = _candidate_prs()
+        try:
+            sq.set_pr_candidates_cache(db, prs)
+        except Exception:
+            pass
+        return prs, warnings
+
+    if cached:
+        payload, _stale = _swr.serve_stale_or_refresh(
+            (cached, ["serving cached PR/MRs while refreshing in the background"]),
+            False, _refresh, "prs")
+        prs, warnings = payload
+        return prs, warnings, True
+    prs, warnings = _refresh()
+    return prs, warnings, False
+
 def _candidate_issues(force: bool = False, days: int = 90,
                       mine: bool = True) -> tuple[list[dict], list[str]]:
     """Issues for the user's (window, scope) selection: the initial

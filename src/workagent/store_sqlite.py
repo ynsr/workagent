@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE TABLE IF NOT EXISTS issue_cache (
   source TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL,
   fetched_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS pr_candidates_cache (
+  source TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL,
+  fetched_at TEXT NOT NULL);
 """
 
 
@@ -331,6 +334,7 @@ _REQUIRED_COLS = {
     "sessions": ("id", "worktree_ref", "state", "created_at"),
     "runs": ("session_id", "command", "args", "created_at"),
     "issue_cache": ("source", "payload", "fetched_at"),
+    "pr_candidates_cache": ("source", "payload", "fetched_at"),
 }
 
 
@@ -728,3 +732,31 @@ def clear_issue_cache(path: Path) -> None:
     init_db(path)
     with connect(path) as conn:
         conn.execute("DELETE FROM issue_cache")
+
+
+def get_pr_candidates_cache(path: Path, source: str = "prs") -> tuple[list, str | None]:
+    """Cached unlinked PR/MR rows + fetched_at ISO, or ([], None)."""
+    import json
+    init_db(path)
+    with connect(path) as conn:
+        row = conn.execute(
+            "SELECT payload, fetched_at FROM pr_candidates_cache WHERE source = ?",
+            (source,)).fetchone()
+    if row is None:
+        return [], None
+    return json.loads(row[0]), row[1]
+
+
+def set_pr_candidates_cache(path: Path, rows: list[dict], source: str = "prs") -> None:
+    """Upsert cached unlinked PR/MR rows with a fresh fetched_at."""
+    import json
+    from datetime import datetime, timezone
+    init_db(path)
+    with connect(path) as conn:
+        conn.execute(
+            "INSERT INTO pr_candidates_cache (source, payload, fetched_at)"
+            " VALUES (?, ?, ?)"
+            " ON CONFLICT(source) DO UPDATE SET payload=excluded.payload,"
+            " fetched_at=excluded.fetched_at",
+            (source, json.dumps(rows),
+             datetime.now(timezone.utc).isoformat()))

@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Dashboard StatusTable and Candidates Unlinked PR/MRs no longer block on expired caches: stale rows render instantly with the refresh overlay while one background thread revalidates (new `pr_candidates_cache` table, `swr.serve_stale_or_refresh` primitive, frontend `gcTime` matching the SWR window so idle tabs keep their rows); Recent issues filter persists in localStorage across tabs and restarts [no-issue]
 - Recent issues scopes now split correctly: `Assigned to me` (assignee-me query) vs `Created by me` (reporter/author query), relabeled from the misleading `My Issues`/`My Created Issues`; rows carry their query origin (`assigned_to_me`/`created_by_me`) so no login comparison is needed; GitLab stays MR-only by design (Jira covers work tracking) [no-issue]
 - Recent issues no longer blank when one tracker is disabled: the issue-source gate is any-usable per vendor (disabling `jira:PAN` keeps `jira:IPG` rows), and a fully-disabled vendor reports `skipped disabled issue source(s)` above the table instead of silently emptying it [no-issue]
 - Run/session resume prefers the DB-recorded transcript path over the pinned path and the web mirror syncs the live run to it, closing the branch-less vs branch-scoped rescope gap [no-issue]

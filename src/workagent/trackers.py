@@ -563,38 +563,53 @@ def _cache_key(source: str, days: int, mine: bool) -> str:
 
 def _cached_source(source: str, fetch, warn: list,
                    force: bool, cache_key: str | None = None) -> list[dict]:
-    """Per-source issue rows: cached rows are served within
-    max(1h * 10, 1 day); older/absent entries trigger a live fetch that
-    refreshes the cache (the next call serves the fresh rows, so a stale
-    table never blocks on the network).
+    """Per-source issue rows, stale-while-revalidate.
 
+    Fresh cache (< 1h) → served instantly. Expired-but-present cache →
+    served instantly with one background revalidation (exactly-once per
+    key, see `swr`); the table renders stale rows + overlay instead of
+    blocking on the tracker CLIs. Empty cache → live fetch inline (first
+    load has nothing to show yet). `force` always fetches live inline.
     Pre-cutover (no state.db) or any cache failure → live fetch, never raise.
     """
     from datetime import datetime, timezone
     from . import store_sqlite as sq
+    from . import swr as _swr
     db = sq.db_path()
     key = cache_key or source
-    if not force and db.exists():
+
+    def _live() -> list[dict]:
         try:
-            rows, fetched_at = sq.get_issue_cache(db, key)
-            if rows and fetched_at:
-                age = (datetime.now(timezone.utc)
-                       - datetime.fromisoformat(fetched_at)).total_seconds()
-                if age < _CACHE_SWR_SECONDS:
-                    return rows
+            rows = fetch(warn)
+        except Exception as e:
+            warn.append(f"{source}: {e}")
+            return []
+        try:
+            if db.exists():
+                sq.set_issue_cache(db, key, rows)
         except Exception:
             pass
+        return rows
+
+    if force or not db.exists():
+        return _live()
     try:
-        rows = fetch(warn)
-    except Exception as e:
-        warn.append(f"{source}: {e}")
-        return []
-    try:
-        if db.exists():
-            sq.set_issue_cache(db, key, rows)
+        cached, fetched_at = sq.get_issue_cache(db, key)
     except Exception:
-        pass
-    return rows
+        return _live()
+    if not cached or not fetched_at:
+        return _live()
+    try:
+        age = (datetime.now(timezone.utc)
+               - datetime.fromisoformat(fetched_at)).total_seconds()
+    except ValueError:
+        return _live()
+    if age < _CACHE_TTL_SECONDS:
+        return cached
+    if age < _CACHE_SWR_SECONDS:
+        payload, _stale = _swr.serve_stale_or_refresh(cached, False, _live, key)
+        return payload
+    return _live()
 
 
 def _tracker_host(url: str) -> str:

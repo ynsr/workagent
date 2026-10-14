@@ -213,6 +213,30 @@ def test_fetch_disabled_repo_skips_pr_scan(isolated_config, tmp_path, monkeypatc
     assert prs == []
 
 
+def test_pr_candidates_serve_stale_without_scan(isolated_config, tmp_path, monkeypatch):
+    """Expired PR cache serves stale rows instantly with a background
+    rescan — the Unlinked PR/MRs tab never blocks on gh/glab."""
+    import time
+    from datetime import datetime, timedelta, timezone
+    from workagent import cli_candidates as cc
+    from workagent import store_sqlite as sq
+    monkeypatch.setattr(sq, "db_path", lambda: tmp_path / "state.db")
+    sq.set_pr_candidates_cache(sq.db_path(), [{"key": "github:o/r#1"}])
+    old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    with sq.connect(sq.db_path()) as conn:
+        conn.execute("UPDATE pr_candidates_cache SET fetched_at = ? WHERE source = ?",
+                     (old, "prs"))
+    def boom(tool, cwd=None):
+        time.sleep(0.2)
+        return []
+    monkeypatch.setattr(cc.refs, "fetch_open_prs", boom)
+    t0 = time.monotonic()
+    prs, warnings, stale = cc._candidate_prs_cached()
+    assert time.monotonic() - t0 < 0.2  # instant, no wait for the rescan
+    assert stale is True and prs == [{"key": "github:o/r#1"}]
+    assert any("background" in w for w in warnings)
+
+
 def test_fetch_disabled_tracker_skips_github_issues(isolated_config, monkeypatch):
     from workagent import store_sqlite as sq
     from workagent import trackers as tr

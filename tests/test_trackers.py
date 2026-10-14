@@ -309,6 +309,45 @@ def test_issue_variant_cache_keys_are_distinct(monkeypatch, tmp_path):
     assert seen == []
 
 
+def test_expired_issue_cache_serves_stale_without_fetch(monkeypatch, tmp_path):
+    """Expired-but-present cache serves stale rows instantly with a
+    background refresh — the API never blocks on the tracker CLI."""
+    import time
+    from datetime import datetime, timedelta, timezone
+    from workagent import trackers
+    from workagent import store_sqlite as sq
+    monkeypatch.setattr(sq, "db_path", lambda: tmp_path / "state.db")
+    stale_rows = [{"key": "jira:OLD-1", "title": "stale"}]
+    sq.set_issue_cache(sq.db_path(), "jira:mine90", stale_rows)
+    # Backdate past the 1h fresh TTL but inside the 1d SWR window.
+    old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    with sq.connect(sq.db_path()) as conn:
+        conn.execute("UPDATE issue_cache SET fetched_at = ? WHERE source = ?",
+                     (old, "jira:mine90"))
+    live_calls: list = []
+    def fake_fetch(warn):
+        live_calls.append(1)
+        time.sleep(0.2)
+        return [{"key": "jira:NEW-1", "title": "fresh"}]
+    t0 = time.monotonic()
+    got = trackers._cached_source("jira", fake_fetch, [], False, "jira:mine90")
+    elapsed = time.monotonic() - t0
+    assert got == stale_rows  # instant, no wait for the 0.2s live fetch
+    assert elapsed < 0.2
+    time.sleep(0.5)  # background refresh lands
+    rows, _ = sq.get_issue_cache(sq.db_path(), "jira:mine90")
+    assert rows == [{"key": "jira:NEW-1", "title": "fresh"}]
+
+
+def test_fresh_issue_cache_never_fetches(monkeypatch, tmp_path):
+    """Fresh cache (< 1h) serves instantly with zero fetches."""
+    from workagent import trackers
+    from workagent import store_sqlite as sq
+    monkeypatch.setattr(sq, "db_path", lambda: tmp_path / "state.db")
+    sq.set_issue_cache(sq.db_path(), "jira:mine90", [{"key": "jira:A-1"}])
+    def boom(warn):
+        raise AssertionError("must not fetch on fresh cache")
+    assert trackers._cached_source("jira", boom, [], False, "jira:mine90") == [{"key": "jira:A-1"}]
 def test_initial_query_is_assigned_or_created_90d():
     """The default fetcher query covers assigned-to-me or created-by-me,
     all statuses, last 90 days."""

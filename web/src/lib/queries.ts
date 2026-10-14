@@ -39,6 +39,11 @@ export function useStatusAll(refresh?: boolean) {
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     staleTime: SWR_STATUS_MS,
+    // Cache retention must match the SWR window: the default gcTime (5min)
+    // garbage-collects rows after an idle tab, so an expired-but-usable
+    // backend cache still blocks on skeleton instead of rendering stale
+    // rows + overlay. Keep them for the full 30d SWR window.
+    gcTime: SWR_STATUS_MS,
   })
 }
 
@@ -51,6 +56,7 @@ export function useStatusInactive() {
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     staleTime: SWR_STATUS_MS,
+    gcTime: SWR_STATUS_MS,
   })
 }
 
@@ -78,17 +84,20 @@ export function useDoctor() {
 }
 
 export function useIssues(days?: number, mine?: boolean) {
-  return useQuery({ queryKey: queryKeys.issues(days, mine), queryFn: () => api.issues({ days, mine }), staleTime: SWR_DAY_MS })
+  return useQuery({ queryKey: queryKeys.issues(days, mine), queryFn: () => api.issues({ days, mine }), staleTime: SWR_DAY_MS, gcTime: SWR_DAY_MS })
 }
 
 export function useCandidates(days?: number, mine?: boolean) {
-  return useQuery({ queryKey: queryKeys.candidates(days, mine), queryFn: () => api.candidates({ days, mine }), staleTime: SWR_DAY_MS })
+  return useQuery({ queryKey: queryKeys.candidates(days, mine), queryFn: () => api.candidates({ days, mine }), staleTime: SWR_DAY_MS, gcTime: SWR_DAY_MS })
 }
 
 /** Per-tab candidates queries: each tab loads independently so the slow
- * PR fetch never blocks issues/worktrees (incremental tab rendering). */
+ * PR fetch never blocks issues/worktrees (incremental tab rendering).
+ * gcTime matches the SWR window: without it the default 5min gc drops
+ * rows after an idle tab, and the Unlinked PR/MRs tab blocks on skeleton
+ * instead of showing stale rows + overlay. */
 export function useCandidatesPrs() {
-  return useQuery({ queryKey: queryKeys.candidatesPrs, queryFn: () => api.candidatesPrs(), staleTime: SWR_DAY_MS })
+  return useQuery({ queryKey: queryKeys.candidatesPrs, queryFn: () => api.candidatesPrs(), staleTime: SWR_DAY_MS, gcTime: SWR_DAY_MS })
 }
 
 export function useCandidatesIssues(
@@ -101,6 +110,9 @@ export function useCandidatesIssues(
     queryKey: queryKeys.candidatesIssues(force, days, mine),
     queryFn: () => api.candidatesIssues({ force, days, mine }),
     staleTime: SWR_DAY_MS,
+    // Same retention as useCandidatesPrs: stale issue rows render with the
+    // overlay instead of blocking on skeleton after an idle tab.
+    gcTime: SWR_DAY_MS,
     enabled,
   })
 }

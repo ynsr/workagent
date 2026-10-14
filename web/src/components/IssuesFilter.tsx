@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
+import { getIssuesFilter, setIssuesFilter } from "@/lib/settings"
 import { CheckRow } from "@/components/FieldHelp"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -122,18 +123,40 @@ export interface IssuesFilterState {
   filtered: IssueRow[]
 }
 export function useIssuesFilter(rows: IssueRow[]): IssuesFilterState {
-  const [scope, setScope] = useState<IssuesScope>(DEFAULT_ISSUES_SCOPE)
-  const [range, setRange] = useState<IssuesRange>(DEFAULT_ISSUES_RANGE)
+  const stored = getIssuesFilter()
+  const validRange =
+    typeof stored.range === "string" &&
+    (ISSUES_RANGES as readonly { value: string }[]).some((r) => r.value === stored.range)
+      ? (stored.range as IssuesRange)
+      : DEFAULT_ISSUES_RANGE
+  const validStatus: IssuesStatusFilter =
+    stored.status === "not done" ||
+    stored.status === "open" ||
+    stored.status === "closed" ||
+    stored.status === "in progress" ||
+    stored.status === ""
+      ? stored.status
+      : "not done"
+  const [scope, setScope] = useState<IssuesScope>({
+    mine: stored.scope?.mine ?? DEFAULT_ISSUES_SCOPE.mine,
+    all: stored.scope?.all ?? DEFAULT_ISSUES_SCOPE.all,
+    createdByMe: stored.scope?.createdByMe ?? DEFAULT_ISSUES_SCOPE.createdByMe,
+  })
+  const [range, setRange] = useState<IssuesRange>(validRange)
   const after = rangeCutoff(range)
-  const [query, setQuery] = useState("")
-  const [status, setStatus] = useState<IssuesStatusFilter>("not done")
+  const [query, setQuery] = useState(typeof stored.query === "string" ? stored.query : "")
+  const [status, setStatus] = useState<IssuesStatusFilter>(validStatus)
   const filtered = useMemo(
     () => filterIssues(rows, scope, after, query, status),
     [rows, scope, after, query, status],
   )
+  // Persist every change (debounced by React's render batching — one write
+  // per state update) so the filter survives tab switches and restarts.
+  useEffect(() => {
+    setIssuesFilter({ scope, range, query, status })
+  }, [scope, range, query, status])
   return { scope, setScope, range, setRange, after, query, setQuery, status, setStatus, filtered }
 }
-
 export function IssuesFilterForm({
   scope,
   setScope,

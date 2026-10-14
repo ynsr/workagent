@@ -6,6 +6,7 @@ export const THEME_KEY = "theme"
 export const VERBOSE_KEY = "workagent.verbose"
 export const SHOW_WORKTREE_KEY = "workagent.showWorktree"
 export const OPTOUT_KEY = "workagent.confirm.optout"
+export const ISSUES_FILTER_KEY = "workagent.issuesFilter"
 
 export type OptOutAction =
   | "cleanup"
@@ -86,6 +87,35 @@ export function setShowWorktree(value: boolean): void {
   }
 }
 
+/** Persisted Recent-issues filter (scope/range/search/status). Partial or
+ * corrupt values fall back to field defaults — a bad stored payload never
+ * blanks the tab. */
+export interface StoredIssuesFilter {
+  scope?: { mine?: boolean; all?: boolean; createdByMe?: boolean }
+  range?: string
+  query?: string
+  status?: string
+}
+
+export function getIssuesFilter(): StoredIssuesFilter {
+  try {
+    const raw = localStorage.getItem(ISSUES_FILTER_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== "object" || parsed === null) return {}
+    return parsed as StoredIssuesFilter
+  } catch {
+    return {}
+  }
+}
+
+export function setIssuesFilter(value: StoredIssuesFilter): void {
+  try {
+    localStorage.setItem(ISSUES_FILTER_KEY, JSON.stringify(value))
+  } catch {
+    /* storage unavailable */
+  }
+}
 export type OptOutMap = Partial<Record<OptOutAction, boolean>>
 
 export function getOptOuts(): OptOutMap {

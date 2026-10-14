@@ -157,7 +157,8 @@ def test_candidates_per_source_endpoints(client, monkeypatch, tmp_path):
         _issue_row(2, "jira:IPG-NEW"),
     ])
     prs = client.get("/api/candidates/prs").json()
-    assert set(prs) == {"prs", "warnings"}
+    assert set(prs) == {"prs", "warnings", "stale"}
+    assert prs["stale"] is False  # empty cache → live fetch, nothing stale
     assert [p["url"] for p in prs["prs"]] == ["https://github.com/o/r/pull/2"]
     issues = client.get("/api/candidates/issues").json()
     assert set(issues) == {"issues", "warnings"}

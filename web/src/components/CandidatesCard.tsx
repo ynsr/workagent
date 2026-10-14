@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useConfirmedRun, useCopyFeedback } from "@/components/RunActions"
 import { CopyCell } from "@/components/CopyCell"
 import { ActionDialog } from "@/components/LinkDialogs"
@@ -45,7 +45,21 @@ export function CandidatesCard() {
   // immediately while the rest streams in (per-tab skeletons below).
   // Unmount-safe: react-query cancels in-flight fetches on unmount.
   const prsQuery = useCandidatesPrs()
-  // The initial fetcher query (assigned/created by me, last 90 days) is
+  // Stale serve: the backend returns expired-cache rows instantly with
+  // `stale: True` while one thread revalidates. Re-fetch once per stale
+  // payload so the tab swaps in the fresh rows when they land (overlay
+  // shows meanwhile). The ref guards the loop: until the background
+  // thread lands, every response is still `stale: True`.
+  const prsStale = prsQuery.data?.stale === true
+  const prsStaleSeen = useRef(false)
+  useEffect(() => {
+    if (!prsStale || prsStaleSeen.current) return
+    prsStaleSeen.current = true
+    void prsQuery.refetch().finally(() => {
+      prsStaleSeen.current = false
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prsStale])
   // always warming its cache key. The client-side filter rides on it —
   // plus, when the user's selection is NOT covered by it (range "Last
   // year", scope "all"), a second gated query requeries the tracker with

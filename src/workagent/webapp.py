@@ -289,10 +289,12 @@ def create_app(static_dir: Path, host: str, port: int,
 
     @app.get("/api/candidates/prs")
     def candidates_prs() -> dict:
-        """Unlinked open PR/MRs (live host-CLI fetch; slowest source). Read-only."""
+        """Unlinked open PR/MRs: fresh cache serves instantly; expired cache
+        serves stale rows (`stale: True`) while one background thread
+        revalidates; empty cache fetches live. Read-only."""
         from . import cli_candidates as _cand
-        prs, warnings = _cand._candidate_prs()
-        return {"prs": prs, "warnings": warnings}
+        prs, warnings, stale = _cand._candidate_prs_cached()
+        return {"prs": prs, "warnings": warnings, "stale": stale}
 
     @app.get("/api/candidates/issues")
     def candidates_issues(force: bool = False, days: int = 90, mine: bool = True) -> dict:

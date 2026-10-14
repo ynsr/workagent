@@ -151,6 +151,10 @@ export interface CandidateWorktree {
 export interface CandidatesPrsResponse {
   prs: CandidatePr[]
   warnings: string[]
+  /** True when rows came from the expired cache while a background
+   * refresh runs — the tab keeps showing them with the overlay badge,
+   * then re-fetches once for the fresh rows. */
+  stale?: boolean
 }
 
 export interface CandidatesIssuesResponse {
