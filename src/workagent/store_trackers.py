@@ -197,12 +197,15 @@ def remove_tracker_repo(path: Path, tid: str, repo_path: str | None = None) -> b
 
 def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
                       remote: str = "", tool: str | None = None,
-                      fetch_enabled: bool | None = None) -> None:
+                      fetch_enabled: bool | None = None,
+                      default_branch: str | None = None,
+                      release_branch: str | None = None) -> None:
     """Upsert a named registry row and link it to *tracker_key* (join-only).
 
     tracker_key stays mandatory: an explicit key wins, else the caller
     derives it from the origin remote. The repo row itself carries no
-    tracker column — the mapping lives in tracker_repos.
+    tracker column — the mapping lives in tracker_repos. Branch args None
+    preserve the stored values; explicit '' clears.
     """
     if not tracker_key:
         raise ValueError("tracker_key is mandatory")
@@ -227,17 +230,22 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
             conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
                          " WHERE key_ref = ?",
                          (name, name, remote or "", tool or "", hit[0]))
-        fe_cur = conn.execute("SELECT fetch_enabled FROM repos WHERE key_ref = ? OR path = ?",
+        fe_cur = conn.execute("SELECT fetch_enabled, default_branch, release_branch FROM repos WHERE key_ref = ? OR path = ?",
                               (name, norm)).fetchone()
         from .store_sqlite import _default_fetch_enabled
         fe = fe_cur[0] if fe_cur is not None else _default_fetch_enabled(tool=tool or "")
         if fetch_enabled is not None:
             fe = 1 if fetch_enabled else 0
-        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, fetch_enabled)"
-                     " VALUES (?, ?, ?, ?, ?, ?)"
+        stored_default = fe_cur[1] if fe_cur is not None else ""
+        stored_release = fe_cur[2] if fe_cur is not None else ""
+        new_default = stored_default if default_branch is None else default_branch
+        new_release = stored_release if release_branch is None else release_branch
+        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, fetch_enabled, default_branch, release_branch)"
+                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
                      " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"
-                     " remote=excluded.remote, tool=excluded.tool, fetch_enabled=excluded.fetch_enabled",
-                     (name, norm, name, remote or "", tool or "", fe))
+                     " remote=excluded.remote, tool=excluded.tool, fetch_enabled=excluded.fetch_enabled,"
+                     " default_branch=excluded.default_branch, release_branch=excluded.release_branch",
+                     (name, norm, name, remote or "", tool or "", fe, new_default or "", new_release or ""))
         conn.execute("INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
                      (tracker_key, name))
 

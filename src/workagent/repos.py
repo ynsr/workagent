@@ -64,6 +64,96 @@ def default_branch(path: Path) -> str:
             except HarnessError:
                 continue
     raise HarnessError(f"cannot determine default branch for {path}", exit_code=2)
+def detect_release_branch(path: Path) -> str:
+    """Release branch for *path*: '' when none configured.
+
+    Jibit (glab-tooled) repos prefer `master` when it exists, else `main`
+    when it exists, else ''. Non-glab repos return '' (release support is
+    opt-in via `repo update --release-branch`). Never raises: probe
+    failures mean ''.
+    """
+    try:
+        if _detect_host_cli(path) != "glab":
+            return ""
+    except Exception:
+        return ""
+    for candidate in ("master", "main"):
+        for ref in (f"origin/{candidate}", candidate):
+            try:
+                run_cmd("git", "-C", str(path), "rev-parse", "--verify", ref)
+                return candidate
+            except HarnessError:
+                continue
+            except Exception:
+                return ""
+    return ""
+
+
+def release_diff_count(path: Path, default_branch: str, release_branch: str) -> int:
+    """Commits *default_branch* has that *release_branch* lacks (int >= 0).
+
+    Fetches both tips first so shallow clones (depth 7) count correctly;
+    falls back to --unshallow when the release ref is missing locally.
+    Raises HarnessError when offline or when either ref is unknown.
+    """
+    if not default_branch or not release_branch:
+        raise HarnessError("release diff needs both default and release branches", exit_code=2)
+    if default_branch == release_branch:
+        raise HarnessError(f"default and release branch are the same ({default_branch!r})",
+                           exit_code=2)
+    run_cmd("git", "-C", str(path), "fetch", "origin", default_branch, release_branch)
+    try:
+        out = run_cmd("git", "-C", str(path), "rev-list", "--count",
+                      f"origin/{release_branch}..origin/{default_branch}")
+    except HarnessError:
+        run_cmd("git", "-C", str(path), "fetch", "--unshallow", "origin")
+        out = run_cmd("git", "-C", str(path), "rev-list", "--count",
+                      f"origin/{release_branch}..origin/{default_branch}")
+    return int((out or "0").strip())
+
+
+def backfill_release_branches() -> None:
+    """Seed default/release branches for repos missing them. Never raises.
+
+    Per-repo failures (unreachable host, missing checkout) leave '' and
+    emit a stderr warning — backfill must never break startup.
+    """
+    import sys
+    for name, info in store.load_repos().items():
+        if info.get("default_branch") and "release_branch" in info:
+            continue
+        p = Path(str(info.get("path", ""))).expanduser()
+        try:
+            default = info.get("default_branch") or default_branch(p)
+        except HarnessError as e:
+            print(f"warning: cannot detect default branch for {name}: {e}", file=sys.stderr)
+            default = ""
+        except Exception as e:
+            print(f"warning: cannot detect default branch for {name}: {e}", file=sys.stderr)
+            default = ""
+        try:
+            release = info.get("release_branch", "")
+            if not release and default:
+                release = detect_release_branch(p)
+        except HarnessError as e:
+            print(f"warning: cannot detect release branch for {name}: {e}", file=sys.stderr)
+            release = ""
+        except Exception as e:
+            print(f"warning: cannot detect release branch for {name}: {e}", file=sys.stderr)
+            release = ""
+        try:
+            from . import store_sqlite as _sq
+            db = _sq.db_path()
+            conn = _sq.connect(db)
+            try:
+                conn.execute(
+                    "UPDATE repos SET default_branch = ?, release_branch = ? WHERE key_ref = ?",
+                    (default, release, name))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"warning: cannot persist branches for {name}: {e}", file=sys.stderr)
 
 
 def current_branch(path: Path) -> str | None:
@@ -211,13 +301,17 @@ def clone_url(url: str, depth: int = 7) -> Path:
     return dest
 
 def register_repo(name: str, path: Path, tracker_key: str = "",
-                  fetch_enabled: bool | None = None) -> None:
+                  fetch_enabled: bool | None = None,
+                  default_branch_name: str | None = None,
+                  release_branch: str | None = None) -> None:
     """Register *name* → *path* (+ mandatory tracker derivation).
 
     Post-migration the SQLite repos row is the registry (``tracker_key``
     NOT NULL): an explicit key wins, else the origin remote is derived
     via ``trackers.default_tracker_for_repo``. fetch_enabled None keeps
     the stored/vendor-aware default; explicit bool sets it.
+    Branch args None auto-detect (default via ``default_branch(path)``,
+    release via ``detect_release_branch(path)``); explicit '' clears.
     Pre-migration both the config.json registry and the tracker mapping
     are updated (dual-write).
     """
@@ -226,11 +320,23 @@ def register_repo(name: str, path: Path, tracker_key: str = "",
     if not tid:
         raise HarnessError(
             "cannot derive tracker from origin remote: pass tracker_key (repo add --tracker)", exit_code=2)
+    if default_branch_name is None:
+        try:
+            default_branch_name = default_branch(path)
+        except Exception:
+            default_branch_name = ""
+    if release_branch is None:
+        try:
+            release_branch = detect_release_branch(path)
+        except Exception:
+            release_branch = ""
     if store._sqlite_path() is not None:
         from . import store_sqlite as sq
         sq.register_repo_row(sq.db_path(), name, str(path), tid,
                              remote=remote_url(path), tool=_detect_host_cli(path),
-                             fetch_enabled=fetch_enabled)
+                             fetch_enabled=fetch_enabled,
+                             default_branch=default_branch_name or "",
+                             release_branch=release_branch or "")
         return
     cfg = store.load_config()
     repos = cfg.setdefault("repos", {})
