@@ -52,6 +52,19 @@ def test_api_issues_force_bypasses_cache(client, monkeypatch):
     assert seen == {"force": False, "days": 90, "mine": True}
     assert client.get("/api/issues?force=true").json()["issues"] == []
     assert seen["force"] is True
+def test_release_status_endpoint(client, monkeypatch):
+    """GET /api/release/status returns the release_status shape."""
+    from workagent import repos as _repos
+    monkeypatch.setattr(_repos, "release_status",
+                        lambda name, force=False: {"repo": name, "path": "/r",
+                            "default_branch": "main", "release_branch": "master",
+                            "diff_count": 2, "releasable": True, "reason": "",
+                            "stale": False})
+    r = client.get("/api/release/status", params={"name": "rx"})
+    assert r.status_code == 200
+    body = r.json()
+    assert {"repo", "default_branch", "release_branch", "diff_count",
+            "releasable", "reason", "stale"} <= set(body)
 
 
 def test_api_issues_selection_params_requery(client, monkeypatch):

@@ -200,7 +200,8 @@ never mirrored (live registry only).
 `is_enabled` 0 = disabled (skipped by issue/PR fetching); updates run
 through `POST /api/runs` with `tracker update KEY [--vendor] [--remote-url] [--fetch/--no-fetch] [--enable/--disable]`.
 ### `GET /api/tracker-domains` → `{disabled_domains: [...]}`; `POST /api/tracker-domains` `{domains: [...]}` replaces the list (normalized lowercase/sorted; empty = all enabled). Trackers on a listed host (or subdomain) are skipped by fetching.
-
+### `GET /api/release/status?name=` → `{repo, path, default_branch, release_branch, diff_count, releasable, reason, stale}`
+Read-only releasability for one repo (1h fresh / 1d SWR diff cache). `releasable` = release branch set + diff > 0. `POST /api/runs` `{command: "release", args: [repo, "--yes"]}` runs the release (confirm dialog appends `--yes`).
 ## Runs (mutating CLI commands as child processes)
 ### `POST /api/runs` → 202
 Request:
@@ -208,7 +209,7 @@ Request:
 {"command": "cleanup", "args": ["IPG-932"],
  "confirm": true, "force": false}
 ```
-- `command`: one of `start | review | cleanup | sync | open | register |
+- `command`: one of `start | review | cleanup | release | sync | open | register |
   repo | link` (subcommand goes first in `args`: `["add", "--name", …]`).
 - Global `-v` may be passed as `args[0]`.
 - `start`/`review`/`sync` take `--env-file <script>`: a shell script sourced before every terminal/headless harness command (`source <file> && …`; headless children also get it parsed into their environment). Default: `env_file` in `config.json` (auto-created as `<config_dir>/env.sh` on first launch with `VISUAL`/`EDITOR`/`NO_PROXY`/`PI_EDIT_VARIANT` defaults). Delete the file to opt out; resume endpoints reuse the run's explicit `--env-file` or the configured default.
