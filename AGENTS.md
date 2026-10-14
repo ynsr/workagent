@@ -29,7 +29,7 @@ Install locally:
 | `src/workagent/refs.py` | issue/PR ref parsing (`OWNER/REPO#N`, Jira `KEY-123`/browse URLs, URLs, bare N) + `gh`/`glab`/`jira-cli` fetching; `fetch_open_prs` (open PR/MR rows) + `fetch_ci_status` (soft-fail CI lookup, None + stderr warning); recorded `pr_url` seeds the PR cell when cache/query find none; GitLab matches render `MR #N` |
 | `src/workagent/repos.py` | repo resolution (`--repo` name/path/URL, cwd, interactive pick), worktree→main-checkout resolution, default-branch detection, registry, `repo_names()` completion source, remote-host-aware gh/glab detection (`repos.<name>.tool` persisted in the registry) |
 | `src/workagent/pick.py` | shared arrow-key picker for every multi-choice prompt: stderr render, ↑/↓ + j/k + Enter, optional dim description per item, q/Esc aborts, `None` on non-TTY; raw-mode-safe `\r\n` terminators (no staircase); testable via `read`/`stream` seams |
-| `src/workagent/trackers.py` | tracker↔repo relation: canonical ids (`jira:PREFIX`, `github:O/R`, `gitlab:host/g/r`), `check_or_record` guard, `resolve_for_tracker` repo picker, `link` command data; `list_my_issues` (jira `_MY_ISSUES_JQL` reporter=me To Do/In Progress last 2 months + gh authored-by-me; never raises, appends warnings) |
+| `src/workagent/trackers.py` | tracker↔repo relation: canonical ids (`jira:PREFIX`, `github:O/R`, `gitlab:host/g/r`), `check_or_record` guard, `resolve_for_tracker` repo picker, `link` command data; `list_my_issues` (jira `_MY_ISSUES_JQL` reporter=me, all statuses, last year + gh authored-by-me last year; never raises, appends warnings) |
 | `src/workagent/sync.py` | sync engine: dirty-file check, local merge (fetch + ff default + merge), sole-conflict `CHANGELOG.md` Unreleased auto-resolve (bullet union), push, remote rebase dispatch (`gh pr update-branch --rebase` / `glab mr rebase`) |
 | `src/workagent/webapp.py` | `serve` web backend (FastAPI; lazy import behind the `web` extra): Host/Origin/Content-Type guard, read endpoints reusing in-process helpers (`/api/status`, `/api/path`, `/api/repos`, `/api/links` with `worktrees` key, `/api/doctor`, `/api/issues`, `/api/candidates`), run registry (`python -m workagent` children, 409 per target key — `open:<ref>`, `review:all`, `cleanup:all`, `sync:all` included — ≤100 runs, ≤10k lines buffered), SSE with `Last-Event-ID` replay, SIGTERM→SIGKILL cancel, SPA catch-all |
 | `src/workagent/service.py` + `cli_service.py` | user systemd unit for `serve` (`~/.config/systemd/user/workagent.service`, `WantedBy=default.target`, linger on install, `Restart=on-failure` + `StartLimitBurst=3`); lifecycle `service install\|uninstall\|start\|stop\|restart\|status\|logs` (CLI-only, skipped in web run passthrough); `GET /api/service` read-only `{"installed","active","state"}` readout (always 200); `uninstall.sh` runs `service uninstall --yes` first |
@@ -62,9 +62,10 @@ cleanup/register). Frontend: `web/` (Vite + React + TS), build →
 **`workagent candidates`**: two Rich tables — "Unlinked PR/MRs" (open
 PR/MRs of every registered repo, minus URLs already linked in
 `links.json`; per-repo CLI failures → stderr warning) and "Recent
-issues (reported by me, last 30 days)" (jira `list_my_issues`: reporter
-= me, To Do/In Progress, last 30 days — plus GitHub issues authored by
-me; server-side 30-day filter). `--json` prints `{"prs": […],
+issues (reported by me, last year)" (jira `list_my_issues`: reporter
+= me, all statuses, last year — plus GitHub issues authored by me, any
+state, last year; the Recent-issues web filter slices range/status/scope
+client-side). `--json` prints `{"prs": […],
 "issues": […]}` (stdout-only); `--csv` renders the PR/MR table as CSV.
 The web endpoints `/api/issues` (all my issues + `warning`) and
 `/api/candidates` (same data as the CLI) share `_candidates()` /
@@ -156,12 +157,13 @@ become `skipped:<reason>` rows — never torn down. Requires `--yes`
   `pr_cache` table of `state.db` (post-`workagent migrate`; legacy
   `pr_cache.json` before) via `store.cache_pr_status`
   (pr, tool, base_branch, branch/base tips, behind/ahead counts, checked_at;
-  CI in `ci`/`ci_checked_at`/`ci_sha` via `store.cache_ci_status`); a cached
-  PR is reused while both tips match and age < 3d, a cached no-PR result
-  while age < 30min — repeat `status` runs cost two `git rev-parse` calls
-  per worktree; `--refresh-pr` re-queries the PR and re-fetches CI (CI is
-  otherwise reused while the branch tip is unchanged and `ci_checked_at`
-  < 10min). A recorded `pr_url` seeds the PR cell when cache/query find
+  PR is reused while both tips match and age is within its
+  stale-while-revalidate window (max(fresh TTL * 10, 1 day) — 30d for a
+  cached PR, 1d for a cached no-PR result) — repeat `status` runs cost two
+  `git rev-parse` calls per worktree; `--refresh-pr` re-queries the PR and
+  re-fetches CI (CI/reviews are otherwise reused while the branch tip is
+  unchanged and `ci_checked_at` is within max(10min * 10, 1 day)). A
+  recorded `pr_url` seeds the PR cell when cache/query find
   none (display only — never drives sync strategy). User content in Rich
   output is `rich.markup.escape`d (PR titles contain `[`). Detail panel
   (`status <ref>`) shows the full issue URL via `refs.issue_url(key,

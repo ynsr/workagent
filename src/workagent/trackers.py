@@ -327,11 +327,11 @@ def _confirm(tid: str, known: list[str], repo: str) -> bool:
 
 # ── my issues / candidates listing (issue #7 task 5) ──────────────────
 
-# Corrected from the task brief against the live Jira (tribe.jibit.cloud):
-# its status is "To Do" (not "To-Do"), and JQL "-2m" means 2 minutes
-# (no month unit) — the intended window is thirty days.
-_MY_ISSUES_JQL = ('reporter = currentUser() AND status in ("To Do", "In Progress") '
-                  'AND created >= -30d ORDER BY created DESC')
+# Broadest scope the Candidates filter can slice client-side: every issue
+# I reported in the last year (all statuses — the Recent-issues filter's
+# status dropdown narrows it). JQL "-365d" is a relative day offset.
+_MY_ISSUES_JQL = ('reporter = currentUser() AND created >= -365d '
+                  'ORDER BY created DESC')
 
 
 def parse_created(value: str) -> datetime | None:
@@ -411,9 +411,9 @@ def _jira_my_issues(warnings: list[str]) -> list[dict]:
     attempts = (
         ("request", ("jira-cli", "request", "GET",
                      f"search?jql={quote(_MY_ISSUES_JQL)}"
-                     "&maxResults=100&fields=key,summary,status,created,reporter,description")),
+                     "&maxResults=1000&fields=key,summary,status,created,reporter,description")),
         ("search", ("jira-cli", "search", _MY_ISSUES_JQL,
-                    "--limit", "100", "--format", "json")),
+                    "--limit", "1000", "--format", "json")),
         ("issue list", ("jira-cli", "issue", "list", "--plain", "--no-headers",
                         "--no-truncate", "--columns", "key,summary,status,created",
                         "--jql", _MY_ISSUES_JQL)),
@@ -435,10 +435,15 @@ def _jira_my_issues(warnings: list[str]) -> list[dict]:
 
 
 def _gh_my_issues(warnings: list[str]) -> list[dict]:
+    """All GitHub issues authored by me in the last year (any state — the
+    Recent-issues filter's status dropdown narrows it)."""
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=365)).date().isoformat()
     try:
-        out = run_cmd("gh", "search", "issues", "--author=@me", "--state=open",
-                      "--limit", "100", "--json",
-                      "repository,number,title,body,author,updatedAt,url,createdAt")
+        out = run_cmd("gh", "search", "issues", "--author=@me",
+                      f"created:>={cutoff}",
+                      "--limit", "1000", "--json",
+                      "repository,number,title,body,author,state,updatedAt,url,createdAt")
     except HarnessError as e:
         warnings.append(f"github: {e}")
         return []
@@ -454,7 +459,8 @@ def _gh_my_issues(warnings: list[str]) -> list[dict]:
         if not repo or num is None:
             continue
         rows.append({"key": f"github:{repo}#{num}", "title": it.get("title", ""),
-                     "url": it.get("url", ""), "status": "open",
+                     "url": it.get("url", ""),
+                     "status": str(it.get("state") or "open").lower(),
                      "created": it.get("createdAt", ""),
                      "author": (it.get("author") or {}).get("login", "") or "",
                      "reporter": (it.get("author") or {}).get("login", "") or "",
@@ -463,11 +469,15 @@ def _gh_my_issues(warnings: list[str]) -> list[dict]:
 
 
 _CACHE_TTL_SECONDS = 3600
+_CACHE_SWR_SECONDS = max(_CACHE_TTL_SECONDS * 10, 24 * 3600)
 
 
 def _cached_source(source: str, fetch, warn: list,
                    force: bool) -> list[dict]:
-    """Per-source issue rows: fresh cache hit wins, else live fetch + store.
+    """Per-source issue rows: cached rows are served within
+    max(1h * 10, 1 day); older/absent entries trigger a live fetch that
+    refreshes the cache (the next call serves the fresh rows, so a stale
+    table never blocks on the network).
 
     Pre-cutover (no state.db) or any cache failure → live fetch, never raise.
     """
@@ -480,7 +490,7 @@ def _cached_source(source: str, fetch, warn: list,
             if rows and fetched_at:
                 age = (datetime.now(timezone.utc)
                        - datetime.fromisoformat(fetched_at)).total_seconds()
-                if age < _CACHE_TTL_SECONDS:
+                if age < _CACHE_SWR_SECONDS:
                     return rows
         except Exception:
             pass
@@ -547,17 +557,18 @@ def _source_enabled(source: str) -> bool:
 
 def list_my_issues(warnings: list[str] | None = None,
                    force: bool = False) -> list[dict]:
-    """My open issues across sources as {key, title, url, status, created,
+    """My issues across sources as {key, title, url, status, created,
     reporter, author, description}.
 
-    jira (reporter=me, To Do/In Progress, last 30 days) + GitHub issues
-    authored by me (state=open). GitLab issues are intentionally omitted
+    jira (reporter=me, all statuses, last year) + GitHub issues authored
+    by me (last year, any state). GitLab issues are intentionally omitted
     (Jira covers work tracking; GitLab surfaces via PR/MR candidates).
     A source is skipped when every linked tracker of that vendor has
     fetch disabled (GitHub off by default, opt-in per tracker).
     Per-source failure contributes [] plus a warning — to stderr when
     *warnings* is None, else appended to the caller's list; never raises.
-    Fresh per-source cache rows (<1h) win unless *force* is set.
+    Cached rows are served within max(1h * 10, 1 day); older entries
+    trigger a live fetch unless *force* is set.
     """
     warn = warnings if warnings is not None else []
     rows: list[dict] = []

@@ -97,7 +97,8 @@ def test_status_cache_reused_until_tip_or_ttl(isolated_config, tmp_path, monkeyp
     assert data["jira:IPG-929"]["pr"] == "PR #9 (open)"
 
 
-def test_status_cache_expired_by_ttl(isolated_config, tmp_path, monkeypatch):
+def test_status_cache_expired_by_swr(isolated_config, tmp_path, monkeypatch):
+    """A cached no-PR entry older than the SWR window (1 day) is not reused."""
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
@@ -108,7 +109,7 @@ def test_status_cache_expired_by_ttl(isolated_config, tmp_path, monkeypatch):
                           repo=str(repo_dir))
     cache = store.load_pr_cache()
     cache[store.pr_cache_key(str(repo_dir), "feat/IPG-929--x")]["checked_at"] = (
-        datetime.now(timezone.utc) - timedelta(hours=4)).isoformat()
+        datetime.now(timezone.utc) - timedelta(hours=36)).isoformat()
     store.save_pr_cache(cache)
     monkeypatch.setattr(cli.repos, "ahead_behind",
                         lambda wt, db, branch="": {"behind": 7, "ahead": 0})
@@ -186,16 +187,17 @@ def test_recorded_pr_parses_github_and_gitlab():
     assert cli._recorded_pr("https://example.com/bogus") is None
 
 
-def test_negative_cache_short_ttl():
+def test_negative_cache_swr_window():
+    """Cached rows stay servable within max(fresh TTL * 10, 1 day)."""
     old = (datetime.now(timezone.utc) - timedelta(minutes=45)).isoformat()
     cached = {"checked_at": old, "pr": None, "branch_tip": "t", "base_tip": "b"}
-    assert cli._cache_fresh(cached) is False          # negative: 30min TTL
+    assert cli._cache_usable(cached) is True        # negative: within 1d SWR
+    day_old = {**cached, "checked_at": (datetime.now(timezone.utc) - timedelta(hours=36)).isoformat()}
+    assert cli._cache_usable(day_old) is False      # negative: past 1d SWR
     cached_pos = {**cached, "pr": {"number": 1, "state": "OPEN"}}
-    assert cli._cache_fresh(cached_pos) is True       # positive: 3d TTL
-    day_old = {**cached, "checked_at": (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat(), "pr": {"number": 1, "state": "OPEN"}}
-    assert cli._cache_fresh(day_old) is True          # 6h: expired under 3h, fresh under 3d
-    stale_pos = {**cached, "checked_at": (datetime.now(timezone.utc) - timedelta(days=4)).isoformat(), "pr": {"number": 1, "state": "OPEN"}}
-    assert cli._cache_fresh(stale_pos) is False       # positive: expired past 3d
+    assert cli._cache_usable(cached_pos) is True    # positive: within 30d SWR
+    stale_pos = {**cached_pos, "checked_at": (datetime.now(timezone.utc) - timedelta(days=31)).isoformat()}
+    assert cli._cache_usable(stale_pos) is False    # positive: past 30d SWR
 
 
 def test_status_cells_partial_entry():
@@ -242,8 +244,9 @@ def test_status_cells_ci_cache_reuse(isolated_config, tmp_path, monkeypatch):
     assert len(fetches) == 3
 
 
-def test_status_cells_ci_reuse_stale_ttl(isolated_config, tmp_path,
-                                         monkeypatch):
+def test_status_cells_ci_reuse_within_swr(isolated_config, tmp_path,
+                                          monkeypatch):
+    """CI cached within the SWR window (1 day) is reused; past it, refetched."""
     wt_dir = tmp_path / "wt"; wt_dir.mkdir()
     entry = {"worktree": str(wt_dir), "branch": "feat/x", "repo": "/repo"}
     store.cache_pr_status("feat/x", {"number": 9, "state": "open",
@@ -251,10 +254,6 @@ def test_status_cells_ci_reuse_stale_ttl(isolated_config, tmp_path,
                           tool="glab", base_branch="main", repo="/repo",
                           branch_tip="a1", base_tip="b1", behind=0, ahead=0)
     store.cache_ci_status("feat/x", "success", "a1", repo="/repo")
-    cache = store.load_pr_cache()
-    cache[store.pr_cache_key("/repo", "feat/x")]["ci_checked_at"] = (
-        datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat()
-    store.save_pr_cache(cache)
     monkeypatch.setattr(cli, "_git_tip",
                         lambda wt, ref: "a1" if ref == "HEAD" else None)
     fetches = []
@@ -263,8 +262,18 @@ def test_status_cells_ci_reuse_stale_ttl(isolated_config, tmp_path,
                         or ("failure", "https://ci.example.com/jobs/8")))
     monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
                         lambda tool, url, cwd=None: {"reviews": 0, "unresolved": 0, "resolved": 0})
-    assert cli._status_cells(entry)["ci"] == "failure"
-    assert len(fetches) == 1  # stale (11 min > 10 min TTL) -> refetched
+    cache = store.load_pr_cache()
+    cache[store.pr_cache_key("/repo", "feat/x")]["ci_checked_at"] = (
+        datetime.now(timezone.utc) - timedelta(hours=20)).isoformat()
+    store.save_pr_cache(cache)
+    assert cli._status_cells(entry)["ci"] == "success"  # 20h < 1d SWR: reused
+    assert len(fetches) == 0
+    cache = store.load_pr_cache()
+    cache[store.pr_cache_key("/repo", "feat/x")]["ci_checked_at"] = (
+        datetime.now(timezone.utc) - timedelta(hours=36)).isoformat()
+    store.save_pr_cache(cache)
+    assert cli._status_cells(entry)["ci"] == "failure"  # 36h > 1d SWR: refetched
+    assert len(fetches) == 1
 
 
 def test_status_cells_ci_none_without_pr(isolated_config):

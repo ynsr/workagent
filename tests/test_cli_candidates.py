@@ -31,7 +31,7 @@ def test_candidates_cli_tables(isolated_config, tmp_path, monkeypatch):
     r = _invoke("candidates")
     assert r.exit_code == 0, r.output
     assert "Unlinked PR/MRs" in r.stdout
-    assert "Recent issues (reported by me, last 30 days)" in r.stdout
+    assert "Recent issues (reported by me, last year)" in r.stdout
     assert "(no unregistered worktrees)" in r.stdout
     # Title user content is Rich-escaped in the table path: the literal
     # "[beta]" must survive rendering (unescaped markup would be eaten).
@@ -46,7 +46,7 @@ def test_candidates_cli_csv_pulls_only(isolated_config, tmp_path, monkeypatch):
     assert r.exit_code == 0, r.output
     assert r.stdout.splitlines()[0] == "url,title,repo,updated"
     # CSV applies to the PR/MR table; the issues table stays a Rich table.
-    assert "Recent issues (reported by me, last 30 days)" in r.stdout
+    assert "Recent issues (reported by me, last year)" in r.stdout
     assert "jira:IPG-981" in r.stdout
     # Titles stay raw for machine-readable output (no Rich escaping).
     assert "Add [beta] flag" in r.stdout

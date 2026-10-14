@@ -24,6 +24,11 @@ export const queryKeys = {
   session: (id: string) => ["sessions", "detail", id] as const,
 }
 
+/** Stale-while-revalidate: cached rows render instantly; a background
+ * refetch refreshes them (overlay badge) — max(cache max-age * 10, 1 day). */
+const SWR_STATUS_MS = 30 * 24 * 3600 * 1000   // PR cache: 3d * 10
+const SWR_DAY_MS = 24 * 3600 * 1000           // issue/CI cache: 1h/10min * 10 → floor 1d
+
 /** Poll /api/status every 15 s while the tab is visible (contract). */
 export function useStatusAll(refresh?: boolean) {
   return useQuery({
@@ -32,6 +37,7 @@ export function useStatusAll(refresh?: boolean) {
     refetchInterval: 15_000,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
+    staleTime: SWR_STATUS_MS,
   })
 }
 
@@ -43,6 +49,7 @@ export function useStatusInactive() {
     refetchInterval: 15_000,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
+    staleTime: SWR_STATUS_MS,
   })
 }
 
@@ -70,29 +77,29 @@ export function useDoctor() {
 }
 
 export function useIssues() {
-  return useQuery({ queryKey: queryKeys.issues, queryFn: () => api.issues(), staleTime: 3600_000 })
+  return useQuery({ queryKey: queryKeys.issues, queryFn: () => api.issues(), staleTime: SWR_DAY_MS })
 }
 
 export function useCandidates() {
-  return useQuery({ queryKey: queryKeys.candidates, queryFn: () => api.candidates(), staleTime: 3600_000 })
+  return useQuery({ queryKey: queryKeys.candidates, queryFn: () => api.candidates(), staleTime: SWR_DAY_MS })
 }
 
 /** Per-tab candidates queries: each tab loads independently so the slow
  * PR fetch never blocks issues/worktrees (incremental tab rendering). */
 export function useCandidatesPrs() {
-  return useQuery({ queryKey: queryKeys.candidatesPrs, queryFn: () => api.candidatesPrs() })
+  return useQuery({ queryKey: queryKeys.candidatesPrs, queryFn: () => api.candidatesPrs(), staleTime: SWR_DAY_MS })
 }
 
 export function useCandidatesIssues(force?: boolean) {
   return useQuery({
     queryKey: queryKeys.candidatesIssues(force),
     queryFn: () => api.candidatesIssues({ force }),
-    staleTime: 3600_000,
+    staleTime: SWR_DAY_MS,
   })
 }
 
 export function useCandidatesWorktrees() {
-  return useQuery({ queryKey: queryKeys.candidatesWorktrees, queryFn: () => api.candidatesWorktrees() })
+  return useQuery({ queryKey: queryKeys.candidatesWorktrees, queryFn: () => api.candidatesWorktrees(), staleTime: SWR_DAY_MS })
 }
 
 export function useSessions() {

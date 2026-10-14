@@ -94,17 +94,19 @@ def test_candidates_exclude_linked(client, monkeypatch, tmp_path):
     assert body["prs"][0]["repo"] == "o/r"
 
 
-def test_candidates_issue_window(client, monkeypatch, tmp_path):
+def test_candidates_issues_year_all_statuses(client, monkeypatch, tmp_path):
+    """Every issue within the year (any status) is served — the Recent-issues
+    filter slices the range/status client-side."""
     _register_repo(tmp_path)
     monkeypatch.setattr(cli, "_repo_tool", lambda path: None)
     monkeypatch.setattr(cli.refs, "fetch_open_prs", lambda tool, cwd: [])
     monkeypatch.setattr(trackers, "list_my_issues", lambda *a, **k: [
-        _issue_row(31, "jira:IPG-OLD"),
+        _issue_row(300, "jira:IPG-OLD"),
         _issue_row(20, "jira:IPG-MID"),
         _issue_row(2, "jira:IPG-NEW"),
     ])
     body = client.get("/api/candidates").json()
-    assert [i["key"] for i in body["issues"]] == ["jira:IPG-NEW", "jira:IPG-MID"]
+    assert [i["key"] for i in body["issues"]] == ["jira:IPG-NEW", "jira:IPG-MID", "jira:IPG-OLD"]
 
 
 def test_candidates_shape_and_warnings(client, monkeypatch, tmp_path):

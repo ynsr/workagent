@@ -28,10 +28,10 @@ from .cli_harness import _harness_cell
 from .cli_repo_util import (
     _CI_STYLES,
     _CI_SYMBOLS,
-    _CI_TTL_SECONDS,
-    _NEGATIVE_TTL_SECONDS,
+    _CI_SWR_SECONDS,
+    _NEGATIVE_SWR_SECONDS,
     _PR_STYLES,
-    _STATUS_TTL_SECONDS,
+    _STATUS_SWR_SECONDS,
     _repo_default_branch,
     _repo_tool,
 )
@@ -54,7 +54,10 @@ from .cli_status_cells import (  # noqa: F401,E402
     _seed_recorded_pr,
 )
 
-def _cache_fresh(cached: dict) -> bool:
+def _cache_usable(cached: dict) -> bool:
+    """Cached PR cell still servable (stale-while-revalidate): age within
+    max(fresh TTL * 10, 1 day) — 30d for a cached PR, 1d for a cached
+    no-PR result. Reused only while branch/base tips are unchanged."""
     ts = cached.get("checked_at", "")
     if not ts:
         return False
@@ -62,8 +65,8 @@ def _cache_fresh(cached: dict) -> bool:
         age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
     except ValueError:
         return False
-    ttl = _STATUS_TTL_SECONDS if cached.get("pr") else _NEGATIVE_TTL_SECONDS
-    return age < timedelta(seconds=ttl)
+    swr = _STATUS_SWR_SECONDS if cached.get("pr") else _NEGATIVE_SWR_SECONDS
+    return age < timedelta(seconds=swr)
 
 
 def _fetch_origins(links: dict, refresh: bool) -> None:
@@ -87,8 +90,9 @@ def _fetch_origins(links: dict, refresh: bool) -> None:
             eprint(f"warning: fetch failed for {repo}: {err}")
 
 
-def _ci_fresh(cached: dict) -> bool:
-    """Cached CI still valid: checked within _CI_TTL_SECONDS."""
+def _ci_usable(cached: dict) -> bool:
+    """Cached CI still servable (stale-while-revalidate): checked within
+    max(10 min * 10, 1 day)."""
     ts = cached.get("ci_checked_at", "")
     if not ts:
         return False
@@ -96,7 +100,7 @@ def _ci_fresh(cached: dict) -> bool:
         age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
     except ValueError:
         return False
-    return age < timedelta(seconds=_CI_TTL_SECONDS)
+    return age < timedelta(seconds=_CI_SWR_SECONDS)
 
 
 def _query_pr(repo: str, branch: str) -> tuple[dict | None, str | None]:
@@ -126,14 +130,15 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
     """Commits + PR cells for one session, backed by pr_cache.json.
 
     A cache entry (keyed by branch) is reused while the session-branch tip
-    and the remote-tracking base tip are unchanged and the entry is younger
-    than its TTL (3d for a cached PR, 30min for a cached no-PR result),
-    and --refresh-pr is not given. Valid cache: two `git rev-parse` calls,
-    no host-CLI spawn, no API call. --refresh-pr re-queries only the PR
-    (counts still reuse when tips are unchanged). When the cache or the
-    live query yields no PR but the link records a `pr_url`, the recorded
-    URL fills the PR cell. ``_tip``/``_tool`` are internal, consumed by the
-    CI cell resolution in :func:`_status_cells`.
+    and the remote-tracking base tip are unchanged and the entry is within
+    its stale-while-revalidate window (max(fresh TTL * 10, 1 day) — 30d
+    for a cached PR, 1d for a cached no-PR result), and --refresh-pr is
+    not given. Valid cache: two `git rev-parse` calls, no host-CLI spawn,
+    no API call. --refresh-pr re-queries only the PR (counts still reuse
+    when tips are unchanged). When the cache or the live query yields no PR
+    but the link records a `pr_url`, the recorded URL fills the PR cell.
+    ``_tip``/``_tool`` are internal, consumed by the CI cell resolution in
+    :func:`_status_cells`.
     """
     wt = entry.get("worktree", "")
     branch = entry.get("branch", "")
@@ -147,7 +152,7 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
     # Cached base must agree with the PR/MR target branch; a mismatch
     # (e.g. base cached as `main` while the MR targets `develop`) is stale.
     cached_target = ((cached or {}).get("pr") or {}).get("target_branch") or ""
-    use_cache = (cached and _cache_fresh(cached)
+    use_cache = (cached and _cache_usable(cached)
                  and (not cached_target
                       or cached_target == (cached.get("base_branch") or "")))
     if wt_ok and branch and use_cache:
@@ -205,12 +210,12 @@ def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
     """_pr_cells plus the CI pipeline and review-comment cells.
 
     CI resolves after the PR: no PR -> no CI cell. A cached ``ci`` is
-    reused while the branch tip is unchanged, the check is younger than
-    _CI_TTL_SECONDS (10 min) and --refresh-pr is not given; otherwise the
-    pipeline is fetched once and persisted via store.cache_ci_status.
-    Review stats ({reviews, unresolved, resolved} via
-    refs.fetch_pr_comment_stats) follow the same 10-min/tip/refresh rules
-    and ride in ``reviews``/``reviews_detail``.
+    reused while the branch tip is unchanged, the check is within the
+    stale-while-revalidate window (max(10 min * 10, 1 day)) and
+    --refresh-pr is not given; otherwise the pipeline is fetched once and
+    persisted via store.cache_ci_status. Review stats ({reviews,
+    unresolved, resolved} via refs.fetch_pr_comment_stats) follow the same
+    tip/refresh rules and ride in ``reviews``/``reviews_detail``.
     """
     cells = _pr_cells(entry, refresh_pr)
     cells["ci"], cells["ci_url"] = _ci_cell(entry, cells, refresh_pr)
@@ -237,7 +242,7 @@ def _ci_cell(entry: dict, cells: dict, refresh_pr: bool) -> tuple[str | None, st
     if branch_tip is None and entry.get("worktree") \
             and Path(entry["worktree"]).exists():
         branch_tip = _patched("_git_tip")(entry["worktree"], "HEAD")
-    if not refresh_pr and cached and _ci_fresh(cached) \
+    if not refresh_pr and cached and _ci_usable(cached) \
             and cached.get("ci_sha") == branch_tip:
         return cached.get("ci"), cached.get("ci_url") or ""
     url = pr["url"]
@@ -248,8 +253,9 @@ def _ci_cell(entry: dict, cells: dict, refresh_pr: bool) -> tuple[str | None, st
         store.cache_ci_status(branch, ci, sha=branch_tip or "", ci_url=ci_url, repo=repo)
     return ci, ci_url
 
-def _reviews_fresh(cached: dict) -> bool:
-    """Cached review-comment stats still valid: checked within _CI_TTL_SECONDS."""
+def _reviews_usable(cached: dict) -> bool:
+    """Cached review-comment stats still servable (stale-while-revalidate):
+    checked within max(10 min * 10, 1 day)."""
     ts = cached.get("reviews_checked_at", "")
     if not ts:
         return False
@@ -257,7 +263,7 @@ def _reviews_fresh(cached: dict) -> bool:
         age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
     except ValueError:
         return False
-    return age < timedelta(seconds=_CI_TTL_SECONDS)
+    return age < timedelta(seconds=_CI_SWR_SECONDS)
 
 
 def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool) -> dict | None:
@@ -277,7 +283,7 @@ def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool) -> dict | None:
     if branch_tip is None and entry.get("worktree") \
             and Path(entry["worktree"]).exists():
         branch_tip = _patched("_git_tip")(entry["worktree"], "HEAD")
-    if not refresh_pr and cached and _reviews_fresh(cached) \
+    if not refresh_pr and cached and _reviews_usable(cached) \
             and cached.get("reviews_sha") == branch_tip \
             and all(k in cached for k in ("reviews", "unresolved", "resolved")):
         return {"reviews": int(cached.get("reviews") or 0),

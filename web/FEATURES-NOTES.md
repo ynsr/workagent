@@ -66,8 +66,15 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
    range dropdown Last 7/30/90 days / Last year defaulting to Last 30 days;
    title/description search; status dropdown defaulting to Not Done = open
    or in progress); issue rows carry `reporter`/`author` + `description`
-   for it. No server query params.
-8. **Trackers:** per-row enable checkbox + Edit (preloads the add form;
+   for it. No server query params. The server serves the widest slice
+   (jira reporter=me / gh authored-by-me, all statuses, last year) so no
+   filter combination can come up empty on the cache.
+8. **Stale-while-revalidate (Dashboard tables):** every cache bucket is
+   served for max(fresh TTL * 10, 1 day) — PR cache 30d (tips must still
+   match), no-PR/CI/reviews 1d, issue cache 1d; the browser mirrors it via
+   react-query `staleTime` (status 30d, candidates/issues 1d), so cached
+   rows render instantly and a background refetch swaps in fresh rows.
+9. **Trackers:** per-row enable checkbox + Edit (preloads the add form;
    submitting an existing key runs `tracker update`), disabled-domains card
    (`GET/POST /api/tracker-domains`). Disabled trackers and disabled-domain
    hosts are skipped by issue/PR fetching.

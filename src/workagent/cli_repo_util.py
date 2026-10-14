@@ -13,6 +13,12 @@ _CI_STYLES = {"success": "bright_green", "failure": "bright_red", "running": "cy
 _DB_CACHE: dict[str, str] = {}
 _STATUS_TTL_SECONDS = 3 * 24 * 3600
 _NEGATIVE_TTL_SECONDS = 30 * 60
+# Stale-while-revalidate windows: cached rows stay servable for
+# max(fresh TTL * 10, 1 day) while a refetch refreshes them in the
+# background (Dashboard tables render the cache instantly).
+_STATUS_SWR_SECONDS = max(_STATUS_TTL_SECONDS * 10, 24 * 3600)
+_NEGATIVE_SWR_SECONDS = max(_NEGATIVE_TTL_SECONDS * 10, 24 * 3600)
+_CI_SWR_SECONDS = max(_CI_TTL_SECONDS * 10, 24 * 3600)
 
 
 def _repo_default_branch(repo: str) -> str | None:

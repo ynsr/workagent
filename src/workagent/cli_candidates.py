@@ -5,7 +5,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -86,16 +86,13 @@ def _candidate_prs() -> tuple[list[dict], list[str]]:
 
 
 def _candidate_issues(force: bool = False) -> tuple[list[dict], list[str]]:
-    """My recent issues (cached 1h); the `force` bypass re-queries the tracker CLIs."""
+    """My issues (last year, all statuses — the Recent-issues filter slices
+    them client-side); the `force` bypass re-queries the tracker CLIs."""
     warnings: list[str] = []
     _, linked_issue_urls, _, _, links = _linked_sets()
     issues = trackers.list_my_issues(warnings, force=force)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
     recent: list[dict] = []
     for i in issues:
-        dt = trackers.parse_created(str(i.get("created", "")))
-        if dt is None or dt < cutoff:
-            continue
         key = str(i.get("key", "") or "")
         if key and refs.matching_issue_keys(key, links):
             continue
@@ -117,10 +114,10 @@ def _candidates(force: bool = False) -> dict:
     PRs are collected from every registered repo (per-repo failures →
     warning) minus any candidate already present in the worktrees table:
     a PR/MR is dropped when its URL, branch name, or worktree path matches
-    a linked row. Issues are `trackers.list_my_issues` filtered to created
-    within the last 30 days, minus issues whose key/URL already has a linked
-    worktree. Scanned worktrees come from `_scan_worktrees`, which already
-    excludes linked paths.
+    a linked row. Issues are `trackers.list_my_issues` (last year, all
+    statuses) minus issues whose key/URL already has a linked worktree.
+    Scanned worktrees come from `_scan_worktrees`, which already excludes
+    linked paths.
     """
     prs, pr_warnings = _candidate_prs()
     recent, issue_warnings = _candidate_issues(force=force)
@@ -228,7 +225,7 @@ def candidates_cmd(
     csv_output: bool = typer.Option(False, "--csv", help="Output the PR/MR table as CSV (stdout; logs go to stderr)."),
     reset_cache: bool = typer.Option(False, "--reset-cache", help="Clear the cached issue rows and re-fetch live."),
 ) -> None:
-    """List unlinked open PR/MRs and my recent issues (last 30 days).
+    """List unlinked open PR/MRs and my issues (last year, all statuses).
 
     Example:
       workagent candidates
@@ -259,7 +256,7 @@ def candidates_cmd(
                 "Unlinked PR/MRs", "(no unlinked open PR/MRs)")
     _print_rows(_esc(out["issues"]), False, False,
                 ["key", "title", "status", "created", "repo_hint"],
-                "Recent issues (reported by me, last 30 days)",
+                "Recent issues (reported by me, last year)",
                 "(no recent issues)")
     _print_rows(out["worktrees"], False, False,
                 ["path", "repo", "branch", "key_guess"],

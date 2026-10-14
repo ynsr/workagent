@@ -42,7 +42,7 @@ Jira rows are keyed `jira:KEY@repo` (e.g. `jira:IPG-932@projectx`); bare
 `pr_detail` is `null` when no open/known PR. `ci` is the latest CI
 pipeline status for the PR — `success` | `failure` | `running` |
 `not_started` — or `null` when there is no PR or the lookup failed
-(cached 10 min while the branch tip is unchanged). `ci_url` is the
+(cached within max(10 min * 10, 1 day) while the branch tip is unchanged). `ci_url` is the
 latest CI job page (GitLab `.../-/jobs/<id>`, GitHub check details URL)
 or `""` when unknown — the CI badge links there. `reviews` is the
 display string `"R|U|R"` (done reviews | unresolved | resolved);
@@ -122,18 +122,21 @@ session exists (caller falls through to a fresh `fix_comments` session):
 ```
 
 ### `GET /api/issues`
-My open issues (jira To Do/In Progress reported by me in the last 30 days
-+ GitHub issues authored by me, state=open). Per-source rows are
-cached 1h server-side; `?force=true` bypasses the cache and re-queries
-the tracker CLIs live (slow). Always 200 — a
+My issues (jira reported by me, all statuses, last year + GitHub issues
+authored by me, any state, last year — the Recent-issues filter slices
+range/status/scope client-side). Per-source rows are cached server-side
+and served within max(1h * 10, 1 day); `?force=true` bypasses the cache
+and re-queries the tracker CLIs live (slow). Always 200 — a
 missing/failing host CLI yields `[]` plus a `warning`:
 
 ### `GET /api/candidates`
 Unlinked open PR/MRs across every registered repo (PR/MR URLs already
-present in `links.json` are excluded server-side) plus my issues created
-within the last 30 days (server-side filter) plus unregistered on-disk
-worktrees under the scan root. `?force=true` re-queries the tracker CLIs
-live instead of the 1h issue cache (slow). Read-only:
+present in `links.json` are excluded server-side) plus my issues (jira
+reported by me / GitHub authored by me, all statuses, last year — the
+Recent-issues filter slices range/status/scope client-side) plus
+unregistered on-disk worktrees under the scan root. `?force=true`
+re-queries the tracker CLIs live instead of the served cache window
+(slow). Read-only:
 {"prs": [{"key": "github:o/r#33", "number": 33, "title": "…",
           "url": "https://github.com/o/r/pull/33", "branch": "feat/x",
           "updated": "2026-09-20T10:00:00Z", "state": "OPEN",
