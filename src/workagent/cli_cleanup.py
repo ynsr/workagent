@@ -211,7 +211,20 @@ def _resolve_branch_pr(branch: str, recorded_url: str, host_cwd: str,
     return recorded_url, (_cli4._fresh_pr_state(recorded_url, host_cwd) if recorded_url else None), False
 
 
-def _merge_pr(pr_url: str, squash: bool, cwd: str | None = None) -> None:
+_LONG_LIVED_SOURCES = frozenset({"dev", "develop", "main", "master"})
+
+
+def _source_needs_squash(source_branch: str) -> bool:
+    """True unless *source_branch* is long-lived (dev/develop/main/master).
+
+    Squash is destructive: branches that stay relevant keep full history
+    and merge with a merge commit. Everything else squashes.
+    """
+    return (source_branch or "").strip().lower() not in _LONG_LIVED_SOURCES
+
+
+def _merge_pr(pr_url: str, squash: bool = True, cwd: str | None = None,
+              source_branch: str = "", no_squash: bool = False) -> None:
     """Merge an open PR/MR (squash default); verify host state; raise on failure.
 
     Already-merged/closed is tolerated (returns with a note) since callers
@@ -223,6 +236,12 @@ def _merge_pr(pr_url: str, squash: bool, cwd: str | None = None) -> None:
     unrelated checkout) and fail with "no git remote points to a known
     host" or act on the wrong repo.
 
+    Squash is mandatory for non-long-lived sources: an explicit
+    ``no_squash`` there is a usage error (exit 2). Long-lived sources
+    (dev/develop/main/master) keep full history and merge with a merge
+    commit. Unknown/empty *source_branch* squashes (fail-safe: only
+    a known long-lived source opts out).
+
     glab quirk (IPG-1017): `glab mr merge` can exit 0 printing a merged
     summary while the MR stays `opened` — e.g. `merge_when_pipeline_succeeds`
     or `detailed_merge_status: commits_status` (auto-merge queued, not
@@ -231,16 +250,29 @@ def _merge_pr(pr_url: str, squash: bool, cwd: str | None = None) -> None:
     commits. So after a clean CLI exit we re-query the host and raise
     unless the MR reports merged (or already-merged/closed tolerance).
     """
+    long_lived = bool(source_branch) and not _source_needs_squash(source_branch)
+    if long_lived:
+        # Long-lived sources keep full history: merge commit.
+        squash = False
+    elif no_squash:
+        _fail(f"--no-squash refused for source branch {source_branch!r}: "
+              "cleanup squash-merges non-long-lived branches into "
+              "default/protected branches (long-lived sources: "
+              "dev/develop/main/master).", EXIT_USAGE)
+    else:
+        squash = True
     from . import cli as _cli  # shim: tests patch workagent.cli.run_cmd
     try:
         if "github.com" in pr_url:
             # gh requires an explicit strategy non-interactively; squash
-            # default, --no-squash maps to a merge commit (--merge).
+            # default, merge commit for long-lived sources (--merge).
             _cli.run_cmd("gh", "pr", "merge", pr_url,
                     "--squash" if squash else "--merge", cwd=cwd)
         else:
+            # glab defaults to a merge commit; pass --squash explicitly,
+            # omit the flag (no --no-squash exists) for merge commits.
             _cli.run_cmd("glab", "mr", "merge", pr_url,
-                    *([] if squash else ["--no-squash"]), cwd=cwd)
+                    *([] if not squash else ["--squash"]), cwd=cwd)
     except HarnessError as e:
         msg = str(e).lower()
         if ("already merged" in msg or "already been merged" in msg
@@ -338,7 +370,8 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
               EXIT_GENERAL)
     if merge:
         try:
-            _cli._merge_pr(pr_url, squash=squash, cwd=host_cwd)
+            _cli._merge_pr(pr_url, squash=squash, cwd=host_cwd,
+                           source_branch=branch, no_squash=not squash)
         except HarnessError as e:
             if force and not _pr_missing(str(e)):
                 # Rule 3: --force merge failed (e.g. conflicts) → leave the

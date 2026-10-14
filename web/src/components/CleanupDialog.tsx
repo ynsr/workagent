@@ -17,24 +17,37 @@ import { CheckRow } from "@/components/FieldHelp"
  * updates the table instantly (a shared confirm() extras node would be a
  * stale snapshot captured at open time).
  */
+export const LONG_LIVED_SOURCES = ["dev", "develop", "main", "master"] as const
+
+export function isLongLivedSource(branch: string): boolean {
+  return (LONG_LIVED_SOURCES as readonly string[]).includes(
+    (branch || "").trim().toLowerCase(),
+  )
+}
+
 export function CleanupDialog({
   worktreeKey,
   invalid,
+  sourceBranch,
   onClose,
 }: {
   worktreeKey: string
   invalid: boolean
+  sourceBranch?: string
   onClose: (ok: false | { force: boolean } | { action: "deactivate" } | { action: "deleteFromDb" }) => void
 }) {
   const [force, setForce] = useState(invalid)
   const effectiveForce = invalid || force
+  const longLived = isLongLivedSource(sourceBranch ?? "")
 
   const rows: [string, string][] = invalid
     ? [["State check", "Skipped — entry is removed either way"]]
     : [
         [
           "Mergeable PR",
-          "Squash-merge, then delete the remote branch",
+          longLived
+            ? "Merge commit (long-lived source keeps history), then delete the remote branch"
+            : "Squash-merge, then delete the remote branch",
         ],
         [
           "Conflicted PR",

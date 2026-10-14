@@ -162,7 +162,7 @@ def test_cleanup_merges_open_pr_first(isolated_config, tmp_path, monkeypatch):
         calls.append(a)
         return ""
     monkeypatch.setattr(cli, "_merge_pr",
-                        lambda url, squash=True, cwd=None: calls.append("merge"))
+                        lambda url, squash=True, cwd=None, **k: calls.append("merge"))
     monkeypatch.setattr("workagent.cli.run_cmd", fake)
     entry = dict(store.load_links()["jira:IPG-9"])
     out = cli._cleanup_one("jira:IPG-9", entry, force=True, yes=True,
@@ -476,9 +476,50 @@ def test_merge_pr_github_squash_default(isolated_config, monkeypatch):
 
 
 def test_merge_pr_github_no_squash_uses_merge(isolated_config, monkeypatch):
-    """--no-squash maps to gh --merge (gh has no --no-squash flag)."""
+    """Long-lived sources (dev/develop/main/master) merge with --merge."""
     seen = []
     monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
-    cli._merge_pr("https://github.com/o/r/pull/9", squash=False, cwd="/tmp")
+    cli._merge_pr("https://github.com/o/r/pull/9", squash=False, cwd="/tmp",
+                  source_branch="develop")
     assert "--merge" in seen[0]
+    assert "--no-squash" not in seen[0]
+
+
+def test_merge_pr_no_squash_refused_for_feature_branch(isolated_config, monkeypatch):
+    """Explicit --no-squash on a feature source is a usage error (exit 2)."""
+    import typer
+    seen = []
+    monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    with pytest.raises(typer.Exit) as exc:
+        cli._merge_pr("https://github.com/o/r/pull/9", squash=False, cwd="/tmp",
+                      source_branch="feat/IPG-9--x", no_squash=True)
+    assert exc.value.exit_code == 2
+    assert seen == []
+
+
+def test_merge_pr_feature_source_always_squashes(isolated_config, monkeypatch):
+    """Feature sources squash even when squash=False is passed without --no-squash."""
+    seen = []
+    monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    cli._merge_pr("https://github.com/o/r/pull/9", squash=False, cwd="/tmp",
+                  source_branch="feat/IPG-9--x")
+    assert "--squash" in seen[0]
+
+
+def test_merge_pr_glab_squash_flag(isolated_config, monkeypatch):
+    """glab takes --squash (no --no-squash flag exists); long-lived omits it."""
+    import workagent.cli_cleanup as _cc
+    seen = []
+    monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    monkeypatch.setattr(_cc, "_fresh_pr_state",
+                        lambda url, cwd: {"state": "merged", "mergeable": "",
+                                          "merge_state": ""})
+    cli._merge_pr("https://git.example.com/g/r/-/merge_requests/1",
+                  squash=True, cwd="/tmp", source_branch="feat/x")
+    assert "--squash" in seen[0]
+    assert "--no-squash" not in seen[0]
+    seen.clear()
+    cli._merge_pr("https://git.example.com/g/r/-/merge_requests/1",
+                  squash=True, cwd="/tmp", source_branch="develop")
+    assert "--squash" not in seen[0]
     assert "--no-squash" not in seen[0]

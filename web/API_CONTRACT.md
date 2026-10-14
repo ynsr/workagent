@@ -198,6 +198,7 @@ Request:
 - Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`) need
   `confirm: true` → the server appends `--yes`. `force: true` requires
   `confirm: true` and appends `--force` (cleanup, register, repo remove).
+- `cleanup` merges open PRs/MRs with the CLI rule: non-long-lived sources squash-merge into default/protected branches; long-lived sources (`dev/develop/main/master`) merge with a merge commit; explicit `--no-squash` on other sources fails (exit 2, in the run log). The web UI never sends `--no-squash`.
 - `repo remove` of a repo with linked worktrees → 400
   `{code: "worktrees_exist"}` unless `force: true` (cascades them).
   `tracker add` without a non-blank `--remote-url` → 400 `bad_arg`.

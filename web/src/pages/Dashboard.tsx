@@ -545,6 +545,7 @@ export function Dashboard() {
         <CleanupDialog
           worktreeKey={cleanupTarget}
           invalid={worktrees?.[cleanupTarget]?.wt_valid === false}
+          sourceBranch={worktrees?.[cleanupTarget]?.branch}
           onClose={(res) => {
             if (!res) {
               setCleanupTarget(null)

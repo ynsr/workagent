@@ -162,6 +162,8 @@
   `start`/`review` reuse the linked-worktree repo, else the single linked
   repo, else prompt (no CWD default; headless aborts with `--repo` usage);
   Launch prefills the repo default via `GET /api/default-repo?ref=`.
+- `cleanup` squash-merges into default/protected branches unless the source is long-lived (`dev/develop/main/master` keep history via merge commit); explicit `--no-squash` on other sources fails (exit 2); glab path now passes `--squash` explicitly [no-issue]
+- Web cleanup follows the CLI squash rule (non-long-lived sources squash-merge; `dev/develop/main/master` merge with a merge commit) — the Cleanup dialog shows the effective strategy for the row's branch; the UI never sends `--no-squash` [no-issue]
 ## 0.2.1 — 2026-09-18
 
 - Fix Tab completion: typer 0.27 never registers its shell completion
