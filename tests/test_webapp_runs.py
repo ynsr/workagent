@@ -639,6 +639,56 @@ def test_resolve_session_file_adopts_minted(client, tmp_path, monkeypatch):
     got = _rr._resolve_session_file(pinned, sid)
     assert got == str(minted)
     assert sq.get_session(db, sid)["file_path"] == str(minted)
+
+
+def test_resolve_session_file_prefers_db_over_stale_pinned(client, tmp_path):
+    """Child rescoped branch-less → branch-scoped: registry path is stale,
+    but the DB row holds the transcript — resolve the DB file, not ""."""
+    from workagent import store_sqlite as sq
+    from workagent import web_runs_routes as _rr
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k6', '/tmp/w6', 'feat/x', NULL, '2026-01-01', '{}')")
+    sid = "2026-10-09T09-01-45-289Z-9100"
+    stale = str(tmp_path / "omp" / f"{sid}.jsonl")  # branch-less, never existed
+    scoped = tmp_path / "omp" / "feat" / "x" / "review"
+    scoped.mkdir(parents=True)
+    real = scoped / "2026-10-09T09-01-47-227Z_abc.jsonl"
+    real.write_text('{"type":"session"}\n')
+    sq.insert_session(db, worktree_ref="k6", harness_name="omp",
+                      initiator_command="review", prompt="p", file_path=str(real),
+                      session_id=sid, session_type="review")
+    assert _rr._resolve_session_file(stale, sid) == str(real)
+
+
+def test_mirror_run_syncs_rescoped_path(client, tmp_path):
+    """Mirror updates the live registry row when the child rescoped the path."""
+    from workagent import store_sqlite as sq
+    from workagent import web_runs as _wr
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k7', '/tmp/w7', 'feat/x', NULL, '2026-01-01', '{}')")
+    sid = "2026-10-09T09-01-45-289Z-9101"
+    stale = str(tmp_path / "omp" / f"{sid}.jsonl")
+    real = tmp_path / "omp" / "feat" / "x" / "review" / "minted.jsonl"
+    real.parent.mkdir(parents=True)
+    real.write_text("{}\n")
+    sq.insert_session(db, worktree_ref="k7", harness_name="omp",
+                      initiator_command="review", prompt="p", file_path=str(real),
+                      session_id=sid, session_type="review")
+    run = client.app.state.registry.create("review", ["k7"], "review:k7")
+    run.session_file = stale
+    run.argv = ["python", "-m", "workagent", "review", "k7", "--launch", "--yes",
+                "--session-file", stale]
+    run.exit_code = 0
+    _wr._mirror_run(run)
+    assert run.session_file == str(real)
+
+
 def test_launch_rescopes_branchless_pinned_path(isolated_config, tmp_path, monkeypatch):
     """Review (branch known only after MR fetch) rescopes the web-minted path.
 

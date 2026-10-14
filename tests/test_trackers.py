@@ -396,7 +396,7 @@ def test_jira_payload_carries_reporter_and_description(monkeypatch):
 
 
 def test_source_disabled_tracker_skips_fetch(isolated_config, monkeypatch):
-    """A tracker with is_enabled=0 turns its source gate off."""
+    """A sole tracker with is_enabled=0 turns its source gate off (with a warning)."""
     from workagent import trackers
     monkeypatch.setattr(trackers.store, "load_trackers", lambda: {
         "jira:IPG": {"vendor": "jira", "remote_url": "https://jira/x",
@@ -404,6 +404,33 @@ def test_source_disabled_tracker_skips_fetch(isolated_config, monkeypatch):
     monkeypatch.setattr(trackers.store, "load_config", lambda: {"disabled_tracker_domains": []})
     assert trackers._source_enabled("jira") is False
     assert trackers._source_enabled("github") is True
+
+
+def test_source_stays_on_while_any_tracker_usable(isolated_config, monkeypatch):
+    """Disabling one tracker (jira:PAN) must not blank the source while a
+    sibling (jira:IPG) is still enabled — the user's exact regression."""
+    from workagent import trackers
+    monkeypatch.setattr(trackers.store, "load_trackers", lambda: {
+        "jira:IPG": {"vendor": "jira", "remote_url": "https://tribe.jibit.cloud/browse/IPG",
+                     "fetch_enabled": True, "is_enabled": True, "repos": []},
+        "jira:PAN": {"vendor": "jira", "remote_url": "https://tribe.jibit.cloud/browse/PAN",
+                     "fetch_enabled": True, "is_enabled": False, "repos": []}})
+    monkeypatch.setattr(trackers.store, "load_config", lambda: {"disabled_tracker_domains": []})
+    warnings: list[str] = []
+    assert trackers._enabled_sources(warnings) == {"jira", "github"}
+    assert warnings == []
+
+
+def test_source_all_disabled_warns(isolated_config, monkeypatch):
+    """Every tracker of a vendor unusable → source off + one warning naming it."""
+    from workagent import trackers
+    monkeypatch.setattr(trackers.store, "load_trackers", lambda: {
+        "jira:IPG": {"vendor": "jira", "remote_url": "https://jira/x",
+                     "fetch_enabled": True, "is_enabled": False, "repos": []}})
+    monkeypatch.setattr(trackers.store, "load_config", lambda: {"disabled_tracker_domains": []})
+    warnings: list[str] = []
+    assert trackers._enabled_sources(warnings) == {"github"}
+    assert warnings == ["skipped disabled issue source(s): jira"]
 
 
 def test_source_disabled_domain_skips_fetch(isolated_config, monkeypatch):
@@ -424,7 +451,6 @@ def test_source_other_domain_stays_on(isolated_config, monkeypatch):
                      "fetch_enabled": True, "is_enabled": True, "repos": []}})
     monkeypatch.setattr(trackers.store, "load_config", lambda: {"disabled_tracker_domains": ["example.com"]})
     assert trackers._source_enabled("jira") is True
-
 
 def test_disabled_domains_roundtrip(isolated_config):
     """Config accessors normalize (lowercase, dedupe, sorted), default empty."""

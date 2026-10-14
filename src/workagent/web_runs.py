@@ -62,6 +62,12 @@ def _mirror_run(run: Run) -> None:
         if row is None:
             return
         sid = str(row.get("id", ""))
+        db_file = str(row.get("file_path") or "")
+        if db_file and db_file != run.session_file:
+            # The child rescoped the path (branch-less → branch-scoped, or
+            # pinned → minted): point the live row at the real transcript.
+            with run.lock:
+                run.session_file = db_file
         # argv is [python, -m, workagent, <command>, ...] (see _build_argv);
         # fall back to the body fields when the shape is unexpected.
         if len(argv) > 3:

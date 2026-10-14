@@ -560,32 +560,48 @@ def _domain_blocked(host: str, blocked: list[str]) -> bool:
     return False
 
 
-def _source_enabled(source: str) -> bool:
-    """Fetch gate for an issue source: off when a linked tracker of that
-    vendor is disabled (is_enabled=0), has fetch disabled, or sits on a
-    disabled-tracker domain; no linked tracker → on (unchanged
-    pre-registration behavior for both sources)."""
+def _enabled_sources(warnings: list[str] | None = None) -> set[str]:
+    """Vendors with at least one usable linked tracker.
+
+    A source stays live while ANY linked tracker of that vendor is usable
+    (enabled, fetch on, host not domain-blocked); no linked tracker → on
+    (unchanged pre-registration behavior). A vendor whose trackers exist
+    but are all unusable is reported once in *warnings* so an empty
+    Recent-issues table explains itself instead of silently blanking.
+    """
+    from collections import OrderedDict
     try:
         from . import store as _store
         trackers = _store.load_trackers()
         cfg = _store.load_config()
     except Exception:
-        return True
+        return {"jira", "github"}
     blocked = list((cfg or {}).get("disabled_tracker_domains", []) or [])
+    matched: OrderedDict[str, bool] = OrderedDict()
     for tid, v in trackers.items():
         vendor = str((v or {}).get("vendor", "") or "").lower()
-        match = (vendor == source) or (source == "github" and str(tid).startswith("gitlab:"))
-        if source == "jira" and str(tid).startswith("jira:") and not vendor:
-            match = True
-        if not match:
-            continue
-        if not (v or {}).get("is_enabled", True):
-            return False
-        if not (v or {}).get("fetch_enabled", True):
-            return False
-        if _domain_blocked(_tracker_host(str((v or {}).get("remote_url", "") or "")), blocked):
-            return False
-    return True
+        for source in ("jira", "github"):
+            match = (vendor == source) or (source == "github" and str(tid).startswith("gitlab:"))
+            if source == "jira" and str(tid).startswith("jira:") and not vendor:
+                match = True
+            if not match:
+                continue
+            usable = bool((v or {}).get("is_enabled", True)) \
+                and bool((v or {}).get("fetch_enabled", True)) \
+                and not _domain_blocked(_tracker_host(str((v or {}).get("remote_url", "") or "")), blocked)
+            matched[source] = matched.get(source, False) or usable
+    dead = sorted(s for s, usable in matched.items() if not usable)
+    if dead and warnings is not None:
+        skipped = ", ".join(dead)
+        msg = f"skipped disabled issue source(s): {skipped}"
+        if msg not in warnings:
+            warnings.append(msg)
+    return {"jira", "github"} - set(dead)
+
+
+def _source_enabled(source: str) -> bool:
+    """Fetch gate for an issue source (any-usable-tracker wins; see _enabled_sources)."""
+    return source in _enabled_sources()
 
 def list_my_issues(warnings: list[str] | None = None,
                    force: bool = False,
@@ -603,8 +619,9 @@ def list_my_issues(warnings: list[str] | None = None,
     requery costs at most one network round per (window, scope).
     GitLab issues are intentionally omitted (Jira covers work tracking;
     GitLab surfaces via PR/MR candidates).
-    A source is skipped when every linked tracker of that vendor has
-    fetch disabled (GitHub off by default, opt-in per tracker).
+    A source is skipped only when every linked tracker of that vendor is
+    unusable (disabled, fetch off, or domain-blocked); the skip is reported
+    in *warnings* so the UI explains the empty table.
     Per-source failure contributes [] plus a warning — to stderr when
     *warnings* is None, else appended to the caller's list; never raises.
     Cached rows are served within max(1h * 10, 1 day); older entries
@@ -613,13 +630,13 @@ def list_my_issues(warnings: list[str] | None = None,
     days = max(1, int(days or _INITIAL_ISSUES_DAYS))
     warn = warnings if warnings is not None else []
     rows: list[dict] = []
-    if _source_enabled("jira"):
+    live = _enabled_sources(warn)
+    if "jira" in live:
         rows += _cached_source("jira", lambda w: _jira_my_issues(w, days, mine),
                                warn, force, _cache_key("jira", days, mine))
-    if _source_enabled("github"):
+    if "github" in live:
         rows += _cached_source("github", lambda w: _gh_my_issues(w, days, mine),
                                warn, force, _cache_key("github", days, mine))
-    rows.sort(key=lambda r: r["created"], reverse=True)
     if warnings is None:
         for w in warn:
             print(f"warning: {w}", file=sys.stderr)

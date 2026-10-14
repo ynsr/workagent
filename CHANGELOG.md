@@ -1,5 +1,7 @@
 # Changelog
 ## Unreleased
+- Recent issues no longer blank when one tracker is disabled: the issue-source gate is any-usable per vendor (disabling `jira:PAN` keeps `jira:IPG` rows), and a fully-disabled vendor reports `skipped disabled issue source(s)` above the table instead of silently emptying it [no-issue]
+- Run/session resume prefers the DB-recorded transcript path over the pinned path and the web mirror syncs the live run to it, closing the branch-less vs branch-scoped rescope gap [no-issue]
 - Fix-comments resumes the review transcript in all modes: session lookup is by exact transcript path (`session_by_file_path`) instead of filename stem — omp-minted `.jsonl` names never matched their session id, so `--resume` silently started fresh; covers preview, headless launch, and terminal spawn plus the web run mirror [no-issue]
 - Recent issues now fetch the assigned-or-created-by-me 90-day superset and requery per selection: `candidates --issues-days 1..365 --issues-scope mine|all`, `/api/issues?days=&mine=`, Launch `Last year` + `All` requery under variant server-cache keys (one remote round max) while common filters stay client-side instant [no-issue]
 - Worktrees `Added` + Candidates rows show relative dates (`5 min ago`, `Yesterday`, `3 weeks ago`) with the exact date on hover [no-issue]

@@ -84,3 +84,17 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
     selection (`days`, `mine=false`). The UI prefetches the (365d, mine)
     variant in the background once the initial rows land (one idle remote
     round), so switching to Last year is instant; All-scope stays lazy.
+11. **Session join key is the transcript file path:** omp mints its own
+    `.jsonl` filename, so filename-stem lookup never matches the session
+    id — `session_by_file_path` (exact `file_path` match, stem fallback
+    for legacy rows) is the join everywhere (fix-continue adopt, launch
+    adopt, preview adopt, web run mirror). `_resolve_session_file`
+    prefers the DB row `file_path` over the pinned path (covers the
+    child rescoping branch-less → branch-scoped) and the mirror syncs
+    the live registry row to the DB path.
+12. **Issue-source gate is any-usable:** a vendor fetches while ANY linked
+    tracker of that vendor is usable (enabled, fetch on, host not
+    domain-blocked) — disabling one tracker (e.g. `jira:PAN`) never
+    blanks Recent issues while a sibling (`jira:IPG`) stays on. A vendor
+    with trackers but none usable is skipped with a `skipped disabled
+    issue source(s): <vendor>` warning surfaced above the table.

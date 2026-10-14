@@ -35,32 +35,45 @@ from .web_runs import (
 
 
 def _resolve_session_file(session_file: str, session_id: str = "") -> str:
-    """Best-effort session file: pinned path wins, else adopt the minted one.
+    """Best-effort session file: DB row wins, else adopt the minted one.
 
     omp mints its own filename: the pinned --session-file path (web-minted
     id) is only the scope hint — after the user runs the printed command
-    manually the real .jsonl lands nearby (same dir, or a same-stem
-    sibling). When the pinned path is missing/empty, adopt the newest
-    non-empty .jsonl under the scope dir (created after the session row)
-    and persist it on the session so future runs reuse the full path.
+    manually the real .jsonl lands nearby. Resolution order:
+    1. DB row `file_path` when it is a ready transcript (covers the child
+       CLI rescoping a branch-less pinned path under
+       `sessions/omp/<branch>/<action>/` — the registry still holds the
+       stale branch-less path);
+    2. pinned path itself when ready;
+    3. newest non-empty .jsonl under the scope dir (pinned parent, falling
+       back to the DB row parent), created after the session row —
+       persisted on the session so future runs reuse the full path.
     Returns "" when nothing resumable is found.
     """
+    from pathlib import Path as _Path
     if _transcript_ready(session_file):
         return session_file
     try:
         from . import store_sqlite as _sq
         from datetime import datetime
         db = _sq.db_path()
-        scope = Path(session_file).parent if session_file else None
-        if scope is None or not scope.is_dir():
-            return ""
+        db_file = ""
         created = ""
         if session_id and db.exists():
             try:
                 row = _sq.get_session(db, session_id)
+                db_file = str((row or {}).get("file_path") or "")
                 created = str((row or {}).get("created_at") or "")
             except Exception:
+                db_file = ""
                 created = ""
+        if db_file and db_file != session_file and _transcript_ready(db_file):
+            return db_file
+        scope = _Path(session_file).parent if session_file else None
+        if scope is None or not scope.is_dir():
+            scope = _Path(db_file).parent if db_file else None
+        if scope is None or not scope.is_dir():
+            return ""
         try:
             created_ts = datetime.fromisoformat(created).timestamp() if created else 0.0
         except Exception:
@@ -326,7 +339,15 @@ def register_runs_routes(app, registry) -> None:
         if not session_file:
             raise ApiError("no_session",
                            f"run {run_id} executed no harness session", 404)
-        session_file = _resolve_session_file(session_file, Path(session_file).stem)
+        arg_file = _session_file_arg(run.command, list(run.args) if isinstance(run.args, list) else [])
+        resolved = ""
+        for cand in (session_file, arg_file or ""):
+            if not cand:
+                continue
+            resolved = _resolve_session_file(cand, Path(cand).stem)
+            if resolved:
+                break
+        session_file = resolved
         if not _transcript_ready(session_file):
             raise ApiError("missing_session",
                            f"session transcript missing: {session_file}", 404)
