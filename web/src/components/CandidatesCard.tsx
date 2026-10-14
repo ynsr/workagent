@@ -165,7 +165,7 @@ export function CandidatesCard() {
   ]
   const counts: Record<Tab, number> = {
     prs: prs.length,
-    issues: issues.length,
+    issues: filter.filtered.length,
     worktrees: scanned.length,
   }
   return (
