@@ -123,7 +123,7 @@ def load_repos(path: Path) -> dict:
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         out: dict = {}
-        for r in conn.execute("SELECT key_ref, name, path, remote, tool, fetch_enabled FROM repos ORDER BY name"):
+        for r in conn.execute("SELECT key_ref, name, path, remote, tool, fetch_enabled, default_branch, release_branch FROM repos ORDER BY name"):
             d = dict(r)
             tids = [x["tracker_key"] for x in conn.execute(
                 "SELECT tracker_key FROM tracker_repos WHERE repo_key = ? ORDER BY tracker_key",
@@ -131,7 +131,9 @@ def load_repos(path: Path) -> dict:
             out[d["name"] or d["key_ref"]] = {
                 "path": d["path"], "trackers": tids, "tracker": tids[0] if tids else "",
                 "remote": d["remote"], "tool": d["tool"] or None,
-                "fetch_enabled": bool(d.get("fetch_enabled", 1))}
+                "fetch_enabled": bool(d.get("fetch_enabled", 1)),
+                "default_branch": d.get("default_branch") or "",
+                "release_branch": d.get("release_branch") or ""}
         return out
 
 

@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import { Copy, Download, FolderGit2, Plus, Trash2 } from "lucide-react"
 import { CopyCell } from "@/components/CopyCell"
 import { PageHeader } from "@/components/PageHeader"
+import { ReleaseButton } from "@/components/ReleaseButton"
 import {
   EmptyState,
   ErrorState,
@@ -46,9 +47,9 @@ export function Repos() {
   const [path, setPath] = useState("")
   const [tracker, setTracker] = useState("")
   const [fetchEnabled, setFetchEnabled] = useState(true)
+  const [releaseBranch, setReleaseBranch] = useState("")
   const [removeForce, setRemoveForce] = useState(false)
   const [adding, setAdding] = useState(false)
-
   const [trackerError, setTrackerError] = useState("")
   async function handleAdd() {
     if (!name.trim() || !path.trim()) return
@@ -62,7 +63,8 @@ export function Repos() {
       const { run_id } = await createRun.mutateAsync({
         command: "repo",
         args: ["add", "--name", name.trim(), "--path", path.trim(), "--tracker", tracker.trim(),
-          ...(fetchEnabled ? [] : ["--no-fetch"])],
+          ...(fetchEnabled ? [] : ["--no-fetch"]),
+          ...(releaseBranch.trim() ? ["--release-branch", releaseBranch.trim()] : [])],
       })
       toast.success("Repo add started", {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
@@ -71,6 +73,7 @@ export function Repos() {
       setPath("")
       setTracker("")
       setFetchEnabled(true)
+      setReleaseBranch("")
     } catch (err) {
       toast.error(errorText(err))
     } finally {
@@ -194,6 +197,8 @@ export function Repos() {
                         <TableHead>Name</TableHead>
                         <TableHead>Path</TableHead>
                         <TableHead>Tracker</TableHead>
+                        <TableHead>Branches</TableHead>
+                        <TableHead className="w-12" aria-label="Release" />
                         <TableHead className="w-12" aria-label="Remove" />
                       </TableRow>
                     </TableHeader>
@@ -214,6 +219,16 @@ export function Repos() {
                             ) : (
                               <span className="text-muted-foreground">—</span>
                             )}
+                          </TableCell>
+                          <TableCell className="font-mono text-[13px]">
+                            {r.default_branch || r.release_branch ? (
+                              <span>{r.default_branch || "—"} → {r.release_branch || "—"}</span>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <ReleaseButton repo={r.name} compact />
                           </TableCell>
                           <TableCell>
                             <Button
@@ -247,15 +262,23 @@ export function Repos() {
                       <p className="mt-1 break-all font-mono text-[13px] text-muted-foreground">
                         {r.path}
                       </p>
-                      <div className="mt-3 flex justify-end border-t pt-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => void handleRemove(r)}
-                          className="min-h-11 text-destructive hover:bg-destructive/10"
-                        >
-                          <Trash2 aria-hidden /> Remove
-                        </Button>
+                      <div className="mt-3 flex items-center justify-between gap-2 border-t pt-1">
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {r.default_branch || r.release_branch
+                            ? `${r.default_branch || "—"} → ${r.release_branch || "—"}`
+                            : "no release branch"}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <ReleaseButton repo={r.name} compact />
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void handleRemove(r)}
+                            className="min-h-11 text-destructive hover:bg-destructive/10"
+                          >
+                            <Trash2 aria-hidden /> Remove
+                          </Button>
+                        </span>
                       </div>
                     </div>
                   ))}
@@ -316,6 +339,17 @@ export function Repos() {
               flag="--no-fetch"
               description="Uncheck to skip this repo's live host-CLI scan (GitHub repos default off)"
             />
+            <div className="grid gap-2">
+              <Label htmlFor="repo-release">Release branch (optional)</Label>
+              <Input
+                id="repo-release"
+                value={releaseBranch}
+                onChange={(e) => setReleaseBranch(e.target.value)}
+                placeholder="master — empty = no release support"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
             <Button onClick={() => void handleAdd()} disabled={!name.trim() || !path.trim() || !tracker.trim() || adding}>
               <Plus aria-hidden />
               {adding ? "Adding…" : "Add repo"}
