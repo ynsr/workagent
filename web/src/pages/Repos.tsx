@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/PageHeader"
 import {
   EmptyState,
   ErrorState,
+  RefreshIndicator,
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
@@ -39,7 +40,7 @@ export function Repos() {
   const navigate = useNavigate()
   const confirm = useConfirm()
   const createRun = useCreateRun()
-  const { data: repos, isPending, isError, error, refetch } = useRepos()
+  const { data: repos, isPending, isFetching, isError, error, refetch } = useRepos()
 
   const [name, setName] = useState("")
   const [path, setPath] = useState("")
@@ -164,9 +165,9 @@ export function Repos() {
             <CardDescription>GET /api/repos</CardDescription>
           </CardHeader>
           <CardContent>
-            {isPending ? (
+            {(isPending && !repos) ? (
               <TableSkeleton rows={4} />
-            ) : isError ? (
+            ) : (isError && !repos) ? (
               <ErrorState error={error} onRetry={() => void refetch()} />
             ) : !repos || repos.length === 0 ? (
               <EmptyState
@@ -176,6 +177,15 @@ export function Repos() {
               />
             ) : (
               <>
+                {isFetching && !isPending ? <RefreshIndicator /> : null}
+                {isError ? (
+                  <p role="alert" className="mb-3 text-sm text-destructive">
+                    {errorText(error)}{" "}
+                    <button type="button" onClick={() => void refetch()} className="underline underline-offset-2">
+                      Retry
+                    </button>
+                  </p>
+                ) : null}
                 {/* Table ≥sm */}
                 <div className="hidden sm:block">
                   <Table>

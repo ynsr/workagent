@@ -3,7 +3,9 @@ import { CopyCell } from "@/components/CopyCell"
 import { PageHeader } from "@/components/PageHeader"
 import {
   ErrorState,
+  RefreshIndicator,
   TableSkeleton,
+  errorText,
 } from "@/components/StatusFeedback"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -24,9 +26,9 @@ import {
 import { useDoctor } from "@/lib/queries"
 
 export function Doctor() {
-  const { data, isPending, isError, error, refetch } = useDoctor()
+  const { data, isPending, isFetching, isError, error, refetch } = useDoctor()
 
-  if (isPending) {
+  if (isPending && !data) {
     return (
       <div>
         <PageHeader
@@ -38,7 +40,7 @@ export function Doctor() {
     )
   }
 
-  if (isError || !data) {
+  if ((isError && !data) || !data) {
     return (
       <div>
         <PageHeader
@@ -60,6 +62,15 @@ export function Doctor() {
         title="Doctor"
         description="Environment status, config drift, and external tool availability."
       />
+      {isFetching && !isPending ? <RefreshIndicator /> : null}
+      {isError ? (
+        <p role="alert" className="mb-3 text-sm text-destructive">
+          {errorText(error)}{" "}
+          <button type="button" onClick={() => void refetch()} className="underline underline-offset-2">
+            Retry
+          </button>
+        </p>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>

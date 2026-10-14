@@ -301,6 +301,46 @@ def test_my_issues_fetch_exception_never_raises(monkeypatch, tmp_path):
     assert trackers.list_my_issues(warn) == []
     assert any("jira" in w for w in warn)
 
+def test_gh_my_issues_carries_author_and_body(monkeypatch):
+    """gh rows carry author/reporter + description for client-side filters."""
+    import json
+    from workagent import trackers
+    from workagent.errors import run_cmd as _real  # noqa: F841 (documents the seam)
+    payload = json.dumps([{
+        "repository": {"nameWithOwner": "o/r"}, "number": 7,
+        "title": "Fix login", "body": "login breaks on retry",
+        "author": {"login": "YounesRahimi"},
+        "url": "https://github.com/o/r/issues/7",
+        "createdAt": "2026-10-01T00:00:00Z",
+        "updatedAt": "2026-10-02T00:00:00Z",
+    }])
+    seen = {}
+    def fake(*a, **k):
+        seen["fields"] = a[a.index("--json") + 1]
+        return payload
+    monkeypatch.setattr(trackers, "run_cmd", fake)
+    rows = trackers._gh_my_issues([])
+    assert "body" in seen["fields"] and "author" in seen["fields"]
+    assert rows[0]["author"] == "YounesRahimi"
+    assert rows[0]["reporter"] == "YounesRahimi"
+    assert rows[0]["description"] == "login breaks on retry"
+
+
+def test_jira_payload_carries_reporter_and_description(monkeypatch):
+    """Jira payload rows carry reporter + description for client-side filters."""
+    import json
+    from workagent import trackers
+    payload = json.dumps({"issues": [{
+        "key": "IPG-9",
+        "fields": {"summary": "Fix it", "status": {"name": "To Do"},
+                   "created": "2026-10-01T00:00:00.000+0000",
+                   "reporter": {"displayName": "Younes Rahimi"},
+                   "description": "details here"},
+    }]})
+    rows = trackers._parse_jira_payload(payload)
+    assert rows is not None and rows[0]["reporter"] == "Younes Rahimi"
+    assert rows[0]["description"] == "details here"
+
 
 def test_default_repo_for_pr_url_resolves_head_worktree(isolated_config, tmp_path, monkeypatch):
     """Branch name without the PR number: only a head_ref fetch can find it."""

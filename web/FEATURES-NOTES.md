@@ -55,3 +55,12 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
    failure; flagged here for the backend owner.
 5. **Runs page state filter** (`?state=`) and **target filter** (`?target=`) are
    client-side; the contract's GET /api/runs returns all runs.
+6. **Loading convention (all pages):** tables/tabs never block on refetch —
+   stale rows stay visible with an inline Updating indicator (`RefreshIndicator`);
+   skeletons render only on first load; a refetch error over stale data shows
+   an inline retry line. Applies to Dashboard StatusTable, Candidates tabs,
+   Links, Runs, Sessions, Repos, Trackers, Doctor.
+7. **Candidates Recent-issues filter** is client-side over the loaded rows
+   (scope toggles My/All/My-Created, created-after date, title/description
+   search, status dropdown); issue rows carry `reporter`/`author` +
+   `description` for it. No server query params.

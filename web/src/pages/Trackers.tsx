@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/PageHeader"
 import {
   EmptyState,
   ErrorState,
+  RefreshIndicator,
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
@@ -40,7 +41,7 @@ export function Trackers() {
   const navigate = useNavigate()
   const confirm = useConfirm()
   const createRun = useCreateRun()
-  const { data, isPending, isError, error, refetch } = useTrackers()
+  const { data, isPending, isFetching, isError, error, refetch } = useTrackers()
   const trackers = data?.trackers ?? []
 
   const [key, setKey] = useState("")
@@ -150,9 +151,9 @@ export function Trackers() {
             <CardDescription>GET /api/trackers</CardDescription>
           </CardHeader>
           <CardContent>
-            {isPending ? (
+            {(isPending && !data) ? (
               <TableSkeleton rows={4} />
-            ) : isError ? (
+            ) : (isError && !data) ? (
               <ErrorState error={error} onRetry={() => void refetch()} />
             ) : trackers.length === 0 ? (
               <EmptyState
@@ -162,6 +163,15 @@ export function Trackers() {
               />
             ) : (
               <>
+                {isFetching && !isPending ? <RefreshIndicator /> : null}
+                {isError ? (
+                  <p role="alert" className="mb-3 text-sm text-destructive">
+                    {errorText(error)}{" "}
+                    <button type="button" onClick={() => void refetch()} className="underline underline-offset-2">
+                      Retry
+                    </button>
+                  </p>
+                ) : null}
                 {/* Table ≥sm */}
                 <div className="hidden sm:block">
                   <Table>

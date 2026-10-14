@@ -30,6 +30,18 @@ export function TableSkeleton({ rows = 5 }: { rows?: number }) {
     </div>
   )
 }
+export function RefreshIndicator({ label = "Updating…" }: { label?: string }) {
+  return (
+    <p
+      role="status"
+      aria-live="polite"
+      className="flex items-center gap-1.5 text-xs text-muted-foreground"
+    >
+      <RefreshCw className="size-3.5 animate-spin" aria-hidden />
+      {label}
+    </p>
+  )
+}
 
 export function ErrorState({
   error,

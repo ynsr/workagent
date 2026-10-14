@@ -351,10 +351,12 @@ def parse_created(value: str) -> datetime | None:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
-def _jira_row(key: str, title: str, status: str, created: str) -> dict:
+def _jira_row(key: str, title: str, status: str, created: str,
+              reporter: str = "", description: str = "") -> dict:
     return {"key": f"jira:{key}", "title": title, "status": status,
             "created": created,
-            "url": refs.issue_url(f"jira:{key}") or ""}
+            "url": refs.issue_url(f"jira:{key}") or "",
+            "reporter": reporter, "description": description}
 
 
 def _parse_jira_payload(out: str | None) -> list[dict] | None:
@@ -376,7 +378,11 @@ def _parse_jira_payload(out: str | None) -> list[dict] | None:
             continue
         rows.append(_jira_row(key, str(fields.get("summary") or ""),
                               str((fields.get("status") or {}).get("name") or ""),
-                              str(fields.get("created") or "")))
+                              str(fields.get("created") or ""),
+                              str((fields.get("reporter") or {}).get("name")
+                                  or (fields.get("reporter") or {}).get("displayName")
+                                  or ""),
+                              str(fields.get("description") or "")))
     return rows
 
 
@@ -405,7 +411,7 @@ def _jira_my_issues(warnings: list[str]) -> list[dict]:
     attempts = (
         ("request", ("jira-cli", "request", "GET",
                      f"search?jql={quote(_MY_ISSUES_JQL)}"
-                     "&maxResults=100&fields=key,summary,status,created")),
+                     "&maxResults=100&fields=key,summary,status,created,reporter,description")),
         ("search", ("jira-cli", "search", _MY_ISSUES_JQL,
                     "--limit", "100", "--format", "json")),
         ("issue list", ("jira-cli", "issue", "list", "--plain", "--no-headers",
@@ -432,7 +438,7 @@ def _gh_my_issues(warnings: list[str]) -> list[dict]:
     try:
         out = run_cmd("gh", "search", "issues", "--author=@me", "--state=open",
                       "--limit", "100", "--json",
-                      "repository,number,title,updatedAt,url,createdAt")
+                      "repository,number,title,body,author,updatedAt,url,createdAt")
     except HarnessError as e:
         warnings.append(f"github: {e}")
         return []
@@ -449,7 +455,10 @@ def _gh_my_issues(warnings: list[str]) -> list[dict]:
             continue
         rows.append({"key": f"github:{repo}#{num}", "title": it.get("title", ""),
                      "url": it.get("url", ""), "status": "open",
-                     "created": it.get("createdAt", "")})
+                     "created": it.get("createdAt", ""),
+                     "author": (it.get("author") or {}).get("login", "") or "",
+                     "reporter": (it.get("author") or {}).get("login", "") or "",
+                     "description": it.get("body", "") or ""})
     return rows
 
 
@@ -510,7 +519,8 @@ def _source_enabled(source: str) -> bool:
 
 def list_my_issues(warnings: list[str] | None = None,
                    force: bool = False) -> list[dict]:
-    """My open issues across sources as {key, title, url, status, created}.
+    """My open issues across sources as {key, title, url, status, created,
+    reporter, author, description}.
 
     jira (reporter=me, To Do/In Progress, last 30 days) + GitHub issues
     authored by me (state=open). GitLab issues are intentionally omitted

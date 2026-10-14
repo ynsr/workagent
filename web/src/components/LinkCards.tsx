@@ -16,6 +16,7 @@ import { useConfirm } from "@/lib/confirm"
 import {
   EmptyState,
   ErrorState,
+  RefreshIndicator,
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
@@ -25,7 +26,7 @@ import { toast } from "sonner"
 import { ActionDialog, useLinkSubmit } from "@/components/LinkDialogs"
 
 export function TrackerMappingsCard() {
-  const { data: links, isPending, isError, error, refetch } = useLinks()
+  const { data: links, isPending, isFetching, isError, error, refetch } = useLinks()
   const confirm = useConfirm()
   const createRun = useCreateRun()
   const navigate = useNavigate()
@@ -67,9 +68,9 @@ export function TrackerMappingsCard() {
         <CardDescription>GET /api/links → trackers (link list)</CardDescription>
       </CardHeader>
       <CardContent>
-        {isPending ? (
+        {(isPending && !links) ? (
           <TableSkeleton rows={3} />
-        ) : isError ? (
+        ) : (isError && !links) ? (
           <ErrorState error={error} onRetry={() => void refetch()} />
         ) : entries.length === 0 ? (
           <EmptyState
@@ -78,7 +79,17 @@ export function TrackerMappingsCard() {
             description="Link a tracker to a repo with the Link tracker action."
           />
         ) : (
-          <div className="space-y-4">
+          <>
+            {isFetching && !isPending ? <RefreshIndicator /> : null}
+            {isError ? (
+              <p role="alert" className="mb-3 text-sm text-destructive">
+                {errorText(error)}{" "}
+                <button type="button" onClick={() => void refetch()} className="underline underline-offset-2">
+                  Retry
+                </button>
+              </p>
+            ) : null}
+            <div className="space-y-4">
             {entries.map(([tracker, mapping]) => (
               <div key={tracker}>
                 <p className="font-mono text-[13px] font-semibold">{tracker}</p>
@@ -106,7 +117,8 @@ export function TrackerMappingsCard() {
                 </ul>
               </div>
             ))}
-          </div>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>

@@ -12,10 +12,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import {
   EmptyState,
   ErrorState,
+  RefreshIndicator,
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
-import { api } from "@/lib/api"
+import { api, type IssueRow } from "@/lib/api"
+import { IssuesFilterForm, NoFilteredIssues, useIssuesFilter } from "@/components/IssuesFilter"
+import type { UseQueryResult } from "@tanstack/react-query"
 import { queryKeys, useCandidatesIssues, useCandidatesPrs, useCandidatesWorktrees } from "@/lib/queries"
 import { exactDateTime, relativeDate } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -160,143 +163,227 @@ export function CandidatesCard() {
           </p>
         ) : null}
         {tab === "prs" ? (
-          prsQuery.isPending ? (
+          (prsQuery.isPending && !prsQuery.data) ? (
             <TableSkeleton rows={3} />
-          ) : prsQuery.isError ? (
+          ) : (prsQuery.isError && !prsQuery.data) ? (
             <ErrorState error={prsQuery.error} onRetry={() => void prsQuery.refetch()} />
-          ) : prs.length === 0 ? (
-            <EmptyState
-              icon={<GitPullRequest className="size-10" aria-hidden />}
-              title="No unlinked PRs"
-              description="Every open PR/MR is already linked to a worktree."
-            />
           ) : (
-            <ul className="divide-y rounded-md border">
-              {prs.map((pr) => (
-                <li key={pr.url} className="flex items-center gap-2 px-3 py-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium" title={pr.title}>
-                      <a href={pr.url} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
-                        {pr.title || pr.url}
-                      </a>
-                    </p>
-                    <p className="truncate font-mono text-xs text-muted-foreground" title={`${pr.key} · ${pr.branch} · ${pr.repo}${exactDateTime(pr.updated) ? ` · updated ${exactDateTime(pr.updated)}` : ""}`}>
-                      {pr.key} · {pr.branch} · {pr.repo} · {relativeDate(pr.updated)}
-                    </p>
-                  </div>
-                  <Badge variant="outline">{pr.state}</Badge>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void handleAction({
-                      command: "review", args: [pr.url],
-                      label: `Review ${pr.key}`,
-                      confirmText: `Run review for ${pr.url} in a worktree.`,
-                    })}
-                    title={`Review ${pr.url}`}
-                  >
-                    <Play aria-hidden /> Review
-                  </Button>
-                </li>
-              ))}
-            </ul>
+            <>
+              {prsQuery.isFetching && !prsQuery.isPending ? <RefreshIndicator /> : null}
+              {prsQuery.isError ? (
+                <p role="alert" className="mb-3 text-sm text-destructive">
+                  {errorText(prsQuery.error)}{" "}
+                  <button type="button" onClick={() => void prsQuery.refetch()} className="underline underline-offset-2">
+                    Retry
+                  </button>
+                </p>
+              ) : null}
+              {prs.length === 0 ? (
+                <EmptyState
+                  icon={<GitPullRequest className="size-10" aria-hidden />}
+                  title="No unlinked PRs"
+                  description="Every open PR/MR is already linked to a worktree."
+                />
+              ) : (
+                <ul className="divide-y rounded-md border">
+                  {prs.map((pr) => (
+                    <li key={pr.url} className="flex items-center gap-2 px-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium" title={pr.title}>
+                          <a href={pr.url} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
+                            {pr.title || pr.url}
+                          </a>
+                        </p>
+                        <p className="truncate font-mono text-xs text-muted-foreground" title={`${pr.key} · ${pr.branch} · ${pr.repo}${exactDateTime(pr.updated) ? ` · updated ${exactDateTime(pr.updated)}` : ""}`}>
+                          {pr.key} · {pr.branch} · {pr.repo} · {relativeDate(pr.updated)}
+                        </p>
+                      </div>
+                      <Badge variant="outline">{pr.state}</Badge>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void handleAction({
+                          command: "review", args: [pr.url],
+                          label: `Review ${pr.key}`,
+                          confirmText: `Run review for ${pr.url} in a worktree.`,
+                        })}
+                        title={`Review ${pr.url}`}
+                      >
+                        <Play aria-hidden /> Review
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
           )
         ) : tab === "issues" ? (
-          issuesQuery.isPending ? (
-            <TableSkeleton rows={3} />
-          ) : issuesQuery.isError ? (
-            <ErrorState error={issuesQuery.error} onRetry={() => void issuesQuery.refetch()} />
-          ) : issues.length === 0 ? (
-            <EmptyState
-              icon={<Ticket className="size-10" aria-hidden />}
-              title="No recent issues"
-              description="No issues created in the last 30 days."
-            />
-          ) : (
-            <ul className="divide-y rounded-md border">
-              {issues.map((issue) => (
-                <li key={issue.key} className="flex items-center gap-2 px-3 py-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium" title={issue.title}>
-                      <a href={issue.url} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
-                        {issue.title || issue.key}
-                      </a>
-                    </p>
-                    <p className="truncate font-mono text-xs text-muted-foreground" title={`${issue.key} · ${issue.status}${issue.repo_hint ? ` · ${issue.repo_hint}` : ""}${exactDateTime(issue.created) ? ` · created ${exactDateTime(issue.created)}` : ""}`}>
-                      {issue.key} · {issue.status}{issue.repo_hint ? ` · ${issue.repo_hint}` : ""} · {relativeDate(issue.created)}
-                    </p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void handleAction({
-                      command: "start", args: [issue.key],
-                      label: `Start ${issue.key}`,
-                      confirmText: `Start a worktree for ${issue.key}.`,
-                    })}
-                    title={`Start ${issue.key}`}
-                  >
-                    <Play aria-hidden /> Start
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void handleCopyRef(issue.key)}
-                    title={`Copy ref ${issue.key}`}
-                  >
-                    <Copy aria-hidden /> {copied ? "Copied" : "Copy ref"}
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )
-        ) : worktreesQuery.isPending ? (
-          <TableSkeleton rows={3} />
-        ) : worktreesQuery.isError ? (
-          <ErrorState error={worktreesQuery.error} onRetry={() => void worktreesQuery.refetch()} />
-        ) : scanned.length === 0 ? (
-          <EmptyState
-            icon={<GitPullRequest className="size-10" aria-hidden />}
-            title="No unregistered worktrees"
-            description="Every worktree under the scan root is already linked."
+          <IssuesTab
+            query={issuesQuery}
+            issues={issues}
+            onStart={(issue) => void handleAction({
+              command: "start", args: [issue.key],
+              label: `Start ${issue.key}`,
+              confirmText: `Start a worktree for ${issue.key}.`,
+            })}
+            onCopyRef={(key) => void handleCopyRef(key)}
+            copied={copied}
           />
+        ) : (worktreesQuery.isPending && !worktreesQuery.data) ? (
+          <TableSkeleton rows={3} />
+        ) : (worktreesQuery.isError && !worktreesQuery.data) ? (
+          <ErrorState error={worktreesQuery.error} onRetry={() => void worktreesQuery.refetch()} />
         ) : (
-          <ul className="divide-y rounded-md border">
-            {scanned.map((wt) => (
-              <li key={wt.path} className="flex items-center gap-2 px-3 py-2">
-                <div className="min-w-0 flex-1">
-                  <CopyCell text={wt.branch} className="text-sm font-medium" />
-                  <CopyCell text={`${wt.key_guess} · ${wt.repo} · ${wt.path}${wt.mtime ? ` · ${relativeDate(wt.mtime)}` : ""}`} title={`${wt.key_guess} · ${wt.repo} · ${wt.path}${exactDateTime(wt.mtime) ? ` · modified ${exactDateTime(wt.mtime)}` : ""}`} className="font-mono text-xs text-muted-foreground" />
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void handleAction({
-                    command: "register", args: [wt.path],
-                    label: `Register ${wt.branch}`,
-                    confirmText: `Register worktree ${wt.path} (key ${wt.key_guess}).`,
-                  })}
-                  title={`Register ${wt.path}`}
-                >
-                  <UserPlus aria-hidden /> Register
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void handleCopyRef(wt.path)}
-                  title={`Copy path ${wt.path}`}
-                >
-                  <Copy aria-hidden /> {copied ? "Copied" : "Copy path"}
-                </Button>
-              </li>
-            ))}
-          </ul>
-         )}
+          <>
+            {worktreesQuery.isFetching && !worktreesQuery.isPending ? <RefreshIndicator /> : null}
+            {worktreesQuery.isError ? (
+              <p role="alert" className="mb-3 text-sm text-destructive">
+                {errorText(worktreesQuery.error)}{" "}
+                <button type="button" onClick={() => void worktreesQuery.refetch()} className="underline underline-offset-2">
+                  Retry
+                </button>
+              </p>
+            ) : null}
+            {scanned.length === 0 ? (
+              <EmptyState
+                icon={<GitPullRequest className="size-10" aria-hidden />}
+                title="No unregistered worktrees"
+                description="Every worktree under the scan root is already linked."
+              />
+            ) : (
+              <ul className="divide-y rounded-md border">
+                {scanned.map((wt) => (
+                  <li key={wt.path} className="flex items-center gap-2 px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <CopyCell text={wt.branch} className="text-sm font-medium" />
+                      <CopyCell text={`${wt.key_guess} · ${wt.repo} · ${wt.path}${wt.mtime ? ` · ${relativeDate(wt.mtime)}` : ""}`} title={`${wt.key_guess} · ${wt.repo} · ${wt.path}${exactDateTime(wt.mtime) ? ` · modified ${exactDateTime(wt.mtime)}` : ""}`} className="font-mono text-xs text-muted-foreground" />
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void handleAction({
+                        command: "register", args: [wt.path],
+                        label: `Register ${wt.branch}`,
+                        confirmText: `Register worktree ${wt.path} (key ${wt.key_guess}).`,
+                      })}
+                      title={`Register ${wt.path}`}
+                    >
+                      <UserPlus aria-hidden /> Register
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void handleCopyRef(wt.path)}
+                      title={`Copy path ${wt.path}`}
+                    >
+                      <Copy aria-hidden /> {copied ? "Copied" : "Copy path"}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
       </CardContent>
       {startKey !== null ? (
         <StartDialog issueKey={startKey} onClose={() => setStartKey(null)} />
       ) : null}
     </Card>
+  )
+}
+function IssuesTab({
+  query,
+  issues,
+  onStart,
+  onCopyRef,
+  copied,
+}: {
+  query: UseQueryResult<{ issues: IssueRow[]; warnings: string[] }, unknown>
+  issues: IssueRow[]
+  onStart: (issue: IssueRow) => void
+  onCopyRef: (key: string) => void
+  copied: boolean
+}) {
+  const f = useIssuesFilter(issues)
+  if (query.isPending && !query.data) {
+    return <TableSkeleton rows={3} />
+  }
+  if (query.isError && !query.data) {
+    return <ErrorState error={query.error} onRetry={() => void query.refetch()} />
+  }
+  return (
+    <>
+      {query.isFetching && !query.isPending ? <RefreshIndicator /> : null}
+      {query.isError ? (
+        <p role="alert" className="mb-3 text-sm text-destructive">
+          {errorText(query.error)}{" "}
+          <button type="button" onClick={() => void query.refetch()} className="underline underline-offset-2">
+            Retry
+          </button>
+        </p>
+      ) : null}
+      <IssuesFilterForm
+        scope={f.scope}
+        setScope={f.setScope}
+        after={f.after}
+        setAfter={f.setAfter}
+        query={f.query}
+        setQuery={f.setQuery}
+        status={f.status}
+        setStatus={f.setStatus}
+        total={issues.length}
+        shown={f.filtered.length}
+      />
+      {issues.length === 0 ? (
+        <EmptyState
+          icon={<Ticket className="size-10" aria-hidden />}
+          title="No recent issues"
+          description="No issues created in the last 30 days."
+        />
+      ) : f.filtered.length === 0 ? (
+        <NoFilteredIssues
+          onClear={() => {
+            f.setScope({ mine: false, all: false, createdByMe: true })
+            f.setAfter("")
+            f.setQuery("")
+            f.setStatus("")
+          }}
+        />
+      ) : (
+        <ul className="divide-y rounded-md border">
+          {f.filtered.map((issue) => (
+            <li key={issue.key} className="flex items-center gap-2 px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium" title={issue.title}>
+                  <a href={issue.url} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
+                    {issue.title || issue.key}
+                  </a>
+                </p>
+                <p className="truncate font-mono text-xs text-muted-foreground" title={`${issue.key} · ${issue.status}${issue.repo_hint ? ` · ${issue.repo_hint}` : ""}${exactDateTime(issue.created) ? ` · created ${exactDateTime(issue.created)}` : ""}`}>
+                  {issue.key} · {issue.status}{issue.repo_hint ? ` · ${issue.repo_hint}` : ""} · {relativeDate(issue.created)}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onStart(issue)}
+                title={`Start ${issue.key}`}
+              >
+                <Play aria-hidden /> Start
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onCopyRef(issue.key)}
+                title={`Copy ref ${issue.key}`}
+              >
+                <Copy aria-hidden /> {copied ? "Copied" : "Copy ref"}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   )
 }
 

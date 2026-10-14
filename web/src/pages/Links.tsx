@@ -9,6 +9,7 @@ import { useRepoTabs } from "@/lib/useRepoTabs"
 import {
   EmptyState,
   ErrorState,
+  RefreshIndicator,
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
@@ -35,7 +36,7 @@ import {
 export function Links() {
   const navigate = useNavigate()
   const runConfirmed = useConfirmedRun()
-  const { data: worktrees, isPending, isError, error, refetch } = useStatusAll()
+  const { data: worktrees, isPending, isFetching, isError, error, refetch } = useStatusAll()
   const { data: info } = useInfo()
   const { data: repos } = useRepos()
   const repoTabs = useRepoTabs(
@@ -204,9 +205,9 @@ export function Links() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {isPending ? (
+          {(isPending && !worktrees) ? (
             <TableSkeleton rows={4} />
-          ) : isError ? (
+          ) : (isError && !worktrees) ? (
             <ErrorState error={error} onRetry={() => void refetch()} />
           ) : !worktrees || Object.keys(worktrees).length === 0 ? (
             <EmptyState
@@ -215,13 +216,24 @@ export function Links() {
               description="Worktrees appear once linked to a tracker."
             />
           ) : (
-            <StatusTable
-              worktrees={worktrees}
-              actions={tableActions}
-              showWorktree={showWorktree}
-              networkExposed={info?.network_exposed ?? false}
-              repoTabs={repos ? { ...repoTabs, repos } : undefined}
-            />
+            <>
+              {isFetching && !isPending ? <RefreshIndicator /> : null}
+              {isError ? (
+                <p role="alert" className="mb-3 text-sm text-destructive">
+                  {errorText(error)}{" "}
+                  <button type="button" onClick={() => void refetch()} className="underline underline-offset-2">
+                    Retry
+                  </button>
+                </p>
+              ) : null}
+              <StatusTable
+                worktrees={worktrees}
+                actions={tableActions}
+                showWorktree={showWorktree}
+                networkExposed={info?.network_exposed ?? false}
+                repoTabs={repos ? { ...repoTabs, repos } : undefined}
+              />
+            </>
           )}
         </CardContent>
       </Card>

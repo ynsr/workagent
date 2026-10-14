@@ -19,6 +19,7 @@ import { StatusTable } from "@/components/StatusTable"
 import {
   EmptyState,
   ErrorState,
+  RefreshIndicator,
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
@@ -71,7 +72,7 @@ export function Dashboard() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const createRun = useCreateRun()
-  const { data: worktrees, isPending, isError, error, refetch } = useStatusAll()
+  const { data: worktrees, isPending, isFetching, isError, error, refetch } = useStatusAll()
   const { data: inactiveAll } = useStatusInactive()
   const { data: info } = useInfo()
   const { data: repos } = useRepos()
@@ -467,9 +468,9 @@ export function Dashboard() {
         }
       />
 
-      {isPending ? (
+      {(isPending && !worktrees) ? (
         <TableSkeleton rows={6} />
-      ) : isError ? (
+      ) : (isError && !worktrees) ? (
         <ErrorState error={error} onRetry={() => void refetch()} />
       ) : !worktrees || Object.keys(worktrees).length === 0 ? (
         <EmptyState
@@ -490,6 +491,15 @@ export function Dashboard() {
         </EmptyState>
       ) : (
         <>
+          {isFetching && !isPending ? <RefreshIndicator /> : null}
+          {isError ? (
+            <p role="alert" className="mb-3 text-sm text-destructive">
+              {errorText(error)}{" "}
+              <button type="button" onClick={() => void refetch()} className="underline underline-offset-2">
+                Retry
+              </button>
+            </p>
+          ) : null}
           {invalidCount > 0 ? (
             <p
               role="alert"

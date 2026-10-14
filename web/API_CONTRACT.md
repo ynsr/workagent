@@ -139,19 +139,23 @@ live instead of the 1h issue cache (slow). Read-only:
           "updated": "2026-09-20T10:00:00Z", "state": "OPEN",
           "repo": "o/r"}],
  "issues": [{"key": "jira:IPG-981", "title": "…", "url": "…",
-             "status": "To Do", "created": "2026-09-20T10:00:00.000+0000"}],
+             "status": "To Do", "created": "2026-09-20T10:00:00.000+0000",
+             "reporter": "Younes Rahimi", "description": "…"}],
  "worktrees": [{"path": "/home/x/dev/worktrees/proj/feat/x",
                "repo": "proj", "branch": "feat/x",
                "key_guess": "branch:feat/x", "mtime": "2026-09-20T10:00:00+00:00"}],
  "warnings": ["proj: gh pr list failed: …"]}
-```
+ ```
 
-Per-tab slices (each loads independently so the slow live-PR fetch never
+Issue rows also carry `reporter` (jira) / `author` (github login) plus
+`description` for the Recent-issues client-side filter (scope toggles,
+created-after date, title/description search, status dropdown — all
+client-side over the loaded rows).
+ 
+ Per-tab slices (each loads independently so the slow live-PR fetch never
 blocks the others; the Dashboard Candidates card queries all three in
-parallel with per-tab skeletons):
-- `GET /api/candidates/prs` → `{prs, warnings}`
-- `GET /api/candidates/issues[?force=true]` → `{issues, warnings}` (same 1h cache/force semantics)
-- `GET /api/candidates/worktrees` → `{worktrees, warnings: []}`
+parallel, never blocking on refetch — stale rows stay visible with an
+inline Updating indicator; skeletons render only on first load):
 
 ### `GET /api/sessions` → list (newest first, no prompts)
 ```json

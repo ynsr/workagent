@@ -10,7 +10,9 @@ import { RepoTabsRow } from "@/components/RepoTabs"
 import {
   EmptyState,
   ErrorState,
+  RefreshIndicator,
   TableSkeleton,
+  errorText,
 } from "@/components/StatusFeedback"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -70,7 +72,7 @@ function StateBadge({ state }: { state: string }) {
 
 export function Sessions() {
   const {
-    data, isPending, isError, error, refetch,
+    data, isPending, isFetching, isError, error, refetch,
   } = useSessions()
   const [params, setParams] = useSearchParams()
   const worktreeFilter = (params.get("worktree") ?? "").trim()
@@ -141,32 +143,43 @@ export function Sessions() {
           </Button>
         ) : null}
       </div>
-      {isPending ? (
+      {(isPending && !data) ? (
         <TableSkeleton rows={5} />
-      ) : isError ? (
+      ) : (isError && !data) ? (
         <ErrorState error={error} onRetry={() => void refetch()} />
-      ) : rows.length === 0 ? (
-        <EmptyState
-          title="No sessions yet"
-          description="Run workagent start, review, or sync to record a session."
-        />
       ) : (
-        <Card>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Title</TableHead>
-                  <TableHead>ID</TableHead>
-                  <TableHead>Worktree</TableHead>
-                  <TableHead>Harness</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>State</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="w-20" aria-label="Session actions" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+        <>
+          {isFetching && !isPending ? <RefreshIndicator /> : null}
+          {isError ? (
+            <p role="alert" className="mb-3 text-sm text-destructive">
+              {errorText(error)}{" "}
+              <button type="button" onClick={() => void refetch()} className="underline underline-offset-2">
+                Retry
+              </button>
+            </p>
+          ) : null}
+          {rows.length === 0 ? (
+            <EmptyState
+              title="No sessions yet"
+              description="Run workagent start, review, or sync to record a session."
+            />
+          ) : (
+            <Card>
+              <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Title</TableHead>
+                    <TableHead>ID</TableHead>
+                    <TableHead>Worktree</TableHead>
+                    <TableHead>Harness</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>State</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead className="w-20" aria-label="Session actions" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                 {rows.map((s) => (
                   <TableRow key={s.id}>
                     <TableCell className="max-w-64 text-sm text-muted-foreground">
@@ -203,10 +216,12 @@ export function Sessions() {
                     </TableCell>
                   </TableRow>
                 ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+          )}
+        </>
       )}
     </div>
   )
@@ -217,8 +232,8 @@ export function SessionDetailPage() {
   const sessionQ = useSession(sessionId)
   const { data: links } = useLinks()
 
-  if (sessionQ.isPending) return <TableSkeleton rows={5} />
-  if (sessionQ.isError || !sessionQ.data) {
+  if (sessionQ.isPending && !sessionQ.data) return <TableSkeleton rows={5} />
+  if ((sessionQ.isError && !sessionQ.data) || !sessionQ.data) {
     return (
       <ErrorState error={sessionQ.error} onRetry={() => void sessionQ.refetch()} />
     )

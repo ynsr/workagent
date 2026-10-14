@@ -106,6 +106,11 @@ export interface IssueRow {
   created: string
   /** Launch default repo for this ref (candidates endpoint only). */
   repo_hint?: string
+  /** Reporter login (jira) / author login (github); absent on old caches. */
+  reporter?: string
+  author?: string
+  /** Issue body/description for client-side search; absent on old caches. */
+  description?: string
 }
 
 export interface IssuesResponse {

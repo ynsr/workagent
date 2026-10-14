@@ -9,6 +9,7 @@ import { RepoTabsRow } from "@/components/RepoTabs"
 import {
   EmptyState,
   ErrorState,
+  RefreshIndicator,
   TableSkeleton,
   errorText,
 } from "@/components/StatusFeedback"
@@ -70,7 +71,7 @@ function CancelButton({ run }: { run: Run }) {
 
 export function Runs() {
   const [params, setParams] = useSearchParams()
-  const { data: runs, isPending, isError, error, refetch } = useRuns()
+  const { data: runs, isPending, isFetching, isError, error, refetch } = useRuns()
   const { data: repos } = useRepos()
 
   const target = params.get("target") ?? ""
@@ -146,46 +147,59 @@ export function Runs() {
         <RepoTabsRow repoTabs={repoTabs} />
       ) : null}
 
-      {isPending ? (
+      {(isPending && !runs) ? (
         <TableSkeleton rows={5} />
-      ) : isError ? (
+      ) : (isError && !runs) ? (
         <ErrorState error={error} onRetry={() => void refetch()} />
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={<SquareTerminal className="size-10" aria-hidden />}
-          title={runs && runs.length > 0 ? "No runs match this filter" : "No runs yet"}
-          description={
-            runs && runs.length > 0
-              ? "Try another state filter or clear the target filter."
-              : "Launch a command from the Dashboard or Launch page — every run appears here with its live log."
-          }
-        >
-          <Button asChild size="sm">
-            <Link to="/launch">Launch</Link>
-          </Button>
-        </EmptyState>
       ) : (
-        <RunsTable
-          rows={filtered.map(
-            (run): RunsTableRow => ({
-              key: run.id,
-              href: `/runs/${run.id}`,
-              label: shortId(run.id),
-              command: run.command,
-              args: run.args,
-              target: run.target,
-              state: run.state,
-              exitCode: run.exit_code,
-              started: run.created,
-              actions: (
-                <>
-                  <SessionResumeActions runId={run.id} worktree={run.worktree} sessionFile={run.session_file} variant="icon" />
-                  {run.state === "running" ? <CancelButton run={run} /> : null}
-                </>
-              ),
-            }),
+        <>
+          {isFetching && !isPending ? <RefreshIndicator /> : null}
+          {isError ? (
+            <p role="alert" className="mb-3 text-sm text-destructive">
+              {errorText(error)}{" "}
+              <button type="button" onClick={() => void refetch()} className="underline underline-offset-2">
+                Retry
+              </button>
+            </p>
+          ) : null}
+          {filtered.length === 0 ? (
+            <EmptyState
+              icon={<SquareTerminal className="size-10" aria-hidden />}
+              title={runs && runs.length > 0 ? "No runs match this filter" : "No runs yet"}
+              description={
+                runs && runs.length > 0
+                  ? "Try another state filter or clear the target filter."
+                  : "Launch a command from the Dashboard or Launch page — every run appears here with its live log."
+              }
+            >
+              <Button asChild size="sm">
+                <Link to="/launch">Launch</Link>
+              </Button>
+            </EmptyState>
+          ) : (
+            <RunsTable
+              rows={filtered.map(
+                (run): RunsTableRow => ({
+                  key: run.id,
+                  href: `/runs/${run.id}`,
+                  label: shortId(run.id),
+                  command: run.command,
+                  args: run.args,
+                  target: run.target,
+                  state: run.state,
+                  exitCode: run.exit_code,
+                  started: run.created,
+                  actions: (
+                    <>
+                      <SessionResumeActions runId={run.id} worktree={run.worktree} sessionFile={run.session_file} variant="icon" />
+                      {run.state === "running" ? <CancelButton run={run} /> : null}
+                    </>
+                  ),
+                }),
+              )}
+            />
           )}
-        />
+        </>
       )}
     </div>
   )
