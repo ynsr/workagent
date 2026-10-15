@@ -21,6 +21,8 @@ SPECS: dict[str, dict[str, Any]] = {
     "cleanup": {"confirm": True, "force": True,
                 "key": lambda args: "cleanup:all" if "--merged" in args
                 else f"cleanup:{_first_positional(args)}"},
+    "release": {"confirm": True, "force": True,
+                "key": lambda args: f"release:{_first_positional(args, VAL_FLAGS['release'])}"},
     "sync": {"confirm": True, "force": False,
              "key": lambda args: "sync:all" if "--all" in args
              else f"sync:{_first_positional(args, VAL_FLAGS['sync'])}"},
@@ -39,6 +41,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "review": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
                "--yes", "--json", "--all", "--sequential", "--fix", "--fix-comments", "--then-fix-comments", "--new-fix-session", "--force-all", "--post-comments"),
     "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--no-squash"),
+    "release": ("--yes", "--dry-run", "--json"),
     "open": (),
     "sync": ("-m", "--merge", "--harness", "--all", "--yes", "--force",
              "-y", "--dry-run", "--json"),
@@ -46,6 +49,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "repo add": ("--json", "--fetch", "--no-fetch"),
     "repo list": ("--json", "--csv"),
     "repo remove": ("--json", "--force"),
+    "repo update": ("--json",),
     "link set": ("--json",),
     "link remove": ("--json",),
     "link deactivate": ("--json",),
@@ -61,12 +65,14 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "review": ("--repo", "--depth", "--harness", "--session-file", "--env-file", "--extra-prompt"),
     "sync": ("--session-file", "--env-file", "--extra-prompt"),
     "register": ("--key", "--issue", "--repo"),
-    "repo add": ("--name", "--path", "--tracker"),
+    "release": (),
+    "repo add": ("--name", "--path", "--tracker", "--release-branch"),
+    "repo update": ("--default-branch", "--release-branch"),
     "link remove": ("--repo",),
     "tracker add": ("--vendor", "--remote-url"),
     "tracker update": ("--vendor", "--remote-url"),
 }
-SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove"},
+SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "link": {"list", "set", "remove", "deactivate", "reactivate"},
                                     "tracker": {"add", "list", "remove", "update"}}
 

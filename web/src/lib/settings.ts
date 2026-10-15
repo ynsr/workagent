@@ -10,15 +10,16 @@ export const ISSUES_FILTER_KEY = "workagent.issuesFilter"
 
 export type OptOutAction =
   | "cleanup"
+  | "release"
   | "sync"
   | "start"
   | "review"
   | "repo remove"
   | "link remove"
   | "tracker remove"
-
 export const OPTOUT_ACTIONS: OptOutAction[] = [
   "cleanup",
+  "release",
   "sync",
   "start",
   "review",
@@ -29,6 +30,7 @@ export const OPTOUT_ACTIONS: OptOutAction[] = [
 
 export const OPTOUT_LABELS: Record<OptOutAction, string> = {
   cleanup: "Worktree cleanup",
+  release: "Release",
   sync: "Sync",
   start: "Start",
   review: "Review",

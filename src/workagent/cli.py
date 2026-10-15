@@ -140,6 +140,8 @@ from .cli_manage import (  # noqa: F401
     tracker_remove,
 )
 
+from . import cli_release  # noqa: F401  (registers `release`)
+from .cli_release import release  # noqa: F401  (test compatibility)
 from . import cli_status  # noqa: F401  (registers `status`)
 from .cli_status import (  # noqa: F401  (test/webapp compatibility)
     _fmt_pr,

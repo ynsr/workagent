@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS repos (
   key_ref TEXT PRIMARY KEY NOT NULL, path TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL,
   remote TEXT NOT NULL DEFAULT '', tool TEXT NOT NULL DEFAULT '',
-  fetch_enabled INTEGER NOT NULL DEFAULT 1);
+  fetch_enabled INTEGER NOT NULL DEFAULT 1,
+  default_branch TEXT NOT NULL DEFAULT '', release_branch TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS tracker_repos (
   tracker_key TEXT NOT NULL REFERENCES trackers(key_ref) ON DELETE CASCADE,
   repo_key TEXT NOT NULL REFERENCES repos(key_ref) ON DELETE CASCADE,
@@ -49,6 +50,9 @@ CREATE TABLE IF NOT EXISTS issue_cache (
   fetched_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS pr_candidates_cache (
   source TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL,
+  fetched_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS release_diff_cache (
+  repo_key TEXT PRIMARY KEY NOT NULL, count INTEGER NOT NULL,
   fetched_at TEXT NOT NULL);
 """
 
@@ -246,6 +250,20 @@ def _migrate_tracker_enabled(conn) -> None:
         return
     conn.execute("ALTER TABLE trackers ADD COLUMN is_enabled INTEGER NOT NULL DEFAULT 1")
 
+def _migrate_repos_release(conn) -> None:
+    """Schema v10: repos gain default_branch/release_branch ('' = unset).
+
+    ALTER TABLE backfills DEFAULT '' — existing rows get empty branches
+    until `backfill_release_branches` seeds them. Idempotent: skipped
+    when present.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
+    if not cols:
+        return
+    if "default_branch" not in cols:
+        conn.execute("ALTER TABLE repos ADD COLUMN default_branch TEXT NOT NULL DEFAULT ''")
+    if "release_branch" not in cols:
+        conn.execute("ALTER TABLE repos ADD COLUMN release_branch TEXT NOT NULL DEFAULT ''")
 def _migrate_sessions_type(conn) -> None:
     """Schema v6: sessions gains session_type + metadata (session-type spec).
     Backfill reads the fix-comments prompt header (the only surviving
@@ -335,6 +353,7 @@ _REQUIRED_COLS = {
     "runs": ("session_id", "command", "args", "created_at"),
     "issue_cache": ("source", "payload", "fetched_at"),
     "pr_candidates_cache": ("source", "payload", "fetched_at"),
+    "release_diff_cache": ("repo_key", "count", "fetched_at"),
 }
 
 
@@ -445,6 +464,11 @@ def _schema_current(path: Path) -> bool:
         tcols = {r[1] for r in conn.execute("PRAGMA table_info(trackers)")}
         if "is_enabled" not in tcols:
             return False
+        rcols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
+        if not {"default_branch", "release_branch"} <= rcols:
+            return False
+        if "release_diff_cache" not in tables:
+            return False
         return True
     except Exception:
         return False
@@ -474,7 +498,7 @@ def init_db(path: Path) -> Path:
                 _migrate_sessions_type(conn)
                 _migrate_fetch_enabled(conn)
                 _migrate_tracker_enabled(conn)
-            break
+                _migrate_repos_release(conn)
         except sqlite3.OperationalError as e:
             last = e
             if "locked" not in str(e).lower():
@@ -485,7 +509,14 @@ def init_db(path: Path) -> Path:
     else:
         raise last  # type: ignore[misc]
     _INIT_CACHE[str(path)] = True
+    try:
+        from . import repos_release as _rel
+        _rel.backfill_release_branches()
+    except Exception:
+        pass
     return path
+
+
 def _norm(p: str) -> str:
     from pathlib import Path as _P
     return str(_P(p).expanduser().resolve()) if p else ""
@@ -760,3 +791,29 @@ def set_pr_candidates_cache(path: Path, rows: list[dict], source: str = "prs") -
             " fetched_at=excluded.fetched_at",
             (source, json.dumps(rows),
              datetime.now(timezone.utc).isoformat()))
+def get_release_diff_cache(path: Path, repo_key: str) -> tuple[int | None, str]:
+    """Cached release diff (count, fetched_at ISO); (None, '') on miss."""
+    init_db(path)
+    try:
+        with connect(path) as conn:
+            row = conn.execute(
+                "SELECT count, fetched_at FROM release_diff_cache WHERE repo_key = ?",
+                (repo_key,)).fetchone()
+    except Exception:
+        return None, ""
+    if row is None:
+        return None, ""
+    return int(row[0]), str(row[1] or "")
+
+
+def set_release_diff_cache(path: Path, repo_key: str, count: int) -> None:
+    """Upsert cached release diff count with a fresh fetched_at."""
+    from datetime import datetime, timezone
+    init_db(path)
+    with connect(path) as conn:
+        conn.execute(
+            "INSERT INTO release_diff_cache (repo_key, count, fetched_at)"
+            " VALUES (?, ?, ?)"
+            " ON CONFLICT(repo_key) DO UPDATE SET count=excluded.count,"
+            " fetched_at=excluded.fetched_at",
+            (repo_key, int(count), datetime.now(timezone.utc).isoformat()))

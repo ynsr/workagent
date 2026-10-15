@@ -29,8 +29,8 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
 | `cleanup --force` | Cleanup dialog option; when set, POST sends `force:true` and the dialog's "don't ask again" checkbox is hidden (force always confirms) |
 | `repo list` | Repos page table/cards (GET /api/repos) |
 | `repo add --name --path [--tracker]` | Repos page "Add a repo" form (runs as a child process; log visible under Runs) |
-| `repo remove` | Repos page per-row trash action → confirm dialog (action type "repo remove") |
-| `link list` | Links page "Tracker mappings" card + "Linked worktrees" table (GET /api/links) |
+| `repo update NAME [--default-branch X] [--release-branch Y]` | Repos page per-row branch edit ('' clears release support) |
+| `release REPO [--yes] [--dry-run]` | Repos page per-row Release button + Dashboard "Ready to release" card (GET /api/release/status) |
 | `link set TRACKER REPO` | Links page "Link a tracker to a repo" form (runs as a child process) |
 | `link remove REF [--repo]` | Links page "Remove a link" form → confirm dialog (action type "link remove") |
 | `register PATH [--key --issue --repo --force]` | Links page "Register an existing worktree" form; force runs always confirm |
@@ -98,3 +98,4 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
     blanks Recent issues while a sibling (`jira:IPG`) stays on. A vendor
     with trackers but none usable is skipped with a `skipped disabled
     issue source(s): <vendor>` warning surfaced above the table.
+13. **Release action:** `workagent release REPO` opens a default→release MR with FF-only auto-merge (one host-side rebase retry; fail-back leaves the MR open and touches neither branch — never squash/merge-commit/force-push/direct-push). Repos carry `default_branch` (mandatory) + `release_branch` ('' = no release support; Jibit repos auto-detect `master`-preferred); releasability = both set + diff > 0 via `git fetch` + `rev-list` over a 1h-fresh/1d-SWR `release_diff_cache`. Web: `GET /api/release/status?name=`, `POST /api/runs` release target, Repos row overlay button + Dashboard Ready-to-release card.

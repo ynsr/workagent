@@ -64,7 +64,14 @@ def default_branch(path: Path) -> str:
             except HarnessError:
                 continue
     raise HarnessError(f"cannot determine default branch for {path}", exit_code=2)
-
+from .repos_release import (  # noqa: F401,E402 — public re-exports
+    _RELEASE_DIFF_SWR_SECONDS,
+    _RELEASE_DIFF_TTL_SECONDS,
+    backfill_release_branches,
+    detect_release_branch,
+    release_diff_count,
+    release_status,
+)
 
 def current_branch(path: Path) -> str | None:
     try:
@@ -211,13 +218,17 @@ def clone_url(url: str, depth: int = 7) -> Path:
     return dest
 
 def register_repo(name: str, path: Path, tracker_key: str = "",
-                  fetch_enabled: bool | None = None) -> None:
+                  fetch_enabled: bool | None = None,
+                  default_branch_name: str | None = None,
+                  release_branch: str | None = None) -> None:
     """Register *name* → *path* (+ mandatory tracker derivation).
 
     Post-migration the SQLite repos row is the registry (``tracker_key``
     NOT NULL): an explicit key wins, else the origin remote is derived
     via ``trackers.default_tracker_for_repo``. fetch_enabled None keeps
     the stored/vendor-aware default; explicit bool sets it.
+    Branch args None auto-detect (default via ``default_branch(path)``,
+    release via ``detect_release_branch(path)``); explicit '' clears.
     Pre-migration both the config.json registry and the tracker mapping
     are updated (dual-write).
     """
@@ -226,16 +237,30 @@ def register_repo(name: str, path: Path, tracker_key: str = "",
     if not tid:
         raise HarnessError(
             "cannot derive tracker from origin remote: pass tracker_key (repo add --tracker)", exit_code=2)
+    if default_branch_name is None:
+        try:
+            default_branch_name = default_branch(path)
+        except Exception:
+            default_branch_name = ""
+    if release_branch is None:
+        try:
+            release_branch = detect_release_branch(path)
+        except Exception:
+            release_branch = ""
     if store._sqlite_path() is not None:
         from . import store_sqlite as sq
         sq.register_repo_row(sq.db_path(), name, str(path), tid,
                              remote=remote_url(path), tool=_detect_host_cli(path),
-                             fetch_enabled=fetch_enabled)
+                             fetch_enabled=fetch_enabled,
+                             default_branch=default_branch_name or "",
+                             release_branch=release_branch or "")
         return
     cfg = store.load_config()
     repos = cfg.setdefault("repos", {})
     repos[name] = {"path": str(path), "remote": remote_url(path),
-                   "tool": _detect_host_cli(path)}
+                   "tool": _detect_host_cli(path),
+                   "default_branch": default_branch_name or "",
+                   "release_branch": release_branch or ""}
     store.save_config(cfg)
     store.add_tracker_repo(tid, str(path))
 

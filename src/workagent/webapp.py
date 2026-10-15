@@ -311,6 +311,11 @@ def create_app(static_dir: Path, host: str, port: int,
         from . import cli_candidates as _cand
         return {"worktrees": _cand._scan_worktrees(), "warnings": []}
 
+    @app.get("/api/release/status")
+    def release_status(name: str = "") -> dict:
+        """Releasability for one repo (SWR diff cache); read-only."""
+        from . import repos as _repos
+        return _repos.release_status(name)
     @app.get("/api/sessions")
     def sessions_list() -> dict:
         """Persisted harness sessions (newest first); [] pre-migration."""

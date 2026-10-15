@@ -1,9 +1,10 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { Copy, Download, FolderGit2, Plus, Trash2 } from "lucide-react"
 import { CopyCell } from "@/components/CopyCell"
 import { PageHeader } from "@/components/PageHeader"
+import { ReleaseButton } from "@/components/ReleaseButton"
 import {
   EmptyState,
   ErrorState,
@@ -46,10 +47,13 @@ export function Repos() {
   const [path, setPath] = useState("")
   const [tracker, setTracker] = useState("")
   const [fetchEnabled, setFetchEnabled] = useState(true)
+  const [releaseBranch, setReleaseBranch] = useState("")
   const [removeForce, setRemoveForce] = useState(false)
   const [adding, setAdding] = useState(false)
-
   const [trackerError, setTrackerError] = useState("")
+  const editDefaultRef = useRef("")
+  const editReleaseRef = useRef("")
+
   async function handleAdd() {
     if (!name.trim() || !path.trim()) return
     if (!tracker.trim()) {
@@ -62,7 +66,8 @@ export function Repos() {
       const { run_id } = await createRun.mutateAsync({
         command: "repo",
         args: ["add", "--name", name.trim(), "--path", path.trim(), "--tracker", tracker.trim(),
-          ...(fetchEnabled ? [] : ["--no-fetch"])],
+          ...(fetchEnabled ? [] : ["--no-fetch"]),
+          ...(releaseBranch.trim() ? ["--release-branch", releaseBranch.trim()] : [])],
       })
       toast.success("Repo add started", {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
@@ -71,10 +76,48 @@ export function Repos() {
       setPath("")
       setTracker("")
       setFetchEnabled(true)
+      setReleaseBranch("")
     } catch (err) {
       toast.error(errorText(err))
     } finally {
       setAdding(false)
+    }
+  }
+
+  async function handleEditBranches(repo: Repo) {
+    const ok = await confirm({
+      title: `Edit branches for ${repo.name}`,
+      description: "Updates the repo's default/release branches (empty release = no release support).",
+      confirmLabel: "Update branches",
+      details: [
+        { label: "Default", value: repo.default_branch || "—", mono: true },
+        { label: "Release", value: repo.release_branch || "—", mono: true },
+      ],
+      extras: (
+        <BranchEditFields
+          initialDefault={repo.default_branch || ""}
+          initialRelease={repo.release_branch || ""}
+          onChange={(d, r) => {
+            editDefaultRef.current = d
+            editReleaseRef.current = r
+          }}
+        />
+      ),
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "repo",
+        args: ["update", repo.name,
+          "--default-branch", editDefaultRef.current,
+          "--release-branch", editReleaseRef.current],
+        confirm: true,
+      })
+      toast.success("Repo update started", {
+        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+    } catch (err) {
+      toast.error(errorText(err))
     }
   }
 
@@ -194,6 +237,8 @@ export function Repos() {
                         <TableHead>Name</TableHead>
                         <TableHead>Path</TableHead>
                         <TableHead>Tracker</TableHead>
+                        <TableHead>Branches</TableHead>
+                        <TableHead className="w-12" aria-label="Release" />
                         <TableHead className="w-12" aria-label="Remove" />
                       </TableRow>
                     </TableHeader>
@@ -214,6 +259,23 @@ export function Repos() {
                             ) : (
                               <span className="text-muted-foreground">—</span>
                             )}
+                          </TableCell>
+                          <TableCell className="font-mono text-[13px]">
+                            <button
+                              type="button"
+                              onClick={() => void handleEditBranches(r)}
+                              title={`Edit branches for ${r.name}`}
+                              className="rounded underline decoration-dotted underline-offset-4 hover:text-foreground"
+                            >
+                              {r.default_branch || r.release_branch ? (
+                                <span>{r.default_branch || "—"} → {r.release_branch || "—"}</span>
+                              ) : (
+                                <span className="text-muted-foreground">set branches</span>
+                              )}
+                            </button>
+                          </TableCell>
+                          <TableCell>
+                            <ReleaseButton repo={r.name} compact />
                           </TableCell>
                           <TableCell>
                             <Button
@@ -247,15 +309,23 @@ export function Repos() {
                       <p className="mt-1 break-all font-mono text-[13px] text-muted-foreground">
                         {r.path}
                       </p>
-                      <div className="mt-3 flex justify-end border-t pt-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => void handleRemove(r)}
-                          className="min-h-11 text-destructive hover:bg-destructive/10"
-                        >
-                          <Trash2 aria-hidden /> Remove
-                        </Button>
+                      <div className="mt-3 flex items-center justify-between gap-2 border-t pt-1">
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {r.default_branch || r.release_branch
+                            ? `${r.default_branch || "—"} → ${r.release_branch || "—"}`
+                            : "no release branch"}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <ReleaseButton repo={r.name} compact />
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void handleRemove(r)}
+                            className="min-h-11 text-destructive hover:bg-destructive/10"
+                          >
+                            <Trash2 aria-hidden /> Remove
+                          </Button>
+                        </span>
                       </div>
                     </div>
                   ))}
@@ -316,6 +386,17 @@ export function Repos() {
               flag="--no-fetch"
               description="Uncheck to skip this repo's live host-CLI scan (GitHub repos default off)"
             />
+            <div className="grid gap-2">
+              <Label htmlFor="repo-release">Release branch (optional)</Label>
+              <Input
+                id="repo-release"
+                value={releaseBranch}
+                onChange={(e) => setReleaseBranch(e.target.value)}
+                placeholder="master — empty = no release support"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
             <Button onClick={() => void handleAdd()} disabled={!name.trim() || !path.trim() || !tracker.trim() || adding}>
               <Plus aria-hidden />
               {adding ? "Adding…" : "Add repo"}
@@ -323,6 +404,40 @@ export function Repos() {
           </CardContent>
         </Card>
       </div>
+    </div>
+  )
+}
+function BranchEditFields({
+  initialDefault,
+  initialRelease,
+  onChange,
+}: {
+  initialDefault: string
+  initialRelease: string
+  onChange: (d: string, r: string) => void
+}) {
+  const [d, setD] = useState(initialDefault)
+  const [r, setR] = useState(initialRelease)
+  return (
+    <div className="grid gap-2">
+      <Label htmlFor="repo-edit-default">Default branch</Label>
+      <Input
+        id="repo-edit-default"
+        value={d}
+        onChange={(e) => { setD(e.target.value); onChange(e.target.value, r) }}
+        placeholder="develop"
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <Label htmlFor="repo-edit-release">Release branch (empty clears)</Label>
+      <Input
+        id="repo-edit-release"
+        value={r}
+        onChange={(e) => { setR(e.target.value); onChange(d, e.target.value) }}
+        placeholder="master — empty = no release support"
+        autoComplete="off"
+        spellCheck={false}
+      />
     </div>
   )
 }

@@ -12,6 +12,7 @@ import {
   SquareTerminal,
 } from "lucide-react"
 import { CandidatesCard } from "@/components/CandidatesCard"
+import { ReleaseCard } from "@/components/ReleaseCard"
 import { CleanupDialog } from "@/components/CleanupDialog"
 import { DeactivatedTable } from "@/components/DeactivatedTable"
 import { PageHeader } from "@/components/PageHeader"
@@ -534,6 +535,9 @@ export function Dashboard() {
           />
           <div className="mt-6">
             <CandidatesCard />
+          </div>
+          <div className="mt-6">
+            <ReleaseCard />
           </div>
           <details className="mt-3 rounded-md border px-3 py-2 text-xs text-muted-foreground">
             <summary className="cursor-pointer font-medium text-foreground">
