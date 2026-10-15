@@ -182,6 +182,17 @@ def create_app(static_dir: Path, host: str, port: int,
                  **{k: val for k, val in v.items() if k not in ("path", "tracker", "trackers")}}
                 for n, v in store.load_repos().items()]
 
+    @app.get("/api/repos/detect")
+    def repos_detect(path: str = "") -> dict:
+        """Auto-detect the pre-release gate for a local path (read-only)."""
+        from . import repos as _repos
+        try:
+            cmd = _repos.detect_prerelease_command(path)
+        except Exception:
+            cmd = None
+        return {"pre-release": cmd}
+
+
     @app.get("/api/trackers")
     def trackers_list() -> dict:
         """Issue trackers with linked-repo counts (CRUD page source)."""

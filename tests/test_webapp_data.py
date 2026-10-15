@@ -567,3 +567,16 @@ def test_persisted_run_serves_stored_log(client):
     r = client.get(f"/api/runs/db-{rid}/events")
     assert r.status_code == 200
     assert '"line one"' in r.text and '"succeeded"' in r.text
+
+
+def test_repos_detect_endpoint(client, tmp_path):
+    (tmp_path / "pom.xml").write_text("<project/>")
+    r = client.get("/api/repos/detect", params={"path": str(tmp_path)})
+    assert r.status_code == 200
+    assert r.json() == {"pre-release": "mvn clean; mvn verify"}
+
+
+def test_repos_detect_unknown_path_is_null(client):
+    r = client.get("/api/repos/detect", params={"path": "/nonexistent-xyz"})
+    assert r.status_code == 200
+    assert r.json() == {"pre-release": None}
