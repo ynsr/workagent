@@ -29,6 +29,53 @@ def remote_url(path: Path) -> str | None:
     except HarnessError:
         return None
 
+def detect_prerelease_command(path: str | Path) -> str | None:
+    """Auto-detect a pre-release gate command for *path*; None when unknown.
+
+    Pure function, never raises (unreadable path → None). Priority on
+    collision: Node > Maven > Gradle > Python.
+    """
+    import os as _os
+    try:
+        root = Path(str(path)).expanduser()
+        if not root.is_dir():
+            return None
+    except Exception:
+        return None
+    try:
+        pkg = root / "package.json"
+        if pkg.is_file():
+            try:
+                scripts = (json.loads(pkg.read_text()) or {}).get("scripts") or {}
+            except Exception:
+                scripts = {}
+            if scripts.get("test"):
+                return "npm test"
+            if scripts.get("build"):
+                return "npm run build"
+            return None
+        if (root / "pom.xml").is_file():
+            return "mvn clean; mvn verify"
+        if ((root / "build.gradle").is_file() or (root / "build.gradle.kts").is_file()
+                or (root / "settings.gradle").is_file() or (root / "settings.gradle.kts").is_file()
+                or (root / "gradlew").is_file()):
+            gw = root / "gradlew"
+            try:
+                if gw.is_file() and _os.access(gw, _os.X_OK):
+                    return "./gradlew clean test"
+            except Exception:
+                pass
+            return "gradle clean test"
+        if (root / "pyproject.toml").is_file():
+            if (root / "uv.lock").is_file():
+                return "uv sync; uv run pytest"
+            return "pip install -e .; python -m pytest"
+        if (root / "requirements.txt").is_file():
+            return "pip install -r requirements.txt; python -m pytest"
+    except Exception:
+        return None
+    return None
+
 
 def default_branch(path: Path) -> str:
     """Detect default branch: gh/glab → origin/HEAD → common names."""
@@ -220,7 +267,8 @@ def clone_url(url: str, depth: int = 7) -> Path:
 def register_repo(name: str, path: Path, tracker_key: str = "",
                   fetch_enabled: bool | None = None,
                   default_branch_name: str | None = None,
-                  release_branch: str | None = None) -> None:
+                  release_branch: str | None = None,
+                  pre_release: str | None = None) -> None:
     """Register *name* → *path* (+ mandatory tracker derivation).
 
     Post-migration the SQLite repos row is the registry (``tracker_key``
@@ -228,7 +276,8 @@ def register_repo(name: str, path: Path, tracker_key: str = "",
     via ``trackers.default_tracker_for_repo``. fetch_enabled None keeps
     the stored/vendor-aware default; explicit bool sets it.
     Branch args None auto-detect (default via ``default_branch(path)``,
-    release via ``detect_release_branch(path)``); explicit '' clears.
+    release via ``detect_release_branch(path)``, pre-release via
+    ``detect_prerelease_command(path)``); explicit '' clears.
     Pre-migration both the config.json registry and the tracker mapping
     are updated (dual-write).
     """
@@ -247,20 +296,28 @@ def register_repo(name: str, path: Path, tracker_key: str = "",
             release_branch = detect_release_branch(path)
         except Exception:
             release_branch = ""
+    if pre_release is None:
+        try:
+            pre_release = detect_prerelease_command(path)
+        except Exception:
+            pre_release = None
+    gate = {} if not pre_release else {"pre-release": pre_release}
     if store._sqlite_path() is not None:
         from . import store_sqlite as sq
         sq.register_repo_row(sq.db_path(), name, str(path), tid,
                              remote=remote_url(path), tool=_detect_host_cli(path),
                              fetch_enabled=fetch_enabled,
                              default_branch=default_branch_name or "",
-                             release_branch=release_branch or "")
+                             release_branch=release_branch or "",
+                             commands=gate)
         return
     cfg = store.load_config()
     repos = cfg.setdefault("repos", {})
     repos[name] = {"path": str(path), "remote": remote_url(path),
                    "tool": _detect_host_cli(path),
                    "default_branch": default_branch_name or "",
-                   "release_branch": release_branch or ""}
+                   "release_branch": release_branch or "",
+                   "commands": gate}
     store.save_config(cfg)
     store.add_tracker_repo(tid, str(path))
 

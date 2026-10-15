@@ -163,3 +163,38 @@ def test_load_repos_bad_json_is_no_gate(tmp_path, monkeypatch):
     with sq.connect(db) as conn:
         conn.execute("INSERT INTO repos (key_ref, path, name, commands) VALUES ('r', '/x', 'r', 'not-json{{{')")
     assert st.load_repos(db)["r"]["commands"] == {}
+
+
+import json as _json_mod
+import pytest as _pytest
+from workagent import repos as _repos
+
+_CASES = [
+    ("node-test", {"package.json": _json_mod.dumps({"scripts": {"test": "jest"}})}, "npm test"),
+    ("node-build", {"package.json": _json_mod.dumps({"scripts": {"build": "tsc"}})}, "npm run build"),
+    ("node-bare", {"package.json": _json_mod.dumps({"name": "x"})}, None),
+    ("maven", {"pom.xml": "<project/>"}, "mvn clean; mvn verify"),
+    ("gradle", {"build.gradle": ""}, "gradle clean test"),
+    ("gradle-wrapper", {"build.gradle": "", "gradlew": "#!/bin/sh"}, "./gradlew clean test"),
+    ("python-uv", {"pyproject.toml": "[project]", "uv.lock": ""}, "uv sync; uv run pytest"),
+    ("python-pep517", {"pyproject.toml": "[project]"}, "pip install -e .; python -m pytest"),
+    ("python-reqs", {"requirements.txt": "pytest"}, "pip install -r requirements.txt; python -m pytest"),
+    ("empty", {}, None),
+    ("collision", {"package.json": _json_mod.dumps({"scripts": {"test": "jest"}}), "pom.xml": "<project/>"}, "npm test"),
+]
+
+
+@_pytest.mark.parametrize("name,files,expected", _CASES)
+def test_detect_prerelease_matrix(tmp_path, name, files, expected):
+    d = tmp_path / name
+    d.mkdir()
+    for fname, content in files.items():
+        (d / fname).write_text(content)
+    if "gradlew" in files:
+        import os
+        os.chmod(d / "gradlew", 0o755)
+    assert _repos.detect_prerelease_command(d) == expected
+
+
+def test_detect_prerelease_unreadable_path():
+    assert _repos.detect_prerelease_command("/nonexistent-path-xyz") is None
