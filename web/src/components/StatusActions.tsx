@@ -1,12 +1,10 @@
 import type { ReactNode } from "react"
-import { ClipboardCopy, GitPullRequest, History, Play, RefreshCw, Rocket, Square, Trash2, Wrench } from "lucide-react"
-import { toast } from "sonner"
+import { GitPullRequest, History, Play, RefreshCw, Rocket, Square, Trash2, Wrench } from "lucide-react"
 import type { WorktreeMap } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { copyToClipboard, resumeCommand } from "@/lib/format"
-import { errorText } from "@/components/StatusFeedback"
 import { useSessions } from "@/lib/queries"
+import { SessionResumeActions } from "@/components/RunActions"
 import type { StatusTableActions } from "@/components/StatusTable"
 
 export function ActionIcon({
@@ -124,37 +122,40 @@ export function RowActions({
           <History aria-hidden />
         </ActionIcon>
       ) : null}
-      <ActionIcon
-        title={lastSession ? `Copy Resume Command: ${lastSession.cmd}` : `Copy Resume Command: no review or fix-comments session for ${worktreeKey} yet`}
-        disabled={!lastSession}
-        onClick={() => {
-          if (!lastSession) return
-          void copyToClipboard(lastSession.cmd)
-            .then(() => toast.success("Resume command copied to clipboard"))
-            .catch((err: unknown) => toast.error(errorText(err)))
-        }}
-      >
-        <ClipboardCopy aria-hidden />
-      </ActionIcon>
+      {lastSession && entry.worktree ? (
+        <SessionResumeActions
+          sessionId={lastSession.id}
+          worktree={entry.worktree}
+          sessionFile={lastSession.file_path}
+          variant="icon"
+        />
+      ) : (
+        <ActionIcon
+          title={`Resume session: no resumable session for ${worktreeKey} yet`}
+          disabled
+          onClick={() => undefined}
+        >
+          <History aria-hidden />
+        </ActionIcon>
+      )}
     </div>
   )
 }
 
-
-/** Latest non-running review/fix-comments session for a worktree key →
- * resume bash command (`/api/sessions` is newest-first, so the first match
- * wins). Null while loading or when no resumable session exists. */
-function useCopyResumeSession(worktreeKey: string, worktree?: string): { cmd: string } | null {
+/** Latest non-running session for a worktree key (any type — start, review,
+ * sync, fix_comments — matching the Sessions page; `/api/sessions` is
+ * newest-first, so the first match wins). Null while loading or when no
+ * resumable session exists. */
+function useCopyResumeSession(worktreeKey: string, worktree?: string): { id: string; file_path: string } | null {
   const { data } = useSessions()
   const sessions = data?.sessions
   if (!sessions || !worktree?.trim()) return null
   const match = sessions.find(
     (row) =>
       row.worktree_ref === worktreeKey &&
-      (row.session_type === "review" || row.session_type === "fix_comments") &&
       row.state !== "running" &&
       row.file_path?.trim(),
   )
   if (!match?.file_path) return null
-  return { cmd: resumeCommand(worktree, match.file_path) }
+  return { id: match.id, file_path: match.file_path }
 }
