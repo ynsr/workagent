@@ -84,6 +84,7 @@ export interface Repo {
   trackers?: string[]
   default_branch?: string
   release_branch?: string
+  commands?: { "pre-release"?: string | null }
   [key: string]: unknown
 }
 

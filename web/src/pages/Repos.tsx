@@ -48,11 +48,30 @@ export function Repos() {
   const [tracker, setTracker] = useState("")
   const [fetchEnabled, setFetchEnabled] = useState(true)
   const [releaseBranch, setReleaseBranch] = useState("")
+  const [preRelease, setPreRelease] = useState("")
+  const [preReleaseTouched, setPreReleaseTouched] = useState(false)
+  const [detecting, setDetecting] = useState(false)
   const [removeForce, setRemoveForce] = useState(false)
   const [adding, setAdding] = useState(false)
   const [trackerError, setTrackerError] = useState("")
   const editDefaultRef = useRef("")
   const editReleaseRef = useRef("")
+  const editPreReleaseRef = useRef("")
+
+  async function handlePathBlur() {
+    if (!path.trim() || preReleaseTouched || preRelease) return
+    setDetecting(true)
+    try {
+      const res = await fetch(`/api/repos/detect?path=${encodeURIComponent(path.trim())}`)
+      if (!res.ok) return
+      const data = (await res.json()) as { "pre-release"?: string | null }
+      if (data["pre-release"]) setPreRelease(data["pre-release"])
+    } catch {
+      /* detection is best-effort; the field stays user-editable */
+    } finally {
+      setDetecting(false)
+    }
+  }
 
   async function handleAdd() {
     if (!name.trim() || !path.trim()) return
@@ -67,7 +86,8 @@ export function Repos() {
         command: "repo",
         args: ["add", "--name", name.trim(), "--path", path.trim(), "--tracker", tracker.trim(),
           ...(fetchEnabled ? [] : ["--no-fetch"]),
-          ...(releaseBranch.trim() ? ["--release-branch", releaseBranch.trim()] : [])],
+          ...(releaseBranch.trim() ? ["--release-branch", releaseBranch.trim()] : []),
+          ...(preRelease.trim() ? ["--pre-release", preRelease.trim()] : [])],
       })
       toast.success("Repo add started", {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
@@ -77,6 +97,8 @@ export function Repos() {
       setTracker("")
       setFetchEnabled(true)
       setReleaseBranch("")
+      setPreRelease("")
+      setPreReleaseTouched(false)
     } catch (err) {
       toast.error(errorText(err))
     } finally {
@@ -111,6 +133,43 @@ export function Repos() {
         args: ["update", repo.name,
           "--default-branch", editDefaultRef.current,
           "--release-branch", editReleaseRef.current],
+        confirm: true,
+      })
+      toast.success("Repo update started", {
+        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+  async function handleEditPreRelease(repo: Repo) {
+    editPreReleaseRef.current = repo.commands?.["pre-release"] || ""
+    const ok = await confirm({
+      title: `Edit pre-release gate for ${repo.name}`,
+      description: "Runs before the release MR opens; a failing gate aborts the release (empty clears).",
+      confirmLabel: "Update gate",
+      details: [
+        { label: "Pre-release", value: repo.commands?.["pre-release"] || "—", mono: true },
+      ],
+      extras: (
+        <div className="grid gap-2">
+          <Label htmlFor="repo-edit-prerelease">Pre-release gate (empty clears)</Label>
+          <Input
+            id="repo-edit-prerelease"
+            defaultValue={repo.commands?.["pre-release"] || ""}
+            onChange={(e) => { editPreReleaseRef.current = e.target.value }}
+            placeholder="npm test — empty = no gate"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+      ),
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "repo",
+        args: ["update", repo.name, "--pre-release", editPreReleaseRef.current],
         confirm: true,
       })
       toast.success("Repo update started", {
@@ -238,6 +297,7 @@ export function Repos() {
                         <TableHead>Path</TableHead>
                         <TableHead>Tracker</TableHead>
                         <TableHead>Branches</TableHead>
+                        <TableHead>Pre-release</TableHead>
                         <TableHead className="w-12" aria-label="Release" />
                         <TableHead className="w-12" aria-label="Remove" />
                       </TableRow>
@@ -271,6 +331,20 @@ export function Repos() {
                                 <span>{r.default_branch || "—"} → {r.release_branch || "—"}</span>
                               ) : (
                                 <span className="text-muted-foreground">set branches</span>
+                              )}
+                            </button>
+                          </TableCell>
+                          <TableCell className="max-w-48 font-mono text-[13px]">
+                            <button
+                              type="button"
+                              onClick={() => void handleEditPreRelease(r)}
+                              title={`Edit pre-release gate for ${r.name}`}
+                              className="rounded underline decoration-dotted underline-offset-4 hover:text-foreground"
+                            >
+                              {r.commands?.["pre-release"] ? (
+                                <span>{r.commands["pre-release"]}</span>
+                              ) : (
+                                <span className="text-muted-foreground">set gate</span>
                               )}
                             </button>
                           </TableCell>
@@ -309,6 +383,13 @@ export function Repos() {
                       <p className="mt-1 break-all font-mono text-[13px] text-muted-foreground">
                         {r.path}
                       </p>
+                      <button
+                        type="button"
+                        onClick={() => void handleEditPreRelease(r)}
+                        className="mt-1 block max-w-full truncate text-left font-mono text-[13px] text-muted-foreground underline decoration-dotted underline-offset-4"
+                      >
+                        {r.commands?.["pre-release"] ? `gate: ${r.commands["pre-release"]}` : "set gate"}
+                      </button>
                       <div className="mt-3 flex items-center justify-between gap-2 border-t pt-1">
                         <span className="font-mono text-xs text-muted-foreground">
                           {r.default_branch || r.release_branch
@@ -360,6 +441,7 @@ export function Repos() {
                 id="repo-path"
                 value={path}
                 onChange={(e) => setPath(e.target.value)}
+                onBlur={() => void handlePathBlur()}
                 placeholder="/home/you/projects/projectx"
                 autoComplete="off"
                 spellCheck={false}
@@ -393,6 +475,17 @@ export function Repos() {
                 value={releaseBranch}
                 onChange={(e) => setReleaseBranch(e.target.value)}
                 placeholder="master — empty = no release support"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="repo-prerelease">Pre-release gate (optional)</Label>
+              <Input
+                id="repo-prerelease"
+                value={preRelease}
+                onChange={(e) => { setPreRelease(e.target.value); setPreReleaseTouched(true) }}
+                placeholder={detecting ? "detecting…" : "auto-detected on path blur — empty = no gate"}
                 autoComplete="off"
                 spellCheck={false}
               />

@@ -45,9 +45,10 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `sync --yes/--force/-y` | mutating | — | `sync:<ref>` | yes-ish | | runs omp headless on conflicts (`omp -p --auto-approve`) |
 | `sync --dry-run` | read-only-ish | — | `sync:<ref>` | no | | none |
 | `sync --json` | mutating | — | `sync:<ref>` | yes-ish | | |
-| `repo add --name --path [--tracker] [--fetch/--no-fetch] [--json]` | mutating | — | `repo:add` | no (config write) | path missing | none |
+| `repo add --name --path [--tracker] [--fetch/--no-fetch] [--release-branch] [--pre-release] [--json]` | mutating | — | `repo:add` | no (config write) | path missing | none |
 | `repo list [--json/--csv]` | read-only | `store.load_config()["repos"]` | — | no | | none |
 | `repo remove NAME [--json]` | mutating | — | `repo:remove` | yes-ish (registry write) | unknown repo (2) | none |
+| `repo update NAME [--default-branch] [--release-branch] [--pre-release] [--json]` | mutating | — | — | no (config write) | unknown repo (2) | none |
 | `link set TRACKER REPO [--json]` | mutating | — | `link:set` | no (config write) | resolve failure | none |
 | `link remove REF [--repo] [--json]` | mutating | — | `link:remove` | yes-ish (drops relation/link) | repo not linked (2) | none |
 | `link list [--worktree] [--refresh-pr] [--json/--csv]` | read-only | `store.load_config()["trackers"]` + `_enrich_entry` | — | no | | none |

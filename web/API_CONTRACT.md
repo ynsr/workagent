@@ -77,6 +77,20 @@ worktree), and `create_hint`
 from the tracker_repos join; any extra registry keys pass through.
 `fetch_enabled` (bool) gates the Candidates PR scan per repo — `repo add
 --fetch/--no-fetch`; GitHub (`gh`-tooled) repos default off.)
+`commands` (object, e.g. `{"pre-release": "npm test"}`) is the per-repo
+command map — currently only the `pre-release` gate, which runs in the
+repo path before the release MR opens (failing gate aborts; empty = no
+gate). `repo add`/`repo update` accept `--pre-release <cmd>`
+(auto-detected from the project type on add unless given; empty clears).
+
+### `GET /api/repos/detect?path=<localpath>`
+Read-only auto-detection of the pre-release gate for a local path
+(used as the add-form autofill; failures leave the field untouched):
+```json
+{"pre-release": "npm test"}
+```
+`{"pre-release": null}` when the path has no recognizable project type
+or is unreadable. Always 200.
 
 ### `GET /api/trackers`
 ```json
