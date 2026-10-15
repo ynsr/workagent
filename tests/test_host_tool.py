@@ -30,16 +30,20 @@ def _host_configs(tmp_path, monkeypatch, gh=("github.com",),
 
 
 def _no_probe(monkeypatch):
-    """Block gh/glab spawns; pass git through."""
+    """Block gh/glab spawning except the default-branch lookups
+    (`gh repo view` / `glab repo view`), which default_branch() wraps
+    in try/except and must be allowed to fail softly; pass git through."""
     real = repos.subprocess.run
+    _VIEW = {("gh", "repo", "view"), ("glab", "repo", "view")}
 
     def run(cmd, *a, **k):
+        if cmd and tuple(cmd[:3]) in _VIEW:
+            raise FileNotFoundError(cmd[0])
         if cmd and cmd[0] in ("gh", "glab"):
             pytest.fail(f"CLI spawned: {cmd[0]}")
         return real(cmd, *a, **k)
 
     monkeypatch.setattr(repos.subprocess, "run", run)
-
 
 @pytest.mark.parametrize(("url", "host"), [
     ("https://git.jibit.cloud/server/projectx.git", "git.jibit.cloud"),

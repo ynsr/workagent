@@ -430,7 +430,9 @@ def test_gh_query_unions_author_and_assignee(monkeypatch):
     rows = trackers._gh_my_issues([], days=365, mine=False)
     assert len(calls) == 1  # unqualified search
     assert all("--author" not in a and "--assignee" not in a for a in calls[0])
-    assert "created:>=2025-10-14" in calls[0]  # 365d back from today 2026-10-14
+    from datetime import datetime, timedelta, timezone
+    expected = (datetime.now(timezone.utc) - timedelta(days=365)).date().isoformat()
+    assert f"created:>={expected}" in calls[0]
 
 
 def test_my_issues_fetch_exception_never_raises(monkeypatch, tmp_path):
