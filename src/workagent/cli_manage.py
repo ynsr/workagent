@@ -109,6 +109,7 @@ def repo_list(
 @repo_app.command("update")
 @_catch_harness_errors
 def repo_update(
+    name: str = typer.Argument(..., autocompletion=_complete_repos, help="Registered repo name."),
     default_branch: Optional[str] = typer.Option(None, "--default-branch", help="Default branch (empty string clears)."),
     release_branch: Optional[str] = typer.Option(None, "--release-branch", help="Release branch (empty string clears release support)."),
     pre_release: Optional[str] = typer.Option(None, "--pre-release", help="Pre-release gate command (empty string clears)."),
