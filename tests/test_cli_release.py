@@ -113,3 +113,53 @@ def test_release_status_same_branch_guard(monkeypatch):
     st = _repos.release_status("rx")
     assert st["releasable"] is False
     assert "same" in st["reason"]
+
+def test_repos_commands_migration_backfills_empty_object(tmp_path, monkeypatch):
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    monkeypatch.setattr(sq, "db_path", lambda: db)
+    with sq.connect(db) as conn:
+        conn.executescript("CREATE TABLE repos (key_ref TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, name TEXT NOT NULL);")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/x', 'r')")
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
+        assert "commands" in cols
+        val = conn.execute("SELECT commands FROM repos WHERE key_ref = 'r'").fetchone()[0]
+        assert val == "{}"
+
+
+def test_load_repos_carries_commands_dict(tmp_path, monkeypatch):
+    from workagent import store_sqlite as sq
+    from workagent import store_trackers as st
+    db = tmp_path / "state.db"
+    monkeypatch.setattr(sq, "db_path", lambda: db)
+    monkeypatch.setattr(st, "connect", lambda p: sq.connect(db))
+    sq.init_db(db)
+    st.register_repo_row(db, "r", "/x", "jira:A", remote="", tool="",
+                         commands={"pre-release": "npm test"})
+    repos = st.load_repos(db)
+    assert repos["r"]["commands"] == {"pre-release": "npm test"}
+
+
+def test_register_repo_row_none_preserves_commands(tmp_path, monkeypatch):
+    from workagent import store_sqlite as sq
+    from workagent import store_trackers as st
+    db = tmp_path / "state.db"
+    monkeypatch.setattr(sq, "db_path", lambda: db)
+    sq.init_db(db)
+    st.register_repo_row(db, "r", "/x", "jira:A", remote="", tool="",
+                         commands={"pre-release": "npm test"})
+    st.register_repo_row(db, "r", "/x", "jira:A", remote="", tool="")
+    assert st.load_repos(db)["r"]["commands"] == {"pre-release": "npm test"}
+
+
+def test_load_repos_bad_json_is_no_gate(tmp_path, monkeypatch):
+    from workagent import store_sqlite as sq
+    from workagent import store_trackers as st
+    db = tmp_path / "state.db"
+    monkeypatch.setattr(sq, "db_path", lambda: db)
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO repos (key_ref, path, name, commands) VALUES ('r', '/x', 'r', 'not-json{{{')")
+    assert st.load_repos(db)["r"]["commands"] == {}

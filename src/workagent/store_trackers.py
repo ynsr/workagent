@@ -6,6 +6,17 @@ from pathlib import Path
 
 from .store_sqlite import _norm, _tracker_meta, connect, init_db, normalize_vendor
 
+def _parse_commands(raw: object) -> dict:
+    """commands JSON text → dict; invalid/empty → {} (no gate, never raise)."""
+    import json
+    if not raw or not isinstance(raw, str):
+        return {}
+    try:
+        val = json.loads(raw)
+    except Exception:
+        return {}
+    return val if isinstance(val, dict) else {}
+
 def load_trackers(path: Path) -> dict:
     """{tracker_id: {"repos", "vendor", "remote_url, "fetch_enabled", "is_enabled"}} — SQLite source of truth."""
     if not path.exists():
@@ -123,7 +134,7 @@ def load_repos(path: Path) -> dict:
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         out: dict = {}
-        for r in conn.execute("SELECT key_ref, name, path, remote, tool, fetch_enabled, default_branch, release_branch FROM repos ORDER BY name"):
+        for r in conn.execute("SELECT key_ref, name, path, remote, tool, fetch_enabled, default_branch, release_branch, commands FROM repos ORDER BY name"):
             d = dict(r)
             tids = [x["tracker_key"] for x in conn.execute(
                 "SELECT tracker_key FROM tracker_repos WHERE repo_key = ? ORDER BY tracker_key",
@@ -133,7 +144,8 @@ def load_repos(path: Path) -> dict:
                 "remote": d["remote"], "tool": d["tool"] or None,
                 "fetch_enabled": bool(d.get("fetch_enabled", 1)),
                 "default_branch": d.get("default_branch") or "",
-                "release_branch": d.get("release_branch") or ""}
+                "release_branch": d.get("release_branch") or "",
+                "commands": _parse_commands(d.get("commands"))}
         return out
 
 
@@ -196,12 +208,12 @@ def remove_tracker_repo(path: Path, tid: str, repo_path: str | None = None) -> b
             conn.execute("DELETE FROM trackers WHERE key_ref = ?", (tid,))
         return True
 
-
 def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
                       remote: str = "", tool: str | None = None,
                       fetch_enabled: bool | None = None,
                       default_branch: str | None = None,
-                      release_branch: str | None = None) -> None:
+                      release_branch: str | None = None,
+                      commands: dict | None = None) -> None:
     """Upsert a named registry row and link it to *tracker_key* (join-only).
 
     tracker_key stays mandatory: an explicit key wins, else the caller
@@ -232,7 +244,7 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
             conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
                          " WHERE key_ref = ?",
                          (name, name, remote or "", tool or "", hit[0]))
-        fe_cur = conn.execute("SELECT fetch_enabled, default_branch, release_branch FROM repos WHERE key_ref = ? OR path = ?",
+        fe_cur = conn.execute("SELECT fetch_enabled, default_branch, release_branch, commands FROM repos WHERE key_ref = ? OR path = ?",
                               (name, norm)).fetchone()
         from .store_sqlite import _default_fetch_enabled
         fe = fe_cur[0] if fe_cur is not None else _default_fetch_enabled(tool=tool or "")
@@ -242,12 +254,16 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
         stored_release = fe_cur[2] if fe_cur is not None else ""
         new_default = stored_default if default_branch is None else default_branch
         new_release = stored_release if release_branch is None else release_branch
-        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, fetch_enabled, default_branch, release_branch)"
-                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        import json as _json
+        stored_commands = _parse_commands(fe_cur[3] if fe_cur is not None else None)
+        new_commands = stored_commands if commands is None else (commands or {})
+        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, fetch_enabled, default_branch, release_branch, commands)"
+                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
                      " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"
                      " remote=excluded.remote, tool=excluded.tool, fetch_enabled=excluded.fetch_enabled,"
-                     " default_branch=excluded.default_branch, release_branch=excluded.release_branch",
-                     (name, norm, name, remote or "", tool or "", fe, new_default or "", new_release or ""))
+                     " default_branch=excluded.default_branch, release_branch=excluded.release_branch,"
+                     " commands=excluded.commands",
+                     (name, norm, name, remote or "", tool or "", fe, new_default or "", new_release or "", _json.dumps(new_commands)))
         conn.execute("INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
                      (tracker_key, name))
 

@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS repos (
   name TEXT NOT NULL,
   remote TEXT NOT NULL DEFAULT '', tool TEXT NOT NULL DEFAULT '',
   fetch_enabled INTEGER NOT NULL DEFAULT 1,
-  default_branch TEXT NOT NULL DEFAULT '', release_branch TEXT NOT NULL DEFAULT '');
+  default_branch TEXT NOT NULL DEFAULT '', release_branch TEXT NOT NULL DEFAULT '',
+  commands TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS tracker_repos (
   tracker_key TEXT NOT NULL REFERENCES trackers(key_ref) ON DELETE CASCADE,
   repo_key TEXT NOT NULL REFERENCES repos(key_ref) ON DELETE CASCADE,
@@ -264,6 +265,21 @@ def _migrate_repos_release(conn) -> None:
         conn.execute("ALTER TABLE repos ADD COLUMN default_branch TEXT NOT NULL DEFAULT ''")
     if "release_branch" not in cols:
         conn.execute("ALTER TABLE repos ADD COLUMN release_branch TEXT NOT NULL DEFAULT ''")
+
+
+def _migrate_repos_commands(conn) -> None:
+    """Schema v11: repos gain commands JSON object ('{}' = no gates).
+
+    ALTER TABLE backfills DEFAULT '{}' — existing rows get no gate.
+    Idempotent: skipped when present.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
+    if not cols:
+        return
+    if "commands" not in cols:
+        conn.execute("ALTER TABLE repos ADD COLUMN commands TEXT NOT NULL DEFAULT '{}'")
+
+
 def _migrate_sessions_type(conn) -> None:
     """Schema v6: sessions gains session_type + metadata (session-type spec).
     Backfill reads the fix-comments prompt header (the only surviving
@@ -499,6 +515,7 @@ def init_db(path: Path) -> Path:
                 _migrate_fetch_enabled(conn)
                 _migrate_tracker_enabled(conn)
                 _migrate_repos_release(conn)
+                _migrate_repos_commands(conn)
         except sqlite3.OperationalError as e:
             last = e
             if "locked" not in str(e).lower():
