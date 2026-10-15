@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Repos gain a `pre-release` gate (auto-detected per project type, editable in Repos page) run before release MR-open; failure aborts [no-issue]
 - Dashboard StatusTable row actions resume the latest non-running session of any type (start/review/sync/fix_comments) via a terminal+copy split button; previously only review/fix-comments sessions enabled the copy button so start-session worktrees showed a dead button [no-issue]
 - New `workagent release REPO`: opens a default→release MR with fast-forward-only auto-merge (one host-side rebase retry on conflict; never squash/merge commit/force-push), gated on a real default-vs-release diff; repos persist `default_branch`/`release_branch` (`repo add/update`, Jibit auto-detects `master`), SWR diff cache (1h fresh / 1d stale), Dashboard "Ready to release" card with release-branch CI badge, per-repo Release button in the Repos page [no-issue]
 - Dashboard StatusTable and Candidates Unlinked PR/MRs no longer block on expired caches: stale rows render instantly with the refresh overlay while one background thread revalidates (new `pr_candidates_cache` table, `swr.serve_stale_or_refresh` primitive, frontend `gcTime` matching the SWR window so idle tabs keep their rows); Recent issues filter persists in localStorage across tabs and restarts [no-issue]

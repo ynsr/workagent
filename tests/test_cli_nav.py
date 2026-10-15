@@ -52,7 +52,7 @@ def test_repo_list_csv(isolated_config, tmp_path):
     r = _invoke("repo", "list", "--csv")
     assert r.exit_code == 0
     lines = [l for l in r.output.strip().splitlines() if l]
-    assert lines[0] == "name,path,trackers,default_branch,release_branch"
+    assert lines[0] == "name,path,trackers,default_branch,release_branch,pre-release"
     assert len(lines) == 2 and lines[1].startswith("proj,")
 
 
