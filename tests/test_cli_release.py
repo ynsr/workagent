@@ -243,3 +243,40 @@ def test_repo_update_no_flags_still_usage(isolated_config, tmp_path):
     assert r.exit_code == 0, r.output
     r = CliRunner().invoke(_cli.app, ["repo", "update", "proj"])
     assert r.exit_code == 2
+
+def _gated_registry(monkeypatch, gate, path="/g"):
+    import workagent.cli_release as rel
+    from workagent import store as _store
+    registry = {"gated": {"path": path, "commands": ({"pre-release": gate} if gate else {})}}
+    monkeypatch.setattr(_store, "load_repos", lambda: registry)
+    st = _status(repo="gated", path=path)
+    monkeypatch.setattr(rel.repos, "release_status", lambda name, force=False: st)
+    return rel
+
+
+def test_release_failing_gate_aborts_before_mr(monkeypatch, tmp_path):
+    rel = _gated_registry(monkeypatch, "exit 1", path=str(tmp_path))
+    calls = []
+    monkeypatch.setattr(rel, "_open_mr", lambda *a, **k: calls.append(a) or "http://mr/1")
+    with pytest.raises(Exception) as e:
+        rel.run_release("gated", yes=True, dry_run=False, json_output=True)
+    assert getattr(e.value, "exit_code", 2) == 1
+    assert calls == []
+
+
+def test_release_no_gate_goes_to_mr(monkeypatch):
+    rel = _gated_registry(monkeypatch, "")
+    monkeypatch.setattr(rel, "_open_mr", lambda *a, **k: "http://mr/1")
+    monkeypatch.setattr(rel, "_set_ff_auto_merge", lambda *a, **k: None)
+    monkeypatch.setattr(rel, "_merge_state", lambda *a, **k: {"state": "merged"})
+    out = rel.run_release("gated", yes=True, dry_run=False, json_output=True)
+    assert out["mr_url"] == "http://mr/1"
+
+
+def test_release_dry_run_shows_gate_without_executing(monkeypatch, capsys):
+    rel = _gated_registry(monkeypatch, "exit 1")
+    opened = []
+    monkeypatch.setattr(rel, "_open_mr", lambda *a, **k: opened.append(a) or "http://mr/1")
+    out = rel.run_release("gated", yes=True, dry_run=True, json_output=True)
+    assert out["dry_run"] is True and opened == []
+    assert "pre-release" in capsys.readouterr().err

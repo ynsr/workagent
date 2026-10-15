@@ -137,8 +137,12 @@ def run_release(repo: str, *, yes: bool, dry_run: bool, json_output: bool) -> di
     plan = {"repo": name, "default_branch": st["default_branch"],
             "release_branch": st["release_branch"], "diff_count": st["diff_count"],
             "mr_title": f"Release {st['default_branch']} -> {st['release_branch']}"}
+    gate = ((registry.get(name) or {}).get("commands") or {}).get("pre-release") or ""
+    plan["pre_release"] = gate
     if dry_run:
         eprint(f"dry-run: would open MR {plan['mr_title']} ({plan['diff_count']} commits)")
+        if gate:
+            eprint(f"dry-run: would run pre-release: {gate}")
         return {**plan, "dry_run": True, "merged": False, "mr_url": ""}
     if not yes and sys.stdin.isatty():
         try:
@@ -149,6 +153,12 @@ def run_release(repo: str, *, yes: bool, dry_run: bool, json_output: bool) -> di
         if answer not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)
     path = st["path"]
+    if gate:
+        eprint(f"running pre-release for {name}: {gate}")
+        try:
+            run_cmd("/bin/sh", "-c", gate, cwd=path, timeout=1800)
+        except HarnessError as e:
+            _fail(f"pre-release command failed for {name}: {e}", EXIT_GENERAL)
     tool = _host_tool(path)
     mr_url = _existing_open_mr(tool, path, st["default_branch"], st["release_branch"])
     if not mr_url:
