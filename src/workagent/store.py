@@ -228,7 +228,8 @@ def load_repos() -> dict:
                      "remote": str((v or {}).get("remote", "") or ""),
                      "tool": (v or {}).get("tool"),
                      "default_branch": str((v or {}).get("default_branch", "") or ""),
-                     "release_branch": str((v or {}).get("release_branch", "") or "")}
+                     "release_branch": str((v or {}).get("release_branch", "") or ""),
+                     "commands": dict((v or {}).get("commands") or {})}
     return out
 
 

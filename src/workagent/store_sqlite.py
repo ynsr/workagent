@@ -6,8 +6,8 @@ JSON→SQLite migration (migrate_json below).
 """
 from __future__ import annotations
 
+import json
 import random
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -616,18 +616,20 @@ def backfill_trackers_repos(path: Path, cfg: dict,
             row = conn.execute("SELECT key_ref FROM repos WHERE path = ? OR key_ref = ?",
                                (norm, name)).fetchone()
             if row is None:
-                conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool)"
-                             " VALUES (?, ?, ?, ?, ?)",
+                conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, commands)"
+                             " VALUES (?, ?, ?, ?, ?, ?)",
                              (name, norm, name, str((v or {}).get("remote", "") or ""),
-                              str((v or {}).get("tool", "") or "")))
+                              str((v or {}).get("tool", "") or ""),
+                              json.dumps(dict((v or {}).get("commands") or {}))))
                 counts["repos"] += 1
                 repo_key = name
             else:
                 repo_key = row[0]
                 counts["repos"] += conn.execute(
-                    "UPDATE repos SET name = ?, remote = ?, tool = ? WHERE key_ref = ?",
+                    "UPDATE repos SET name = ?, remote = ?, tool = ?, commands = ? WHERE key_ref = ?",
                     (name, str((v or {}).get("remote", "") or ""),
-                     str((v or {}).get("tool", "") or ""), repo_key)).rowcount
+                     str((v or {}).get("tool", "") or ""),
+                     json.dumps(dict((v or {}).get("commands") or {})), repo_key)).rowcount
             counts["links"] += conn.execute(
                 "INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
                 (tid, repo_key)).rowcount

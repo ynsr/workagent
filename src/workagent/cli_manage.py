@@ -40,6 +40,7 @@ def repo_add(
     fetch: Optional[bool] = typer.Option(None, "--fetch/--no-fetch",
         help="Fetch this repo's MRs/PRs for Candidates (default: on, except GitHub gh-tooled repos which default off)."),
     release_branch: Optional[str] = typer.Option(None, "--release-branch", help="Release branch (default: auto-detect master on Jibit repos, else none)."),
+    pre_release: Optional[str] = typer.Option(None, "--pre-release", help="Pre-release gate command (default: auto-detect from project type; empty string clears)."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Register an offline repo.
@@ -57,7 +58,7 @@ def repo_add(
     tid = trackers.normalize_id(tracker) if tracker else trackers.default_tracker_for_repo(p)
     if not tid:
         _fail("cannot derive tracker from origin remote: pass --tracker IPG|github:O/R|GitLab URL", EXIT_USAGE)
-    repos.register_repo(name, p, tracker_key=tid, fetch_enabled=fetch, release_branch=release_branch)
+    repos.register_repo(name, p, tracker_key=tid, fetch_enabled=fetch, release_branch=release_branch, pre_release=pre_release)
     _print_result({"registered": name, "path": str(p), "tracker": tid}, json_output)
 
 
@@ -97,19 +98,20 @@ def repo_list(
     items = [{"name": n, "path": v.get("path", ""),
               "trackers": ",".join(v.get("trackers", []) or ([v["tracker"]] if v.get("tracker") else [])),
               "default_branch": v.get("default_branch", ""),
-              "release_branch": v.get("release_branch", "")}
+              "release_branch": v.get("release_branch", ""),
+              "pre-release": (v.get("commands") or {}).get("pre-release", "")}
              for n, v in store.load_repos().items()]
     _print_rows(items, json_output, csv_output,
-                ["name", "path", "trackers", "default_branch", "release_branch"],
+                ["name", "path", "trackers", "default_branch", "release_branch", "pre-release"],
                 "Registered repos", "(no repos registered)")
 
 
 @repo_app.command("update")
 @_catch_harness_errors
 def repo_update(
-    name: str = typer.Argument(..., autocompletion=_complete_repos, help="Registered repo name."),
     default_branch: Optional[str] = typer.Option(None, "--default-branch", help="Default branch (empty string clears)."),
     release_branch: Optional[str] = typer.Option(None, "--release-branch", help="Release branch (empty string clears release support)."),
+    pre_release: Optional[str] = typer.Option(None, "--pre-release", help="Pre-release gate command (empty string clears)."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Update a registered repo's default/release branches.
@@ -119,8 +121,8 @@ def repo_update(
     registry = store.load_repos()
     if name not in registry:
         _fail(f"unknown repo: {name}", EXIT_USAGE)
-    if default_branch is None and release_branch is None:
-        _fail("nothing to update: pass --default-branch and/or --release-branch.", EXIT_USAGE)
+    if default_branch is None and release_branch is None and pre_release is None:
+        _fail("nothing to update: pass --default-branch and/or --release-branch and/or --pre-release.", EXIT_USAGE)
     if store._sqlite_path() is None:
         cfg = store.load_config()
         entry = cfg.get("repos", {}).get(name)
@@ -130,9 +132,17 @@ def repo_update(
             entry["default_branch"] = default_branch
         if release_branch is not None:
             entry["release_branch"] = release_branch
+        if pre_release is not None:
+            cmds = dict(entry.get("commands") or {})
+            if pre_release:
+                cmds["pre-release"] = pre_release
+            else:
+                cmds.pop("pre-release", None)
+            entry["commands"] = cmds
         store.save_config(cfg)
         _print_result({"updated": name, "default_branch": entry.get("default_branch", ""),
-                       "release_branch": entry.get("release_branch", "")}, json_output)
+                       "release_branch": entry.get("release_branch", ""),
+                       "pre-release": (entry.get("commands") or {}).get("pre-release", "")}, json_output)
         return
     from . import store_sqlite as _sq
     db = _sq.db_path()
@@ -144,10 +154,23 @@ def repo_update(
         if release_branch is not None:
             conn.execute("UPDATE repos SET release_branch = ? WHERE key_ref = ?",
                          (release_branch, name))
-        row = conn.execute("SELECT default_branch, release_branch FROM repos WHERE key_ref = ?",
+        if pre_release is not None:
+            import json as _json
+            cur = conn.execute("SELECT commands FROM repos WHERE key_ref = ?", (name,)).fetchone()
+            from .store_trackers import _parse_commands as _pc
+            cmds = _pc(cur[0] if cur else None)
+            if pre_release:
+                cmds["pre-release"] = pre_release
+            else:
+                cmds.pop("pre-release", None)
+            conn.execute("UPDATE repos SET commands = ? WHERE key_ref = ?",
+                         (_json.dumps(cmds), name))
+        row = conn.execute("SELECT default_branch, release_branch, commands FROM repos WHERE key_ref = ?",
                            (name,)).fetchone()
+    from .store_trackers import _parse_commands as _pc2
     stored = {"updated": name, "default_branch": (row[0] if row else "") or "",
-              "release_branch": (row[1] if row else "") or ""}
+              "release_branch": (row[1] if row else "") or "",
+              "pre-release": _pc2(row[2] if row else None).get("pre-release", "")}
     _print_result(stored, json_output)
 
 

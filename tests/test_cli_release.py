@@ -198,3 +198,48 @@ def test_detect_prerelease_matrix(tmp_path, name, files, expected):
 
 def test_detect_prerelease_unreadable_path():
     assert _repos.detect_prerelease_command("/nonexistent-path-xyz") is None
+
+
+def test_repo_add_autodetects_prerelease(isolated_config, tmp_path):
+    import json
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    repo_dir = tmp_path / "nodeproj"
+    repo_dir.mkdir()
+    (repo_dir / "package.json").write_text(json.dumps({"scripts": {"test": "jest"}}))
+    r = CliRunner().invoke(_cli.app, ["repo", "add", "--name", "nodeproj",
+                                      "--path", str(repo_dir), "--tracker", "IPG"])
+    assert r.exit_code == 0, r.output
+    r = CliRunner().invoke(_cli.app, ["repo", "list", "--json"])
+    rows = json.loads(r.stdout)
+    assert rows[0].get("pre-release") == "npm test"
+
+
+def test_repo_add_explicit_overrides_and_clear(isolated_config, tmp_path):
+    import json
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    repo_dir = tmp_path / "nodeproj"
+    repo_dir.mkdir()
+    (repo_dir / "package.json").write_text(json.dumps({"scripts": {"test": "jest"}}))
+    r = CliRunner().invoke(_cli.app, ["repo", "add", "--name", "nodeproj",
+                                      "--path", str(repo_dir), "--tracker", "IPG",
+                                      "--pre-release", "make check"])
+    assert r.exit_code == 0, r.output
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "nodeproj",
+                                      "--pre-release", ""])
+    assert r.exit_code == 0, r.output
+    r = CliRunner().invoke(_cli.app, ["repo", "list", "--json"])
+    assert "make check" not in r.stdout
+
+
+def test_repo_update_no_flags_still_usage(isolated_config, tmp_path):
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    r = CliRunner().invoke(_cli.app, ["repo", "add", "--name", "proj",
+                                      "--path", str(repo_dir), "--tracker", "IPG"])
+    assert r.exit_code == 0, r.output
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj"])
+    assert r.exit_code == 2
