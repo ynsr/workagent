@@ -742,3 +742,12 @@ def test_preview_command_carries_branch_scoped_session_dir(isolated_config, monk
     assert result.get("harness_command", "").find(f"--session-dir {rescoped.rsplit('/', 1)[0]}") >= 0         or f"--session-dir '{rescoped.rsplit('/', 1)[0]}'" in result.get("harness_command", "")
     row = sq.get_session(db, sid)
     assert row is not None and row["file_path"] == rescoped
+
+
+def test_release_run_accepts_new_flags(client, monkeypatch):
+    _stub_spawn(monkeypatch)
+    r = client.post("/api/runs", json={"command": "release",
+        "args": ["proj", "--checks", "both", "--diff", "local",
+                 "--pre-release-timeout", "10m", "--ci-timeout", "15m"],
+        "confirm": True})
+    assert r.status_code in (202, 409), r.text  # accepted, not 400 bad_arg
