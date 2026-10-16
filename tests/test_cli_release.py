@@ -253,6 +253,12 @@ def _gated_registry(monkeypatch, gate, path="/g"):
     monkeypatch.setattr(rel.repos, "release_status", lambda name, force=False: st)
     return rel
 
+def _validate_registry(monkeypatch, row):
+    from workagent import repos_release as _rr
+    monkeypatch.setattr(_rr.store, "load_repos", lambda: {"rx": row})
+    monkeypatch.setattr(_rr, "_fetch_refs", lambda *a, **k: None)
+    return _rr
+
 
 def test_release_failing_gate_aborts_before_mr(monkeypatch, tmp_path):
     rel = _gated_registry(monkeypatch, "exit 1", path=str(tmp_path))
@@ -280,3 +286,70 @@ def test_release_dry_run_shows_gate_without_executing(monkeypatch, capsys):
     out = rel.run_release("gated", yes=True, dry_run=True, json_output=True)
     assert out["dry_run"] is True and opened == []
     assert "pre-release" in capsys.readouterr().err
+
+
+
+def test_validate_missing_release_branch_aborts(monkeypatch):
+    rr = _validate_registry(monkeypatch, {"path": "/r", "default_branch": "main",
+                                          "release_branch": "", "tool": "", "remote": ""})
+    with pytest.raises(Exception) as e:
+        rr.validate_release("rx")
+    assert getattr(e.value, "exit_code", 2) == 2
+
+
+def test_validate_diverged_aborts_no_pr(monkeypatch):
+    from workagent import cli_release as rel
+    rr = _validate_registry(monkeypatch, {"path": "/r", "default_branch": "main",
+                                          "release_branch": "master", "tool": "glab",
+                                          "remote": "https://h/o/r.git"})
+    monkeypatch.setattr(rr, "_count_both", lambda *a, **k: (0, 2))
+    monkeypatch.setattr(rr, "_auth_ok", lambda *a: True)
+    opened = []
+    monkeypatch.setattr(rel, "_open_mr", lambda *a, **k: opened.append(a) or "http://mr/1")
+    with pytest.raises(Exception) as e:
+        rr.validate_release("rx")
+    assert "merge release back into default" in str(e.value)
+    assert opened == []
+
+
+def test_validate_ahead_zero_nothing_to_release(monkeypatch):
+    rr = _validate_registry(monkeypatch, {"path": "/r", "default_branch": "main",
+                                          "release_branch": "master", "tool": "glab",
+                                          "remote": "https://h/o/r.git"})
+    monkeypatch.setattr(rr, "_count_both", lambda *a, **k: (0, 0))
+    monkeypatch.setattr(rr, "_auth_ok", lambda *a: True)
+    out = rr.validate_release("rx")
+    assert out.get("note") == "already in sync, nothing to release"
+
+
+def test_existing_pr_reused_not_duplicated(monkeypatch):
+    import workagent.cli_release as rel
+    monkeypatch.setattr(rel, "_existing_open_mr", lambda *a, **k: "http://mr/9")
+    opened = []
+    monkeypatch.setattr(rel, "_open_mr", lambda *a, **k: opened.append(a) or "http://mr/1")
+    assert rel._find_or_open_mr("glab", "/r", "main", "master", "T") == "http://mr/9"
+    assert opened == []
+
+
+def test_wrong_base_pr_not_reused(monkeypatch):
+    import workagent.cli_release as rel
+    from workagent import refs as _refs
+    monkeypatch.setattr(_refs, "fetch_open_prs", lambda tool, cwd=None: [
+        {"branch": "main", "target_branch": "other", "url": "http://mr/9"}])
+    opened = []
+    monkeypatch.setattr(rel, "_open_mr", lambda *a, **k: opened.append(a) or "http://mr/1")
+    assert rel._find_or_open_mr("glab", "/r", "main", "master", "T") == "http://mr/1"
+    assert len(opened) == 1
+
+
+def test_pinned_sha_recorded(monkeypatch):
+    rr = _validate_registry(monkeypatch, {"path": "/r", "default_branch": "main",
+                                          "release_branch": "master", "tool": "glab",
+                                          "remote": "https://h/o/r.git"})
+    monkeypatch.setattr(rr, "_count_both", lambda *a, **k: (3, 0))
+    monkeypatch.setattr(rr, "_auth_ok", lambda *a: True)
+    monkeypatch.setattr(rr, "_origin_tip", lambda *a, **k: "abc123")
+    from workagent import release_caps as _caps
+    monkeypatch.setattr(_caps, "get_caps", lambda *a: {"strategy": ["ff-push"], "raw": {}})
+    out = rr.validate_release("rx")
+    assert out["pinned_sha"] == "abc123" and out["ahead"] == 3 and out["behind"] == 0

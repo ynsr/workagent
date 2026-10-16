@@ -62,6 +62,82 @@ def release_diff_count(path: Path, default_branch: str, release_branch: str) -> 
         out = run_cmd("git", "-C", str(path), "rev-list", "--count",
                       f"origin/{release_branch}..origin/{default_branch}")
     return int((out or "0").strip())
+def _fetch_refs(path: str, default_branch: str, release_branch: str, diff_mode: str) -> None:
+    """Fetch both refs; diff_mode is remote (per-branch fetch) or local (full fetch)."""
+    if diff_mode == "local":
+        run_cmd("git", "-C", path, "fetch", "origin")
+    else:
+        run_cmd("git", "-C", path, "fetch", "origin", default_branch, release_branch)
+
+
+def _count_both(path: str, default_branch: str, release_branch: str) -> tuple[int, int]:
+    """(ahead, behind): commits default has that release lacks, and vice versa."""
+    ahead = int((run_cmd("git", "-C", path, "rev-list", "--count",
+                         f"origin/{release_branch}..origin/{default_branch}") or "0").strip())
+    behind = int((run_cmd("git", "-C", path, "rev-list", "--count",
+                          f"origin/{default_branch}..origin/{release_branch}") or "0").strip())
+    return ahead, behind
+
+
+def _origin_tip(path: str, branch: str) -> str:
+    """SHA of origin/<branch>."""
+    return (run_cmd("git", "-C", path, "rev-parse", f"origin/{branch}") or "").strip()
+
+
+def _auth_ok(tool: str, path: str) -> bool:
+    """Host CLI installed and authenticated."""
+    from .cli_repo_util import _repo_tool  # noqa: PLC0415 — avoid import cycle
+    try:
+        if tool == "gh":
+            run_cmd("gh", "auth", "status", cwd=path, echo=False)
+        elif tool == "glab":
+            run_cmd("glab", "auth", "status", cwd=path, echo=False)
+        else:
+            _repo_tool(path)
+        return True
+    except Exception:
+        return False
+
+
+def validate_release(name: str, diff_mode: str = "remote") -> dict:
+    """Step 1 validation returning the release plan context (raises via _fail-free raises).
+
+    Keys: repo, path, tool, default_branch, release_branch, pinned_sha,
+    behind, ahead, diff_count. ahead == 0 returns {"note": "already in sync"}.
+    Raises HarnessError: exit 2 for config errors (1a/1b), exit 1 for
+    diverged/auth/strategy failures.
+    """
+    from . import release_caps as _caps
+    from .release_util import validate_unique_repo_names
+    registry = store.load_repos()
+    info = validate_unique_repo_names(registry, name)
+    path = str(info.get("path", "") or "")
+    default = str(info.get("default_branch", "") or "")
+    release = str(info.get("release_branch", "") or "")
+    if not default or not release:
+        raise HarnessError(f"{name}: missing default or release branch "
+                           f"(repo update {name} --release-branch MASTER).", exit_code=2)
+    if default == release:
+        raise HarnessError(f"{name}: default and release branch are the same.", exit_code=2)
+    tool = str(info.get("tool", "") or "glab")
+    _fetch_refs(path, default, release, diff_mode)
+    ahead, behind = _count_both(path, default, release)
+    if behind > 0:
+        raise HarnessError(f"{name}: release branch is ahead of default ({behind} commits); "
+                           "merge release back into default first.", exit_code=1)
+    if ahead == 0:
+        return {"repo": name, "merged": False, "mr_url": "",
+                "note": "already in sync, nothing to release"}
+    if not _auth_ok(tool, path):
+        raise HarnessError(f"{name}: {tool} missing or unauthenticated.", exit_code=1)
+    pinned = _origin_tip(path, default)
+    caps = _caps.get_caps(tool, path, release)
+    if not caps.get("strategy"):
+        raise HarnessError(f"{name}: no merge strategy available.", exit_code=1)
+    return {"repo": name, "path": path, "tool": tool,
+            "default_branch": default, "release_branch": release,
+            "pinned_sha": pinned, "behind": behind, "ahead": ahead,
+            "diff_count": ahead, "strategy": caps["strategy"]}
 
 
 _RELEASE_DIFF_TTL_SECONDS = 3600

@@ -19,7 +19,6 @@ from .cli_core import (
 from .cli_repo_util import _repo_tool
 from .errors import HarnessError, run_cmd
 
-
 @app.command("release")
 @_catch_harness_errors
 def release(
@@ -27,9 +26,12 @@ def release(
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    diff: str = typer.Option("remote", "--diff", help="Diff source: remote or local."),
 ) -> None:
     """Open a default->release MR with FF-only auto-merge (one host rebase retry)."""
-    result = run_release(repo, yes=yes, dry_run=dry_run, json_output=json_output)
+    if diff not in ("remote", "local"):
+        _fail(f"bad --diff {diff!r}: use remote or local", EXIT_USAGE)
+    result = run_release(repo, yes=yes, dry_run=dry_run, json_output=json_output, diff=diff)
     _print_result(result, json_output)
 
 
@@ -75,6 +77,12 @@ def _open_mr(tool: str, path: str, default_branch: str, release_branch: str, tit
     if not url:
         raise HarnessError("host CLI opened the MR but returned no URL", exit_code=1)
     return url
+def _find_or_open_mr(tool: str, path: str, default_branch: str, release_branch: str,
+                     title: str) -> str:
+    """Reuse an existing open default->release MR, else open one."""
+    existing = _existing_open_mr(tool, path, default_branch, release_branch)
+    return existing or _open_mr(tool, path, default_branch, release_branch, title)
+
 
 
 def _set_ff_auto_merge(tool: str, mr_url: str, cwd: str) -> None:
@@ -103,7 +111,8 @@ def _merge_state(mr_url: str, path: str) -> dict:
         return {}
 
 
-def run_release(repo: str, *, yes: bool, dry_run: bool, json_output: bool) -> dict:
+def run_release(repo: str, *, yes: bool, dry_run: bool, json_output: bool,
+                diff: str = "remote") -> dict:
     """Release flow returning a JSON-able result dict (raises via _fail)."""
     from . import store as _store
     registry = _store.load_repos()
