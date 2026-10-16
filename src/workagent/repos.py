@@ -118,6 +118,7 @@ from .repos_release import (  # noqa: F401,E402 — public re-exports
     detect_release_branch,
     release_diff_count,
     release_status,
+    validate_release,
 )
 
 def current_branch(path: Path) -> str | None:

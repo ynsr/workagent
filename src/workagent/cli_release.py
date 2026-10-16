@@ -26,12 +26,17 @@ def release(
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    checks: str = typer.Option("ci", "--checks", help="Gates: ci, local, both, or none."),
     diff: str = typer.Option("remote", "--diff", help="Diff source: remote or local."),
+    pre_release_timeout: str = typer.Option("10m", "--pre-release-timeout",
+                                            help="Timeout for the pre-release gate (e.g. 10m)."),
+    ci_timeout: str = typer.Option("15m", "--ci-timeout",
+                                   help="Timeout for the CI gate (e.g. 15m)."),
 ) -> None:
-    """Open a default->release MR with FF-only auto-merge (one host rebase retry)."""
-    if diff not in ("remote", "local"):
-        _fail(f"bad --diff {diff!r}: use remote or local", EXIT_USAGE)
-    result = run_release(repo, yes=yes, dry_run=dry_run, json_output=json_output, diff=diff)
+    """Ship default -> release via pinned-SHA MR merge (FF-only, never squash)."""
+    result = run_release(repo, yes=yes, dry_run=dry_run, json_output=json_output,
+                         checks=checks, diff=diff,
+                         pre_release_timeout=pre_release_timeout, ci_timeout=ci_timeout)
     _print_result(result, json_output)
 
 
@@ -84,110 +89,175 @@ def _find_or_open_mr(tool: str, path: str, default_branch: str, release_branch: 
     return existing or _open_mr(tool, path, default_branch, release_branch, title)
 
 
-
-def _set_ff_auto_merge(tool: str, mr_url: str, cwd: str) -> None:
-    """Enable FF-only auto-merge on *mr_url*; raise HarnessError on refusal."""
-    if tool == "gh":
-        run_cmd("gh", "pr", "merge", "--auto", "--ff-only", mr_url, cwd=cwd)
-    else:
-        run_cmd("glab", "mr", "merge", "--ff-only", "--auto-merge", mr_url, cwd=cwd)
+def _origin_tip_now(path: str, branch: str) -> str:
+    """Fresh origin/<branch> SHA (no cache)."""
+    return (run_cmd("git", "-C", path, "rev-parse", f"origin/{branch}") or "").strip()
 
 
-def _rebase_retry(tool: str, mr_url: str, cwd: str) -> None:
-    """One host-side rebase retry (glab only); raise when unsupported/failed."""
-    if tool != "glab":
-        raise HarnessError("gh has no host-side rebase; resolve conflicts on the host",
-                           exit_code=1)
-    run_cmd("glab", "mr", "rebase", mr_url, cwd=cwd)
-
-
-def _merge_state(mr_url: str, path: str) -> dict:
-    """Fresh merge state for *mr_url*; {} when unreadable."""
-    from . import refs as _refs
+def _verify_head(path: str, release_branch: str, pinned: str) -> None:
+    """Confirm origin/<release> == pinned after merge; _fail otherwise."""
     try:
-        return _refs.fetch_pr_merge_state(mr_url, cwd=path) or {}
+        head = _origin_tip_now(path, release_branch)
     except HarnessError as e:
-        eprint(f"warning: cannot read MR state for {mr_url}: {e}")
-        return {}
+        _fail(f"cannot verify release head: {e}", EXIT_GENERAL)
+        return
+    if head != pinned:
+        _fail(f"release head {head or '?'} != pinned {pinned}; verify on the host.",
+              EXIT_GENERAL)
+
+
+def _merge_pinned(tool: str, path: str, release_branch: str, pinned: str,
+                  mr_url: str, strategy: list[str]) -> str:
+    """Merge *pinned* via the first viable strategy; return strategy used."""
+    from . import release_caps as _caps
+    from . import repos_release as _rr
+    info = None
+    try:
+        rows = _rr.store.load_repos().values()
+    except Exception:
+        rows = []
+    for row in rows:
+        if str((row or {}).get("path", "")) == path:
+            info = row
+            break
+    default = str((info or {}).get("default_branch", "") or "")
+    if default and _origin_tip_now(path, default) not in ("", pinned):
+        _fail(f"release source advanced past {pinned}; re-run release.", EXIT_GENERAL)
+    last_err: Exception | None = None
+    for strat in strategy:
+        try:
+            if strat == "gitlab-mr-ff" and tool == "glab":
+                run_cmd("glab", "mr", "merge", "--sha", pinned, mr_url, cwd=path)
+                _verify_head(path, release_branch, pinned)
+                return strat
+            if strat == "ff-push":
+                run_cmd("git", "push", "origin",
+                        f"{pinned}:refs/heads/{release_branch}", cwd=path)
+                if tool == "gh" and "github-pr-merge-commit" in strategy:
+                    continue
+                _verify_head(path, release_branch, pinned)
+                return strat
+            if strat == "github-pr-merge-commit" and tool == "gh":
+                run_cmd("gh", "pr", "merge", "--merge", "--match-head-commit",
+                        mr_url, cwd=path)
+                _verify_head(path, release_branch, pinned)
+                return strat
+        except HarnessError as e:
+            last_err = e
+            try:
+                _caps.invalidate(tool, path, release_branch)
+            except Exception:
+                pass
+            if strat == "ff-push" and tool == "gh" and "github-pr-merge-commit" in strategy:
+                continue
+            _fail(f"release merge rejected ({strat}): {e}; MR left open: {mr_url}",
+                  EXIT_GENERAL)
+    if last_err is not None:
+        _fail(f"release merge rejected: {last_err}; MR left open: {mr_url}", EXIT_GENERAL)
+    _fail(f"no merge strategy available; MR left open: {mr_url}", EXIT_GENERAL)
+    raise AssertionError("unreachable")
+
+
+def _resolve_name(repo: str, registry: dict) -> str:
+    """Registry key for a name or checkout path; '' when unknown."""
+    if repo in registry:
+        return repo
+    from pathlib import Path as _P
+    try:
+        want = str(_P(repo).expanduser().resolve())
+    except Exception:
+        return ""
+    for n, info in registry.items():
+        try:
+            got = str(_P(str(info.get("path", ""))).expanduser().resolve())
+        except Exception:
+            continue
+        if got and got == want:
+            return n
+    return ""
 
 
 def run_release(repo: str, *, yes: bool, dry_run: bool, json_output: bool,
-                diff: str = "remote") -> dict:
+                checks: str = "ci", diff: str = "remote",
+                pre_release_timeout: str = "10m", ci_timeout: str = "15m") -> dict:
     """Release flow returning a JSON-able result dict (raises via _fail)."""
+    from . import release_lock as _lock
+    from . import release_util as _util
     from . import store as _store
+    if checks not in ("ci", "local", "both", "none"):
+        _fail(f"bad --checks {checks!r}: use ci, local, both, or none", EXIT_USAGE)
+    if diff not in ("remote", "local"):
+        _fail(f"bad --diff {diff!r}: use remote or local", EXIT_USAGE)
+    local_timeout = _util.parse_duration(pre_release_timeout)
+    ci_timeout_s = _util.parse_duration(ci_timeout)
     registry = _store.load_repos()
-    name = repo if repo in registry else ""
-    if not name:
-        from pathlib import Path as _P
-        try:
-            want = str(_P(repo).expanduser().resolve())
-        except Exception:
-            want = ""
-        for n, info in registry.items():
-            try:
-                got = str(_P(str(info.get("path", ""))).expanduser().resolve())
-            except Exception:
-                continue
-            if got and got == want:
-                name = n
-                break
+    name = _resolve_name(repo, registry)
     if not name:
         _fail(f"unknown repo: {repo}", EXIT_USAGE)
     assert name
-    st = repos.release_status(name)
-    if not st["release_branch"]:
-        _fail(f"{name}: no release branch configured (repo update {name} --release-branch MASTER).",
-              EXIT_USAGE)
-    if st["default_branch"] == st["release_branch"]:
-        _fail(f"{name}: default and release branch are the same.", EXIT_USAGE)
-    if not st["releasable"]:
-        return {"repo": name, "merged": False, "mr_url": "",
-                "note": "already in sync, nothing to release"}
-    plan = {"repo": name, "default_branch": st["default_branch"],
-            "release_branch": st["release_branch"], "diff_count": st["diff_count"],
-            "mr_title": f"Release {st['default_branch']} -> {st['release_branch']}"}
-    gate = ((registry.get(name) or {}).get("commands") or {}).get("pre-release") or ""
-    plan["pre_release"] = gate
-    if dry_run:
-        eprint(f"dry-run: would open MR {plan['mr_title']} ({plan['diff_count']} commits)")
-        if gate:
-            eprint(f"dry-run: would run pre-release: {gate}")
-        return {**plan, "dry_run": True, "merged": False, "mr_url": ""}
-    if not yes and sys.stdin.isatty():
-        try:
-            print(f"Open release MR {plan['mr_title']}? [y/N] ", file=sys.stderr, end="")
-            answer = sys.stdin.readline().strip().lower()
-        except EOFError:
-            answer = ""
-        if answer not in ("y", "yes"):
-            _fail("aborted", EXIT_USAGE)
-    path = st["path"]
-    if gate:
-        eprint(f"running pre-release for {name}: {gate}")
-        try:
-            run_cmd("/bin/sh", "-c", gate, cwd=path, timeout=1800)
-        except HarnessError as e:
-            _fail(f"pre-release command failed for {name}: {e}", EXIT_GENERAL)
-    tool = _host_tool(path)
-    mr_url = _existing_open_mr(tool, path, st["default_branch"], st["release_branch"])
-    if not mr_url:
-        try:
-            mr_url = _open_mr(tool, path, st["default_branch"], st["release_branch"],
-                              plan["mr_title"])
-        except HarnessError as e:
-            _fail(f"release MR not opened: {e}", EXIT_GENERAL)
+    base = _util.worktree_base()
+    lock = _lock.lock_path(str(base), name)
     try:
-        _set_ff_auto_merge(tool, mr_url, cwd=path)
-    except HarnessError as first:
-        try:
-            _rebase_retry(tool, mr_url, cwd=path)
-        except HarnessError as re:
-            _fail(f"release MR left open: {mr_url}: {re}", EXIT_GENERAL)
-        try:
-            _set_ff_auto_merge(tool, mr_url, cwd=path)
-        except HarnessError as second:
-            _fail(f"release MR left open: {mr_url}: {second} (after rebase: {first})",
-                  EXIT_GENERAL)
-    state = _merge_state(mr_url, path)
-    merged = (state.get("state") or "").lower() == "merged"
-    return {**plan, "merged": merged, "mr_url": mr_url}
+        with _lock.held_lock(lock):
+            return _run_locked(name, registry, yes=yes, dry_run=dry_run,
+                               checks=checks, diff=diff, local_timeout=local_timeout,
+                               ci_timeout_s=ci_timeout_s)
+    except KeyboardInterrupt:
+        _fail("interrupted; worktree kept for inspection.", EXIT_GENERAL)
+    raise AssertionError("unreachable")
+
+
+def _run_locked(name: str, registry: dict, *, yes: bool, dry_run: bool,
+                checks: str, diff: str, local_timeout: int, ci_timeout_s: int) -> dict:
+    """Steps 1-7 inside the release lock."""
+    from . import release_gates as gates
+    from .release_util import worktree_base
+    ctx = repos.validate_release(name, diff)
+    if ctx.get("note"):
+        return {"repo": name, "merged": False, "mr_url": "", **ctx}
+    path, tool = ctx["path"], ctx["tool"]
+    default, release_branch, pinned = ctx["default_branch"], ctx["release_branch"], ctx["pinned_sha"]
+    strategy = list(ctx.get("strategy") or [])
+    gate = ((registry.get(name) or {}).get("commands") or {}).get("pre-release") or ""
+    title = f"Release {default} -> {release_branch}"
+    if dry_run:
+        eprint(f"dry-run: validate {name} {default}@{pinned} -> {release_branch} "
+               f"({ctx.get('ahead', 0)} commits)")
+        eprint(f"dry-run: would open or reuse MR {title}")
+        if checks in ("local", "both") and gate:
+            eprint(f"dry-run: would run pre-release: {gate}")
+        if checks in ("ci", "both"):
+            eprint(f"dry-run: would poll CI for {pinned}")
+        eprint(f"dry-run: would merge {pinned} via {strategy[0] if strategy else 'none'}")
+        return {"repo": name, "pinned_sha": pinned, "checks": checks,
+                "strategy": strategy, "mr_url": "", "merged": False, "dry_run": True}
+    mr_url = _find_or_open_mr(tool, path, default, release_branch, title)
+    try:
+        if checks in ("local", "both") and gate:
+            gates.run_local_gate(path, name, pinned, gate, local_timeout)
+        if checks in ("ci", "both"):
+            gates.run_ci_gate(tool, path, pinned, ci_timeout_s)
+    except KeyboardInterrupt:
+        _fail("interrupted; worktree kept for inspection.", EXIT_GENERAL)
+        raise AssertionError("unreachable")
+    if not yes:
+        if sys.stdin.isatty():
+            try:
+                print(f"Release {pinned} via {strategy[0] if strategy else 'none'} "
+                      f"checks={checks} {mr_url}? [y/N] ", file=sys.stderr, end="")
+                answer = sys.stdin.readline().strip().lower()
+            except EOFError:
+                answer = ""
+            if answer not in ("y", "yes"):
+                _fail("aborted", EXIT_USAGE)
+        else:
+            _fail("needs --yes in non-interactive mode", EXIT_USAGE)
+    used = _merge_pinned(tool, path, release_branch, pinned, mr_url, strategy)
+    try:
+        from . import release_worktree as _wt
+        _wt.finish(_wt.release_path(str(worktree_base()), name), True)
+    except Exception:
+        pass
+    eprint(f"released {pinned} via {used} checks={checks} {mr_url}")
+    return {"repo": name, "pinned_sha": pinned, "checks": checks,
+            "strategy": used, "mr_url": mr_url, "merged": True}

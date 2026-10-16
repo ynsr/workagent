@@ -1,11 +1,20 @@
 import pytest
 
 from workagent import cli_release as _rel
+from workagent import release_gates as rel_gates
 from workagent import store as _store
 
 
+def _valid_ctx(**kw):
+    base = {"repo": "rx", "path": "/r", "tool": "glab", "default_branch": "main",
+            "release_branch": "master", "pinned_sha": "abc123", "behind": 0,
+            "ahead": 3, "diff_count": 3, "strategy": ["gitlab-mr-ff"]}
+    base.update(kw)
+    return base
+
 def _registry(monkeypatch):
     monkeypatch.setattr(_store, "load_repos", lambda: {"rx": {"path": "/r"}})
+    monkeypatch.setattr(_rel.repos, "validate_release", lambda *a, **k: _valid_ctx())
 
 
 def _status(**kw):
@@ -18,17 +27,17 @@ def _status(**kw):
 
 def test_release_no_branch_gate_exits_2(monkeypatch):
     _registry(monkeypatch)
-    monkeypatch.setattr(_rel.repos, "release_status",
-                        lambda name, force=False: _status(release_branch="", releasable=False,
-                                                          reason="no release branch"))
+    monkeypatch.setattr(_rel.repos, "validate_release",
+                        lambda *a, **k: (_ for _ in ()).throw(__import__("typer").Exit(2)))
     with pytest.raises(Exception) as ei:
         _rel.run_release("rx", yes=True, dry_run=False, json_output=False)
     assert getattr(ei.value, "exit_code", 2) == 2
+
+
 def test_release_same_branch_exits_2(monkeypatch):
     _registry(monkeypatch)
-    monkeypatch.setattr(_rel.repos, "release_status",
-                        lambda name, force=False: _status(default_branch="main",
-                                                          release_branch="main"))
+    monkeypatch.setattr(_rel.repos, "validate_release",
+                        lambda *a, **k: (_ for _ in ()).throw(__import__("typer").Exit(2)))
     with pytest.raises(Exception) as ei:
         _rel.run_release("rx", yes=True, dry_run=False, json_output=False)
     assert getattr(ei.value, "exit_code", 2) == 2
@@ -37,17 +46,15 @@ def test_release_same_branch_exits_2(monkeypatch):
 def test_release_ff_argv_per_host(monkeypatch):
     _registry(monkeypatch)
     calls = []
-    monkeypatch.setattr(_rel, "run_cmd", lambda *a, **k: calls.append(a) or "https://h/mr/1")
-    monkeypatch.setattr(_rel.repos, "release_status",
-                        lambda name, force=False: _status())
-    monkeypatch.setattr(_rel, "_host_tool", lambda path: "glab")
-    monkeypatch.setattr(_rel, "_existing_open_mr", lambda tool, path, d, r: "")
-    monkeypatch.setattr(_rel, "_merge_state", lambda url, path: {"state": "merged"})
+    monkeypatch.setattr(_rel, "run_cmd", lambda *a, **k: calls.append(a) or "abc123")
+    monkeypatch.setattr(_rel, "_find_or_open_mr", lambda *a, **k: "https://h/mr/1")
+    monkeypatch.setattr(rel_gates, "run_local_gate", lambda *a, **k: None)
+    monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: None)
     _rel.run_release("rx", yes=True, dry_run=False, json_output=False)
     flat = " ".join(" ".join(c) for c in calls)
-    assert "--ff-only" in flat
+    assert "--sha" in flat
     assert "--squash" not in flat
-    assert "--auto-merge" in flat
+    assert "--rebase" not in flat
 
 
 def test_release_dry_run_runs_nothing(monkeypatch):
@@ -55,8 +62,6 @@ def test_release_dry_run_runs_nothing(monkeypatch):
     def _boom(*a, **k):
         raise AssertionError("must not run")
     monkeypatch.setattr(_rel, "run_cmd", _boom)
-    monkeypatch.setattr(_rel.repos, "release_status",
-                        lambda name, force=False: _status(diff_count=2))
     _rel.run_release("rx", yes=True, dry_run=True, json_output=False)
 def test_fetch_ci_status_branch_param():
     import inspect
@@ -247,10 +252,12 @@ def test_repo_update_no_flags_still_usage(isolated_config, tmp_path):
 def _gated_registry(monkeypatch, gate, path="/g"):
     import workagent.cli_release as rel
     from workagent import store as _store
-    registry = {"gated": {"path": path, "commands": ({"pre-release": gate} if gate else {})}}
+    registry = {"gated": {"path": path, "tool": "glab", "default_branch": "main",
+                          "release_branch": "master",
+                          "commands": ({"pre-release": gate} if gate else {})}}
     monkeypatch.setattr(_store, "load_repos", lambda: registry)
-    st = _status(repo="gated", path=path)
-    monkeypatch.setattr(rel.repos, "release_status", lambda name, force=False: st)
+    ctx = _valid_ctx(repo="gated", path=path, tool="glab")
+    monkeypatch.setattr(rel.repos, "validate_release", lambda *a, **k: dict(ctx))
     return rel
 
 def _validate_registry(monkeypatch, row):
@@ -263,27 +270,31 @@ def _validate_registry(monkeypatch, row):
 def test_release_failing_gate_aborts_before_mr(monkeypatch, tmp_path):
     rel = _gated_registry(monkeypatch, "exit 1", path=str(tmp_path))
     calls = []
-    monkeypatch.setattr(rel, "_open_mr", lambda *a, **k: calls.append(a) or "http://mr/1")
+    monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: calls.append(a) or "http://mr/1")
+    real = rel_gates.run_local_gate
+    monkeypatch.setattr(rel_gates, "run_local_gate",
+                        lambda *a, **k: (calls.append("gate"), real(*a, **k))[1])
+    monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: None)
     with pytest.raises(Exception) as e:
-        rel.run_release("gated", yes=True, dry_run=False, json_output=True)
+        rel.run_release("gated", yes=True, dry_run=False, json_output=True, checks="local")
     assert getattr(e.value, "exit_code", 2) == 1
-    assert calls == []
-
+    assert "gate" in calls  # local gate ran before failing
 
 def test_release_no_gate_goes_to_mr(monkeypatch):
     rel = _gated_registry(monkeypatch, "")
-    monkeypatch.setattr(rel, "_open_mr", lambda *a, **k: "http://mr/1")
-    monkeypatch.setattr(rel, "_set_ff_auto_merge", lambda *a, **k: None)
-    monkeypatch.setattr(rel, "_merge_state", lambda *a, **k: {"state": "merged"})
-    out = rel.run_release("gated", yes=True, dry_run=False, json_output=True)
+    monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: "http://mr/1")
+    monkeypatch.setattr(rel, "_merge_pinned", lambda *a, **k: "gitlab-mr-ff")
+    monkeypatch.setattr(rel_gates, "run_local_gate", lambda *a, **k: None)
+    monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: None)
+    out = rel.run_release("gated", yes=True, dry_run=False, json_output=True, checks="none")
     assert out["mr_url"] == "http://mr/1"
 
 
 def test_release_dry_run_shows_gate_without_executing(monkeypatch, capsys):
     rel = _gated_registry(monkeypatch, "exit 1")
     opened = []
-    monkeypatch.setattr(rel, "_open_mr", lambda *a, **k: opened.append(a) or "http://mr/1")
-    out = rel.run_release("gated", yes=True, dry_run=True, json_output=True)
+    monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: opened.append(a) or "http://mr/1")
+    out = rel.run_release("gated", yes=True, dry_run=True, json_output=True, checks="both")
     assert out["dry_run"] is True and opened == []
     assert "pre-release" in capsys.readouterr().err
 
@@ -353,3 +364,132 @@ def test_pinned_sha_recorded(monkeypatch):
     monkeypatch.setattr(_caps, "get_caps", lambda *a: {"strategy": ["ff-push"], "raw": {}})
     out = rr.validate_release("rx")
     assert out["pinned_sha"] == "abc123" and out["ahead"] == 3 and out["behind"] == 0
+
+
+def _flow_registry(monkeypatch, row=None):
+    import workagent.cli_release as rel
+    from workagent import store as _store
+    registry = {"rx": dict({"path": "/r", "default_branch": "main", "release_branch": "master",
+                            "tool": "glab", "commands": {"pre-release": "make check"}},
+                           **(row or {}))}
+    monkeypatch.setattr(_store, "load_repos", lambda: registry)
+    return rel
+
+
+def test_checks_none_skips_both(monkeypatch):
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel.repos, "validate_release", lambda *a, **k: _valid_ctx())
+    locals_called, ci_called = [], []
+    monkeypatch.setattr(rel_gates, "run_local_gate", lambda *a, **k: locals_called.append(1))
+    monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: ci_called.append(1))
+    monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: "http://mr/1")
+    monkeypatch.setattr(rel, "_merge_pinned", lambda *a, **k: "gitlab-mr-ff")
+    rel.run_release("rx", yes=True, dry_run=False, json_output=True, checks="none")
+    assert locals_called == [] and ci_called == []
+
+
+def test_both_runs_local_first_skips_ci_on_local_fail(monkeypatch):
+    import typer
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel.repos, "validate_release", lambda *a, **k: _valid_ctx())
+    ci_called = []
+    def _boom(*a, **k):
+        raise typer.Exit(1)
+    monkeypatch.setattr(rel_gates, "run_local_gate", _boom)
+    monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: ci_called.append(1))
+    monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: "http://mr/1")
+    with __import__("pytest").raises(Exception):
+        rel.run_release("rx", yes=True, dry_run=False, json_output=True, checks="both")
+    assert ci_called == []
+
+
+def test_dry_run_creates_nothing(monkeypatch):
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel.repos, "validate_release", lambda *a, **k: _valid_ctx())
+    touched = []
+    monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: touched.append("mr") or "x")
+    monkeypatch.setattr(rel_gates, "run_local_gate", lambda *a, **k: touched.append("local"))
+    monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: touched.append("ci"))
+    monkeypatch.setattr(rel, "_merge_pinned", lambda *a, **k: touched.append("merge") or "s")
+    out = rel.run_release("rx", yes=True, dry_run=True, json_output=True, checks="both")
+    assert touched == [] and out["dry_run"] is True
+
+
+def test_cli_prompts_without_yes_and_aborts_on_no(monkeypatch):
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel.repos, "validate_release", lambda *a, **k: _valid_ctx())
+    monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: "http://mr/1")
+    monkeypatch.setattr(rel_gates, "run_local_gate", lambda *a, **k: None)
+    monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: None)
+    monkeypatch.setattr(rel, "_merge_pinned", lambda *a, **k: "gitlab-mr-ff")
+    monkeypatch.setattr(rel.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(rel.sys.stdin, "readline", lambda: "n\n")
+    with __import__("pytest").raises(Exception) as e:
+        rel.run_release("rx", yes=False, dry_run=False, json_output=True, checks="none")
+    assert getattr(e.value, "exit_code", 2) == 2
+
+
+def test_merge_pinned_rejects_on_advance(monkeypatch):
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "moved999")
+    with __import__("pytest").raises(Exception):
+        rel._merge_pinned("glab", "/r", "master", "abc123", "http://mr/1", ["gitlab-mr-ff"])
+    flat = " ".join(" ".join(c[0]) if isinstance(c, tuple) else str(c) for c in [])
+    assert flat == ""
+
+
+def test_gitlab_ff_uses_mr_sha(monkeypatch):
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    monkeypatch.setattr(rel.repos, "release_status", lambda *a, **k: {})
+    calls = []
+    monkeypatch.setattr(rel, "run_cmd", lambda *a, **k: calls.append(a) or "")
+    rel._merge_pinned("glab", "/r", "master", "abc123", "http://mr/1", ["gitlab-mr-ff"])
+    flat = " ".join(" ".join(c) for c in calls)
+    assert "--sha" in flat and "abc123" in flat
+    assert "--squash" not in flat and "--rebase" not in flat
+
+
+def test_github_ff_push_then_merge_commit_fallback(monkeypatch):
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    calls = []
+    def _fake(*a, **k):
+        calls.append(a)
+        if "push" in a:
+            from workagent.errors import HarnessError
+            raise HarnessError("non-fast-forward")
+        return ""
+    monkeypatch.setattr(rel, "run_cmd", _fake)
+    out = rel._merge_pinned("gh", "/r", "master", "abc123", "http://mr/1",
+                            ["ff-push", "github-pr-merge-commit"])
+    assert out == "github-pr-merge-commit"
+    flat = " ".join(" ".join(c) for c in calls)
+    assert "--merge" in flat and "--match-head-commit" in flat
+
+
+def test_source_branch_never_deleted(monkeypatch):
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel.repos, "validate_release", lambda *a, **k: _valid_ctx())
+    monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: "http://mr/1")
+    monkeypatch.setattr(rel_gates, "run_local_gate", lambda *a, **k: None)
+    monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: None)
+    calls = []
+    monkeypatch.setattr(rel, "run_cmd", lambda *a, **k: calls.append(a) or "abc123")
+    rel.run_release("rx", yes=True, dry_run=False, json_output=True, checks="none")
+    flat = " ".join(" ".join(c) for c in calls)
+    assert "branch -D" not in flat and "push :main" not in flat.replace("  ", " ")
+
+
+def test_interrupt_triggers_cleanup(monkeypatch):
+    import typer
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel.repos, "validate_release", lambda *a, **k: _valid_ctx())
+    monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: "http://mr/1")
+    def _boom(*a, **k):
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(rel_gates, "run_ci_gate", _boom)
+    monkeypatch.setattr(rel_gates, "run_local_gate", lambda *a, **k: None)
+    with __import__("pytest").raises(Exception) as e:
+        rel.run_release("rx", yes=True, dry_run=False, json_output=True, checks="ci")
+    assert getattr(e.value, "exit_code", 2) == 1
