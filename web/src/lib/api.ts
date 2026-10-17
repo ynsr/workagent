@@ -154,6 +154,8 @@ export interface CandidatePr {
   updated: string
   state: string
   repo: string
+  /** Registered repo display name (backend WS2 Task 5); absent until then. */
+  repo_name?: string
 }
 
 export interface CandidateWorktree {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import { useConfirmedRun, useCopyFeedback } from "@/components/RunActions"
 import { CopyCell } from "@/components/CopyCell"
 import { ActionDialog } from "@/components/LinkDialogs"
@@ -38,8 +38,8 @@ const TABS: readonly { value: Tab; label: (n: number) => string }[] = [
  * run pipeline (confirm modal for start/review). Never auto-starts or links.
  */
 export function CandidatesCard() {
+  const navigate = useNavigate()
   const runConfirmed = useConfirmedRun()
-  const qc = useQueryClient()
   // Per-tab queries: each source loads independently, so the slow live-PR
   // fetch never blocks issues/worktrees; switching tabs shows ready data
   // immediately while the rest streams in (per-tab skeletons below).
@@ -252,14 +252,11 @@ export function CandidatesCard() {
                         </p>
                       </div>
                       <Badge variant="outline">{pr.state}</Badge>
+                      <Badge variant="secondary">{pr.repo_name ?? pr.repo}</Badge>
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => void handleAction({
-                          command: "review", args: [pr.url],
-                          label: `Review ${pr.key}`,
-                          confirmText: `Run review for ${pr.url} in a worktree.`,
-                        })}
+                        onClick={() => navigate(`/launch?mode=review&ref=${encodeURIComponent(pr.url)}`)}
                         title={`Review ${pr.url}`}
                       >
                         <Play aria-hidden /> Review
