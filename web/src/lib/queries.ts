@@ -122,7 +122,10 @@ export function useCandidatesWorktrees() {
   return useQuery({ queryKey: queryKeys.candidatesWorktrees, queryFn: () => api.candidatesWorktrees(), staleTime: SWR_DAY_MS })
 }
 
-/** Release releasability for one repo (1h SWR; retention matches). */
+/** Release releasability for one repo (1h SWR; retention matches).
+ * Polls every 30 s like StatusTable: cached rows render instantly, the
+ * background refetch only swaps in fresh data (no skeleton/block). */
+const RELEASE_POLL_MS = 30_000
 export function useReleaseStatus(name: string) {
   return useQuery({
     queryKey: queryKeys.release(name),
@@ -130,10 +133,13 @@ export function useReleaseStatus(name: string) {
     staleTime: RELEASE_SWR_MS,
     gcTime: RELEASE_SWR_MS,
     enabled: !!name,
+    refetchInterval: RELEASE_POLL_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   })
 }
 
-/** Release releasability for several repos (one query each). */
+/** Release releasability for several repos (one query each; same 30 s poll). */
 export function useReleaseStatuses(names: string[]) {
   return useQueries({
     queries: names.map((name) => ({
@@ -141,6 +147,9 @@ export function useReleaseStatuses(names: string[]) {
       queryFn: () => api.releaseStatus(name),
       staleTime: RELEASE_SWR_MS,
       gcTime: RELEASE_SWR_MS,
+      refetchInterval: RELEASE_POLL_MS,
+      refetchIntervalInBackground: false,
+      refetchOnWindowFocus: true,
     })),
   })
 }

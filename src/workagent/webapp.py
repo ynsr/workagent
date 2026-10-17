@@ -324,9 +324,10 @@ def create_app(static_dir: Path, host: str, port: int,
 
     @app.get("/api/release/status")
     def release_status(name: str = "") -> dict:
-        """Releasability for one repo (SWR diff cache); read-only."""
+        """Releasability for one repo; always serves the cached row instantly
+        and revalidates the diff in the background (never blocks)."""
         from . import repos as _repos
-        return _repos.release_status(name)
+        return _repos.release_status(name, background=True)
     @app.get("/api/sessions")
     def sessions_list() -> dict:
         """Persisted harness sessions (newest first); [] pre-migration."""

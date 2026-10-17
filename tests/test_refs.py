@@ -408,10 +408,10 @@ def test_gh_bot_comment_resolved_marker():
 
 def test_fetch_pr_comment_stats_glab(monkeypatch):
     """Issue #28: glab counts # Code Review notes + discussion resolution.
-    Bot `# Code Review` notes follow the same `Status:\\s+RESOLVED` second-line
-    marker as GitHub (case-insensitive): a bot discussion counts as resolved
-    only when every bot note carries the marker — native resolved flags are
-    ignored for bot notes, non-bot threads keep native resolution.
+    A bot `# Code Review` note counts as resolved when natively resolved
+    OR its second non-empty line matches `Status:\\s+RESOLVED`
+    (case-insensitive); a bot discussion is resolved only when every bot
+    note in it is resolved. Non-bot threads keep native resolution.
     """
     monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: json.dumps([
         {"resolved": True, "notes": [
@@ -424,25 +424,26 @@ def test_fetch_pr_comment_stats_glab(monkeypatch):
     ]))
     assert refs.fetch_pr_comment_stats(
         "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo") == {
-            "reviews": 1, "unresolved": 2, "resolved": 0}
+            "reviews": 1, "unresolved": 1, "resolved": 1}
 
 
 def test_fetch_pr_comment_stats_glab_bot_marker(monkeypatch):
-    """Bot marker decides on GitLab too: native flags ignored for bot notes."""
+    """Bot note resolved when natively resolved OR marker present (either suffices)."""
     monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: json.dumps([
         # Marker present but native flags say unresolved → resolved anyway.
         {"resolved": False, "notes": [
             {"body": "# Code Review: ok\nStatus: RESOLVED", "resolved": False,
              "resolvable": True}]},
-        # No marker but native flags say resolved → still unresolved.
+        # No marker but natively resolved → resolved (MR 1766 shape).
         {"resolved": True, "notes": [
             {"body": "# Code Review: open finding", "resolved": True,
              "resolvable": True}]},
-        # Mixed bot notes in one discussion → unresolved (all() required).
+        # Mixed bot notes in one discussion, none natively resolved and one
+        # missing the marker → unresolved (all() required on both paths).
         {"notes": [
             {"body": "# Code Review: one\nStatus: RESOLVED",
-             "resolved": True, "resolvable": True},
-            {"body": "# Code Review: two", "resolved": True,
+             "resolved": False, "resolvable": True},
+            {"body": "# Code Review: two", "resolved": False,
              "resolvable": True}]},
         # Non-bot thread keeps native resolution.
         {"resolved": True, "notes": [
@@ -450,7 +451,7 @@ def test_fetch_pr_comment_stats_glab_bot_marker(monkeypatch):
     ]))
     assert refs.fetch_pr_comment_stats(
         "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo") == {
-            "reviews": 4, "unresolved": 2, "resolved": 2}
+            "reviews": 4, "unresolved": 1, "resolved": 3}
 
 def test_pr_comment_stats_failure_is_soft(monkeypatch):
     def boom(*a, **k):

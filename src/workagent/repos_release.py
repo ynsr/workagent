@@ -188,14 +188,17 @@ def backfill_release_branches() -> None:
             print(f"warning: cannot persist branches for {name}: {e}", file=sys.stderr)
 
 
-def release_status(repo_name: str, force: bool = False) -> dict:
+def release_status(repo_name: str, force: bool = False, background: bool = False) -> dict:
     """Read-only releasability for *repo_name* (SWR over release_diff_cache).
 
     Fresh (<1h) serves instantly; expired-but-present (<1d) serves stale +
-    one background revalidation; empty/force fetches live. Offline fetch
-    with stale rows serves stale + reason; offline with no rows reports
-    reason "cannot reach remote". Never raises for unknown repo — returns
-    releasable False with reason.
+    one background revalidation; empty/force fetches live. With
+    ``background=True`` a fresh cached row is also served instantly while
+    one background revalidation is kicked (the 30 s ReleaseCard poll path —
+    the component never blocks, fresh data swaps in on the next poll).
+    Offline fetch with stale rows serves stale + reason; offline with no
+    rows reports reason "cannot reach remote". Never raises for unknown
+    repo — returns releasable False with reason.
     """
     from . import swr as _swr
     info = store.load_repos().get(repo_name)
@@ -251,6 +254,14 @@ def release_status(repo_name: str, force: bool = False) -> dict:
         except Exception:
             age = float("inf")
         if age < _RELEASE_DIFF_TTL_SECONDS:
+            if background and db is not None:
+                def _refresh() -> None:
+                    try:
+                        _sq.set_release_diff_cache(db, repo_name, _live())
+                    except Exception:
+                        pass
+                _swr.serve_stale_or_refresh(stale=True, is_fresh=False, refresh=_refresh,
+                                            key=f"release:{repo_name}")
             return _finish(cached, False)
         if age < _RELEASE_DIFF_SWR_SECONDS:
             def _refresh() -> None:

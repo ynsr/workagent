@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- GitLab bot review threads resolve on native resolved OR `Status: RESOLVED` second line (MR 1766 shape); fix-comments prompt matches; ReleaseCard polls the diff every 30 s with background revalidation [no-issue]
 - Interactive (`execvp`) harness launches and the pre-release gate now source `~/.config/workagent/env.sh` first like headless/terminal launches (direct-exec parsed overlay; `sourcing env:` logged) [no-issue]
 - `release` verify fetches the branch first and retries (host-side MR merges left a stale local ref, falsely failing successful merges); merge-commit heads accepted via containment check; merged repos drop their cached diff so the ReleaseCard converges to 0 immediately [no-issue]
 - `release` takes `--env-file <script>` (override for the pre-release gate env sourcing); all `repos.commands` executions route through the shared `run_repo_command` helper so future keys inherit sourcing automatically [no-issue]

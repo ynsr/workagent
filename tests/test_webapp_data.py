@@ -56,7 +56,7 @@ def test_release_status_endpoint(client, monkeypatch):
     """GET /api/release/status returns the release_status shape."""
     from workagent import repos as _repos
     monkeypatch.setattr(_repos, "release_status",
-                        lambda name, force=False: {"repo": name, "path": "/r",
+                        lambda name, force=False, background=False: {"repo": name, "path": "/r",
                             "default_branch": "main", "release_branch": "master",
                             "diff_count": 2, "releasable": True, "reason": "",
                             "stale": False})

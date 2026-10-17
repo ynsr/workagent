@@ -173,10 +173,11 @@ def prompt_for_fix_comments(pr_url: str, worktree: str = "", branch: str = "") -
         "any you skip and why.\n\n"
         "Rules:\n"
         "- Resolve/close every comment you fixed or verified as already addressed.\n"
-        "- A plain `# Code Review` bot comment counts as resolved only "
-        "when its second non-empty line (directly below the header) matches "
-        "`Status:\\s+RESOLVED` (case-insensitive); skip comments already carrying that second line and "
-        "insert `Status: RESOLVED` as the new second line of each bot comment you resolve.\n"
+        "- A plain `# Code Review` bot comment counts as resolved when it is "
+        "natively marked resolved OR its second non-empty line (directly below the header) matches "
+        "`Status:\\s+RESOLVED` (case-insensitive); skip comments already resolved either way and, "
+        "for each bot comment you resolve, both resolve it natively (where the host supports it) and "
+        "insert `Status: RESOLVED` as the new second line.\n"
         "- After fixing/applying the required changes, commit and push the code."
     )
     if worktree and branch:

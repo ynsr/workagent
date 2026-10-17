@@ -52,3 +52,28 @@ def test_release_status_serves_stale_without_fetch(tmp_path, monkeypatch):
     monkeypatch.setattr(_store, "load_repos", lambda: {"rx": {"path": "/r/rx", "default_branch": "main", "release_branch": "master"}})
     st = _repos.release_status("rx")
     assert st["diff_count"] == 4 and st["stale"] is True and st["releasable"] is True
+
+def test_release_status_background_revalidates_fresh_cache(tmp_path, monkeypatch):
+    """background=True serves the fresh row instantly and refreshes off-thread."""
+    import time
+    from workagent import repos as _repos
+    from workagent import repos_release as _rel
+    from workagent import store_sqlite as _sq
+    from workagent import store as _store
+    db = tmp_path / "state.db"
+    _sq.init_db(db)
+    monkeypatch.setattr(_sq, "db_path", lambda: db)
+    _sq.register_repo_row(db, "rx", "/r/rx", "jira:RX")
+    with _sq.connect(db) as _c:
+        _c.execute("UPDATE repos SET default_branch='main', release_branch='master' WHERE key_ref='rx'")
+    _sq.set_release_diff_cache(db, "rx", 4)
+    monkeypatch.setattr(_rel, "release_diff_count", lambda *a, **k: 9)
+    monkeypatch.setattr(_store, "load_repos", lambda: {"rx": {"path": "/r/rx", "default_branch": "main", "release_branch": "master"}})
+    st = _repos.release_status("rx", background=True)
+    assert st["diff_count"] == 4 and st["stale"] is False
+    for _ in range(100):
+        count, _ = _sq.get_release_diff_cache(db, "rx")
+        if count == 9:
+            break
+        time.sleep(0.05)
+    assert _sq.get_release_diff_cache(db, "rx")[0] == 9

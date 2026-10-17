@@ -83,12 +83,12 @@ def _review_comments_gh(pr_url: str, cwd: str | None) -> dict:
 def _review_comments_glab(pr_url: str, cwd: str | None) -> dict:
     """{reviews, unresolved, resolved} for a GitLab MR via discussions API.
 
-    reviews = notes whose body starts with `# Code Review`. Like GitHub,
-    a bot note counts as resolved only when its second non-empty line
-    (below the header) matches `Status:\\s+RESOLVED` (case-insensitive) —
-    native resolved/resolvable flags are ignored for bot notes. Non-bot
-    review threads keep native resolution (discussion resolved=True, or
-    every resolvable note resolved).
+    reviews = notes whose body starts with `# Code Review`. A bot note
+    counts as resolved when it is natively resolved (discussion
+    resolved=True, or every resolvable note resolved) OR its second
+    non-empty line (below the header) matches `Status:\\s+RESOLVED`
+    (case-insensitive). A bot discussion is resolved only when every bot
+    note in it is resolved. Non-bot review threads keep native resolution.
     """
     m = _GITLAB_MR.match(pr_url or "")
     if not m:
@@ -109,12 +109,18 @@ def _review_comments_glab(pr_url: str, cwd: str | None) -> dict:
     resolved = 0
     for disc in data or []:
         notes = (disc or {}).get("notes") or []
-        bot_notes = [str((n or {}).get("body") or "") for n in notes
-                     if str((n or {}).get("body") or "").lstrip().startswith("# Code Review")]
-        reviews += len(bot_notes)
-        if bot_notes:
-            # Bot threads: the marker decides, native flags ignored.
-            if all(_bot_comment_resolved(b) for b in bot_notes):
+        bot = [n for n in notes
+               if str((n or {}).get("body") or "").lstrip().startswith("# Code Review")]
+        reviews += len(bot)
+        if bot:
+            # Bot threads: resolved when natively resolved OR marker present.
+            # Native mirrors the non-bot path: discussion resolved=True, or
+            # every resolvable bot note resolved (vacuous when none are).
+            bot_resolvable = [n for n in bot if (n or {}).get("resolvable")]
+            native = (disc or {}).get("resolved") is True or all(
+                (n or {}).get("resolved") for n in bot_resolvable)
+            bodies = [str((n or {}).get("body") or "") for n in bot]
+            if native or all(_bot_comment_resolved(b) for b in bodies):
                 resolved += 1
             else:
                 unresolved += 1
