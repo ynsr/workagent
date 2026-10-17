@@ -266,3 +266,47 @@ def test_fetch_migration_defaults_github_off(isolated_config):
     assert sq.load_trackers(db)["jira:IPG"]["fetch_enabled"] is True
     assert sq.load_repos(db)["a"]["fetch_enabled"] is False
     assert sq.load_repos(db)["b"]["fetch_enabled"] is True
+
+
+def test_candidate_prs_drops_linked_variants_and_release_mrs(isolated_config, tmp_path, monkeypatch):
+    """Slash-variant linked URLs, linked worktree paths, and default->release
+    MRs are dropped; surviving rows carry the registered repo_name."""
+    from workagent import cli_candidates as cc
+    from tests.cli_helpers import _init_repo
+    repo = _init_repo(tmp_path / "proj")
+    wt = repo.parent / "wt-feat"
+    import subprocess as _sp
+    _sp.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b",
+             "feat/b", str(wt)], check=True, capture_output=True)
+    cfg = store.load_config()
+    cfg["repos"] = {"proj": {"path": str(repo), "default_branch": "main",
+                             "release_branch": "release"}}
+    empty = tmp_path / "empty-scan"
+    empty.mkdir()
+    cfg["scan_root"] = str(empty)
+    store.save_config(cfg)
+    monkeypatch.setattr(cli, "_repo_tool", lambda path: "gh")
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", lambda tool, cwd: [
+        {"number": 1, "title": "linked slash", "branch": "feat/a",
+         "updated": "2026-09-20T10:00:00Z",
+         "url": "https://github.com/o/r/pull/1", "state": "OPEN"},
+        {"number": 2, "title": "linked path", "branch": "feat/b",
+         "updated": "2026-09-21T10:00:00Z",
+         "url": "https://github.com/o/r/pull/2", "state": "OPEN"},
+        {"number": 3, "title": "release MR", "branch": "main",
+         "updated": "2026-09-22T10:00:00Z",
+         "url": "https://github.com/o/r/pull/3", "state": "OPEN",
+         "target_branch": "release"},
+        {"number": 4, "title": "real one", "branch": "feat/c",
+         "updated": "2026-09-23T10:00:00Z",
+         "url": "https://github.com/o/r/pull/4", "state": "OPEN"},
+    ])
+    store.record_link("github:o/r#1",
+                      {"pr_url": "https://github.com/o/r/pull/1/"})
+    # Path-only link (no branch recorded): consulting linked_paths means
+    # resolving the worktree's live branch, so the feat/b PR is dropped.
+    store.record_link("branch:feat/b", {"worktree": str(wt)})
+    prs, _warnings = cc._candidate_prs()
+    assert [p["number"] for p in prs] == [4], (
+        "slash-variant URLs, linked paths, and default->release MRs must be filtered")
+    assert prs[0].get("repo_name") == "proj"

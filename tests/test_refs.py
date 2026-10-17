@@ -473,12 +473,14 @@ def test_fetch_open_prs_gh(monkeypatch):
         calls.append((a, k))
         return json.dumps([
             {"number": 33, "title": "T1", "headRefName": "feat/x",
+             "baseRefName": "main",
              "updatedAt": "2026-09-20T10:00:00Z",
              "url": "https://github.com/o/r/pull/33"}])
 
     monkeypatch.setattr(refs, "run_cmd", fake)
     prs = refs.fetch_open_prs("gh", "/repo")
     assert prs == [{"number": 33, "title": "T1", "branch": "feat/x",
+                    "target_branch": "main",
                     "updated": "2026-09-20T10:00:00Z",
                     "url": "https://github.com/o/r/pull/33", "state": "OPEN"}]
     assert calls[0][0][:5] == ("gh", "pr", "list", "--state", "open")

@@ -25,7 +25,12 @@ from .cli_core import (
 
 
 def _linked_sets() -> tuple[set, set, set, set, dict]:
-    """Linked URL/branch/path sets shared by the per-source candidate fetchers."""
+    """Linked URL/branch/path sets shared by the per-source candidate fetchers.
+
+    URLs are normalized via `refs.normalize_pr_url` (trailing slash + `.git`
+    stripped), so a clone-URL paste or hand-added slash still matches.
+    `linked_paths` resolves each linked worktree's live branch via git, so
+    a path-only link (no recorded branch) still drops its PR."""
     links = store.load_links()
     linked_urls = set()
     linked_issue_urls = set()
@@ -36,11 +41,11 @@ def _linked_sets() -> tuple[set, set, set, set, dict]:
             continue
         pr_url = str(v.get("pr_url", "") or "")
         if pr_url:
-            linked_urls.add(pr_url.rstrip("/"))
+            linked_urls.add(refs.normalize_pr_url(pr_url))
         issue_url = str(v.get("issue_url", "") or "")
         if issue_url:
-            linked_urls.add(issue_url.rstrip("/"))
-            linked_issue_urls.add(issue_url.rstrip("/"))
+            linked_urls.add(refs.normalize_pr_url(issue_url))
+            linked_issue_urls.add(refs.normalize_pr_url(issue_url))
         branch = str(v.get("branch", "") or "")
         if branch:
             linked_branches.add(branch)
@@ -50,6 +55,11 @@ def _linked_sets() -> tuple[set, set, set, set, dict]:
                 linked_paths.add(str(Path(wt).expanduser().resolve()))
             except OSError:
                 linked_paths.add(wt)
+            if not branch:
+                live = run_cmd("git", "-C", wt, "branch", "--show-current",
+                               check=False)
+                if live and str(live).strip():
+                    linked_branches.add(str(live).strip())
     return linked_urls, linked_issue_urls, linked_branches, linked_paths, links
 
 
@@ -57,7 +67,7 @@ def _candidate_prs() -> tuple[list[dict], list[str]]:
     """Unlinked open PR/MRs across registered repos (slowest source: live host-CLI calls)."""
     from . import cli as _cli  # shim: tests patch cli._repo_tool
     warnings: list[str] = []
-    linked_urls, _, linked_branches, _, _ = _linked_sets()
+    linked_urls, _, linked_branches, linked_paths, _ = _linked_sets()
     prs: list[dict] = []
     for name, entry in store.load_repos().items():
         if not entry.get("fetch_enabled", True):
@@ -67,16 +77,30 @@ def _candidate_prs() -> tuple[list[dict], list[str]]:
             tool = _cli._repo_tool(path)
             if tool not in ("gh", "glab"):
                 continue
+            default_branch = str(entry.get("default_branch", "") or "")
+            release_branch = str(entry.get("release_branch", "") or "")
             for p in refs.fetch_open_prs(tool, path):
                 url = str(p.get("url", ""))
-                if url.rstrip("/") in linked_urls:
+                if url and refs.normalize_pr_url(url) in linked_urls:
                     continue
                 branch = str(p.get("branch", "") or "")
                 if branch and branch in linked_branches:
                     continue
+                wt_path = str(p.get("worktree_path", "") or "")
+                if wt_path and wt_path in linked_paths:
+                    continue
+                target = str(p.get("target_branch", "") or "")
+                # Release plumbing is never review work: drop default→release
+                # MRs (target == release, or source == default when the
+                # release branch is configured).
+                if release_branch and target == release_branch:
+                    continue
+                if default_branch and branch == default_branch:
+                    continue
                 key = refs.pr_key(url)
                 prs.append({**p, "url": url, "key": key,
-                            "repo": key.split(":", 1)[-1].rsplit("#", 1)[0]})
+                            "repo": key.split(":", 1)[-1].rsplit("#", 1)[0],
+                            "repo_name": name})
         except HarnessError as e:
             warnings.append(f"{name}: {e}")
         except Exception as e:  # one bad repo must not kill the listing
@@ -158,7 +182,7 @@ def _candidate_issues(force: bool = False, days: int = 90,
         if key and refs.matching_issue_keys(key, links):
             continue
         url = str(i.get("url", "") or "")
-        if url and url.rstrip("/") in linked_issue_urls:
+        if url and refs.normalize_pr_url(url) in linked_issue_urls:
             continue
         # Repo hint: the Launch default for this ref — linked worktree's
         # repo, else the tracker's single linked repo, else "".

@@ -258,15 +258,25 @@ def pr_key(url: str) -> str:
     return ""
 
 
+def normalize_pr_url(url: str) -> str:
+    """Linked-vs-candidate URL comparison: strip trailing slashes and a
+    trailing `.git` (clone-URL paste / hand-added slash must still match)."""
+    norm = (url or "").strip().rstrip("/")
+    if norm.lower().endswith(".git"):
+        norm = norm[:-4].rstrip("/")
+    return norm
+
+
 def fetch_open_prs(tool: str, cwd: str | None = None) -> list[dict]:
     """All open PRs/MRs of the repo at *cwd*, normalized.
 
-    Returns [{number, title, branch, updated, url, state:"OPEN"}].
-    Raises HarnessError when the host CLI fails (caller decides).
+    Returns [{number, title, branch, target_branch, updated, url,
+    state:"OPEN"}]. Raises HarnessError when the host CLI fails (caller
+    decides).
     """
     if tool == "gh":
         out = run_cmd("gh", "pr", "list", "--state", "open", "--limit", "100",
-                      "--json", "number,title,headRefName,updatedAt,url",
+                      "--json", "number,title,headRefName,baseRefName,updatedAt,url",
                       cwd=cwd)
         try:
             data = json.loads(out or "[]")
@@ -274,6 +284,7 @@ def fetch_open_prs(tool: str, cwd: str | None = None) -> list[dict]:
             raise HarnessError("cannot parse gh pr list output")
         return [{"number": p["number"], "title": p.get("title", ""),
                  "branch": p.get("headRefName", ""),
+                 "target_branch": p.get("baseRefName", ""),
                  "updated": p.get("updatedAt", ""), "url": p.get("url", ""),
                  "state": "OPEN"} for p in data]
     if tool == "glab":
@@ -290,6 +301,7 @@ def fetch_open_prs(tool: str, cwd: str | None = None) -> list[dict]:
             raise HarnessError("cannot parse glab mr list output")
         return [{"number": m["iid"], "title": m.get("title", ""),
                  "branch": m.get("source_branch", ""),
+                 "target_branch": m.get("target_branch", ""),
                  "updated": m.get("updated_at", ""),
                  "url": m.get("web_url", ""), "state": "OPEN"} for m in data]
     raise HarnessError(f"unsupported host CLI: {tool}")

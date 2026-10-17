@@ -149,15 +149,19 @@ Always 200 — a missing/failing host CLI yields `[]` plus a `warning`:
 
 ### `GET /api/candidates`
 Unlinked open PR/MRs across every registered repo (PR/MR URLs already
-present in `links.json` are excluded server-side) plus issues for the
+present in `links.json` are excluded server-side — normalized: trailing
+slash and `.git` stripped — plus linked branch/worktree matches; the
+repo's default→release MRs are excluded as release plumbing, never
+review work) plus issues for the
 (window, scope) selection (same query as `/api/issues`; days/mine
 params accepted) plus unregistered on-disk worktrees under the scan
 root. `?force=true` re-queries the tracker CLIs live instead of the
 served cache window (slow). Read-only:
 {"prs": [{"key": "github:o/r#33", "number": 33, "title": "…",
           "url": "https://github.com/o/r/pull/33", "branch": "feat/x",
+          "target_branch": "main",
           "updated": "2026-09-20T10:00:00Z", "state": "OPEN",
-          "repo": "o/r"}],
+          "repo": "o/r", "repo_name": "proj"}],
  "issues": [{"key": "jira:IPG-981", "title": "…", "url": "…",
              "status": "To Do", "created": "2026-09-20T10:00:00.000+0000",
              "reporter": "Younes Rahimi", "description": "…"}],
@@ -166,6 +170,8 @@ served cache window (slow). Read-only:
                "key_guess": "branch:feat/x", "mtime": "2026-09-20T10:00:00+00:00"}],
  "warnings": ["proj: gh pr list failed: …"]}
  ```
+(`repo_name` is the registered repo name for the Launch repo picker;
+`target_branch` is the MR/PR base branch.)
 
 Issue rows also carry `reporter` (jira) / `author` (github login) plus
 `description` for the Recent-issues client-side filter: scope toggles
