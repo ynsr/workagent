@@ -45,22 +45,27 @@ export function repoKeyForItem(item: RepoTabItem, repos: Repo[]): string {
 }
 
 /** Repo tabs (?repo=) shared by Dashboard/Runs/Sessions: "All" + one tab per
- * registered repo name + "(other)" when items fall outside every repo path. */
+ * registered repo name with at least one item + "(other)" when items fall
+ * outside every repo path. A stale ?repo= value that matches no tab falls
+ * back to "All" (empty filter). */
 export function useRepoTabs(items: RepoTabItem[], repos: Repo[] | undefined) {
   const [params, setParams] = useSearchParams()
-  const repoFilter = (params.get("repo") ?? "").trim()
   const list = repos ?? []
   const tabs = useMemo(() => {
-    const names = list.map((r) => r.name)
+    const allNames = list.map((r) => r.name)
     const counts = new Map<string, number>()
     let other = 0
     for (const item of items) {
       const k = repoKeyForItem(item, list)
-      if (names.includes(k)) counts.set(k, (counts.get(k) ?? 0) + 1)
+      if (allNames.includes(k)) counts.set(k, (counts.get(k) ?? 0) + 1)
       else other += 1
     }
+    const names = allNames.filter((n) => (counts.get(n) ?? 0) > 0)
     return { names, counts, other }
   }, [items, list])
+  const raw = (params.get("repo") ?? "").trim()
+  const repoFilter =
+    raw && raw !== "(other)" && !tabs.names.includes(raw) ? "" : raw
   function setRepo(next: string) {
     const p = new URLSearchParams(params)
     if (next) p.set("repo", next)
