@@ -360,6 +360,7 @@ def link_list(
     refresh_pr: bool = typer.Option(False, "--refresh-pr", help="Fetch origin, then re-query PR status instead of using the cache."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
     csv_output: bool = typer.Option(False, "--csv", help="Output as CSV (stdout; logs go to stderr)."),
+    include_deleted: bool = typer.Option(False, "--include-deleted", help="Include soft-deleted worktree links."),
 ) -> None:
     from . import cli as _cli  # shim: status fns stay in cli.py
     """List tracker↔repo relations and worktree links.
@@ -369,7 +370,7 @@ def link_list(
       workagent link list --json
     """
     trackers_map = store.load_trackers()
-    links = store.load_links()
+    links = store.load_links(include_deleted=include_deleted)
     _cli._fetch_origins(links, refresh_pr)
     if json_output:
         print(json.dumps({"trackers": trackers_map,
@@ -416,11 +417,13 @@ def link_remove(
     ref: str = typer.Argument(..., help="Tracker id or worktree key (issue/PR ref, branch, or worktree path)."),
     repo: Optional[str] = typer.Option(None, "--repo", help="Only remove this repo from the tracker mapping."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    hard_delete: bool = typer.Option(False, "--hard-delete", help="Drop the worktree row immediately (skip the 7-day soft-delete recovery window)."),
 ) -> None:
-    """Remove a tracker mapping or delete a worktree DB row.
+    """Remove a tracker mapping or soft-delete a worktree DB row.
 
-    Worktree rows are deleted from the database only — files, branch and
-    PR are left untouched. This key's session history is deleted too.
+    Worktree rows are stamped deleted_at (recoverable for 7 days via
+    `link undelete`) — files, branch and PR are left untouched.
+    Sessions survive soft-delete; only GC after 7 days cascades them.
 
     Example:
       workagent link remove jira:IPG
@@ -442,8 +445,13 @@ def link_remove(
         _fail(f"no tracker mapping or worktree link for {ref}", EXIT_USAGE)
     links = store.load_links(include_inactive=True)
     if resolved in links:
-        store.delete_worktree_row(resolved)
-        _print_result({"removed": resolved}, json_output)
+        if hard_delete:
+            store.delete_worktree_row(resolved)
+            _print_result({"removed": resolved}, json_output)
+        else:
+            deleted_at = store.soft_delete_worktree(resolved)
+            _print_result({"removed": resolved, "deleted_at": deleted_at,
+                           "recover": "workagent link undelete " + resolved}, json_output)
         return
 
 
@@ -473,6 +481,37 @@ def link_reactivate(
         _fail(f"no worktree link for {ref}", EXIT_USAGE)
     store.set_worktree_active(resolved, True)
     _print_result({"reactivated": resolved}, json_output)
+
+
+@link_app.command("gc")
+@_catch_harness_errors
+def link_gc(
+    dry_run: bool = typer.Option(False, "--dry-run", help="List rows that would be purged without acting."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Purge worktree rows soft-deleted more than 7 days ago (worktree dir + local branch + row)."""
+    from . import cli_cleanup as _cleanup
+    rows = _cleanup.gc_soft_deleted(dry_run=dry_run)
+    if json_output:
+        print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
+        return
+    _print_rows(rows, json_output, False, ["key", "branch", "status"],
+                "GC (soft-deleted)", "(nothing to purge)")
+
+
+@link_app.command("undelete")
+@_catch_harness_errors
+def link_undelete(
+    ref: str = typer.Argument(..., help="Worktree key (issue/PR ref, branch, or worktree path)."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Restore a soft-deleted worktree link (clears deleted_at)."""
+    resolved = worktrees.resolve_worktree(ref, store.load_links(include_inactive=True,
+                                                                include_deleted=True))
+    if resolved is None:
+        _fail(f"no worktree link for {ref}", EXIT_USAGE)
+    store.undelete_worktree(resolved)
+    _print_result({"undeleted": resolved}, json_output)
 
 
 from .cli_repo_util import (  # noqa: F401,E402

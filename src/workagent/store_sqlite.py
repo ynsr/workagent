@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS worktrees (
   issue_url TEXT NOT NULL DEFAULT '', pr_url TEXT NOT NULL DEFAULT '',
   added_at TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}',
   active INTEGER NOT NULL DEFAULT 1,
+  deleted_at TEXT NOT NULL DEFAULT '',
   UNIQUE (repo_key, branch));
 CREATE TABLE IF NOT EXISTS pr_cache (
   branch TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, checked_at TEXT NOT NULL);
@@ -204,6 +205,18 @@ def _migrate_worktrees_active(conn) -> None:
         return
     if "active" not in cols:
         conn.execute("ALTER TABLE worktrees ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
+def _migrate_worktrees_deleted_at(conn) -> None:
+    """Schema v12: worktrees gains deleted_at ('' = live, ISO ts = soft-deleted).
+
+    ALTER TABLE is enough (NOT NULL DEFAULT '', so old rows read back as
+    live). Idempotent: skipped when present.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
+    if not cols:
+        return
+    if "deleted_at" not in cols:
+        conn.execute("ALTER TABLE worktrees ADD COLUMN deleted_at TEXT NOT NULL DEFAULT ''")
+
 
 def _default_fetch_enabled(tid: str = "", tool: str = "") -> int:
     """Default fetch gate: GitHub off (slow/rate-limited, opt-in), else on.
@@ -459,6 +472,8 @@ def _schema_current(path: Path) -> bool:
         wcols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
         if "active" not in wcols:
             return False
+        if "deleted_at" not in wcols:
+            return False
         widx = list(conn.execute("PRAGMA index_list(worktrees)"))
         idx_cols = []
         for entry in widx:
@@ -517,8 +532,8 @@ def init_db(path: Path) -> Path:
                 _migrate_tracker_enabled(conn)
                 _migrate_repos_release(conn)
                 _migrate_repos_commands(conn)
+                _migrate_worktrees_deleted_at(conn)
         except sqlite3.OperationalError as e:
-            last = e
             if "locked" not in str(e).lower():
                 raise
             if _schema_current(path):
@@ -672,7 +687,10 @@ from .store_sessions import (  # noqa: F401,E402
     set_session_metadata,
 )
 
-from .store_links import delete_worktree_row, load_links_rows, save_links_rows, set_worktree_active  # noqa: F401,E402
+from .store_links import (  # noqa: F401,E402
+    SOFT_DELETE_RETENTION_DAYS,
+    delete_worktree_row, gc_soft_deleted, load_links_rows, save_links_rows,
+    set_worktree_active, soft_delete_worktree, undelete_worktree)
 
 def migrate_json(config_dir: Path, db_path: Path) -> dict:
     """One-shot migration: links/pr_cache/harnesses JSON → state.db.

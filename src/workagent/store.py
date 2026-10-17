@@ -109,19 +109,24 @@ def _sqlite_path():
         return None
 
 
-def load_links(include_inactive: bool = False) -> dict:
+def load_links(include_inactive: bool = False, include_deleted: bool = False) -> dict:
     db = _sqlite_path()
     if db is not None:
         from . import store_sqlite as sq
-        return sq.load_links_rows(db, include_inactive=include_inactive)
+        return sq.load_links_rows(db, include_inactive=include_inactive,
+                                  include_deleted=include_deleted)
     links = _read_json(config_dir() / "links.json", {})
     for key, entry in links.items():
         if isinstance(entry, dict):
             entry.setdefault("ref_key", key)
             entry.setdefault("active", 1)
+            entry.setdefault("deleted_at", "")
     if not include_inactive:
         links = {k: v for k, v in links.items()
                  if not isinstance(v, dict) or v.get("active", 1) != 0}
+    if not include_deleted:
+        links = {k: v for k, v in links.items()
+                 if not isinstance(v, dict) or not v.get("deleted_at")}
     return links
 
 
@@ -149,11 +154,69 @@ def delete_worktree_row(key: str) -> None:
         from . import store_sqlite as sq
         sq.delete_worktree_row(db, key)
         return
-    links = load_links(include_inactive=True)
+    links = load_links(include_inactive=True, include_deleted=True)
     if key not in links:
         raise HarnessError(f"no worktree link for {key}", exit_code=2)
     del links[key]
     save_links(links)
+
+
+def soft_delete_worktree(key: str) -> str:
+    """Stamp deleted_at (soft-delete); row, sessions, and files all survive."""
+    from .errors import HarnessError
+    db = _sqlite_path()
+    if db is not None:
+        from . import store_sqlite as sq
+        return sq.soft_delete_worktree(db, key)
+    path = config_dir() / "links.json"
+    links = _read_json(path, {})
+    if key not in links:
+        raise HarnessError(f"no worktree link for {key}", exit_code=2)
+    links[key]["deleted_at"] = _now_iso()
+    save_links(links)
+    return links[key]["deleted_at"]
+
+
+def undelete_worktree(key: str) -> None:
+    """Clear deleted_at (restore a soft-deleted row)."""
+    from .errors import HarnessError
+    db = _sqlite_path()
+    if db is not None:
+        from . import store_sqlite as sq
+        sq.undelete_worktree(db, key)
+        return
+    path = config_dir() / "links.json"
+    links = _read_json(path, {})
+    if key not in links:
+        raise HarnessError(f"no worktree link for {key}", exit_code=2)
+    links[key]["deleted_at"] = ""
+    save_links(links)
+
+
+def gc_soft_deleted(retention_days: int = 7) -> list[dict]:
+    """Hard-delete rows soft-deleted longer than *retention_days* ago.
+
+    Returns [{ref_key, path, branch, repo}] for the caller to tear down
+    on disk before/after (row is already gone; sessions/runs CASCADE).
+    """
+    db = _sqlite_path()
+    if db is not None:
+        from . import store_sqlite as sq
+        return sq.gc_soft_deleted(db, retention_days=retention_days)
+    from datetime import timedelta
+    path = config_dir() / "links.json"
+    links = _read_json(path, {})
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+    expired = [k for k, v in links.items()
+               if isinstance(v, dict) and v.get("deleted_at") and v["deleted_at"] < cutoff]
+    rows = [{"ref_key": k, "path": links[k].get("worktree", ""),
+             "branch": links[k].get("branch", ""),
+             "repo": links[k].get("repo", "")} for k in expired]
+    for k in expired:
+        del links[k]
+    if expired:
+        save_links(links)
+    return rows
 
 def save_links(links: dict) -> None:
     db = _sqlite_path()
@@ -165,9 +228,10 @@ def save_links(links: dict) -> None:
 
 def record_link(issue_key: str, entry: dict) -> None:
     if _sqlite_path() is not None:
-        # include_inactive: save_links_rows deletes absent rows, so an
-        # active-only snapshot would purge every deactivated worktree.
-        links = load_links(include_inactive=True)
+        # include_inactive + include_deleted: save_links_rows deletes
+        # absent rows, so a filtered snapshot would purge deactivated
+        # and soft-deleted worktrees.
+        links = load_links(include_inactive=True, include_deleted=True)
         merged = {**links.get(issue_key, {}), **entry}
         merged.setdefault("added_at", _now_iso())
         links[issue_key] = merged

@@ -46,6 +46,7 @@ def cleanup(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
     merged: bool = typer.Option(False, "--merged", help="Clean every linked worktree whose PR/MR is merged/closed (requires --yes; skips live-harness and invalid worktrees)."),
     no_squash: bool = typer.Option(False, "--no-squash", help="Merge open PRs with a merge commit instead of squash."),
+    hard_delete: bool = typer.Option(False, "--hard-delete", help="Delete the row, worktree, and branch immediately (skip the 7-day soft-delete recovery window)."),
 ) -> None:
     """Close issue + remove worktree/branch/PR.
 
@@ -97,7 +98,7 @@ def cleanup(
                 continue
             rows.append(_cleanup_one(key, dict(entry), force, yes, dry_run,
                                      json_output, squash=not no_squash,
-                                     merge=False))
+                                     merge=False, hard_delete=hard_delete))
         if json_output:
             print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
         else:
@@ -148,7 +149,7 @@ def cleanup(
             _fail("aborted", EXIT_USAGE)
 
     result = _cleanup_one(key, dict(entry), force, True, False, json_output,
-                          squash=not no_squash)
+                          squash=not no_squash, hard_delete=hard_delete)
 
 
 def _pr_missing(msg: str) -> bool:
@@ -294,13 +295,18 @@ def _merge_pr(pr_url: str, squash: bool = True, cwd: str | None = None,
 
 def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
                  dry_run: bool, json_output: bool, squash: bool = True,
-                 merge: bool | None = None) -> dict:
+                 merge: bool | None = None, hard_delete: bool = False) -> dict:
     """Clean one linked worktree: merge open PR/MR, git-wt cleanup, close + drop link.
 
     Shared by `cleanup <ref>` (after confirmation) and the `cleanup --merged`
     loop (after the merged/live-harness/validity gates). The caller owns ref
     resolution and prompts; this only acts. Returns a summary row with
     "status": "cleaned" or "dry-run".
+
+    Soft-delete (default): the MR merge-or-close still runs, but all local
+    and remote teardown is skipped and the row is stamped deleted_at
+    instead of dropped — recoverable for 7 days via `link undelete`.
+    `hard_delete` restores the immediate full teardown.
     """
     from . import cli as _cli  # shim: tests patch cli.*
     repo = Path(entry.get("repo", "")).expanduser()
@@ -418,6 +424,15 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
             head_ref = branch if merged_now else ""
     delete_remote = bool(branch) and (merged_now or fresh_state == "merged") \
         and (not head_ref or head_ref == branch)
+    if not hard_delete:
+        # Soft-delete: no local/remote teardown — worktree files, branch
+        # (local + remote) all survive. Only the row is stamped.
+        deleted_at = store.soft_delete_worktree(key)
+        tail = " (soft-deleted; recover within 7 days via `link undelete`)"
+        if not json_output:
+            eprint(f"{key}: cleaned{tail}")
+        return {"key": key, "branch": branch, "status": "cleaned",
+                "deleted_at": deleted_at}
     cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=False,
                                      force=force, yes=yes)
     try:
@@ -433,8 +448,7 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
             remote_deleted = True
         except HarnessError as e:
             eprint(f"warning: remote branch delete failed: {e}")
-    remaining = {k: v for k, v in store.load_links(include_inactive=True).items() if k != key}
-    store.save_links(remaining)
+    store.delete_worktree_row(key)
     if not json_output:
         tail = " (remote branch deleted)" if remote_deleted \
             else " (remote branch kept)"
@@ -501,4 +515,35 @@ def _close_pr(parsed: dict, pr_url: str, force: bool, cwd: str | None = None) ->
             raise
         eprint(f"warning: {e}")
 
+
+def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict]:
+    """Purge worktree rows soft-deleted longer than *retention_days* ago.
+
+    For each expired row: git-wt cleanup (worktree dir + local branch),
+    delete the local branch, then drop the row (already gone from the
+    store's view — gc_soft_deleted removed it; sessions/runs CASCADE).
+    Remote branches are NOT touched: the merge-or-close at cleanup time
+    already decided their fate. Returns per-row status dicts.
+    """
+    from . import cli as _cli
+    expired = store.gc_soft_deleted(retention_days=retention_days)
+    rows = []
+    for r in expired:
+        key, branch, repo = r["ref_key"], r.get("branch", ""), r.get("repo", "")
+        status = "purged"
+        if dry_run:
+            rows.append({"key": key, "branch": branch, "status": "gc-dry-run"})
+            continue
+        if branch and repo:
+            try:
+                gitwt.cleanup_worktree(Path(repo), branch, delete_branch=False,
+                                       force=True, yes=True)
+            except HarnessError as e:
+                eprint(f"warning: git-wt cleanup failed for {key}: {e}")
+            try:
+                _cli.run_cmd("git", "-C", str(repo), "branch", "-D", branch)
+            except HarnessError:
+                pass
+        rows.append({"key": key, "branch": branch, "status": status})
+    return rows
 

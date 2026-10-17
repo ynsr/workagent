@@ -396,6 +396,14 @@ def _is_ip(hostname: str) -> bool:
 def run_server(host: str, port: int, static_dir: Path,
                allowed_hosts: list[str]) -> None:
     try:
+        from .cli_cleanup import gc_soft_deleted
+        purged = gc_soft_deleted()
+        if purged:
+            print(f"gc: purged {len(purged)} soft-deleted worktree(s) "
+                  f"older than 7 days", file=sys.stderr)
+    except Exception as e:
+        print(f"warning: soft-delete GC failed: {e}", file=sys.stderr)
+    try:
         import uvicorn
     except ImportError:
         print("error: the web extra is required — install with "

@@ -72,7 +72,7 @@ def test_cleanup_merged_loop(isolated_config, monkeypatch):
     monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
     monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda path: True)
-    r = _invoke("cleanup", "--merged", "--yes", "--json")
+    r = _invoke("cleanup", "--merged", "--yes", "--json", "--hard-delete")
     assert r.exit_code == 0, r.output
     status = {row["key"]: row["status"] for row in json.loads(r.stdout)["results"]}
     assert status == {"jira:IPG-1": "cleaned", "jira:IPG-2": "skipped:open"}
@@ -80,6 +80,26 @@ def test_cleanup_merged_loop(isolated_config, monkeypatch):
     links = store.load_links()
     assert "jira:IPG-1" not in links and "jira:IPG-2" in links
 
+
+def test_cleanup_merged_loop_soft_deletes_by_default(isolated_config, monkeypatch):
+    """Without --hard-delete the merged loop stamps deleted_at, no teardown."""
+    store.record_link("jira:IPG-1", {"issue": "IPG-1", "worktree": "/tmp/wt-1",
+                                     "branch": "feat/1", "repo": "/tmp/proj"})
+    monkeypatch.setattr(
+        cli, "_status_cells",
+        lambda entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
+    cleaned = []
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda repo, branch, **k: cleaned.append(branch) or {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
+    monkeypatch.setattr(cli.worktrees, "is_valid_worktree", lambda path: True)
+    r = _invoke("cleanup", "--merged", "--yes", "--json")
+    assert r.exit_code == 0, r.output
+    assert cleaned == []
+    assert "jira:IPG-1" not in store.load_links()
+    row = store.load_links(include_deleted=True)["jira:IPG-1"]
+    assert row["deleted_at"]
 
 def test_cleanup_merged_skips_live_harness_and_invalid(isolated_config,
                                                        tmp_path, monkeypatch):
@@ -166,7 +186,7 @@ def test_cleanup_merges_open_pr_first(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr("workagent.cli.run_cmd", fake)
     entry = dict(store.load_links()["jira:IPG-9"])
     out = cli._cleanup_one("jira:IPG-9", entry, force=True, yes=True,
-                           dry_run=False, json_output=True)
+                           dry_run=False, json_output=True, hard_delete=True)
     assert out["status"] == "cleaned"
     assert "merge" in calls
     assert "close" not in calls  # merged, not closed
@@ -229,7 +249,7 @@ def test_cleanup_picks_latest_open_pr(isolated_config, monkeypatch, capsys):
     monkeypatch.setattr("workagent.cli.run_cmd", lambda *a, **k: "")
     out = cli._cleanup_one("jira:IPG-12", dict(store.load_links()["jira:IPG-12"]),
                            force=False, yes=True, dry_run=False,
-                           json_output=True, merge=False)
+                           json_output=True, merge=False, hard_delete=True)
     assert seen["url"] == "https://github.com/o/r/pull/2"
     assert "latest for branch" in capsys.readouterr().err
     assert out["remote_deleted"] is True
@@ -259,7 +279,7 @@ def test_cleanup_force_conflict_leaves_pr_open_keeps_remote(isolated_config, mon
     monkeypatch.setattr("workagent.cli.run_cmd", boom)
     out = cli._cleanup_one("jira:IPG-13", dict(store.load_links()["jira:IPG-13"]),
                            force=True, yes=True, dry_run=False,
-                           json_output=True)
+                           json_output=True, hard_delete=True)
     assert not closed  # PR left open on unmergeable --force
     assert "left open" in capsys.readouterr().err
     assert out["status"] == "cleaned"
@@ -303,7 +323,8 @@ def test_cleanup_unknown_pr_state_closes_without_merge(isolated_config, monkeypa
     monkeypatch.setattr("workagent.cli.run_cmd",
                         lambda *a, **k: calls.append("merge") or "")
     out = cli._cleanup_one("jira:IPG-10", dict(store.load_links()["jira:IPG-10"]),
-                           force=False, yes=True, dry_run=False, json_output=True)
+                           force=False, yes=True, dry_run=False, json_output=True,
+                           hard_delete=True)
     assert "close" in calls
     assert out["remote_deleted"] is False  # unknown state keeps remote branch
 
@@ -407,7 +428,8 @@ def test_cleanup_merged_state_skips_remote_close(isolated_config, monkeypatch, c
         return ""
     monkeypatch.setattr("workagent.cli.run_cmd", fake_run)
     out = cli._cleanup_one("jira:IPG-11", dict(store.load_links()["jira:IPG-11"]),
-                           force=False, yes=True, dry_run=False, json_output=True)
+                           force=False, yes=True, dry_run=False, json_output=True,
+                           hard_delete=True)
     assert "close" not in calls
     assert "skipping remote close" in capsys.readouterr().err
     assert out["remote_deleted"] is True  # merged source branch is deleted
@@ -459,7 +481,8 @@ def test_cleanup_repairs_stale_repo_from_live_worktree(isolated_config, tmp_path
     monkeypatch.setattr(cli, "_status_cells",
                         lambda entry, refresh_pr=False: {"pr_data": {"state": ""}})
     cli._cleanup_one("jira:X-1", dict(store.load_links()["jira:X-1"]),
-                     force=False, yes=True, dry_run=False, json_output=True)
+                     force=False, yes=True, dry_run=False, json_output=True,
+                     hard_delete=True)
     assert seen["repo"] == str(main)
     assert seen["cwd"] == str(wt)
     assert seen["wt_alive_at_close"] is True
