@@ -83,3 +83,52 @@ def test_headless_launch_gets_parsed_env(tmp_path, isolated_config, monkeypatch)
     backend.launch("omp", "p", str(tmp_path), no_tty=True,
                    env_file=str(env_file))
     assert seen["env"]["TEST_WA_ENV"] == "hello123"
+
+def test_tty_launch_applies_overlay_before_exec(tmp_path, isolated_config, monkeypatch):
+    from workagent import backend, store
+    env_file = store.config_dir() / "env.sh"
+    env_file.write_text("export TEST_WA_ENV=tty123\n")
+    monkeypatch.delenv("TEST_WA_ENV", raising=False)
+    monkeypatch.setattr(backend.shutil, "which", lambda n: f"/usr/bin/{n}")
+    seen = {}
+
+    def fake_execvp(path, argv):
+        seen["environ"] = dict(backend.os.environ)
+        raise RuntimeError("stop after exec")
+
+    monkeypatch.setattr(backend.os, "execvp", fake_execvp)
+    monkeypatch.setattr(backend, "cd_worktree", lambda d: None)
+    import pytest as _pytest
+    with _pytest.raises(RuntimeError, match="stop after exec"):
+        backend.get_harness("omp").launch("p", str(tmp_path), False,
+                                          env_file=str(env_file))
+    assert seen["environ"].get("TEST_WA_ENV") == "tty123"
+
+
+def test_merged_env_overlay(tmp_path, isolated_config, monkeypatch):
+    from workagent import store
+    env_file = store.config_dir() / "env.sh"
+    env_file.write_text("export TEST_WA_MERGED=yes456\n")
+    monkeypatch.delenv("TEST_WA_MERGED", raising=False)
+    assert env.merged_env(str(env_file))["TEST_WA_MERGED"] == "yes456"
+
+
+def test_pre_release_gate_sources_env(tmp_path, isolated_config):
+    import subprocess
+    from workagent import release_gates as g
+    from workagent import store
+    src = tmp_path / "src"
+    src.mkdir()
+    for a in (["init", "-q", str(src)],
+              ["-C", str(src), "config", "user.email", "t@t"],
+              ["-C", str(src), "config", "user.name", "t"]):
+        subprocess.run(["git", *a], check=True)
+    (src / "f.txt").write_text("x")
+    subprocess.run(["git", "-C", str(src), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(src), "commit", "-qm", "init"], check=True)
+    sha = subprocess.run(["git", "-C", str(src), "rev-parse", "HEAD"],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    env_file = store.config_dir() / "env.sh"
+    env_file.write_text("export TEST_WA_GATE=gate789\n")
+    g.run_local_gate(str(src), "proj", sha,
+                     "test \"$TEST_WA_GATE\" = gate789", 60)

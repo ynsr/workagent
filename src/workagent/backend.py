@@ -53,16 +53,18 @@ class OmpHarness(Harness):
         return ["omp", *(extra_args or []), prompt]
 
     def launch(self, prompt, workdir, no_tty, extra_args=None, env_file=None):
+        from . import env as _env
         argv = self.command_argv(prompt, no_tty, extra_args)
         if shutil.which(argv[0]) is None:
             raise HarnessError(f"`{argv[0]}` not found on PATH")
         if no_tty:
-            from . import env as _env
-            overlay = _env.launch_env(env_file)
-            merged = dict(os.environ)
-            merged.update(overlay)
+            merged = _env.merged_env(env_file)
             proc = subprocess.run(argv, cwd=workdir, env=merged)
             return proc.returncode
+        # TTY exec replaces this process: apply the parsed overlay to our
+        # own environ first so the harness inherits it (same values the
+        # headless child and the sourced shell command would see).
+        os.environ.update(_env.launch_env(env_file))
         cd_worktree(workdir)
         os.execvp(argv[0], argv)
         return 0  # unreachable; keeps type checkers quiet
@@ -122,11 +124,15 @@ def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
     argv = get_harness(harness).command_argv(prompt, no_tty, extra_args)
     print(f"$ {' '.join(argv)}", file=sys.stderr, flush=True)
     if watch and not no_tty:
+        from . import env as _env
         shim = [sys.executable, "-m", "workagent", "watch-and-exec",
                 "--sid", str(watch["sid"]),
                 "--scope-dir", str(watch["scope_dir"]),
                 "--before", str(watch.get("before") or ""),
                 "--", *argv]
+        # Shim exec replaces this process: apply the overlay first so the
+        # harness inherits it (mirrors OmpHarness.launch TTY path).
+        os.environ.update(_env.launch_env(env_file))
         cd_worktree(workdir)
         os.execvp(shim[0], shim)
         return 0  # unreachable; keeps type checkers quiet

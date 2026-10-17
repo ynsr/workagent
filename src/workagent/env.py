@@ -1,11 +1,12 @@
-"""Env-file sourcing for terminal/headless harness launches.
+"""Env-file sourcing for terminal/headless/interactive harness launches.
 
 Terminal emulators and daemon-spawned headless runs miss the user's login
 shell env (VISUAL/EDITOR/NO_PROXY/...). `env_file` (config.json key,
 default `<config_dir>/env.sh`) points at a shell script sourced before
-every harness command: `bash -lc 'source <file> && <cmd>'` for shell
-strings (terminal/resume), and parsed `KEY=VAL` export for direct-exec
-headless launches (subprocess env=).
+every harness command (start/review/fix-comments/sync) and every
+repos.commands execution (currently the pre-release gate): `bash -lc
+'source <file> && <cmd>'` for shell strings (terminal/resume), and
+parsed `KEY=VAL` export for direct-exec launches (subprocess env=).
 
 The default file content is seeded on first launch (ensure_env_file).
 """
@@ -117,7 +118,6 @@ def parse_env_file(path: str | Path) -> dict[str, str]:
         out[key] = val
     return out
 
-
 def launch_env(env_file: str | Path | None) -> dict[str, str]:
     """Environ overlay for headless child launches (parsed env file)."""
     if not env_file:
@@ -128,3 +128,17 @@ def launch_env(env_file: str | Path | None) -> dict[str, str]:
     except OSError:
         return {}
     return parse_env_file(env_file)
+
+
+def merged_env(env_file: str | Path | None) -> dict[str, str]:
+    """os.environ overlaid with the parsed env file (empty when none).
+
+    Single choke point for every direct-exec child (headless harness,
+    pre-release gate, and any future repos.commands runner): parse the
+    file once here instead of reimplementing the merge per caller.
+    """
+    import os as _os
+    merged = dict(_os.environ)
+    merged.update(launch_env(env_file))
+    return merged
+

@@ -26,11 +26,20 @@ _sleep = time.sleep
 _GRACE_S = 10
 
 
-def _run_group(argv: list[str], cwd: str, timeout_s: int) -> None:
-    """Run argv in its own process group; timeout kills the group."""
+def _run_group(argv: list[str], cwd: str, timeout_s: int,
+               env_file: str | None = None) -> None:
+    """Run argv in its own process group; timeout kills the group.
+
+    The env file is sourced first via the parsed KEY=VAL overlay (same
+    semantics as the headless harness launch) so repos.commands entries
+    see the same env as login shells.
+    """
+    from . import env as _env
+    resolved = _env.resolve_env_file(env_file)
+    eprint(f"sourcing env: {resolved}" if resolved else "sourcing env: none")
     proc = subprocess.Popen(
         argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, start_new_session=True,
+        text=True, start_new_session=True, env=_env.merged_env(resolved),
     )
     assert proc.stdout is not None
     try:
@@ -51,8 +60,13 @@ def _run_group(argv: list[str], cwd: str, timeout_s: int) -> None:
 
 
 def run_local_gate(repo_path: str, repo_name: str, sha: str,
-                   command: str, timeout_s: int) -> None:
-    """Run pre-release *command* in a detached worktree at *sha*."""
+                   command: str, timeout_s: int,
+                   env_file: str | None = None) -> None:
+    """Run pre-release *command* in a detached worktree at *sha*.
+
+    *env_file* overrides the configured default (None = resolve the
+    default); every repos.commands execution sources it first.
+    """
     from .release_util import worktree_base
     if not (command or "").strip():
         _fail(f"{repo_name}: pre-release command missing.", 2)
@@ -61,7 +75,8 @@ def run_local_gate(repo_path: str, repo_name: str, sha: str,
     dest = _wt.release_path(str(worktree_base()), repo_name)
     _wt.prepare(repo_path, dest, sha)
     try:
-        _run_group(["/bin/sh", "-c", command.strip()], str(dest), timeout_s)
+        _run_group(["/bin/sh", "-c", command.strip()], str(dest), timeout_s,
+                   env_file)
     except HarnessError:
         _wt.finish(dest, False)
         raise
