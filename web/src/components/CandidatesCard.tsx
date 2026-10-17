@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useConfirmedRun, useCopyFeedback } from "@/components/RunActions"
 import { CopyCell } from "@/components/CopyCell"
@@ -40,6 +41,7 @@ const TABS: readonly { value: Tab; label: (n: number) => string }[] = [
 export function CandidatesCard() {
   const navigate = useNavigate()
   const runConfirmed = useConfirmedRun()
+  const qc = useQueryClient()
   // Per-tab queries: each source loads independently, so the slow live-PR
   // fetch never blocks issues/worktrees; switching tabs shows ready data
   // immediately while the rest streams in (per-tab skeletons below).
