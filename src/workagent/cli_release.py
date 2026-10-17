@@ -92,21 +92,74 @@ def _find_or_open_mr(tool: str, path: str, default_branch: str, release_branch: 
 
 
 def _origin_tip_now(path: str, branch: str) -> str:
-    """Fresh origin/<branch> SHA (no cache)."""
+    """Fresh origin/<branch> SHA (no cache; caller fetches first)."""
     return (run_cmd("git", "-C", path, "rev-parse", f"origin/{branch}") or "").strip()
 
 
-def _verify_head(path: str, release_branch: str, pinned: str) -> None:
-    """Confirm origin/<release> == pinned after merge; _fail otherwise."""
+def _fetch_branch(path: str, branch: str) -> None:
+    """Refresh origin/<branch>; never fails the release (offline tolerated)."""
     try:
-        head = _origin_tip_now(path, release_branch)
-    except HarnessError as e:
-        _fail(f"cannot verify release head: {e}", EXIT_GENERAL)
-        return
-    if head != pinned:
-        _fail(f"release head {head or '?'} != pinned {pinned}; verify on the host.",
-              EXIT_GENERAL)
+        run_cmd("git", "-C", path, "fetch", "origin", branch, echo=False)
+    except HarnessError:
+        pass
 
+
+def _head_contains(path: str, release_branch: str, pinned: str) -> bool:
+    """True when origin/<release> == pinned or contains it (merge commit)."""
+    head = _origin_tip_now(path, release_branch)
+    if head == pinned:
+        return True
+    try:
+        run_cmd("git", "-C", path, "merge-base", "--is-ancestor", pinned,
+                f"origin/{release_branch}", echo=False)
+    except HarnessError:
+        return False
+    return True
+
+
+def _verify_head(path: str, release_branch: str, pinned: str) -> None:
+    """Confirm origin/<release> has *pinned* after merge; _fail otherwise.
+
+    Fetches the branch first (the checkout's remote-tracking ref is stale
+    after a host-side MR merge) and retries twice; a merge-commit head is
+    accepted when it contains the pinned SHA.
+    """
+    head = ""
+    for _ in range(3):
+        _fetch_branch(path, release_branch)
+        try:
+            if _head_contains(path, release_branch, pinned):
+                _invalidate_diff_cache_by_path(path)
+                return
+            head = _origin_tip_now(path, release_branch)
+        except HarnessError as e:
+            _fail(f"cannot verify release head: {e}", EXIT_GENERAL)
+            return
+    _fail(f"release head {head or '?'} != pinned {pinned}; verify on the host.",
+          EXIT_GENERAL)
+
+
+def _invalidate_diff_cache_by_path(path: str) -> None:
+    """Drop cached release diff counts for the repo at *path* (merged)."""
+    try:
+        from . import store as _store
+        from . import store_sqlite as _sq
+        from pathlib import Path as _P
+        db = _store._sqlite_path()  # noqa: SLF001 — same package
+        if db is None:
+            return
+        want = str(_P(path).expanduser().resolve())
+        for name, info in _store.load_repos().items():
+            try:
+                got = str(_P(str((info or {}).get("path", ""))).expanduser().resolve())
+            except Exception:
+                continue
+            if got and got == want:
+                with _sq.connect(db) as conn:
+                    conn.execute("DELETE FROM release_diff_cache WHERE repo_key = ?",
+                                 (name,))
+    except Exception:
+        pass
 
 def _merge_pinned(tool: str, path: str, release_branch: str, pinned: str,
                   mr_url: str, strategy: list[str]) -> str:
@@ -123,6 +176,7 @@ def _merge_pinned(tool: str, path: str, release_branch: str, pinned: str,
             info = row
             break
     default = str((info or {}).get("default_branch", "") or "")
+    _fetch_branch(path, default)
     if default and _origin_tip_now(path, default) not in ("", pinned):
         _fail(f"release source advanced past {pinned}; re-run release.", EXIT_GENERAL)
     last_err: Exception | None = None

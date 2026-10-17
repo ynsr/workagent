@@ -500,6 +500,62 @@ def test_source_branch_never_deleted(monkeypatch):
     flat = " ".join(" ".join(c) for c in calls)
     assert "branch -D" not in flat and "push :main" not in flat.replace("  ", " ")
 
+def test_verify_head_fetches_before_compare(monkeypatch):
+    rel = _flow_registry(monkeypatch)
+    calls = []
+    def _fake(*a, **k):
+        calls.append(a)
+        if a[:3] == ("git", "-C", "/r") and "fetch" in a:
+            return ""
+        if a[:3] == ("git", "-C", "/r") and "rev-parse" in a:
+            return "abc123"
+        return ""
+    monkeypatch.setattr(rel, "run_cmd", _fake)
+    rel._verify_head("/r", "master", "abc123")  # must not raise
+    flat = " ".join(" ".join(c) for c in calls)
+    assert flat.index("fetch") < flat.index("rev-parse")
+
+
+def test_verify_head_accepts_merge_commit_head(monkeypatch):
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "merge999")
+    monkeypatch.setattr(rel, "_fetch_branch", lambda *a, **k: None)
+    monkeypatch.setattr(rel, "_invalidate_diff_cache_by_path",
+                        lambda *a, **k: None)
+    def _fake(*a, **k):
+        assert "merge-base" in a and "--is-ancestor" in a
+        return ""
+    monkeypatch.setattr(rel, "run_cmd", _fake)
+    rel._verify_head("/r", "master", "abc123")  # contains pinned: no raise
+
+
+def test_verify_head_invalidates_cache_on_success(monkeypatch):
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    monkeypatch.setattr(rel, "_fetch_branch", lambda *a, **k: None)
+    dropped = []
+    monkeypatch.setattr(rel, "_invalidate_diff_cache_by_path",
+                        lambda p: dropped.append(p))
+    rel._verify_head("/r", "master", "abc123")
+    assert dropped == ["/r"]
+
+
+def test_verify_head_retries_then_fails(monkeypatch):
+    import typer
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "stale111")
+    monkeypatch.setattr(rel, "_fetch_branch", lambda *a, **k: None)
+    def _boom(*a, **k):
+        from workagent.errors import HarnessError
+        raise HarnessError("not ancestor")
+    monkeypatch.setattr(rel, "run_cmd", _boom)
+    try:
+        rel._verify_head("/r", "master", "abc123")
+    except typer.Exit as e:
+        assert e.exit_code == 1
+    else:
+        raise AssertionError("expected verify failure")
+
 
 def test_interrupt_triggers_cleanup(monkeypatch):
     import typer

@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Interactive (`execvp`) harness launches and the pre-release gate now source `~/.config/workagent/env.sh` first like headless/terminal launches (direct-exec parsed overlay; `sourcing env:` logged) [no-issue]
+- `release` verify fetches the branch first and retries (host-side MR merges left a stale local ref, falsely failing successful merges); merge-commit heads accepted via containment check; merged repos drop their cached diff so the ReleaseCard converges to 0 immediately [no-issue]
 - `release` takes `--env-file <script>` (override for the pre-release gate env sourcing); all `repos.commands` executions route through the shared `run_repo_command` helper so future keys inherit sourcing automatically [no-issue]
 - Repos gain a `pre-release` gate (auto-detected per project type, editable in Repos page) run before release MR-open; failure aborts [no-issue]
 - Dashboard StatusTable row actions resume the latest non-running session of any type (start/review/sync/fix_comments) via a terminal+copy split button; previously only review/fix-comments sessions enabled the copy button so start-session worktrees showed a dead button [no-issue]
