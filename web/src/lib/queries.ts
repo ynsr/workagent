@@ -7,6 +7,7 @@ export const queryKeys = {
   info: ["info"] as const,
   statusAll: ["status", "all"] as const,
   statusInactive: ["status", "inactive"] as const,
+  statusDeleted: ["status", "deleted"] as const,
   path: (ref: string) => ["path", ref] as const,
   repos: ["repos"] as const,
   trackers: ["trackers"] as const,
@@ -53,6 +54,19 @@ export function useStatusInactive() {
   return useQuery({
     queryKey: queryKeys.statusInactive,
     queryFn: () => api.statusAll({ includeInactive: true }),
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    staleTime: SWR_STATUS_MS,
+    gcTime: SWR_STATUS_MS,
+  })
+}
+
+/** Soft-deleted worktrees (default /api/status hides them). Same 15 s poll. */
+export function useStatusDeleted() {
+  return useQuery({
+    queryKey: queryKeys.statusDeleted,
+    queryFn: () => api.statusAll({ includeInactive: true, includeDeleted: true }),
     refetchInterval: 15_000,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,

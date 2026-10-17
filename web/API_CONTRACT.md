@@ -18,8 +18,10 @@ same-origin check passes).
 
 ### `GET /api/status` → all worktrees
 Map of worktree key → entry (same shape as `workagent status --json`).
+Query params: `ref` (single detail), `refresh=true` (re-query PR),
+`include_inactive=true` (deactivated rows), `include_deleted=true`
+(soft-deleted rows, 7-day recovery window).
 Jira rows are keyed `jira:KEY@repo` (e.g. `jira:IPG-932@projectx`); bare
-`jira:KEY` rows are pre-suffix legacy and still resolve.
 ```json
 {
   "jira:IPG-932@projectx": {

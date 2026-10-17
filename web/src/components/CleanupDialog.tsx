@@ -34,12 +34,12 @@ export function CleanupDialog({
   worktreeKey: string
   invalid: boolean
   sourceBranch?: string
-  onClose: (ok: false | { force: boolean } | { action: "deactivate" } | { action: "deleteFromDb" }) => void
+  onClose: (ok: false | { force: boolean; hardDelete: boolean } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean }) => void
 }) {
   const [force, setForce] = useState(invalid)
+  const [hardDelete, setHardDelete] = useState(false)
   const effectiveForce = invalid || force
   const longLived = isLongLivedSource(sourceBranch ?? "")
-
   const rows: [string, string][] = invalid
     ? [["State check", "Skipped — entry is removed either way"]]
     : [
@@ -79,7 +79,9 @@ export function CleanupDialog({
           <AlertDialogDescription>
             {invalid
               ? "The recorded path is missing or not a live git worktree. The entry is removed either way. This cannot be undone."
-              : "Closes the tracker issue, removes the worktree, deletes the local branch, and merges or closes the PR. The remote branch is deleted only when the PR merges. This cannot be undone."}
+              : hardDelete
+                ? "Closes the tracker issue, removes the worktree, deletes the local branch, and merges or closes the PR. The remote branch is deleted only when the PR merges. This cannot be undone."
+                : "Closes or merges the PR, then soft-deletes the entry — worktree files, branch, and remote branch all survive, recoverable for 7 days via link undelete. Check hard-delete to tear everything down immediately."}
           </AlertDialogDescription>
           {!invalid ? (
             <div className="overflow-x-auto rounded-md border">
@@ -120,6 +122,14 @@ export function CleanupDialog({
               flag="--force"
               description="Skip state validation and confirmation"
             />
+            <CheckRow
+              id="cleanup-hard-delete"
+              checked={hardDelete}
+              onChange={(v) => setHardDelete(v)}
+              label="Hard-delete (no recovery)"
+              flag="--hard-delete"
+              description="Delete the row, worktree, and branch immediately — skip the 7-day recovery window"
+            />
           </div>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -133,14 +143,14 @@ export function CleanupDialog({
             </AlertDialogAction>
           ) : null}
           <AlertDialogAction
-            title="link remove — drop the database row only; files/branch/PR untouched, session history deleted"
-            onClick={() => onClose({ action: "deleteFromDb" })}
+            title="link remove — soft-delete the database row (recoverable 7 days); files/branch/PR untouched"
+            onClick={() => onClose({ action: "deleteFromDb", hardDelete })}
           >
             Delete from DB
           </AlertDialogAction>
           <AlertDialogAction
             autoFocus
-            onClick={() => onClose({ force: effectiveForce })}
+            onClick={() => onClose({ force: effectiveForce, hardDelete })}
           >
             {invalid ? "Delete worktree" : "Remove worktree"}
           </AlertDialogAction>

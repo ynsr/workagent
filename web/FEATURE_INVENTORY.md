@@ -28,11 +28,12 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `review --repo/--depth/--harness/--no-tty/--launch/--terminal/--dry-run/--yes/--json` | mutating | — | `review` | no | as above | as above (`--terminal` XOR `--launch`, same spawn/lock semantics as `start --terminal`) |
 | `cleanup --merged [--force/--dry-run/--json]` | mutating | — | `cleanup:all` | **yes** (per merged/closed link) | `--merged` w/o `--yes` non-interactive (2); ref given with `--merged` (2) | none — requires `--yes`; skips live-harness/invalid worktrees |
 | `open REF` | read-only-ish (OS opener) | — | `open:<ref>` | no | no linked state (2), invalid/missing worktree (1), no opener (1) | none — prints the worktree path |
-| `cleanup REF` | mutating | — | `cleanup:<ref>` | **yes** (closes tracker issue, removes worktree + local branch, closes/merges PR; remote branch deleted only on merge of the branch PR, `--force` merge-fail leaves PR open and remote kept; modal shows a live Cleanup-vs---force table) | no linked state; conflicted/404 PR keeps remote + link (1) | none (non-TTY) / y-N (TTY) |
+| `cleanup REF` | mutating | — | `cleanup:<ref>` | **yes** (closes/merges PR then soft-deletes: worktree/branch/remote survive, 7-day `link undelete` window; `--hard-delete` tears down immediately; modal shows live outcome table + hard-delete checkbox) | no linked state; conflicted/404 PR keeps remote + link (1) | none (non-TTY) / y-N (TTY) |
 | `cleanup --force` | mutating | — | `cleanup:<ref>` | **yes** | | skips state validation |
 | `cleanup --yes` | mutating | — | `cleanup:<ref>` | **yes** | | skips confirmation |
 | `cleanup --dry-run` | read-only-ish | — | `cleanup:<ref>` | no | no linked state | none |
 | `cleanup --json` | mutating | — | `cleanup:<ref>` | **yes** | | |
+| `cleanup --hard-delete` | mutating | — | `cleanup:<ref>` | **yes** (immediate full teardown, no recovery) | | skips the 7-day soft-delete window |
 | `status [REF]` | read-only | `_resolve_session_key` + `_enrich_entry` / `_session_detail` (`cli.py`) | — | no | unknown ref without linked state | none |
 | `status --worktree` | read-only | same (`_session_rows(show_worktree=True)`) | — | no | | |
 | `status --refresh-pr` | read-only (network) | `_enrich_entry(entry, refresh=True)` | — | no | | |
@@ -51,8 +52,10 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `repo update NAME [--default-branch] [--release-branch] [--pre-release] [--json]` | mutating | — | — | no (config write) | unknown repo (2) | none |
 | `release REPO [--checks ci\|local\|both\|none] [--diff remote\|local] [--pre-release-timeout 10m] [--ci-timeout 15m] [--env-file script] [--yes] [--dry-run] [--json]` | mutating | — | `release:<repo>` | yes (pinned-SHA MR merge) | bad checks/diff (2), diverged behind>0 (1), CI fail/timeout (1) | TTY confirm; non-TTY needs `--yes` (2); `--env-file` sourced before the pre-release gate (default: configured `env.sh`) |
 | `link set TRACKER REPO [--json]` | mutating | — | `link:set` | no (config write) | resolve failure | none |
-| `link remove REF [--repo] [--json]` | mutating | — | `link:remove` | yes-ish (drops relation/link) | repo not linked (2) | none |
-| `link list [--worktree] [--refresh-pr] [--json/--csv]` | read-only | `store.load_config()["trackers"]` + `_enrich_entry` | — | no | | none |
+| `link remove REF [--repo] [--json] [--hard-delete]` | mutating | — | `link:remove` | yes-ish (soft-deletes link, 7-day `link undelete` window; `--hard-delete` drops immediately) | repo not linked (2) | none |
+| `link undelete REF [--json]` | mutating | — | `link:undelete` | no (clears deleted_at) | no worktree link (2) | none |
+| `link gc [--dry-run] [--json]` | mutating | — | `link:gc` | no (purges rows soft-deleted >7d: worktree dir + local branch + row) | | none |
+| `link list [--worktree] [--refresh-pr] [--json/--csv] [--include-deleted]` | read-only | `store.load_config()["trackers"]` + `_enrich_entry` | — | no | | none |
 | `tracker add KEY [--vendor] [--remote-url] [--fetch/--no-fetch] [--json]` | mutating | — | `config` | no (trackers table write) | `--vendor` outside the jira/github enum (2) | none — vendor/URL derive from the key when blank |
 | `tracker list [--json/--csv]` | read-only | `store_sqlite.load_tracker_rows` | — | no | | none |
 | `tracker remove KEY [--json]` | mutating | — | `config` | yes-ish (row delete, links cascade) | unknown tracker (2) | none |

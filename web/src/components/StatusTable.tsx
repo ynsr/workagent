@@ -10,6 +10,8 @@ export interface StatusTableActions {
   onCleanup?: (key: string) => void
   /** Reactivate a deactivated worktree (`link reactivate` confirmed run). */
   onReactivate?: (key: string) => void
+  /** Restore a soft-deleted worktree (`link undelete` confirmed run). */
+  onUndelete?: (key: string) => void
   onOpenWorktree: (key: string) => void
   onOpenRun: (key: string) => void
   /** Navigate to the Sessions page filtered to this worktree. */

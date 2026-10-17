@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { GitPullRequest, History, Play, RefreshCw, Rocket, Square, Trash2, Wrench } from "lucide-react"
+import { GitPullRequest, History, Play, RefreshCw, Rocket, Square, Trash2, Undo2, Wrench } from "lucide-react"
 import type { WorktreeMap } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -104,6 +104,14 @@ export function RowActions({
           onClick={() => actions.onReactivate?.(worktreeKey)}
         >
           <Play aria-hidden />
+        </ActionIcon>
+      ) : null}
+      {actions.onUndelete ? (
+        <ActionIcon
+          title={`Undelete ${worktreeKey} (restore soft-deleted entry)`}
+          onClick={() => actions.onUndelete?.(worktreeKey)}
+        >
+          <Undo2 aria-hidden />
         </ActionIcon>
       ) : null}
       {showRuns ? (

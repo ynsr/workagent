@@ -15,6 +15,7 @@ import { CandidatesCard } from "@/components/CandidatesCard"
 import { ReleaseCard } from "@/components/ReleaseCard"
 import { CleanupDialog } from "@/components/CleanupDialog"
 import { DeactivatedTable } from "@/components/DeactivatedTable"
+import { DeletedTable } from "@/components/DeletedTable"
 import { PageHeader } from "@/components/PageHeader"
 import { StatusTable } from "@/components/StatusTable"
 import {
@@ -30,7 +31,7 @@ import { Switch } from "@/components/ui/switch"
 import { api, type WorktreeMap } from "@/lib/api"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
-import { queryKeys, useCreateRun, useInfo, useRepos, useStatusAll, useStatusInactive, useStopTerminal } from "@/lib/queries"
+import { queryKeys, useCreateRun, useInfo, useRepos, useStatusAll, useStatusDeleted, useStatusInactive, useStopTerminal } from "@/lib/queries"
 import { useRepoTabs } from "@/lib/useRepoTabs"
 import { getShowWorktree, setShowWorktree as persistShowWorktree } from "@/lib/settings"
 
@@ -75,6 +76,7 @@ export function Dashboard() {
   const createRun = useCreateRun()
   const { data: worktrees, isPending, isFetching, isError, error, refetch } = useStatusAll()
   const { data: inactiveAll } = useStatusInactive()
+  const { data: deletedAll } = useStatusDeleted()
   const { data: info } = useInfo()
   const { data: repos } = useRepos()
   const repoTabs = useRepoTabs(
@@ -317,11 +319,11 @@ export function Dashboard() {
     setCleanupTarget(key)
   }
 
-  async function submitCleanup(key: string, opts: { force: boolean } | { action: "deactivate" } | { action: "deleteFromDb" }) {
+  async function submitCleanup(key: string, opts: { force: boolean; hardDelete: boolean } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean }) {
     setCleanupTarget(null)
     if ("action" in opts) {
       try {
-        const cmd = opts.action === "deactivate" ? ["deactivate", key] : ["remove", key]
+        const cmd = opts.action === "deactivate" ? ["deactivate", key] : ["remove", key, ...(opts.hardDelete ? ["--hard-delete"] : [])]
         const { run_id } = await createRun.mutateAsync({ command: "link", args: cmd, confirm: true })
         runCreated(run_id, opts.action === "deactivate" ? `Deactivated ${key}` : `Deleted ${key} from DB`)
       } catch (err) {
@@ -332,7 +334,7 @@ export function Dashboard() {
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "cleanup",
-        args: [key, ...(opts.force ? ["--force"] : [])],
+        args: [key, ...(opts.force ? ["--force"] : []), ...(opts.hardDelete ? ["--hard-delete"] : [])],
         confirm: true,
         force: opts.force || undefined,
       })
@@ -368,6 +370,19 @@ export function Dashboard() {
         confirm: true,
       })
       runCreated(run_id, `Reactivated ${key}`)
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  async function handleUndelete(key: string) {
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "link",
+        args: ["undelete", key],
+        confirm: true,
+      })
+      runCreated(run_id, `Undeleted ${key}`)
     } catch (err) {
       toast.error(errorText(err))
     }
@@ -531,6 +546,16 @@ export function Dashboard() {
               onOpenWorktree: handleOpenWorktree,
               onOpenRun: handleOpenRun,
               onReactivate: handleReactivate,
+            }}
+          />
+          <DeletedTable
+            worktrees={Object.fromEntries(
+              Object.entries(deletedAll ?? {}).filter(([k]) => !(k in (worktrees ?? {}))),
+            )}
+            actions={{
+              onOpenWorktree: handleOpenWorktree,
+              onOpenRun: handleOpenRun,
+              onUndelete: handleUndelete,
             }}
           />
           <div className="mt-6">
