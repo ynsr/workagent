@@ -59,8 +59,9 @@ def test_review_preview_prints_command_and_skips_launch(isolated_config, tmp_pat
     assert launched == []  # harness must not run
     out = json.loads(r.stdout)
     assert out["worktree_path"] == str(worktree)
-    assert out["harness_command"].startswith(f"cd {worktree} && omp ")
-    assert "harness command: cd " in r.stderr
+    assert out["harness_command"].startswith("source ")
+    assert f"cd {worktree} && omp " in out["harness_command"]
+    assert "harness command: source " in r.stderr
     assert str(worktree) in r.stderr
 
 

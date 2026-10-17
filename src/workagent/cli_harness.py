@@ -208,11 +208,12 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     if not isinstance(env_file, str):
         env_file = None
     from . import env as _env
-    # Env file for terminal/headless launches: explicit --env-file wins,
-    # else the configured default (auto-created with sane defaults on
-    # first launch). Terminal spinners source it in-shell; headless
-    # children get it parsed into their environment.
-    env_path = _env.ensure_env_file(env_file) if (launch or terminal) else None
+    # Env file for every launch path (preview included): explicit
+    # --env-file wins, else the configured default (auto-created with
+    # sane defaults on first launch). Terminal spinners source it
+    # in-shell; headless children get it parsed into their environment;
+    # the preview shows the exact same wrapped command.
+    env_path = _env.ensure_env_file(env_file)
     harness = backend.get_harness(harness_name)
     action = _session_action(result)
     branch0 = str(result.get("branch", "") or "")

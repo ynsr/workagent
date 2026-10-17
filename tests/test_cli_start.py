@@ -236,8 +236,9 @@ def test_start_preview_prints_command_and_skips_launch(isolated_config, tmp_path
     assert launched == []  # harness must not run
     out = json.loads(r.stdout)
     assert out["worktree_path"] == str(worktree)
-    assert out["harness_command"].startswith(f"cd {worktree} && omp ")
-    assert "harness command: cd " in r.stderr
+    assert out["harness_command"].startswith("source ")
+    assert f"cd {worktree} && omp " in out["harness_command"]
+    assert "harness command: source " in r.stderr
     assert str(worktree) in r.stderr
 
 
@@ -318,9 +319,7 @@ def test_start_preview_persists_session_row(isolated_config, tmp_path, monkeypat
     assert "/sessions/omp/feat/22-add-login/start/" in row["file_path"]
     runs = store_sqlite.list_runs(db)
     assert len(runs) == 1 and runs[0]["command"] == "start"
-    # RunDetail/start-terminal find the command via the log prefix; a bare
-    # command would render as terminal output after a DB reload (db-37 bug).
-    assert runs[0]["output"].startswith("harness command: cd ")
+    assert runs[0]["output"].startswith("harness command: source ")
     # stdout stays data-only: no session-row chatter on stdout
     assert "preview session recorded" not in r.stdout
 
@@ -352,7 +351,7 @@ def test_start_preview_tty_lands_shell_in_worktree(isolated_config, tmp_path, mo
     assert excinfo.value.args[0] == "/bin/bash"
     assert excinfo.value.args[2] == str(worktree)
     captured = capsys.readouterr()
-    assert "harness command: cd " in captured.err
+    assert "harness command: source " in captured.err
     assert f"worktree_path: {worktree}" in captured.out
 
 

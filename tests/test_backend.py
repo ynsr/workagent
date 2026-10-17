@@ -113,3 +113,13 @@ def test_omp_session_file_routes_via_resume(tmp_path):
         "--session-dir", str(tmp_path)]
     argv = OmpHarness().command_argv("prompt", True, ["--auto-approve"])
     assert "--session-file" not in argv
+
+
+def test_preview_command_sources_env(tmp_path, monkeypatch, isolated_config):
+    from workagent import cli_harness as _h
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    result = {"branch": "feat/x", "command": "start", "key": "k"}
+    _h._run_harness("omp", "do things", str(worktree), str(worktree),
+                    False, False, result, False)
+    assert result["harness_command"].startswith("source ")

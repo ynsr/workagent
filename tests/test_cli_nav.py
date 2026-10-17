@@ -105,8 +105,8 @@ def test_launch_shorthand_L_on_start_and_review(isolated_config, tmp_path, monke
                                  "--no-tty", "--json"])
     assert r2.exit_code == 0, r2.output
     assert launched == []
-    assert json.loads(r.stdout)["harness_command"].startswith("cd ")
-    assert json.loads(r2.stdout)["harness_command"].startswith("cd ")
+    assert json.loads(r.stdout)["harness_command"].startswith("source ")
+    assert json.loads(r2.stdout)["harness_command"].startswith("source ")
     # -L shorthand launches like --launch
     launched.clear()
     store.record_link("jira:IPG-33", {"issue": "IPG-33", "worktree": str(worktree),
