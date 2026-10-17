@@ -17,8 +17,25 @@ import { cn } from "@/lib/utils"
 
 import { COPY, INITIAL, MODES, extraPromptArgs, isPrShaped, runModeArgs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
-import { CheckRow, FieldHelp } from "@/components/FieldHelp"
-import { ReviewActionSelect, RunModeSelect, StartFormFields, buildStartArgs } from "@/components/StartForm"
+import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
+import type { LaunchPrefs } from "@/lib/launchPrefs"
+
+/** Launch prefs slice for the current mode: hydrates run-mode toggles, the
+ * start base, and the review fix flags. `ref`/`repo`/free text are never
+ * persisted, and deep-link URL params win over stored values on mount. */
+function prefsForMode(p: LaunchPrefs, mode: Mode): Partial<LaunchForm> {
+  if (mode === "sync") return { merge: p.sync.merge }
+  if (mode === "review") {
+    return {
+      runMode: p.review.runMode as LaunchForm["runMode"],
+      reviewAction: p.review.fixAction as LaunchForm["reviewAction"],
+      fixComments: p.review.fixAction === "fix",
+      thenFixComments: p.review.thenFix,
+      newFixSession: p.review.newFixSession,
+    }
+  }
+  return { runMode: p.start.runMode as LaunchForm["runMode"], base: p.start.base }
+}
 
 /** Review/Sync fields (kept on the Launch page; Start lives in StartForm). */
 function ExtraPromptField({ form, onChange, id = "launch-extra-prompt" }: {
@@ -110,12 +127,21 @@ export function Launch() {
   const [mode, setMode] = useState<Mode>(
     modeKnown && modeParam !== null ? (modeParam as Mode) : "start",
   )
-  const [form, setForm] = useState<LaunchForm>(() => ({
-    ...INITIAL,
-    ref: modeKnown ? refParam : "",
-    fixComments: modeParam === "review" && params.get("fixComments") === "1",
-    newFixSession: false,
-  }))
+  // Stored prefs seed run-mode toggles, the start base, and the review fix
+  // flags; deep-link URL params (`fixComments=1`, future run-mode params)
+  // win over stored values on this mount.
+  const [form, setForm] = useState<LaunchForm>(() => {
+    const initialMode: Mode = modeKnown && modeParam !== null ? (modeParam as Mode) : "start"
+    const stored = loadLaunchPrefs()
+    const base: LaunchForm = { ...INITIAL, ...prefsForMode(stored, initialMode) }
+    base.ref = modeKnown ? refParam : ""
+    if (modeParam === "review") {
+      const urlFix = params.get("fixComments") === "1"
+      base.fixComments = urlFix || base.fixComments
+      if (urlFix) base.reviewAction = "fix"
+    }
+    return base
+  })
   const [submitting, setSubmitting] = useState(false)
   const [refreshingIssues, setRefreshingIssues] = useState(false)
   const [issuesNonce, setIssuesNonce] = useState(0)
@@ -181,6 +207,30 @@ export function Launch() {
     setForm((f) => ({ ...f, [key]: value }))
   }
 
+
+  // Persist the active tab's slice on every relevant change, merging into
+  // the stored prefs so the shared `runMode` field never smears one tab's
+  // choice into another tab's slice. Switching tabs clears the transient
+  // base (never persisted) so Start shows the stored base on return.
+  useEffect(() => {
+    const prev = loadLaunchPrefs()
+    if (mode === "start") {
+      saveLaunchPrefs({ ...prev, start: { runMode: form.runMode, base: form.base } })
+    } else if (mode === "review") {
+      saveLaunchPrefs({
+        ...prev,
+        review: {
+          runMode: form.runMode,
+          thenFix: form.thenFixComments,
+          fixAction: form.reviewAction,
+          newFixSession: form.newFixSession,
+        },
+      })
+    } else {
+      saveLaunchPrefs({ ...prev, sync: { merge: form.merge } })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, form.runMode, form.base, form.reviewAction, form.thenFixComments, form.newFixSession, form.merge])
 
   function switchMode(next: Mode) {
     setMode(next)
@@ -289,7 +339,7 @@ export function Launch() {
             <div
               role="tablist"
               aria-label="Launch mode"
-              className="inline-flex rounded-lg border p-1"
+              className="inline-flex shrink-0 flex-nowrap rounded-lg border p-1"
             >
               {MODES.map((m) => (
                 <button
@@ -298,7 +348,7 @@ export function Launch() {
                   aria-selected={mode === m}
                   onClick={() => switchMode(m)}
                   className={cn(
-                    "min-h-9 rounded-md px-4 text-sm font-medium transition-colors",
+                    "min-h-9 shrink-0 rounded-md px-4 text-sm font-medium transition-colors",
                     mode === m
                       ? "bg-primary text-primary-foreground"
                       : "text-muted-foreground hover:text-foreground",
@@ -310,7 +360,7 @@ export function Launch() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="grid gap-5">
+        <CardContent className="grid min-h-[420px] content-start gap-5">
           {mode === "start" ? (
             <StartFormFields form={form} onChange={update} idPrefix="launch" issuesNonce={mode === "start" && !refParam ? issuesNonce : undefined} />
           ) : (

@@ -8,6 +8,7 @@ import { useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
 import { RUN_MODE_OPTIONS, REVIEW_ACTION_OPTIONS, INITIAL, extraPromptArgs, runModeArgs } from "@/lib/launchConfig"
 import type { LaunchForm, RunMode, ReviewAction } from "@/lib/launchConfig"
+import { loadLaunchPrefs } from "@/lib/launchPrefs"
 import { FieldHelp } from "@/components/FieldHelp"
 export interface StartFormValue extends LaunchForm {}
 
@@ -285,7 +286,12 @@ export function startFlagList(form: StartFormValue): string {
 }
 
 export function useStartForm(initial?: Partial<StartFormValue>) {
-  const [form, setForm] = useState<StartFormValue>({ ...INITIAL, ...initial })
+  const [form, setForm] = useState<StartFormValue>(() => {
+    // Candidate Start dialog mirrors the Launch Start tab's stored prefs
+    // (run mode + base); the clicked row's ref still wins via `initial`.
+    const stored = loadLaunchPrefs().start
+    return { ...INITIAL, runMode: stored.runMode, base: stored.base, ...initial }
+  })
   function update<K extends keyof StartFormValue>(key: K, value: StartFormValue[K]) {
     setForm((f) => ({ ...f, [key]: value }))
   }
