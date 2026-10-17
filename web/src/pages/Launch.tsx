@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
@@ -197,21 +197,47 @@ export function Launch() {
       }
     }
   }, [prefillChecked, modeParam, refParam, links])
+  // Transient URL-forced fix (`?mode=review&fixComments=1`) stays
+  // live-session-only: it wins over stored prefs on mount but is never
+  // written back until the user explicitly picks a review action.
+  const urlForcedFix = useRef(modeParam === "review" && params.get("fixComments") === "1")
+  /** Restore the incoming tab's stored slice so the shared `runMode` (and
+   * the start base) never smear one tab's values into another tab's stored
+   * slice. `ref`/`repo`/free text are untouched; the URL-forced fix action
+   * is preserved live while transient. */
+  function applyModeSlice(next: Mode) {
+    const stored = loadLaunchPrefs()
+    setForm((f) => {
+      const merged: LaunchForm = { ...f, ...prefsForMode(stored, next) }
+      if (next === "review" && urlForcedFix.current) {
+        merged.reviewAction = f.reviewAction
+        merged.fixComments = f.fixComments
+      }
+      merged.base = next === "start" ? stored.start.base : ""
+      return merged
+    })
+  }
   function update<K extends keyof LaunchForm>(key: K, value: LaunchForm[K]) {
+    if (key === "reviewAction" || key === "fixComments") urlForcedFix.current = false
     // PR/MR-shaped ref typed into the Start tab: switch to Review (toast +
     // keep the text; the user can tab back — never auto-switched back).
     if (mode === "start" && key === "ref" && typeof value === "string" && isPrShaped(value)) {
       setMode("review")
+      applyModeSlice("review")
+      setForm((f) => ({ ...f, [key]: value }))
       toast.info("PR/MR ref detected — switched to Review")
+      return
     }
     setForm((f) => ({ ...f, [key]: value }))
   }
 
 
-  // Persist the active tab's slice on every relevant change, merging into
-  // the stored prefs so the shared `runMode` field never smears one tab's
-  // choice into another tab's slice. Switching tabs clears the transient
-  // base (never persisted) so Start shows the stored base on return.
+  // Persist only the active tab's stored slice on user edits; the incoming
+  // tab's slice is rehydrated on switch so the shared `runMode` never
+  // smears across tabs. The URL-forced fix action stays live-session-only:
+  // sibling review edits still persist, but the stored fix action is kept
+  // until the user explicitly picks one. URL params still win for the live
+  // session.
   useEffect(() => {
     const prev = loadLaunchPrefs()
     if (mode === "start") {
@@ -222,7 +248,7 @@ export function Launch() {
         review: {
           runMode: form.runMode,
           thenFix: form.thenFixComments,
-          fixAction: form.reviewAction,
+          fixAction: urlForcedFix.current ? prev.review.fixAction : form.reviewAction,
           newFixSession: form.newFixSession,
         },
       })
@@ -234,7 +260,7 @@ export function Launch() {
 
   function switchMode(next: Mode) {
     setMode(next)
-    setForm((f) => ({ ...f, base: "" }))
+    applyModeSlice(next)
   }
 
   // Repo is mandatory: prefill from /api/default-repo (linked-worktree repo
