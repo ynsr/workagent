@@ -751,3 +751,55 @@ def test_release_run_accepts_new_flags(client, monkeypatch):
                  "--pre-release-timeout", "10m", "--ci-timeout", "15m"],
         "confirm": True})
     assert r.status_code in (202, 409), r.text  # accepted, not 400 bad_arg
+
+
+def test_resume_session_uses_run_env_file(client, monkeypatch, tmp_path):
+    """Session resume must forward the run's --env-file (WS1)."""
+    from workagent import store_sqlite as sq
+    session = tmp_path / "s.jsonl"
+    session.write_text("{}\n")
+    env_file = tmp_path / "custom-env.sh"
+    env_file.write_text("export A=1\n")
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
+    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
+                            initiator_command="start", prompt="hello",
+                            file_path=str(session))
+    sq.insert_run(db, sid, "start", ["k", "--env-file", str(env_file)], 0)
+    opened: dict = {}
+    monkeypatch.setattr("workagent.webapp._open_terminal",
+                        lambda wt, sf, env=None: opened.update(wt=wt, sf=sf, env=env))
+    r = client.post(f"/api/sessions/{sid}/resume")
+    assert r.status_code == 200, r.text
+    assert opened == {"wt": "/wt", "sf": str(session), "env": str(env_file)}
+
+
+def test_resume_session_defaults_env_file(client, monkeypatch, tmp_path):
+    """Session resume with no run --env-file passes None (default resolves downstream)."""
+    from workagent import store_sqlite as sq
+    session = tmp_path / "s.jsonl"
+    session.write_text("{}\n")
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
+    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
+                            initiator_command="start", prompt="hello",
+                            file_path=str(session))
+    sq.insert_run(db, sid, "start", ["k"], 0)
+    opened: dict = {}
+    monkeypatch.setattr("workagent.webapp._open_terminal",
+                        lambda wt, sf, env=None: opened.update(wt=wt, sf=sf, env=env))
+    r = client.post(f"/api/sessions/{sid}/resume")
+    assert r.status_code == 200, r.text
+    assert opened == {"wt": "/wt", "sf": str(session), "env": None}

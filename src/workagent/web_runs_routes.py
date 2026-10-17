@@ -422,7 +422,14 @@ def register_runs_routes(app, registry) -> None:
         if not worktree:
             raise ApiError("no_worktree",
                            f"no worktree for session {sid}", 404)
-        _open_terminal(worktree, session_file)
+        env = ""
+        try:
+            runs = row.get("runs") or []
+            if isinstance(runs, list) and runs:
+                env = _env_file_arg(list(runs[-1].get("args") or []))
+        except Exception:
+            env = ""
+        _open_terminal(worktree, session_file, env or None)
         return {"id": sid, "session_file": session_file,
                 "worktree": worktree}
 
