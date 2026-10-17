@@ -232,7 +232,7 @@ Request:
 - `command`: one of `start | review | cleanup | release | sync | open | register |
   repo | link` (subcommand goes first in `args`: `["add", "--name", …]`).
 - Global `-v` may be passed as `args[0]`.
-- `start`/`review`/`sync`/`release` take `--env-file <script>`: a shell script sourced before every terminal/headless harness command (`source <file> && …`; headless children also get it parsed into their environment) and before the release pre-release gate. Default: `env_file` in `config.json` (auto-created as `<config_dir>/env.sh` on first launch with `VISUAL`/`EDITOR`/`NO_PROXY`/`PI_EDIT_VARIANT` defaults). Delete the file to opt out; resume endpoints reuse the run's explicit `--env-file` or the configured default.
+- `start`/`review`/`sync`/`release` take `--env-file <script>`: a shell script sourced before every harness command including the preview (`source <file> && …`; headless children also get it parsed into their environment) and before the release pre-release gate. Default: `env_file` in `config.json` (auto-created as `<config_dir>/env.sh` on first launch with `VISUAL`/`EDITOR`/`NO_PROXY`/`PI_EDIT_VARIANT` defaults). Delete the file to opt out; session-resume endpoints reuse the originating run's explicit `--env-file` or the configured default.
 - Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`) need
   `confirm: true` → the server appends `--yes`. `force: true` requires
   `confirm: true` and appends `--force` (cleanup, register, repo remove).
@@ -296,29 +296,18 @@ manually outside the web server), the endpoint adopts the newest non-empty
 `.jsonl` in the scope dir minted after the session row was created, persists
 it on the session, and resumes that transcript — so the first run stays
 resumable and later runs reuse the full path.
-Non-destructive (same class as `open`): no confirm needed. Detached-spawns
-the OS default terminal running
-`cd <worktree> && omp --resume <session_file>` (`$TERMINAL` →
-`xdg-terminal-exec` → gnome-terminal/konsole/xfce4-terminal/xterm;
-macOS `open -a Terminal`; Windows `cmd /k`). 404 `no_session` when the run
+Non-destructive (same class as `open`): no confirm needed. Detached-spawns the OS default terminal running `cd <worktree> && omp --resume <session_file>` (`$TERMINAL` → `xdg-terminal-exec` → gnome-terminal/konsole/xfce4-terminal/xterm; macOS `open -a Terminal`; Windows `cmd /k`). Terminal spawns claim the harness lock with `origin=terminal` (pid = spawned terminal emulator) and pre-spawn 409 `{code:"conflict"}` when a live harness already holds the worktree, so no orphan terminal launches; sources the originating run's `--env-file` (or the configured default). 404 `no_session` when the run
 executed no harness session, `missing_session` when the transcript is
 absent, `no_worktree` when the target has no recorded worktree.
 
 ### `POST /api/runs/{id}/start-terminal` → `{"id": …}`
-Same spawn running the run's last logged `harness command:` entry — the
-exact command behind the Run page "Copy harness command" button (the button
-is disabled exactly when this returns 404 `no_harness_command`).
+Same spawn running the run's last logged `harness command:` entry — the exact command behind the Run page "Copy harness command" button (the button is disabled exactly when this returns 404 `no_harness_command`). Claims the harness lock with `origin=terminal` and pre-spawn 409s `{code:"conflict"}` on a live lock, like the resume endpoints.
 
 ### `POST /api/terminal/stop` → `{"worktree_ref", "stopped": true}`
-SIGTERM→SIGKILL the terminal-origin agent behind a worktree ref (the
-`--terminal` run mode). Body: `{"worktree_ref": "<key>"}`. 404
-`not_found` when no live terminal lock (missing, dead-pid swept, or
-headless origin — headless runs are never stoppable here).
+SIGTERM→SIGKILL the terminal-origin agent behind a worktree ref (the `--terminal` run mode). Body: `{"worktree_ref": "<key>"}`. 404 `not_found` when no live terminal lock (missing, dead-pid swept, or headless origin — headless runs are never stoppable here).
 
 ### `POST /api/sessions/{id}/resume` → same shape
-Same terminal spawn for a persisted session row (`worktree` resolved from
-the row, else the recorded worktree ref via `/api/path`); 404
-`not_found`/`missing_session`/`no_worktree` as applicable.
+Same terminal spawn for a persisted session row (`worktree` resolved from the row, else the recorded worktree ref via `/api/path`); sources the latest run's `--env-file` for the session's worktree when present. Claims the terminal lock / pre-spawn 409s like the run resume endpoints; 404 `not_found`/`missing_session`/`no_worktree` as applicable.
 
 ## Run states
 `running` → `succeeded` (exit 0) | `failed` (exit 1 or other non-zero)
@@ -333,5 +322,5 @@ preset as before).
   reconnect is built into EventSource).
 - Theme: `light | dark | system` in localStorage, follows
   `prefers-color-scheme` for `system`.
-- Confirmation opt-outs: localStorage key `workagent.confirm.optout` —
-  JSON map `{"cleanup": true, ...}` resettable in Settings.
+- Confirmation opt-outs: localStorage key `workagent.confirm.optout` — JSON map `{"cleanup": true, ...}` resettable in Settings.
+- Launch prefs: localStorage key `launch.prefs.v1` — per-tab `{start:{runMode,base},review:{runMode,thenFix,fixAction,newFixSession},sync:{merge}}`; only the active tab's slice persists on change, URL params (`ref`, `fixComments=1`) win for the live form and never persist. Repo tabs (`useRepoTabs`) show only repos with count > 0; a stale `?repo=` falls back to All. Candidates Review rows deep-link to `…/launch?mode=review&ref=<pr-url>` with the repo pre-selected.

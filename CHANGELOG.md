@@ -1,5 +1,13 @@
 # Changelog
 ## Unreleased
+- Preview harness commands wrap env.sh like every other launch path (launch/terminal-gated sourcing dropped) [no-issue]
+- Session-resume terminal spawns reuse the originating run's `--env-file`, else the configured default [no-issue]
+- Web resume/start-terminal endpoints pre-spawn 409 on a live harness lock, then claim the terminal lock with the spawned pid [no-issue]
+- Candidates Review rows deep-link to Launch review prefill with the repo pre-selected; rows carry a repo-name badge [no-issue]
+- Candidates drop normalized-URL/path linked rows and default→release MR plumbing; rows carry `repo_name` + `target_branch` [no-issue]
+- Shared repo tabs hide zero-count repos; stale `?repo=` falls back to All [no-issue]
+- Launch persists per-tab prefs (`launch.prefs.v1`: start/review/sync slices; URL params win, never persist) [no-issue]
+- Launch page restores dropped `FieldHelp`/`StartForm` imports (build `tsc -b` failed while plain `tsc` passed) [no-issue]
 - GitLab bot review threads resolve on native resolved OR `Status: RESOLVED` second line (MR 1766 shape); fix-comments prompt matches; ReleaseCard polls the diff every 30 s with background revalidation [no-issue]
 - Interactive (`execvp`) harness launches and the pre-release gate now source `~/.config/workagent/env.sh` first like headless/terminal launches (direct-exec parsed overlay; `sourcing env:` logged) [no-issue]
 - `release` verify fetches the branch first and retries (host-side MR merges left a stale local ref, falsely failing successful merges); merge-commit heads accepted via containment check; merged repos drop their cached diff so the ReleaseCard converges to 0 immediately [no-issue]
