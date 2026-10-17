@@ -120,8 +120,69 @@ def _transcript_ready(session_file: str) -> bool:
     except OSError:
         return False
 
+def _ref_key_for_worktree(worktree: str) -> str:
+    """Link ref_key owning a worktree path ("" when unlinked)."""
+    try:
+        from . import store as _store
+        for key, entry in _store.load_links().items():
+            if isinstance(entry, dict) and entry.get("worktree") == worktree:
+                return key
+    except Exception:
+        pass
+    return ""
+
+
+def _target_ref_key(run) -> str:
+    """Link ref_key behind a live run's target ("" when not link-shaped)."""
+    try:
+        target = str(getattr(run, "target", "") or "")
+        command = str(getattr(run, "command", "") or "")
+        args = list(getattr(run, "args", []) or [])
+        for prefix in ("start:", "review:", "sync:", "cleanup:", "open:"):
+            if target.startswith(prefix):
+                ref = target[len(prefix):]
+                if ref and ref != "all":
+                    return ref
+        if command in ("start", "review"):
+            ref = _first_positional(args, VAL_FLAGS[command])
+            if ref:
+                return ref
+    except Exception:
+        pass
+    return ""
+
+def _live_terminal_blocker(worktree: str, ref_key: str = "") -> dict | None:
+    """Live harness record blocking a terminal spawn (None when free)."""
+    from . import store as _store
+    key = ref_key or _ref_key_for_worktree(worktree) or worktree
+    rec = _store.active_harness(key)
+    if rec is None and worktree:
+        for v in _store.load_harnesses().values():
+            if isinstance(v, dict) and v.get("worktree") == worktree:
+                rec = v
+                break
+    return rec
+
+
+def _conflict_msg(worktree: str, blocker: dict) -> str:
+    return (f"worktree {worktree} already has a live harness "
+            f"({blocker.get('harness')}, pid {blocker.get('pid')})"
+            " — wait for it to finish or kill it")
+
+
+def _claim_terminal_lock(worktree: str, ref_key: str = "",
+                         pid: int | None = None) -> None:
+    """Claim the terminal harness lock; 409 when a live harness holds it."""
+    from . import store as _store
+    key = ref_key or _ref_key_for_worktree(worktree) or worktree
+    blocker = _store.record_harness_run(key, "omp", worktree,
+                                        origin="terminal", pid=pid)
+    if blocker is not None:
+        raise ApiError("conflict", _conflict_msg(worktree, blocker), 409)
+
+
 def _open_terminal(worktree: str, session_file: str,
-                   env_file: str | None = None) -> None:
+                   env_file: str | None = None) -> int | None:
     from . import webapp as _w
     return _w._open_terminal(worktree, session_file, env_file)
 
@@ -330,8 +391,12 @@ def register_runs_routes(app, registry) -> None:
             if not worktree:
                 raise ApiError("no_worktree",
                                f"no worktree for run {run_id!r}", 404)
-            _open_terminal(worktree, session_file,
-                           _env_file_arg(list(args)) or None)
+            ref = str(row.get("worktree_ref") or "")
+            if (blocker := _live_terminal_blocker(worktree, ref)) is not None:
+                raise ApiError("conflict", _conflict_msg(worktree, blocker), 409)
+            pid = _open_terminal(worktree, session_file,
+                                 _env_file_arg(list(args)) or None)
+            _claim_terminal_lock(worktree, ref, pid)
             return {"id": run_id, "session_file": session_file,
                     "worktree": worktree}
         session_file = run.session_file \
@@ -357,8 +422,12 @@ def register_runs_routes(app, registry) -> None:
         if not worktree:
             raise ApiError("no_worktree",
                            f"no worktree for target {run.target!r}", 404)
-        _open_terminal(worktree, session_file,
-                       _session_file_env(run))
+        ref = _target_ref_key(run)
+        if (blocker := _live_terminal_blocker(worktree, ref)) is not None:
+            raise ApiError("conflict", _conflict_msg(worktree, blocker), 409)
+        pid = _open_terminal(worktree, session_file,
+                             _session_file_env(run))
+        _claim_terminal_lock(worktree, ref, pid)
         return {"id": run.id, "session_file": session_file,
                 "worktree": worktree}
 
@@ -373,6 +442,19 @@ def register_runs_routes(app, registry) -> None:
         """
         from . import webapp as _w
 
+        ref_key = ""
+        worktree = ""
+        try:
+            live = registry.get(run_id)
+            worktree = live.worktree or _worktree_for_target(live.target)
+            if not worktree and live.command in ("start", "review"):
+                worktree = _worktree_for_target(
+                    f"{live.command}:{_first_positional(live.args, VAL_FLAGS[live.command])}")
+        except ApiError:
+            row = _persisted_row(run_id)
+            if row is not None:
+                ref_key = str(row.get("worktree_ref") or "")
+                worktree = _persisted_summary(row).get("worktree") or ""
         def _lines() -> list[str]:
             try:
                 run = registry.get(run_id)
@@ -388,7 +470,10 @@ def register_runs_routes(app, registry) -> None:
         if not cmd:
             raise ApiError("no_harness_command",
                            f"run {run_id} logged no harness command", 404)
-        _w._open_terminal_command(cmd)
+        if (blocker := _live_terminal_blocker(worktree, ref_key)) is not None:
+            raise ApiError("conflict", _conflict_msg(worktree, blocker), 409)
+        pid = _w._open_terminal_command(cmd, worktree)
+        _claim_terminal_lock(worktree, ref_key, pid)
         return {"id": run_id}
 
     @app.post("/api/terminal/stop")
@@ -429,7 +514,11 @@ def register_runs_routes(app, registry) -> None:
                 env = _env_file_arg(list(runs[-1].get("args") or []))
         except Exception:
             env = ""
-        _open_terminal(worktree, session_file, env or None)
+        ref = str(row.get("worktree_ref") or "")
+        if (blocker := _live_terminal_blocker(worktree, ref)) is not None:
+            raise ApiError("conflict", _conflict_msg(worktree, blocker), 409)
+        pid = _open_terminal(worktree, session_file, env or None)
+        _claim_terminal_lock(worktree, ref, pid)
         return {"id": sid, "session_file": session_file,
                 "worktree": worktree}
 

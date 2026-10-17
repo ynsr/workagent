@@ -803,3 +803,118 @@ def test_resume_session_defaults_env_file(client, monkeypatch, tmp_path):
     r = client.post(f"/api/sessions/{sid}/resume")
     assert r.status_code == 200, r.text
     assert opened == {"wt": "/wt", "sf": str(session), "env": None}
+
+def test_resume_endpoint_claims_terminal_lock(client, monkeypatch, tmp_path):
+    """Run resume must record_harness_run with origin=terminal (WS5)."""
+    import subprocess as sp
+    from workagent import store as _store
+    session = tmp_path / "s-lock.jsonl"
+    session.write_text("{}\n")
+    wt = tmp_path / "wt-lock"
+    wt.mkdir()
+    _store.record_link("rk-lock", {"worktree": str(wt), "branch": "b-lock",
+                                   "repo": "/tmp/r"})
+    holder = sp.Popen(["sleep", "30"])
+    try:
+        monkeypatch.setattr("workagent.web_runs_routes._open_terminal",
+                            lambda wt, sf, env=None: holder.pid)
+        run = client.app.state.registry.create("review", ["rk-lock"],
+                                               "review:rk-lock")
+        run.session_file = str(session)
+        run.worktree = str(wt)
+        run.args = ["rk-lock", "--no-tty"]
+        r = client.post(f"/api/runs/{run.id}/resume")
+        assert r.status_code == 200, r.text
+        rec = _store.active_harness("rk-lock")
+        assert rec is not None and rec.get("origin") == "terminal"
+        assert rec.get("pid") == holder.pid
+    finally:
+        holder.kill()
+        _store.clear_harness_run("rk-lock")
+
+
+def test_resume_endpoint_blocked_by_live_lock_is_409(client, monkeypatch, tmp_path):
+    """Run resume on a live terminal lock must 409 conflict (WS5)."""
+    import subprocess as sp
+    from workagent import store as _store
+    session = tmp_path / "s-lock2.jsonl"
+    session.write_text("{}\n")
+    wt = tmp_path / "wt-lock2"
+    wt.mkdir()
+    _store.record_link("rk-lock2", {"worktree": str(wt), "branch": "b-lock2",
+                                    "repo": "/tmp/r"})
+    holder = sp.Popen(["sleep", "30"])
+    _store.record_harness_run("rk-lock2", "omp", str(wt),
+                              origin="terminal", pid=holder.pid)
+    spawned: dict = {}
+    monkeypatch.setattr("workagent.web_runs_routes._open_terminal",
+                        lambda wt, sf, env=None: spawned.update(wt=wt) or holder.pid)
+    try:
+        run = client.app.state.registry.create("review", ["rk-lock2"],
+                                               "review:rk-lock2")
+        run.session_file = str(session)
+        run.worktree = str(wt)
+        run.args = ["rk-lock2", "--no-tty"]
+        r = client.post(f"/api/runs/{run.id}/resume")
+        assert r.status_code == 409, r.text
+        assert r.json()["error"]["code"] == "conflict"
+        assert spawned == {}
+    finally:
+        holder.kill()
+        _store.clear_harness_run("rk-lock2")
+
+
+def test_start_terminal_claims_terminal_lock(client, monkeypatch, tmp_path):
+    """Start-terminal must record_harness_run with origin=terminal (WS5)."""
+    import subprocess as sp
+    from workagent import store as _store
+    wt = tmp_path / "wt-st"
+    wt.mkdir()
+    _store.record_link("rk-st", {"worktree": str(wt), "branch": "b-st",
+                                 "repo": "/tmp/r"})
+    holder = sp.Popen(["sleep", "30"])
+    try:
+        monkeypatch.setattr("workagent.webapp._open_terminal_command",
+                            lambda cmd, cwd="": holder.pid)
+        run = client.app.state.registry.create("start", ["rk-st"], "start:rk-st")
+        run.append(f"harness command: cd {wt} && omp 'hello'\n")
+        r = client.post(f"/api/runs/{run.id}/start-terminal")
+        assert r.status_code == 200, r.text
+        rec = _store.active_harness("rk-st")
+        assert rec is not None and rec.get("origin") == "terminal"
+        assert rec.get("pid") == holder.pid
+    finally:
+        holder.kill()
+        _store.clear_harness_run("rk-st")
+
+
+def test_session_resume_claims_terminal_lock(client, monkeypatch, tmp_path):
+    """Session resume must record_harness_run with origin=terminal (WS5)."""
+    from workagent import store_sqlite as sq
+    from workagent import store as _store
+    import subprocess as sp
+    session = tmp_path / "s-lock3.jsonl"
+    session.write_text("{}\n")
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t3', 'unknown', 't3')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r3', '/r3', 'r3')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t3', 'r3')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k3', '/wt3', 'b3', 'r3', '2026-01-01T00:00:00+00:00')")
+    sid = sq.insert_session(db, worktree_ref="k3", harness_name="omp",
+                            initiator_command="start", prompt="hello",
+                            file_path=str(session))
+    holder = sp.Popen(["sleep", "30"])
+    try:
+        monkeypatch.setattr("workagent.web_runs_routes._open_terminal",
+                            lambda wt, sf, env=None: holder.pid)
+        r = client.post(f"/api/sessions/{sid}/resume")
+        assert r.status_code == 200, r.text
+        rec = _store.active_harness("k3")
+        assert rec is not None and rec.get("origin") == "terminal"
+        assert rec.get("pid") == holder.pid
+    finally:
+        holder.kill()
+        _store.clear_harness_run("k3")

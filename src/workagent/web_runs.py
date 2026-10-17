@@ -412,18 +412,18 @@ def _extract_harness_command(texts: list[str]) -> str:
     return cmd.strip()
 
 
-def _open_terminal_command(cmd: str, cwd: str = "") -> None:
+def _open_terminal_command(cmd: str, cwd: str = "") -> int | None:
     """Detached-spawn the OS default terminal running an arbitrary shell
     command (core moved to `cli_harness.spawn_in_terminal`; kept here as
     the web-side alias). `cwd` seeds the terminal's directory — parsed
-    from a leading `cd` when omitted."""
+    from a leading `cd` when omitted. Returns the spawned pid."""
     from .cli_harness import spawn_in_terminal
-    spawn_in_terminal(cmd, cwd)
+    return spawn_in_terminal(cmd, cwd)
 
 
 def _open_terminal(worktree: str, session_file: str,
-                   env_file: str | None = None) -> None:
+                   env_file: str | None = None) -> int | None:
     """Detached-spawn the OS default terminal resumed on the session
-    (mirrors `workagent open` detachment)."""
-    _open_terminal_command(
+    (mirrors `workagent open` detachment). Returns the spawned pid."""
+    return _open_terminal_command(
         _resume_shell_command(worktree, session_file, env_file), worktree)
