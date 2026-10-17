@@ -59,24 +59,36 @@ def _run_group(argv: list[str], cwd: str, timeout_s: int,
         raise HarnessError(f"{' '.join(argv)} failed with exit {proc.returncode}")
 
 
+def run_repo_command(repo_name: str, key: str, command: str, cwd: str,
+                     timeout_s: int, env_file: str | None = None) -> None:
+    """Run any repos.commands entry with the env file sourced first.
+
+    Shared choke point for every current and future commands-column
+    execution: resolves the env file (None = configured default), logs
+    the sourcing line, and runs via _run_group (own process group, whole
+    tree killed on timeout). Raises HarnessError on failure/timeout,
+    usage error when the command is blank.
+    """
+    from . import store as _store
+    if not (command or "").strip():
+        _fail(f"{repo_name}: {key} command missing.", 2)
+    assert command is not None
+    known = set((_store.load_repos().get(repo_name) or {}).get("commands") or {})
+    eprint(f"running {key} for {repo_name}: {command.strip()}"
+           + ("" if key in known else f" (ad-hoc key, known: {sorted(known)})"))
+    _run_group(["/bin/sh", "-c", command.strip()], cwd, timeout_s, env_file)
+
+
 def run_local_gate(repo_path: str, repo_name: str, sha: str,
                    command: str, timeout_s: int,
                    env_file: str | None = None) -> None:
-    """Run pre-release *command* in a detached worktree at *sha*.
-
-    *env_file* overrides the configured default (None = resolve the
-    default); every repos.commands execution sources it first.
-    """
+    """Run pre-release *command* in a detached worktree at *sha* (via run_repo_command)."""
     from .release_util import worktree_base
-    if not (command or "").strip():
-        _fail(f"{repo_name}: pre-release command missing.", 2)
-    assert command is not None
-    eprint(f"running pre-release for {repo_name}: {command.strip()}")
     dest = _wt.release_path(str(worktree_base()), repo_name)
     _wt.prepare(repo_path, dest, sha)
     try:
-        _run_group(["/bin/sh", "-c", command.strip()], str(dest), timeout_s,
-                   env_file)
+        run_repo_command(repo_name, "pre-release", command, str(dest),
+                         timeout_s, env_file)
     except HarnessError:
         _wt.finish(dest, False)
         raise
@@ -162,4 +174,4 @@ def run_ci_gate(tool: str, path: str, sha: str, timeout_s: int) -> None:
         wait = min(wait * 2, 30.0)
 
 
-__all__ = ["run_local_gate", "run_ci_gate", "local_gate_path", "_lock"]
+__all__ = ["run_repo_command", "run_local_gate", "run_ci_gate", "local_gate_path", "_lock"]

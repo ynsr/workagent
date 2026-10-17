@@ -65,7 +65,7 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "review": ("--repo", "--depth", "--harness", "--session-file", "--env-file", "--extra-prompt"),
     "sync": ("--session-file", "--env-file", "--extra-prompt"),
     "register": ("--key", "--issue", "--repo"),
-    "release": ("--checks", "--diff", "--pre-release-timeout", "--ci-timeout"),
+    "release": ("--checks", "--diff", "--pre-release-timeout", "--ci-timeout", "--env-file"),
     "repo add": ("--name", "--path", "--tracker", "--release-branch", "--pre-release"),
     "repo update": ("--default-branch", "--release-branch", "--pre-release"),
     "link remove": ("--repo",),

@@ -32,11 +32,13 @@ def release(
                                             help="Timeout for the pre-release gate (e.g. 10m)."),
     ci_timeout: str = typer.Option("15m", "--ci-timeout",
                                    help="Timeout for the CI gate (e.g. 15m)."),
+    env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before the pre-release gate command (default: env_file in config.json, auto-created)."),
 ) -> None:
     """Ship default -> release via pinned-SHA MR merge (FF-only, never squash)."""
     result = run_release(repo, yes=yes, dry_run=dry_run, json_output=json_output,
                          checks=checks, diff=diff,
-                         pre_release_timeout=pre_release_timeout, ci_timeout=ci_timeout)
+                         pre_release_timeout=pre_release_timeout, ci_timeout=ci_timeout,
+                         env_file=env_file)
     _print_result(result, json_output)
 
 
@@ -179,7 +181,8 @@ def _resolve_name(repo: str, registry: dict) -> str:
 
 def run_release(repo: str, *, yes: bool, dry_run: bool, json_output: bool,
                 checks: str = "ci", diff: str = "remote",
-                pre_release_timeout: str = "10m", ci_timeout: str = "15m") -> dict:
+                pre_release_timeout: str = "10m", ci_timeout: str = "15m",
+                env_file: str | None = None) -> dict:
     """Release flow returning a JSON-able result dict (raises via _fail)."""
     from . import release_lock as _lock
     from . import release_util as _util
@@ -201,14 +204,15 @@ def run_release(repo: str, *, yes: bool, dry_run: bool, json_output: bool,
         with _lock.held_lock(lock):
             return _run_locked(name, registry, yes=yes, dry_run=dry_run,
                                checks=checks, diff=diff, local_timeout=local_timeout,
-                               ci_timeout_s=ci_timeout_s)
+                               ci_timeout_s=ci_timeout_s, env_file=env_file)
     except KeyboardInterrupt:
         _fail("interrupted; worktree kept for inspection.", EXIT_GENERAL)
     raise AssertionError("unreachable")
 
 
 def _run_locked(name: str, registry: dict, *, yes: bool, dry_run: bool,
-                checks: str, diff: str, local_timeout: int, ci_timeout_s: int) -> dict:
+                checks: str, diff: str, local_timeout: int, ci_timeout_s: int,
+                env_file: str | None = None) -> dict:
     """Steps 1-7 inside the release lock."""
     from . import release_gates as gates
     from .release_util import worktree_base
@@ -234,7 +238,7 @@ def _run_locked(name: str, registry: dict, *, yes: bool, dry_run: bool,
     mr_url = _find_or_open_mr(tool, path, default, release_branch, title)
     try:
         if checks in ("local", "both") and gate:
-            gates.run_local_gate(path, name, pinned, gate, local_timeout)
+            gates.run_local_gate(path, name, pinned, gate, local_timeout, env_file)
         if checks in ("ci", "both"):
             gates.run_ci_gate(tool, path, pinned, ci_timeout_s)
     except KeyboardInterrupt:

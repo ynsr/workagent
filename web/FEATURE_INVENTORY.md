@@ -49,7 +49,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `repo list [--json/--csv]` | read-only | `store.load_config()["repos"]` | — | no | | none |
 | `repo remove NAME [--json]` | mutating | — | `repo:remove` | yes-ish (registry write) | unknown repo (2) | none |
 | `repo update NAME [--default-branch] [--release-branch] [--pre-release] [--json]` | mutating | — | — | no (config write) | unknown repo (2) | none |
-| `release REPO [--checks ci\|local\|both\|none] [--diff remote\|local] [--pre-release-timeout 10m] [--ci-timeout 15m] [--yes] [--dry-run] [--json]` | mutating | — | `release:<repo>` | yes (pinned-SHA MR merge) | bad checks/diff (2), diverged behind>0 (1), CI fail/timeout (1) | TTY confirm; non-TTY needs `--yes` (2) |
+| `release REPO [--checks ci\|local\|both\|none] [--diff remote\|local] [--pre-release-timeout 10m] [--ci-timeout 15m] [--env-file script] [--yes] [--dry-run] [--json]` | mutating | — | `release:<repo>` | yes (pinned-SHA MR merge) | bad checks/diff (2), diverged behind>0 (1), CI fail/timeout (1) | TTY confirm; non-TTY needs `--yes` (2); `--env-file` sourced before the pre-release gate (default: configured `env.sh`) |
 | `link set TRACKER REPO [--json]` | mutating | — | `link:set` | no (config write) | resolve failure | none |
 | `link remove REF [--repo] [--json]` | mutating | — | `link:remove` | yes-ish (drops relation/link) | repo not linked (2) | none |
 | `link list [--worktree] [--refresh-pr] [--json/--csv]` | read-only | `store.load_config()["trackers"]` + `_enrich_entry` | — | no | | none |

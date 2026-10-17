@@ -280,6 +280,26 @@ def test_release_failing_gate_aborts_before_mr(monkeypatch, tmp_path):
     assert getattr(e.value, "exit_code", 2) == 1
     assert "gate" in calls  # local gate ran before failing
 
+def test_release_env_file_reaches_gate(monkeypatch, tmp_path):
+    rel = _gated_registry(monkeypatch, "true", path=str(tmp_path))
+    seen = {}
+    monkeypatch.setattr(rel_gates, "run_local_gate",
+                        lambda *a, **k: seen.update({"a": a, "k": k}))
+    monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: None)
+    monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: "http://mr/1")
+    monkeypatch.setattr(rel, "_merge_pinned", lambda *a, **k: "gitlab-mr-ff")
+    out = rel.run_release("gated", yes=True, dry_run=False, json_output=True,
+                          checks="local", env_file="/tmp/custom.sh")
+    assert out["merged"] is True
+    assert seen["a"][5] == "/tmp/custom.sh"  # env_file positional passthrough
+
+
+def test_repo_command_helper_rejects_blank(isolated_config):
+    import pytest as _pytest
+    with _pytest.raises(Exception) as e:
+        rel_gates.run_repo_command("rx", "pre-release", "  ", "/tmp", 60)
+    assert getattr(e.value, "exit_code", 2) == 2
+
 def test_release_no_gate_goes_to_mr(monkeypatch):
     rel = _gated_registry(monkeypatch, "")
     monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: "http://mr/1")

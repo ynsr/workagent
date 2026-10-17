@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Interactive (`execvp`) harness launches and the pre-release gate now source `~/.config/workagent/env.sh` first like headless/terminal launches (direct-exec parsed overlay; `sourcing env:` logged) [no-issue]
+- `release` takes `--env-file <script>` (override for the pre-release gate env sourcing); all `repos.commands` executions route through the shared `run_repo_command` helper so future keys inherit sourcing automatically [no-issue]
 - Repos gain a `pre-release` gate (auto-detected per project type, editable in Repos page) run before release MR-open; failure aborts [no-issue]
 - Dashboard StatusTable row actions resume the latest non-running session of any type (start/review/sync/fix_comments) via a terminal+copy split button; previously only review/fix-comments sessions enabled the copy button so start-session worktrees showed a dead button [no-issue]
 - New `workagent release REPO`: opens a default→release MR with fast-forward-only auto-merge (one host-side rebase retry on conflict; never squash/merge commit/force-push), gated on a real default-vs-release diff; repos persist `default_branch`/`release_branch` (`repo add/update`, Jibit auto-detects `master`), SWR diff cache (1h fresh / 1d stale), Dashboard "Ready to release" card with release-branch CI badge, per-repo Release button in the Repos page [no-issue]
