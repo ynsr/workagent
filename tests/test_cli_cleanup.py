@@ -507,6 +507,14 @@ def test_merge_pr_github_no_squash_uses_merge(isolated_config, monkeypatch):
     assert "--merge" in seen[0]
     assert "--no-squash" not in seen[0]
 
+def test_merge_pr_glab_uses_no_auto_merge(isolated_config, monkeypatch):
+    """GitLab merges disable the auto-merge queue (IPG-1017: exit 0 + MR opened)."""
+    seen = []
+    monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    cli._merge_pr("https://git.jibit.cloud/x/-/merge_requests/1", squash=True, cwd="/tmp")
+    assert seen[0][0] == "glab"
+    assert "--auto-merge=false" in seen[0]
+
 
 def test_merge_pr_no_squash_refused_for_feature_branch(isolated_config, monkeypatch):
     """Explicit --no-squash on a feature source is a usage error (exit 2)."""

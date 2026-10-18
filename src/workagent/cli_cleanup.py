@@ -272,8 +272,13 @@ def _merge_pr(pr_url: str, squash: bool = True, cwd: str | None = None,
         else:
             # glab defaults to a merge commit; pass --squash explicitly,
             # omit the flag (no --no-squash exists) for merge commits.
+            # --auto-merge=false avoids the silent auto-merge queue when a
+            # pipeline is running (same quirk as release, IPG-1017): without
+            # it glab can exit 0 while the MR stays opened, and the caller
+            # would go on to delete the remote branch before the host merges.
             _cli.run_cmd("glab", "mr", "merge", pr_url,
-                    *([] if not squash else ["--squash"]), cwd=cwd)
+                    *([] if not squash else ["--squash"]),
+                    "--auto-merge=false", cwd=cwd)
     except HarnessError as e:
         msg = str(e).lower()
         if ("already merged" in msg or "already been merged" in msg
