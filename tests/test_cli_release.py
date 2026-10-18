@@ -299,6 +299,83 @@ def test_repo_command_helper_rejects_blank(isolated_config):
     with _pytest.raises(Exception) as e:
         rel_gates.run_repo_command("rx", "pre-release", "  ", "/tmp", 60)
     assert getattr(e.value, "exit_code", 2) == 2
+def _merge_state_script(monkeypatch, states):
+    """Stub host MR state lookups with a canned sequence, instant clock."""
+    import workagent.cli_release as rel
+    from workagent import refs as _refs
+    seen = []
+    def _fake(url, cwd=None):
+        seen.append(url)
+        name = states[min(len(seen) - 1, len(states) - 1)]
+        return {"state": name, "mergeable": "", "merge_state": ""}
+    monkeypatch.setattr(_refs, "fetch_pr_merge_state", _fake)
+    now = [1000.0]
+    monkeypatch.setattr(rel, "_now", lambda: now[0])
+    monkeypatch.setattr(rel, "_sleep", lambda s: now.__setitem__(0, now[0] + s))
+    return seen
+
+
+def test_gitlab_ff_local_forces_immediate_merge(monkeypatch):
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    calls = []
+    monkeypatch.setattr(rel, "run_cmd", lambda *a, **k: calls.append(a) or "")
+    seen = _merge_state_script(monkeypatch, ["merged"])
+    rel._merge_pinned("glab", "/r", "master", "abc123", "http://mr/1",
+                      ["gitlab-mr-ff"], checks="local")
+    merge = [c for c in calls if "merge" in c]
+    assert merge and "--auto-merge=false" in merge[0]
+    assert "--sha" in merge[0] and "abc123" in merge[0]
+    assert seen == ["http://mr/1"]
+
+
+def test_gitlab_ff_ci_waits_for_queued_merge(monkeypatch):
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    calls = []
+    monkeypatch.setattr(rel, "run_cmd", lambda *a, **k: calls.append(a) or "")
+    seen = _merge_state_script(monkeypatch, ["opened", "opened", "merged"])
+    rel._merge_pinned("glab", "/r", "master", "abc123", "http://mr/1",
+                      ["gitlab-mr-ff"], checks="ci", ci_timeout_s=60)
+    merge = [c for c in calls if "merge" in c]
+    assert merge and "--auto-merge=false" not in merge[0]
+    assert len(seen) >= 2  # polled until the host reported merged
+
+
+def test_gitlab_ff_ci_never_merged_times_out(monkeypatch):
+    import typer
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    monkeypatch.setattr(rel, "run_cmd", lambda *a, **k: "")
+    _merge_state_script(monkeypatch, ["opened"])
+    try:
+        rel._merge_pinned("glab", "/r", "master", "abc123", "http://mr/1",
+                          ["gitlab-mr-ff"], checks="ci", ci_timeout_s=60)
+    except typer.Exit as e:
+        assert e.exit_code == 1
+    else:
+        raise AssertionError("expected timeout failure")
+
+
+def test_gitlab_ff_forced_merge_rejected_hints_ci(monkeypatch, capsys):
+    import typer
+    from workagent.errors import HarnessError
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    def _fake(*a, **k):
+        if "merge" in a:
+            raise HarnessError("405 Method Not Allowed: pipelines must succeed")
+        return ""
+    monkeypatch.setattr(rel, "run_cmd", _fake)
+    try:
+        rel._merge_pinned("glab", "/r", "master", "abc123", "http://mr/1",
+                          ["gitlab-mr-ff"], checks="local")
+    except typer.Exit as e:
+        assert e.exit_code == 1
+    else:
+        raise AssertionError("expected rejection failure")
+    assert "--checks ci" in capsys.readouterr().err
+
 
 def test_release_no_gate_goes_to_mr(monkeypatch):
     rel = _gated_registry(monkeypatch, "")

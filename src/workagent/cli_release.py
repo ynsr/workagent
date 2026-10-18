@@ -1,7 +1,9 @@
 """`release` command: ship default -> release via FF-only auto-merge MR."""
 from __future__ import annotations
 
+import re as _re
 import sys
+import time
 from typing import Optional
 
 import typer
@@ -18,6 +20,13 @@ from .cli_core import (
 )
 from .cli_repo_util import _repo_tool
 from .errors import HarnessError, run_cmd
+
+_now = time.monotonic
+_sleep = time.sleep
+
+_PIPELINE_GATE_RE = _re.compile(r"405|pipeline.*must succeed|must succeed",
+                                _re.IGNORECASE)
+
 
 @app.command("release")
 @_catch_harness_errors
@@ -161,9 +170,64 @@ def _invalidate_diff_cache_by_path(path: str) -> None:
     except Exception:
         pass
 
+def _mr_state_now(mr_url: str, path: str) -> dict | None:
+    """Fresh MR state; None on lookup failure (warned, caller proceeds)."""
+    from . import refs as _refs
+    try:
+        return _refs.fetch_pr_merge_state(mr_url, cwd=path)
+    except HarnessError as e:
+        eprint(f"warning: cannot read MR state for {mr_url}: {e}")
+        return None
+
+
+def _wait_mr_merged(tool: str, path: str, mr_url: str, pinned: str,
+                    timeout_s: int) -> bool:
+    """Poll until the MR reports merged; False on timeout/terminal state.
+
+    gh merges immediately (nothing to wait for); GitLab auto-merge may
+    queue behind a pipeline. Unknown state lookups (non-MR URLs in tests)
+    are treated as merged so callers proceed to SHA verification.
+    """
+    if tool != "glab":
+        return True
+    deadline = _now() + timeout_s
+    wait = 5.0
+    while True:
+        fresh = _mr_state_now(mr_url, path)
+        if fresh is None:
+            return True
+        state = str(fresh.get("state") or "").lower()
+        if state == "merged":
+            return True
+        if state in ("closed",):
+            eprint(f"warning: {mr_url} reports {state}; verifying pinned SHA anyway.")
+            return True
+        if _now() + wait > deadline:
+            _sleep(max(0.0, deadline - _now()))
+            fresh = _mr_state_now(mr_url, path)
+            if fresh is not None and str(fresh.get("state") or "").lower() == "merged":
+                return True
+            return False
+        eprint(f"merge queued on the host (MR {state}); waiting for {pinned[:8]} …")
+        _sleep(wait)
+        wait = min(wait * 2, 30.0)
+
+
+def _pipeline_gate_rejection(msg: str) -> bool:
+    """True when the host rejected a merge over its pipeline gate (405)."""
+    return bool(_PIPELINE_GATE_RE.search(msg or ""))
+
+
 def _merge_pinned(tool: str, path: str, release_branch: str, pinned: str,
-                  mr_url: str, strategy: list[str]) -> str:
-    """Merge *pinned* via the first viable strategy; return strategy used."""
+                  mr_url: str, strategy: list[str], checks: str = "ci",
+                  ci_timeout_s: int = 900) -> str:
+    """Merge *pinned* via the first viable strategy; return strategy used.
+
+    checks local/none forces an immediate GitLab merge (--auto-merge=false:
+    glab otherwise queues behind any running pipeline). checks ci/both keeps
+    the host default and waits for the queued merge (bounded by
+    ci_timeout_s) before SHA verification.
+    """
     from . import release_caps as _caps
     from . import repos_release as _rr
     info = None
@@ -179,11 +243,28 @@ def _merge_pinned(tool: str, path: str, release_branch: str, pinned: str,
     _fetch_branch(path, default)
     if default and _origin_tip_now(path, default) not in ("", pinned):
         _fail(f"release source advanced past {pinned}; re-run release.", EXIT_GENERAL)
+    force = checks in ("local", "none")
     last_err: Exception | None = None
     for strat in strategy:
         try:
             if strat == "gitlab-mr-ff" and tool == "glab":
-                run_cmd("glab", "mr", "merge", "--sha", pinned, mr_url, cwd=path)
+                argv = ["glab", "mr", "merge", "--sha", pinned]
+                if force:
+                    argv.append("--auto-merge=false")
+                argv.append(mr_url)
+                try:
+                    run_cmd(*argv, cwd=path)
+                except HarnessError as e:
+                    if force and _pipeline_gate_rejection(str(e)):
+                        _fail(f"release merge rejected ({strat}): the project "
+                              f"requires a successful pipeline before merging; "
+                              f"re-run with --checks ci. MR left open: {mr_url}",
+                              EXIT_GENERAL)
+                    raise
+                if not _wait_mr_merged(tool, path, mr_url, pinned, ci_timeout_s):
+                    _fail(f"release merge queued on the host but {mr_url} never "
+                          f"reported merged within {ci_timeout_s}s; MR left open: "
+                          f"{mr_url}", EXIT_GENERAL)
                 _verify_head(path, release_branch, pinned)
                 return strat
             if strat == "ff-push":
@@ -286,7 +367,8 @@ def _run_locked(name: str, registry: dict, *, yes: bool, dry_run: bool,
             eprint(f"dry-run: would run pre-release: {gate}")
         if checks in ("ci", "both"):
             eprint(f"dry-run: would poll CI for {pinned}")
-        eprint(f"dry-run: would merge {pinned} via {strategy[0] if strategy else 'none'}")
+        mode = " (--auto-merge=false, immediate)" if checks in ("local", "none") else " (host default, wait for merged)"
+        eprint(f"dry-run: would merge {pinned} via {strategy[0] if strategy else 'none'}{mode}")
         return {"repo": name, "pinned_sha": pinned, "checks": checks,
                 "strategy": strategy, "mr_url": "", "merged": False, "dry_run": True}
     mr_url = _find_or_open_mr(tool, path, default, release_branch, title)
@@ -310,7 +392,8 @@ def _run_locked(name: str, registry: dict, *, yes: bool, dry_run: bool,
                 _fail("aborted", EXIT_USAGE)
         else:
             _fail("needs --yes in non-interactive mode", EXIT_USAGE)
-    used = _merge_pinned(tool, path, release_branch, pinned, mr_url, strategy)
+    used = _merge_pinned(tool, path, release_branch, pinned, mr_url, strategy,
+                         checks=checks, ci_timeout_s=ci_timeout_s)
     try:
         from . import release_worktree as _wt
         _wt.finish(_wt.release_path(str(worktree_base()), name), True)

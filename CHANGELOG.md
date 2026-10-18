@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Maven pre-release default falls back to `ft` when `mvn verify` fails (`mvn clean; mvn verify || ft`) [no-issue]
+- `release` no longer false-fails on queued auto-merges: local/none merges immediately (`--auto-merge=false`), ci/both waits for the host `merged` state (bounded by `--ci-timeout`) before SHA verification [no-issue]
 - Preview harness commands wrap env.sh like every other launch path (launch/terminal-gated sourcing dropped) [no-issue]
 - Session-resume terminal spawns reuse the originating run's `--env-file`, else the configured default [no-issue]
 - Web resume/start-terminal endpoints pre-spawn 409 on a live harness lock, then claim the terminal lock with the spawned pid [no-issue]
