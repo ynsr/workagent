@@ -55,7 +55,7 @@ def detect_prerelease_command(path: str | Path) -> str | None:
                 return "npm run build"
             return None
         if (root / "pom.xml").is_file():
-            return "mvn clean; mvn verify"
+            return "mvn clean; mvn verify || ft"
         if ((root / "build.gradle").is_file() or (root / "build.gradle.kts").is_file()
                 or (root / "settings.gradle").is_file() or (root / "settings.gradle.kts").is_file()
                 or (root / "gradlew").is_file()):

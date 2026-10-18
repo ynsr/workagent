@@ -178,7 +178,7 @@ _CASES = [
     ("node-test", {"package.json": _json_mod.dumps({"scripts": {"test": "jest"}})}, "npm test"),
     ("node-build", {"package.json": _json_mod.dumps({"scripts": {"build": "tsc"}})}, "npm run build"),
     ("node-bare", {"package.json": _json_mod.dumps({"name": "x"})}, None),
-    ("maven", {"pom.xml": "<project/>"}, "mvn clean; mvn verify"),
+    ("maven", {"pom.xml": "<project/>"}, "mvn clean; mvn verify || ft"),
     ("gradle", {"build.gradle": ""}, "gradle clean test"),
     ("gradle-wrapper", {"build.gradle": "", "gradlew": "#!/bin/sh"}, "./gradlew clean test"),
     ("python-uv", {"pyproject.toml": "[project]", "uv.lock": ""}, "uv sync; uv run pytest"),
