@@ -140,6 +140,7 @@ export interface ReleaseStatus {
   releasable: boolean
   reason: string
   stale?: boolean
+  releasing?: boolean
   ci?: string
   ci_url?: string
   fetched_at?: string | null

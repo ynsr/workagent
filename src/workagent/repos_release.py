@@ -202,9 +202,20 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
     """
     from . import swr as _swr
     info = store.load_repos().get(repo_name)
+    from . import release_lock as _lock
+    from .release_util import worktree_base as _wt_base
+    try:
+        base_dir = str(_wt_base())
+    except Exception:
+        base_dir = ""
     base = {"repo": repo_name, "path": "", "default_branch": "", "release_branch": "",
             "diff_count": 0, "releasable": False, "reason": "", "stale": False,
-            "ci": "", "ci_url": "", "fetched_at": None}
+            "ci": "", "ci_url": "", "fetched_at": None, "releasing": False}
+    if base_dir:
+        try:
+            base["releasing"] = _lock.locked(_lock.lock_path(base_dir, repo_name))
+        except Exception:
+            base["releasing"] = False
     if not info:
         base["reason"] = "unknown repo"
         return base

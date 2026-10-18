@@ -5,6 +5,7 @@ import { Copy, Download, FolderGit2, Plus, Trash2 } from "lucide-react"
 import { CopyCell } from "@/components/CopyCell"
 import { PageHeader } from "@/components/PageHeader"
 import { ReleaseButton } from "@/components/ReleaseButton"
+import { ReleasingDot } from "@/components/ReleaseCard"
 import {
   EmptyState,
   ErrorState,
@@ -306,7 +307,10 @@ export function Repos() {
                       {repos.map((r) => (
                         <TableRow key={r.name}>
                           <TableCell className="max-w-48 font-medium">
-                            <CopyCell text={r.name} />
+                            <span className="flex items-center gap-1.5">
+                              <span className="min-w-0 flex-1"><CopyCell text={r.name} /></span>
+                              <ReleasingDot repo={r.name} />
+                            </span>
                           </TableCell>
                           <TableCell className="max-w-72 font-mono text-[13px]">
                             <CopyCell text={r.path} />
@@ -373,7 +377,10 @@ export function Repos() {
                   {repos.map((r) => (
                     <div key={r.name} className="rounded-xl border bg-card p-4">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="font-medium">{r.name}</p>
+                        <span className="flex items-center gap-1.5">
+                          <p className="font-medium">{r.name}</p>
+                          <ReleasingDot repo={r.name} />
+                        </span>
                         {typeof r.tracker === "string" && r.tracker ? (
                           <Badge variant="secondary" className="font-mono">
                             {r.tracker}

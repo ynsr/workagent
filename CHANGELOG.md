@@ -220,6 +220,7 @@
 
 ## Unreleased
 - Session transcripts scope to `sessions/omp/<branch>/<action>/` in preview/headless/interactive for start/review/fix-comments/sync.
+- Release flow per-repo flock lock; `/api/release/status` exposes `releasing`, ReleaseCard/Repos dot + disabled button. [no-issue]
 - Fix #22: `start` passes full GitHub issue URLs to `git-wt --link`
   (shorthand `OWNER/REPO#N` built `github:OWNER/REPO#N`, which git-wt
   rejects); `register --issue` records the full URL likewise. `review`

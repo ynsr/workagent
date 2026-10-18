@@ -44,3 +44,12 @@ def test_worktree_base_env(tmp_path, monkeypatch):
     from workagent.release_util import worktree_base
     monkeypatch.setenv("WORKTREES_DIR", str(tmp_path))
     assert worktree_base() == tmp_path
+
+
+def test_locked_probe_reports_held_and_free(tmp_path):
+    from workagent.release_lock import held_lock, lock_path, locked
+    p = lock_path(str(tmp_path), "proj")
+    assert locked(p) is False
+    with held_lock(p):
+        assert locked(p) is True
+    assert locked(p) is False

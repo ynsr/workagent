@@ -7,6 +7,20 @@ from pathlib import Path
 
 from .errors import HarnessError
 
+def locked(path: Path) -> bool:
+    """True when another process holds the flock on *path* (never raises)."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as fh:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            return False
+    except OSError:
+        return False
+
 
 def lock_path(base: str, repo_name: str) -> Path:
     return Path(base) / repo_name / ".release.lock"

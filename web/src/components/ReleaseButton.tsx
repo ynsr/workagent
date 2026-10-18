@@ -19,18 +19,21 @@ export function ReleaseButton({ repo, compact }: { repo: string; compact?: boole
   const runConfirmed = useConfirmedRun()
   const [menuOpen, setMenuOpen] = useState(false)
   const [prefs, setPrefs] = useState(loadPrefs)
-  const releasable = data?.releasable === true
-  const reason = data?.reason || (isPending ? "loading…" : "not releasable")
-  const title = releasable && data
-    ? `Release ${data.default_branch} → ${data.release_branch} (${data.diff_count} commits)`
-    : reason
-
   function pick(checks: Checks, diff: DiffMode) {
     setPrefs({ checks, diff })
     savePrefs(checks, diff)
     setMenuOpen(false)
   }
-
+  const releasable = data?.releasable === true
+  const releasing = data?.releasing === true
+  const reason = releasing
+    ? `release already running for ${repo}`
+    : data?.reason || (isPending ? "loading…" : "not releasable")
+  const title = releasing
+    ? reason
+    : releasable && data
+      ? `Release ${data.default_branch} → ${data.release_branch} (${data.diff_count} commits)`
+      : reason
   async function handleRelease() {
     if (!data || !releasable) return
     const { checks, diff } = prefs
@@ -61,7 +64,7 @@ export function ReleaseButton({ repo, compact }: { repo: string; compact?: boole
         size={compact ? "icon" : "sm"}
         aria-label={`Release ${repo}`}
         title={title}
-        disabled={!releasable}
+        disabled={!releasable || releasing}
         onClick={() => void handleRelease()}
         className="rounded-r-none text-muted-foreground hover:bg-primary/10 hover:text-primary disabled:opacity-40"
       >
@@ -72,8 +75,8 @@ export function ReleaseButton({ repo, compact }: { repo: string; compact?: boole
         variant="ghost"
         size="icon"
         aria-label={`Release options for ${repo}`}
-        title={`Checks: ${prefs.checks}, diff: ${prefs.diff}`}
-        disabled={!releasable}
+        title={releasing ? reason : `Checks: ${prefs.checks}, diff: ${prefs.diff}`}
+        disabled={!releasable || releasing}
         onClick={() => setMenuOpen((v) => !v)}
         className="rounded-l-none border-l border-border/50 px-1 text-muted-foreground hover:bg-primary/10 hover:text-primary disabled:opacity-40"
       >

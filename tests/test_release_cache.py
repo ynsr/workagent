@@ -77,3 +77,23 @@ def test_release_status_background_revalidates_fresh_cache(tmp_path, monkeypatch
             break
         time.sleep(0.05)
     assert _sq.get_release_diff_cache(db, "rx")[0] == 9
+
+def test_release_status_carries_releasing_flag(tmp_path, monkeypatch):
+    """A held per-repo lock surfaces as releasing=True (never raises)."""
+    from workagent import repos as _repos
+    from workagent import release_lock as _lock
+    from workagent import store_sqlite as _sq
+    from workagent import store as _store
+    db = tmp_path / "state.db"
+    monkeypatch.setattr(_sq, "db_path", lambda: db)
+    from workagent import store_trackers as _st
+    monkeypatch.setattr(_st, "connect", lambda p: _sq.connect(db))
+    _sq.init_db(db)
+    _st.register_repo_row(db, "rx", "/r/rx", "jira:RX", remote="", tool="")
+    with _sq.connect(db) as _c:
+        _c.execute("UPDATE repos SET default_branch='main', release_branch='master' WHERE key_ref='rx'")
+    monkeypatch.setattr(_store, "load_repos", lambda: {"rx": {"path": "/r/rx", "default_branch": "main", "release_branch": "master"}})
+    monkeypatch.setattr(_lock, "lock_path", lambda base, name: tmp_path / ".release.lock")
+    assert _repos.release_status("rx")["releasing"] is False
+    with _lock.held_lock(tmp_path / ".release.lock"):
+        assert _repos.release_status("rx")["releasing"] is True

@@ -5,6 +5,19 @@ import { EmptyState, ErrorState, RefreshOverlay } from "@/components/StatusFeedb
 import { useRepos, useReleaseStatus, useReleaseStatuses } from "@/lib/queries"
 import { ReleaseButton } from "@/components/ReleaseButton"
 
+/** Blinking green dot while a release holds the repo's lock. */
+export function ReleasingDot({ repo }: { repo: string }) {
+  const { data } = useReleaseStatus(repo)
+  if (!data?.releasing) return null
+  return (
+    <span
+      aria-label={`Release running for ${repo}`}
+      title={`Release running for ${repo}`}
+      className="size-2 shrink-0 animate-pulse rounded-full bg-emerald-500"
+    />
+  )
+}
+
 function relativeFetchMs(iso: string | null | undefined): string {
   if (!iso) return "—"
   const ms = Date.parse(iso)
@@ -127,6 +140,7 @@ function ReleaseRow({ name }: { name: string }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="font-medium">{data.repo}</span>
+          <ReleasingDot repo={data.repo} />
           {data.ci && data.ci !== "not_started" ? (
             <CiBadge ci={data.ci as "success" | "failure" | "running"} ciUrl={data.ci_url || undefined} />
           ) : null}
