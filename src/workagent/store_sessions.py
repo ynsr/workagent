@@ -71,7 +71,7 @@ def gen_session_id(now: datetime | None = None) -> str:
 
 
 #: Allowed values for sessions.session_type — an enum, never free text (NULL = unknown).
-SESSION_TYPES = ("start", "review", "sync", "fix_comments")
+SESSION_TYPES = ("start", "review", "sync", "fix_comments", "custom_action")
 
 #: Fix-comments prompt header — the only surviving discriminator for history
 #: rows (initiator_command carries the harness name, never the subcommand).
@@ -85,6 +85,8 @@ def derive_session_type(command: str, fix_comments: bool = False) -> str | None:
         return "fix_comments"
     if c in ("start", "review", "sync"):
         return c
+    if c == "action":
+        return "custom_action"
     return None
 
 
@@ -95,6 +97,8 @@ def _backfill_session_type(initiator_command: str, prompt: str) -> str | None:
     first = (initiator_command or "").split(" ", 1)[0].strip().lower()
     if first in ("start", "review", "sync"):
         return first
+    if first == "action":
+        return "custom_action"
     if "--fix-comments" in (initiator_command or ""):
         return "fix_comments"
     return None

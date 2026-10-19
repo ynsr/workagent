@@ -195,6 +195,7 @@ from .cli_sync import (  # noqa: F401  (test compatibility)
 )
 
 from . import cli_service  # noqa: F401  (registers `service`)
+from . import cli_action  # noqa: F401  (registers `action`)
 
 
 @app.command("doctor")

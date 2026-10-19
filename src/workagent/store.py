@@ -714,10 +714,34 @@ def _clear_harness_locked(path: Path, key: str) -> None:
 def active_harness(key: str) -> dict | None:
     return load_harnesses().get(key)
 
-from .store_custom_actions import (  # noqa: F401,E402
-    create_action,
-    delete_action,
-    get_action,
-    list_actions,
-    update_action,
-)
+from . import store_custom_actions as _ca
+
+
+def list_actions() -> list:
+    """All custom actions (state.db; empty pre-migration)."""
+    from . import store_sqlite as _sq
+    return _ca.list_actions(_sq.db_path())
+
+
+def get_action(label: str) -> dict | None:
+    """One custom action by label; None when unknown."""
+    from . import store_sqlite as _sq
+    return _ca.get_action(_sq.db_path(), label)
+
+
+def create_action(**fields) -> dict:
+    """Create a custom action (delegates to store_custom_actions)."""
+    from . import store_sqlite as _sq
+    return _ca.create_action(_sq.db_path(), **fields)
+
+
+def update_action(label: str, **fields) -> dict:
+    """Update a custom action (delegates to store_custom_actions)."""
+    from . import store_sqlite as _sq
+    return _ca.update_action(_sq.db_path(), label, **fields)
+
+
+def delete_action(label: str) -> None:
+    """Delete a custom action (delegates to store_custom_actions)."""
+    from . import store_sqlite as _sq
+    return _ca.delete_action(_sq.db_path(), label)
