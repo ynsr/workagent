@@ -148,10 +148,15 @@ def _push_target_lines(worktree: str, branch: str) -> str:
 
 
 def prompt_for_issue(title: str, body: str, issue_ref: str,
-                     worktree: str = "", branch: str = "") -> str:
+                     worktree: str = "", branch: str = "",
+                     related_paths: list[tuple[str, str]] | None = None) -> str:
     prompt = f"Work on issue {issue_ref}: {title}\n\n{body}".strip()
     if worktree and branch:
         prompt += _push_target_lines(worktree, branch)
+    if related_paths:
+        lines = "\n".join(f"- {name}: {path}" for name, path in related_paths)
+        prompt += ("\n\nRelated repo worktrees (apply cross-repo code changes"
+                   f" here too):\n{lines}")
     return prompt
 
 

@@ -47,6 +47,7 @@ from .cli_core import _DEFAULT_BRANCH_NAMES as _CORE_DEFAULTS
 def start(
     ref: str = typer.Argument(..., help="Issue key/URL, OWNER/REPO#NUM, or bare number."),
     repo: Optional[str] = typer.Option(None, "--repo", autocompletion=_complete_repos, help="Registered name, local path, or clone URL."),
+    related_repo: Optional[list[str]] = typer.Option(None, "--related-repo", autocompletion=_complete_repos, help="Additional repo checkouts to fan out (repeatable): one child worktree per repo on the same branch."),
     depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
     base: Optional[str] = typer.Option(None, "--base", autocompletion=_complete_branches, help="Base branch (default: repo default). A non-default branch runs on that branch instead of creating a new one."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
@@ -73,6 +74,8 @@ def start(
         _fail("--terminal cannot be used with --launch (pick one run mode)", EXIT_USAGE)
     parsed = refs.parse_ref(ref)
     pr_mode = parsed["kind"] in ("pr", "mr")
+    if pr_mode and related_repo:
+        _fail("--related-repo is not supported in PR/MR mode (start from the issue instead)", EXIT_USAGE)
     if pr_mode:
         return _start_from_pr(ref, parsed, repo, depth, harness, no_tty,
                               launch, dry_run, yes, json_output,
@@ -184,6 +187,7 @@ def start(
     issue_id, slug = gitwt.build_branch_for_issue(parsed, issue["title"])
     if parsed["tool"] == "jira-cli" and not issue_id:
         issue_id = parsed["number"]
+    related_paths = _resolve_related_repos(related_repo, r, depth=depth)
 
     if dry_run:
         result = {"dry_run": True, "repo": str(r),
@@ -191,6 +195,8 @@ def start(
                   "issue": {"title": issue["title"]}, "harness": harness_name,
                   "key": key, "tracker": tid, "tracker_link": outcome,
                   "link": None if (branch_mode or cwd_mode) else link_url}
+        if related_paths:
+            result["related_repos"] = [name for name, _ in related_paths]
         if branch_mode:
             result["branch"] = base
         elif cwd_mode:
@@ -214,16 +220,20 @@ def start(
     rec = {"issue": ref, "worktree": worktree, "branch": branch, "repo": str(r)}
     if link_url and link_url.startswith("http"):
         rec["issue_url"] = link_url
+    if related_paths:
+        rec["related_repos"] = [str(p) for _, p in related_paths]
     store.record_link(key, rec)
     # Remember the repo under a derived name for future --repo picks.
     try:
         repos.register_repo(repos.repo_name(r), r)
     except HarnessError:
         pass
+    child_paths = _fan_out_related(parsed, key, branch, base_branch, related_paths)
     prompt = backend.prompt_for_issue(issue["title"], issue["body"], ref,
-                                      worktree=worktree, branch=branch)
+                                      worktree=worktree, branch=branch,
+                                      related_paths=child_paths)
     if no_tty:
-        prompt += "\n\nWhen done: commit, push to this branch, and create an MR/PR to the default branch."
+        prompt += ("\n\nWhen done: if there are any code changes, commit, push to this branch, and open a PR/MR to the default branch. If there are no code changes, do not commit — just report that.")
     prompt = append_extra_prompt(prompt, extra_prompt)
     result = {"worktree_path": worktree, "branch": branch,
               "base": detected_default if branch_mode else base_branch,
@@ -234,6 +244,70 @@ def start(
     _run_harness(harness_name, prompt, worktree, str(r), no_tty, launch,
                  result, json_output, run_key=key, session_file=session_file,
                  terminal=terminal, env_file=env_file)
+
+
+def _resolve_related_repos(related: list[str] | None, main_repo: Path,
+                           depth: int = 7) -> list[tuple[str, Path]]:
+    """Resolve --related-repo values to (name, path), deduped, minus main.
+
+    Values accept a registered name, local path, or clone URL (same
+    surface as --repo). The main repo itself is a usage error (exit 2):
+    silently dropping it would hide a no-op fan-out.
+    """
+    seen: set[str] = set()
+    out: list[tuple[str, Path]] = []
+    names = related if isinstance(related, (list, tuple)) else []
+    for name in names:
+        path = repos.resolve_repo(name, Path.cwd(), depth=depth)
+        if _same_repo_path(str(path), str(main_repo)):
+            _fail(f"--related-repo {name} is the main repo"
+                  " (already covered; related repos must differ)", EXIT_USAGE)
+        norm = str(path.expanduser().resolve()) if str(path) else str(path)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        out.append((name, path))
+    return out
+
+
+def _fan_out_related(parsed: dict, parent_key: str, branch: str,
+                     base_branch: str,
+                     related: list[tuple[str, Path]]) -> list[tuple[str, str]]:
+    """Create/adopt one child worktree per related repo on *branch*.
+
+    Child rows key as refs.issue_key(parsed, <repo-name>) with
+    parent_key_ref → parent. Re-runs adopt live-path children (idempotent).
+    Returns [(name, worktree-path)] for the harness prompt.
+    """
+    paths: list[tuple[str, str]] = []
+    for name, repo_path in related:
+        child_key = refs.issue_key(parsed, Path(str(repo_path)).name)
+        existing = store.load_links(include_inactive=True).get(child_key, {})
+        if (existing.get("worktree")
+                and Path(str(existing["worktree"])).is_dir()
+                and str(existing.get("branch", "")) == branch):
+            eprint(f"note: reusing linked worktree {existing['worktree']} for {child_key}")
+            paths.append((name, str(existing["worktree"])))
+            rec = dict(existing)
+            rec["parent_key_ref"] = parent_key
+            store.record_link(child_key, rec)
+            continue
+        wt = gitwt.start_worktree(repo_path, branch=branch, base=base_branch)
+        wt_path = wt.get("worktree_path", "")
+        child_branch = wt.get("branch", branch)
+        prior = worktrees.recorded_key(
+            wt_path, child_branch, store.load_links(include_inactive=True),
+            repo=str(repo_path))
+        use_key = prior if isinstance(prior, str) else child_key
+        store.record_link(use_key, {"issue": parent_key, "worktree": wt_path,
+                                    "branch": child_branch, "repo": str(repo_path),
+                                    "parent_key_ref": parent_key})
+        try:
+            repos.register_repo(repos.repo_name(repo_path), repo_path)
+        except HarnessError:
+            pass
+        paths.append((name, wt_path))
+    return paths
 
 
 def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,

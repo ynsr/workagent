@@ -96,6 +96,18 @@ def test_prompt_push_target_mentions_origin_branch():
     p = backend.prompt_for_issue("T", "B", "o/r#22", worktree="/w", branch="chore/a--b")
     assert "origin/chore/a--b" in p
 
+def test_prompt_for_issue_lists_related_paths():
+    p = backend.prompt_for_issue("T", "B", "o/r#22", worktree="/wt", branch="feat/x",
+                                 related_paths=[("other", "/tmp/wt2")])
+    assert "Related repo worktrees" in p
+    assert "- other: /tmp/wt2" in p
+
+
+def test_prompt_for_issue_no_related_section_when_empty():
+    p = backend.prompt_for_issue("T", "B", "o/r#22", worktree="/wt", branch="feat/x")
+    assert "Related repo" not in p
+
+
 def test_omp_session_file_routes_via_resume(tmp_path):
     from workagent.backend import OmpHarness
     real = tmp_path / "x.jsonl"

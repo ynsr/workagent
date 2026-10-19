@@ -189,7 +189,7 @@ def test_start_from_worktree_continues_on_current_branch(isolated_config, tmp_pa
     monkeypatch.setattr(cli.gitwt, "start_worktree", fake_start_worktree)
     prompts = []
     monkeypatch.setattr(cli.backend, "prompt_for_issue",
-                        lambda title, body, ref, worktree="", branch="": prompts.append((worktree, branch)))
+                        lambda title, body, ref, worktree="", branch="", **kw: prompts.append((worktree, branch)))
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
     r = runner.invoke(cli.app, ["start", "o/r#22", "--launch", "--json"])
     assert r.exit_code == 0, r.output
