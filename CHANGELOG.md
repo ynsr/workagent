@@ -202,6 +202,7 @@
 - `cleanup` MR merge passes `--auto-merge=false` to glab so a running pipeline can't silently queue the merge and strand the follow-up branch delete [no-issue]
 - `release` prints the default→release commit subjects to stderr before the pre-release gate runs (local `git log`, no extra fetch) [no-issue]
 - Headless Start/Review/Fix-Comments/Sync prints the session's last assistant message (stdout, `summary` field with `--json`) and posts it to the worktree's linked issue (jira/gh/glab, best-effort stderr warning) [no-issue]
+- Custom actions: `action add/list/show/run/delete` (label auto-normalized, Zap default icon, prompt/scripts + run_mode default) with per-worktree headless fan-out, pre/post shell gates, child-worktree paths in the prompt; Actions page + Dashboard Actions dropdown (selection-gated) [no-issue]
 ## 0.2.1 — 2026-09-18
 
 - Fix Tab completion: typer 0.27 never registers its shell completion
