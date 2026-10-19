@@ -42,6 +42,23 @@ def test_start_accepts_and_forwards_launch(client, monkeypatch):
     _wait_state(client, rid, {"succeeded"})
 
 
+def test_start_accepts_repeated_related_repo(client, monkeypatch):
+    """`start --related-repo a --related-repo b` passes validation, reaches argv."""
+    _stub_spawn(monkeypatch)
+    r = client.post("/api/runs", json={
+        "command": "start",
+        "args": ["IPG-1", "--repo", "main", "--related-repo", "a",
+                 "--related-repo", "b", "--dry-run"],
+        "confirm": True,
+    })
+    assert r.status_code == 202, r.text
+    run = client.app.state.registry.get(r.json()["run_id"])
+    assert run.argv.count("--related-repo") == 2
+    assert "--related-repo=a" not in run.argv  # separate argv tokens
+    _wait_state(client, r.json()["run_id"], {"succeeded"})
+
+
+
 def test_review_accepts_launch_shorthand_L(client, monkeypatch):
     """-L (CLI shorthand) passes web validation like --launch."""
     _stub_spawn(monkeypatch)

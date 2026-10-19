@@ -8,6 +8,7 @@ import { useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
 import { RUN_MODE_OPTIONS, REVIEW_ACTION_OPTIONS, INITIAL, extraPromptArgs, runModeArgs } from "@/lib/launchConfig"
 import type { LaunchForm, RunMode, ReviewAction } from "@/lib/launchConfig"
+import { RelatedReposSelect } from "@/components/RelatedReposSelect"
 import { loadLaunchPrefs } from "@/lib/launchPrefs"
 import { FieldHelp } from "@/components/FieldHelp"
 export interface StartFormValue extends LaunchForm {}
@@ -109,7 +110,7 @@ export function StartFormFields({
   issuesNonce,
 }: {
   form: StartFormValue
-  onChange: <K extends keyof StartFormValue>(key: K, value: StartFormValue[K]) => void
+  onChange: <K extends keyof LaunchForm>(key: K, value: LaunchForm[K]) => void
   idPrefix: string
   /** Remount key for the issue dropdown (Launch refresh button). */
   issuesNonce?: number
@@ -217,6 +218,13 @@ export function StartFormFields({
         ) : null}
       </div>
 
+      <RelatedReposSelect
+        idPrefix={idPrefix}
+        mainRepo={form.repo}
+        value={form.relatedRepos}
+        onChange={(v) => onChange("relatedRepos", v)}
+      />
+
       <div className="grid gap-2">
         <Label htmlFor={`${idPrefix}-base`}>
           <FieldHelp label="Base branch" flag="--base" description="Base branch for the new worktree (default: repo default)." />
@@ -229,7 +237,6 @@ export function StartFormFields({
           spellCheck={false}
         />
       </div>
-
       <div className="flex flex-wrap gap-x-6 gap-y-3">
         <RunModeSelect
           idPrefix={idPrefix}
@@ -263,6 +270,9 @@ export function buildStartArgs(form: StartFormValue): string[] {
   // (--no-tty, omp -p --auto-approve) only when actually running now.
   if (form.runMode === "headless") args.push("--no-tty")
   if (repo) args.push("--repo", repo)
+  for (const n of form.relatedRepos ?? []) {
+    if (n.trim()) args.push("--related-repo", n.trim())
+  }
   if (form.depth.trim()) args.push("--depth", form.depth.trim())
   if (form.base.trim()) args.push("--base", form.base.trim())
   args.push(...runModeArgs(form.runMode))
@@ -273,9 +283,11 @@ export function buildStartArgs(form: StartFormValue): string[] {
 export function startFlagList(form: StartFormValue): string {
   const repo = form.repo.trim()
   const extra = form.extraPrompt.trim()
+  const related = (form.relatedRepos ?? []).filter((n) => n.trim())
   return [
     form.runMode === "headless" ? "headless (--no-tty)" : form.runMode === "terminal" ? "terminal (--terminal)" : "tty preview (no --no-tty)",
     repo ? `--repo ${repo}` : "repo: pick a repo",
+    related.length ? `--related-repo ${related.join(", ")}` : null,
     `--depth ${form.depth.trim() || "7"}`,
     form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
     form.runMode === "headless" ? "--launch (run the agent now)"

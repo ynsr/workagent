@@ -57,6 +57,7 @@ export interface LaunchForm {
   newFixSession: boolean
   merge: boolean
   extraPrompt: string
+  relatedRepos: string[]
 }
 export const INITIAL: LaunchForm = {
   ref: "",
@@ -72,6 +73,7 @@ export const INITIAL: LaunchForm = {
   newFixSession: false,
   merge: false,
   extraPrompt: "",
+  relatedRepos: [],
 }
 
 /** Extra user instructions appended via --extra-prompt (all modes). */

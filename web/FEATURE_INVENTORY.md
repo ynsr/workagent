@@ -21,6 +21,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `start --no-tty` | mutating | — | `start` | no | | none — headless mode (`omp -p --auto-approve`, `backend.command_argv(no_tty=True)`); the web UI sends it only with `--launch` (Run agent now), so preview `harness_command` stays TTY (`omp`, no `-p`) |
 | `start --launch` (default: preview) | mutating | — | `start` | no | | without `--launch` lands in interactive shell with the printed command — **UI must not use `--launch`** (needs a TTY shell) |
 | `start --terminal` (XOR `--launch`) | mutating | — | `start` | no (detached terminal) | no graphical session (no `$DISPLAY`/`$WAYLAND_DISPLAY`); no terminal emulator found (set `$TERMINAL`) | persists a preview session row, claims the harness lock with `origin=terminal` (recorded pid = spawned terminal emulator), prints `terminal_pid` in `--json`; stop from the Dashboard via `POST /api/terminal/stop` (Task 5) |
+| `start --related-repo NAME` (repeatable) | mutating | Related repos multi-select | `start` | no (child worktrees) | same-repo-as-main (2); PR/MR mode (2) | one child worktree per repo on the same branch, grouped under the parent in StatusTable; cleanup cascades |
 | `start --dry-run` | read-only-ish | — | `start` | no | | none |
 | `start --yes` | mutating | — | `start` | no | | skips confirmations |
 | `start --json` | mutating | — | `start` | no | | |

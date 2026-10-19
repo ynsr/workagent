@@ -63,7 +63,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "tracker list": ("--json", "--csv"),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
-    "start": ("--repo", "--depth", "--base", "--harness", "--session-file", "--env-file", "--extra-prompt"),
+    "start": ("--repo", "--depth", "--base", "--harness", "--session-file", "--env-file", "--extra-prompt", "--related-repo"),
     "review": ("--repo", "--depth", "--harness", "--session-file", "--env-file", "--extra-prompt"),
     "sync": ("--session-file", "--env-file", "--extra-prompt"),
     "register": ("--key", "--issue", "--repo"),

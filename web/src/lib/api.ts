@@ -49,6 +49,10 @@ export interface WorktreeEntry {
   active?: number
   /** Soft-delete stamp (`link remove`); absent/"" = live. */
   deleted_at?: string
+  /** Related-repo keys for a parent worktree (start --related-repo); absent/[] = none. */
+  related_repos?: string[]
+  /** Parent link key for a child worktree; absent/"" = top-level. */
+  parent_key_ref?: string
   commits_detail?: CommitsDetail | null
   pr_detail?: PrDetail | null
   reviews_detail?: ReviewsDetail | null

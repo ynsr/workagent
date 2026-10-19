@@ -254,6 +254,9 @@ Request:
   the harness lock with `origin=terminal` (pid = spawned terminal
   emulator), and prints `terminal_pid` in the run's JSON output; the
   agent is stopped via `POST /api/terminal/stop` with the worktree ref.
+- `start` takes repeatable `--related-repo <name>` (one child worktree per
+  repo on the same branch; the Launch Start form multi-selects from every
+  registered repo except the main one).
 
 Response 202: `{"run_id": "abc123"}` — `409 {code:"conflict"}` when
 another run holds the same target key.

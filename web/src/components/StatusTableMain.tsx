@@ -116,20 +116,36 @@ export function StatusTable({
 
   const keys = useMemo(() => {
     const needle = q.toLowerCase()
-    return Object.keys(worktrees)
-      .filter((key) => {
-        const entry = worktrees[key]
-        if (!entry) return false
-        if (repoFilter && repoTabs) {
-          const k = repoKeyForItem(entry, repoTabs.repos)
-          const want = repoFilter === "(other)" ? "(other)" : repoFilter
-          if (k !== want) return false
-        }
-        return !needle || matchesQuery(key, entry, needle)
-      })
-      .sort((a, b) =>
-        (worktrees[b]?.added_at ?? "").localeCompare(worktrees[a]?.added_at ?? ""),
-      )
+    const visible = Object.keys(worktrees).filter((key) => {
+      const entry = worktrees[key]
+      if (!entry) return false
+      if (repoFilter && repoTabs) {
+        const k = repoKeyForItem(entry, repoTabs.repos)
+        const want = repoFilter === "(other)" ? "(other)" : repoFilter
+        if (k !== want) return false
+      }
+      return !needle || matchesQuery(key, entry, needle)
+    })
+    const byAdded = (a: string, b: string) =>
+      (worktrees[b]?.added_at ?? "").localeCompare(worktrees[a]?.added_at ?? "")
+    // Multi-repo fan-out: child rows (parent_key_ref set) render directly
+    // under their parent when the parent is visible; orphaned children
+    // (parent filtered out) stay top-level so they are never hidden.
+    const live = new Set(visible)
+    const parents = visible.filter((k) => !worktrees[k]?.parent_key_ref).sort(byAdded)
+    const childrenOf = new Map<string, string[]>()
+    const orphans: string[] = []
+    for (const k of visible.filter((k) => worktrees[k]?.parent_key_ref).sort(byAdded)) {
+      const p = worktrees[k]?.parent_key_ref ?? ""
+      if (p && live.has(p)) {
+        const list = childrenOf.get(p) ?? []
+        list.push(k)
+        childrenOf.set(p, list)
+      } else {
+        orphans.push(k)
+      }
+    }
+    return [...parents.flatMap((p) => [p, ...(childrenOf.get(p) ?? [])]), ...orphans.sort(byAdded)]
   }, [worktrees, q, repoFilter, repoTabs])
   // Hydrate `?sel=` once per worktree-set (unknown keys dropped).
   const hydratedFor = useRef<string>("")
@@ -288,6 +304,9 @@ export function StatusTable({
                         </TableCell>
                         <TableCell className="max-w-48 font-medium">
                           <span className="flex min-w-0 items-center gap-1.5">
+                            {entry.parent_key_ref ? (
+                              <span aria-hidden className="shrink-0 select-none text-muted-foreground">└</span>
+                            ) : null}
                             <span className="min-w-0 flex-1">
                               {entry.issue_url ? (
                                 <a
@@ -304,6 +323,11 @@ export function StatusTable({
                                 <CopyCell text={key} className="font-mono text-[13px] font-semibold" />
                               )}
                             </span>
+                            {entry.parent_key_ref ? (
+                              <Badge variant="outline" title={`Child worktree of ${entry.parent_key_ref}`}>
+                                child
+                              </Badge>
+                            ) : null}
                             {entry.harness ? (
                               <span
                                 aria-label={`Live harness: ${entry.harness}`}
