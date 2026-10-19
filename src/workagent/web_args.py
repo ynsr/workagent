@@ -67,6 +67,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "action list": ("--json", "--csv"),
     "action show": ("--json",),
     "action run": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
+    "action update": ("--json",),
     "action delete": ("--yes", "--json"),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
@@ -81,12 +82,13 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "tracker add": ("--vendor", "--remote-url"),
     "tracker update": ("--vendor", "--remote-url"),
     "action add": ("--name", "--label", "--icon", "--prompt", "--pre-execution", "--post-execution", "--default-options"),
+    "action update": ("--name", "--icon", "--prompt", "--pre-execution", "--post-execution", "--default-options"),
     "action run": ("--harness", "--extra-prompt", "--env-file", "--session-file"),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "link": {"list", "set", "remove", "deactivate", "reactivate"},
                                     "tracker": {"add", "list", "remove", "update"},
-                                    "action": {"add", "list", "show", "run", "delete"}}
+                                    "action": {"add", "list", "show", "run", "update", "delete"}}
 
 
 def _first_positional(args: list[str], vals: tuple[str, ...] = ()) -> str:

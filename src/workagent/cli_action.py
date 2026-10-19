@@ -128,6 +128,39 @@ def action_show(
     _print_result(out, json_output)
 
 
+@action_app.command("update")
+@_catch_harness_errors
+def action_update(
+    label: str = typer.Argument(..., help="Action label."),
+    name: Optional[str] = typer.Option(None, "--name", help="New display name."),
+    icon: Optional[str] = typer.Option(None, "--icon", help="New Lucide icon name."),
+    prompt: Optional[str] = typer.Option(None, "--prompt", help="New agent prompt."),
+    pre_execution: Optional[str] = typer.Option(None, "--pre-execution", help="New pre-harness shell script."),
+    post_execution: Optional[str] = typer.Option(None, "--post-execution", help="New post-harness shell script."),
+    default_options: Optional[str] = typer.Option(None, "--default-options", help='New JSON execution config ({"run_mode": ...}).'),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Update a custom action (label is immutable)."""
+    fields: dict = {}
+    if name is not None:
+        fields["name"] = name
+    if icon is not None:
+        fields["icon"] = icon
+    if prompt is not None:
+        fields["prompt"] = prompt
+    if pre_execution is not None:
+        fields["pre_execution"] = pre_execution
+    if post_execution is not None:
+        fields["post_execution"] = post_execution
+    if default_options is not None:
+        fields["default_options"] = default_options
+    if not fields:
+        _fail("nothing to update — pass at least one field flag", EXIT_USAGE)
+    row = store.update_action(label, **fields)
+    _print_result({"updated": row["label"], "id": row["id"],
+                   "name": row["name"]}, json_output)
+
+
 @action_app.command("delete")
 @_catch_harness_errors
 def action_delete(
@@ -213,12 +246,16 @@ def action_run(
             return
     if not (action.get("prompt") or "").strip():
         eprint(f"{key}: prompt empty — scripts only, no harness session")
+        result = {"label": label, "key": key, "skipped": "empty prompt"}
     else:
         if mode != "preview":
             _guard_harness(key, wt)
         harness_name = harness_name or store.load_config().get("default_harness", "omp")
-        _run_harness(harness_name, prompt, wt, str(entry.get("repo", wt)),
-                     no_tty, use_launch, result, json_output, run_key=key,
+        prompt = build_action_prompt(action, entry, key, links)
+        if extra_prompt and extra_prompt.strip():
+            prompt = append_extra_prompt(prompt, extra_prompt)
+        result = _run_harness(harness_name, prompt, wt, str(entry.get("repo", wt)),
+                     no_tty, use_launch, {"command": "action"}, json_output, run_key=key,
                      session_file=session_file if isinstance(session_file, str) else None,
                      terminal=use_terminal, env_file=env_file)
         if mode == "preview":

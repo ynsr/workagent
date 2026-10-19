@@ -63,6 +63,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `action add --name NAME [--label] [--icon] [--prompt] [--pre-execution] [--post-execution] [--default-options JSON] [--json]` | mutating | — | `config` | no (custom_actions row write) | blank name (2), blank prompt+pre (2), bad label/JSON (2), label collision (2) | none |
 | `action list [--json/--csv]` | read-only | `store.list_actions` | — | no | | none |
 | `action show LABEL [--json]` | read-only | `store.get_action` | — | no | unknown label (2) | none |
+| `action update LABEL [--name] [--icon] [--prompt] [--pre-execution] [--post-execution] [--default-options JSON] [--json]` | mutating | — | `config` | no (custom_actions row write) | unknown label (2), no fields (2), blank name / blank prompt+pre (2) | none |
 | `action run LABEL REF [--launch/--terminal] [--harness] [--extra-prompt] [--env-file] [--session-file] [--dry-run] [--yes] [--json]` | mutating | — | `action:<label>:<ref>` | no (spawns agent) | unknown label (2), launch+terminal (2), blank prompt+pre (2), live harness (1) | TTY confirm; non-TTY needs `--yes` (2) |
 | `action delete LABEL [--yes] [--json]` | mutating | — | `config` | yes-ish (row delete) | unknown label (2) | TTY confirm; non-TTY needs `--yes` (2) |
 | `register PATH [--key] [--issue] [--repo] [--yes/--force] [--json]` | mutating | — | `register` | no (links.json write) | bad path/main checkout (2), key conflict (1) | none |

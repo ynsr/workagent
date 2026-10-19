@@ -58,6 +58,7 @@ export function Actions() {
   const [mode, setMode] = useState<string>("preview")
   const [adding, setAdding] = useState(false)
   const [detail, setDetail] = useState<ActionRow | null>(null)
+  const [editingLabel, setEditingLabel] = useState<string | null>(null)
 
   function reset() {
     setName("")
@@ -66,25 +67,37 @@ export function Actions() {
     setPre("")
     setPost("")
     setMode("preview")
+    setEditingLabel(null)
   }
 
   async function handleAdd() {
     if (!name.trim() || (!prompt.trim() && !pre.trim())) return
     setAdding(true)
     try {
+      const isEdit = editingLabel !== null
       const { run_id } = await createRun.mutateAsync({
         command: "action",
-        args: [
-          "add",
-          "--name", name.trim(),
-          ...(icon.trim() ? ["--icon", icon.trim()] : []),
-          ...(prompt.trim() ? ["--prompt", prompt.trim()] : []),
-          ...(pre.trim() ? ["--pre-execution", pre.trim()] : []),
-          ...(post.trim() ? ["--post-execution", post.trim()] : []),
-          "--default-options", JSON.stringify({ run_mode: mode }),
-        ],
+        args: isEdit
+          ? [
+              "update", editingLabel,
+              "--name", name.trim(),
+              "--icon", icon.trim() || "Zap",
+              "--prompt", prompt,
+              "--pre-execution", pre,
+              "--post-execution", post,
+              "--default-options", JSON.stringify({ run_mode: mode }),
+            ]
+          : [
+              "add",
+              "--name", name.trim(),
+              ...(icon.trim() ? ["--icon", icon.trim()] : []),
+              ...(prompt.trim() ? ["--prompt", prompt.trim()] : []),
+              ...(pre.trim() ? ["--pre-execution", pre.trim()] : []),
+              ...(post.trim() ? ["--post-execution", post.trim()] : []),
+              "--default-options", JSON.stringify({ run_mode: mode }),
+            ],
       })
-      toast.success("Action add started", {
+      toast.success(isEdit ? "Action update started" : "Action add started", {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
       })
       reset()
@@ -97,6 +110,7 @@ export function Actions() {
 
   function handleEdit(row: ActionRow) {
     setDetail(null)
+    setEditingLabel(row.label)
     setName(row.name)
     setIcon(row.icon === "Zap" ? "" : row.icon)
     setPrompt(row.prompt ?? "")
@@ -242,9 +256,11 @@ export function Actions() {
 
         <Card className="order-1 h-fit lg:order-2">
           <CardHeader>
-            <CardTitle>Add an action</CardTitle>
+            <CardTitle>{editingLabel ? `Edit ${editingLabel}` : "Add an action"}</CardTitle>
             <CardDescription>
-              action add --name creates the row; run it per worktree from the Dashboard.
+              {editingLabel
+                ? "action update — the label stays fixed, all other fields are replaced."
+                : "action add --name creates the row; run it per worktree from the Dashboard."}
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
@@ -318,10 +334,17 @@ export function Actions() {
                 ))}
               </select>
             </div>
-            <Button onClick={() => void handleAdd()} disabled={!name.trim() || (!prompt.trim() && !pre.trim()) || adding}>
-              <Plus aria-hidden />
-              {adding ? "Saving…" : "Add action"}
-            </Button>
+            <div className="flex gap-2">
+              <Button className="flex-1" onClick={() => void handleAdd()} disabled={!name.trim() || (!prompt.trim() && !pre.trim()) || adding}>
+                <Plus aria-hidden />
+                {adding ? "Saving…" : editingLabel ? "Save changes" : "Add action"}
+              </Button>
+              {editingLabel ? (
+                <Button variant="outline" onClick={reset} disabled={adding}>
+                  Cancel
+                </Button>
+              ) : null}
+            </div>
           </CardContent>
         </Card>
       </div>

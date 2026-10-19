@@ -117,7 +117,7 @@ Candidates/Launch issue fetch per tracker — `tracker add
   "default_options": {"run_mode": "preview"},
   "created_at": "…", "modified_at": "…"}]}
 ```
-(CRUD page source: `action add/list/show/delete` run as runs; detail 404s
+(CRUD page source: `action add/list/show/update/delete` run as runs; detail 404s
 on unknown label. `action run <label> <ref>` runs via `POST /api/runs`
 with target key `action:<label>:<ref>` — one run per worktree, fanned out
 by the Dashboard Actions dropdown.)

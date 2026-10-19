@@ -62,3 +62,30 @@ def test_pre_fail_skips_harness(tmp_path, monkeypatch):
     assert res.exit_code == 0, res.output
     assert called == []
     assert "pre-execution failed" in res.stderr
+
+
+def test_update_changes_fields(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from workagent.cli_core import app
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_action as cli_mod
+    import json as _json
+    row = {"id": 1, "label": "generate_post_prd", "name": "New name"}
+    monkeypatch.setattr("workagent.store.update_action",
+                        lambda label, **f: {**row, "label": label})
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["action", "update", "generate_post_prd",
+                         "--name", "New name", "--json"])
+    assert res.exit_code == 0, res.output
+    assert _json.loads(res.stdout)["name"] == "New name"
+
+
+def test_update_no_fields_exits_2(tmp_path):
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_action as cli_mod
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["action", "update", "generate_post_prd"])
+    assert res.exit_code == 2
