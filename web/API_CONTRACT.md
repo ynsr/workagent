@@ -33,6 +33,7 @@ Jira rows are keyed `jira:KEY@repo` (e.g. `jira:IPG-932@projectx`); bare
     "ci_url": "https://…/-/jobs/194493",
     "added_at": "2026-09-20T10:00:00+00:00",
     "wt_valid": true,
+    "active": 1, "deleted_at": "",
     "commits_detail": {"behind": 0, "ahead": 1},
     "pr_detail": {"number": 1706, "state": "open", "title": "…",
                    "author": "…", "url": "https://…", "tool": "glab"}
@@ -50,6 +51,9 @@ or `""` when unknown — the CI badge links there. `reviews` is the
 display string `"R|U|R"` (done reviews | unresolved | resolved);
 `reviews_detail` is `{"reviews", "unresolved", "resolved"}` or
 `null` when there is no PR or the lookup failed (same 10-min/tip cache).
+`active` is `0` on deactivated rows (`link deactivate`), `1` otherwise;
+`deleted_at` is the soft-delete stamp (`link remove`), `""` on live rows —
+the Dashboard deactivated/deleted tables filter on these flags.
 Plain (non-inline) `# Code Review` bot comments carry
 no reliable cross-host resolution state, so one counts as resolved only when its second
 non-empty line (below the header) matches `Status:\\s+RESOLVED` (case-insensitive) — on both GitHub and GitLab; non-bot threads keep their native flags.

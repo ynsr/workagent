@@ -540,7 +540,9 @@ export function Dashboard() {
           />
           <DeactivatedTable
             worktrees={Object.fromEntries(
-              Object.entries(inactiveAll ?? {}).filter(([k]) => !(k in (worktrees ?? {}))),
+              Object.entries(inactiveAll ?? {}).filter(
+                ([k, e]) => !(k in (worktrees ?? {})) && !e.deleted_at,
+              ),
             )}
             actions={{
               onOpenWorktree: handleOpenWorktree,
@@ -550,7 +552,7 @@ export function Dashboard() {
           />
           <DeletedTable
             worktrees={Object.fromEntries(
-              Object.entries(deletedAll ?? {}).filter(([k]) => !(k in (worktrees ?? {}))),
+              Object.entries(deletedAll ?? {}).filter(([, e]) => !!e.deleted_at),
             )}
             actions={{
               onOpenWorktree: handleOpenWorktree,

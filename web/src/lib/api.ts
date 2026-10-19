@@ -45,6 +45,10 @@ export interface WorktreeEntry {
   added_at?: string
   /** False when the recorded path is missing or not a live git worktree. */
   wt_valid?: boolean
+  /** 0 = deactivated (`link deactivate`); absent/1 = active. */
+  active?: number
+  /** Soft-delete stamp (`link remove`); absent/"" = live. */
+  deleted_at?: string
   commits_detail?: CommitsDetail | null
   pr_detail?: PrDetail | null
   reviews_detail?: ReviewsDetail | null

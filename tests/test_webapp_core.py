@@ -303,6 +303,22 @@ def test_status_include_inactive(client):
     body = client.get("/api/status", params={"include_inactive": "true"}).json()
     assert "jira:IPG-9" in body
 
+def test_api_status_carries_active_and_deleted_at(client):
+    """Deactivated/deleted table filters need `active`/`deleted_at` in the payload."""
+    store.record_link("jira:IPG-10", {"issue": "IPG-10",
+                                      "worktree": "/tmp/wt10", "branch": "b10",
+                                      "repo": "/tmp/repo"})
+    store.record_link("jira:IPG-11", {"issue": "IPG-11",
+                                      "worktree": "/tmp/wt11", "branch": "b11",
+                                      "repo": "/tmp/repo"})
+    store.set_worktree_active("jira:IPG-10", False)
+    store.soft_delete_worktree("jira:IPG-11")
+    body = client.get("/api/status", params={"include_inactive": "true",
+                                              "include_deleted": "true"}).json()
+    assert body["jira:IPG-10"]["active"] == 0
+    assert not body["jira:IPG-10"]["deleted_at"]
+    assert body["jira:IPG-11"]["deleted_at"]
+
 
 def test_api_status_includes_harness(client):
     store.record_link("jira:IPG-1", {"issue": "IPG-1",
