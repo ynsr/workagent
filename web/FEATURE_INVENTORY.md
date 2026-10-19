@@ -26,6 +26,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `start --yes` | mutating | — | `start` | no | | skips confirmations |
 | `start --json` | mutating | — | `start` | no | | |
 | `review REF` | mutating | — | `review` | no | parse failure; not a PR/MR ref and no discoverable PR; tracker linked to 2+ repos without `--repo` (#29, exit 2 naming candidates) | repo picker (TTY) |
+| `review --repo/--depth/--harness/--no-tty/--launch/--terminal/--dry-run/--yes/--json` | mutating | — | `review` | no | as above | as above (`--terminal` XOR `--launch`, same spawn/lock semantics as `start --terminal`) |
 | `review --then-fix-comments` | mutating | — | `review` | no | with `--fix-comments`/`--all` (2) | chains a fix run after review exit 0 (headless auto; preview/terminal print follow-up); **deprecated: use flows; ignored inside flow templates** |
 | `cleanup --merged [--force/--dry-run/--json]` | mutating | — | `cleanup:all` | **yes** (per merged/closed link) | `--merged` w/o `--yes` non-interactive (2); ref given with `--merged` (2) | none — requires `--yes`; skips live-harness/invalid worktrees |
 | `open REF` | read-only-ish (OS opener) | — | `open:<ref>` | no | no linked state (2), invalid/missing worktree (1), no opener (1) | none — prints the worktree path |
