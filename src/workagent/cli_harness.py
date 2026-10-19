@@ -402,9 +402,10 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         if minted is not None and minted != before:
             if finish_sid:
                 _sq.set_session_file_path(db, finish_sid, str(minted))
-            result["session_file"] = str(minted)
         if finish_sid:
             _sq.finish_session(db, finish_sid, "finished")
+        if no_tty and run_key:
+            _publish_headless_summary(result, json_output)
     except Exception:
         if finish_sid:
             try:
@@ -418,6 +419,43 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         if run_key:
             store.clear_harness_run(run_key)
     _print_result(result, json_output)
+
+
+def _publish_headless_summary(result: dict, json_output: bool = False) -> None:
+    """Print the session summary and post it to the linked issue (best effort).
+
+    Headless runs only (no_tty): parses the last assistant text from the
+    minted transcript, prints it to stdout (human) or as result["summary"]
+    (--json), and posts it to the worktree record's issue_url when present.
+    Never raises; failures warn on stderr.
+    """
+    from . import harness_summary as _hs
+    from . import issue_comments as _ic
+    summary = ""
+    try:
+        session_file = str(result.get("session_file", "") or "")
+        if session_file:
+            summary = _hs.last_assistant_text(session_file)
+    except Exception as e:
+        eprint(f"warning: summary parse failed: {e}")
+    if not summary:
+        summary = (f"headless {result.get('command', 'harness')} run finished "
+                   f"(branch {result.get('branch', '')}); no transcript summary.")
+    if json_output:
+        result["summary"] = summary
+    else:
+        print(summary)
+    key = str(result.get("key", "") or "")
+    if not key:
+        return
+    try:
+        entry = store.lookup_link(key) or {}
+    except Exception as e:
+        eprint(f"warning: link lookup failed for {key}: {e}")
+        return
+    issue_url = str(entry.get("issue_url", "") or "")
+    if issue_url:
+        _ic.post_issue_comment(issue_url, summary)
 
 
 def _watch_minted_transcript(db, scope_dir, before, finish_sid, result):

@@ -455,6 +455,7 @@ def test_pinned_sha_recorded(monkeypatch):
                                           "release_branch": "master", "tool": "glab",
                                           "remote": "https://h/o/r.git"})
     monkeypatch.setattr(rr, "_count_both", lambda *a, **k: (3, 0))
+    monkeypatch.setattr(rr, "_subjects", lambda *a, **k: ["feat: one"])
     monkeypatch.setattr(rr, "_auth_ok", lambda *a: True)
     monkeypatch.setattr(rr, "_origin_tip", lambda *a, **k: "abc123")
     from workagent import release_caps as _caps
@@ -646,3 +647,36 @@ def test_interrupt_triggers_cleanup(monkeypatch):
     with __import__("pytest").raises(Exception) as e:
         rel.run_release("rx", yes=True, dry_run=False, json_output=True, checks="ci")
     assert getattr(e.value, "exit_code", 2) == 1
+
+def test_validate_carries_commit_subjects(monkeypatch):
+    """validate_release returns first-line subjects for default→release diff."""
+    rr = _validate_registry(monkeypatch, {"path": "/r", "default_branch": "main",
+                                          "release_branch": "master", "tool": "glab",
+                                          "remote": "https://h/o/r.git"})
+    monkeypatch.setattr(rr, "_count_both", lambda *a, **k: (2, 0))
+    monkeypatch.setattr(rr, "_subjects", lambda *a, **k: ["feat: one", "fix: two"])
+    monkeypatch.setattr(rr, "_auth_ok", lambda *a: True)
+    monkeypatch.setattr(rr, "_origin_tip", lambda *a, **k: "abc123")
+    from workagent import release_caps as _caps
+    monkeypatch.setattr(_caps, "get_caps", lambda *a: {"strategy": ["ff-push"], "raw": {}})
+    out = rr.validate_release("rx")
+    assert out["commit_subjects"] == ["feat: one", "fix: two"]
+
+def test_release_prints_subjects_before_gate(monkeypatch, capsys):
+    """Commit subjects print to stderr before the pre-release gate runs."""
+    rel = _gated_registry(monkeypatch, "true")
+    monkeypatch.setattr(rel.repos, "validate_release",
+                        lambda *a, **k: _valid_ctx(commit_subjects=["feat: one", "fix: two"]))
+    order = []
+    monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: "http://mr/1")
+    def _gate(*a, **k):
+        order.append("gate")
+    monkeypatch.setattr(rel_gates, "run_local_gate", _gate)
+    monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: None)
+    monkeypatch.setattr(rel, "_merge_pinned", lambda *a, **k: "gitlab-mr-ff")
+    rel.run_release("gated", yes=True, dry_run=False, json_output=False, checks="local")
+    err = capsys.readouterr().err
+    assert "commits to release (3):" in err
+    assert "- feat: one" in err and "- fix: two" in err
+    assert err.index("- fix: two") < err.index("released abc123")
+    assert order == ["gate"]

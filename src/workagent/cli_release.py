@@ -359,6 +359,11 @@ def _run_locked(name: str, registry: dict, *, yes: bool, dry_run: bool,
     strategy = list(ctx.get("strategy") or [])
     gate = ((registry.get(name) or {}).get("commands") or {}).get("pre-release") or ""
     title = f"Release {default} -> {release_branch}"
+    subjects = list(ctx.get("commit_subjects") or [])
+    n = ctx.get("ahead", len(subjects))
+    eprint(f"commits to release ({n}):")
+    for subject in subjects:
+        eprint(f"- {subject}")
     if dry_run:
         eprint(f"dry-run: validate {name} {default}@{pinned} -> {release_branch} "
                f"({ctx.get('ahead', 0)} commits)")

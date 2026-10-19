@@ -79,6 +79,13 @@ def _count_both(path: str, default_branch: str, release_branch: str) -> tuple[in
     return ahead, behind
 
 
+def _subjects(path: str, default_branch: str, release_branch: str) -> list[str]:
+    """First-line subjects for origin/<release>..origin/<default> (oldest first)."""
+    out = run_cmd("git", "-C", path, "log", "--format=%s", "--reverse",
+                  f"origin/{release_branch}..origin/{default_branch}") or ""
+    return [line for line in (s.strip() for s in out.splitlines()) if line]
+
+
 def _origin_tip(path: str, branch: str) -> str:
     """SHA of origin/<branch>."""
     return (run_cmd("git", "-C", path, "rev-parse", f"origin/{branch}") or "").strip()
@@ -137,7 +144,8 @@ def validate_release(name: str, diff_mode: str = "remote") -> dict:
     return {"repo": name, "path": path, "tool": tool,
             "default_branch": default, "release_branch": release,
             "pinned_sha": pinned, "behind": behind, "ahead": ahead,
-            "diff_count": ahead, "strategy": caps["strategy"]}
+            "diff_count": ahead, "strategy": caps["strategy"],
+            "commit_subjects": _subjects(path, default, release)}
 
 
 _RELEASE_DIFF_TTL_SECONDS = 3600
