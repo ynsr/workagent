@@ -745,3 +745,61 @@ def delete_action(label: str) -> None:
     """Delete a custom action (delegates to store_custom_actions)."""
     from . import store_sqlite as _sq
     return _ca.delete_action(_sq.db_path(), label)
+
+from . import store_flows as _fl
+
+
+def list_templates() -> list:
+    """All flow templates (state.db; empty pre-migration)."""
+    from . import store_sqlite as _sq
+    return _fl.list_templates(_sq.db_path())
+
+
+def get_template(label: str) -> dict | None:
+    """One flow template by label; None when unknown."""
+    from . import store_sqlite as _sq
+    return _fl.get_template(_sq.db_path(), label)
+
+
+def create_template(**fields) -> dict:
+    """Create a flow template (delegates to store_flows)."""
+    from . import store_sqlite as _sq
+    return _fl.create_template(_sq.db_path(), **fields)
+
+
+def update_template(label: str, **fields) -> dict:
+    """Update a flow template (delegates to store_flows)."""
+    from . import store_sqlite as _sq
+    return _fl.update_template(_sq.db_path(), label, **fields)
+
+
+def delete_template(label: str) -> None:
+    """Delete a flow template (delegates to store_flows)."""
+    from . import store_sqlite as _sq
+    return _fl.delete_template(_sq.db_path(), label)
+
+
+def create_flow(**fields) -> dict:
+    """Create a flow run (delegates to store_flows)."""
+    from . import store_sqlite as _sq
+    return _fl.create_flow(_sq.db_path(), **fields)
+
+
+def get_flow(flow_id: int) -> dict | None:
+    """One flow by id; None when unknown."""
+    from . import store_sqlite as _sq
+    return _fl.get_flow(_sq.db_path(), flow_id)
+
+
+def list_flows(worktree: str = "",
+               include_deleted_worktrees: bool = False) -> list:
+    """All flows, optionally scoped to one worktree."""
+    from . import store_sqlite as _sq
+    return _fl.list_flows(_sq.db_path(), worktree,
+                          include_deleted_worktrees)
+
+
+def update_flow(flow_id: int, **fields) -> dict:
+    """Update a flow run (delegates to store_flows)."""
+    from . import store_sqlite as _sq
+    return _fl.update_flow(_sq.db_path(), flow_id, **fields)

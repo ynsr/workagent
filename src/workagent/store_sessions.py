@@ -71,8 +71,8 @@ def gen_session_id(now: datetime | None = None) -> str:
 
 
 #: Allowed values for sessions.session_type — an enum, never free text (NULL = unknown).
-SESSION_TYPES = ("start", "review", "sync", "fix_comments", "custom_action")
-
+SESSION_TYPES = ("start", "review", "sync", "fix_comments", "custom_action",
+                "flow")
 #: Fix-comments prompt header — the only surviving discriminator for history
 #: rows (initiator_command carries the harness name, never the subcommand).
 _FIX_PROMPT_PREFIX = "Fix all open (not-resolved) review comments on this PR/MR:"
@@ -83,19 +83,18 @@ def derive_session_type(command: str, fix_comments: bool = False) -> str | None:
     c = (command or "").strip().lower()
     if c == "review" and fix_comments:
         return "fix_comments"
-    if c in ("start", "review", "sync"):
+    if c in ("start", "review", "sync", "flow"):
         return c
     if c == "action":
         return "custom_action"
     return None
-
 
 def _backfill_session_type(initiator_command: str, prompt: str) -> str | None:
     """History backfill: prompt header first, then command starts-with."""
     if (prompt or "").startswith(_FIX_PROMPT_PREFIX):
         return "fix_comments"
     first = (initiator_command or "").split(" ", 1)[0].strip().lower()
-    if first in ("start", "review", "sync"):
+    if first in ("start", "review", "sync", "flow"):
         return first
     if first == "action":
         return "custom_action"

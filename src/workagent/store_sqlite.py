@@ -66,6 +66,21 @@ CREATE TABLE IF NOT EXISTS custom_actions (
   post_execution TEXT NOT NULL DEFAULT '',
   default_options TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL, modified_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS flow_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL, steps TEXT NOT NULL DEFAULT '[]',
+  pre_execution TEXT NOT NULL DEFAULT '',
+  post_execution TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL, modified_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS flows (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, template_label TEXT NOT NULL,
+  worktree_ref TEXT NOT NULL DEFAULT '',
+  repo_snapshot TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'pending',
+  current_step INTEGER NOT NULL DEFAULT 0,
+  step_results TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL, modified_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_flows_worktree ON flows(worktree_ref);
 """
 
 
@@ -531,6 +546,8 @@ def _schema_current(path: Path) -> bool:
         if "release_diff_cache" not in tables:
             return False
         if "custom_actions" not in tables:
+            return False
+        if "flow_templates" not in tables or "flows" not in tables:
             return False
         return True
     except Exception:

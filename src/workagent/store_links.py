@@ -136,15 +136,17 @@ def delete_worktree_row(path: Path, key: str) -> None:
     """Delete a worktree row only; files/branch/PR untouched.
 
     Note: sessions/runs CASCADE off the worktree row, so this key's
-    session history is deleted too.
+    session history is deleted too. flows rows (no hard FK: pre-Start
+    flows have no ref yet, and worktrees are soft-deleted not dropped)
+    are deleted explicitly alongside.
     """
     from .errors import HarnessError
     init_db(path)
     with connect(path) as conn:
+        conn.execute("DELETE FROM flows WHERE worktree_ref = ?", (key,))
         cur = conn.execute("DELETE FROM worktrees WHERE ref_key = ?", (key,))
         if cur.rowcount == 0:
             raise HarnessError(f"no worktree link for {key}", exit_code=2)
-
 def soft_delete_worktree(path: Path, key: str) -> str:
     """Stamp deleted_at (soft-delete); row, sessions, and files all survive.
 
@@ -199,6 +201,9 @@ def gc_soft_deleted(path: Path, retention_days: int = SOFT_DELETE_RETENTION_DAYS
             " WHERE w.deleted_at IS NOT NULL AND w.deleted_at != ''"
             " AND w.deleted_at < ?", (cutoff,))]
         for r in rows:
+            # flows have no hard FK to worktrees (pre-Start flows carry no
+            # ref); purge them explicitly alongside the GC'd link row.
+            conn.execute("DELETE FROM flows WHERE worktree_ref = ?", (r["ref_key"],))
             conn.execute("DELETE FROM worktrees WHERE ref_key = ?", (r["ref_key"],))
     return rows
 
