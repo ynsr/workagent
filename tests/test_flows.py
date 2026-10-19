@@ -36,7 +36,9 @@ def test_validate_template_ordering_matrix(tmp_path):
     _rejects([{"kind": "start"}, {"kind": "release"},
               {"kind": "cleanup"}], "release")
     _rejects([{"kind": "start"}, {"kind": "release"}], "cleanup")
-    _rejects([], "at least one step")
+    _rejects([{"kind": "frobnicate"}, {"kind": "cleanup"}], "unknown step kind")
+    _rejects([{"kind": "start"}, {"kind": "release"},
+              {"kind": "cleanup"}, {"kind": "release"}], "at most one")
 
 
 def test_validate_template_action_rules(tmp_path):
