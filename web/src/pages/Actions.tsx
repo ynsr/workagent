@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { Copy, Download, Pencil, Plus, Trash2, Zap } from "lucide-react"
 import { ActionIcon } from "@/components/ActionIcon"
+import { IconPicker } from "@/components/IconPicker"
 import { PageHeader } from "@/components/PageHeader"
 import {
   EmptyState,
@@ -59,6 +60,12 @@ export function Actions() {
   const [adding, setAdding] = useState(false)
   const [detail, setDetail] = useState<ActionRow | null>(null)
   const [editingLabel, setEditingLabel] = useState<string | null>(null)
+  // Label the typed name would map to (client mirror of normalize_label):
+  // typing a name whose label already exists switches the form to update mode.
+  const typedLabel = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/_{2,}/g, "")
+  const matched = typedLabel ? (actions.find((a) => a.label === typedLabel) ?? null) : null
+  const effectiveLabel = editingLabel ?? matched?.label ?? null
+  const isEdit = effectiveLabel !== null
 
   function reset() {
     setName("")
@@ -74,12 +81,11 @@ export function Actions() {
     if (!name.trim() || (!prompt.trim() && !pre.trim())) return
     setAdding(true)
     try {
-      const isEdit = editingLabel !== null
       const { run_id } = await createRun.mutateAsync({
         command: "action",
         args: isEdit
           ? [
-              "update", editingLabel,
+              "update", effectiveLabel as string,
               "--name", name.trim(),
               "--icon", icon.trim() || "Zap",
               "--prompt", prompt,
@@ -256,10 +262,10 @@ export function Actions() {
 
         <Card className="order-1 h-fit lg:order-2">
           <CardHeader>
-            <CardTitle>{editingLabel ? `Edit ${editingLabel}` : "Add an action"}</CardTitle>
+            <CardTitle>{isEdit ? `Update ${effectiveLabel}` : "Add an action"}</CardTitle>
             <CardDescription>
-              {editingLabel
-                ? "action update — the label stays fixed, all other fields are replaced."
+              {isEdit
+                ? "Name matches an existing action — saving runs action update (label stays fixed, all other fields replaced)."
                 : "action add --name creates the row; run it per worktree from the Dashboard."}
             </CardDescription>
           </CardHeader>
@@ -276,15 +282,8 @@ export function Actions() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="action-icon">Icon (Lucide name)</Label>
-              <Input
-                id="action-icon"
-                value={icon}
-                onChange={(e) => setIcon(e.target.value)}
-                placeholder="Zap"
-                autoComplete="off"
-                spellCheck={false}
-              />
+              <Label htmlFor="action-icon">Icon</Label>
+              <IconPicker id="action-icon" value={icon} onChange={setIcon} />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="action-prompt">Prompt</Label>
@@ -336,10 +335,10 @@ export function Actions() {
             </div>
             <div className="flex gap-2">
               <Button className="flex-1" onClick={() => void handleAdd()} disabled={!name.trim() || (!prompt.trim() && !pre.trim()) || adding}>
-                <Plus aria-hidden />
-                {adding ? "Saving…" : editingLabel ? "Save changes" : "Add action"}
+                {isEdit ? <Pencil aria-hidden /> : <Plus aria-hidden />}
+                {adding ? "Saving…" : isEdit ? "Update action" : "Add action"}
               </Button>
-              {editingLabel ? (
+              {isEdit ? (
                 <Button variant="outline" onClick={reset} disabled={adding}>
                   Cancel
                 </Button>
