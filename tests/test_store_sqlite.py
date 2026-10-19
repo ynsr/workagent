@@ -309,7 +309,7 @@ def test_migrate_worktrees_branch_scope_allows_same_branch_per_repo(tmp_path):
         assert {"branch"} not in [c for c, r in
                                   zip(idx_cols, conn.execute("PRAGMA index_list(worktrees)")) if r[2]]
         # second repo may now track the same branch name
-        conn.execute("INSERT INTO worktrees VALUES ('k2', '/wt/b', 'feat/X', 'b', '', '', '2026-01-01T00:00:00+00:00', '{}', 1, '')")
+        conn.execute("INSERT INTO worktrees VALUES ('k2', '/wt/b', 'feat/X', 'b', '', '', '2026-01-01T00:00:00+00:00', '{}', 1, '', '[]', '')")
         assert conn.execute("SELECT COUNT(*) FROM worktrees").fetchone()[0] == 2
 
 

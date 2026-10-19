@@ -42,6 +42,8 @@ def load_links_rows(path: Path, include_inactive: bool = False,
                 "pr_url": r["pr_url"], "added_at": r["added_at"],
                 "ref_key": r["ref_key"], "active": r.get("active", 1),
                 "deleted_at": r.get("deleted_at", "") or "",
+                "related_repos": json.loads(r.get("related_repos") or "[]"),
+                "parent_key_ref": r.get("parent_key_ref", "") or "",
             })
             if "issue" not in entry and r["ref_key"].startswith("jira:"):
                 entry["issue"] = r["ref_key"].split(":", 1)[1]
@@ -65,7 +67,8 @@ def save_links_rows(path: Path, links: dict) -> None:
         for key, e in links.items():
             extra = {k: v for k, v in e.items() if k not in (
                 "worktree", "branch", "repo", "issue_url", "pr_url",
-                "added_at", "ref_key", "issue", "active", "deleted_at")}
+                "added_at", "ref_key", "issue", "active", "deleted_at",
+                "related_repos", "parent_key_ref")}
             repo = str(e.get("repo", ""))
             repo_key = ""
             if repo:
@@ -87,22 +90,29 @@ def save_links_rows(path: Path, links: dict) -> None:
                     repo_key = row[0]
             has_active = "active" in e
             has_deleted = "deleted_at" in e
+            has_related = "related_repos" in e
+            has_parent = "parent_key_ref" in e
             conn.execute(
                 "INSERT INTO worktrees (ref_key, path, branch, repo_key,"
-                " issue_url, pr_url, added_at, payload, active, deleted_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " issue_url, pr_url, added_at, payload, active, deleted_at,"
+                " related_repos, parent_key_ref)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(ref_key) DO UPDATE SET path=excluded.path,"
                 " branch=excluded.branch, repo_key=excluded.repo_key,"
                 " issue_url=excluded.issue_url, pr_url=excluded.pr_url,"
                 " added_at=excluded.added_at, payload=excluded.payload"
                 + (", active=excluded.active" if has_active else "")
-                + (", deleted_at=excluded.deleted_at" if has_deleted else ""),
+                + (", deleted_at=excluded.deleted_at" if has_deleted else "")
+                + (", related_repos=excluded.related_repos" if has_related else "")
+                + (", parent_key_ref=excluded.parent_key_ref" if has_parent else ""),
                 (key, str(e.get("worktree", "")), str(e.get("branch", "")),
                  repo_key, str(e.get("issue_url", "")),
                  str(e.get("pr_url", "")), str(e.get("added_at")
                  or datetime.now(timezone.utc).isoformat()),
                  json.dumps(extra), 1 if e.get("active", 1) else 0,
-                 str(e.get("deleted_at", "") or "")))
+                 str(e.get("deleted_at", "") or ""),
+                 json.dumps(e.get("related_repos", [])),
+                 str(e.get("parent_key_ref", "") or "")))
         if links:
             conn.execute(
                 "DELETE FROM worktrees WHERE ref_key NOT IN (%s)" %

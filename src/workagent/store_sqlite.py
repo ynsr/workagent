@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS worktrees (
   added_at TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}',
   active INTEGER NOT NULL DEFAULT 1,
   deleted_at TEXT NOT NULL DEFAULT '',
+  related_repos TEXT NOT NULL DEFAULT '[]',
+  parent_key_ref TEXT NOT NULL DEFAULT '',
   UNIQUE (repo_key, branch));
 CREATE TABLE IF NOT EXISTS pr_cache (
   branch TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, checked_at TEXT NOT NULL);
@@ -216,6 +218,22 @@ def _migrate_worktrees_deleted_at(conn) -> None:
         return
     if "deleted_at" not in cols:
         conn.execute("ALTER TABLE worktrees ADD COLUMN deleted_at TEXT NOT NULL DEFAULT ''")
+
+
+def _migrate_worktrees_related(conn) -> None:
+    """Worktrees gains related_repos (JSON repo-key list, parent rows) and
+    parent_key_ref (child → parent ref_key, '' = top-level).
+
+    ALTER TABLE is enough (NOT NULL DEFAULTs, so old rows read back as
+    top-level childless). Idempotent: skipped when present.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
+    if not cols:
+        return
+    if "related_repos" not in cols:
+        conn.execute("ALTER TABLE worktrees ADD COLUMN related_repos TEXT NOT NULL DEFAULT '[]'")
+    if "parent_key_ref" not in cols:
+        conn.execute("ALTER TABLE worktrees ADD COLUMN parent_key_ref TEXT NOT NULL DEFAULT ''")
 
 
 def _default_fetch_enabled(tid: str = "", tool: str = "") -> int:
@@ -474,6 +492,10 @@ def _schema_current(path: Path) -> bool:
             return False
         if "deleted_at" not in wcols:
             return False
+        if "related_repos" not in wcols:
+            return False
+        if "parent_key_ref" not in wcols:
+            return False
         widx = list(conn.execute("PRAGMA index_list(worktrees)"))
         idx_cols = []
         for entry in widx:
@@ -533,6 +555,7 @@ def init_db(path: Path) -> Path:
                 _migrate_repos_release(conn)
                 _migrate_repos_commands(conn)
                 _migrate_worktrees_deleted_at(conn)
+                _migrate_worktrees_related(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():
                 raise

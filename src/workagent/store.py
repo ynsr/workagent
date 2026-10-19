@@ -121,6 +121,8 @@ def load_links(include_inactive: bool = False, include_deleted: bool = False) ->
             entry.setdefault("ref_key", key)
             entry.setdefault("active", 1)
             entry.setdefault("deleted_at", "")
+            entry.setdefault("related_repos", [])
+            entry.setdefault("parent_key_ref", "")
     if not include_inactive:
         links = {k: v for k, v in links.items()
                  if not isinstance(v, dict) or v.get("active", 1) != 0}
