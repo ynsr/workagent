@@ -139,12 +139,10 @@ def template_delete(
     _print_result({"deleted": label}, json_output)
 
 
-# ── step seams (module-level for testability): dispatch each step to its
-# existing runner in-process with merged flags (unknown config keys ignored).
-# Success → dict with a "status" string (no "preview"); preview/terminal →
-# {"preview": True, "command": ...} WITHOUT calling the runner.
-# HarnessError propagates to the dispatch loop. Steps default headless
-# (launch=True) unless the config says otherwise.
+# ── step seams: dispatch each step to its existing runner in-process with
+# merged flags (unknown config keys ignored). Success → dict with "status"
+# (no "preview"); preview/terminal → {"preview": True, ...} WITHOUT calling
+# the runner. Steps default headless (launch=True) unless config says otherwise.
 def _resolve_ref(ref: str) -> tuple[str, dict, dict | None]:
     """Resolve *ref* to (key, entry, parsed); exit 2 when unresolvable."""
     links = store.load_links()
@@ -213,6 +211,8 @@ def _run_review_step(key: str, config: dict, fix_comments: bool,
 
 def _run_sync_step(key: str, config: dict, json_output: bool) -> dict:
     """Sync step with merged flags."""
+    if not _headless(config):
+        return _manual_step("sync", [key])
     from . import cli_sync as _mod
     _mod.sync_cmd.__wrapped__(key, yes=True, json_output=json_output,
                               **_pick(config, "merge", "harness", "session_file", "env_file", "extra_prompt"))

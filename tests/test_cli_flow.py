@@ -156,7 +156,7 @@ def test_seam_review_calls_runner_headless_skips_preview(monkeypatch):
     assert len(calls) == before + 1
 
 
-def test_seam_sync_calls_runner(monkeypatch):
+def test_seam_sync_calls_runner_headless_skips_preview(monkeypatch):
     import workagent.cli_flow as m
     import workagent.cli_sync as s
     calls = []
@@ -166,6 +166,10 @@ def test_seam_sync_calls_runner(monkeypatch):
     assert calls and calls[0][0][0] == "wt-1"
     assert calls[0][1].get("merge") is True
     assert "preview" not in out and out["status"] == "synced"
+    before = len(calls)
+    out = m._run_sync_step("wt-1", {"dry_run": True}, False)
+    assert out["preview"] is True and out["command"]
+    assert len(calls) == before
 
 
 def test_seam_action_calls_runner_headless_skips_preview(monkeypatch):
