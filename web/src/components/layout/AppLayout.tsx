@@ -13,6 +13,7 @@ import {
   ShieldAlert,
   SquareTerminal,
   Stethoscope,
+  Zap,
 } from "lucide-react"
 import { RunWatcher } from "@/components/RunWatcher"
 import { useInfo } from "@/lib/queries"
@@ -23,6 +24,7 @@ const NAV_ITEMS = [
   { to: "/launch", label: "Launch", icon: Rocket },
   { to: "/repos", label: "Repos", icon: FolderGit2 },
   { to: "/trackers", label: "Trackers", icon: Tags },
+  { to: "/actions", label: "Actions", icon: Zap },
   { to: "/links", label: "Links", icon: Link2 },
   { to: "/doctor", label: "Doctor", icon: Stethoscope },
   { to: "/runs", label: "Runs", icon: SquareTerminal },

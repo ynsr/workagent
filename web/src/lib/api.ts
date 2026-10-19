@@ -106,6 +106,18 @@ export interface TrackerRow {
   is_enabled?: number | boolean
 }
 
+export interface ActionRow {
+  id: number
+  label: string
+  name: string
+  icon: string
+  prompt: string
+  pre_execution: string
+  post_execution: string
+  default_options: Record<string, unknown>
+  created_at: string
+  modified_at: string
+}
 export interface Links {
   trackers: Record<string, { repos: string[] }>
   worktrees: WorktreeMap
@@ -273,6 +285,7 @@ export type RunCommand =
   | "repo"
   | "link"
   | "tracker"
+  | "action"
 
 /** Display label for a PR/MR URL: "PR #33" (GitHub) or "MR #42" (GitLab);
  * falls back to the raw URL when the kind cannot be determined. */
@@ -374,6 +387,11 @@ export const api = {
 
   repos: () => request<Repo[]>("/api/repos"),
   trackers: () => request<{ trackers: TrackerRow[] }>("/api/trackers"),
+  /** GET /api/actions — custom actions (Actions page source). */
+  actions: () => request<{ actions: ActionRow[] }>("/api/actions"),
+  /** GET /api/actions/{label} — one custom action; rejects on 404. */
+  actionDetail: (label: string) =>
+    request<ActionRow>(`/api/actions/${encodeURIComponent(label)}`),
   trackerDomains: () => request<{ disabled_domains: string[] }>("/api/tracker-domains"),
   setTrackerDomains: (domains: string[]) =>
     request<{ disabled_domains: string[] }>("/api/tracker-domains", {

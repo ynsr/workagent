@@ -12,6 +12,8 @@ export const queryKeys = {
   repos: ["repos"] as const,
   trackers: ["trackers"] as const,
   trackerDomains: ["trackers", "domains"] as const,
+  actions: ["actions"] as const,
+  action: (label: string) => ["actions", "detail", label] as const,
   links: ["links"] as const,
   doctor: ["doctor"] as const,
   runs: ["runs"] as const,
@@ -84,6 +86,17 @@ export function useRepos() {
 
 export function useTrackers() {
   return useQuery({ queryKey: queryKeys.trackers, queryFn: api.trackers })
+}
+export function useActions() {
+  return useQuery({ queryKey: queryKeys.actions, queryFn: api.actions })
+}
+
+export function useAction(label: string | null) {
+  return useQuery({
+    queryKey: queryKeys.action(label ?? ""),
+    queryFn: () => api.actionDetail(label ?? ""),
+    enabled: !!label,
+  })
 }
 
 export function useTrackerDomains() {
