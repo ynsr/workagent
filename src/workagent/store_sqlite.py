@@ -59,6 +59,13 @@ CREATE TABLE IF NOT EXISTS pr_candidates_cache (
 CREATE TABLE IF NOT EXISTS release_diff_cache (
   repo_key TEXT PRIMARY KEY NOT NULL, count INTEGER NOT NULL,
   fetched_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS custom_actions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL, icon TEXT NOT NULL DEFAULT 'Zap',
+  prompt TEXT NOT NULL DEFAULT '', pre_execution TEXT NOT NULL DEFAULT '',
+  post_execution TEXT NOT NULL DEFAULT '',
+  default_options TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL, modified_at TEXT NOT NULL);
 """
 
 
@@ -522,6 +529,8 @@ def _schema_current(path: Path) -> bool:
         if not {"default_branch", "release_branch"} <= rcols:
             return False
         if "release_diff_cache" not in tables:
+            return False
+        if "custom_actions" not in tables:
             return False
         return True
     except Exception:
