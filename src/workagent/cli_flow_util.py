@@ -12,15 +12,21 @@ import shlex
 _RUN_MODES = ("preview", "dry_run", "terminal")
 
 
+def _coerce(value: str) -> object:
+    """Coerce pure-digit flag values to int (e.g. `--depth 7`)."""
+    return int(value) if value.isdigit() else value
+
+
 def normalize_config(config: object) -> dict:
     """Translate UI-only keys to real runner keys (idempotent).
 
     - ``run_mode: preview|terminal`` → ``{"preview"|"terminal": True}``
       (``headless`` strips any manual-mode flags).
-    - ``extra-flags: "--depth 7 --merge"`` → ``{"depth": "7",
-      "merge": True}`` (shlex-parsed; ``--k=v`` / ``--k v`` / bare
-      boolean ``--k``; the kebab/underscore variants of a flag are
-      both accepted downstream by the runner parsers).
+    - ``extra-flags``/``extra_flags``: ``"--depth 7 --no-tty"`` →
+      ``{"depth": 7, "no_tty": True}`` (shlex-parsed; ``--k=v`` /
+      ``--k v`` / bare boolean ``--k``; dashes normalized to
+      underscores so keys match the ``_pick`` allowlists; pure-digit
+      values coerced to int).
     Unknown keys pass through untouched; non-dict input → ``{}``.
     """
     if not isinstance(config, dict):
@@ -36,33 +42,35 @@ def normalize_config(config: object) -> dict:
             out["terminal"] = True
         # "headless" (or unknown): manual flags already stripped above.
     raw_flags = out.pop("extra-flags", None)
-    if not isinstance(raw_flags, str) or not raw_flags.strip():
-        out.pop("extra_flags", None)
+    if raw_flags is None:
+        raw_flags = out.pop("extra_flags", None)
     else:
         out.pop("extra_flags", None)
-        try:
-            tokens = shlex.split(raw_flags)
-        except ValueError:
-            tokens = raw_flags.split()
-        i = 0
-        while i < len(tokens):
-            tok = tokens[i]
+    if not isinstance(raw_flags, str) or not raw_flags.strip():
+        return out
+    try:
+        tokens = shlex.split(raw_flags)
+    except ValueError:
+        tokens = raw_flags.split()
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        i += 1
+        if not tok.startswith("--"):
+            continue
+        body = tok[2:]
+        if not body:
+            continue
+        if "=" in body:
+            k, v = body.split("=", 1)
+            out[k.replace("-", "_")] = _coerce(v)
+            continue
+        nxt = tokens[i] if i < len(tokens) else None
+        if nxt is not None and not nxt.startswith("-"):
+            out[body.replace("-", "_")] = _coerce(nxt)
             i += 1
-            if not tok.startswith("--"):
-                continue
-            body = tok[2:]
-            if not body:
-                continue
-            if "=" in body:
-                k, v = body.split("=", 1)
-                out[k] = v
-                continue
-            nxt = tokens[i] if i < len(tokens) else None
-            if nxt is not None and not nxt.startswith("-"):
-                out[body] = nxt
-                i += 1
-            else:
-                out[body] = True
+        else:
+            out[body.replace("-", "_")] = True
     return out
 
 

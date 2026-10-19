@@ -16,12 +16,18 @@ def test_normalize_run_mode_preview_and_terminal():
 def test_normalize_extra_flags_parses_kv_and_boolean():
     from workagent import cli_flow_util as u
     out = u.normalize_config({"extra-flags": "--depth 7 --merge"})
-    assert out == {"depth": "7", "merge": True}
+    assert out == {"depth": 7, "merge": True}
     out = u.normalize_config({"extra-flags": "--repo=main"})
     assert out == {"repo": "main"}
+    # dashed keys normalize to the underscore names _pick allowlists
+    out = u.normalize_config({"extra-flags": "--no-tty --related-repo proj --extra-prompt=hi"})
+    assert out == {"no_tty": True, "related_repo": "proj", "extra_prompt": "hi"}
+    # underscore variant accepted too
+    out = u.normalize_config({"extra_flags": "--depth 7"})
+    assert out == {"depth": 7}
     # combined with run_mode in one override
     out = u.normalize_config({"run_mode": "preview", "extra-flags": "--depth 7"})
-    assert out == {"preview": True, "depth": "7"}
+    assert out == {"preview": True, "depth": 7}
 
 
 def test_has_banned_scans_keys_and_values_without_blob_false_positives():

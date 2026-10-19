@@ -92,9 +92,10 @@ export function Runs() {
 
   const flowParam = (params.get("flow") ?? "").trim()
   // ?flow=<id> resolves through the flow row (worktree_ref + launch_ref);
-  // unresolved flowParam filters to empty — never silently unfiltered.
+  // an unresolved flowParam filters to empty — even while flows load —
+  // never silently unfiltered (cached flows make the window one fetch).
   const flowRow = flowParam ? (flowsData?.flows ?? []).find((f) => String(f.id) === flowParam) : undefined
-  const flowMissing = Boolean(flowParam && flowsData && !flowRow)
+  const flowMissing = Boolean(flowParam && !flowRow)
   const target = params.get("target") ?? ""
   const filter = (params.get("state") as Filter | null) ?? "all"
   const repoTabs = useRepoTabs((runs ?? []).map((r) => r.worktree || r.target), repos)
