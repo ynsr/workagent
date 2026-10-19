@@ -139,11 +139,12 @@ def template_delete(
     _print_result({"deleted": label}, json_output)
 
 
-# ── step seams (module-level for testability) ─────────────────────────────
-# Each _run_*_step returns a result dict; {"preview": True} (plus an
-# optional "command") marks a preview/terminal outcome → flow pauses.
-
-
+# ── step seams (module-level for testability): dispatch each step to its
+# existing runner in-process with merged flags (unknown config keys ignored).
+# Success → dict with a "status" string (no "preview"); preview/terminal →
+# {"preview": True, "command": ...} WITHOUT calling the runner.
+# HarnessError propagates to the dispatch loop. Steps default headless
+# (launch=True) unless the config says otherwise.
 def _resolve_ref(ref: str) -> tuple[str, dict, dict | None]:
     """Resolve *ref* to (key, entry, parsed); exit 2 when unresolvable."""
     links = store.load_links()
@@ -159,91 +160,114 @@ def _resolve_ref(ref: str) -> tuple[str, dict, dict | None]:
 
 
 def _merge_config(step: dict, overrides: dict) -> dict:
-    """Template step default + per-run override (wholesale merge)."""
     return {**(step.get("config") or {}), **overrides}
+
+
+def _manual_step(kind: str, args: list[str]) -> dict:
+    import shlex
+    cmd = " ".join(shlex.quote(a) for a in [kind, *args] if a)
+    return {"preview": True, "command": f"workagent {cmd}"}
+
+
+def _headless(config: dict) -> bool:
+    manual = ("preview", "dry_run", "terminal")
+    return (bool(config.get("launch", True))
+            and not any(config.get(k) for k in manual))
+
+
+def _pick(config: dict, *names: str) -> dict:
+    return {n: config[n] for n in names if n in config}
 
 
 def _run_start_step(ref: str, key: str, config: dict,
                     json_output: bool) -> dict:
-    """Run the Start step in-process (adopt when the worktree exists)."""
-    from . import cli_start as _start_mod
-    launch = bool(config.get("launch", True))
-    terminal = bool(config.get("terminal", False))
-    return {"key": key, "ref": ref, "preview": not (launch or terminal),
-            "_runner": _start_mod.start, "config": config,
-            "json_output": json_output}
+    """Start step: adopt the worktree when it exists, else start the ref."""
+    if not _headless(config):
+        return _manual_step("start", [ref])
+    from . import cli_start as _mod
+    target = key or ref
+    try:
+        target = _resolve_ref(target)[0] or target
+    except HarnessError:
+        pass
+    _mod.start.__wrapped__(target, yes=True, launch=True,
+                           json_output=json_output,
+                           **_pick(config, "repo", "related_repo", "depth",
+                                  "base", "harness", "no_tty", "session_file",
+                                  "env_file", "extra_prompt"))
+    return {"key": target, "ref": ref, "status": "started"}
 
 
 def _run_review_step(key: str, config: dict, fix_comments: bool,
                      json_output: bool) -> dict:
-    """Run the Review (or Fix-comments) step in-process."""
-    from . import cli_review as _review_mod
-    launch = bool(config.get("launch", True))
-    terminal = bool(config.get("terminal", False))
-    return {"key": key, "preview": not (launch or terminal),
-            "fix_comments": fix_comments,
-            "_runner": _review_mod.review, "config": config,
-            "json_output": json_output}
+    """Review (or Fix-comments) step with merged flags."""
+    fix = bool(fix_comments or config.get("fix_comments", False))
+    if not _headless(config):
+        return _manual_step("review", [key] + (["--fix-comments"] if fix else []))
+    from . import cli_review as _mod
+    _mod.review.__wrapped__(key, yes=True, launch=True, json_output=json_output, fix_comments=fix,
+                            **_pick(config, "repo", "depth", "harness", "no_tty", "then_fix_comments",
+                                   "new_fix_session", "session_file", "env_file", "extra_prompt"))
+    return {"key": key, "status": "reviewed", "fix_comments": fix_comments}
 
 
 def _run_sync_step(key: str, config: dict, json_output: bool) -> dict:
-    """Run the Sync step in-process."""
-    from . import cli_sync as _sync_mod
-    return {"key": key, "preview": bool(config.get("dry_run", False)),
-            "_runner": _sync_mod.sync_cmd, "config": config,
-            "json_output": json_output}
+    """Sync step with merged flags."""
+    from . import cli_sync as _mod
+    _mod.sync_cmd.__wrapped__(key, yes=True, json_output=json_output,
+                              **_pick(config, "merge", "harness", "session_file", "env_file", "extra_prompt"))
+    return {"key": key, "status": "synced"}
 
 
-def _run_action_step(key: str, action_label: str, config: dict,
-                     json_output: bool) -> dict:
-    """Run a custom-action step in-process (live label re-check)."""
-    action = store.get_action(action_label)
-    if action is None:
-        raise HarnessError(f"unknown action_label {action_label!r}",
-                           exit_code=2)
-    from . import cli_action as _action_mod
-    mode = ((action.get("default_options") or {}).get("run_mode")
-            or "preview")
-    launch = bool(config.get("launch", mode == "headless"))
-    terminal = bool(config.get("terminal", mode == "terminal"))
-    return {"key": key, "label": action_label,
-            "preview": not (launch or terminal),
-            "_runner": _action_mod.action_run, "config": config,
-            "json_output": json_output}
+def _run_action_step(key: str, action_label: str, config: dict, json_output: bool) -> dict:
+    """Custom-action step (live label re-check for races)."""
+    if store.get_action(action_label) is None:
+        raise HarnessError(f"unknown action_label {action_label!r}", exit_code=2)
+    if not _headless(config):
+        return _manual_step("action", ["run", action_label, key])
+    from . import cli_action as _mod
+    _mod.action_run.__wrapped__(action_label, key, launch=True, yes=True, json_output=json_output,
+                                **_pick(config, "harness", "extra_prompt", "env_file", "session_file"))
+    return {"key": key, "label": action_label, "status": "acted"}
 
 
 def _run_cleanup_step(key: str, config: dict, json_output: bool) -> dict:
-    """Run the Cleanup step (fixed squash + soft-delete; overrides rejected)."""
-    for banned in ("hard_delete", "hard-delete", "no_squash", "no-squash"):
-        if banned in json.dumps(config):
-            raise HarnessError(
-                f"{banned!r} is rejected in cleanup steps — cleanup "
-                f"is fixed to squash + soft-delete", exit_code=2)
-    from . import cli_cleanup as _cleanup_mod
-    return {"key": key, "_runner": _cleanup_mod._cleanup_one,
-            "config": config, "json_output": json_output}
+    """Cleanup step (fixed squash + soft-delete; overrides rejected)."""
+    banned = ("hard_delete", "hard-delete", "no_squash", "no-squash")
+    if any(k in config for k in banned):
+        raise HarnessError("cleanup is fixed to squash + soft-delete — "
+                           "hard-delete/no-squash overrides rejected", exit_code=2)
+    if not _headless(config):
+        return _manual_step("cleanup", [key])
+    entry = store.load_links().get(key) or {}
+    if not key or not entry:
+        raise HarnessError(f"no linked state for {key}", exit_code=2)
+    from . import cli_cleanup as _mod
+    _mod._cleanup_one(key, dict(entry), bool(config.get("force", False)), True, False, json_output,
+                      squash=True, merge=None, hard_delete=False)
+    return {"key": key, "status": "cleaned"}
 
 
-def _run_release_step(repo_snapshot: dict, config: dict,
-                      json_output: bool) -> dict:
-    """Run the Release step from the flow's repo snapshot (never links)."""
-    from . import cli_release as _release_mod
+def _run_release_step(repo_snapshot: dict, config: dict, json_output: bool) -> dict:
+    """Release step from the flow's repo snapshot (never links)."""
     from . import release_lock as _lock
     from . import release_util as _util
     repo = str((repo_snapshot or {}).get("repo", "") or "")
     if not repo:
         raise HarnessError("flow has no repo snapshot — cannot release",
                            exit_code=2)
+    if not _headless(config):
+        return _manual_step("release", [repo])
     lock = _lock.lock_path(str(_util.worktree_base()), repo)
     if _lock.locked(lock):
         return {"skipped": "release-locked", "repo": repo}
-    return {"repo": repo, "_runner": _release_mod.run_release,
-            "config": config, "json_output": json_output}
+    from . import cli_release as _mod
+    out = _mod.run_release(repo, yes=True, dry_run=False, json_output=json_output,
+                           **_pick(config, "checks", "diff", "pre_release_timeout", "ci_timeout", "env_file"))
+    return {"repo": repo, "status": str((out or {}).get("status") or "released"), **(out or {})}
 
 
-def _run_repo_command(repo_name: str, phase: str, command: str,
-                      cwd: str) -> None:
-    """Template pre/post script via run_repo_command (raises on failure)."""
+def _run_repo_command(repo_name: str, phase: str, command: str, cwd: str) -> None:
     from . import release_gates as _gates
     _gates.run_repo_command(repo_name, phase, command, cwd, 600, None)
 
@@ -252,15 +276,13 @@ def _tag_flow_session(key: str, flow_id: int) -> None:
     """Best-effort: stamp flow_id into the step's newest session metadata."""
     try:
         from . import store_sqlite as _sq
-        sessions = _sq.list_sessions(_sq.db_path())
-        mine = [s for s in sessions
+        db = _sq.db_path()
+        mine = [s for s in _sq.list_sessions(db)
                 if (s.get("worktree_ref") or "") == key]
         if mine:
-            _sq.set_session_metadata(
-                _sq.db_path(), mine[-1]["id"], {"flow_id": flow_id})
+            _sq.set_session_metadata(db, mine[-1]["id"], {"flow_id": flow_id})
     except Exception as e:
         eprint(f"flow session tagging skipped: {e}")
-
 
 # ── flow run ──────────────────────────────────────────────────────────────
 
@@ -304,22 +326,18 @@ def flow_run(
         _fail(f"--step-config is not valid JSON: {e}", EXIT_USAGE)
     if not isinstance(overrides, dict):
         _fail("--step-config must be a JSON object", EXIT_USAGE)
-    merged_steps = []
-    for i, step in enumerate(steps):
-        cfg = _merge_config(step, dict(overrides.get(str(i), {})
-                                       if isinstance(overrides.get(str(i)), dict)
-                                       else {}))
-        merged = {**step, "config": cfg}
-        merged_steps.append(merged)
+    merged_steps = [{**s, "config": _merge_config(
+        s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
+        for i, s in enumerate(steps)]
     # Fail fast on per-run cleanup overrides (before any flow row exists).
+    banned_cfg = ("hard_delete", "hard-delete", "no_squash", "no-squash")
     for step in merged_steps:
         if step["kind"] == "cleanup":
-            for banned in ("hard_delete", "hard-delete",
-                           "no_squash", "no-squash"):
-                if banned in json.dumps(step.get("config") or {}):
-                    _fail(f"{banned!r} is rejected in cleanup steps — "
-                          f"cleanup is fixed to squash + soft-delete",
-                          EXIT_USAGE)
+            blob = json.dumps(step.get("config") or {})
+            hit = next((b for b in banned_cfg if b in blob), None)
+            if hit:
+                _fail(f"{hit!r} is rejected in cleanup steps — fixed to squash + soft-delete",
+                      EXIT_USAGE)
     if dry_run:
         _print_result({"template": tpl["label"], "ref": ref,
                        "chain": merged_steps}, json_output)
@@ -360,7 +378,7 @@ def flow_run(
         try:
             if kind == "start":
                 outcome = _run_start_step(ref, key, config, json_output)
-                if not outcome.get("preview") and not outcome.get("dry_run"):
+                if not outcome.get("preview"):
                     new_key = str(outcome.get("key") or key or "")
                     if new_key and new_key != key:
                         key = new_key
@@ -371,39 +389,29 @@ def flow_run(
                                       or wt_path)
                     if key and not (flow.get("repo_snapshot") or {}):
                         repo = str((entry or {}).get("repo", "") or "")
-                        registry = store.load_repos()
-                        info = registry.get(repo, {})
-                        store.update_flow(
-                            fid, repo_snapshot={
-                                "repo": repo,
-                                "default_branch": str(info.get(
-                                    "default_branch", "") or ""),
-                                "release_branch": str(info.get(
-                                    "release_branch", "") or "")})
+                        info = store.load_repos().get(repo, {})
+                        snap = {"repo": repo, "default_branch": str(
+                            info.get("default_branch", "") or ""),
+                            "release_branch": str(
+                            info.get("release_branch", "") or "")}
+                        store.update_flow(fid, repo_snapshot=snap)
                         flow = store.get_flow(fid) or flow
                     if pre and not wt_path:
-                        wt_path = str(((store.load_links().get(key, {})
-                                                or {}).get("worktree", "")) or "")
-                        if wt_path:
-                            # Deferred pre for issue flows: worktree now
-                            # exists after step 0.
-                            _run_repo_command(tpl["label"], "pre-execution",
-                                              pre, wt_path)
+                        wt = str((store.load_links().get(key, {}) or {}
+                                 ).get("worktree", "") or "")
+                        if wt:  # deferred pre: worktree exists after step 0
+                            wt_path = wt
+                            _run_repo_command(tpl["label"], "pre-execution", pre, wt)
             elif kind in ("review", "fix_comments"):
-                outcome = _run_review_step(key, config,
-                                           kind == "fix_comments",
-                                           json_output)
+                outcome = _run_review_step(key, config, kind == "fix_comments", json_output)
             elif kind == "sync":
                 outcome = _run_sync_step(key, config, json_output)
             elif kind == "action":
-                outcome = _run_action_step(key,
-                                           str(step.get("action_label", "")),
-                                           config, json_output)
+                outcome = _run_action_step(key, str(step.get("action_label", "")), config, json_output)
             elif kind == "cleanup":
                 outcome = _run_cleanup_step(key, config, json_output)
             elif kind == "release":
-                snap = (store.get_flow(fid) or {}).get("repo_snapshot",
-                                                       {}) or {}
+                snap = (store.get_flow(fid) or {}).get("repo_snapshot") or {}
                 outcome = _run_release_step(snap, config, json_output)
             else:  # pragma: no cover — validate_template guards kinds
                 raise HarnessError(f"unknown step kind {kind!r}",
@@ -436,10 +444,6 @@ def flow_run(
         store.update_flow(fid, current_step=idx + 1,
                           step_results=results)
         _tag_flow_session(key, fid)
-        if kind == "cleanup":
-            # The worktree row is soft-deleted after a successful
-            # cleanup — later steps must not touch links.
-            key = key
     post = (tpl.get("post_execution") or "").strip()
     if post:
         snap_wt = wt_path or str(((store.load_links().get(key, {})

@@ -120,3 +120,100 @@ def test_run_paused_on_preview(tmp_path, monkeypatch):
                         ["flow", "run", "solo", "jira:X-1", "--yes"])
     assert res.exit_code == 0, res.output
     assert states.get("status") == "paused"
+
+
+
+def test_seam_start_calls_runner_headless_skips_preview(monkeypatch):
+    import workagent.cli_flow as m
+    import workagent.cli_start as s
+    calls = []
+    monkeypatch.setattr(s.start, "__wrapped__",
+                        lambda *a, **k: calls.append((a, k)) or None)
+    monkeypatch.setattr(m, "_resolve_ref", lambda ref: (ref, {}, None))
+    out = m._run_start_step("jira:X-1", "wt-1", {"launch": True}, False)
+    assert calls and calls[0][0][0] == "wt-1"
+    assert "preview" not in out and out["status"] == "started"
+    before = len(calls)
+    out = m._run_start_step("jira:X-1", "wt-1", {"launch": False}, False)
+    assert out["preview"] is True and out["command"]
+    assert len(calls) == before
+
+
+def test_seam_review_calls_runner_headless_skips_preview(monkeypatch):
+    import workagent.cli_flow as m
+    import workagent.cli_review as r
+    calls = []
+    monkeypatch.setattr(r.review, "__wrapped__",
+                        lambda *a, **k: calls.append((a, k)) or None)
+    out = m._run_review_step("wt-1", {"launch": True}, False, False)
+    assert calls and calls[0][1].get("fix_comments") is False
+    assert "preview" not in out and out["status"] == "reviewed"
+    before = len(calls)
+    out = m._run_review_step("wt-1", {"launch": True}, True, False)
+    assert calls and calls[-1][1].get("fix_comments") is True
+    out = m._run_review_step("wt-1", {"terminal": True}, False, False)
+    assert out["preview"] is True and out["command"]
+    assert len(calls) == before + 1
+
+
+def test_seam_sync_calls_runner(monkeypatch):
+    import workagent.cli_flow as m
+    import workagent.cli_sync as s
+    calls = []
+    monkeypatch.setattr(s.sync_cmd, "__wrapped__",
+                        lambda *a, **k: calls.append((a, k)) or None)
+    out = m._run_sync_step("wt-1", {"merge": True}, False)
+    assert calls and calls[0][0][0] == "wt-1"
+    assert calls[0][1].get("merge") is True
+    assert "preview" not in out and out["status"] == "synced"
+
+
+def test_seam_action_calls_runner_headless_skips_preview(monkeypatch):
+    import workagent.cli_flow as m
+    import workagent.cli_action as a
+    import workagent.store as st
+    monkeypatch.setattr(st, "get_action", lambda label: {"label": label})
+    calls = []
+    monkeypatch.setattr(a.action_run, "__wrapped__",
+                        lambda *a_, **k: calls.append((a_, k)) or None)
+    out = m._run_action_step("wt-1", "gen", {"launch": True}, False)
+    assert calls and calls[0][0][:2] == ("gen", "wt-1")
+    assert "preview" not in out and out["status"] == "acted"
+    before = len(calls)
+    out = m._run_action_step("wt-1", "gen", {"launch": False}, False)
+    assert out["preview"] is True and len(calls) == before
+
+
+def test_seam_cleanup_calls_cleanup_one(monkeypatch):
+    import workagent.cli_flow as m
+    import workagent.cli_cleanup as c
+    import workagent.store as st
+    calls = []
+    monkeypatch.setattr(st, "load_links",
+                        lambda *a, **k: {"wt-1": {"worktree": "/tmp/wt",
+                                                 "repo": "r", "branch": "b"}})
+    monkeypatch.setattr(c, "_cleanup_one",
+                        lambda *a, **k: calls.append((a, k)) or {"status": "x"})
+    out = m._run_cleanup_step("wt-1", {}, False)
+    assert calls and calls[0][0][0] == "wt-1"
+    assert calls[0][1].get("hard_delete") is False
+    assert "preview" not in out and out["status"] == "cleaned"
+
+
+def test_seam_release_calls_run_release_skips_preview(monkeypatch):
+    import workagent.cli_flow as m
+    import workagent.cli_release as r
+    import workagent.release_lock as lk
+    import workagent.release_util as ut
+    monkeypatch.setattr(ut, "worktree_base", lambda: "/tmp/wtbase")
+    monkeypatch.setattr(lk, "lock_path", lambda base, repo: f"{base}/{repo}")
+    monkeypatch.setattr(lk, "locked", lambda lock: False)
+    calls = []
+    monkeypatch.setattr(r, "run_release",
+                        lambda *a, **k: calls.append((a, k)) or {"merged": True})
+    out = m._run_release_step({"repo": "myrepo"}, {}, False)
+    assert calls and calls[0][0][0] == "myrepo"
+    assert "preview" not in out and out["status"]
+    before = len(calls)
+    out = m._run_release_step({"repo": "myrepo"}, {"preview": True}, False)
+    assert out["preview"] is True and len(calls) == before
