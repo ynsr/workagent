@@ -26,7 +26,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `start --yes` | mutating | — | `start` | no | | skips confirmations |
 | `start --json` | mutating | — | `start` | no | | |
 | `review REF` | mutating | — | `review` | no | parse failure; not a PR/MR ref and no discoverable PR; tracker linked to 2+ repos without `--repo` (#29, exit 2 naming candidates) | repo picker (TTY) |
-| `review --repo/--depth/--harness/--no-tty/--launch/--terminal/--dry-run/--yes/--json` | mutating | — | `review` | no | as above | as above (`--terminal` XOR `--launch`, same spawn/lock semantics as `start --terminal`) |
+| `review --then-fix-comments` | mutating | — | `review` | no | with `--fix-comments`/`--all` (2) | chains a fix run after review exit 0 (headless auto; preview/terminal print follow-up); **deprecated: use flows; ignored inside flow templates** |
 | `cleanup --merged [--force/--dry-run/--json]` | mutating | — | `cleanup:all` | **yes** (per merged/closed link) | `--merged` w/o `--yes` non-interactive (2); ref given with `--merged` (2) | none — requires `--yes`; skips live-harness/invalid worktrees |
 | `open REF` | read-only-ish (OS opener) | — | `open:<ref>` | no | no linked state (2), invalid/missing worktree (1), no opener (1) | none — prints the worktree path |
 | `cleanup REF` | mutating | — | `cleanup:<ref>` | **yes** (closes/merges PR then soft-deletes: worktree/branch/remote survive, 7-day `link undelete` window; `--hard-delete` tears down immediately; modal shows live outcome table + hard-delete checkbox) | no linked state; conflicted/404 PR keeps remote + link (1) | none (non-TTY) / y-N (TTY) |
@@ -66,6 +66,14 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `action update LABEL [--name] [--icon] [--prompt] [--pre-execution] [--post-execution] [--default-options JSON] [--json]` | mutating | — | `config` | no (custom_actions row write) | unknown label (2), no fields (2), blank name / blank prompt+pre (2) | none |
 | `action run LABEL REF [--launch/--terminal] [--harness] [--extra-prompt] [--env-file] [--session-file] [--dry-run] [--yes] [--json]` | mutating | — | `action:<label>:<ref>` | no (spawns agent) | unknown label (2), launch+terminal (2), blank prompt+pre (2), live harness (1) | TTY confirm; non-TTY needs `--yes` (2) |
 | `action delete LABEL [--yes] [--json]` | mutating | — | `config` | yes-ish (row delete) | unknown label (2) | TTY confirm; non-TTY needs `--yes` (2) |
+| `flow template add --name NAME [--label] --steps JSON [--pre-execution] [--post-execution] [--json]` | mutating | — | `config` | no (flow_templates row write) | missing steps (2), bad steps JSON / unknown kind (2), label collision (2) | none |
+| `flow template list [--json/--csv]` | read-only | `store.list_templates` | — | no | | none |
+| `flow template show LABEL [--json]` | read-only | `store.get_template` | — | no | unknown label (2) | none |
+| `flow template update LABEL [--name] [--steps JSON] [--pre-execution] [--post-execution] [--json]` | mutating | — | `config` | no (flow_templates row write) | unknown label (2), no fields (2), bad steps JSON (2) | none |
+| `flow template delete LABEL [--yes] [--json]` | mutating | — | `config` | yes-ish (row delete) | unknown label (2) | TTY confirm; non-TTY needs `--yes` (2) |
+| `flow run TEMPLATE REF [--step-config JSON] [--dry-run] [--fresh] [--yes] [--json]` | mutating | — | `flow:<template>:<ref>` | no (fans out to step runners) | unknown template (2), bad step-config JSON (2), cleanup overrides (2) | TTY confirm; non-TTY needs `--yes` (2) |
+| `flow list [--worktree REF] [--json/--csv]` | read-only | `store.list_flows` | — | no | | none |
+| `flow show ID [--json]` | read-only | `store.get_flow` | — | no | unknown flow id (2) | none |
 | `register PATH [--key] [--issue] [--repo] [--yes/--force] [--json]` | mutating | — | `register` | no (links.json write) | bad path/main checkout (2), key conflict (1) | none |
 | `doctor [--json]` | read-only | `doctor.check(json_output=True)` returns dict | — | no | exit 1 when stale | none |
 | `completions show/install` | mutating (writes rc) | — | — | — | — | **excluded from UI per prompt** |

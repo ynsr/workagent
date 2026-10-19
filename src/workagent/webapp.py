@@ -222,6 +222,25 @@ def create_app(static_dir: Path, host: str, port: int,
                                 detail=f"unknown action label: {label!r}")
         return row
 
+    @app.get("/api/flow-templates")
+    def flow_templates_list() -> dict:
+        """Flow templates (Flow page source). Always 200, [] when none."""
+        return {"templates": store.list_templates()}
+
+    @app.get("/api/flow-templates/{label}")
+    def flow_template_detail(label: str) -> dict:
+        """One flow template by label; 404 when unknown."""
+        row = store.get_template(label)
+        if row is None:
+            raise HTTPException(status_code=404,
+                                detail=f"unknown flow template: {label!r}")
+        return row
+
+    @app.get("/api/flows")
+    def flows_list(worktree: str = "") -> dict:
+        """Flow runs, optionally scoped to one worktree. Always 200."""
+        return {"flows": store.list_flows(worktree=worktree)}
+
     @app.get("/api/tracker-domains")
     def tracker_domains() -> dict:
         """Disabled tracker domains (domain-level disable list)."""

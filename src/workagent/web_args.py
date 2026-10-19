@@ -35,6 +35,8 @@ SPECS: dict[str, dict[str, Any]] = {
     "tracker": {"confirm": False, "force": False, "key": "config"},
     "action": {"confirm": True, "force": True,
                "key": lambda args: f"action:{_first_positional(args, VAL_FLAGS['action run'])}:{_first_positional(args[1:], VAL_FLAGS['action run'])}" if args[:1] == ["run"] else "config"},
+    "flow": {"confirm": True, "force": True,
+             "key": lambda args: f"flow:{_nth_positional(args, 1, VAL_FLAGS['flow run'])}:{_nth_positional(args, 2, VAL_FLAGS['flow run'])}" if args[:1] == ["run"] else "config"},
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
@@ -69,6 +71,16 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "action run": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
     "action update": ("--json",),
     "action delete": ("--yes", "--json"),
+    "flow": (),
+    "flow template": (),
+    "flow template add": ("--json",),
+    "flow template list": ("--json", "--csv"),
+    "flow template show": ("--json",),
+    "flow template update": ("--json",),
+    "flow template delete": ("--yes", "--json"),
+    "flow list": ("--json", "--csv"),
+    "flow show": ("--json",),
+    "flow run": ("--dry-run", "--yes", "--json", "--fresh"),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "start": ("--repo", "--depth", "--base", "--harness", "--session-file", "--env-file", "--extra-prompt", "--related-repo"),
@@ -84,11 +96,17 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "action add": ("--name", "--label", "--icon", "--prompt", "--pre-execution", "--post-execution", "--default-options"),
     "action update": ("--name", "--icon", "--prompt", "--pre-execution", "--post-execution", "--default-options"),
     "action run": ("--harness", "--extra-prompt", "--env-file", "--session-file"),
+    "flow template add": ("--name", "--label", "--steps", "--pre-execution", "--post-execution"),
+    "flow template update": ("--name", "--steps", "--pre-execution", "--post-execution"),
+    "flow list": ("--worktree",),
+    "flow run": ("--step-config",),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "link": {"list", "set", "remove", "deactivate", "reactivate"},
                                     "tracker": {"add", "list", "remove", "update"},
-                                    "action": {"add", "list", "show", "run", "update", "delete"}}
+                                    "action": {"add", "list", "show", "run", "update", "delete"},
+                                    "flow": {"template", "list", "show", "run"}}
+TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "delete"}
 
 
 def _first_positional(args: list[str], vals: tuple[str, ...] = ()) -> str:
@@ -109,6 +127,27 @@ def _first_positional(args: list[str], vals: tuple[str, ...] = ()) -> str:
     return ""
 
 
+def _nth_positional(args: list[str], n: int, vals: tuple[str, ...] = ()) -> str:
+    """nth positional of *args* skipping val-flag values (0-based)."""
+    skip_next = False
+    found = 0
+    for a in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if a in vals:
+            skip_next = True
+            continue
+        if a.startswith("--") and "=" in a:
+            name = a.split("=", 1)[0]
+            if name in vals:
+                continue
+        if not a.startswith("-"):
+            if found == n:
+                return a
+            found += 1
+    return ""
+
 class ApiError(Exception):
     def __init__(self, code: str, message: str, status: int):
         super().__init__(message)
@@ -125,6 +164,8 @@ class RunIn(BaseModel):
 
 def _sub_of(command: str, args: list[str]) -> str:
     if command in SUBCOMMANDS and args:
+        if command == "flow" and args[:1] == ["template"] and len(args) > 1:
+            return f"flow template {args[1]}"
         return f"{command} {args[0]}"
     return command
 
@@ -139,6 +180,11 @@ def _validate_args(command: str, args: list[str], body_force: bool = False) -> N
         raise ApiError("bad_subcommand",
                        f"{command} needs one of: "
                        f"{', '.join(sorted(SUBCOMMANDS[command]))}", 400)
+    if command == "flow" and rest[:1] == ["template"] and (
+            len(rest) < 2 or rest[1] not in TEMPLATE_SUBCOMMANDS):
+        raise ApiError("bad_subcommand",
+                       "flow template needs one of: "
+                       f"{', '.join(sorted(TEMPLATE_SUBCOMMANDS))}", 400)
     sub = _sub_of(command, rest) if command in SUBCOMMANDS else command
     bools = set(BOOL_FLAGS.get(sub, ()))
     vals = set(VAL_FLAGS.get(sub, ()))

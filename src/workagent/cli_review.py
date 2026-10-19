@@ -326,7 +326,7 @@ def review(
     force_all: bool = typer.Option(False, "--force-all", help="With --all: include already-reviewed and unresolved-comment worktrees too (still needs a PR/MR)."),
     post_comments: bool = typer.Option(False, "--post-comments", hidden=True, help="Append the auto-comment prompt segment (set by --all)."),
     fix_comments: bool = typer.Option(False, "--fix-comments", help="Fix open PR/MR review comments instead of reviewing: validate each finding, apply, resolve/close, commit and push."),
-    then_fix_comments: bool = typer.Option(False, "--then-fix-comments", help="After a successful review run (exit 0), chain a fix-comments run in the same harness session. Headless runs it automatically; preview/terminal print the follow-up command for manual use."),
+    then_fix_comments: bool = typer.Option(False, "--then-fix-comments", help="After a successful review run (exit 0), chain a fix-comments run in the same harness session. Headless runs it automatically; preview/terminal print the follow-up command for manual use. (deprecated: use flows; ignored inside flow templates)"),
     new_fix_session: bool = typer.Option(False, "--new-fix-session", help="With --fix-comments or --then-fix-comments: start a fresh fix session instead of continuing the latest review session."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path: resumed via omp --resume when non-empty, otherwise used as --session-dir scope for a fresh session."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before terminal/headless harness commands (default: env_file in config.json, auto-created)."),

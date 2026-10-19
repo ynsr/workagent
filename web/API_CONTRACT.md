@@ -121,6 +121,20 @@ Candidates/Launch issue fetch per tracker — `tracker add
 on unknown label. `action run <label> <ref>` runs via `POST /api/runs`
 with target key `action:<label>:<ref>` — one run per worktree, fanned out
 by the Dashboard Actions dropdown.)
+
+### `GET /api/flow-templates` → `{"templates": [...]}`, `GET /api/flow-templates/{label}`, `GET /api/flows?worktree=`
+```json
+{"templates": [{"id": 1, "label": "full-review-cycle",
+  "name": "Full review cycle",
+  "steps": [{"kind": "start"}, {"kind": "review"}, {"kind": "cleanup"}],
+  "pre_execution": "", "post_execution": "",
+  "created_at": "…", "modified_at": "…"}]}
+```
+(Flow page source: `flow template add/list/show/update/delete` run as runs; detail 404s
+on unknown label. `flow run TEMPLATE REF [--step-config JSON] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`
+with target key `flow:<template>:<ref>` — one run per template+worktree pair; `flow list [--worktree REF] [--json/--csv]`
+and `flow show ID [--json]` run as runs. `GET /api/flows?worktree=` scopes the run list to one worktree.)
+
 ### `GET /api/links`
 ```json
 {"trackers": {"jira:IPG": {"repos": ["/home/x/projects/projectx"]}},
@@ -248,7 +262,7 @@ Request:
  "confirm": true, "force": false}
 ```
 - `command`: one of `start | review | cleanup | release | sync | open | register |
-  repo | link` (subcommand goes first in `args`: `["add", "--name", …]`).
+  repo | link | action | flow` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`).
 - Global `-v` may be passed as `args[0]`.
 - `start`/`review`/`sync`/`release` take `--env-file <script>`: a shell script sourced before every harness command including the preview (`source <file> && …`; headless children also get it parsed into their environment) and before the release pre-release gate. Default: `env_file` in `config.json` (auto-created as `<config_dir>/env.sh` on first launch with `VISUAL`/`EDITOR`/`NO_PROXY`/`PI_EDIT_VARIANT` defaults). Delete the file to opt out; session-resume endpoints reuse the originating run's explicit `--env-file` or the configured default.
 - Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`) need
@@ -276,7 +290,8 @@ another run holds the same target key.
 ### Target keys (409 collisions)
 `start`, `review:<ref>` / `review:all` (`--all`, plus `--force-all` to
 re-include already-reviewed and unresolved-comment worktrees),
-`cleanup:<ref>` / `cleanup:all`
+`cleanup:<ref>` / `cleanup:all`, `action:<label>:<ref>` / `config` (template CRUD),
+`flow:<template>:<ref>` / `config` (template CRUD)
 
 ### `GET /api/runs` → list
 ```json
