@@ -78,10 +78,11 @@ export function Runs() {
   const flowParam = (params.get("flow") ?? "").trim()
   // ?flow=<id> resolves through the flow row: runs carry the
   // `flow:<template>:<ref>` target key, never the numeric flow id.
+  // Unresolved flowParam (still loading or no such flow) filters to empty
+  // via an impossible sentinel — never silently unfiltered.
   const flowRow = flowParam ? (flowsData?.flows ?? []).find((f) => String(f.id) === flowParam) : undefined
-  const target = flowRow ? `flow:${flowRow.template_label}:${flowRow.worktree_ref}` : (params.get("target") ?? "")
+  const target = flowRow ? `flow:${flowRow.template_label}:${flowRow.worktree_ref}` : flowParam ? "__no_such_flow__" : (params.get("target") ?? "")
   const filter = (params.get("state") as Filter | null) ?? "all"
-
   const repoTabs = useRepoTabs((runs ?? []).map((r) => r.worktree || r.target), repos)
   const repoOf = (r: Run) => repoKeyForPath(r.worktree || r.target, repos ?? [])
   const filtered = useMemo(() => filterRuns(runs, filter, target, repoOf, repoTabs.repoFilter), [runs, filter, target, repoTabs.repoFilter, repos])
@@ -153,7 +154,7 @@ export function Runs() {
             </button>
           </span>
         ) : null}
-        {target ? (
+        {!flowParam && target ? (
           <span className="inline-flex items-center gap-1.5 rounded-full border bg-muted px-3 text-sm">
             <span className="font-mono text-[13px]">{target}</span>
             <button

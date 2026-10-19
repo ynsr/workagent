@@ -155,8 +155,11 @@ export function Flows() {
                         <TableCell>
                           <StatusBadge status={f.status} />
                         </TableCell>
-                        <TableCell className="font-mono text-[13px]">
-                          {f.current_step}/{f.step_results?.length ?? 0}
+                        <TableCell
+                          className="font-mono text-[13px]"
+                          title={`${f.step_results?.length ?? 0} step result${(f.step_results?.length ?? 0) === 1 ? "" : "s"} recorded`}
+                        >
+                          step {f.current_step}
                         </TableCell>
                         <TableCell title={exactDateTime(f.modified_at)}>
                           {relativeDate(f.modified_at)}

@@ -84,28 +84,36 @@ export function validateChain(steps: FlowStep[]): string[] {
   return errors
 }
 
-/** Per-step config editor: run_mode select + extra-flags text (+ raw JSON add-on). */
+/** Per-step config editor: run_mode select + extra-flags text (+ raw JSON add-on).
+ * In launch mode pass `hints` (template defaults): the form edits DELTAS —
+ * empty config shows template values as placeholder hints, and re-selecting
+ * the template value removes the key so only user-set keys are stored. */
 function StepConfigForm({
   config,
   onChange,
   idPrefix,
+  hints,
 }: {
   config: Record<string, unknown>
   onChange: (next: Record<string, unknown>) => void
   idPrefix: string
+  hints?: Record<string, unknown>
 }) {
-  const runMode = typeof config.run_mode === "string" ? config.run_mode : "headless"
+  const hintRunMode = typeof hints?.run_mode === "string" ? String(hints.run_mode) : "headless"
+  const runMode = typeof config.run_mode === "string" ? config.run_mode : hintRunMode
   const flags = typeof config["extra-flags"] === "string" ? String(config["extra-flags"]) : ""
+  const hintFlags = typeof hints?.["extra-flags"] === "string" ? String(hints["extra-flags"]) : ""
   function patch(key: string, value: unknown) {
     const next = { ...config }
-    if (value === "" || value === undefined) delete next[key]
+    const hint = key === "run_mode" ? hintRunMode : hints?.[key]
+    if (value === "" || value === undefined || (hints && value === hint)) delete next[key]
     else next[key] = value
     onChange(next)
   }
   return (
     <div className="grid gap-2 sm:grid-cols-2">
       <div className="grid gap-1.5">
-        <Label htmlFor={`${idPrefix}-run-mode`}>Run mode</Label>
+        <Label htmlFor={`${idPrefix}-run-mode`}>Run mode{hints ? ` (template: ${hintRunMode})` : ""}</Label>
         <select
           id={`${idPrefix}-run-mode`}
           value={runMode}
@@ -118,12 +126,12 @@ function StepConfigForm({
         </select>
       </div>
       <div className="grid gap-1.5">
-        <Label htmlFor={`${idPrefix}-flags`}>Extra flags</Label>
+        <Label htmlFor={`${idPrefix}-flags`}>Extra flags{hintFlags ? ` (template: ${hintFlags})` : ""}</Label>
         <Input
           id={`${idPrefix}-flags`}
           value={flags}
           onChange={(e) => patch("extra-flags", e.target.value)}
-          placeholder="--depth 7"
+          placeholder={hintFlags || "--depth 7"}
           autoComplete="off"
           spellCheck={false}
           className="font-mono text-[13px]"
@@ -168,6 +176,11 @@ export function ChainEditor({
   }
   function setOverride(i: number, next: Record<string, unknown>) {
     if (!onOverridesChange) return
+    if (Object.keys(next).length === 0) {
+      const { [i]: _dropped, ...rest } = overrides
+      onOverridesChange(rest)
+      return
+    }
     onOverridesChange({ ...overrides, [i]: next })
   }
 
@@ -259,7 +272,8 @@ export function ChainEditor({
                 />
               ) : (
                 <StepConfigForm
-                  config={{ ...(step.config ?? {}), ...(overrides[i] ?? {}) }}
+                  config={overrides[i] ?? {}}
+                  hints={step.config ?? {}}
                   onChange={(next) => setOverride(i, next)}
                   idPrefix={`chain-override-${i}`}
                 />
