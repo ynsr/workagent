@@ -33,6 +33,8 @@ SPECS: dict[str, dict[str, Any]] = {
     "repo": {"confirm": False, "force": True, "key": "config"},
     "link": {"confirm": False, "force": False, "key": "config"},
     "tracker": {"confirm": False, "force": False, "key": "config"},
+    "action": {"confirm": True, "force": True,
+               "key": lambda args: f"action:{_first_positional(args, VAL_FLAGS['action run'])}:{_first_positional(args[1:], VAL_FLAGS['action run'])}" if args[:1] == ["run"] else "config"},
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
@@ -61,6 +63,11 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "tracker update": ("--json", "--fetch", "--no-fetch", "--enable", "--disable"),
     "tracker remove": ("--json",),
     "tracker list": ("--json", "--csv"),
+    "action add": ("--json",),
+    "action list": ("--json", "--csv"),
+    "action show": ("--json",),
+    "action run": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
+    "action delete": ("--yes", "--json"),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "start": ("--repo", "--depth", "--base", "--harness", "--session-file", "--env-file", "--extra-prompt", "--related-repo"),
@@ -73,10 +80,13 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "link remove": ("--repo",),
     "tracker add": ("--vendor", "--remote-url"),
     "tracker update": ("--vendor", "--remote-url"),
+    "action add": ("--name", "--label", "--icon", "--prompt", "--pre-execution", "--post-execution", "--default-options"),
+    "action run": ("--harness", "--extra-prompt", "--env-file", "--session-file"),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "link": {"list", "set", "remove", "deactivate", "reactivate"},
-                                    "tracker": {"add", "list", "remove", "update"}}
+                                    "tracker": {"add", "list", "remove", "update"},
+                                    "action": {"add", "list", "show", "run", "delete"}}
 
 
 def _first_positional(args: list[str], vals: tuple[str, ...] = ()) -> str:

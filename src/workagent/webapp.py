@@ -207,6 +207,21 @@ def create_app(static_dir: Path, host: str, port: int,
              "is_enabled": bool((v or {}).get("is_enabled", True))}
             for t, v in store.load_trackers().items()]}
 
+    @app.get("/api/actions")
+    def actions_list() -> dict:
+        """Custom actions (Actions page source). Always 200, [] when none."""
+        return {"actions": store.list_actions()}
+
+    @app.get("/api/actions/{label}")
+    def action_detail(label: str) -> dict:
+        """One custom action by label; 404 when unknown."""
+        row = store.get_action(label)
+        if row is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404,
+                                detail=f"unknown action label: {label!r}")
+        return row
+
     @app.get("/api/tracker-domains")
     def tracker_domains() -> dict:
         """Disabled tracker domains (domain-level disable list)."""

@@ -109,6 +109,18 @@ linked-repo count. `vendor` is an enum: `jira` | `github`; `remote_url` is manda
 Candidates/Launch issue fetch per tracker — `tracker add
 --fetch/--no-fetch`; `github:` ids default off.)
 
+### `GET /api/actions` → `{"actions": [...]}`, `GET /api/actions/{label}`
+```json
+{"actions": [{"id": 1, "label": "generate_post_prd",
+  "name": "Generate Post PRD", "icon": "Zap", "prompt": "…",
+  "pre_execution": "", "post_execution": "",
+  "default_options": {"run_mode": "preview"},
+  "created_at": "…", "modified_at": "…"}]}
+```
+(CRUD page source: `action add/list/show/delete` run as runs; detail 404s
+on unknown label. `action run <label> <ref>` runs via `POST /api/runs`
+with target key `action:<label>:<ref>` — one run per worktree, fanned out
+by the Dashboard Actions dropdown.)
 ### `GET /api/links`
 ```json
 {"trackers": {"jira:IPG": {"repos": ["/home/x/projects/projectx"]}},

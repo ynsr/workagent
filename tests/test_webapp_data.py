@@ -489,7 +489,7 @@ def test_specs_mirror_cli_flags():
     skip = {"", "completions", "completions install", "completions show",
             "serve", "doctor", "migrate", "candidates", "status", "cd",
             "watch-and-exec",  # hidden interactive shim, never web-invoked
-            "repo", "link", "tracker"}  # bare groups never invoked; subcommands covered
+            "repo", "link", "tracker", "action"}  # bare groups never invoked; subcommands covered
     for path, (b, v) in sorted(inv.items()):
         if path in skip or path == "service" or path.startswith("service "):
             continue
@@ -580,3 +580,22 @@ def test_repos_detect_unknown_path_is_null(client):
     r = client.get("/api/repos/detect", params={"path": "/nonexistent-xyz"})
     assert r.status_code == 200
     assert r.json() == {"pre-release": None}
+
+
+def test_actions_list_empty(client, monkeypatch):
+    monkeypatch.setattr(store, "list_actions", lambda: [])
+    r = client.get("/api/actions")
+    assert r.status_code == 200
+    assert r.json() == {"actions": []}
+
+
+def test_actions_detail_and_404(client, monkeypatch):
+    row = {"id": 1, "label": "gen_prd", "name": "Gen", "icon": "Zap",
+           "prompt": "p", "pre_execution": "", "post_execution": "",
+           "default_options": {}, "created_at": "t", "modified_at": "t"}
+    monkeypatch.setattr(store, "get_action",
+                        lambda label: row if label == "gen_prd" else None)
+    r = client.get("/api/actions/gen_prd")
+    assert r.status_code == 200
+    assert r.json()["label"] == "gen_prd"
+    assert client.get("/api/actions/nope").status_code == 404
