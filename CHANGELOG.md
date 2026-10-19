@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Flows: templates + runs chain Start → … → Cleanup → Release via wizard, dry-run/resume, CLI + web parity [no-issue]
 - `start --related-repo` fans out child worktrees per repo (same branch), prompt lists child paths + conditional MR suffix, cleanup cascades, web multi-select + StatusTable grouping [no-issue]
 - Dashboard Deleted table filters on `deleted_at` so deactivated rows no longer ghost into it; Deactivated excludes soft-deleted [no-issue]
 - Maven pre-release default falls back to `ft` when `mvn verify` fails (`mvn clean; mvn verify || ft`) [no-issue]
