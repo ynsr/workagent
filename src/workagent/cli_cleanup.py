@@ -73,12 +73,17 @@ def cleanup(
         # _status_cells(refresh_pr=True) is the merged/closed source of truth;
         # live harnesses and invalid worktrees are skipped, never torn down.
         rows = []
+        cleaned_parents: set[str] = set()
         for key, entry in links.items():
             branch = entry.get("branch", "")
             from . import cli as _cli
             _sc = _cli._status_cells
             state = ((_sc(dict(entry), refresh_pr=True).get("pr_data")
                      or {}).get("state", "") or "").upper()
+            if (entry.get("parent_key_ref") or "") in cleaned_parents:
+                rows.append({"key": key, "branch": branch,
+                             "status": "skipped:cleaned-with-parent"})
+                continue
             if state not in ("MERGED", "CLOSED"):
                 rows.append({"key": key, "branch": branch,
                              "status": f"skipped:{state.lower() or 'no-pr'}"})
@@ -96,9 +101,16 @@ def cleanup(
                 rows.append({"key": key, "branch": branch,
                              "status": "skipped:invalid"})
                 continue
-            rows.append(_cleanup_one(key, dict(entry), force, yes, dry_run,
-                                     json_output, squash=not no_squash,
-                                     merge=False, hard_delete=hard_delete))
+            row = _cleanup_one(key, dict(entry), force, yes, dry_run,
+                               json_output, squash=not no_squash,
+                               merge=False, hard_delete=hard_delete)
+            children = _cleanup_children(key, _child_keys(key), force, json_output,
+                                         squash=not no_squash,
+                                         hard_delete=hard_delete)
+            row["children"] = children
+            cleaned_parents.add(key)
+            cleaned_parents.update(children)
+            rows.append(row)
         if json_output:
             print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
         else:
@@ -134,10 +146,11 @@ def cleanup(
         if answer not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)
 
+    children = _child_keys(key)
     if dry_run:
         _print_result({"dry_run": True, "key": key, "repo": str(repo), "branch": branch,
                        "pr_url": entry.get("pr_url", ""), "force": force,
-                       "merge": entry.get("pr_url", "")}, json_output)
+                       "merge": entry.get("pr_url", ""), "children": children}, json_output)
         return
 
     if not yes and not force and sys.stdin.isatty():
@@ -150,6 +163,38 @@ def cleanup(
 
     result = _cleanup_one(key, dict(entry), force, True, False, json_output,
                           squash=not no_squash, hard_delete=hard_delete)
+    cleaned = _cleanup_children(key, children, force, json_output,
+                                squash=not no_squash, hard_delete=hard_delete)
+    result["children"] = cleaned
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+def _child_keys(parent_key: str) -> list[str]:
+    """Ref keys whose parent_key_ref points at *parent_key* (sorted)."""
+    links = store.load_links(include_inactive=True, include_deleted=True)
+    return sorted(k for k, v in links.items()
+                  if isinstance(v, dict) and (v.get("parent_key_ref") or "") == parent_key)
+
+
+def _cleanup_children(parent_key: str, children: list[str], force: bool,
+                      json_output: bool, squash: bool,
+                      hard_delete: bool) -> list[str]:
+    """Clean each child row after its parent teardown succeeded.
+
+    Children reuse the parent branch flow via _cleanup_one; a missing row
+    (already gone) is skipped, never an error. Returns cleaned keys.
+    """
+    cleaned: list[str] = []
+    for child in children:
+        entry = store.load_links(include_inactive=True,
+                                 include_deleted=True).get(child, {})
+        if not entry:
+            continue
+        _cleanup_one(child, dict(entry), force, True, False, json_output,
+                     squash=squash, hard_delete=hard_delete)
+        cleaned.append(child)
+    return cleaned
 
 
 def _pr_missing(msg: str) -> bool:
