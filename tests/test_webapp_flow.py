@@ -32,3 +32,31 @@ def test_flow_run_validates_and_targets(client):
     _validate_args("flow", ["run", "full", "IPG-1", "--dry-run"])
     assert _target_for("flow", ["run", "full", "IPG-1"]) == "flow:full:IPG-1"
     _validate_args("flow", ["template", "list"])
+
+
+def test_flow_template_mutations_require_confirm(client, monkeypatch):
+    """F2: template add/delete are confirm-gated; confirm:true reaches 202."""
+    from tests.webapp_helpers import _stub_spawn
+    _stub_spawn(monkeypatch)
+    store.create_template(name="Full", label="full",
+                          steps='[{"kind": "start"}]')
+    r = client.post("/api/runs", json={
+        "command": "flow",
+        "args": ["template", "add", "--name", "X",
+                 "--steps", '[{"kind": "start"}]'],
+    })
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["code"] == "confirm_required"
+    r = client.post("/api/runs", json={
+        "command": "flow",
+        "args": ["template", "add", "--name", "X",
+                 "--steps", '[{"kind": "start"}]'],
+        "confirm": True,
+    })
+    assert r.status_code == 202, r.text
+    r = client.post("/api/runs", json={
+        "command": "flow",
+        "args": ["template", "delete", "full", "--yes"],
+        "confirm": True,
+    })
+    assert r.status_code == 202, r.text

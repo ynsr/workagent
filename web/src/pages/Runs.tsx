@@ -30,11 +30,27 @@ const FILTERS = [
 
 type Filter = (typeof FILTERS)[number]["value"]
 
-function filterRuns(runs: Run[] | undefined, filter: Filter, target: string, repoOf: (r: Run) => string, repo: string): Run[] {
+interface FlowKey {
+  template_label: string
+  worktree_ref: string
+  repo_snapshot?: { launch_ref?: string }
+}
+
+/** Web run targets embed the raw launch ref (`flow:<tpl>:<raw-ref>`), while
+ * older rows resolved the worktree ref — match the row's worktree_ref AND
+ * launch_ref. */
+function filterRuns(runs: Run[] | undefined, filter: Filter, flow: FlowKey | undefined, flowMissing: boolean, target: string, repoOf: (r: Run) => string, repo: string): Run[] {
   if (!runs) return []
   let out = runs
   if (filter !== "all") out = out.filter((r) => r.state === filter)
   if (repo) out = out.filter((r) => repoOf(r) === repo)
+  if (flowMissing) return []
+  if (flow) {
+    const refs = [flow.worktree_ref, flow.repo_snapshot?.launch_ref ?? ""].filter(Boolean)
+    const keys = refs.map((r) => `flow:${flow.template_label}:${r}`.toLowerCase())
+    out = out.filter((r) => keys.includes(r.target.toLowerCase()))
+    return out.sort((a, b) => b.created - a.created)
+  }
   if (target) {
     const t = target.toLowerCase()
     out = out.filter(
@@ -45,7 +61,6 @@ function filterRuns(runs: Run[] | undefined, filter: Filter, target: string, rep
   }
   return out.sort((a, b) => b.created - a.created)
 }
-
 function CancelButton({ run }: { run: Run }) {
   const cancel = useCancelRun()
   return (
@@ -76,16 +91,15 @@ export function Runs() {
   const { data: flowsData } = useFlows()
 
   const flowParam = (params.get("flow") ?? "").trim()
-  // ?flow=<id> resolves through the flow row: runs carry the
-  // `flow:<template>:<ref>` target key, never the numeric flow id.
-  // Unresolved flowParam (still loading or no such flow) filters to empty
-  // via an impossible sentinel — never silently unfiltered.
+  // ?flow=<id> resolves through the flow row (worktree_ref + launch_ref);
+  // unresolved flowParam filters to empty — never silently unfiltered.
   const flowRow = flowParam ? (flowsData?.flows ?? []).find((f) => String(f.id) === flowParam) : undefined
-  const target = flowRow ? `flow:${flowRow.template_label}:${flowRow.worktree_ref}` : flowParam ? "__no_such_flow__" : (params.get("target") ?? "")
+  const flowMissing = Boolean(flowParam && flowsData && !flowRow)
+  const target = params.get("target") ?? ""
   const filter = (params.get("state") as Filter | null) ?? "all"
   const repoTabs = useRepoTabs((runs ?? []).map((r) => r.worktree || r.target), repos)
   const repoOf = (r: Run) => repoKeyForPath(r.worktree || r.target, repos ?? [])
-  const filtered = useMemo(() => filterRuns(runs, filter, target, repoOf, repoTabs.repoFilter), [runs, filter, target, repoTabs.repoFilter, repos])
+  const filtered = useMemo(() => filterRuns(runs, filter, flowRow, flowMissing, target, repoOf, repoTabs.repoFilter), [runs, filter, flowRow, flowMissing, target, repoTabs.repoFilter, repos])
 
   function setFilter(next: Filter) {
     const p = new URLSearchParams(params)

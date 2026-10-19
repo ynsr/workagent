@@ -1,14 +1,4 @@
-"""`flow` command: flow-template CRUD + flow runs (Start → … → Release).
-
-Registered on the shared `cli_core.app`; cli.py imports this module
-for its side effect.
-
-Execution fans out to the existing step runners in-process (zero logic
-duplication). Each step mints its normal session + run rows; the flow
-row only tracks the cursor (`current_step`), per-step results, the
-worktree ref, and a repo snapshot (Release reads the snapshot, never
-the possibly-cleaned link).
-"""
+"""`flow` command: template CRUD + runs (Start → … → Release)."""
 from __future__ import annotations
 
 import json
@@ -16,6 +6,7 @@ from typing import Optional
 
 import typer
 
+from . import cli_flow_util as _futil
 from . import store, worktrees
 from . import store_flows as sf
 from .cli_core import (
@@ -139,10 +130,8 @@ def template_delete(
     _print_result({"deleted": label}, json_output)
 
 
-# ── step seams: dispatch each step to its existing runner in-process with
-# merged flags (unknown config keys ignored). Success → dict with "status"
-# (no "preview"); preview/terminal → {"preview": True, ...} WITHOUT calling
-# the runner. Steps default headless (launch=True) unless config says otherwise.
+# Seams dispatch each step to its runner in-process with merged flags.
+# Success → {"status"}; preview/terminal → {"preview": True} (runner skipped).
 def _resolve_ref(ref: str) -> tuple[str, dict, dict | None]:
     """Resolve *ref* to (key, entry, parsed); exit 2 when unresolvable."""
     links = store.load_links()
@@ -158,7 +147,7 @@ def _resolve_ref(ref: str) -> tuple[str, dict, dict | None]:
 
 
 def _merge_config(step: dict, overrides: dict) -> dict:
-    return {**(step.get("config") or {}), **overrides}
+    return _futil.normalize_config({**(step.get("config") or {}), **overrides})
 
 
 def _manual_step(kind: str, args: list[str]) -> dict:
@@ -233,8 +222,7 @@ def _run_action_step(key: str, action_label: str, config: dict, json_output: boo
 
 def _run_cleanup_step(key: str, config: dict, json_output: bool) -> dict:
     """Cleanup step (fixed squash + soft-delete; overrides rejected)."""
-    banned = ("hard_delete", "hard-delete", "no_squash", "no-squash")
-    if any(k in config for k in banned):
+    if _futil.has_banned(config, sf._BANNED_CLEANUP_FLAGS):
         raise HarnessError("cleanup is fixed to squash + soft-delete — "
                            "hard-delete/no-squash overrides rejected", exit_code=2)
     if not _headless(config):
@@ -280,7 +268,7 @@ def _tag_flow_session(key: str, flow_id: int) -> None:
         mine = [s for s in _sq.list_sessions(db)
                 if (s.get("worktree_ref") or "") == key]
         if mine:
-            _sq.set_session_metadata(db, mine[-1]["id"], {"flow_id": flow_id})
+            _sq.set_session_metadata(db, mine[0]["id"], {"flow_id": flow_id})
     except Exception as e:
         eprint(f"flow session tagging skipped: {e}")
 
@@ -288,7 +276,7 @@ def _tag_flow_session(key: str, flow_id: int) -> None:
 
 def _find_resumable(template_label: str, ref: str,
                     key: str) -> dict | None:
-    """Latest non-done flow for the template+worktree pair (None: fresh)."""
+    """Latest non-done flow for the template+ref pair (None: fresh)."""
     for flow in reversed(store.list_flows()):
         if flow.get("template_label") != template_label:
             continue
@@ -297,7 +285,11 @@ def _find_resumable(template_label: str, ref: str,
         wref = flow.get("worktree_ref") or ""
         if key and wref == key:
             return flow
-        if not key and not wref:
+        snap = flow.get("repo_snapshot") or {}
+        launch = snap.get("launch_ref") if isinstance(snap, dict) else ""
+        if not key and launch and launch == ref:
+            return flow
+        if not key and not wref and not launch:
             return flow
     return None
 
@@ -329,12 +321,15 @@ def flow_run(
     merged_steps = [{**s, "config": _merge_config(
         s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
         for i, s in enumerate(steps)]
-    # Fail fast on per-run cleanup overrides (before any flow row exists).
-    banned_cfg = ("hard_delete", "hard-delete", "no_squash", "no-squash")
+    # Fail fast on per-run overrides (before any flow row exists): banned
+    # shortcut/cleanup flags rejected via the shared keys+values scanner.
     for step in merged_steps:
+        hit = _futil.has_banned(step.get("config") or {}, sf._BANNED_STEP_FLAGS)
+        if hit:
+            _fail(f"{hit!r} is rejected inside flows — use an explicit "
+                  f"'fix_comments' step", EXIT_USAGE)
         if step["kind"] == "cleanup":
-            blob = json.dumps(step.get("config") or {})
-            hit = next((b for b in banned_cfg if b in blob), None)
+            hit = _futil.has_banned(step.get("config") or {}, sf._BANNED_CLEANUP_FLAGS)
             if hit:
                 _fail(f"{hit!r} is rejected in cleanup steps — fixed to squash + soft-delete",
                       EXIT_USAGE)
@@ -350,8 +345,8 @@ def flow_run(
     key, entry, parsed = _resolve_ref(ref)
     flow = None if fresh else _find_resumable(tpl["label"], ref, key)
     if flow is None:
-        flow = store.create_flow(template_label=tpl["label"],
-                                 worktree_ref=key)
+        flow = store.create_flow(template_label=tpl["label"], worktree_ref=key,
+                                 repo_snapshot={"launch_ref": ref})
     fid = flow["id"]
     store.update_flow(fid, status="running")
     current = int(flow.get("current_step") or 0)
@@ -387,10 +382,10 @@ def flow_run(
                         entry = links.get(key, entry)
                         wt_path = str((entry or {}).get("worktree", "")
                                       or wt_path)
-                    if key and not (flow.get("repo_snapshot") or {}):
+                    if key and not (flow.get("repo_snapshot") or {}).get("repo"):
                         repo = str((entry or {}).get("repo", "") or "")
                         info = store.load_repos().get(repo, {})
-                        snap = {"repo": repo, "default_branch": str(
+                        snap = {"repo": repo, "launch_ref": ref, "default_branch": str(
                             info.get("default_branch", "") or ""),
                             "release_branch": str(
                             info.get("release_branch", "") or "")}

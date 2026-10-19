@@ -67,6 +67,7 @@ export function FlowTemplates() {
       const isEdit = editingLabel !== null
       const { run_id } = await createRun.mutateAsync({
         command: "flow",
+        confirm: true,
         args: isEdit
           ? [
               "template", "update", editingLabel,
@@ -119,6 +120,7 @@ export function FlowTemplates() {
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "flow",
+        confirm: true,
         args: ["template", "delete", row.label, "--yes"],
       })
       toast.success("Flow template delete started", {
