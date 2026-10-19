@@ -4,6 +4,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   FolderGit2,
+  Library,
   Tags,
   GitBranch,
   LayoutDashboard,
@@ -13,6 +14,7 @@ import {
   ShieldAlert,
   SquareTerminal,
   Stethoscope,
+  Workflow,
   Zap,
 } from "lucide-react"
 import { RunWatcher } from "@/components/RunWatcher"
@@ -25,6 +27,8 @@ const NAV_ITEMS = [
   { to: "/repos", label: "Repos", icon: FolderGit2 },
   { to: "/trackers", label: "Trackers", icon: Tags },
   { to: "/actions", label: "Actions", icon: Zap },
+  { to: "/flows", label: "Flows", icon: Workflow },
+  { to: "/flow-templates", label: "Flow Templates", icon: Library },
   { to: "/links", label: "Links", icon: Link2 },
   { to: "/doctor", label: "Doctor", icon: Stethoscope },
   { to: "/runs", label: "Runs", icon: SquareTerminal },

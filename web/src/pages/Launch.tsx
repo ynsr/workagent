@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { RefreshCw, Rocket, ShieldAlert } from "lucide-react"
+import { RefreshCw, Rocket, ShieldAlert, Workflow } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
+import { FlowWizard } from "@/components/FlowWizard"
+import { ActionDialog } from "@/components/LinkDialogs"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -11,8 +13,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useConfirm } from "@/lib/confirm"
 import { errorText } from "@/components/StatusFeedback"
-import { queryKeys, useCreateRun, useLinks, useRepos } from "@/lib/queries"
-import { api } from "@/lib/api"
+import { queryKeys, useCreateRun, useFlowTemplates, useLinks, useRepos } from "@/lib/queries"
+import { api, type FlowTemplateRow } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
@@ -22,6 +24,50 @@ import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
 import type { LaunchPrefs } from "@/lib/launchPrefs"
 
+/** Template picker for the Launch page: picks a flow template, then the
+ * shared FlowWizard scopes it to the issue ref input. */
+function TemplatePickerDialog({
+  onClose,
+  onPick,
+}: {
+  onClose: () => void
+  onPick: (t: FlowTemplateRow) => void
+}) {
+  const { data } = useFlowTemplates()
+  const templates = data?.templates ?? []
+  return (
+    <ActionDialog
+      title="Run a flow template"
+      description="Pick a template — the wizard scopes it to the issue ref above."
+      onClose={onClose}
+      footer={<></>}
+    >
+      {templates.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No flow templates yet.{" "}
+          <a href="/flow-templates" className="underline underline-offset-2">Add one</a>.
+        </p>
+      ) : (
+        <div className="grid gap-1">
+          {templates.map((t) => (
+            <button
+              key={t.label}
+              type="button"
+              onClick={() => onPick(t)}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent"
+            >
+              <Workflow aria-hidden className="size-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{t.name}</span>
+              <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                {t.steps?.length ?? 0} steps
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </ActionDialog>
+  )
+}
 /** Launch prefs slice for the current mode: hydrates run-mode toggles, the
  * start base, and the review fix flags. `ref`/`repo`/free text are never
  * persisted, and deep-link URL params win over stored values on mount. */
@@ -145,6 +191,8 @@ export function Launch() {
     return base
   })
   const [submitting, setSubmitting] = useState(false)
+  const [templatePicker, setTemplatePicker] = useState(false)
+  const [wizardTemplate, setWizardTemplate] = useState<FlowTemplateRow | null>(null)
   const [refreshingIssues, setRefreshingIssues] = useState(false)
   const [issuesNonce, setIssuesNonce] = useState(0)
   const [prefillChecked, setPrefillChecked] = useState(false)
@@ -471,16 +519,28 @@ export function Launch() {
             </p>
           </div>
 
-          <div className="flex items-center justify-between gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void handleRefreshIssues()}
-              disabled={refreshingIssues}
-            >
-              <RefreshCw className={refreshingIssues ? "animate-spin" : undefined} aria-hidden />
-              Refresh issues
-            </Button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleRefreshIssues()}
+                disabled={refreshingIssues}
+              >
+                <RefreshCw className={refreshingIssues ? "animate-spin" : undefined} aria-hidden />
+                Refresh issues
+              </Button>
+              {refValue ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setTemplatePicker(true)}
+                >
+                  <Workflow aria-hidden />
+                  Run a flow…
+                </Button>
+              ) : null}
+            </div>
             <Button
               type="button"
               onClick={() => void handleSubmit()}
@@ -497,6 +557,22 @@ export function Launch() {
           </div>
         </CardContent>
       </Card>
+      {templatePicker ? (
+        <TemplatePickerDialog
+          onClose={() => setTemplatePicker(false)}
+          onPick={(t) => {
+            setTemplatePicker(false)
+            setWizardTemplate(t)
+          }}
+        />
+      ) : null}
+      {wizardTemplate && refValue ? (
+        <FlowWizard
+          template={wizardTemplate}
+          refs={[refValue]}
+          onClose={() => setWizardTemplate(null)}
+        />
+      ) : null}
     </div>
   )
 }

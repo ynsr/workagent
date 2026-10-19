@@ -1,0 +1,287 @@
+import { useState } from "react"
+import { GripVertical, Plus, Trash2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import type { FlowStep } from "@/lib/api"
+
+export const STEP_KINDS = [
+  "start",
+  "review",
+  "fix_comments",
+  "sync",
+  "action",
+  "cleanup",
+  "release",
+] as const
+
+export interface ChainEditorProps {
+  mode: "edit" | "launch"
+  steps: FlowStep[]
+  onChange?: (steps: FlowStep[]) => void
+  overrides?: Record<number, Record<string, unknown>>
+  onOverridesChange?: (o: Record<number, Record<string, unknown>>) => void
+  knownActions: { label: string; name: string }[]
+}
+
+/** Backend rule order (mirrors store_flows.validate_template): Start-first,
+ * Release-last, review→cleanup needs fix_comments, action placement. */
+export function validateChain(steps: FlowStep[]): string[] {
+  const errors: string[] = []
+  if (steps.length === 0) {
+    errors.push("The chain needs at least one step.")
+    return errors
+  }
+  const kinds = steps.map((s) => s.kind)
+  for (const k of kinds) {
+    if (!(STEP_KINDS as readonly string[]).includes(k)) {
+      errors.push(`Unknown step kind ${JSON.stringify(k)}.`)
+    }
+  }
+  const starts = kinds.map((k, i) => (k === "start" ? i : -1)).filter((i) => i >= 0)
+  if (starts.length > 1) errors.push("At most one 'start' step is allowed.")
+  if (starts.length === 1 && starts[0] !== 0) errors.push("'start' must be the first step.")
+  const releases = kinds.map((k, i) => (k === "release" ? i : -1)).filter((i) => i >= 0)
+  if (releases.length > 1) errors.push("At most one 'release' step is allowed.")
+  if (releases.length === 1 && releases[0] !== kinds.length - 1) {
+    errors.push("'release' must be the last step.")
+  }
+  const cleanups = kinds.map((k, i) => (k === "cleanup" ? i : -1)).filter((i) => i >= 0)
+  if (releases.length === 1 && cleanups.length === 0) {
+    errors.push("'release' requires a prior 'cleanup' step.")
+  }
+  if (releases.length === 1 && cleanups.length > 0 && Math.max(...cleanups) > (releases[0] ?? -1)) {
+    errors.push("'release' requires a prior 'cleanup' step.")
+  }
+  for (let i = 0; i < kinds.length; i++) {
+    if (kinds[i] !== "review") continue
+    const rest = kinds.slice(i + 1)
+    if (!rest.includes("cleanup")) continue
+    const span = kinds.slice(i + 1, i + 1 + rest.indexOf("cleanup"))
+    if (!span.includes("fix_comments")) {
+      errors.push(`Step ${i + 1}: review…cleanup requires 'fix_comments' between them.`)
+    }
+  }
+  steps.forEach((step, i) => {
+    if (step.kind !== "action") return
+    if (starts.length === 1 && i < (starts[0] ?? 0)) errors.push(`Step ${i + 1}: 'action' steps must come after 'start'.`)
+    if (cleanups.length > 0 && i >= Math.min(...cleanups)) {
+      errors.push(`Step ${i + 1}: 'action' steps must come before 'cleanup'.`)
+    }
+    if (starts.length === 0) errors.push(`Step ${i + 1}: 'action' steps require a 'start' step.`)
+    if (cleanups.length === 0) errors.push(`Step ${i + 1}: 'action' steps require a 'cleanup' step.`)
+    if (!step.action_label?.trim()) errors.push(`Step ${i + 1}: 'action' step needs an action label.`)
+  })
+  steps.forEach((step, i) => {
+    const cfg = JSON.stringify(step.config ?? {})
+    if (/then-fix-comments|then_fix_comments/.test(cfg)) {
+      errors.push(`Step ${i + 1}: then-fix-comments is rejected inside flows — use an explicit 'fix_comments' step.`)
+    }
+    if (step.kind === "cleanup" && /hard_delete|hard-delete|no_squash|no-squash/.test(cfg)) {
+      errors.push(`Step ${i + 1}: cleanup is fixed to squash + soft-delete — hard-delete/no-squash overrides are rejected.`)
+    }
+  })
+  return errors
+}
+
+/** Per-step config editor: run_mode select + extra-flags text (+ raw JSON add-on). */
+function StepConfigForm({
+  config,
+  onChange,
+  idPrefix,
+}: {
+  config: Record<string, unknown>
+  onChange: (next: Record<string, unknown>) => void
+  idPrefix: string
+}) {
+  const runMode = typeof config.run_mode === "string" ? config.run_mode : "headless"
+  const flags = typeof config["extra-flags"] === "string" ? String(config["extra-flags"]) : ""
+  function patch(key: string, value: unknown) {
+    const next = { ...config }
+    if (value === "" || value === undefined) delete next[key]
+    else next[key] = value
+    onChange(next)
+  }
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid gap-1.5">
+        <Label htmlFor={`${idPrefix}-run-mode`}>Run mode</Label>
+        <select
+          id={`${idPrefix}-run-mode`}
+          value={runMode}
+          onChange={(e) => patch("run_mode", e.target.value)}
+          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring"
+        >
+          <option value="headless">headless</option>
+          <option value="preview">preview</option>
+          <option value="terminal">terminal</option>
+        </select>
+      </div>
+      <div className="grid gap-1.5">
+        <Label htmlFor={`${idPrefix}-flags`}>Extra flags</Label>
+        <Input
+          id={`${idPrefix}-flags`}
+          value={flags}
+          onChange={(e) => patch("extra-flags", e.target.value)}
+          placeholder="--depth 7"
+          autoComplete="off"
+          spellCheck={false}
+          className="font-mono text-[13px]"
+        />
+      </div>
+    </div>
+  )
+}
+
+/** Shared step-chain editor: edit mode (full CRUD + drag-reorder) or launch
+ * mode (read-only chain + per-step override editors). */
+export function ChainEditor({
+  mode,
+  steps,
+  onChange,
+  overrides = {},
+  onOverridesChange,
+  knownActions,
+}: ChainEditorProps) {
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const errors = mode === "edit" ? validateChain(steps) : []
+
+  function setStep(i: number, next: FlowStep) {
+    if (!onChange) return
+    onChange(steps.map((s, j) => (j === i ? next : s)))
+  }
+  function addStep() {
+    if (!onChange) return
+    onChange([...steps, { kind: "sync", config: {} }])
+  }
+  function removeStep(i: number) {
+    if (!onChange) return
+    onChange(steps.filter((_, j) => j !== i))
+  }
+  function moveStep(from: number, to: number) {
+    if (!onChange || from === to) return
+    const next = [...steps]
+    const [moved] = next.splice(from, 1)
+    if (!moved) return
+    next.splice(to, 0, moved)
+    onChange(next)
+  }
+  function setOverride(i: number, next: Record<string, unknown>) {
+    if (!onOverridesChange) return
+    onOverridesChange({ ...overrides, [i]: next })
+  }
+
+  return (
+    <div className="grid gap-3">
+      {steps.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {mode === "edit" ? "No steps yet — add the first step below." : "This template has no steps."}
+        </p>
+      ) : (
+        <ol className="grid gap-3">
+          {steps.map((step, i) => (
+            <li
+              key={i}
+              draggable={mode === "edit"}
+              onDragStart={mode === "edit" ? () => setDragIndex(i) : undefined}
+              onDragOver={mode === "edit" ? (e) => e.preventDefault() : undefined}
+              onDrop={mode === "edit" ? (e) => {
+                e.preventDefault()
+                if (dragIndex !== null) moveStep(dragIndex, i)
+                setDragIndex(null)
+              } : undefined}
+              className="rounded-md border p-3"
+            >
+              <div className="mb-2 flex items-center gap-2">
+                {mode === "edit" ? (
+                  <span
+                    className="cursor-grab text-muted-foreground"
+                    title="Drag to reorder"
+                    aria-label={`Reorder step ${i + 1}`}
+                  >
+                    <GripVertical aria-hidden className="size-4" />
+                  </span>
+                ) : null}
+                <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted font-mono text-xs">
+                  {i + 1}
+                </span>
+                {mode === "edit" ? (
+                  <select
+                    value={step.kind}
+                    onChange={(e) => setStep(i, { ...step, kind: e.target.value })}
+                    aria-label={`Step ${i + 1} kind`}
+                    className="flex h-9 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 font-mono text-[13px] shadow-xs outline-none focus-visible:border-ring"
+                  >
+                    {STEP_KINDS.map((k) => (
+                      <option key={k} value={k}>{k}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="min-w-0 flex-1 font-mono text-[13px] font-medium">
+                    {step.kind}
+                    {step.action_label ? (
+                      <span className="text-muted-foreground"> · {step.action_label}</span>
+                    ) : null}
+                  </span>
+                )}
+                {mode === "edit" ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title={`Remove step ${i + 1}`}
+                    onClick={() => removeStep(i)}
+                  >
+                    <Trash2 aria-hidden />
+                  </Button>
+                ) : null}
+              </div>
+              {mode === "edit" && step.kind === "action" ? (
+                <div className="mb-2 grid gap-1.5">
+                  <Label htmlFor={`chain-step-${i}-action`}>Action</Label>
+                  <select
+                    id={`chain-step-${i}-action`}
+                    value={step.action_label ?? ""}
+                    onChange={(e) => setStep(i, { ...step, action_label: e.target.value })}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring"
+                  >
+                    <option value="">Select an action…</option>
+                    {knownActions.map((a) => (
+                      <option key={a.label} value={a.label}>{a.name} ({a.label})</option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+              {mode === "edit" ? (
+                <StepConfigForm
+                  config={step.config ?? {}}
+                  onChange={(config) => setStep(i, { ...step, config })}
+                  idPrefix={`chain-step-${i}`}
+                />
+              ) : (
+                <StepConfigForm
+                  config={{ ...(step.config ?? {}), ...(overrides[i] ?? {}) }}
+                  onChange={(next) => setOverride(i, next)}
+                  idPrefix={`chain-override-${i}`}
+                />
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+      {mode === "edit" ? (
+        <div>
+          <Button variant="outline" size="sm" onClick={addStep}>
+            <Plus aria-hidden /> Add step
+          </Button>
+          {errors.length > 0 ? (
+            <ul className="mt-2 space-y-1" role="alert">
+              {errors.map((e) => (
+                <li key={e} className="text-[13px] text-destructive">{e}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}

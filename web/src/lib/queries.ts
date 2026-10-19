@@ -14,6 +14,9 @@ export const queryKeys = {
   trackerDomains: ["trackers", "domains"] as const,
   actions: ["actions"] as const,
   action: (label: string) => ["actions", "detail", label] as const,
+  flowTemplates: ["flow-templates"] as const,
+  flowTemplate: (label: string) => ["flow-templates", "detail", label] as const,
+  flows: (worktree?: string) => ["flows", worktree ?? ""] as const,
   links: ["links"] as const,
   doctor: ["doctor"] as const,
   runs: ["runs"] as const,
@@ -96,6 +99,31 @@ export function useAction(label: string | null) {
     queryKey: queryKeys.action(label ?? ""),
     queryFn: () => api.actionDetail(label ?? ""),
     enabled: !!label,
+  })
+}
+
+export function useFlowTemplates() {
+  return useQuery({ queryKey: queryKeys.flowTemplates, queryFn: api.flowTemplates })
+}
+
+export function useFlowTemplate(label: string | null) {
+  return useQuery({
+    queryKey: queryKeys.flowTemplate(label ?? ""),
+    queryFn: () => api.flowTemplateDetail(label ?? ""),
+    enabled: !!label,
+  })
+}
+
+/** Flow runs, optionally scoped to one worktree (SWR: cached rows render
+ * instantly, background refetch only swaps in fresh data — never blank). */
+export function useFlows(worktree?: string) {
+  return useQuery({
+    queryKey: queryKeys.flows(worktree),
+    queryFn: () => api.flows(worktree || undefined),
+    staleTime: SWR_DAY_MS,
+    gcTime: SWR_DAY_MS,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
   })
 }
 
@@ -273,4 +301,6 @@ export function invalidateAfterRun(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: queryKeys.trackers })
   void qc.invalidateQueries({ queryKey: queryKeys.links })
   void qc.invalidateQueries({ queryKey: queryKeys.doctor })
+  void qc.invalidateQueries({ queryKey: queryKeys.flowTemplates })
+  void qc.invalidateQueries({ queryKey: ["flows"] })
 }

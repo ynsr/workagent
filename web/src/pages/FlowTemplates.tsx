@@ -1,0 +1,342 @@
+import { useState } from "react"
+import { useNavigate } from "react-router-dom"
+import { toast } from "sonner"
+import { Copy, Download, Pencil, Plus, Trash2, Workflow } from "lucide-react"
+import { ChainEditor, validateChain } from "@/components/ChainEditor"
+import { PageHeader } from "@/components/PageHeader"
+import {
+  EmptyState,
+  ErrorState,
+  RefreshOverlay,
+  TableSkeleton,
+  errorText,
+} from "@/components/StatusFeedback"
+import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import { ActionDialog } from "@/components/LinkDialogs"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { useConfirm } from "@/lib/confirm"
+import { copyToClipboard, downloadText, exactDateTime, relativeDate, toCsv } from "@/lib/format"
+import { useActions, useCreateRun, useFlowTemplates } from "@/lib/queries"
+import type { FlowStep, FlowTemplateRow } from "@/lib/api"
+
+export function FlowTemplates() {
+  const navigate = useNavigate()
+  const confirm = useConfirm()
+  const createRun = useCreateRun()
+  const { data, isPending, isFetching, isError, error, refetch } = useFlowTemplates()
+  const { data: actionsData } = useActions()
+  const templates = data?.templates ?? []
+  const knownActions = (actionsData?.actions ?? []).map((a) => ({ label: a.label, name: a.name }))
+
+  const [name, setName] = useState("")
+  const [steps, setSteps] = useState<FlowStep[]>([])
+  const [pre, setPre] = useState("")
+  const [post, setPost] = useState("")
+  const [adding, setAdding] = useState(false)
+  const [detail, setDetail] = useState<FlowTemplateRow | null>(null)
+  const [editingLabel, setEditingLabel] = useState<string | null>(null)
+
+  function reset() {
+    setName("")
+    setSteps([])
+    setPre("")
+    setPost("")
+    setEditingLabel(null)
+  }
+
+  async function handleAdd() {
+    if (!name.trim() || validateChain(steps).length > 0) return
+    setAdding(true)
+    try {
+      const isEdit = editingLabel !== null
+      const { run_id } = await createRun.mutateAsync({
+        command: "flow",
+        args: isEdit
+          ? [
+              "template", "update", editingLabel,
+              "--name", name.trim(),
+              "--steps", JSON.stringify(steps),
+              "--pre-execution", pre,
+              "--post-execution", post,
+            ]
+          : [
+              "template", "add",
+              "--name", name.trim(),
+              "--steps", JSON.stringify(steps),
+              ...(pre.trim() ? ["--pre-execution", pre.trim()] : []),
+              ...(post.trim() ? ["--post-execution", post.trim()] : []),
+            ],
+      })
+      toast.success(isEdit ? "Flow template update started" : "Flow template add started", {
+        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+      reset()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  function handleEdit(row: FlowTemplateRow) {
+    setDetail(null)
+    setEditingLabel(row.label)
+    setName(row.name)
+    setSteps(row.steps ?? [])
+    setPre(row.pre_execution ?? "")
+    setPost(row.post_execution ?? "")
+  }
+
+  async function handleRemove(row: FlowTemplateRow) {
+    const ok = await confirm({
+      action: "flow template delete",
+      title: `Delete flow template ${row.name}`,
+      description: "Deletes the flow template row. Flow runs are untouched.",
+      destructive: true,
+      confirmLabel: "Delete template",
+      details: [
+        { label: "Label", value: row.label, mono: true },
+        { label: "Name", value: row.name },
+      ],
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "flow",
+        args: ["template", "delete", row.label, "--yes"],
+      })
+      toast.success("Flow template delete started", {
+        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  async function handleCopyJson() {
+    try {
+      await copyToClipboard(JSON.stringify(templates, null, 2))
+      toast.success("Flow template list JSON copied")
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  function handleDownloadCsv() {
+    downloadText(
+      "workagent-flow-templates.csv",
+      toCsv(
+        ["label", "name", "steps"],
+        templates.map((t) => [t.label, t.name, String(t.steps?.length ?? 0)]),
+      ),
+      "text/csv",
+    )
+  }
+
+  const chainErrors = validateChain(steps)
+  const canSave = name.trim().length > 0 && steps.length > 0 && chainErrors.length === 0 && !adding
+
+  return (
+    <div>
+      <PageHeader
+        title="Flow Templates"
+        description="Step chains (Start → … → Release). Run them from the Dashboard Flows dropdown or Launch."
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={handleCopyJson}>
+              <Copy aria-hidden /> JSON
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleDownloadCsv}>
+              <Download aria-hidden /> CSV
+            </Button>
+          </>
+        }
+      />
+
+      <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
+        <Card className="order-2 lg:order-1">
+          <CardHeader>
+            <CardTitle>Flow templates</CardTitle>
+            <CardDescription>GET /api/flow-templates</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {(isPending && !data) ? (
+              <TableSkeleton rows={4} />
+            ) : (isError && !data) ? (
+              <ErrorState error={error} onRetry={() => void refetch()} />
+            ) : templates.length === 0 ? (
+              <EmptyState
+                icon={<Workflow className="size-10" aria-hidden />}
+                title="No flow templates"
+                description="Add one with the form — a name plus at least one step."
+              />
+            ) : (
+              <div className="relative">
+                {isFetching && !isPending ? <RefreshOverlay /> : null}
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Label</TableHead>
+                      <TableHead>Steps</TableHead>
+                      <TableHead>Updated</TableHead>
+                      <TableHead className="w-28" aria-label="Actions" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {templates.map((t) => (
+                      <TableRow key={t.label}>
+                        <TableCell>
+                          <button
+                            type="button"
+                            className="font-medium underline-offset-2 hover:underline"
+                            onClick={() => setDetail(t)}
+                          >
+                            {t.name}
+                          </button>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{t.label}</TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {t.steps?.length ?? 0}
+                        </TableCell>
+                        <TableCell title={exactDateTime(t.modified_at)}>
+                          {relativeDate(t.modified_at)}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            <Button variant="ghost" size="sm" title={`Edit ${t.name}`} onClick={() => handleEdit(t)}>
+                              <Pencil aria-hidden />
+                            </Button>
+                            <Button variant="ghost" size="sm" title={`Delete ${t.name}`} onClick={() => void handleRemove(t)}>
+                              <Trash2 aria-hidden />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="order-1 h-fit lg:order-2">
+          <CardHeader>
+            <CardTitle>{editingLabel ? `Edit ${editingLabel}` : "Add a template"}</CardTitle>
+            <CardDescription>
+              {editingLabel
+                ? "flow template update — the label stays fixed, all other fields are replaced."
+                : "flow template add --name creates the row; run it per worktree from the Dashboard."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="flow-name">Name</Label>
+              <Input
+                id="flow-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Full review cycle"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>Steps</Label>
+              <ChainEditor mode="edit" steps={steps} onChange={setSteps} knownActions={knownActions} />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="flow-pre">Pre-execution script</Label>
+              <Input
+                id="flow-pre"
+                value={pre}
+                onChange={(e) => setPre(e.target.value)}
+                placeholder="make lint"
+                autoComplete="off"
+                spellCheck={false}
+                className="font-mono text-[13px]"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="flow-post">Post-execution script</Label>
+              <Input
+                id="flow-post"
+                value={post}
+                onChange={(e) => setPost(e.target.value)}
+                placeholder="make test"
+                autoComplete="off"
+                spellCheck={false}
+                className="font-mono text-[13px]"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button className="flex-1" onClick={() => void handleAdd()} disabled={!canSave}>
+                <Plus aria-hidden />
+                {adding ? "Saving…" : editingLabel ? "Save changes" : "Add template"}
+              </Button>
+              {editingLabel ? (
+                <Button variant="outline" onClick={reset} disabled={adding}>
+                  Cancel
+                </Button>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {detail ? (
+        <ActionDialog
+          title={detail.name}
+          description={detail.label}
+          onClose={() => setDetail(null)}
+          footer={
+            <Button variant="outline" size="sm" onClick={() => handleEdit(detail)}>
+              <Pencil aria-hidden /> Edit
+            </Button>
+          }
+        >
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground" title={exactDateTime(detail.modified_at)}>
+              updated {relativeDate(detail.modified_at)}
+            </span>
+          </div>
+          <div className="grid gap-1 text-sm">
+            <span className="font-medium">Steps</span>
+            <pre className="max-h-64 overflow-auto rounded-md border p-2 font-mono text-xs whitespace-pre-wrap">
+              {JSON.stringify(detail.steps, null, 2)}
+            </pre>
+          </div>
+          {detail.pre_execution ? (
+            <div className="grid gap-1 text-sm">
+              <span className="font-medium">Pre-execution</span>
+              <code className="rounded-md border p-2 font-mono text-xs">{detail.pre_execution}</code>
+            </div>
+          ) : null}
+          {detail.post_execution ? (
+            <div className="grid gap-1 text-sm">
+              <span className="font-medium">Post-execution</span>
+              <code className="rounded-md border p-2 font-mono text-xs">{detail.post_execution}</code>
+            </div>
+          ) : null}
+        </ActionDialog>
+      ) : null}
+    </div>
+  )
+}

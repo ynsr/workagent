@@ -14,6 +14,7 @@ import {
 import { CandidatesCard } from "@/components/CandidatesCard"
 import { ReleaseCard } from "@/components/ReleaseCard"
 import { ActionsMenu } from "@/components/ActionsMenu"
+import { FlowsMenu } from "@/components/FlowsMenu"
 import { CleanupDialog } from "@/components/CleanupDialog"
 import { DeactivatedTable } from "@/components/DeactivatedTable"
 import { DeletedTable } from "@/components/DeletedTable"
@@ -457,6 +458,7 @@ export function Dashboard() {
               {scopeLabel("Sync")}
             </Button>
             <ActionsMenu selected={selected} />
+            <FlowsMenu selected={selected} />
             <Button variant="outline" size="sm" onClick={handleReviewAll} title={selCount > 0 ? `Review ${selCount} selected worktrees` : "Review every active linked worktree"}>
               {scopeLabel("Review")}
             </Button>

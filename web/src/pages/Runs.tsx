@@ -15,7 +15,7 @@ import {
 } from "@/components/StatusFeedback"
 import { Button } from "@/components/ui/button"
 import { type Run } from "@/lib/api"
-import { useCancelRun, useRepos, useRuns } from "@/lib/queries"
+import { useCancelRun, useFlows, useRepos, useRuns } from "@/lib/queries"
 import { repoKeyForPath, useRepoTabs } from "@/lib/useRepoTabs"
 import { shortId } from "@/lib/format"
 
@@ -73,8 +73,13 @@ export function Runs() {
   const [params, setParams] = useSearchParams()
   const { data: runs, isPending, isFetching, isError, error, refetch } = useRuns()
   const { data: repos } = useRepos()
+  const { data: flowsData } = useFlows()
 
-  const target = params.get("target") ?? ""
+  const flowParam = (params.get("flow") ?? "").trim()
+  // ?flow=<id> resolves through the flow row: runs carry the
+  // `flow:<template>:<ref>` target key, never the numeric flow id.
+  const flowRow = flowParam ? (flowsData?.flows ?? []).find((f) => String(f.id) === flowParam) : undefined
+  const target = flowRow ? `flow:${flowRow.template_label}:${flowRow.worktree_ref}` : (params.get("target") ?? "")
   const filter = (params.get("state") as Filter | null) ?? "all"
 
   const repoTabs = useRepoTabs((runs ?? []).map((r) => r.worktree || r.target), repos)
@@ -91,6 +96,12 @@ export function Runs() {
   function clearTarget() {
     const p = new URLSearchParams(params)
     p.delete("target")
+    setParams(p, { replace: true })
+  }
+
+  function clearFlow() {
+    const p = new URLSearchParams(params)
+    p.delete("flow")
     setParams(p, { replace: true })
   }
 
@@ -130,6 +141,18 @@ export function Runs() {
             </button>
           ))}
         </div>
+        {flowParam ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border bg-muted px-3 text-sm">
+            <span className="font-mono text-[13px]">flow #{flowParam}</span>
+            <button
+              aria-label={`Clear flow filter ${flowParam}`}
+              onClick={clearFlow}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <XCircle aria-hidden className="size-4" />
+            </button>
+          </span>
+        ) : null}
         {target ? (
           <span className="inline-flex items-center gap-1.5 rounded-full border bg-muted px-3 text-sm">
             <span className="font-mono text-[13px]">{target}</span>

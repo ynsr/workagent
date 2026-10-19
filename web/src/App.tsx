@@ -5,6 +5,8 @@ import { Launch } from "@/pages/Launch"
 import { Repos } from "@/pages/Repos"
 import { Trackers } from "@/pages/Trackers"
 import { Actions } from "@/pages/Actions"
+import { FlowTemplates } from "@/pages/FlowTemplates"
+import { Flows } from "@/pages/Flows"
 import { Links } from "@/pages/Links"
 import { Doctor } from "@/pages/Doctor"
 import { Runs } from "@/pages/Runs"
@@ -22,6 +24,8 @@ export default function App() {
         <Route path="repos" element={<Repos />} />
         <Route path="trackers" element={<Trackers />} />
         <Route path="actions" element={<Actions />} />
+        <Route path="flows" element={<Flows />} />
+        <Route path="flow-templates" element={<FlowTemplates />} />
         <Route path="links" element={<Links />} />
         <Route path="doctor" element={<Doctor />} />
         <Route path="runs" element={<Runs />} />

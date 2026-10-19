@@ -286,6 +286,12 @@ export type RunCommand =
   | "link"
   | "tracker"
   | "action"
+  | "flow"
+
+export interface FlowStep { kind: string; action_label?: string; config?: Record<string, unknown> }
+export interface FlowTemplateRow { id: number; label: string; name: string; steps: FlowStep[]; pre_execution: string; post_execution: string; created_at: string; modified_at: string }
+export interface FlowStepResult { kind: string; status: string; detail?: string }
+export interface FlowRow { id: number; template_label: string; worktree_ref: string; repo_snapshot: { repo?: string; default_branch?: string; release_branch?: string }; status: string; current_step: number; step_results: FlowStepResult[]; created_at: string; modified_at: string }
 
 /** Display label for a PR/MR URL: "PR #33" (GitHub) or "MR #42" (GitLab);
  * falls back to the raw URL when the kind cannot be determined. */
@@ -392,6 +398,14 @@ export const api = {
   /** GET /api/actions/{label} — one custom action; rejects on 404. */
   actionDetail: (label: string) =>
     request<ActionRow>(`/api/actions/${encodeURIComponent(label)}`),
+  /** GET /api/flow-templates — flow template definitions (Flow Templates page source). */
+  flowTemplates: () => request<{ templates: FlowTemplateRow[] }>("/api/flow-templates"),
+  /** GET /api/flow-templates/{label} — one flow template; rejects on 404. */
+  flowTemplateDetail: (label: string) =>
+    request<FlowTemplateRow>(`/api/flow-templates/${encodeURIComponent(label)}`),
+  /** GET /api/flows?worktree= — flow runs, optionally scoped to one worktree. */
+  flows: (worktree?: string) =>
+    request<{ flows: FlowRow[] }>(`/api/flows${qs({ worktree })}`),
   trackerDomains: () => request<{ disabled_domains: string[] }>("/api/tracker-domains"),
   setTrackerDomains: (domains: string[]) =>
     request<{ disabled_domains: string[] }>("/api/tracker-domains", {

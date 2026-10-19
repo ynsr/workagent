@@ -76,6 +76,7 @@ export function Sessions() {
   } = useSessions()
   const [params, setParams] = useSearchParams()
   const worktreeFilter = (params.get("worktree") ?? "").trim()
+  const flowFilter = (params.get("flow") ?? "").trim()
   const titleFilter = (params.get("q") ?? "").trim().toLowerCase()
   const allRows: SessionRow[] = data?.sessions ?? []
   const { data: repos } = useRepos()
@@ -92,13 +93,14 @@ export function Sessions() {
     let out = allRows
     if (repoFilter) out = out.filter((r) => repoOf(r.worktree_ref) === repoFilter)
     if (worktreeFilter) out = out.filter((r) => r.worktree_ref === worktreeFilter)
+    if (flowFilter) out = out.filter((r) => String((r.metadata as Record<string, unknown> | undefined)?.flow_id ?? "") === flowFilter)
     if (titleFilter) {
       out = out.filter((r) =>
         `${r.id} ${r.worktree_ref} ${sessionTitle(r.worktree_ref, links?.worktrees?.[r.worktree_ref]?.branch ?? "")} ${r.initiator_command} ${r.harness_name} ${r.state}`.toLowerCase().includes(titleFilter),
       )
     }
     return out
-  }, [allRows, worktreeFilter, titleFilter, repoFilter, links, repos])
+  }, [allRows, worktreeFilter, flowFilter, titleFilter, repoFilter, links, repos])
 
   function setParam(key: string, value: string) {
     const next = new URLSearchParams(params)
@@ -109,6 +111,10 @@ export function Sessions() {
 
   function clearWorktree() {
     setParam("worktree", "")
+  }
+
+  function clearFlow() {
+    setParam("flow", "")
   }
 
   return (
@@ -140,6 +146,11 @@ export function Sessions() {
         {worktreeFilter ? (
           <Button variant="outline" size="sm" onClick={clearWorktree}>
             Clear worktree
+          </Button>
+        ) : null}
+        {flowFilter ? (
+          <Button variant="outline" size="sm" onClick={clearFlow}>
+            Clear flow #{flowFilter}
           </Button>
         ) : null}
       </div>

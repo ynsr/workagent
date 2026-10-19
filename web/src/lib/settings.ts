@@ -18,6 +18,7 @@ export type OptOutAction =
   | "link remove"
   | "tracker remove"
   | "action delete"
+  | "flow template delete"
 export const OPTOUT_ACTIONS: OptOutAction[] = [
   "cleanup",
   "release",
@@ -28,6 +29,7 @@ export const OPTOUT_ACTIONS: OptOutAction[] = [
   "link remove",
   "tracker remove",
   "action delete",
+  "flow template delete",
 ]
 
 export const OPTOUT_LABELS: Record<OptOutAction, string> = {
@@ -40,6 +42,7 @@ export const OPTOUT_LABELS: Record<OptOutAction, string> = {
   "link remove": "Link removal",
   "tracker remove": "Tracker removal",
   "action delete": "Action deletion",
+  "flow template delete": "Flow template deletion",
 }
 
 export function getTheme(): Theme {
