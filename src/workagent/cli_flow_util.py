@@ -17,6 +17,11 @@ def _coerce(value: str) -> object:
     return int(value) if value.isdigit() else value
 
 
+#: config keys that must reach the runner as a list (UI edits them as
+#: comma-separated text; idempotent — lists pass through untouched).
+_LIST_KEYS = ("related_repo",)
+
+
 def normalize_config(config: object) -> dict:
     """Translate UI-only keys to real runner keys (idempotent).
 
@@ -47,7 +52,7 @@ def normalize_config(config: object) -> dict:
     else:
         out.pop("extra_flags", None)
     if not isinstance(raw_flags, str) or not raw_flags.strip():
-        return out
+        return _coerce_lists(out)
     try:
         tokens = shlex.split(raw_flags)
     except ValueError:
@@ -71,6 +76,19 @@ def normalize_config(config: object) -> dict:
             i += 1
         else:
             out[body.replace("-", "_")] = True
+    return _coerce_lists(out)
+
+
+def _coerce_lists(out: dict) -> dict:
+    """Split comma-string list keys (idempotent; blank → dropped)."""
+    for k in _LIST_KEYS:
+        v = out.get(k)
+        if isinstance(v, str):
+            items = [p.strip() for p in v.split(",") if p.strip()]
+            if items:
+                out[k] = items
+            else:
+                del out[k]
     return out
 
 

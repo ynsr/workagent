@@ -445,7 +445,6 @@ export function Dashboard() {
         description="Linked issue ↔ PR ↔ worktrees. Refreshes every 15 s while the tab is visible."
         actions={
           <>
-            <span aria-hidden className="mx-1 hidden h-6 w-px self-center bg-border sm:block" />
             <ActionsMenu selected={selected} />
             <FlowsMenu selected={selected} />
             <span aria-hidden className="mx-1 hidden h-6 w-px self-center bg-border sm:block" />

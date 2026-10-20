@@ -81,6 +81,14 @@ def test_validate_template_accepts_valid_chains(tmp_path):
     assert ok[3]["action_label"] == "lint"
 
 
+def test_validate_template_action_without_cleanup(tmp_path):
+    from workagent import store_flows as sf
+    ok = sf.validate_template(
+        [{"kind": "start"}, {"kind": "action", "action_label": "lint"}],
+        get_action=lambda label: {"label": label})
+    assert [s["kind"] for s in ok] == ["start", "action"]
+
+
 def test_template_crud_round_trip(tmp_path, monkeypatch):
     from workagent import store_flows as sf
     db = tmp_path / "state.db"

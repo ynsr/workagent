@@ -21,7 +21,11 @@ def test_normalize_extra_flags_parses_kv_and_boolean():
     assert out == {"repo": "main"}
     # dashed keys normalize to the underscore names _pick allowlists
     out = u.normalize_config({"extra-flags": "--no-tty --related-repo proj --extra-prompt=hi"})
-    assert out == {"no_tty": True, "related_repo": "proj", "extra_prompt": "hi"}
+    assert out == {"no_tty": True, "related_repo": ["proj"], "extra_prompt": "hi"}
+    # related_repo as direct key (not via extra-flags) coerces too; lists pass through
+    assert u.normalize_config({"related_repo": "a, b"}) == {"related_repo": ["a", "b"]}
+    assert u.normalize_config({"related_repo": ["a"]}) == {"related_repo": ["a"]}
+    assert u.normalize_config({"related_repo": "  "}) == {}
     # underscore variant accepted too
     out = u.normalize_config({"extra_flags": "--depth 7"})
     assert out == {"depth": 7}

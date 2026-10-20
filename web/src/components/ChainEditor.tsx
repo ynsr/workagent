@@ -69,7 +69,6 @@ export function validateChain(steps: FlowStep[]): string[] {
       errors.push(`Step ${i + 1}: 'action' steps must come before 'cleanup'.`)
     }
     if (starts.length === 0) errors.push(`Step ${i + 1}: 'action' steps require a 'start' step.`)
-    if (cleanups.length === 0) errors.push(`Step ${i + 1}: 'action' steps require a 'cleanup' step.`)
     if (!step.action_label?.trim()) errors.push(`Step ${i + 1}: 'action' step needs an action label.`)
   })
   steps.forEach((step, i) => {
@@ -89,11 +88,13 @@ export function validateChain(steps: FlowStep[]): string[] {
  * empty config shows template values as placeholder hints, and re-selecting
  * the template value removes the key so only user-set keys are stored. */
 function StepConfigForm({
+  kind,
   config,
   onChange,
   idPrefix,
   hints,
 }: {
+  kind: string
   config: Record<string, unknown>
   onChange: (next: Record<string, unknown>) => void
   idPrefix: string
@@ -103,6 +104,23 @@ function StepConfigForm({
   const runMode = typeof config.run_mode === "string" ? config.run_mode : hintRunMode
   const flags = typeof config["extra-flags"] === "string" ? String(config["extra-flags"]) : ""
   const hintFlags = typeof hints?.["extra-flags"] === "string" ? String(hints["extra-flags"]) : ""
+  const strOf = (v: unknown): string => {
+    if (typeof v === "string") return v
+    if (Array.isArray(v)) return v.map(String).join(", ")
+    return ""
+  }
+  const related = strOf(config.related_repo)
+  const hintRelated = strOf(hints?.related_repo)
+  const extraPrompt = typeof config.extra_prompt === "string" ? String(config.extra_prompt) : ""
+  const hintExtraPrompt = typeof hints?.extra_prompt === "string" ? String(hints.extra_prompt) : ""
+  const newFixSession = config.new_fix_session === true
+  const hintNewFixSession = hints?.new_fix_session === true
+  // Per-kind named fields (mirrors the cli_flow _pick allowlists):
+  // start → related_repo + extra_prompt; review/fix_comments/action → extra_prompt;
+  // fix_comments → new_fix_session checkbox (default off: reuse review transcript).
+  const showRelated = kind === "start"
+  const showExtraPrompt = kind === "start" || kind === "review" || kind === "fix_comments" || kind === "action"
+  const showNewFixSession = kind === "fix_comments"
   function patch(key: string, value: unknown) {
     const next = { ...config }
     const hint = key === "run_mode" ? hintRunMode : hints?.[key]
@@ -137,6 +155,45 @@ function StepConfigForm({
           className="font-mono text-[13px]"
         />
       </div>
+      {showRelated ? (
+        <div className="grid gap-1.5 sm:col-span-2">
+          <Label htmlFor={`${idPrefix}-related`}>Related repos{hintRelated ? ` (template: ${hintRelated})` : ""}</Label>
+          <Input
+            id={`${idPrefix}-related`}
+            value={related}
+            onChange={(e) => patch("related_repo", e.target.value)}
+            placeholder={hintRelated || "projectx, projecty (comma-separated; set before execution)"}
+            autoComplete="off"
+            spellCheck={false}
+            className="font-mono text-[13px]"
+          />
+        </div>
+      ) : null}
+      {showExtraPrompt ? (
+        <div className="grid gap-1.5 sm:col-span-2">
+          <Label htmlFor={`${idPrefix}-prompt`}>Extra prompt{hintExtraPrompt ? " (template set)" : ""}</Label>
+          <textarea
+            id={`${idPrefix}-prompt`}
+            value={extraPrompt}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => patch("extra_prompt", e.target.value)}
+            placeholder={hintExtraPrompt || "Extra instructions appended to the harness prompt…"}
+            rows={2}
+            className="flex min-h-16 w-full rounded-md border border-input bg-transparent px-3 py-2 text-[13px] shadow-xs outline-none placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+          />
+        </div>
+      ) : null}
+      {showNewFixSession ? (
+        <label className="flex items-center gap-2 text-sm sm:col-span-2">
+          <input
+            id={`${idPrefix}-new-session`}
+            type="checkbox"
+            checked={newFixSession}
+            onChange={(e) => patch("new_fix_session", e.target.checked || undefined)}
+            className="size-4 accent-current"
+          />
+          Create a new session{hintNewFixSession ? " (template: on)" : " (default: reuse review transcript)"}
+        </label>
+      ) : null}
     </div>
   )
 }
@@ -266,12 +323,14 @@ export function ChainEditor({
               ) : null}
               {mode === "edit" ? (
                 <StepConfigForm
+                  kind={step.kind}
                   config={step.config ?? {}}
                   onChange={(config) => setStep(i, { ...step, config })}
                   idPrefix={`chain-step-${i}`}
                 />
               ) : (
                 <StepConfigForm
+                  kind={step.kind}
                   config={overrides[i] ?? {}}
                   hints={step.config ?? {}}
                   onChange={(next) => setOverride(i, next)}
