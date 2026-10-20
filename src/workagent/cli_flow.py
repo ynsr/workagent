@@ -438,6 +438,18 @@ def flow_run(
         flow = store.create_flow(template_label=tpl["label"], worktree_ref=key,
                                  repo_snapshot=snap)
     fid = flow["id"]
+    if not (flow.get("repo_snapshot") or {}).get("repo"):
+        # Pre-fix rows (flow 26) carry {'launch_ref'} only — repair on
+        # resume from the deleted-aware link row instead of failing.
+        link = entry or store.load_links(include_deleted=True).get(key, {})
+        repo = str((link or {}).get("repo", "") or "")
+        if repo:
+            info = store.load_repos().get(repo, {})
+            store.update_flow(fid, repo_snapshot={
+                "repo": repo, "launch_ref": ref, "default_branch": str(
+                    info.get("default_branch", "") or ""),
+                "release_branch": str(info.get("release_branch", "") or "")})
+            flow = store.get_flow(fid, include_deleted_worktrees=True) or flow
     store.update_flow(fid, status="running")
     current = int(flow.get("current_step") or 0)
     results = list(flow.get("step_results") or [])

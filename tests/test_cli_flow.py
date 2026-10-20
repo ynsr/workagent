@@ -512,3 +512,43 @@ def test_resume_after_soft_delete_keeps_repo_snapshot(monkeypatch):
     key, entry, _ = cli_mod._resolve_ref("wt-9")
     assert key == "wt-9"
     assert entry.get("repo") == "r"
+
+
+
+def test_resume_repairs_empty_repo_snapshot(monkeypatch):
+    """Pre-fix rows (flow 26) resume without 'no repo snapshot' — the
+    snapshot is backfilled from the deleted-aware link row."""
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    tpl = {"label": "cr", "name": "CR",
+           "steps": [{"kind": "sync"}, {"kind": "cleanup"},
+                     {"kind": "release"}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    existing = {"id": 26, "template_label": "cr", "worktree_ref": "wt-1",
+                "repo_snapshot": {"launch_ref": "wt-1"},
+                "status": "failed", "current_step": 2, "step_results": []}
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [existing])
+    updates = {}
+    monkeypatch.setattr("workagent.store.update_flow",
+                        lambda fid, **f: updates.update(f) or {"id": fid, **f})
+    monkeypatch.setattr("workagent.store.get_flow",
+                        lambda fid, **k: {**existing, **updates})
+    monkeypatch.setattr(cli_mod, "_resolve_ref",
+                        lambda ref: ("wt-1", {"repo": "r",
+                                             "worktree": "/tmp/wt",
+                                             "branch": "b"}, None))
+    monkeypatch.setattr("workagent.store.load_links",
+                        lambda **k: {"wt-1": {"repo": "r"}})
+    monkeypatch.setattr("workagent.store.load_repos",
+                        lambda: {"r": {"default_branch": "main",
+                                      "release_branch": "rel"}})
+    seen = {}
+    monkeypatch.setattr(cli_mod, "_run_release_step",
+                        lambda snap, *a, **k: seen.update(snap) or {"status": "released"})
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["flow", "run", "cr", "wt-1", "--yes", "--json"])
+    assert res.exit_code == 0, res.output
+    assert seen.get("repo") == "r"
+    assert updates.get("repo_snapshot", {}).get("repo") == "r"

@@ -127,13 +127,13 @@ def test_pre_post_ordering_with_deferred_pre(tmp_path, monkeypatch):
                       "repo": "r", "branch": "b"}}
     seen = {"n": 0}
 
-    # NB: _resolve_ref is mocked (no load_links there); the first two real
-    # load_links calls are the snapshot seed (include_deleted=True) + the
-    # pre-step read — both must see no link so pre stays deferred until
-    # the start step mints the worktree.
+    # NB: _resolve_ref is mocked (no load_links there); the first three real
+    # load_links calls are the snapshot seed + resume backfill (both
+    # include_deleted=True) + the pre-step read — all must see no link so
+    # pre stays deferred until the start step mints the worktree.
     def _links(*a, **k):
         seen["n"] += 1
-        return {} if seen["n"] <= 2 else links
+        return {} if seen["n"] <= 3 else links
     monkeypatch.setattr("workagent.store.load_links", _links)
     order = []
     monkeypatch.setattr(cli_mod, "_run_repo_command",
