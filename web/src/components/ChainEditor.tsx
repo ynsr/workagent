@@ -4,8 +4,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RelatedReposSelect } from "@/components/RelatedReposSelect"
+import { SearchableSelect } from "@/components/SearchableSelect"
 import { cn } from "@/lib/utils"
 import type { FlowStep } from "@/lib/api"
+import { useRepos } from "@/lib/queries"
 
 export const STEP_KINDS = [
   "start",
@@ -85,6 +87,18 @@ export function validateChain(steps: FlowStep[]): string[] {
   return errors
 }
 
+/** Effective repo for the chain's start step (override wins over template).
+ * Returns "ok" when no start step exists or a repo is set, else "missing". */
+export function startRepoState(
+  steps: FlowStep[],
+  overrides: Record<number, Record<string, unknown>>,
+): "ok" | "missing" {
+  const first = steps[0]
+  if (!first || first.kind !== "start") return "ok"
+  const eff = overrides[0]?.repo ?? (first.config ?? {}).repo
+  return typeof eff === "string" && eff.trim() ? "ok" : "missing"
+}
+
 /** Per-step config editor: run_mode select + extra-flags text (+ raw JSON add-on).
  * In launch mode pass `hints` (template defaults): the form edits DELTAS —
  * empty config shows template values as placeholder hints, and re-selecting
@@ -112,6 +126,10 @@ function StepConfigForm({
     if (typeof v === "string" && v.trim()) return v.split(",").map((p) => p.trim()).filter(Boolean)
     return []
   }
+  const { data: repos } = useRepos()
+  const repoNames = (repos ?? []).map((r) => r.name)
+  const repo = typeof config.repo === "string" ? config.repo : ""
+  const hintRepo = typeof hints?.repo === "string" ? hints.repo : ""
   const related = strList(config.related_repo)
   const hintRelated = strList(hints?.related_repo)
   const extraPrompt = typeof config.extra_prompt === "string" ? String(config.extra_prompt) : ""
@@ -124,6 +142,7 @@ function StepConfigForm({
   // start → related_repo + extra_prompt; review/fix_comments/action → extra_prompt;
   // fix_comments → new_fix_session checkbox (default off: reuse review transcript).
   const showRelated = kind === "start"
+  const showRepo = kind === "start"
   const showExtraPrompt = kind === "start" || kind === "review" || kind === "fix_comments" || kind === "action"
   const showNewFixSession = kind === "fix_comments"
   function patch(key: string, value: unknown) {
@@ -145,6 +164,26 @@ function StepConfigForm({
   }
   return (
     <div className="grid gap-2 sm:grid-cols-2">
+      {showRepo ? (
+        <div className="grid gap-1.5 sm:col-span-2">
+          <Label htmlFor={`${idPrefix}-repo`}>
+            Repository{hints ? (hintRepo ? ` (template: ${hintRepo})` : " (required)") : ""}
+          </Label>
+          <SearchableSelect
+            id={`${idPrefix}-repo`}
+            value={repo || hintRepo}
+            options={repoNames}
+            onChange={(v) => patch("repo", v)}
+            placeholder={hintRepo || "Select a repo…"}
+            allowCustom
+          />
+          {!repo && !hintRepo ? (
+            <p className="text-xs text-muted-foreground">
+              Required — the Start step needs a repo to create the worktree.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       {showRelated ? (
         <div className="grid gap-1.5 sm:col-span-2">
           <Label htmlFor={`${idPrefix}-related-repos`}>

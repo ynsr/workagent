@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { ChainEditor } from "@/components/ChainEditor"
+import { ChainEditor, startRepoState } from "@/components/ChainEditor"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { Button } from "@/components/ui/button"
 import { errorText } from "@/components/StatusFeedback"
@@ -30,6 +30,8 @@ export function FlowWizard({
   )
   const stepConfig = Object.keys(active).length > 0 ? JSON.stringify(active) : null
   const sorted = [...refs].sort()
+  const repoState = startRepoState(template.steps ?? [], overrides)
+  const repoMissing = repoState === "missing"
 
   async function handleConfirm() {
     setRunning(true)
@@ -58,7 +60,12 @@ export function FlowWizard({
       description={sorted.length === 1 ? (sorted[0] ?? template.label) : `${sorted.length} worktrees: ${sorted.slice(0, 3).join(", ")}${sorted.length > 3 ? ` +${sorted.length - 3} more` : ""}`}
       busy={running}
       footer={
-        <Button size="sm" onClick={() => void handleConfirm()} disabled={running || sorted.length === 0}>
+        <Button
+          size="sm"
+          onClick={() => void handleConfirm()}
+          disabled={running || sorted.length === 0 || repoMissing}
+          title={repoMissing ? "Pick a Repository for the Start step first" : undefined}
+        >
           {running ? "Starting…" : sorted.length > 1 ? `Run on ${sorted.length} worktrees` : "Run flow"}
         </Button>
       }
