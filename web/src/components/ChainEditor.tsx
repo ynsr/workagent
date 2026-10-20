@@ -1,8 +1,10 @@
 import { useState } from "react"
-import { GripVertical, Plus, Trash2 } from "lucide-react"
+import { ChevronDown, GripVertical, Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { RelatedReposSelect } from "@/components/RelatedReposSelect"
+import { cn } from "@/lib/utils"
 import type { FlowStep } from "@/lib/api"
 
 export const STEP_KINDS = [
@@ -100,21 +102,24 @@ function StepConfigForm({
   idPrefix: string
   hints?: Record<string, unknown>
 }) {
+  const [advanced, setAdvanced] = useState(false)
   const hintRunMode = typeof hints?.run_mode === "string" ? String(hints.run_mode) : "headless"
   const runMode = typeof config.run_mode === "string" ? config.run_mode : hintRunMode
   const flags = typeof config["extra-flags"] === "string" ? String(config["extra-flags"]) : ""
   const hintFlags = typeof hints?.["extra-flags"] === "string" ? String(hints["extra-flags"]) : ""
-  const strOf = (v: unknown): string => {
-    if (typeof v === "string") return v
-    if (Array.isArray(v)) return v.map(String).join(", ")
-    return ""
+  const strList = (v: unknown): string[] => {
+    if (Array.isArray(v)) return v.map(String)
+    if (typeof v === "string" && v.trim()) return v.split(",").map((p) => p.trim()).filter(Boolean)
+    return []
   }
-  const related = strOf(config.related_repo)
-  const hintRelated = strOf(hints?.related_repo)
+  const related = strList(config.related_repo)
+  const hintRelated = strList(hints?.related_repo)
   const extraPrompt = typeof config.extra_prompt === "string" ? String(config.extra_prompt) : ""
   const hintExtraPrompt = typeof hints?.extra_prompt === "string" ? String(hints.extra_prompt) : ""
   const newFixSession = config.new_fix_session === true
   const hintNewFixSession = hints?.new_fix_session === true
+  // Chevron badge: how many advanced (collapsed) fields carry a value.
+  const advancedCount = (flags ? 1 : 0) + (extraPrompt ? 1 : 0)
   // Per-kind named fields (mirrors the cli_flow _pick allowlists):
   // start → related_repo + extra_prompt; review/fix_comments/action → extra_prompt;
   // fix_comments → new_fix_session checkbox (default off: reuse review transcript).
@@ -128,57 +133,29 @@ function StepConfigForm({
     else next[key] = value
     onChange(next)
   }
+  function patchList(next: string[]) {
+    const hinted = hints && JSON.stringify(next) === JSON.stringify(hintRelated)
+    if (next.length === 0 || hinted) {
+      const rest = { ...config }
+      delete rest.related_repo
+      onChange(rest)
+      return
+    }
+    onChange({ ...config, related_repo: next })
+  }
   return (
     <div className="grid gap-2 sm:grid-cols-2">
-      <div className="grid gap-1.5">
-        <Label htmlFor={`${idPrefix}-run-mode`}>Run mode{hints ? ` (template: ${hintRunMode})` : ""}</Label>
-        <select
-          id={`${idPrefix}-run-mode`}
-          value={runMode}
-          onChange={(e) => patch("run_mode", e.target.value)}
-          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring"
-        >
-          <option value="headless">headless</option>
-          <option value="preview">preview</option>
-          <option value="terminal">terminal</option>
-        </select>
-      </div>
-      <div className="grid gap-1.5">
-        <Label htmlFor={`${idPrefix}-flags`}>Extra flags{hintFlags ? ` (template: ${hintFlags})` : ""}</Label>
-        <Input
-          id={`${idPrefix}-flags`}
-          value={flags}
-          onChange={(e) => patch("extra-flags", e.target.value)}
-          placeholder={hintFlags || "--depth 7"}
-          autoComplete="off"
-          spellCheck={false}
-          className="font-mono text-[13px]"
-        />
-      </div>
       {showRelated ? (
         <div className="grid gap-1.5 sm:col-span-2">
-          <Label htmlFor={`${idPrefix}-related`}>Related repos{hintRelated ? ` (template: ${hintRelated})` : ""}</Label>
-          <Input
-            id={`${idPrefix}-related`}
+          <Label htmlFor={`${idPrefix}-related-repos`}>
+            Related repos{hintRelated.length > 0 ? ` (template: ${hintRelated.join(", ")})` : ""}
+          </Label>
+          <RelatedReposSelect
+            idPrefix={idPrefix}
+            mainRepo=""
             value={related}
-            onChange={(e) => patch("related_repo", e.target.value)}
-            placeholder={hintRelated || "projectx, projecty (comma-separated; set before execution)"}
-            autoComplete="off"
-            spellCheck={false}
-            className="font-mono text-[13px]"
-          />
-        </div>
-      ) : null}
-      {showExtraPrompt ? (
-        <div className="grid gap-1.5 sm:col-span-2">
-          <Label htmlFor={`${idPrefix}-prompt`}>Extra prompt{hintExtraPrompt ? " (template set)" : ""}</Label>
-          <textarea
-            id={`${idPrefix}-prompt`}
-            value={extraPrompt}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => patch("extra_prompt", e.target.value)}
-            placeholder={hintExtraPrompt || "Extra instructions appended to the harness prompt…"}
-            rows={2}
-            className="flex min-h-16 w-full rounded-md border border-input bg-transparent px-3 py-2 text-[13px] shadow-xs outline-none placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+            onChange={patchList}
+            variant="dropdown"
           />
         </div>
       ) : null}
@@ -194,6 +171,62 @@ function StepConfigForm({
           Create a new session{hintNewFixSession ? " (template: on)" : " (default: reuse review transcript)"}
         </label>
       ) : null}
+      <div className="sm:col-span-2">
+        <button
+          type="button"
+          onClick={() => setAdvanced((v) => !v)}
+          aria-expanded={advanced}
+          className="flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"
+        >
+          <ChevronDown aria-hidden className={cn("size-4 transition-transform", advanced && "rotate-180")} />
+          Advanced
+          {advancedCount > 0 ? (
+            <span className="rounded-full bg-muted px-1.5 py-0.5 font-mono text-[11px]">{advancedCount} set</span>
+          ) : null}
+        </button>
+        {advanced ? (
+          <div className="mt-2 grid gap-2">
+            <div className="grid gap-1.5">
+              <Label htmlFor={`${idPrefix}-flags`}>Extra flags{hintFlags ? ` (template: ${hintFlags})` : ""}</Label>
+              <Input
+                id={`${idPrefix}-flags`}
+                value={flags}
+                onChange={(e) => patch("extra-flags", e.target.value)}
+                placeholder={hintFlags || "--depth 7"}
+                autoComplete="off"
+                spellCheck={false}
+                className="font-mono text-[13px]"
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor={`${idPrefix}-run-mode`}>Run mode{hints ? ` (template: ${hintRunMode})` : ""}</Label>
+              <select
+                id={`${idPrefix}-run-mode`}
+                value={runMode}
+                onChange={(e) => patch("run_mode", e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring"
+              >
+                <option value="headless">headless</option>
+                <option value="preview">preview</option>
+                <option value="terminal">terminal</option>
+              </select>
+            </div>
+            {showExtraPrompt ? (
+              <div className="grid gap-1.5">
+                <Label htmlFor={`${idPrefix}-prompt`}>Extra prompt{hintExtraPrompt ? " (template set)" : ""}</Label>
+                <textarea
+                  id={`${idPrefix}-prompt`}
+                  value={extraPrompt}
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => patch("extra_prompt", e.target.value)}
+                  placeholder={hintExtraPrompt || "Extra instructions appended to the harness prompt…"}
+                  rows={2}
+                  className="flex min-h-16 w-full rounded-md border border-input bg-transparent px-3 py-2 text-[13px] shadow-xs outline-none placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }

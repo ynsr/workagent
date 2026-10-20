@@ -125,9 +125,6 @@ def validate_template(steps: list[dict] | str,
         if not starts:
             raise HarnessError("'action' steps require a 'start' step",
                                exit_code=2)
-        if not cleanups:
-            raise HarnessError("'action' steps require a 'cleanup' step",
-                               exit_code=2)
         label = str(step.get("action_label", "") or "")
         if not label:
             raise HarnessError("'action' step is missing 'action_label'",

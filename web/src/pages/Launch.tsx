@@ -110,7 +110,7 @@ function ExtraPromptField({ form, onChange, id = "launch-extra-prompt" }: {
 
 /** Review/Sync fields (kept on the Launch page; Start lives in StartForm). */
 function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
-  mode: Mode
+  mode: Exclude<Mode, "flow">
   form: LaunchForm
   onChange: <K extends keyof LaunchForm>(key: K, value: LaunchForm[K]) => void
   refParam: string
@@ -156,6 +156,102 @@ function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
         />
       </div>
       <ExtraPromptField form={form} onChange={onChange} />
+    </>
+  )
+}
+
+/** Flow tab: template picker (start-first templates only) + issue ref.
+ * Submit opens the shared FlowWizard scoped to the ref. */
+function FlowTabFields({
+  issuesNonce,
+}: {
+  issuesNonce?: number
+}) {
+  const { data } = useFlowTemplates()
+  const templates = (data?.templates ?? []).filter(
+    (t) => (t.steps ?? [])[0]?.kind === "start",
+  )
+  const [templateLabel, setTemplateLabel] = useState("")
+  const [ref, setRef] = useState("")
+  const [wizard, setWizard] = useState<FlowTemplateRow | null>(null)
+  const template = templates.find((t) => t.label === templateLabel) ?? null
+  const refValue = ref.trim()
+  return (
+    <>
+      <div className="grid gap-2">
+        <Label htmlFor="launch-flow-template">Flow template</Label>
+        {templates.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No start-first flow templates yet.{" "}
+            <a href="/flow-templates" className="underline underline-offset-2">Add one</a>.
+          </p>
+        ) : (
+          <SearchableSelect
+            id="launch-flow-template"
+            value={template ? `${template.name} (${template.label})` : ""}
+            options={templates.map((t) => `${t.name} (${t.label})`)}
+            onChange={(v) => {
+              const m = v.match(/\(([^)]+)\)\s*$/)
+              setTemplateLabel(m?.[1] ?? "")
+            }}
+            placeholder="Select a flow template…"
+          />
+        )}
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor="launch-flow-ref">Issue ref</Label>
+        {issuesNonce !== undefined ? (
+          <>
+            <SearchableSelect
+              key={issuesNonce}
+              id="launch-flow-ref"
+              value={ref}
+              options={[]}
+              onChange={(v) => setRef(v.trim())}
+              allowCustom
+              mapOption={(o) => (o.split(" — ")[0] ?? o).trim()}
+              fetchOptions={async () => {
+                const res = await api.issues()
+                return {
+                  options: res.issues.map((i) =>
+                    i.title ? `${i.key} — ${i.title}` : i.key,
+                  ),
+                  warning: res.warning ?? undefined,
+                }
+              }}
+            />
+            <p className="text-xs text-muted-foreground">
+              Pick a recent issue or type any ref; free text is kept.
+            </p>
+          </>
+        ) : (
+          <Input
+            id="launch-flow-ref"
+            value={ref}
+            onChange={(e) => setRef(e.target.value)}
+            placeholder="IPG-932, OWNER/REPO#22, or https://…/issues/22"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        )}
+      </div>
+      <div>
+        <Button
+          type="button"
+          disabled={!template || !refValue}
+          onClick={() => template && setWizard(template)}
+        >
+          <Workflow aria-hidden />
+          {`Run ${template ? template.name : "flow"}…`}
+        </Button>
+      </div>
+      {wizard && refValue ? (
+        <FlowWizard
+          template={wizard}
+          refs={[refValue]}
+          onClose={() => setWizard(null)}
+        />
+      ) : null}
     </>
   )
 }
@@ -402,47 +498,49 @@ export function Launch() {
     <div>
       <PageHeader
         title="Launch"
-        description="Start an agent from an issue ref/URL, review a PR/MR ref/URL, or sync a linked worktree. Runs headless as a child process of workagent serve."
+        description="Start an agent from an issue ref/URL, review a PR/MR ref/URL, run a flow template, or sync a linked worktree. Runs headless as a child process of workagent serve."
         actions={null}
       />
       <Card className="mx-auto max-w-2xl">
         <CardHeader>
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <CardTitle>{copy.title}</CardTitle>
-              <CardDescription>{copy.refHint}</CardDescription>
-            </div>
-            <div
-              role="tablist"
-              aria-label="Launch mode"
-              className="inline-flex shrink-0 flex-nowrap rounded-lg border p-1"
-            >
-              {MODES.map((m) => (
-                <button
-                  key={m}
-                  role="tab"
-                  aria-selected={mode === m}
-                  onClick={() => switchMode(m)}
-                  className={cn(
-                    "min-h-9 shrink-0 rounded-md px-4 text-sm font-medium transition-colors",
-                    mode === m
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {COPY[m].label}
-                </button>
-              ))}
-            </div>
+          <div>
+            <CardTitle>{copy.title}</CardTitle>
+            <CardDescription>{copy.refHint}</CardDescription>
+          </div>
+          <div
+            role="tablist"
+            aria-label="Launch mode"
+            className="mt-3 inline-flex max-w-full flex-wrap rounded-lg border p-1"
+          >
+            {MODES.map((m) => (
+              <button
+                key={m}
+                role="tab"
+                aria-selected={mode === m}
+                onClick={() => switchMode(m)}
+                className={cn(
+                  "min-h-9 shrink-0 rounded-md px-4 text-sm font-medium transition-colors",
+                  mode === m
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {COPY[m].label}
+              </button>
+            ))}
           </div>
         </CardHeader>
         <CardContent className="grid min-h-[420px] content-start gap-5">
           {mode === "start" ? (
             <StartFormFields form={form} onChange={update} idPrefix="launch" issuesNonce={mode === "start" && !refParam ? issuesNonce : undefined} />
+          ) : mode === "flow" ? (
+            <FlowTabFields issuesNonce={!refParam ? issuesNonce : undefined} />
           ) : (
             <LaunchOtherFields mode={mode} form={form} onChange={update} refParam={refParam} issuesNonce={issuesNonce} copy={copy} repoNames={repoNames} />
           )}
 
+          {mode === "flow" ? null : (
+          <>
           <div className="flex flex-wrap gap-x-6 gap-y-3">
             {mode === "review" ? (
               <RunModeSelect
@@ -542,19 +640,21 @@ export function Launch() {
               ) : null}
             </div>
             <Button
-              type="button"
-              onClick={() => void handleSubmit()}
-              disabled={!refValue || submitting || (mode !== "sync" && !repoValue)}
-              title={
-                mode !== "sync" && refValue && !repoValue
-                  ? "Pick a repo — none matches this ref"
-                  : undefined
-              }
-            >
-              <Rocket aria-hidden />
-              {submitting ? "Launching…" : `Launch ${copy.label}`}
-            </Button>
+                type="button"
+                onClick={() => void handleSubmit()}
+                disabled={!refValue || submitting || (mode !== "sync" && !repoValue)}
+                title={
+                  mode !== "sync" && refValue && !repoValue
+                    ? "Pick a repo — none matches this ref"
+                    : undefined
+                }
+              >
+                <Rocket aria-hidden />
+                {submitting ? "Launching…" : `Launch ${copy.label}`}
+              </Button>
           </div>
+          </>
+          )}
         </CardContent>
       </Card>
       {templatePicker ? (

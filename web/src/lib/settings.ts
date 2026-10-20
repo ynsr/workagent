@@ -14,6 +14,7 @@ export type OptOutAction =
   | "sync"
   | "start"
   | "review"
+  | "flow"
   | "repo remove"
   | "link remove"
   | "tracker remove"
@@ -26,6 +27,7 @@ export const OPTOUT_ACTIONS: OptOutAction[] = [
   "sync",
   "start",
   "review",
+  "flow",
   "repo remove",
   "link remove",
   "tracker remove",
@@ -40,6 +42,7 @@ export const OPTOUT_LABELS: Record<OptOutAction, string> = {
   sync: "Sync",
   start: "Start",
   review: "Review",
+  flow: "Flow launch",
   "repo remove": "Repo removal",
   "link remove": "Link removal",
   "tracker remove": "Tracker removal",

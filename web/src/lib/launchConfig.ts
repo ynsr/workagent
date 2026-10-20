@@ -1,10 +1,10 @@
-export type Mode = "start" | "review" | "sync"
+export type Mode = "start" | "review" | "sync" | "flow"
 
 /** Issue #26: Launch never defaults to the serve CWD. The backend
  * `GET /api/default-repo?ref=` returns the linked-worktree repo for the
  * typed ref, else the single-linked repo — else no default. */
 
-export const MODES: readonly Mode[] = ["start", "review", "sync"]
+export const MODES: readonly Mode[] = ["start", "review", "sync", "flow"]
 
 export const COPY: Record<
   Mode,
@@ -34,6 +34,14 @@ export const COPY: Record<
     refHint: "PR/MR URL, OWNER/REPO#33, or a worktree ref (key/branch/path).",
     refPlaceholder: "https://…/pull/33, OWNER/REPO#33, or jira:IPG-929",
     confirmDesc: "Creates a worktree from the PR/MR and launches a review agent.",
+  },
+  flow: {
+    label: "Flow",
+    title: "Run a flow template",
+    description: "Flow templates starting with Start, scoped to an issue ref.",
+    refHint: "Issue key, OWNER/REPO#22, or a full issue URL.",
+    refPlaceholder: "IPG-932, OWNER/REPO#22, or https://…/issues/22",
+    confirmDesc: "Runs the flow template scoped to the issue ref.",
   },
   sync: {
     label: "Sync",
