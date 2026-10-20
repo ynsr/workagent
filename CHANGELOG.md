@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Web `action add/update` + `flow template add/update` no longer need `confirm: true` (plain row writes); only run/delete stay confirm-gated [no-issue]
 - Flows: templates + runs chain Start → … → Cleanup → Release via wizard, dry-run/resume, CLI + web parity [no-issue]
 - `start --related-repo` fans out child worktrees per repo (same branch), prompt lists child paths + conditional MR suffix, cleanup cascades, web multi-select + StatusTable grouping [no-issue]
 - Dashboard Deleted table filters on `deleted_at` so deactivated rows no longer ghost into it; Deactivated excludes soft-deleted [no-issue]

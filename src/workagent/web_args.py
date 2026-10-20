@@ -33,9 +33,9 @@ SPECS: dict[str, dict[str, Any]] = {
     "repo": {"confirm": False, "force": True, "key": "config"},
     "link": {"confirm": False, "force": False, "key": "config"},
     "tracker": {"confirm": False, "force": False, "key": "config"},
-    "action": {"confirm": True, "force": True,
+    "action": {"confirm": False, "force": False, "confirm_subs": ("run", "delete"),
                "key": lambda args: f"action:{_first_positional(args, VAL_FLAGS['action run'])}:{_first_positional(args[1:], VAL_FLAGS['action run'])}" if args[:1] == ["run"] else "config"},
-    "flow": {"confirm": True, "force": True,
+    "flow": {"confirm": False, "force": False, "confirm_subs": ("run", "delete"),
              "key": lambda args: f"flow:{_nth_positional(args, 1, VAL_FLAGS['flow run'])}:{_nth_positional(args, 2, VAL_FLAGS['flow run'])}" if args[:1] == ["run"] else "config"},
 }
 
@@ -107,6 +107,28 @@ SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "action": {"add", "list", "show", "run", "update", "delete"},
                                     "flow": {"template", "list", "show", "run"}}
 TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "delete"}
+def _needs_confirm(command: str, args: list[str]) -> bool:
+    """True when the (sub)command needs confirm:true (destructive only).
+
+    Plain SPECS confirm covers whole commands (cleanup/sync/start/review);
+    action/flow narrow it via confirm_subs to run/delete (add/update/list/
+    show are plain row writes/reads — the inventory marks them
+    non-destructive). Nested flow template CRUD nests two deep
+    (["template", "add", ...]) so the second token decides there.
+    """
+    spec = SPECS[command]
+    if "--dry-run" in args:
+        return False
+    subs = spec.get("confirm_subs")
+    if not subs:
+        return bool(spec.get("confirm"))
+    rest = [a for a in args if a not in ("-v", "--verbose")]
+    if command == "flow" and rest[:1] == ["template"]:
+        sub = rest[1] if len(rest) > 1 else ""
+        return sub in ("delete", "run")
+    sub = rest[0] if rest else ""
+    return sub in subs
+
 
 
 def _first_positional(args: list[str], vals: tuple[str, ...] = ()) -> str:

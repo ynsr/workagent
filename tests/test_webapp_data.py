@@ -599,3 +599,26 @@ def test_actions_detail_and_404(client, monkeypatch):
     assert r.status_code == 200
     assert r.json()["label"] == "gen_prd"
     assert client.get("/api/actions/nope").status_code == 404
+
+def test_action_add_needs_no_confirm(client, monkeypatch):
+    """action add is a plain row write — no confirm:true needed.
+
+    Regression: the blanket command-level gate rejected
+    POST /api/runs {action, [add, ...]} with confirm_required.
+    delete/run stay gated (destructive).
+    """
+    from tests.webapp_helpers import _stub_spawn
+    _stub_spawn(monkeypatch)
+    r = client.post("/api/runs", json={
+        "command": "action",
+        "args": ["add", "--name", "Open MR to Develop",
+                 "--prompt", "Open a merge request.",
+                 "--default-options", '{"run_mode": "headless"}'],
+    })
+    assert r.status_code == 202, r.text
+    r = client.post("/api/runs", json={
+        "command": "action",
+        "args": ["delete", "open_mr_to_develop", "--yes"],
+    })
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["code"] == "confirm_required"

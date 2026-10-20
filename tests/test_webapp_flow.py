@@ -35,7 +35,12 @@ def test_flow_run_validates_and_targets(client):
 
 
 def test_flow_template_mutations_require_confirm(client, monkeypatch):
-    """F2: template add/delete are confirm-gated; confirm:true reaches 202."""
+    """F2: template delete is confirm-gated; add is a plain row write.
+
+    Regression mirror of the action-add bug: blanket confirm on the whole
+    command blocked template add without confirm:true. Only run/delete
+    need the gate now.
+    """
     from tests.webapp_helpers import _stub_spawn
     _stub_spawn(monkeypatch)
     store.create_template(name="Full", label="full",
@@ -45,15 +50,13 @@ def test_flow_template_mutations_require_confirm(client, monkeypatch):
         "args": ["template", "add", "--name", "X",
                  "--steps", '[{"kind": "start"}]'],
     })
-    assert r.status_code == 400, r.text
-    assert r.json()["error"]["code"] == "confirm_required"
+    assert r.status_code == 202, r.text
     r = client.post("/api/runs", json={
         "command": "flow",
-        "args": ["template", "add", "--name", "X",
-                 "--steps", '[{"kind": "start"}]'],
-        "confirm": True,
+        "args": ["template", "delete", "full", "--yes"],
     })
-    assert r.status_code == 202, r.text
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["code"] == "confirm_required"
     r = client.post("/api/runs", json={
         "command": "flow",
         "args": ["template", "delete", "full", "--yes"],

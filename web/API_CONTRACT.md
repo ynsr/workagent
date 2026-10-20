@@ -265,9 +265,11 @@ Request:
   repo | link | action | flow` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`).
 - Global `-v` may be passed as `args[0]`.
 - `start`/`review`/`sync`/`release` take `--env-file <script>`: a shell script sourced before every harness command including the preview (`source <file> && …`; headless children also get it parsed into their environment) and before the release pre-release gate. Default: `env_file` in `config.json` (auto-created as `<config_dir>/env.sh` on first launch with `VISUAL`/`EDITOR`/`NO_PROXY`/`PI_EDIT_VARIANT` defaults). Delete the file to opt out; session-resume endpoints reuse the originating run's explicit `--env-file` or the configured default.
-- Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`) need
-  `confirm: true` → the server appends `--yes`. `force: true` requires
-  `confirm: true` and appends `--force` (cleanup, register, repo remove).
+- Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`,
+  `action run`/`action delete`, `flow run`/`flow template delete`) need
+  `confirm: true` → the server appends `--yes`. `action add`/`update` and
+  `flow template add`/`update` are plain row writes — no confirm needed.
+  `force: true` requires `confirm: true` and appends `--force` (cleanup, register, repo remove).
 - `cleanup` merges open PRs/MRs with the CLI rule: non-long-lived sources squash-merge into default/protected branches; long-lived sources (`dev/develop/main/master`) merge with a merge commit; explicit `--no-squash` on other sources fails (exit 2, in the run log). The web UI never sends `--no-squash`.
 - `repo remove` of a repo with linked worktrees → 400
   `{code: "worktrees_exist"}` unless `force: true` (cascades them).

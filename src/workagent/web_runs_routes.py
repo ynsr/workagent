@@ -18,6 +18,7 @@ from .web_args import (
     _build_argv,
     _first_positional,
     _has_session_file,
+    _needs_confirm,
     _session_file_arg,
     _session_file_for,
     _target_for,
@@ -220,8 +221,7 @@ def register_runs_routes(app, registry) -> None:
                            "force requires confirm: true", 400)
         _validate_args(body.command, body.args, body_force=body.force)
         spec = SPECS[body.command]
-        destructive = spec["confirm"] and "--dry-run" not in body.args
-        if destructive and not body.confirm:
+        if _needs_confirm(body.command, body.args) and not body.confirm:
             raise ApiError(
                 "confirm_required",
                 f"{body.command} is destructive — pass confirm: true", 400)

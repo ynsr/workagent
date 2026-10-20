@@ -158,6 +158,7 @@ export function Actions() {
       const { run_id } = await createRun.mutateAsync({
         command: "action",
         args: ["delete", row.label, "--yes"],
+        confirm: true,
       })
       toast.success("Action delete started", {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
