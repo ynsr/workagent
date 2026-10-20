@@ -335,12 +335,19 @@ def create_flow(db: Path, *, template_label: str, worktree_ref: str = "",
         return _flow_row(r)
 
 
-def get_flow(db: Path, flow_id: int) -> dict | None:
-    """One flow by id; None when unknown."""
+def get_flow(db: Path, flow_id: int,
+             include_deleted_worktrees: bool = False) -> dict | None:
+    """One flow by id; None when unknown (or its worktree is soft-deleted)."""
     with _connect(db) as conn:
         conn.row_factory = sqlite3.Row
-        r = conn.execute("SELECT * FROM flows WHERE id = ?",
-                         (flow_id,)).fetchone()
+        q = ("SELECT f.* FROM flows f"
+             " LEFT JOIN worktrees w ON w.ref_key = f.worktree_ref"
+             " WHERE f.id = ?")
+        params: list = [flow_id]
+        if not include_deleted_worktrees:
+            q += (" AND (f.worktree_ref = '' OR w.ref_key IS NULL"
+                  " OR (w.deleted_at IS NULL OR w.deleted_at = ''))")
+        r = conn.execute(q, params).fetchone()
         return _flow_row(r) if r is not None else None
 
 

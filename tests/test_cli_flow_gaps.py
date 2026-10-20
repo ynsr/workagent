@@ -35,7 +35,7 @@ def test_tag_flow_session_stamps_newest(tmp_path, monkeypatch):
     # list_sessions is ORDER BY created_at DESC (newest first).
     sessions = [{"id": "new", "worktree_ref": "wt-1"},
                 {"id": "old", "worktree_ref": "wt-1"}]
-    monkeypatch.setattr(sq, "list_sessions", lambda db: sessions)
+    monkeypatch.setattr(sq, "list_sessions", lambda db, **k: sessions)
     stamped = {}
     monkeypatch.setattr(sq, "set_session_metadata",
                         lambda db, sid, patch: stamped.update({sid: patch}))

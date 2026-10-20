@@ -405,5 +405,7 @@ def _run_locked(name: str, registry: dict, *, yes: bool, dry_run: bool,
     except Exception:
         pass
     eprint(f"released {pinned} via {used} checks={checks} {mr_url}")
+    # No session/run row: releases are repo-scoped (keyed by repo name),
+    # not worktree-attached — sessions/runs require a worktree FK.
     return {"repo": name, "pinned_sha": pinned, "checks": checks,
             "strategy": used, "mr_url": mr_url, "merged": True}

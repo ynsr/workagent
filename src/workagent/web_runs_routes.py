@@ -62,7 +62,7 @@ def _resolve_session_file(session_file: str, session_id: str = "") -> str:
         created = ""
         if session_id and db.exists():
             try:
-                row = _sq.get_session(db, session_id)
+                row = _sq.get_session(db, session_id, include_deleted_worktrees=True)
                 db_file = str((row or {}).get("file_path") or "")
                 created = str((row or {}).get("created_at") or "")
             except Exception:
@@ -495,7 +495,7 @@ def register_runs_routes(app, registry) -> None:
         """Open the OS default terminal resumed on a persisted session."""
         from . import store_sqlite as _sq
         db = _sq.db_path()
-        row = _sq.get_session(db, sid) if db.exists() else None
+        row = _sq.get_session(db, sid, include_deleted_worktrees=True) if db.exists() else None
         if row is None:
             raise ApiError("not_found", f"no session {sid}", 404)
         session_file = str(row.get("file_path") or "")

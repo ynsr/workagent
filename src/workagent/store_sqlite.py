@@ -155,6 +155,51 @@ def _migrate_runs_output(conn) -> None:
     if "truncated" not in cols:
         conn.execute("ALTER TABLE runs ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0")
 
+
+def _migrate_sessions_no_fk(conn) -> None:
+    """Schema v14: sessions.worktree_ref restores the worktrees FK (CASCADE).
+
+    Only worktree-attached sessions/runs persist: unattached attempts are
+    never written (callers skip when no linked worktree exists), dangling
+    refs from the FK-less window are purged, and hard-delete cascades
+    again via the FK. Rebuilds the table from the canonical DDL when the
+    FK is missing. Idempotent: skipped once the FK exists.
+    """
+    info = list(conn.execute("PRAGMA table_info(sessions)"))
+    if not info:
+        return
+    fk = [r for r in conn.execute("PRAGMA foreign_key_list(sessions)")
+          if r[2] == "worktrees"]
+    if fk:
+        return
+    if conn.in_transaction:
+        conn.commit()
+    was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if was_on:
+        conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        ddl = _canonical_ddl()["sessions"]
+        conn.execute('DROP TABLE IF EXISTS "sessions_rebuild"')
+        conn.execute(ddl.replace("CREATE TABLE sessions", 'CREATE TABLE "sessions_rebuild"', 1))
+        new_cols = {r[1] for r in conn.execute('PRAGMA table_info("sessions_rebuild")')}
+        old_cols = [r[1] for r in info if r[1] in new_cols]
+        cols = ", ".join(f'"{c}"' for c in old_cols)
+        conn.execute(f'INSERT INTO "sessions_rebuild" ({cols}) SELECT {cols} FROM "sessions"')
+        conn.execute('DROP TABLE "sessions"')
+        conn.execute('ALTER TABLE "sessions_rebuild" RENAME TO "sessions"')
+        # FK-less window may have left dangling refs: purge rows whose
+        # worktree is gone (CASCADE could not fire for them).
+        try:
+            conn.execute("DELETE FROM sessions WHERE worktree_ref != ''"
+                         " AND worktree_ref NOT IN (SELECT ref_key FROM worktrees)")
+        except Exception:
+            pass
+        if conn.in_transaction:
+            conn.commit()
+    finally:
+        if was_on:
+            conn.execute("PRAGMA foreign_keys = ON")
+
 def _migrate_sessions_harness(conn) -> None:
     """Schema v5: sessions.runtime_name → harness_name (the runtime→harness rename).
 
@@ -468,8 +513,16 @@ def _rebuild_required_columns(conn) -> list[str]:
             conn.execute(ddl.replace(f"CREATE TABLE {table}",
                                      f'CREATE TABLE "{tmp}"', 1))
             new_cols = {r[1] for r in conn.execute(f'PRAGMA table_info("{tmp}")')}
-            cols = ", ".join(f'"{r[1]}"' for r in info if r[1] in new_cols)
-            conn.execute(f'INSERT INTO "{tmp}" ({cols}) SELECT {cols} FROM "{table}"')
+            pairs = [(r[1], r[1]) for r in info if r[1] in new_cols]
+            if table == "sessions" and "harness_name" in new_cols \
+                    and "harness_name" not in {r[1] for r in info} \
+                    and "runtime_name" in {r[1] for r in info}:
+                # Pre-rename DBs carry runtime_name: map it forward so the
+                # rebuild does not drop the harness name.
+                pairs.append(("runtime_name", "harness_name"))
+            cols = ", ".join(f'"{dst}"' for _, dst in pairs)
+            sel = ", ".join(f'"{src}"' for src, _ in pairs)
+            conn.execute(f'INSERT INTO "{tmp}" ({cols}) SELECT {sel} FROM "{table}"')
             conn.execute(f'DROP TABLE "{table}"')
             conn.execute(f'ALTER TABLE "{tmp}" RENAME TO "{table}"')
             rebuilt.append(table)
@@ -582,6 +635,7 @@ def init_db(path: Path) -> Path:
                 _migrate_repos_commands(conn)
                 _migrate_worktrees_deleted_at(conn)
                 _migrate_worktrees_related(conn)
+                _migrate_sessions_no_fk(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():
                 raise

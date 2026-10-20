@@ -481,6 +481,16 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
         tail = " (soft-deleted; recover within 7 days via `link undelete`)"
         if not json_output:
             eprint(f"{key}: cleaned{tail}")
+        try:
+            from . import cli_harness as _h
+            _h.record_headless_attempt(
+                key, "cleanup", [key, "--yes", "--force"] if force else [key, "--yes"],
+                f"harness command: workagent cleanup {key}"
+                f" -> cleaned{tail} pr={pr_url or 'none'}",
+                exit_code=0, metadata={"mode": "cleanup",
+                                       "soft_deleted": True})
+        except Exception:
+            pass
         return {"key": key, "branch": branch, "status": "cleaned",
                 "deleted_at": deleted_at}
     cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=False,

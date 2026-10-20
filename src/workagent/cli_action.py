@@ -271,15 +271,38 @@ def action_run(
         except _gates.SkippedGate as e:
             _print_result({"label": label, "key": key, "skipped": e.reason},
                           json_output)
+            from . import cli_harness as _h
+            _h.record_headless_attempt(
+                key, "action",
+                [label, key] if mode == "preview" else [label, key, "--launch"],
+                f"harness command: skipped: {e.reason}",
+                exit_code=10 if mode != "preview" else 0,
+                harness_name=harness_name or "",
+                metadata={"action": label, "mode": mode})
             return {"label": label, "key": key, "skipped": e.reason}
         except HarnessError as e:
             eprint(f"{key}: pre-execution failed: {e} — skipping harness")
             _print_result({"label": label, "key": key, "skipped": "pre-execution failed"},
                           json_output)
+            from . import cli_harness as _h
+            _h.record_headless_attempt(
+                key, "action",
+                [label, key] if mode == "preview" else [label, key, "--launch"],
+                f"harness command: pre-execution failed: {e}",
+                exit_code=1, harness_name=harness_name or "",
+                metadata={"action": label, "mode": mode})
             return
     if not (action.get("prompt") or "").strip():
         eprint(f"{key}: prompt empty — scripts only, no harness session")
         result = {"label": label, "key": key, "skipped": "empty prompt"}
+        from . import cli_harness as _h
+        _h.record_headless_attempt(
+            key, "action",
+            [label, key] if mode == "preview" else [label, key, "--launch"],
+            "harness command: skipped: empty prompt",
+            exit_code=0 if mode == "preview" else 10,
+            harness_name=harness_name or "",
+            metadata={"action": label, "mode": mode})
     else:
         if mode != "preview":
             _guard_harness(key, wt)

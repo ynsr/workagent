@@ -56,9 +56,9 @@ def _mirror_run(run: Run) -> None:
         db = _sq.db_path()
         if not db.exists():
             return
-        row = _sq.session_by_file_path(db, run.session_file)
+        row = _sq.session_by_file_path(db, run.session_file, include_deleted_worktrees=True)
         if row is None and (sid := Path(run.session_file).stem):
-            row = _sq.get_session(db, sid)
+            row = _sq.get_session(db, sid, include_deleted_worktrees=True)
         if row is None:
             return
         sid = str(row.get("id", ""))
@@ -79,8 +79,17 @@ def _mirror_run(run: Run) -> None:
             truncated = run.truncated
         final = "finished" if run.exit_code == 0 else "failed"
         try:
-            if (_sq.get_session(db, sid) or {}).get("state") == "running":
+            if (_sq.get_session(db, sid, include_deleted_worktrees=True) or {}).get("state") == "running":
                 _sq.finish_session(db, sid, final)
+        except Exception:
+            pass
+        try:
+            if any(r.get("session_id") == sid
+                   for r in _sq.list_runs(db, limit=1000,
+                                         include_deleted_worktrees=True)):
+                # CLI headless already recorded this run (same session):
+                # mirroring would duplicate it (preview-skip rule).
+                return
         except Exception:
             pass
         _sq.insert_run(db, sid, command, args, run.exit_code,
@@ -88,7 +97,7 @@ def _mirror_run(run: Run) -> None:
         try:
             is_fix_continue = (command == "review" and "--fix-comments" in args
                                and "--new-fix-session" not in args and run.exit_code == 0)
-            if is_fix_continue and (_sq.get_session(db, sid) or {}).get("session_type") == "review":
+            if is_fix_continue and (_sq.get_session(db, sid, include_deleted_worktrees=True) or {}).get("session_type") == "review":
                 from datetime import datetime, timezone
                 _sq.set_session_metadata(db, sid, {
                     "review_comments_fixed_at": datetime.now(timezone.utc).isoformat(),
@@ -281,7 +290,7 @@ def _persisted_row(run_id: str) -> dict | None:
     try:
         from . import store_sqlite as _sq
         db = _sq.db_path()
-        for row in _sq.list_runs(db, limit=1000):
+        for row in _sq.list_runs(db, limit=1000, include_deleted_worktrees=True):
             if f"db-{row.get('id')}" == run_id:
                 return row
     except Exception:

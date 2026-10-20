@@ -147,9 +147,9 @@ def _adopt_fix_reuse(result: dict, review_key: str) -> bool:
         db = _sq.db_path()
         if not db.exists():
             return False
-        existing = _sq.session_by_file_path(db, pinned)
+        existing = _sq.session_by_file_path(db, pinned, include_deleted_worktrees=True)
         if existing is None:
-            existing = _sq.get_session(db, _Path(pinned).stem)
+            existing = _sq.get_session(db, _Path(pinned).stem, include_deleted_worktrees=True)
         if existing is None:
             return False
         if str(existing.get("worktree_ref", "")) != review_key:
@@ -189,7 +189,7 @@ def _apply_fix_session(result: dict, review_key: str, fix_comments: bool,
         return
     from . import store_sqlite as _sq
     db = _sq.db_path()
-    latest = _sq.latest_review_session(db, review_key) if db.exists() else None
+    latest = _sq.latest_review_session(db, review_key, include_deleted_worktrees=True) if db.exists() else None
     if latest and not new_fix_session:
         result["reuse_session_id"] = latest["id"]
         result["session_file"] = latest.get("file_path")
@@ -405,6 +405,13 @@ def review(
             _print_rows(rows, json_output, csv_output=False,
                         columns=["key", "pr_url", "command", "exit_code"],
                         title="Review runs", empty="nothing reviewed")
+            from . import cli_harness as _h
+            for k, pr in reviewable:
+                _h.record_headless_attempt(
+                    k, "review", _child_argv(pr),
+                    f"harness command: {_child_cmd(pr)}",
+                    exit_code=0,
+                    metadata={"pr_url": pr, "mode": "all-preview"})
             return
         rows: list[dict] = []
 

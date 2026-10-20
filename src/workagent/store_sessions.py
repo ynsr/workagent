@@ -11,8 +11,8 @@ def _connect(path: Path):
     return connect(path)
 
 #: Cap on persisted run output lines (mirrors the live buffer policy at a
-#: smaller scale: enough log to diagnose, bounded DB growth).
-MAX_RUN_OUTPUT_LINES = 2000
+#: larger scale: enough log to diagnose, bounded DB growth).
+MAX_RUN_OUTPUT_LINES = 10000
 def db_path(config_dir: Path | None = None) -> Path:
     from . import store as _store
     base = config_dir or _store.config_dir()
@@ -160,19 +160,25 @@ def finish_session(path: Path, sid: str, state: str) -> None:
                      (state, sid))
 
 
-def session_by_file_path(path: Path, file_path: str) -> dict | None:
+def session_by_file_path(path: Path, file_path: str,
+                         include_deleted_worktrees: bool = False) -> dict | None:
     """Session row whose file_path equals *file_path* (the web-pinned
     transcript), newest first. Stem lookup misses omp-minted filenames;
     the pinned path itself is the reliable join key."""
     if not file_path or not path.exists():
         return None
+    import sqlite3
     with _connect(path) as conn:
         conn.row_factory = sqlite3.Row
         try:
-            row = conn.execute(
-                "SELECT * FROM sessions WHERE file_path = ?"
-                " ORDER BY created_at DESC LIMIT 1",
-                (file_path,)).fetchone()
+            q = ("SELECT s.* FROM sessions s"
+                 " LEFT JOIN worktrees w ON w.ref_key = s.worktree_ref"
+                 " WHERE s.file_path = ?")
+            params: list = [file_path]
+            if not include_deleted_worktrees:
+                q += " AND " + _NOT_DELETED
+            q += " ORDER BY s.created_at DESC LIMIT 1"
+            row = conn.execute(q, params).fetchone()
         except sqlite3.OperationalError:
             return None
         if row is None:
@@ -233,7 +239,8 @@ def set_session_metadata(path: Path, sid: str, patch: dict) -> dict:
         return meta
 
 
-def latest_review_session(path: Path, worktree_ref: str) -> dict | None:
+def latest_review_session(path: Path, worktree_ref: str,
+                         include_deleted_worktrees: bool = False) -> dict | None:
     """Newest non-running review session for the ref (the 'current' one to continue)."""
     import json
     if not path.exists():
@@ -241,10 +248,15 @@ def latest_review_session(path: Path, worktree_ref: str) -> dict | None:
     with _connect(path) as conn:
         conn.row_factory = sqlite3.Row
         try:
-            row = conn.execute(
-                "SELECT * FROM sessions WHERE worktree_ref = ? AND session_type = 'review'"
-                " AND state != 'running' ORDER BY created_at DESC LIMIT 1",
-                (worktree_ref,)).fetchone()
+            q = ("SELECT s.* FROM sessions s"
+                 " LEFT JOIN worktrees w ON w.ref_key = s.worktree_ref"
+                 " WHERE s.worktree_ref = ? AND s.session_type = 'review'"
+                 " AND s.state != 'running'")
+            params: list = [worktree_ref]
+            if not include_deleted_worktrees:
+                q += " AND " + _NOT_DELETED
+            q += " ORDER BY s.created_at DESC LIMIT 1"
+            row = conn.execute(q, params).fetchone()
         except sqlite3.OperationalError:
             return None  # pre-v6 schema: no session_type column yet
         if row is None:
@@ -262,6 +274,7 @@ def insert_run(path: Path, session_id: str, command: str,
     import json
     created = datetime.now(timezone.utc).isoformat()
     lines = list(output or [])[-MAX_RUN_OUTPUT_LINES:]
+    truncated = bool(truncated) or (output is not None and len(list(output)) > len(lines))
     with _connect(path) as conn:
         cur = conn.execute(
             "INSERT INTO runs (session_id, command, args, exit_code, created_at,"
@@ -270,19 +283,32 @@ def insert_run(path: Path, session_id: str, command: str,
              "\n".join(lines), 1 if truncated else 0))
         return cur.lastrowid
 
-def list_runs(path: Path, limit: int = 200) -> list[dict]:
+#: Sessions/runs of soft-deleted worktrees stay in the DB (restorable via
+#: undelete) but are hidden from list/detail queries unless
+#: *include_deleted_worktrees*; rows with an empty ref (pre-link attempts)
+#: or a dangling ref (hard-deleted worktree, pending explicit purge) stay
+#: visible — same pass-through rule as list_flows.
+_NOT_DELETED = ("(s.worktree_ref = '' OR w.ref_key IS NULL"
+                " OR (w.deleted_at IS NULL OR w.deleted_at = ''))")
+
+
+def list_runs(path: Path, limit: int = 200,
+              include_deleted_worktrees: bool = False) -> list[dict]:
     """Persisted session-linked runs, newest first (drives GET /api/runs)."""
     import json
     if not path.exists():
         return []
     with _connect(path) as conn:
         conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT r.id, r.session_id, r.command, r.args, r.exit_code,"
-            " r.created_at, r.output, r.truncated,"
-            " s.file_path AS session_file, s.worktree_ref"
-            " FROM runs r LEFT JOIN sessions s ON s.id = r.session_id"
-            " ORDER BY r.id DESC LIMIT ?", (limit,)).fetchall()
+        q = ("SELECT r.id, r.session_id, r.command, r.args, r.exit_code,"
+             " r.created_at, r.output, r.truncated,"
+             " s.file_path AS session_file, s.worktree_ref"
+             " FROM runs r LEFT JOIN sessions s ON s.id = r.session_id"
+             " LEFT JOIN worktrees w ON w.ref_key = s.worktree_ref")
+        if not include_deleted_worktrees:
+            q += " WHERE " + _NOT_DELETED
+        q += " ORDER BY r.id DESC LIMIT ?"
+        rows = conn.execute(q, (limit,)).fetchall()
         out = []
         for r in rows:
             d = dict(r)
@@ -303,27 +329,39 @@ def _parse_metadata(value: object) -> dict:
     return out if isinstance(out, dict) else {}
 
 
-def list_sessions(path: Path) -> list[dict]:
+def list_sessions(path: Path,
+                  include_deleted_worktrees: bool = False) -> list[dict]:
     if not path.exists():
         return []
     with _connect(path) as conn:
         conn.row_factory = sqlite3.Row
+        q = ("SELECT s.* FROM sessions s"
+             " LEFT JOIN worktrees w ON w.ref_key = s.worktree_ref")
+        if not include_deleted_worktrees:
+            q += " WHERE " + _NOT_DELETED
+        q += " ORDER BY s.created_at DESC"
         out = []
-        for r in conn.execute("SELECT * FROM sessions ORDER BY created_at DESC"):
+        for r in conn.execute(q):
             d = dict(r)
             d["metadata"] = _parse_metadata(d.get("metadata"))
             out.append(d)
         return out
 
 
-def get_session(path: Path, sid: str) -> dict | None:
+def get_session(path: Path, sid: str,
+                include_deleted_worktrees: bool = False) -> dict | None:
     import json
     if not path.exists():
         return None
     with _connect(path) as conn:
         conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT * FROM sessions WHERE id = ?",
-                           (sid,)).fetchone()
+        q = ("SELECT s.* FROM sessions s"
+             " LEFT JOIN worktrees w ON w.ref_key = s.worktree_ref"
+             " WHERE s.id = ?")
+        params: list = [sid]
+        if not include_deleted_worktrees:
+            q += " AND " + _NOT_DELETED
+        row = conn.execute(q, params).fetchone()
         if row is None:
             return None
         out = dict(row)

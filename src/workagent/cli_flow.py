@@ -156,7 +156,8 @@ def _merge_config(step: dict, overrides: dict) -> dict:
 def _manual_step(kind: str, args: list[str]) -> dict:
     import shlex
     cmd = " ".join(shlex.quote(a) for a in [kind, *args] if a)
-    return {"preview": True, "command": f"workagent {cmd}"}
+    return {"preview": True, "command": f"workagent {cmd}",
+            "manual_kind": kind, "manual_args": [kind, *args]}
 
 
 def _headless(config: dict) -> bool:
@@ -299,7 +300,7 @@ def _tag_flow_session(key: str, flow_id: int) -> None:
     try:
         from . import store_sqlite as _sq
         db = _sq.db_path()
-        mine = [s for s in _sq.list_sessions(db)
+        mine = [s for s in _sq.list_sessions(db, include_deleted_worktrees=True)
                 if (s.get("worktree_ref") or "") == key]
         if mine:
             _sq.set_session_metadata(db, mine[0]["id"], {"flow_id": flow_id})
@@ -469,6 +470,15 @@ def flow_run(
             store.update_flow(fid, status="paused", current_step=idx,
                               step_results=results)
             cmd = outcome.get("command") or f"flow run {tpl['label']} {ref}"
+            try:
+                from . import cli_harness as _h
+                _h.record_headless_attempt(
+                    key or ref, str(outcome.get("manual_kind") or kind),
+                    list(outcome.get("manual_args") or [kind]),
+                    f"harness command: {cmd}", exit_code=0,
+                    metadata={"flow_id": fid, "mode": "manual-step"})
+            except Exception:
+                pass
             eprint(f"paused after step {idx} ({kind}) — preview/terminal "
                    f"needs a human:\n{cmd}\nre-run to resume.")
             _print_result({"flow": fid, "status": "paused",

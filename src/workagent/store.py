@@ -803,10 +803,12 @@ def create_flow(**fields) -> dict:
     return _fl.create_flow(_sq.db_path(), **fields)
 
 
-def get_flow(flow_id: int) -> dict | None:
+def get_flow(flow_id: int,
+             include_deleted_worktrees: bool = False) -> dict | None:
     """One flow by id; None when unknown."""
     from . import store_sqlite as _sq
-    return _fl.get_flow(_sq.db_path(), flow_id)
+    return _fl.get_flow(_sq.db_path(), flow_id,
+                        include_deleted_worktrees=include_deleted_worktrees)
 
 
 def list_flows(worktree: str = "",

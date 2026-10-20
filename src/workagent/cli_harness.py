@@ -352,20 +352,26 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     stype = action
     if run_key and db.exists() and not reuse_sid and session_file:
         try:
-            existing = _sq.session_by_file_path(db, session_file) or _sq.get_session(db, Path(session_file).stem)
+            existing = _sq.session_by_file_path(db, session_file, include_deleted_worktrees=True) or _sq.get_session(db, Path(session_file).stem, include_deleted_worktrees=True)
         except Exception:
             existing = None
         if existing is not None:
             sid = str(existing.get("id"))
     if run_key and db.exists() and not reuse_sid and sid is None:
         try:
-            sid = _sq.insert_session(
-                db, worktree_ref=run_key, harness_name=harness_name,
-                initiator_command=result.get("command", harness_name),
-                prompt=prompt, file_path=session_path,
-                session_id=Path(session_path).stem,
-                session_type=stype,
-                metadata=result.get("session_metadata"))
+            if run_key not in store.load_links(include_inactive=True,
+                                               include_deleted=True):
+                # Unattached run (register/pre-link): FK forbids the row —
+                # launch continues, warn once like the insert failure path.
+                eprint(f"warning: session record skipped: no linked worktree for {run_key!r}")
+            else:
+                sid = _sq.insert_session(
+                    db, worktree_ref=run_key, harness_name=harness_name,
+                    initiator_command=result.get("command", harness_name),
+                    prompt=prompt, file_path=session_path,
+                    session_id=Path(session_path).stem,
+                    session_type=stype,
+                    metadata=result.get("session_metadata"))
         except Exception as e:
             # Post-cutover insert failure: launch continues, warn only.
             # No transcript file is pre-created (omp owns the filename
@@ -404,6 +410,20 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                 _sq.set_session_file_path(db, finish_sid, str(minted))
         if finish_sid:
             _sq.finish_session(db, finish_sid, "finished")
+        if finish_sid and no_tty and run_key:
+            # CLI headless owns the row (web children get mirrored on the
+            # same session; the mirror skips when a run row already
+            # exists for it). Output = last assistant text; the full log
+            # lives in the transcript the session row points at.
+            try:
+                from . import harness_summary as _hs
+                _sq.insert_run(
+                    db, finish_sid, str(result.get("command", harness_name)),
+                    [run_key], 0,
+                    output=[f"harness command: {full_cmd}",
+                            _hs.last_assistant_text(str(result.get("session_file", "") or "") or (str(minted) if minted else ""))])
+            except Exception as e:
+                eprint(f"warning: run record failed: {e}")
         if no_tty and run_key:
             _publish_headless_summary(result, json_output)
     except Exception:
@@ -498,6 +518,26 @@ def _watch_minted_transcript(db, scope_dir, before, finish_sid, result):
     t.start()
     return stop
 
+def record_headless_attempt(key: str, command: str, args: list[str],
+                            output: str, exit_code: int = 1,
+                            harness_name: str = "",
+                            session_file: str | None = None,
+                            prompt: str = "",
+                            metadata: dict | None = None) -> str | None:
+    """Persist a failed-before-launch headless attempt (session + run).
+
+    Pre-link failures (no DB row for the key yet) persist too — sessions
+    carry no worktree FK, so the row survives with a dangling ref until
+    the worktree is hard-deleted. Same ``harness command:`` output
+    contract as previews. Never raises.
+    """
+    return record_preview_session(
+        key, command, prompt, harness_name, output,
+        exit_code=exit_code, args=args,
+        metadata={**(metadata or {}), "origin": "headless-attempt"},
+        session_file=session_file)
+
+
 def record_preview_session(key: str, command: str, prompt: str,
                            harness_name: str, output: str,
                            exit_code: int = 0,
@@ -534,6 +574,16 @@ def record_preview_session(key: str, command: str, prompt: str,
         db = _sq.db_path()
         if not db.exists():
             return None
+        try:
+            from . import store as _store
+            if not key or key not in _store.load_links(include_inactive=True,
+                                                       include_deleted=True):
+                # No worktree row (pre-link failure, release-by-name, bad
+                # key): sessions/runs require a worktree FK — skip, warn.
+                eprint(f"warning: session record skipped: no linked worktree for {key!r}")
+                return None
+        except Exception:
+            return None
         meta = {"origin": "preview"}
         if metadata:
             meta.update(metadata)
@@ -541,9 +591,9 @@ def record_preview_session(key: str, command: str, prompt: str,
         sid_arg = _Path(pinned).stem if pinned else None
         if pinned:
             try:
-                existing = _sq.session_by_file_path(db, pinned)
+                existing = _sq.session_by_file_path(db, pinned, include_deleted_worktrees=True)
                 if existing is None and sid_arg:
-                    existing = _sq.get_session(db, sid_arg)
+                    existing = _sq.get_session(db, sid_arg, include_deleted_worktrees=True)
             except Exception:
                 existing = None
             if existing is not None:
