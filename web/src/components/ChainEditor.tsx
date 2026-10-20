@@ -29,7 +29,7 @@ export interface ChainEditorProps {
 }
 
 /** Backend rule order (mirrors store_flows.validate_template): Start-first,
- * Release-last, review→cleanup needs fix_comments, action placement. */
+ * Release-last, review→cleanup needs fix_comments, action before cleanup. */
 export function validateChain(steps: FlowStep[]): string[] {
   const errors: string[] = []
   if (steps.length === 0) {
@@ -68,11 +68,9 @@ export function validateChain(steps: FlowStep[]): string[] {
   }
   steps.forEach((step, i) => {
     if (step.kind !== "action") return
-    if (starts.length === 1 && i < (starts[0] ?? 0)) errors.push(`Step ${i + 1}: 'action' steps must come after 'start'.`)
     if (cleanups.length > 0 && i >= Math.min(...cleanups)) {
       errors.push(`Step ${i + 1}: 'action' steps must come before 'cleanup'.`)
     }
-    if (starts.length === 0) errors.push(`Step ${i + 1}: 'action' steps require a 'start' step.`)
     if (!step.action_label?.trim()) errors.push(`Step ${i + 1}: 'action' step needs an action label.`)
   })
   steps.forEach((step, i) => {
@@ -167,19 +165,19 @@ function StepConfigForm({
       {showRepo ? (
         <div className="grid gap-1.5 sm:col-span-2">
           <Label htmlFor={`${idPrefix}-repo`}>
-            Repository{hints ? (hintRepo ? ` (template: ${hintRepo})` : " (required)") : ""}
+            Repository{hints ? (hintRepo ? ` (template: ${hintRepo})` : "") : " (optional)"}
           </Label>
           <SearchableSelect
             id={`${idPrefix}-repo`}
             value={repo || hintRepo}
             options={repoNames}
             onChange={(v) => patch("repo", v)}
-            placeholder={hintRepo || "Select a repo…"}
+            placeholder={hintRepo || "Select a repo… (optional)"}
             allowCustom
           />
           {!repo && !hintRepo ? (
             <p className="text-xs text-muted-foreground">
-              Required — the Start step needs a repo to create the worktree.
+              Optional — when empty, the issue's linked repo is used (you may be asked to pick one).
             </p>
           ) : null}
         </div>

@@ -116,14 +116,8 @@ def validate_template(steps: list[dict] | str,
     for i, (step, k) in enumerate(zip(steps, kinds)):
         if k != "action":
             continue
-        if starts and i < starts[0]:
-            raise HarnessError("'action' steps must come after 'start'",
-                               exit_code=2)
         if cleanups and i >= min(cleanups):
             raise HarnessError("'action' steps must come before 'cleanup'",
-                               exit_code=2)
-        if not starts:
-            raise HarnessError("'action' steps require a 'start' step",
                                exit_code=2)
         label = str(step.get("action_label", "") or "")
         if not label:
