@@ -411,6 +411,69 @@ def test_skip_steps_marks_resume_step_done(monkeypatch):
     assert _json.loads(res.stdout) == {"flow": 11, "status": "done", "steps": 2}
 
 
+def test_skip_start_adopts_terminal_worktree(monkeypatch):
+    """Skipping a paused start step adopts the terminal-made worktree.
+
+    Regression: `--skip-steps 0` after a terminal Start left key="" (the
+    issue ref never resolves until start links it), so the review step
+    failed with "Needs input" (exit 2). The skip path must re-resolve
+    the ref so downstream steps get the real key.
+    """
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    tpl = {"label": "pipe", "name": "Pipe",
+           "steps": [{"kind": "start"}, {"kind": "review"}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    existing = {"id": 12, "template_label": "pipe", "worktree_ref": "",
+                "repo_snapshot": {"launch_ref": "jira:X-1"},
+                "status": "paused", "current_step": 0,
+                "step_results": [{"kind": "start", "status": "paused",
+                                  "detail": "workagent start jira:X-1"}]}
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [existing])
+    updates = []
+
+    def _update(fid, **fields):
+        updates.append({"fid": fid, **fields})
+        return {**existing, **updates[-1]}
+
+    monkeypatch.setattr("workagent.store.update_flow", _update)
+    monkeypatch.setattr("workagent.store.get_flow",
+                        lambda fid, **k: {**existing, **updates[-1]})
+    seen = {}
+    # First call (flow preamble): unlinked issue → key "". Second call
+    # (skip path): terminal work finished → real linked key.
+    calls = {"n": 0}
+
+    def _resolve(ref):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "", {}, {"kind": "issue"}
+        return ("jira:X-1@myrepo",
+                {"worktree": "/tmp/wt", "repo": "myrepo",
+                 "branch": "b", "active": 1}, {"kind": "issue"})
+
+    monkeypatch.setattr(cli_mod, "_resolve_ref", _resolve)
+    monkeypatch.setattr("workagent.store.load_links",
+                        lambda *a, **k: {"jira:X-1@myrepo":
+                                         {"worktree": "/tmp/wt",
+                                          "repo": "myrepo", "branch": "b"}})
+
+    def _review(key, config, fix, json_output):
+        seen["key"] = key
+        return {"key": key, "status": "reviewed", "fix_comments": fix}
+
+    monkeypatch.setattr(cli_mod, "_run_review_step", _review)
+    monkeypatch.setattr(cli_mod, "_tag_flow_session", lambda *a, **k: None)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["flow", "run", "pipe", "jira:X-1", "--yes",
+                         "--skip-steps", "0", "--json"])
+    assert res.exit_code == 0, res.output
+    assert seen["key"] == "jira:X-1@myrepo"
+    assert any(u.get("worktree_ref") == "jira:X-1@myrepo" for u in updates)
+
+
 def test_skip_steps_rejects_future_step(monkeypatch):
     """Only the resume cursor can be marked done — no jumping ahead."""
     from typer.testing import CliRunner

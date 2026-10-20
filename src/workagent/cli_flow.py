@@ -468,7 +468,17 @@ def flow_run(
             results.append({"kind": kind, "status": "skipped",
                             "detail": "marked done on resume (--skip-steps)"})
             current = i + 1
-        store.update_flow(fid, current_step=current, step_results=results)
+            if kind == "start":
+                # Skipped start = the human finished in the terminal (or the
+                # worktree already exists): adopt whatever the ref resolves
+                # to NOW so downstream steps get a real key. Without this
+                # the review step runs with key="" and fails "Needs input".
+                key, adopted = _futil.adopt_skipped_start_key(
+                    _resolve_ref, ref, key)
+                if adopted:
+                    entry = adopted
+                    wt_path = str(adopted.get("worktree", "") or wt_path)
+                    store.update_flow(fid, worktree_ref=key)
     pre = (tpl.get("pre_execution") or "").strip()
     wt_path = str((entry or {}).get("worktree", "") or "")
     if pre and current == 0:

@@ -200,3 +200,23 @@ def spawn_terminal_step(kind: str, args: list[str], cwd: str = "") -> dict:
     if cwd:
         out["terminal_cwd"] = cwd
     return out
+
+
+def adopt_skipped_start_key(resolver, ref: str, key: str):
+    """Re-resolve *ref* after a skipped start step.
+
+    A skipped start means the human finished in the terminal (or the
+    worktree already exists): whatever the ref resolves to NOW is the
+    key downstream steps must use. Returns (key, entry) — (unchanged
+    key, {}) when nothing resolves. Resolver failures are swallowed
+    (the step still runs with the old key and fails loudly there).
+    """
+    from . import store as _store
+    try:
+        new_key, new_entry, _ = resolver(ref)
+    except Exception:
+        return key, {}
+    if new_key and new_key != key:
+        links = _store.load_links()
+        return new_key, links.get(new_key, new_entry or {})
+    return key, new_entry or {}

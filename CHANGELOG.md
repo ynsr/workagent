@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Flow `--skip-steps 0` after a terminal Start adopts the terminal-made worktree (re-resolves the ref) so the review step runs seamlessly instead of failing "Needs input" [no-issue]
 - Flow terminal steps append `--terminal` to the spawned command (start/review/action) so the child really launches the harness in the new terminal instead of printing; sync/cleanup/release degrade to manual pause [no-issue]
 - Flow run card: Start step Repository is mandatory — Run flow stays disabled until a repo is set; template Add/Edit form keeps it optional [no-issue]
 - `review --new-fix-session` renamed to `--use-review-session` with inverted default: fix-comments starts a fresh session (linked via fixed_from_session_id) unless reuse is requested; old flag removed [no-issue]
