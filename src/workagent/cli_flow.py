@@ -137,7 +137,9 @@ def template_delete(
 # Success → {"status"}; preview/terminal → {"preview": True} (runner skipped).
 def _resolve_ref(ref: str) -> tuple[str, dict, dict | None]:
     """Resolve *ref* to (key, entry, parsed); exit 2 when unresolvable."""
-    links = store.load_links()
+    # Deleted rows included: resume after a cleanup soft-delete must still
+    # find its key (release runs post-cleanup by design).
+    links = store.load_links(include_deleted=True)
     try:
         return worktrees.resolve_any(ref, links)
     except worktrees.NoLinkedState as e:
@@ -352,7 +354,7 @@ def _tag_flow_session(key: str, flow_id: int) -> None:
 def _find_resumable(template_label: str, ref: str,
                     key: str) -> dict | None:
     """Latest non-done flow for the template+ref pair (None: fresh)."""
-    for flow in reversed(store.list_flows()):
+    for flow in reversed(store.list_flows(include_deleted_worktrees=True)):
         if flow.get("template_label") != template_label:
             continue
         if flow.get("status") == "done":
@@ -421,8 +423,20 @@ def flow_run(
     key, entry, parsed = _resolve_ref(ref)
     flow = None if fresh else _find_resumable(tpl["label"], ref, key)
     if flow is None:
+        snap: dict = {"launch_ref": ref}
+        # Templates without a start step (e.g. cleanup_release) never hit
+        # the start-step backfill below — seed repo info from the resolved
+        # link up front so the release step finds it (deleted row included:
+        # resume after cleanup soft-delete still needs the repo name).
+        link = entry or store.load_links(include_deleted=True).get(key, {})
+        repo = str((link or {}).get("repo", "") or "")
+        if repo:
+            info = store.load_repos().get(repo, {})
+            snap = {"repo": repo, "launch_ref": ref, "default_branch": str(
+                info.get("default_branch", "") or ""),
+                "release_branch": str(info.get("release_branch", "") or "")}
         flow = store.create_flow(template_label=tpl["label"], worktree_ref=key,
-                                 repo_snapshot={"launch_ref": ref})
+                                 repo_snapshot=snap)
     fid = flow["id"]
     store.update_flow(fid, status="running")
     current = int(flow.get("current_step") or 0)
@@ -508,7 +522,7 @@ def flow_run(
             elif kind == "cleanup":
                 outcome = _run_cleanup_step(key, config, json_output)
             elif kind == "release":
-                snap = (store.get_flow(fid) or {}).get("repo_snapshot") or {}
+                snap = (store.get_flow(fid, include_deleted_worktrees=True) or {}).get("repo_snapshot") or {}
                 outcome = _run_release_step(snap, config, json_output)
             else:  # pragma: no cover — validate_template guards kinds
                 raise HarnessError(f"unknown step kind {kind!r}",

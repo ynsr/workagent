@@ -456,3 +456,59 @@ def test_skip_steps_rejects_out_of_range(monkeypatch):
                          "--skip-steps", "5"])
     assert res.exit_code == 2
     assert "out of range" in res.output
+
+
+def test_no_start_template_seeds_repo_snapshot(monkeypatch):
+    """cleanup_release (no start step) must still seed repo_snapshot so the
+    release step finds its repo (flow 26 root cause: snapshot stayed
+    {'launch_ref'} → 'flow has no repo snapshot — cannot release')."""
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    tpl = {"label": "norun", "name": "NoRun",
+           "steps": [{"kind": "sync"}, {"kind": "cleanup"},
+                     {"kind": "release"}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    created = {}
+
+    def _create(**fields):
+        created.update(fields)
+        return {"id": 21, **fields, "status": "running",
+                "current_step": 0, "step_results": []}
+
+    monkeypatch.setattr("workagent.store.create_flow", _create)
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [])
+    monkeypatch.setattr("workagent.store.update_flow",
+                        lambda fid, **f: {"id": fid, **f})
+    monkeypatch.setattr("workagent.store.get_flow",
+                        lambda fid, **k: {"id": fid,
+                                          "repo_snapshot": created.get("repo_snapshot", {})})
+    monkeypatch.setattr(cli_mod, "_resolve_ref",
+                        lambda ref: ("wt-1", {"repo": "r",
+                                             "worktree": "/tmp/wt",
+                                             "branch": "b"}, None))
+    monkeypatch.setattr("workagent.store.load_repos",
+                        lambda: {"r": {"default_branch": "main",
+                                      "release_branch": "rel"}})
+    monkeypatch.setattr(cli_mod, "_run_sync_step",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            cli_mod.HarnessError("stop after seed", 1)))
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["flow", "run", "norun", "wt-1", "--yes"])
+    assert res.exit_code == 1  # halted at sync — after the seed ran
+    assert created["repo_snapshot"]["repo"] == "r"
+    assert created["repo_snapshot"]["default_branch"] == "main"
+    assert created["repo_snapshot"]["launch_ref"] == "wt-1"
+
+
+def test_resume_after_soft_delete_keeps_repo_snapshot(monkeypatch):
+    """Resume of a flow whose worktree was soft-deleted must still see the
+    key and the seeded snapshot (flow 26 resume: deleted row hidden from
+    load_links/list_flows/get_flow defaults)."""
+    import workagent.cli_flow as cli_mod
+    monkeypatch.setattr("workagent.store.load_links",
+                        lambda **k: {"wt-9": {"repo": "r"}} if k.get("include_deleted") else {})
+    key, entry, _ = cli_mod._resolve_ref("wt-9")
+    assert key == "wt-9"
+    assert entry.get("repo") == "r"
