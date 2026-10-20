@@ -247,7 +247,7 @@ def _run_action_step(key: str, action_label: str, config: dict, json_output: boo
     from . import cli_action as _mod
     from .release_gates import SkippedGate
     try:
-        out = _call(_mod.action_run.__wrapped__, action_label, key, launch=True, no_tty=True, yes=True, json_output=json_output,
+        out = _call(_mod.action_run.__wrapped__, action_label, key, launch=True, yes=True, json_output=json_output,
                     **_pick(config, "harness", "extra_prompt", "env_file", "session_file"))
     except SkippedGate as e:
         return {"key": key, "label": action_label, "status": "skipped", "detail": e.reason}
