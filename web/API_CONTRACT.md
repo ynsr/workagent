@@ -131,9 +131,9 @@ by the Dashboard Actions dropdown.)
   "created_at": "…", "modified_at": "…"}]}
 ```
 (Flow page source: `flow template add/list/show/update/delete` run as runs; detail 404s
-on unknown label. `flow template update OLD [--new-label NEW] ...` renames the label (flow history retargeted). Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection. `flow run TEMPLATE REF [--step-config JSON] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`
-with target key `flow:<template>:<ref>` — one run per template+worktree pair; `flow list [--worktree REF] [--json/--csv]`
-and `flow show ID [--json]` run as runs. `GET /api/flows?worktree=` scopes the run list to one worktree.)
+ on unknown label. `flow template update OLD [--new-label NEW] ...` renames the label (flow history retargeted). Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection. `flow run TEMPLATE REF [--step-config JSON] [--skip-steps 0[,N]] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`
+ with target key `flow:<template>:<ref>` — one run per template+worktree pair; `--skip-steps` marks the paused resume step done-without-running (already finished by hand in the spawned terminal) and advances the cursor; `flow list [--worktree REF] [--json/--csv]`
+ and `flow show ID [--json]` run as runs. `GET /api/flows?worktree=` scopes the run list to one worktree.)
 ### `GET /api/links`
 ```json
 {"trackers": {"jira:IPG": {"repos": ["/home/x/projects/projectx"]}},

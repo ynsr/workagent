@@ -375,6 +375,7 @@ def flow_run(
     template: str = typer.Argument(..., help="Flow template label."),
     ref: str = typer.Argument(..., autocompletion=_complete_refs, help="Issue ref or worktree key/branch/path."),
     step_config: Optional[str] = typer.Option(None, "--step-config", help='Per-run step overrides as JSON ({"<index>": {...}}).'),
+    skip_steps: Optional[str] = typer.Option(None, "--skip-steps", help='Comma-separated step indexes to mark done-without-running on resume (e.g. "0" or "0,2"). Only paused/done work applies.'),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the resolved chain without executing."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     fresh: bool = typer.Option(False, "--fresh", help="Force a new flow row instead of resuming."),
@@ -426,6 +427,32 @@ def flow_run(
     store.update_flow(fid, status="running")
     current = int(flow.get("current_step") or 0)
     results = list(flow.get("step_results") or [])
+    if skip_steps:
+        wanted: set[int] = set()
+        for tok in str(skip_steps).split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            try:
+                wanted.add(int(tok))
+            except ValueError:
+                _fail(f"--skip-steps takes comma-separated step indexes, got {tok!r}", EXIT_USAGE)
+        bad = sorted(i for i in wanted if i < 0 or i >= len(merged_steps))
+        if bad:
+            _fail(f"--skip-steps index out of range (0..{len(merged_steps) - 1}): {bad}", EXIT_USAGE)
+        for i in sorted(wanted):
+            if i < current:
+                continue  # already green — nothing to mark
+            if i > current:
+                _fail(f"--skip-steps {i} is beyond the resume cursor (step {current}) — "
+                      f"only the resume step can be marked done", EXIT_USAGE)
+            kind = merged_steps[i]["kind"]
+            if results and results[-1].get("kind") == kind and results[-1].get("status") == "paused":
+                results.pop()  # replace the stale paused entry for this step
+            results.append({"kind": kind, "status": "skipped",
+                            "detail": "marked done on resume (--skip-steps)"})
+            current = i + 1
+        store.update_flow(fid, current_step=current, step_results=results)
     pre = (tpl.get("pre_execution") or "").strip()
     wt_path = str((entry or {}).get("worktree", "") or "")
     if pre and current == 0:

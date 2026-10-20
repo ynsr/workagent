@@ -65,7 +65,7 @@ export function Flows() {
   const [resuming, setResuming] = useState(false)
   const pausedCmd = (detail?.step_results ?? []).find((r) => r.status === "paused")?.detail ?? ""
 
-  async function handleResume() {
+  async function handleResume(skipStep = false) {
     if (!detail || resuming) return
     const ref = detail.worktree_ref || detail.repo_snapshot?.launch_ref || ""
     if (!ref) {
@@ -74,12 +74,14 @@ export function Flows() {
     }
     setResuming(true)
     try {
+      const args = ["run", detail.template_label, ref, "--yes"]
+      if (skipStep) args.push("--skip-steps", String(detail.current_step))
       const { run_id } = await createRun.mutateAsync({
         command: "flow",
-        args: ["run", detail.template_label, ref, "--yes"],
+        args,
         confirm: true,
       })
-      toast.success(`Flow ${detail.template_label} resumed`, {
+      toast.success(skipStep ? `Step ${detail.current_step} marked done — flow resumed` : `Flow ${detail.template_label} resumed`, {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
       })
       setDetail(null)
@@ -230,6 +232,17 @@ export function Flows() {
                   title={pausedCmd ? `Resume from step ${detail.current_step}: ${pausedCmd}` : "Resume from the paused step"}
                 >
                   {resuming ? "Resuming…" : "Resume"}
+                </Button>
+              ) : null}
+              {detail.status === "paused" ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleResume(true)}
+                  disabled={resuming}
+                  title={`Mark step ${detail.current_step} done (already finished by hand) and continue from step ${detail.current_step + 1}`}
+                >
+                  Skip step {detail.current_step}
                 </Button>
               ) : null}
               {detail.status === "paused" && pausedCmd ? (

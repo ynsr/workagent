@@ -362,3 +362,97 @@ def test_terminal_spawn_failure_degrades_to_manual_pause(monkeypatch):
     assert out["preview"] is True
     assert "terminal_pid" not in out
     assert "no terminal emulator" in str(out.get("terminal_error", ""))
+
+
+def test_skip_steps_marks_resume_step_done(monkeypatch):
+    """--skip-steps advances the cursor without executing the step."""
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    import json as _json
+    tpl = {"label": "pipe", "name": "Pipe",
+           "steps": [{"kind": "start"}, {"kind": "cleanup"}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    existing = {"id": 11, "template_label": "pipe", "worktree_ref": "wt-1",
+                "repo_snapshot": {"repo": "r", "default_branch": "main",
+                                  "release_branch": ""},
+                "status": "paused", "current_step": 0,
+                "step_results": [{"kind": "start", "status": "paused",
+                                  "detail": "workagent start jira:X-1"}]}
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [existing])
+    updates = []
+
+    def _update(fid, **fields):
+        updates.append({"fid": fid, **fields})
+        return {**existing, **updates[-1]}
+
+    monkeypatch.setattr("workagent.store.update_flow", _update)
+    monkeypatch.setattr("workagent.store.get_flow",
+                        lambda fid: {**existing, **updates[-1]})
+    ran = []
+    monkeypatch.setattr(cli_mod, "_run_start_step",
+                        lambda *a, **k: ran.append("start") or {"status": "x"})
+    monkeypatch.setattr(cli_mod, "_run_cleanup_step",
+                        lambda *a, **k: ran.append("cleanup") or {"status": "cleaned"})
+    monkeypatch.setattr(cli_mod, "_resolve_ref",
+                        lambda ref: ("wt-1", {"worktree": "/tmp/wt", "repo": "r",
+                                             "branch": "b", "active": 1}, None))
+    monkeypatch.setattr(cli_mod, "_tag_flow_session", lambda *a, **k: None)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["flow", "run", "pipe", "wt-1", "--yes",
+                         "--skip-steps", "0", "--json"])
+    assert res.exit_code == 0, res.output
+    assert ran == ["cleanup"]  # step 0 never re-executed
+    done = [u for u in updates if u.get("status") == "done"][-1]
+    kinds = [(r["kind"], r["status"]) for r in done["step_results"]]
+    assert kinds[0] == ("start", "skipped")
+    assert kinds[1] == ("cleanup", "ok")
+    assert _json.loads(res.stdout) == {"flow": 11, "status": "done", "steps": 2}
+
+
+def test_skip_steps_rejects_future_step(monkeypatch):
+    """Only the resume cursor can be marked done — no jumping ahead."""
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    tpl = {"label": "pipe", "name": "Pipe",
+           "steps": [{"kind": "start"}, {"kind": "cleanup"}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    existing = {"id": 12, "template_label": "pipe", "worktree_ref": "wt-1",
+                "repo_snapshot": {}, "status": "paused", "current_step": 0,
+                "step_results": []}
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [existing])
+    monkeypatch.setattr("workagent.store.update_flow",
+                        lambda fid, **f: {**existing, **f})
+    monkeypatch.setattr(cli_mod, "_resolve_ref",
+                        lambda ref: ("wt-1", {}, None))
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["flow", "run", "pipe", "wt-1", "--yes",
+                         "--skip-steps", "1"])
+    assert res.exit_code == 2
+    assert "beyond the resume cursor" in res.output
+
+
+def test_skip_steps_rejects_out_of_range(monkeypatch):
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    tpl = {"label": "pipe", "name": "Pipe",
+           "steps": [{"kind": "start"}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    existing = {"id": 13, "template_label": "pipe", "worktree_ref": "wt-1",
+                "repo_snapshot": {}, "status": "paused", "current_step": 0,
+                "step_results": []}
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [existing])
+    monkeypatch.setattr("workagent.store.update_flow",
+                        lambda fid, **f: {**existing, **f})
+    monkeypatch.setattr(cli_mod, "_resolve_ref",
+                        lambda ref: ("wt-1", {}, None))
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["flow", "run", "pipe", "wt-1", "--yes",
+                         "--skip-steps", "5"])
+    assert res.exit_code == 2
+    assert "out of range" in res.output

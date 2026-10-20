@@ -71,7 +71,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `flow template list [--json/--csv]` | read-only | `store.list_templates` | — | no | | none |
 | `flow template show LABEL [--json]` | read-only | `store.get_template` | — | no | unknown label (2) | none |
 | `flow template update LABEL [--name] [--steps JSON] [--pre-execution] [--post-execution] [--new-label] [--json]` | mutating | — | `config` | no (flow_templates row write) | unknown label (2), no fields (2), bad steps JSON (2), bad new-label / new-label collision (2) | none — `--new-label` renames (`^[a-z0-9_]+$`, collisions rejected); `flows.template_label` history rows retargeted |
-| `flow run TEMPLATE REF [--step-config JSON] [--dry-run] [--fresh] [--yes] [--json]` | mutating | — | `flow:<template>:<ref>` | no (fans out to step runners) | unknown template (2), bad step-config JSON (2), cleanup overrides (2) | TTY confirm; non-TTY needs `--yes` (2) |
+| `flow run TEMPLATE REF [--step-config JSON] [--skip-steps 0[,N]] [--dry-run] [--fresh] [--yes] [--json]` | mutating | — | `flow:<template>:<ref>` | no (fans out to step runners) | unknown template (2), bad step-config JSON (2), bad/out-of-range/future --skip-steps (2), cleanup overrides (2) | TTY confirm; non-TTY needs `--yes` (2) |
 | `flow list [--worktree REF] [--json/--csv]` | read-only | `store.list_flows` | — | no | | none |
 | `flow show ID [--json]` | read-only | `store.get_flow` | — | no | unknown flow id (2) | none |
 | `register PATH [--key] [--issue] [--repo] [--yes/--force] [--json]` | mutating | — | `register` | no (links.json write) | bad path/main checkout (2), key conflict (1) | none |
