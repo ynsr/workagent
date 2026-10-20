@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Scheduled backups: `workagent-backup.timer` runs `backup run-scheduled` every 6h (timestamped files, keeps 7); coupled to `service install/uninstall` with `--no-backup` opt-out [no-issue]
 - Pre-exec exit-0 may print `{"append_prompt": "..."}` on stdout (last JSON line wins); appended between base prompt and --extra-prompt in action run + flows; Open MR preset reports resolved base branch via it [no-issue]
 - `backup export/import`: JSON snapshot of custom actions + flow templates in config dir; import replaces tables (confirm-gated, --yes), validates every row [no-issue]
 - Preset actions: `Start from preset` dropdown pre-fills the Actions form (first: Open MR with base-resolving pre-exec); pre/post exit 10 = skipped with SKIP: reason, flows continue past skipped action steps [no-issue]

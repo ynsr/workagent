@@ -6,7 +6,6 @@ web_runs (registry summaries).
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -85,6 +84,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "flow run": ("--dry-run", "--yes", "--json", "--fresh"),
     "backup export": ("--json",),
     "backup import": ("--yes", "--json"),
+    "backup run-scheduled": ("--json",),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "start": ("--repo", "--depth", "--base", "--harness", "--session-file", "--env-file", "--extra-prompt", "--related-repo"),
@@ -106,13 +106,14 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "flow run": ("--step-config",),
     "backup export": ("--path",),
     "backup import": (),
+    "backup run-scheduled": ("--keep",),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "link": {"list", "set", "remove", "deactivate", "reactivate", "undelete"},
                                     "tracker": {"add", "list", "remove", "update"},
                                     "action": {"add", "list", "show", "run", "update", "delete"},
                                     "flow": {"template", "list", "show", "run"},
-                                    "backup": {"export", "import"}}
+                                    "backup": {"export", "import", "run-scheduled"}}
 TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "delete"}
 def _needs_confirm(command: str, args: list[str]) -> bool:
     """True when the (sub)command needs confirm:true (destructive only).
@@ -262,9 +263,9 @@ def _validate_args(command: str, args: list[str], body_force: bool = False) -> N
         if not u.strip():
             raise ApiError("bad_arg", "--remote-url must be a real tracker web URL", 400)
     if command in ("start", "review"):
+        from . import refs as _refs
         from . import trackers as _trackers
         from . import worktrees as _worktrees
-        from . import refs as _refs
         ref = _first_positional(rest, VAL_FLAGS.get(command, ()))
         repo = ""
         for i, a in enumerate(rest):

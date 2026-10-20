@@ -95,3 +95,42 @@ def test_cli_logs_no_pager_off_tty(monkeypatch):
 
 def test_service_not_web_exposed():
     assert "service" not in BOOL_FLAGS and "service" not in VAL_FLAGS
+
+def test_backup_units_render():
+    unit = _svc.render_backup_unit()
+    assert "Type=oneshot" in unit
+    assert "backup run-scheduled --keep 7" in unit
+    timer = _svc.render_backup_timer()
+    assert "OnUnitActiveSec=6h" in timer
+    assert "OnBootSec=6h" in timer
+    assert "Unit=workagent-backup.service" in timer
+    assert "WantedBy=timers.target" in timer
+
+
+def test_install_backup_dry_run(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    out = _svc.install_backup(dry_run=True)
+    assert out["dry_run"] is True
+    assert not _svc.backup_unit_path().exists()
+    assert not _svc.backup_timer_path().exists()
+    assert any("workagent-backup.timer" in a for a in out["actions"])
+
+
+def test_run_scheduled_prunes(tmp_path, monkeypatch):
+    from workagent import cli_backup, store_sqlite as sq
+    monkeypatch.setattr(sq, "db_path", lambda *a, **k: tmp_path / "s.db")
+    monkeypatch.setattr(cli_backup, "_db", lambda: tmp_path / "s.db")
+    from workagent import store_backup as _b
+    monkeypatch.setattr(_b, "default_backup_path",
+                        lambda: tmp_path / "backup-actions-flows.json")
+    from typer.testing import CliRunner as _R
+    r = _R().invoke(cli.app, ["backup", "run-scheduled", "--keep", "2"])
+    assert r.exit_code == 0, r.output
+    r = _R().invoke(cli.app, ["backup", "run-scheduled", "--keep", "2"])
+    assert r.exit_code == 0, r.output
+    import time as _t
+    _t.sleep(1.1)
+    r = _R().invoke(cli.app, ["backup", "run-scheduled", "--keep", "2"])
+    assert r.exit_code == 0, r.output
+    kept = sorted((tmp_path).glob("backup-actions-flows-*.json"))
+    assert len(kept) == 2

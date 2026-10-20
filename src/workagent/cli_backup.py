@@ -82,3 +82,34 @@ def backup_import(
         _fail(f"cannot read backup {src}: {e}", 2)
     out = _b.import_backup(_db(), snapshot)
     _print_result({"imported": str(src), **out}, json_output)
+
+@backup_app.command("run-scheduled")
+@_catch_harness_errors
+def backup_run_scheduled(
+    keep: int = typer.Option(7, "--keep", help="Timestamped backups to keep (oldest pruned)."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Timer entrypoint: timestamped export + prune (non-interactive, no confirm)."""
+    import json
+    from datetime import datetime, timezone
+
+    from . import store_backup as _b
+    dest = _b.default_backup_path()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target = dest.parent / f"backup-actions-flows-{stamp}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    snapshot = _b.export_backup(_db())
+    target.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False)
+                      + "\n", encoding="utf-8")
+    files = sorted(target.parent.glob("backup-actions-flows-*.json"))
+    pruned = 0
+    for stale in files[:-max(keep, 1)]:
+        try:
+            stale.unlink()
+            pruned += 1
+        except OSError as e:
+            eprint(f"prune {stale} failed: {e}")
+    _print_result({"exported": str(target),
+                   "actions": len(snapshot["actions"]),
+                   "flow_templates": len(snapshot["flow_templates"]),
+                   "pruned": pruned}, json_output)

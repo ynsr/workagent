@@ -13,7 +13,14 @@ import sys
 import typer
 
 from . import service as _svc
-from .cli_core import EXIT_GENERAL, EXIT_USAGE, _catch_harness_errors, _fail, app, eprint
+from .cli_core import (
+    EXIT_GENERAL,
+    EXIT_USAGE,
+    _catch_harness_errors,
+    _fail,
+    app,
+    eprint,
+)
 
 service_app = typer.Typer(help="Run the web UI as a user systemd service (auto-start on login).",
                           no_args_is_help=True)
@@ -48,6 +55,7 @@ def service_install(
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    no_backup: bool = typer.Option(False, "--no-backup", help="Skip the 6h backup timer."),
 ) -> None:
     """Install + enable the user service (auto-start on login, linger on)."""
     resolved = _resolve_port(port)
@@ -55,7 +63,7 @@ def service_install(
     from .webapp import _is_loopback
     if not _is_loopback(host):
         eprint(f"warning: non-loopback bind {host} is unauthenticated — see the README security note.")
-    result = _svc.install(host, resolved, yes=yes, dry_run=dry_run)
+    result = _svc.install(host, resolved, yes=yes, dry_run=dry_run, backup=not no_backup)
     if json_output:
         print(json.dumps(result))
         return
