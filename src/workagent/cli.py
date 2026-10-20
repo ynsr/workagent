@@ -353,7 +353,13 @@ def completions_install(
 
 def main() -> None:
     _completions.ensure_completion_classes()  # typer 0.27: harness server needs registered classes
-    argv, harness_args = _split_harness_args(sys.argv[1:])
+    # watch-and-exec owns its argv after -- (backend shim); the harness-args
+    # split must not strip it or the shim sees an empty argv (exit 2).
+    raw = sys.argv[1:]
+    if raw[:1] == ["watch-and-exec"]:
+        argv, harness_args = raw, []
+    else:
+        argv, harness_args = _split_harness_args(raw)
     _HARNESS_ARGS[:] = harness_args
     warn = _doctor.dev_warning()
     if warn:

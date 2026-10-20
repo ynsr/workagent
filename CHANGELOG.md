@@ -523,3 +523,4 @@
 - GitHub (`gh`) + GitLab (`glab`) issue/PR fetching; `omp` harness (v1 only).
 - State in `~/.config/harness/`; `git-wt` via subprocess.
 - Cleanup/link-remove soft-delete by default (7-day `link undelete` window; `serve` GCs expired; `--hard-delete` skips) [no-issue]
+- Fix `watch-and-exec` shim argv stripped by `--` harness-args split [no-issue]
