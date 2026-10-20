@@ -107,12 +107,14 @@ function StepConfigForm({
   onChange,
   idPrefix,
   hints,
+  requiredRepo,
 }: {
   kind: string
   config: Record<string, unknown>
   onChange: (next: Record<string, unknown>) => void
   idPrefix: string
   hints?: Record<string, unknown>
+  requiredRepo?: boolean
 }) {
   const [advanced, setAdvanced] = useState(false)
   const hintRunMode = typeof hints?.run_mode === "string" ? String(hints.run_mode) : "headless"
@@ -165,20 +167,29 @@ function StepConfigForm({
       {showRepo ? (
         <div className="grid gap-1.5 sm:col-span-2">
           <Label htmlFor={`${idPrefix}-repo`}>
-            Repository{hints ? (hintRepo ? ` (template: ${hintRepo})` : "") : " (optional)"}
+            Repository
+            {requiredRepo
+              ? <span className="text-destructive"> *</span>
+              : hints ? (hintRepo ? ` (template: ${hintRepo})` : "") : " (optional)"}
           </Label>
           <SearchableSelect
             id={`${idPrefix}-repo`}
             value={repo || hintRepo}
             options={repoNames}
             onChange={(v) => patch("repo", v)}
-            placeholder={hintRepo || "Select a repo… (optional)"}
+            placeholder={hintRepo || (requiredRepo ? "Select a repo… (required)" : "Select a repo… (optional)")}
             allowCustom
           />
           {!repo && !hintRepo ? (
-            <p className="text-xs text-muted-foreground">
-              Optional — when empty, the issue's linked repo is used (you may be asked to pick one).
-            </p>
+            requiredRepo ? (
+              <p className="text-[13px] text-destructive" role="alert">
+                Repository is required to run this flow.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Optional — when empty, the issue's linked repo is used (you may be asked to pick one).
+              </p>
+            )
           ) : null}
         </div>
       ) : null}
@@ -405,6 +416,7 @@ export function ChainEditor({
                   hints={step.config ?? {}}
                   onChange={(next) => setOverride(i, next)}
                   idPrefix={`chain-override-${i}`}
+                  requiredRepo={step.kind === "start"}
                 />
               )}
             </li>

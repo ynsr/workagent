@@ -63,17 +63,16 @@ export function FlowWizard({
         <Button
           size="sm"
           onClick={() => void handleConfirm()}
-          disabled={running || sorted.length === 0}
-          title={repoMissing ? "No repo set — the linked repo is used, or you are asked to pick one" : undefined}
+          disabled={running || sorted.length === 0 || repoMissing}
+          title={repoMissing ? "Select a Repository on the Start step to run" : undefined}
         >
           {running ? "Starting…" : sorted.length > 1 ? `Run on ${sorted.length} worktrees` : "Run flow"}
         </Button>
       }
     >
       {repoMissing ? (
-        <p className="mb-2 text-[13px] text-muted-foreground">
-          No Repository set on the Start step — the issue's linked repo is used
-          (you may be asked to pick one).
+        <p className="mb-2 text-[13px] text-destructive" role="alert">
+          Repository is required on the Start step — select one below to enable Run flow.
         </p>
       ) : null}
       <ChainEditor
