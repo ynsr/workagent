@@ -14,7 +14,7 @@ import { useActions, useCreateRun } from "@/lib/queries"
 
 /** Dashboard top-bar dropdown: run a custom action on each selected
  * worktree (one run per worktree). Disabled until ≥1 row is selected. */
-export function ActionsMenu({ selected }: { selected: Set<string> }) {
+export function ActionsMenu({ selected, compact = false }: { selected: Set<string>; compact?: boolean }) {
   const navigate = useNavigate()
   const createRun = useCreateRun()
   const { data } = useActions()
@@ -45,6 +45,21 @@ export function ActionsMenu({ selected }: { selected: Set<string> }) {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
+        {compact ? (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={selected.size === 0}
+            title={
+              selected.size > 0
+                ? `Run a custom action on ${[...selected][0]}`
+                : "No worktree"
+            }
+          >
+            <Zap aria-hidden className="size-4" />
+            Actions
+          </Button>
+        ) : (
         <Button
           variant="outline"
           size="sm"
@@ -58,6 +73,7 @@ export function ActionsMenu({ selected }: { selected: Set<string> }) {
           <Zap aria-hidden />
           {selected.size > 0 ? `Actions (${selected.size})` : "Actions"}
         </Button>
+        )}
       </PopoverTrigger>
       <PopoverContent className="w-64 p-1" align="end">
         {actions.length === 0 ? (

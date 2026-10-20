@@ -1,6 +1,6 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { toast } from "sonner"
-import { Copy, FolderOpen, History, Rocket } from "lucide-react"
+import { Copy, FolderOpen, History, Rocket, Workflow } from "lucide-react"
 import type { WorktreeEntry } from "@/lib/api"
 import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label"
 import { CiBadge } from "@/components/StateBadge"
 import { CopyCell } from "@/components/CopyCell"
 import { ReviewsCell } from "@/components/StatusCells"
+import { ActionsMenu } from "@/components/ActionsMenu"
 import { copyToClipboard } from "@/lib/format"
 import { errorText } from "@/components/StatusFeedback"
 /** Editable subset rendered in edit mode; strings are trimmed by the caller. */
@@ -42,6 +43,7 @@ export function WorktreeDetail({
   onOpenWorktree,
   onOpenRun,
   onOpenSessions,
+  onOpenFlows,
   rowActions,
   networkExposed = false,
 }: {
@@ -53,10 +55,17 @@ export function WorktreeDetail({
   onOpenWorktree?: (key: string) => void
   onOpenRun?: (key: string) => void
   onOpenSessions?: (key: string) => void
+  /** Navigate to the Flows page filtered to this worktree. */
+  onOpenFlows?: (key: string) => void
   /** Row actions rendered as the dialog "Actions" row (Sync/Review/Fix/…); omitted in edit mode. */
   rowActions?: React.ReactNode
   networkExposed?: boolean
 }) {
+  // ActionsMenu takes the Dashboard selection set; scope it to this worktree.
+  const scoped = useMemo(
+    () => new Set(worktreeKey ? [worktreeKey] : []),
+    [worktreeKey],
+  )
   const [draft, setDraft] = useState<WorktreeDetailDraft>(() => ({
     branch: entry.branch ?? "",
     worktree: entry.worktree ?? "",
@@ -260,6 +269,17 @@ export function WorktreeDetail({
             Sessions
           </Button>
         ) : null}
+        {worktreeKey && onOpenFlows ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenFlows(worktreeKey)}
+          >
+            <Workflow aria-hidden className="size-4" />
+            Flows
+          </Button>
+        ) : null}
+        {worktreeKey ? <ActionsMenu selected={scoped} compact /> : null}
         <span className="flex-1" />
         <Button variant="outline" size="sm" onClick={onClose}>
           Close

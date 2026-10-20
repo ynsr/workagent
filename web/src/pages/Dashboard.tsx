@@ -433,6 +433,8 @@ export function Dashboard() {
     onOpenRun: handleOpenRun,
     onOpenSessions: (key: string) =>
       navigate("/sessions?worktree=" + encodeURIComponent(key)),
+    onOpenFlows: (key: string) =>
+      navigate("/flows?worktree=" + encodeURIComponent(key)),
   }
   const invalidCount = worktrees
     ? Object.values(worktrees).filter((e) => e.wt_valid === false).length
