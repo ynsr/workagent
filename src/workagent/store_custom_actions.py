@@ -132,10 +132,14 @@ def create_action(db: Path, *, name: str, label: str = "",
 
 
 def update_action(db: Path, label: str, **fields) -> dict:
-    """Update mutable fields (name/icon/prompt/pre/post/options); bumps modified_at."""
+    """Update mutable fields (name/icon/prompt/pre/post/options); bumps modified_at.
+
+    Pass ``new_label`` to rename the action (``^[a-z0-9_]+$``; collisions
+    rejected with HarnessError exit 2).
+    """
     from .errors import HarnessError
     allowed = {"name", "icon", "prompt", "pre_execution", "post_execution",
-               "default_options"}
+               "default_options", "new_label"}
     unknown = set(fields) - allowed
     if unknown:
         raise HarnessError(f"unknown fields: {sorted(unknown)}", exit_code=2)
@@ -150,6 +154,7 @@ def update_action(db: Path, label: str, **fields) -> dict:
     if "default_options" in fields and isinstance(fields["default_options"], str):
         fields["default_options"] = json.dumps(
             parse_default_options(fields["default_options"]))
+    new_label = fields.pop("new_label", None)
     with _connect(db) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.execute("SELECT * FROM custom_actions WHERE label = ?",
@@ -158,19 +163,36 @@ def update_action(db: Path, label: str, **fields) -> dict:
         if existing is None:
             raise HarnessError(f"unknown action label: {label!r}",
                                exit_code=2)
+        target = label
+        if new_label is not None and new_label != label:
+            try:
+                validate_label(new_label)
+            except ValueError as e:
+                raise HarnessError(str(e), exit_code=2) from None
+            clash = conn.execute(
+                "SELECT 1 FROM custom_actions WHERE label = ?",
+                (new_label,)).fetchone()
+            if clash is not None:
+                raise HarnessError(
+                    f"action label {new_label!r} already exists", exit_code=2)
+            fields["label"] = new_label
+            target = new_label
         merged = {**dict(existing), **fields}
         if not (merged.get("prompt") or "").strip() \
                 and not (merged.get("pre_execution") or "").strip():
             raise HarnessError(
                 "at least one of prompt / pre_execution must stay set",
                 exit_code=2)
-        sets = ", ".join(f"{k} = ?" for k in fields) + ", modified_at = ?"
-        vals = [fields[k] if k != "default_options" or isinstance(fields[k], str)
-                else json.dumps(fields[k]) for k in fields]
+        if fields:
+            sets = ", ".join(f"{k} = ?" for k in fields) + ", modified_at = ?"
+            vals = [fields[k] if k != "default_options" or isinstance(fields[k], str)
+                    else json.dumps(fields[k]) for k in fields]
+        else:
+            sets, vals = "modified_at = ?", []
         conn.execute(f"UPDATE custom_actions SET {sets} WHERE label = ?",
                      (*vals, _now_iso(), label))
         r = conn.execute("SELECT * FROM custom_actions WHERE label = ?",
-                         (label,)).fetchone()
+                         (target,)).fetchone()
         return _row(r)
 
 

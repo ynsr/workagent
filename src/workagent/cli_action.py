@@ -162,9 +162,10 @@ def action_update(
     pre_execution: Optional[str] = typer.Option(None, "--pre-execution", help="New pre-harness shell script."),
     post_execution: Optional[str] = typer.Option(None, "--post-execution", help="New post-harness shell script."),
     default_options: Optional[str] = typer.Option(None, "--default-options", help='New JSON execution config ({"run_mode": ...}).'),
+    new_label: Optional[str] = typer.Option(None, "--new-label", help="Rename to a new label (^[a-z0-9_]+$; flow steps referencing it are rewritten)."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
-    """Update a custom action (label is immutable)."""
+    """Update a custom action (rename via --new-label; flow steps cascade)."""
     fields: dict = {}
     if name is not None:
         fields["name"] = name
@@ -178,6 +179,8 @@ def action_update(
         fields["post_execution"] = post_execution
     if default_options is not None:
         fields["default_options"] = default_options
+    if new_label is not None:
+        fields["new_label"] = new_label
     if not fields:
         _fail("nothing to update — pass at least one field flag", EXIT_USAGE)
     row = store.update_action(label, **fields)

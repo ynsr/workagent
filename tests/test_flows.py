@@ -125,3 +125,47 @@ def test_flow_crud_round_trip(tmp_path, monkeypatch):
     with pytest.raises(HarnessError) as ei:
         sf.update_flow(db, 99999, status="done")
     assert ei.value.exit_code == 2
+
+
+def test_template_rename_ok_and_retargets_flows(tmp_path, monkeypatch):
+    from workagent import store_flows as sf
+    db = tmp_path / "state.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    sf.create_template(db, name="End to End",
+                       steps=json.dumps([{"kind": "start"}, {"kind": "cleanup"}]))
+    sf.create_flow(db, template_label="end_to_end")
+    renamed = sf.update_template(db, "end_to_end", new_label="e2e_v2")
+    assert renamed["label"] == "e2e_v2"
+    assert sf.get_template(db, "end_to_end") is None
+    assert sf.get_template(db, "e2e_v2")["name"] == "End to End"
+    assert all(f["template_label"] == "e2e_v2" for f in sf.list_flows(db))
+
+
+def test_template_rename_collision_rejected(tmp_path, monkeypatch):
+    from workagent import store_flows as sf
+    db = tmp_path / "state.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    sf.create_template(db, name="One",
+                       steps=json.dumps([{"kind": "start"}, {"kind": "cleanup"}]))
+    sf.create_template(db, name="Two",
+                       steps=json.dumps([{"kind": "start"}, {"kind": "cleanup"}]))
+    with pytest.raises(HarnessError) as ei:
+        sf.update_template(db, "one", new_label="two")
+    assert ei.value.exit_code == 2
+    assert "two" in str(ei.value)
+
+
+def test_action_rename_rewrites_template_steps(tmp_path, monkeypatch):
+    from workagent import store, store_sqlite as sq
+    db = tmp_path / "state.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    sq.init_db(db)
+    store.create_action(name="Lint", label="lint", prompt="lint it")
+    store.create_template(name="Pipe",
+                          steps=json.dumps([{"kind": "start"},
+                                            {"kind": "action", "action_label": "lint"},
+                                            {"kind": "cleanup"}]))
+    row = store.update_action("lint", new_label="lint_v2")
+    assert row["label"] == "lint_v2"
+    tpl = store.get_template("pipe")
+    assert tpl["steps"][1]["action_label"] == "lint_v2"

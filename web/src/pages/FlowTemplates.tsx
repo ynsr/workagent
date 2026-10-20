@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import { Copy, Download, Pencil, Plus, Trash2, Workflow } from "lucide-react"
 import { ChainEditor, validateChain } from "@/components/ChainEditor"
 import { PageHeader } from "@/components/PageHeader"
+import { ScriptBlock, ScriptField } from "@/components/ScriptBlock"
 import {
   EmptyState,
   ErrorState,
@@ -43,17 +44,33 @@ export function FlowTemplates() {
   const { data: actionsData } = useActions()
   const templates = data?.templates ?? []
   const knownActions = (actionsData?.actions ?? []).map((a) => ({ label: a.label, name: a.name }))
-
   const [name, setName] = useState("")
+  const [label, setLabel] = useState("")
+  const [labelDirty, setLabelDirty] = useState(false)
   const [steps, setSteps] = useState<FlowStep[]>([])
   const [pre, setPre] = useState("")
   const [post, setPost] = useState("")
   const [adding, setAdding] = useState(false)
   const [detail, setDetail] = useState<FlowTemplateRow | null>(null)
   const [editingLabel, setEditingLabel] = useState<string | null>(null)
+  const labelValid = /^[a-z0-9_]+$/.test(label)
+
+  function handleNameChange(value: string) {
+    setName(value)
+    if (editingLabel === null && !labelDirty) {
+      setLabel(value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/_{2,}/g, "_"))
+    }
+  }
+
+  function handleLabelChange(value: string) {
+    setLabel(value)
+    setLabelDirty(true)
+  }
 
   function reset() {
     setName("")
+    setLabel("")
+    setLabelDirty(false)
     setSteps([])
     setPre("")
     setPost("")
@@ -61,7 +78,7 @@ export function FlowTemplates() {
   }
 
   async function handleAdd() {
-    if (!name.trim() || validateChain(steps).length > 0) return
+    if (!name.trim() || !labelValid || validateChain(steps).length > 0) return
     setAdding(true)
     try {
       const isEdit = editingLabel !== null
@@ -72,6 +89,7 @@ export function FlowTemplates() {
           ? [
               "template", "update", editingLabel,
               "--name", name.trim(),
+              ...(label !== editingLabel ? ["--new-label", label] : []),
               "--steps", JSON.stringify(steps),
               "--pre-execution", pre,
               "--post-execution", post,
@@ -79,6 +97,7 @@ export function FlowTemplates() {
           : [
               "template", "add",
               "--name", name.trim(),
+              "--label", label,
               "--steps", JSON.stringify(steps),
               ...(pre.trim() ? ["--pre-execution", pre.trim()] : []),
               ...(post.trim() ? ["--post-execution", post.trim()] : []),
@@ -99,6 +118,8 @@ export function FlowTemplates() {
     setDetail(null)
     setEditingLabel(row.label)
     setName(row.name)
+    setLabel(row.label)
+    setLabelDirty(false)
     setSteps(row.steps ?? [])
     setPre(row.pre_execution ?? "")
     setPost(row.post_execution ?? "")
@@ -152,7 +173,7 @@ export function FlowTemplates() {
   }
 
   const chainErrors = validateChain(steps)
-  const canSave = name.trim().length > 0 && steps.length > 0 && chainErrors.length === 0 && !adding
+  const canSave = name.trim().length > 0 && labelValid && steps.length > 0 && chainErrors.length === 0 && !adding
 
   return (
     <div>
@@ -244,8 +265,8 @@ export function FlowTemplates() {
             <CardTitle>{editingLabel ? `Edit ${editingLabel}` : "Add a template"}</CardTitle>
             <CardDescription>
               {editingLabel
-                ? "flow template update — the label stays fixed, all other fields are replaced."
-                : "flow template add --name creates the row; run it per worktree from the Dashboard."}
+                ? "flow template update replaces all fields; renaming the label retargets flow history."
+                : "flow template add --name --label creates the row; run it per worktree from the Dashboard."}
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
@@ -254,40 +275,31 @@ export function FlowTemplates() {
               <Input
                 id="flow-name"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => handleNameChange(e.target.value)}
                 placeholder="Full review cycle"
                 autoComplete="off"
                 spellCheck={false}
               />
             </div>
             <div className="grid gap-2">
+              <Label htmlFor="flow-label">Label</Label>
+              <Input
+                id="flow-label"
+                value={label}
+                onChange={(e) => handleLabelChange(e.target.value)}
+                placeholder="full_review_cycle"
+                autoComplete="off"
+                spellCheck={false}
+                className="font-mono text-[13px]"
+              />
+              <p className="text-xs text-muted-foreground">Lowercase letters, digits, underscores only (^[a-z0-9_]+$).</p>
+            </div>
+            <div className="grid gap-2">
               <Label>Steps</Label>
               <ChainEditor mode="edit" steps={steps} onChange={setSteps} knownActions={knownActions} />
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="flow-pre">Pre-execution script</Label>
-              <Input
-                id="flow-pre"
-                value={pre}
-                onChange={(e) => setPre(e.target.value)}
-                placeholder="make lint"
-                autoComplete="off"
-                spellCheck={false}
-                className="font-mono text-[13px]"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="flow-post">Post-execution script</Label>
-              <Input
-                id="flow-post"
-                value={post}
-                onChange={(e) => setPost(e.target.value)}
-                placeholder="make test"
-                autoComplete="off"
-                spellCheck={false}
-                className="font-mono text-[13px]"
-              />
-            </div>
+            <ScriptField id="flow-pre" label="Pre-execution script" value={pre} onChange={setPre} placeholder={"#!/bin/bash\nmake lint"} />
+            <ScriptField id="flow-post" label="Post-execution script" value={post} onChange={setPost} placeholder={"#!/bin/bash\nmake test"} />
             <div className="flex gap-2">
               <Button className="flex-1" onClick={() => void handleAdd()} disabled={!canSave}>
                 <Plus aria-hidden />
@@ -328,13 +340,13 @@ export function FlowTemplates() {
           {detail.pre_execution ? (
             <div className="grid gap-1 text-sm">
               <span className="font-medium">Pre-execution</span>
-              <code className="rounded-md border p-2 font-mono text-xs">{detail.pre_execution}</code>
+              <ScriptBlock code={detail.pre_execution} />
             </div>
           ) : null}
           {detail.post_execution ? (
             <div className="grid gap-1 text-sm">
               <span className="font-medium">Post-execution</span>
-              <code className="rounded-md border p-2 font-mono text-xs">{detail.post_execution}</code>
+              <ScriptBlock code={detail.post_execution} />
             </div>
           ) : null}
         </ActionDialog>

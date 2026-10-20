@@ -5,6 +5,7 @@ import { Copy, Download, Pencil, Plus, Trash2, Zap } from "lucide-react"
 import { ActionIcon } from "@/components/ActionIcon"
 import { IconPicker } from "@/components/IconPicker"
 import { PageHeader } from "@/components/PageHeader"
+import { ScriptBlock, ScriptField } from "@/components/ScriptBlock"
 import {
   EmptyState,
   ErrorState,
@@ -53,6 +54,8 @@ export function Actions() {
   const actions = data?.actions ?? []
 
   const [name, setName] = useState("")
+  const [label, setLabel] = useState("")
+  const [labelDirty, setLabelDirty] = useState(false)
   const [icon, setIcon] = useState("")
   const [prompt, setPrompt] = useState("")
   const [pre, setPre] = useState("")
@@ -61,17 +64,28 @@ export function Actions() {
   const [adding, setAdding] = useState(false)
   const [detail, setDetail] = useState<ActionRow | null>(null)
   const [editingLabel, setEditingLabel] = useState<string | null>(null)
-  // Label the typed name would map to (client mirror of normalize_label):
-  // typing a name whose label already exists switches the form to update mode.
-  const typedLabel = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/_{2,}/g, "")
-  const matched = typedLabel ? (actions.find((a) => a.label === typedLabel) ?? null) : null
-  const effectiveLabel = editingLabel ?? matched?.label ?? null
-  const isEdit = effectiveLabel !== null
+  const isEdit = editingLabel !== null
+  const labelValid = /^[a-z0-9_]+$/.test(label)
+
+  function handleNameChange(value: string) {
+    setName(value)
+    if (editingLabel === null && !labelDirty) {
+      setLabel(value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/_{2,}/g, "_"))
+    }
+  }
+
+  function handleLabelChange(value: string) {
+    setLabel(value)
+    setLabelDirty(true)
+  }
 
   function applyPreset(id: string) {
     const preset = ACTION_PRESETS.find((p) => p.id === id)
     if (!preset) return
     setName(preset.name)
+    if (editingLabel === null && !labelDirty) {
+      setLabel(preset.name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/_{2,}/g, "_"))
+    }
     setIcon(preset.icon)
     setPrompt(preset.prompt)
     setPre(preset.pre_execution)
@@ -81,6 +95,8 @@ export function Actions() {
 
   function reset() {
     setName("")
+    setLabel("")
+    setLabelDirty(false)
     setIcon("")
     setPrompt("")
     setPre("")
@@ -90,31 +106,16 @@ export function Actions() {
   }
 
   async function handleAdd() {
-    if (!name.trim() || (!prompt.trim() && !pre.trim())) return
-    // Implicit update (typed name collides with an existing label) needs an
-    // explicit confirm — explicit pencil-button edits already had one click.
-    if (isEdit && editingLabel === null && matched) {
-      const ok = await confirm({
-        action: "action update",
-        title: `Update action ${matched.name}?`,
-        description: "The name matches an existing action. Saving overwrites that action — the label stays fixed, all other fields are replaced.",
-        confirmLabel: "Update action",
-        details: [
-          { label: "Label", value: matched.label, mono: true },
-          { label: "Existing name", value: matched.name },
-          { label: "New name", value: name.trim() },
-        ],
-      })
-      if (!ok) return
-    }
+    if (!name.trim() || !labelValid || (!prompt.trim() && !pre.trim())) return
     setAdding(true)
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "action",
         args: isEdit
           ? [
-              "update", effectiveLabel as string,
+              "update", editingLabel as string,
               "--name", name.trim(),
+              ...(label !== editingLabel ? ["--new-label", label] : []),
               "--icon", icon.trim() || "Zap",
               "--prompt", prompt,
               "--pre-execution", pre,
@@ -124,6 +125,7 @@ export function Actions() {
           : [
               "add",
               "--name", name.trim(),
+              "--label", label,
               ...(icon.trim() ? ["--icon", icon.trim()] : []),
               ...(prompt.trim() ? ["--prompt", prompt.trim()] : []),
               ...(pre.trim() ? ["--pre-execution", pre.trim()] : []),
@@ -146,6 +148,8 @@ export function Actions() {
     setDetail(null)
     setEditingLabel(row.label)
     setName(row.name)
+    setLabel(row.label)
+    setLabelDirty(false)
     setIcon(row.icon === "Zap" ? "" : row.icon)
     setPrompt(row.prompt ?? "")
     setPre(row.pre_execution ?? "")
@@ -291,11 +295,11 @@ export function Actions() {
 
         <Card className="order-1 h-fit lg:order-2">
           <CardHeader>
-            <CardTitle>{isEdit ? `Update ${effectiveLabel}` : "Add an action"}</CardTitle>
+            <CardTitle>{isEdit ? `Update ${editingLabel}` : "Add an action"}</CardTitle>
             <CardDescription>
               {isEdit
-                ? "Name matches an existing action — saving runs action update (label stays fixed, all other fields replaced)."
-                : "action add --name creates the row; run it per worktree from the Dashboard."}
+                ? "action update replaces all fields; renaming the label cascades to flow steps."
+                : "action add --name --label creates the row; run it per worktree from the Dashboard."}
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
@@ -318,11 +322,24 @@ export function Actions() {
               <Input
                 id="action-name"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => handleNameChange(e.target.value)}
                 placeholder="Generate Post PRD"
                 autoComplete="off"
                 spellCheck={false}
               />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="action-label">Label</Label>
+              <Input
+                id="action-label"
+                value={label}
+                onChange={(e) => handleLabelChange(e.target.value)}
+                placeholder="generate_post_prd"
+                autoComplete="off"
+                spellCheck={false}
+                className="font-mono text-[13px]"
+              />
+              <p className="text-xs text-muted-foreground">Lowercase letters, digits, underscores only (^[a-z0-9_]+$).</p>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="action-icon">Icon</Label>
@@ -339,30 +356,8 @@ export function Actions() {
                 className="flex min-h-24 w-full rounded-md border border-input bg-transparent px-3 py-2 text-[13px] shadow-xs outline-none placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
               />
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="action-pre">Pre-execution script</Label>
-              <Input
-                id="action-pre"
-                value={pre}
-                onChange={(e) => setPre(e.target.value)}
-                placeholder="make lint"
-                autoComplete="off"
-                spellCheck={false}
-                className="font-mono text-[13px]"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="action-post">Post-execution script</Label>
-              <Input
-                id="action-post"
-                value={post}
-                onChange={(e) => setPost(e.target.value)}
-                placeholder="make test"
-                autoComplete="off"
-                spellCheck={false}
-                className="font-mono text-[13px]"
-              />
-            </div>
+            <ScriptField id="action-pre" label="Pre-execution script" value={pre} onChange={setPre} placeholder={"#!/bin/bash\nmake lint"} />
+            <ScriptField id="action-post" label="Post-execution script" value={post} onChange={setPost} placeholder={"#!/bin/bash\nmake test"} />
             <div className="grid gap-2">
               <Label htmlFor="action-mode">Default run mode</Label>
               <select
@@ -377,7 +372,7 @@ export function Actions() {
               </select>
             </div>
             <div className="flex gap-2">
-              <Button className="flex-1" onClick={() => void handleAdd()} disabled={!name.trim() || (!prompt.trim() && !pre.trim()) || adding}>
+              <Button className="flex-1" onClick={() => void handleAdd()} disabled={!name.trim() || !labelValid || (!prompt.trim() && !pre.trim()) || adding}>
                 {isEdit ? <Pencil aria-hidden /> : <Plus aria-hidden />}
                 {adding ? "Saving…" : isEdit ? "Update action" : "Add action"}
               </Button>
@@ -418,13 +413,13 @@ export function Actions() {
           {detail.pre_execution ? (
             <div className="grid gap-1 text-sm">
               <span className="font-medium">Pre-execution</span>
-              <code className="rounded-md border p-2 font-mono text-xs">{detail.pre_execution}</code>
+              <ScriptBlock code={detail.pre_execution} />
             </div>
           ) : null}
           {detail.post_execution ? (
             <div className="grid gap-1 text-sm">
               <span className="font-medium">Post-execution</span>
-              <code className="rounded-md border p-2 font-mono text-xs">{detail.post_execution}</code>
+              <ScriptBlock code={detail.post_execution} />
             </div>
           ) : null}
         </ActionDialog>

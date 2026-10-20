@@ -302,3 +302,25 @@ def test_run_action_skip_records_skipped_and_continues(monkeypatch):
         {"kind": "action", "status": "skipped", "detail": "nothing-ahead"},
         {"kind": "cleanup", "status": "ok", "detail": "cleaned"}]
     assert _json.loads(res.stdout) == {"flow": 9, "status": "done", "steps": 3}
+
+
+def test_template_update_new_label_passed_through(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    import json as _json
+    seen = {}
+
+    def _update(label, **fields):
+        seen.update({"label": label, **fields})
+        return {"id": 1, "label": fields.get("new_label", label),
+                "name": "Pipe"}
+
+    monkeypatch.setattr("workagent.store.update_template", _update)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["flow", "template", "update", "pipe",
+                         "--new-label", "pipe_v2", "--json"])
+    assert res.exit_code == 0, res.output
+    assert seen == {"label": "pipe", "new_label": "pipe_v2"}
+    assert _json.loads(res.stdout)["updated"] == "pipe_v2"

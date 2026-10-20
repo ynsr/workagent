@@ -296,3 +296,25 @@ def test_action_run_non_json_pre_changes_nothing(tmp_path, monkeypatch):
                                   {"k": entry})
     from workagent.cli_harness import append_extra_prompt as _aep
     assert seen["prompt"] == _aep(base, "EXTRA-BITS")
+
+
+def test_update_new_label_passed_through(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_action as cli_mod
+    seen = {}
+
+    def _update(label, **fields):
+        seen.update({"label": label, **fields})
+        return {"id": 1, "label": fields.get("new_label", label),
+                "name": "Foo"}
+
+    monkeypatch.setattr("workagent.store.update_action", _update)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["action", "update", "foo",
+                         "--new-label", "bar", "--json"])
+    assert res.exit_code == 0, res.output
+    assert seen == {"label": "foo", "new_label": "bar"}
+    import json as _json
+    assert _json.loads(res.stdout)["updated"] == "bar"

@@ -242,9 +242,15 @@ def create_template(db: Path, *, name: str, label: str = "",
 
 
 def update_template(db: Path, label: str, **fields) -> dict:
-    """Update mutable fields (name/steps/pre/post); bumps modified_at."""
+    """Update mutable fields (name/steps/pre/post); bumps modified_at.
+
+    Pass ``new_label`` to rename the template (``^[a-z0-9_]+$``; collisions
+    rejected with HarnessError exit 2). ``flows.template_label`` history
+    rows are retargeted to the new label in the same connection.
+    """
     from .errors import HarnessError
-    allowed = {"name", "steps", "pre_execution", "post_execution"}
+    allowed = {"name", "steps", "pre_execution", "post_execution",
+               "new_label"}
     unknown = set(fields) - allowed
     if unknown:
         raise HarnessError(f"unknown fields: {sorted(unknown)}",
@@ -254,6 +260,7 @@ def update_template(db: Path, label: str, **fields) -> dict:
     if "steps" in fields:
         norm = validate_template(fields["steps"])
         fields["steps"] = json.dumps(norm)
+    new_label = fields.pop("new_label", None)
     with _connect(db) as conn:
         conn.row_factory = sqlite3.Row
         existing = conn.execute(
@@ -262,13 +269,35 @@ def update_template(db: Path, label: str, **fields) -> dict:
         if existing is None:
             raise HarnessError(f"unknown template label: {label!r}",
                                exit_code=2)
+        target = label
+        if new_label is not None and new_label != label:
+            try:
+                validate_label(new_label)
+            except ValueError as e:
+                raise HarnessError(str(e), exit_code=2) from None
+            clash = conn.execute(
+                "SELECT 1 FROM flow_templates WHERE label = ?",
+                (new_label,)).fetchone()
+            if clash is not None:
+                raise HarnessError(
+                    f"template label {new_label!r} already exists",
+                    exit_code=2)
+            fields["label"] = new_label
+            target = new_label
         if "name" in fields:
             fields["name"] = fields["name"].strip()
-        sets = ", ".join(f"{k} = ?" for k in fields) + ", modified_at = ?"
-        conn.execute(f"UPDATE flow_templates SET {sets} WHERE label = ?",
-                     (*fields.values(), _now_iso(), label))
+        if fields:
+            sets = ", ".join(f"{k} = ?" for k in fields) + ", modified_at = ?"
+            conn.execute(f"UPDATE flow_templates SET {sets} WHERE label = ?",
+                         (*fields.values(), _now_iso(), label))
+        else:
+            conn.execute("UPDATE flow_templates SET modified_at = ? WHERE label = ?",
+                         (_now_iso(), label))
+        if target != label:
+            conn.execute("UPDATE flows SET template_label = ? WHERE template_label = ?",
+                         (target, label))
         r = conn.execute("SELECT * FROM flow_templates WHERE label = ?",
-                         (label,)).fetchone()
+                         (target,)).fetchone()
         return _row(r)
 
 

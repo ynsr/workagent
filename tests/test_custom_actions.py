@@ -76,3 +76,42 @@ def test_label_collision_names_holder(tmp_path):
         assert "foo_bar" in str(e)
     else:
         raise AssertionError("expected HarnessError")
+
+
+def test_rename_ok(tmp_path):
+    from workagent import store_custom_actions as ca
+    db = _db(tmp_path)
+    ca.create_action(db, name="Foo", label="foo", prompt="p")
+    renamed = ca.update_action(db, "foo", new_label="bar")
+    assert renamed["label"] == "bar"
+    assert ca.get_action(db, "foo") is None
+    assert ca.get_action(db, "bar")["name"] == "Foo"
+
+
+def test_rename_collision_rejected(tmp_path):
+    from workagent import store_custom_actions as ca
+    from workagent.errors import HarnessError
+    db = _db(tmp_path)
+    ca.create_action(db, name="Foo", label="foo", prompt="p")
+    ca.create_action(db, name="Bar", label="bar", prompt="p")
+    try:
+        ca.update_action(db, "foo", new_label="bar")
+    except HarnessError as e:
+        assert e.exit_code == 2
+        assert "bar" in str(e)
+    else:
+        raise AssertionError("expected HarnessError")
+
+
+def test_rename_invalid_label_rejected(tmp_path):
+    from workagent import store_custom_actions as ca
+    from workagent.errors import HarnessError
+    db = _db(tmp_path)
+    ca.create_action(db, name="Foo", label="foo", prompt="p")
+    for bad in ("Bad Label!", "HAS SPACE", ""):
+        try:
+            ca.update_action(db, "foo", new_label=bad)
+        except (HarnessError, ValueError) as e:
+            assert getattr(e, "exit_code", 2) == 2
+        else:
+            raise AssertionError(f"expected rejection for {bad!r}")

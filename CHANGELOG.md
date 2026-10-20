@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Actions + flow templates: edit forms gain an editable Label (auto-slug, rename via `--new-label` cascading to flow steps / flow history), compact multi-line pre/post textareas, details show shebang-detected (bash/python/powershell) highlighted scripts [no-issue]
 - Scheduled backups: `workagent-backup.timer` runs `backup run-scheduled` every 6h (timestamped files, keeps 7); coupled to `service install/uninstall` with `--no-backup` opt-out [no-issue]
 - Pre-exec exit-0 may print `{"append_prompt": "..."}` on stdout (last JSON line wins); appended between base prompt and --extra-prompt in action run + flows; Open MR preset reports resolved base branch via it [no-issue]
 - `backup export/import`: JSON snapshot of custom actions + flow templates in config dir; import replaces tables (confirm-gated, --yes), validates every row [no-issue]

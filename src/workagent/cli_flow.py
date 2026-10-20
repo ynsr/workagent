@@ -94,9 +94,10 @@ def template_update(
     steps: Optional[str] = typer.Option(None, "--steps", help="New JSON step list."),
     pre_execution: Optional[str] = typer.Option(None, "--pre-execution", help="New pre-flow shell script."),
     post_execution: Optional[str] = typer.Option(None, "--post-execution", help="New post-flow shell script."),
+    new_label: Optional[str] = typer.Option(None, "--new-label", help="Rename to a new label (^[a-z0-9_]+$; flows history retargeted)."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
-    """Update a flow template (label is immutable)."""
+    """Update a flow template (rename via --new-label; flows history retargeted)."""
     fields: dict = {}
     if name is not None:
         fields["name"] = name
@@ -106,6 +107,8 @@ def template_update(
         fields["pre_execution"] = pre_execution
     if post_execution is not None:
         fields["post_execution"] = post_execution
+    if new_label is not None:
+        fields["new_label"] = new_label
     if not fields:
         _fail("nothing to update — pass at least one field flag", EXIT_USAGE)
     row = store.update_template(label, **fields)

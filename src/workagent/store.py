@@ -736,9 +736,27 @@ def create_action(**fields) -> dict:
 
 
 def update_action(label: str, **fields) -> dict:
-    """Update a custom action (delegates to store_custom_actions)."""
+    """Update a custom action (rename via new_label; flow steps cascade)."""
     from . import store_sqlite as _sq
-    return _ca.update_action(_sq.db_path(), label, **fields)
+    db = _sq.db_path()
+    row = _ca.update_action(db, label, **fields)
+    new_label = fields.get("new_label")
+    if new_label is not None and new_label != label:
+        for t in _fl.list_templates(db):
+            steps = t.get("steps") or []
+            if not isinstance(steps, list):
+                try:
+                    steps = json.loads(steps)
+                except (TypeError, ValueError):
+                    continue
+            if not any(isinstance(s, dict) and s.get("action_label") == label
+                       for s in steps):
+                continue
+            new_steps = [dict(s, action_label=new_label)
+                         if isinstance(s, dict) and s.get("action_label") == label
+                         else s for s in steps]
+            _fl.update_template(db, t["label"], steps=json.dumps(new_steps))
+    return row
 
 
 def delete_action(label: str) -> None:

@@ -118,7 +118,7 @@ Candidates/Launch issue fetch per tracker — `tracker add
   "created_at": "…", "modified_at": "…"}]}
 ```
 (CRUD page source: `action add/list/show/update/delete` run as runs; detail 404s
-on unknown label. `action run <label> <ref>` runs via `POST /api/runs`
+on unknown label. `action update OLD [--new-label NEW] ...` renames the label (flow steps cascade). Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection. `action run <label> <ref>` runs via `POST /api/runs`
 with target key `action:<label>:<ref>` — one run per worktree, fanned out
 by the Dashboard Actions dropdown.)
 
@@ -131,10 +131,9 @@ by the Dashboard Actions dropdown.)
   "created_at": "…", "modified_at": "…"}]}
 ```
 (Flow page source: `flow template add/list/show/update/delete` run as runs; detail 404s
-on unknown label. `flow run TEMPLATE REF [--step-config JSON] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`
+on unknown label. `flow template update OLD [--new-label NEW] ...` renames the label (flow history retargeted). Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection. `flow run TEMPLATE REF [--step-config JSON] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`
 with target key `flow:<template>:<ref>` — one run per template+worktree pair; `flow list [--worktree REF] [--json/--csv]`
 and `flow show ID [--json]` run as runs. `GET /api/flows?worktree=` scopes the run list to one worktree.)
-
 ### `GET /api/links`
 ```json
 {"trackers": {"jira:IPG": {"repos": ["/home/x/projects/projectx"]}},
