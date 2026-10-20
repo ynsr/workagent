@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Preset actions: `Start from preset` dropdown pre-fills the Actions form (first: Open MR with base-resolving pre-exec); pre/post exit 10 = skipped with SKIP: reason, flows continue past skipped action steps [no-issue]
 - Web `action add/update` + `flow template add/update` no longer need `confirm: true` (plain row writes); only run/delete stay confirm-gated [no-issue]
 - Flows: templates + runs chain Start → … → Cleanup → Release via wizard, dry-run/resume, CLI + web parity [no-issue]
 - `start --related-repo` fans out child worktrees per repo (same branch), prompt lists child paths + conditional MR suffix, cleanup cascades, web multi-select + StatusTable grouping [no-issue]
