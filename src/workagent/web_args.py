@@ -102,7 +102,7 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "flow run": ("--step-config",),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
-                                    "link": {"list", "set", "remove", "deactivate", "reactivate"},
+                                    "link": {"list", "set", "remove", "deactivate", "reactivate", "undelete"},
                                     "tracker": {"add", "list", "remove", "update"},
                                     "action": {"add", "list", "show", "run", "update", "delete"},
                                     "flow": {"template", "list", "show", "run"}}
