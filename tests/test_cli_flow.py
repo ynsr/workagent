@@ -131,7 +131,7 @@ def test_seam_start_calls_runner_headless_skips_preview(monkeypatch):
                         lambda *a, **k: calls.append((a, k)) or None)
     monkeypatch.setattr(m, "_resolve_ref", lambda ref: (ref, {}, None))
     out = m._run_start_step("jira:X-1", "wt-1", {"launch": True}, False)
-    assert calls and calls[0][0][0] == "wt-1"
+    assert calls and calls[0][0][0] == "jira:X-1"
     assert calls[0][1].get("launch") is True and calls[0][1].get("no_tty") is True
     assert "preview" not in out and out["status"] == "started"
     before = len(calls)

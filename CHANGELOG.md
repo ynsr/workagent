@@ -526,3 +526,4 @@
 - Fix `watch-and-exec` shim argv stripped by `--` harness-args split [no-issue]
 - Fix web `link undelete` rejected by subcommand allowlist [no-issue]
 - Fix flow headless steps execing interactively: force `no_tty` in seams [no-issue]
+- Fix flow start step passing worktree key instead of issue ref [no-issue]

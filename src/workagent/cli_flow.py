@@ -198,11 +198,9 @@ def _run_start_step(ref: str, key: str, config: dict,
     if not _headless(config):
         return _manual_step("start", [ref])
     from . import cli_start as _mod
-    target = key or ref
-    try:
-        target = _resolve_ref(target)[0] or target
-    except HarnessError:
-        pass
+    # Pass the original issue ref: start resolves links itself and adopts
+    # the existing worktree (pre-resolving to a key breaks parse_ref).
+    target = ref
     out = _call(_mod.start.__wrapped__, target, yes=True, launch=True,
                 no_tty=True, json_output=json_output,
                 **_pick(config, "repo", "related_repo", "depth",
