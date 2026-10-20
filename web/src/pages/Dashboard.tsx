@@ -457,10 +457,10 @@ export function Dashboard() {
             <Button variant="outline" size="sm" onClick={handleSyncAll} title={selCount > 0 ? `Sync ${selCount} selected worktrees` : "Sync every active linked worktree"}>
               {scopeLabel("Sync")}
             </Button>
-            <span aria-hidden className="mx-1 h-6 w-px self-center bg-border" />
+            <span aria-hidden className="mx-1 hidden h-6 w-px self-center bg-border sm:block" />
             <ActionsMenu selected={selected} />
             <FlowsMenu selected={selected} />
-            <span aria-hidden className="mx-1 h-6 w-px self-center bg-border" />
+            <span aria-hidden className="mx-1 hidden h-6 w-px self-center bg-border sm:block" />
             <Button variant="outline" size="sm" onClick={handleReviewAll} title={selCount > 0 ? `Review ${selCount} selected worktrees` : "Review every active linked worktree"}>
               {scopeLabel("Review")}
             </Button>

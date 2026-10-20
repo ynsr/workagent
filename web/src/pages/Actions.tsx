@@ -79,6 +79,22 @@ export function Actions() {
 
   async function handleAdd() {
     if (!name.trim() || (!prompt.trim() && !pre.trim())) return
+    // Implicit update (typed name collides with an existing label) needs an
+    // explicit confirm — explicit pencil-button edits already had one click.
+    if (isEdit && editingLabel === null && matched) {
+      const ok = await confirm({
+        action: "action update",
+        title: `Update action ${matched.name}?`,
+        description: "The name matches an existing action. Saving overwrites that action — the label stays fixed, all other fields are replaced.",
+        confirmLabel: "Update action",
+        details: [
+          { label: "Label", value: matched.label, mono: true },
+          { label: "Existing name", value: matched.name },
+          { label: "New name", value: name.trim() },
+        ],
+      })
+      if (!ok) return
+    }
     setAdding(true)
     try {
       const { run_id } = await createRun.mutateAsync({
