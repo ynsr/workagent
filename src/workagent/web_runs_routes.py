@@ -240,18 +240,17 @@ def register_runs_routes(app, registry) -> None:
                 and not _has_session_file(body.command, body.args):
             # Preview (no --launch) gets a path too: the CLI preview carries it as
             # --resume (creating nothing), so resume/copy buttons work once
-            # the user runs the printed command manually. Fix-continue runs
-            # reuse the latest finished review transcript instead of a fresh
-            # id (a minted file would shadow it: explicit --session-file
-            # always wins in the CLI). Fresh fix sessions (--new-fix-session)
-            # keep the minted path: the child links back via
-            # fixed_from_session_id.
+            # the user runs the printed command manually. Fix runs default to
+            # a fresh minted path (the child links back via
+            # fixed_from_session_id); --use-review-session reuses the latest
+            # finished review transcript instead (explicit --session-file
+            # always wins in the CLI).
             from . import store as _store
             from . import store_sqlite as _sq
             from . import worktrees as _worktrees_mod
             session_file = ""
             if body.command == "review" and "--fix-comments" in body.args \
-                    and "--new-fix-session" not in body.args:
+                    and "--use-review-session" in body.args:
                 ref = _first_positional(body.args, VAL_FLAGS["review"])
                 links = _store.load_links()
                 resolved = _worktrees_mod.resolve_worktree(ref, links)

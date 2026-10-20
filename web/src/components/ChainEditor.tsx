@@ -132,13 +132,13 @@ function StepConfigForm({
   const hintRelated = strList(hints?.related_repo)
   const extraPrompt = typeof config.extra_prompt === "string" ? String(config.extra_prompt) : ""
   const hintExtraPrompt = typeof hints?.extra_prompt === "string" ? String(hints.extra_prompt) : ""
-  const newFixSession = config.new_fix_session === true
-  const hintNewFixSession = hints?.new_fix_session === true
+  const useReviewSession = config.use_review_session === true
+  const hintUseReviewSession = hints?.use_review_session === true
   // Chevron badge: how many advanced (collapsed) fields carry a value.
   const advancedCount = (flags ? 1 : 0) + (extraPrompt ? 1 : 0)
   // Per-kind named fields (mirrors the cli_flow _pick allowlists):
   // start → related_repo + extra_prompt; review/fix_comments/action → extra_prompt;
-  // fix_comments → new_fix_session checkbox (default off: reuse review transcript).
+  // fix_comments → use_review_session checkbox (default off: fresh fix session).
   const showRelated = kind === "start"
   const showRepo = kind === "start"
   const showExtraPrompt = kind === "start" || kind === "review" || kind === "fix_comments" || kind === "action"
@@ -201,11 +201,11 @@ function StepConfigForm({
           <input
             id={`${idPrefix}-new-session`}
             type="checkbox"
-            checked={newFixSession}
-            onChange={(e) => patch("new_fix_session", e.target.checked || undefined)}
+            checked={useReviewSession}
+            onChange={(e) => patch("use_review_session", e.target.checked || undefined)}
             className="size-4 accent-current"
           />
-          Create a new session{hintNewFixSession ? " (template: on)" : " (default: reuse review transcript)"}
+          Use review session{hintUseReviewSession ? " (template: on)" : " (default: fresh fix session)"}
         </label>
       ) : null}
       <div className="sm:col-span-2">

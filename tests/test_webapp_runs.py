@@ -131,10 +131,10 @@ def test_mirror_run_stamps_fix_metadata(client):
                             prompt="p", file_path="/s/rev-1.jsonl", session_id="rev-1",
                             session_type="review")
     sq.finish_session(db, "rev-1", "finished")
-    run = client.app.state.registry.create("review", ["k", "--fix-comments"], "review:k")
+    run = client.app.state.registry.create("review", ["k", "--fix-comments", "--use-review-session"], "review:k")
     run.session_file = "/s/rev-1.jsonl"
     run.argv = ["python", "-m", "workagent", "review", "k", "--fix-comments",
-                "--launch", "--session-file", "/s/rev-1.jsonl"]
+                "--use-review-session", "--launch", "--session-file", "/s/rev-1.jsonl"]
     run.exit_code = 0
     _wr._mirror_run(run)
     md = sq.get_session(db, sid)["metadata"]
@@ -156,10 +156,10 @@ def test_mirror_run_failure_leaves_fix_metadata(client):
                             session_type="review",
                             metadata={"review_comments_fixed_at": "old", "fixed_by_run_id": "old-run"})
     sq.finish_session(db, "rev-9", "finished")
-    run = client.app.state.registry.create("review", ["k2", "--fix-comments"], "review:k2")
+    run = client.app.state.registry.create("review", ["k2", "--fix-comments", "--use-review-session"], "review:k2")
     run.session_file = "/s/rev-9.jsonl"
     run.argv = ["python", "-m", "workagent", "review", "k2", "--fix-comments",
-                "--launch", "--session-file", "/s/rev-9.jsonl"]
+                "--use-review-session", "--launch", "--session-file", "/s/rev-9.jsonl"]
     run.exit_code = 1
     _wr._mirror_run(run)
     md = sq.get_session(db, sid)["metadata"]
@@ -182,13 +182,10 @@ def test_api_review_session_returns_latest(client):
     assert r.json() == {"ref": "rk2", "session_id": "rev-2", "file_path": "/s/rev-2.jsonl"}
 
 
-def test_review_fix_comments_reuses_review_transcript(client, monkeypatch):
-    """Fix-continue runs reuse the latest review transcript, not a fresh id.
+def test_review_fix_comments_defaults_to_fresh_session(client, monkeypatch):
+    """Fix runs default to a fresh minted path (linked back via metadata).
 
-    Regression: the server minted a fresh --session-file for preview
-    fix-comments runs; explicit --session-file always wins in the CLI, so
-    the minted file shadowed the finished review transcript and omp
-    resumed an empty/new session instead of the review one.
+    Only --use-review-session reuses the latest review transcript.
     """
     from workagent import store_sqlite as sq
     from workagent import store as _store
@@ -216,14 +213,14 @@ def test_review_fix_comments_reuses_review_transcript(client, monkeypatch):
                                        "args": ["rk-fix", "--no-tty", "--fix-comments"],
                                        "confirm": True})
     assert r.status_code == 202, r.text
-    assert seen["session_file"] == "/s/review-old.jsonl"
-    assert "--session-file" in seen["argv"]
+    assert seen["session_file"] != "/s/review-old.jsonl"
+    assert seen["session_file"].endswith(".jsonl")
     idx = seen["argv"].index("--session-file")
-    assert seen["argv"][idx + 1] == "/s/review-old.jsonl"
+    assert seen["argv"][idx + 1] == seen["session_file"]
 
 
-def test_review_fix_comments_fresh_session_mints_new_file(client, monkeypatch):
-    """--new-fix-session keeps a minted path (links back via metadata)."""
+def test_review_fix_comments_use_review_session_reuses_transcript(client, monkeypatch):
+    """--use-review-session reuses the latest review transcript."""
     from workagent import store_sqlite as sq
     from workagent import store as _store
     db = sq.db_path()
@@ -248,11 +245,10 @@ def test_review_fix_comments_fresh_session_mints_new_file(client, monkeypatch):
     monkeypatch.setattr("workagent.webapp._spawn", fake_spawn)
     r = client.post("/api/runs", json={"command": "review",
                                        "args": ["rk-fresh", "--no-tty", "--fix-comments",
-                                                "--new-fix-session"],
+                                                "--use-review-session"],
                                        "confirm": True})
     assert r.status_code == 202, r.text
-    assert seen["session_file"] != "/s/review-prev.jsonl"
-    assert seen["session_file"].endswith(".jsonl")
+    assert seen["session_file"] == "/s/review-prev.jsonl"
 
 def test_register_run_key_unique_per_path(client):
     r1 = client.post("/api/runs", json={"command": "register",

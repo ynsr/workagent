@@ -39,7 +39,7 @@ REVIEW_FLAGS = (("repo", "--repo", "str"),
                 ("depth", "--depth", "str"),
                 ("harness", "--harness", "str"),
                 ("no_tty", "--no-tty", "bool"),
-                ("new_fix_session", "--new-fix-session", "bool"),
+                ("use_review_session", "--use-review-session", "bool"),
                 ("session_file", "--session-file", "str"),
                 ("env_file", "--env-file", "str"),
                 ("extra_prompt", "--extra-prompt", "str"))

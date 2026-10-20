@@ -13,7 +13,7 @@ export interface LaunchReviewPrefs {
   runMode: RunMode
   thenFix: boolean
   fixAction: ReviewAction
-  newFixSession: boolean
+  useReviewSession: boolean
 }
 
 export interface LaunchSyncPrefs {
@@ -34,7 +34,7 @@ const FIX_ACTIONS: readonly string[] = REVIEW_ACTION_OPTIONS.map((o) => o.value)
 export function loadLaunchPrefs(): LaunchPrefs {
   const fallback: LaunchPrefs = {
     start: { runMode: "preview", base: "" },
-    review: { runMode: "preview", thenFix: false, fixAction: "review", newFixSession: false },
+    review: { runMode: "preview", thenFix: false, fixAction: "review", useReviewSession: false },
     sync: { merge: false },
   }
   try {
@@ -42,7 +42,7 @@ export function loadLaunchPrefs(): LaunchPrefs {
     if (!raw) return fallback
     const p = JSON.parse(raw) as {
       start?: { runMode?: unknown; base?: unknown }
-      review?: { runMode?: unknown; thenFix?: unknown; fixAction?: unknown; newFixSession?: unknown }
+      review?: { runMode?: unknown; thenFix?: unknown; fixAction?: unknown; useReviewSession?: unknown }
       sync?: { merge?: unknown }
     }
     return {
@@ -60,7 +60,7 @@ export function loadLaunchPrefs(): LaunchPrefs {
         fixAction: typeof p.review?.fixAction === "string" && FIX_ACTIONS.includes(p.review.fixAction)
           ? (p.review.fixAction as ReviewAction)
           : "review",
-        newFixSession: p.review?.newFixSession === true,
+        useReviewSession: p.review?.useReviewSession === true,
       },
       sync: { merge: p.sync?.merge === true },
     }

@@ -194,7 +194,7 @@ def test_terminal_start_forwards_repo_flags(monkeypatch):
     assert out["preview"] is True and "manual_args" in out
     out = m._run_review_step(
         "wt-1", {"terminal": True, "repo": "projectx",
-                 "new_fix_session": True}, True, False)
+                 "use_review_session": True}, True, False)
     assert "--repo projectx" in out["command"]
     assert "--fix-comments" in out["command"]
-    assert "--new-fix-session" in out["command"]
+    assert "--use-review-session" in out["command"]

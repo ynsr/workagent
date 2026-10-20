@@ -258,7 +258,7 @@ def _run_review_step(key: str, config: dict, fix_comments: bool,
     from . import cli_review as _mod
     _call(_mod.review.__wrapped__, key, yes=True, launch=True, no_tty=True, json_output=json_output, fix_comments=fix,
           **_pick(config, "repo", "depth", "harness", "no_tty", "then_fix_comments",
-                 "new_fix_session", "session_file", "env_file", "extra_prompt"))
+                 "use_review_session", "session_file", "env_file", "extra_prompt"))
     return {"key": key, "status": "reviewed", "fix_comments": fix_comments}
 
 

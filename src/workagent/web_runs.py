@@ -96,7 +96,7 @@ def _mirror_run(run: Run) -> None:
                        output=output, truncated=truncated)
         try:
             is_fix_continue = (command == "review" and "--fix-comments" in args
-                               and "--new-fix-session" not in args and run.exit_code == 0)
+                               and "--use-review-session" in args and run.exit_code == 0)
             if is_fix_continue and (_sq.get_session(db, sid, include_deleted_worktrees=True) or {}).get("session_type") == "review":
                 from datetime import datetime, timezone
                 _sq.set_session_metadata(db, sid, {

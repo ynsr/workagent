@@ -123,7 +123,7 @@ def test_review_preview_tty_lands_shell_in_worktree(isolated_config, tmp_path, m
         cli.review(ref="https://github.com/o/r/pull/33", repo=None, depth=7, harness=None,
                    no_tty=False, launch=False, dry_run=False, yes=False, json_output=False,
                    all_wts=False, sequential=False, fix=False, force_all=False, post_comments=False,
-                   fix_comments=False, then_fix_comments=False, new_fix_session=False)
+                   fix_comments=False, then_fix_comments=False, use_review_session=False)
     assert excinfo.value.args[0] == "/bin/zsh"
     assert excinfo.value.args[2] == str(worktree)
 
@@ -162,8 +162,8 @@ def test_review_without_ref_is_usage_error(isolated_config):
     assert "use --all" in r.stderr
 
 
-def test_review_new_fix_session_requires_fix_comments(isolated_config):
-    r = runner.invoke(cli.app, ["review", "o/r#1", "--new-fix-session"])
+def test_review_use_review_session_requires_fix_comments(isolated_config):
+    r = runner.invoke(cli.app, ["review", "o/r#1", "--use-review-session"])
     assert r.exit_code == 2, r.output
     assert "--fix-comments" in r.stderr
 
@@ -238,7 +238,7 @@ def test_review_continue_reuses_transcript(isolated_config, monkeypatch):
     assert got and got["file_path"] == "/s/old.jsonl"
 
 def test_fix_comments_explicit_file_adopts_review_reuse(isolated_config):
-    """Explicit review transcript path adopts the reuse (no fix_comments rescope)."""
+    """Explicit review transcript path + --use-review-session adopts the reuse."""
     from workagent import cli_review as _r, store_sqlite as sq
     db = sq.db_path()
     sq.init_db(db)
@@ -251,11 +251,30 @@ def test_fix_comments_explicit_file_adopts_review_reuse(isolated_config):
                       session_type="review")
     sq.finish_session(db, "rev-1896", "finished")
     result: dict = {}
-    _r._apply_fix_session(result, "k", True, False, review_path)
+    _r._apply_fix_session(result, "k", True, True, review_path)
     assert result["reuse_session_id"] == "rev-1896"
     assert result["session_file"] == review_path
     assert "/review/" in result["session_file"]
     assert "/fix_comments/" not in result["session_file"]
+
+
+def test_fix_comments_default_is_fresh_session(isolated_config):
+    """Bare --fix-comments mints a fresh row linked back via metadata."""
+    from workagent import cli_review as _r, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="review",
+                      prompt="p", file_path="/s/old.jsonl", session_id="old-9",
+                      session_type="review")
+    sq.finish_session(db, "old-9", "finished")
+    result: dict = {}
+    _r._apply_fix_session(result, "k", True, False, None)
+    assert "reuse_session_id" not in result
+    assert "session_file" not in result
+    assert result["session_metadata"] == {"fixed_from_session_id": "old-9"}
 
 
 def test_fix_comments_minted_filename_resumes_in_all_modes(isolated_config, tmp_path, monkeypatch):
@@ -289,11 +308,12 @@ def test_fix_comments_minted_filename_resumes_in_all_modes(isolated_config, tmp_
     monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda w, b: "up-to-date")
     PR = "https://github.com/o/r/pull/33"
     # preview: printed command resumes the minted transcript
-    r = runner.invoke(cli.app, ["review", PR, "--fix-comments", "--json"])
+    # preview with --use-review-session: printed command resumes the transcript
+    r = runner.invoke(cli.app, ["review", PR, "--fix-comments",
+                                "--use-review-session", "--json"])
     assert r.exit_code == 0, r.output
     out = json.loads(r.stdout)
     assert out["session_file"] == str(transcript)
-    assert f"--resume {transcript}" in out["harness_command"]
     assert out.get("reuse_session_id") == "rev-minted"
     # headless: launch argv carries --resume on the minted file
     seen: dict = {}
@@ -303,6 +323,7 @@ def test_fix_comments_minted_filename_resumes_in_all_modes(isolated_config, tmp_
     monkeypatch.setattr(_h.store, "record_harness_run", lambda *a, **k: None)
     monkeypatch.setattr(_h.store, "clear_harness_run", lambda *a, **k: None)
     r = runner.invoke(cli.app, ["review", PR, "--fix-comments",
+                                "--use-review-session",
                                 "--no-tty", "--launch", "--yes", "--json"])
     assert r.exit_code == 0, r.output
     assert "--resume" in seen["args"] and str(transcript) in seen["args"]
@@ -311,6 +332,7 @@ def test_fix_comments_minted_filename_resumes_in_all_modes(isolated_config, tmp_
     monkeypatch.setattr(_h, "spawn_in_terminal",
                         lambda cmd, wd: (spawned.update(cmd=cmd), 4242)[1])
     r = runner.invoke(cli.app, ["review", PR, "--fix-comments",
+                                "--use-review-session",
                                 "--terminal", "--yes", "--json"])
     assert r.exit_code == 0, r.output
     assert f"--resume {transcript}" in spawned["cmd"]

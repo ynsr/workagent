@@ -169,20 +169,18 @@ def _adopt_fix_reuse(result: dict, review_key: str) -> bool:
 
 
 def _apply_fix_session(result: dict, review_key: str, fix_comments: bool,
-                       new_fix_session: bool, explicit_file: str | None) -> None:
+                       use_review_session: bool, explicit_file: str | None) -> None:
     """Resolve the fix-comments session strategy into *result*.
 
-    Explicit --session-file always wins. When it names the latest
-    finished review session (the web passes the saved file_path), the
-    reuse is adopted so the transcript is resumed verbatim. Otherwise a
-    fix run continues the latest non-running review session (reuse id +
-    transcript) unless --new-fix-session forces a fresh fix_comments row
-    (linked back via fixed_from_session_id). Non-fix runs leave result
-    untouched.
+    Fresh fix_comments row by default (linked back via fixed_from_session_id).
+    Explicit --session-file always wins. --use-review-session continues the
+    latest non-running review session instead (reuse id + transcript); when
+    the explicit file names that session the reuse is adopted so the
+    transcript is resumed verbatim. Non-fix runs leave result untouched.
     """
     if explicit_file:
         result["session_file"] = explicit_file
-        if fix_comments and not new_fix_session:
+        if fix_comments and use_review_session:
             _adopt_fix_reuse(result, review_key)
         return
     if not fix_comments:
@@ -190,7 +188,7 @@ def _apply_fix_session(result: dict, review_key: str, fix_comments: bool,
     from . import store_sqlite as _sq
     db = _sq.db_path()
     latest = _sq.latest_review_session(db, review_key, include_deleted_worktrees=True) if db.exists() else None
-    if latest and not new_fix_session:
+    if latest and use_review_session:
         result["reuse_session_id"] = latest["id"]
         result["session_file"] = latest.get("file_path")
     elif latest:
@@ -198,18 +196,18 @@ def _apply_fix_session(result: dict, review_key: str, fix_comments: bool,
 
 
 def _chain_fix_command(review_key: str, pr_url: str, harness_name: str,
-                       new_fix_session: bool, env_file: str | None,
+                       use_review_session: bool, env_file: str | None,
                        extra_prompt: str | None) -> list[str]:
     """Headless follow-up argv for --then-fix-comments: a second review
-    invocation in pure fix mode against the same ref. Same-session reuse
-    is resolved inside the child via latest_review_session (the review
-    just finished, so it is latest) unless --new-fix-session forces fresh.
+    invocation in pure fix mode against the same ref. A fresh fix session
+    is the default; --use-review-session continues the just-finished review
+    (resolved inside the child via latest_review_session).
     Exit-code gating lives with the caller: only chain on review exit 0.
     """
     argv = [sys.executable, "-m", "workagent", "review", pr_url,
             "--fix-comments", "--no-tty", "--launch"]
-    if new_fix_session:
-        argv.append("--new-fix-session")
+    if use_review_session:
+        argv.append("--use-review-session")
     if harness_name:
         argv += ["--harness", harness_name]
     if env_file:
@@ -220,18 +218,18 @@ def _chain_fix_command(review_key: str, pr_url: str, harness_name: str,
 
 
 def _print_then_fix_hint(pr_url: str, harness_name: str,
-                         new_fix_session: bool) -> None:
+                         use_review_session: bool) -> None:
     """Preview/terminal follow-up: these modes return instantly (no exit
     code to gate on), so print the exact manual command instead of
     chaining. The user runs it after the review yields."""
     cmd = " ".join(shlex.quote(a) for a in
                    _chain_fix_command(pr_url, pr_url, harness_name,
-                                      new_fix_session, None, None)[3:])
+                                      use_review_session, None, None)[3:])
     eprint(f"then-fix: after the review yields, run: workagent {cmd}")
 
 
 def _run_then_fix(review_key: str, pr_url: str, harness_name: str,
-                  new_fix_session: bool, env_file: str | None,
+                  use_review_session: bool, env_file: str | None,
                   extra_prompt: str | None, then_fix: bool,
                   launch: bool, terminal: bool) -> None:
     """--then-fix-comments dispatcher. No-op unless requested. Headless
@@ -242,10 +240,10 @@ def _run_then_fix(review_key: str, pr_url: str, harness_name: str,
     if not then_fix:
         return
     if not launch or terminal:
-        _print_then_fix_hint(pr_url, harness_name, new_fix_session)
+        _print_then_fix_hint(pr_url, harness_name, use_review_session)
         return
     argv = _chain_fix_command(review_key, pr_url, harness_name,
-                              new_fix_session, env_file, extra_prompt)
+                              use_review_session, env_file, extra_prompt)
     eprint(f"then-fix: review done, chaining: {' '.join(shlex.quote(a) for a in argv)}")
     proc = subprocess.run(argv)
     if proc.returncode != 0:
@@ -327,7 +325,7 @@ def review(
     post_comments: bool = typer.Option(False, "--post-comments", hidden=True, help="Append the auto-comment prompt segment (set by --all)."),
     fix_comments: bool = typer.Option(False, "--fix-comments", help="Fix open PR/MR review comments instead of reviewing: validate each finding, apply, resolve/close, commit and push."),
     then_fix_comments: bool = typer.Option(False, "--then-fix-comments", help="After a successful review run (exit 0), chain a fix-comments run in the same harness session. Headless runs it automatically; preview/terminal print the follow-up command for manual use. (deprecated: use flows; ignored inside flow templates)"),
-    new_fix_session: bool = typer.Option(False, "--new-fix-session", help="With --fix-comments or --then-fix-comments: start a fresh fix session instead of continuing the latest review session."),
+    use_review_session: bool = typer.Option(False, "--use-review-session", help="With --fix-comments or --then-fix-comments: continue the latest review session instead of starting a fresh fix session."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path: resumed via omp --resume when non-empty, otherwise used as --session-dir scope for a fresh session."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before terminal/headless harness commands (default: env_file in config.json, auto-created)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
@@ -360,8 +358,8 @@ def review(
         _fail("--then-fix-comments cannot be used with --all (chain per-PR instead: review <pr> --then-fix-comments)", EXIT_USAGE)
     if post_comments and fix_comments:
         _fail("--post-comments cannot be used with --fix-comments", EXIT_USAGE)
-    if new_fix_session and not (fix_comments or then_fix_comments):
-        _fail("--new-fix-session requires --fix-comments or --then-fix-comments", EXIT_USAGE)
+    if use_review_session and not (fix_comments or then_fix_comments):
+        _fail("--use-review-session requires --fix-comments or --then-fix-comments", EXIT_USAGE)
     if ref is None and not all_wts:
         _fail("missing PR/MR ref or worktree key\n"
               "  Pass a ref, or use --all to review every not-reviewed worktree.",
@@ -525,7 +523,7 @@ def review(
                     eprint(f"{review_key}: pulled origin/{branch} ({pulled})")
                 _guard_harness(review_key, worktree)
                 _mark_reviewed(review_key, worktree)
-            _apply_fix_session(result, review_key, fix_comments, new_fix_session, session_file)
+            _apply_fix_session(result, review_key, fix_comments, use_review_session, session_file)
             try:
                 _run_harness(harness_name, prompt, worktree, str(repo_dir),
                              no_tty, launch, result, json_output,
@@ -535,7 +533,7 @@ def review(
                 if launch:
                     _clear_reviewed(review_key)
                 raise
-            _run_then_fix(review_key, pr_url, harness_name, new_fix_session,
+            _run_then_fix(review_key, pr_url, harness_name, use_review_session,
                           env_file, extra_prompt, then_fix_comments,
                           launch, terminal)
             return
@@ -563,7 +561,7 @@ def review(
     if launch:
         _guard_harness(review_key, worktree)
         _mark_reviewed(review_key, worktree)
-    _apply_fix_session(result, review_key, fix_comments, new_fix_session, session_file)
+    _apply_fix_session(result, review_key, fix_comments, use_review_session, session_file)
     try:
         _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
                      launch, result, json_output, run_key=review_key,
@@ -573,7 +571,7 @@ def review(
         if launch:
             _clear_reviewed(review_key)
         raise
-    _run_then_fix(review_key, pr_url, harness_name, new_fix_session,
+    _run_then_fix(review_key, pr_url, harness_name, use_review_session,
                   env_file, extra_prompt, then_fix_comments,
                   launch, terminal)
 

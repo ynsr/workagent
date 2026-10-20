@@ -79,7 +79,7 @@ function prefsForMode(p: LaunchPrefs, mode: Mode): Partial<LaunchForm> {
       reviewAction: p.review.fixAction as LaunchForm["reviewAction"],
       fixComments: p.review.fixAction === "fix",
       thenFixComments: p.review.thenFix,
-      newFixSession: p.review.newFixSession,
+      useReviewSession: p.review.useReviewSession,
     }
   }
   return { runMode: p.start.runMode as LaunchForm["runMode"], base: p.start.base }
@@ -398,14 +398,14 @@ export function Launch() {
           runMode: form.runMode,
           thenFix: form.thenFixComments,
           fixAction: urlForcedFix.current ? prev.review.fixAction : form.reviewAction,
-          newFixSession: form.newFixSession,
+          useReviewSession: form.useReviewSession,
         },
       })
     } else {
       saveLaunchPrefs({ ...prev, sync: { merge: form.merge } })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, form.runMode, form.base, form.reviewAction, form.thenFixComments, form.newFixSession, form.merge])
+  }, [mode, form.runMode, form.base, form.reviewAction, form.thenFixComments, form.useReviewSession, form.merge])
 
   function switchMode(next: Mode) {
     setMode(next)
@@ -430,7 +430,7 @@ export function Launch() {
     if (form.runMode === "headless") args.push("--no-tty")
     if (form.reviewAction === "fix" || form.fixComments) args.push("--fix-comments")
     if (form.reviewAction === "review" && form.thenFixComments) args.push("--then-fix-comments")
-    if (form.fixComments && form.newFixSession) args.push("--new-fix-session")
+    if (form.fixComments && form.useReviewSession) args.push("--use-review-session")
     if (repoValue) args.push("--repo", repoValue)
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
     args.push(...runModeArgs(form.runMode))
@@ -579,12 +579,12 @@ export function Launch() {
             ) : null}
             {mode === "review" && form.fixComments ? (
               <CheckRow
-                id="launch-new-fix-session"
-                checked={form.newFixSession}
-                onChange={(v) => update("newFixSession", v)}
-                label="Create a new session"
-                flag="--new-fix-session"
-                description="Start a fresh fix session instead of continuing the latest review session."
+                id="launch-use-review-session"
+                checked={form.useReviewSession}
+                onChange={(v) => update("useReviewSession", v)}
+                label="Use review session"
+                flag="--use-review-session"
+                description="Continue the latest review session instead of starting a fresh fix session."
               />
             ) : null}
           </div>

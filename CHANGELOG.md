@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- `review --new-fix-session` renamed to `--use-review-session` with inverted default: fix-comments starts a fresh session (linked via fixed_from_session_id) unless reuse is requested; old flag removed [no-issue]
 - Flow terminal/manual steps forward step-config flags (--repo/--related-repo/depth/harness/session/env/prompt; review +sync/action/release too) so spawned `workagent start` no longer hits ambiguous-tracker errors [no-issue]
 - Flows without a start step (cleanup_release) seed repo_snapshot at creation so release finds its repo; resume after a cleanup soft-delete sees the deleted link/flow rows [no-issue]
 - Flow resume gains `--skip-steps 0[,N]` + UI `Skip step N`: marks the paused resume step done-without-running (already finished by hand in the spawned terminal) and continues from the next step [no-issue]
