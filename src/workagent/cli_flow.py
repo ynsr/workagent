@@ -160,10 +160,35 @@ def _manual_step(kind: str, args: list[str]) -> dict:
             "manual_kind": kind, "manual_args": [kind, *args]}
 
 
+def _spawn_terminal_step(kind: str, args: list[str], cwd: str = "") -> dict:
+    """Terminal-mode step: spawn the OS terminal via the same helper the
+    web 'Start in terminal' button uses, then pause for the human to
+    finish there. Spawn failure degrades to a plain manual pause (the
+    command is always printed either way)."""
+    import shlex
+    from . import cli_harness as _h
+    cmd = " ".join(shlex.quote(a) for a in [kind, *args] if a)
+    full = f"workagent {cmd}"
+    base = {"preview": True, "command": full,
+            "manual_kind": kind, "manual_args": [kind, *args]}
+    try:
+        tpid = _h.spawn_in_terminal(full, cwd)
+    except Exception as e:
+        return {**base, "terminal_error": str(e)}
+    out = {**base, "terminal_pid": tpid}
+    if cwd:
+        out["terminal_cwd"] = cwd
+    return out
+
 def _headless(config: dict) -> bool:
     manual = ("preview", "dry_run", "terminal")
     return (bool(config.get("launch", True))
             and not any(config.get(k) for k in manual))
+
+
+def _is_terminal(config: dict) -> bool:
+    """Normalized terminal-mode flag (run_mode: terminal → terminal: True)."""
+    return bool(config.get("terminal", False))
 
 
 def _pick(config: dict, *names: str) -> dict:
@@ -199,6 +224,8 @@ def _call(fn, *args, **kwargs):
 def _run_start_step(ref: str, key: str, config: dict,
                     json_output: bool) -> dict:
     """Start step: adopt the worktree when it exists, else start the ref."""
+    if _is_terminal(config):
+        return _spawn_terminal_step("start", [ref])
     if not _headless(config):
         return _manual_step("start", [ref])
     from . import cli_start as _mod
@@ -219,6 +246,8 @@ def _run_review_step(key: str, config: dict, fix_comments: bool,
                      json_output: bool) -> dict:
     """Review (or Fix-comments) step with merged flags."""
     fix = bool(fix_comments or config.get("fix_comments", False))
+    if _is_terminal(config):
+        return _spawn_terminal_step("review", [key] + (["--fix-comments"] if fix else []))
     if not _headless(config):
         return _manual_step("review", [key] + (["--fix-comments"] if fix else []))
     from . import cli_review as _mod
@@ -230,6 +259,9 @@ def _run_review_step(key: str, config: dict, fix_comments: bool,
 
 def _run_sync_step(key: str, config: dict, json_output: bool) -> dict:
     """Sync step with merged flags."""
+    if _is_terminal(config):
+        wt = str((store.load_links().get(key, {}) or {}).get("worktree", "") or "")
+        return _spawn_terminal_step("sync", [key], wt)
     if not _headless(config):
         return _manual_step("sync", [key])
     from . import cli_sync as _mod
@@ -242,6 +274,9 @@ def _run_action_step(key: str, action_label: str, config: dict, json_output: boo
     """Custom-action step (live label re-check for races)."""
     if store.get_action(action_label) is None:
         raise HarnessError(f"unknown action_label {action_label!r}", exit_code=2)
+    if _is_terminal(config):
+        wt = str((store.load_links().get(key, {}) or {}).get("worktree", "") or "")
+        return _spawn_terminal_step("action", ["run", action_label, key], wt)
     if not _headless(config):
         return _manual_step("action", ["run", action_label, key])
     from . import cli_action as _mod
@@ -260,6 +295,9 @@ def _run_cleanup_step(key: str, config: dict, json_output: bool) -> dict:
     if _futil.has_banned(config, sf._BANNED_CLEANUP_FLAGS):
         raise HarnessError("cleanup is fixed to squash + soft-delete — "
                            "hard-delete/no-squash overrides rejected", exit_code=2)
+    if _is_terminal(config):
+        wt = str((store.load_links().get(key, {}) or {}).get("worktree", "") or "")
+        return _spawn_terminal_step("cleanup", [key], wt)
     if not _headless(config):
         return _manual_step("cleanup", [key])
     entry = store.load_links().get(key) or {}
@@ -279,6 +317,8 @@ def _run_release_step(repo_snapshot: dict, config: dict, json_output: bool) -> d
     if not repo:
         raise HarnessError("flow has no repo snapshot — cannot release",
                            exit_code=2)
+    if _is_terminal(config):
+        return _spawn_terminal_step("release", [repo])
     if not _headless(config):
         return _manual_step("release", [repo])
     lock = _lock.lock_path(str(_util.worktree_base()), repo)
@@ -465,22 +505,34 @@ def flow_run(
                               step_results=results)
             continue
         if outcome.get("preview"):
+            detail = str(outcome.get("command", ""))
+            if outcome.get("terminal_pid") is not None:
+                detail = f"{detail} [terminal pid {outcome.get('terminal_pid')}]"
+            elif outcome.get("terminal_error"):
+                detail = f"{detail} [terminal spawn failed: {outcome.get('terminal_error')}]"
             results.append({"kind": kind, "status": "paused",
-                            "detail": str(outcome.get("command", ""))})
+                            "detail": detail})
             store.update_flow(fid, status="paused", current_step=idx,
                               step_results=results)
             cmd = outcome.get("command") or f"flow run {tpl['label']} {ref}"
             try:
                 from . import cli_harness as _h
+                meta = {"flow_id": fid, "mode": "manual-step"}
+                if outcome.get("terminal_pid") is not None:
+                    meta["terminal_pid"] = outcome.get("terminal_pid")
                 _h.record_headless_attempt(
                     key or ref, str(outcome.get("manual_kind") or kind),
                     list(outcome.get("manual_args") or [kind]),
                     f"harness command: {cmd}", exit_code=0,
-                    metadata={"flow_id": fid, "mode": "manual-step"})
+                    metadata=meta)
             except Exception:
                 pass
-            eprint(f"paused after step {idx} ({kind}) — preview/terminal "
-                   f"needs a human:\n{cmd}\nre-run to resume.")
+            if outcome.get("terminal_pid") is not None:
+                eprint(f"paused after step {idx} ({kind}) — terminal opened "
+                       f"(pid {outcome.get('terminal_pid')}): finish there, then re-run to resume:\n{cmd}")
+            else:
+                eprint(f"paused after step {idx} ({kind}) — preview/terminal "
+                       f"needs a human:\n{cmd}\nre-run to resume.")
             _print_result({"flow": fid, "status": "paused",
                            "step": idx, "kind": kind}, json_output)
             return

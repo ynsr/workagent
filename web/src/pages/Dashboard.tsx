@@ -33,7 +33,7 @@ import { Switch } from "@/components/ui/switch"
 import { api, type WorktreeMap } from "@/lib/api"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
-import { queryKeys, useCreateRun, useInfo, useRepos, useStatusAll, useStatusDeleted, useStatusInactive, useStopTerminal } from "@/lib/queries"
+import { queryKeys, useCreateRun, useFlows, useInfo, useRepos, useStatusAll, useStatusDeleted, useStatusInactive, useStopTerminal } from "@/lib/queries"
 import { useRepoTabs } from "@/lib/useRepoTabs"
 import { getShowWorktree, setShowWorktree as persistShowWorktree } from "@/lib/settings"
 
@@ -81,6 +81,8 @@ export function Dashboard() {
   const { data: deletedAll } = useStatusDeleted()
   const { data: info } = useInfo()
   const { data: repos } = useRepos()
+  const { data: flowsData } = useFlows()
+  const pausedCount = (flowsData?.flows ?? []).filter((f) => f.status === "paused").length
   const repoTabs = useRepoTabs(
     Object.values(worktrees ?? {}),
     repos,
@@ -491,6 +493,15 @@ export function Dashboard() {
         }
       />
 
+      {pausedCount > 0 ? (
+        <div className="mb-3">
+          <Button variant="outline" size="sm" asChild title={`${pausedCount} paused flow${pausedCount === 1 ? "" : "s"} — review and resume`}>
+            <Link to="/flows?status=paused">
+              ⏸ {pausedCount} paused flow{pausedCount === 1 ? "" : "s"} — resume
+            </Link>
+          </Button>
+        </div>
+      ) : null}
       {(isPending && !worktrees) ? (
         <TableSkeleton rows={6} />
       ) : (isError && !worktrees) ? (

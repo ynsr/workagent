@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { CheckCircle2, Circle, Loader2, Workflow, XCircle } from "lucide-react"
+import { toast } from "sonner"
 import { PageHeader } from "@/components/PageHeader"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { SearchableSelect } from "@/components/SearchableSelect"
@@ -29,8 +30,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import type { FlowRow } from "@/lib/api"
-import { exactDateTime, relativeDate } from "@/lib/format"
-import { useFlows } from "@/lib/queries"
+import { exactDateTime, relativeDate, copyToClipboard } from "@/lib/format"
+import { useCreateRun, useFlows } from "@/lib/queries"
 
 function StatusBadge({ status }: { status: string }) {
   const tone =
@@ -52,13 +53,48 @@ function StepIcon({ status }: { status: string }) {
 }
 
 export function Flows() {
+  const navigate = useNavigate()
+  const createRun = useCreateRun()
   const [params, setParams] = useSearchParams()
   const worktreeFilter = (params.get("worktree") ?? "").trim()
+  const statusFilter = (params.get("status") ?? "").trim()
   const { data, isPending, isFetching, isError, error, refetch } = useFlows(
     worktreeFilter || undefined,
   )
   const [detail, setDetail] = useState<FlowRow | null>(null)
-  const allRows: FlowRow[] = data?.flows ?? []
+  const [resuming, setResuming] = useState(false)
+  const pausedCmd = (detail?.step_results ?? []).find((r) => r.status === "paused")?.detail ?? ""
+
+  async function handleResume() {
+    if (!detail || resuming) return
+    const ref = detail.worktree_ref || detail.repo_snapshot?.launch_ref || ""
+    if (!ref) {
+      toast.error("No worktree or launch ref to resume from")
+      return
+    }
+    setResuming(true)
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "flow",
+        args: ["run", detail.template_label, ref, "--yes"],
+        confirm: true,
+      })
+      toast.success(`Flow ${detail.template_label} resumed`, {
+        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+      setDetail(null)
+      void refetch()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setResuming(false)
+    }
+  }
+  const allRows: FlowRow[] = useMemo(() => {
+    const rows: FlowRow[] = data?.flows ?? []
+    if (!statusFilter) return rows
+    return rows.filter((f) => f.status === statusFilter)
+  }, [data, statusFilter])
   const worktreeOptions = useMemo(
     () => ["(all worktrees)", ...new Set(allRows.map((f) => f.worktree_ref).filter(Boolean))].sort(),
     [allRows],
@@ -89,6 +125,11 @@ export function Flows() {
         {worktreeFilter ? (
           <Button variant="outline" size="sm" onClick={() => setParam("worktree", "")}>
             Clear worktree
+          </Button>
+        ) : null}
+        {statusFilter ? (
+          <Button variant="outline" size="sm" onClick={() => setParam("status", "")}>
+            Clear status: {statusFilter} ✕
           </Button>
         ) : null}
       </div>
@@ -181,6 +222,30 @@ export function Flows() {
           onClose={() => setDetail(null)}
           footer={
             <>
+              {detail.status === "paused" ? (
+                <Button
+                  size="sm"
+                  onClick={() => void handleResume()}
+                  disabled={resuming}
+                  title={pausedCmd ? `Resume from step ${detail.current_step}: ${pausedCmd}` : "Resume from the paused step"}
+                >
+                  {resuming ? "Resuming…" : "Resume"}
+                </Button>
+              ) : null}
+              {detail.status === "paused" && pausedCmd ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    copyToClipboard(pausedCmd)
+                      .then(() => toast.success("Manual command copied"))
+                      .catch(() => toast.error("Copy failed"))
+                  }}
+                  title={pausedCmd}
+                >
+                  Copy command
+                </Button>
+              ) : null}
               <Button variant="outline" size="sm" asChild>
                 <Link to={`/sessions?flow=${detail.id}`}>Sessions</Link>
               </Button>

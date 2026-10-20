@@ -324,3 +324,41 @@ def test_template_update_new_label_passed_through(tmp_path, monkeypatch):
     assert res.exit_code == 0, res.output
     assert seen == {"label": "pipe", "new_label": "pipe_v2"}
     assert _json.loads(res.stdout)["updated"] == "pipe_v2"
+
+
+def test_terminal_action_step_spawns_and_pauses(monkeypatch):
+    """run_mode: terminal routes through spawn_in_terminal, then pauses."""
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    monkeypatch.setattr("workagent.store.get_action",
+                        lambda label: {"label": label})
+    monkeypatch.setattr("workagent.store.load_links",
+                        lambda *a, **k: {"wt-1": {"worktree": "/tmp/wt"}})
+    spawned = {}
+    monkeypatch.setattr("workagent.cli_harness.spawn_in_terminal",
+                        lambda cmd, cwd="": spawned.update(cmd=cmd, cwd=cwd) or 4242)
+    out = cli_mod._run_action_step(
+        "wt-1", "myact", {"terminal": True}, False)
+    assert out["preview"] is True
+    assert out["terminal_pid"] == 4242
+    assert spawned["cmd"] == "workagent action run myact wt-1"
+    assert spawned["cwd"] == "/tmp/wt"
+
+
+def test_terminal_spawn_failure_degrades_to_manual_pause(monkeypatch):
+    """No emulator/display: pause carries the command + the spawn error."""
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    monkeypatch.setattr("workagent.store.get_action",
+                        lambda label: {"label": label})
+    monkeypatch.setattr("workagent.store.load_links", lambda *a, **k: {})
+
+    def _boom(cmd, cwd=""):
+        raise RuntimeError("no terminal emulator found")
+
+    monkeypatch.setattr("workagent.cli_harness.spawn_in_terminal", _boom)
+    out = cli_mod._run_action_step(
+        "wt-1", "myact", {"terminal": True}, False)
+    assert out["preview"] is True
+    assert "terminal_pid" not in out
+    assert "no terminal emulator" in str(out.get("terminal_error", ""))
