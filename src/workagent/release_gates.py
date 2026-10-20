@@ -25,21 +25,38 @@ _now = time.monotonic
 _sleep = time.sleep
 _GRACE_S = 10
 
+SKIP_EXIT_CODE = 10
+
+
+class SkippedGate(HarnessError):
+    """Pre/post script requested skip via exit 10 (carries the SKIP: reason)."""
+
+    def __init__(self, reason: str, exit_code: int = SKIP_EXIT_CODE) -> None:
+        super().__init__(reason, exit_code)
+        self.reason = reason
+
 
 def _run_group(argv: list[str], cwd: str, timeout_s: int,
-               env_file: str | None = None) -> None:
+               env_file: str | None = None,
+               extra_env: dict | None = None) -> None:
     """Run argv in its own process group; timeout kills the group.
 
     The env file is sourced first via the parsed KEY=VAL overlay (same
     semantics as the headless harness launch) so repos.commands entries
-    see the same env as login shells.
+    see the same env as login shells. *extra_env* (e.g. preview flag) is
+    merged over the resolved env without affecting existing callers.
+    Exit 10 raises SkippedGate (reason = last SKIP:-prefixed output line);
+    all other non-zero exits raise HarnessError exactly as before.
     """
     from . import env as _env
     resolved = _env.resolve_env_file(env_file)
     eprint(f"sourcing env: {resolved}" if resolved else "sourcing env: none")
+    merged = _env.merged_env(resolved)
+    if extra_env:
+        merged.update(extra_env)
     proc = subprocess.Popen(
         argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, start_new_session=True, env=_env.merged_env(resolved),
+        text=True, start_new_session=True, env=merged,
     )
     assert proc.stdout is not None
     try:
@@ -55,18 +72,27 @@ def _run_group(argv: list[str], cwd: str, timeout_s: int,
             os.killpg(proc.pid, signal.SIGKILL)
             proc.communicate()
         raise HarnessError(f"command timed out: {' '.join(argv)}")
+    if proc.returncode == SKIP_EXIT_CODE:
+        reason = f"exit {SKIP_EXIT_CODE}"
+        for line in (out or "").splitlines():
+            stripped = line.strip()
+            if stripped.upper().startswith("SKIP:"):
+                reason = stripped.split(":", 1)[1].strip() or reason
+        raise SkippedGate(reason)
     if proc.returncode != 0:
         raise HarnessError(f"{' '.join(argv)} failed with exit {proc.returncode}")
 
 
 def run_repo_command(repo_name: str, key: str, command: str, cwd: str,
-                     timeout_s: int, env_file: str | None = None) -> None:
+                     timeout_s: int, env_file: str | None = None,
+                     extra_env: dict | None = None) -> None:
     """Run any repos.commands entry with the env file sourced first.
 
     Shared choke point for every current and future commands-column
     execution: resolves the env file (None = configured default), logs
     the sourcing line, and runs via _run_group (own process group, whole
-    tree killed on timeout). Raises HarnessError on failure/timeout,
+    tree killed on timeout). Raises HarnessError on failure/timeout
+    (SkippedGate, a HarnessError subclass, on exit 10),
     usage error when the command is blank.
     """
     from . import store as _store
@@ -76,7 +102,8 @@ def run_repo_command(repo_name: str, key: str, command: str, cwd: str,
     known = set((_store.load_repos().get(repo_name) or {}).get("commands") or {})
     eprint(f"running {key} for {repo_name}: {command.strip()}"
            + ("" if key in known else f" (ad-hoc key, known: {sorted(known)})"))
-    _run_group(["/bin/sh", "-c", command.strip()], cwd, timeout_s, env_file)
+    _run_group(["/bin/sh", "-c", command.strip()], cwd, timeout_s, env_file,
+               extra_env)
 
 
 def run_local_gate(repo_path: str, repo_name: str, sha: str,
@@ -172,6 +199,6 @@ def run_ci_gate(tool: str, path: str, sha: str, timeout_s: int) -> None:
             _fail(f"CI timed out waiting for {sha} ({timeout_s}s).", 1)
         _sleep(wait)
         wait = min(wait * 2, 30.0)
+__all__ = ["run_repo_command", "run_local_gate", "run_ci_gate", "local_gate_path",
+           "SKIP_EXIT_CODE", "SkippedGate", "_lock"]
 
-
-__all__ = ["run_repo_command", "run_local_gate", "run_ci_gate", "local_gate_path", "_lock"]

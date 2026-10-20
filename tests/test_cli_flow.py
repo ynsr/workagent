@@ -223,3 +223,82 @@ def test_seam_release_calls_run_release_skips_preview(monkeypatch):
     before = len(calls)
     out = m._run_release_step({"repo": "myrepo"}, {"preview": True}, False)
     assert out["preview"] is True and len(calls) == before
+
+
+def test_action_step_skip_exception_maps_to_skipped(monkeypatch):
+    import workagent.cli_action as a
+    import workagent.cli_flow as m
+    import workagent.store as st
+    from workagent.release_gates import SkippedGate
+    monkeypatch.setattr(st, "get_action", lambda label: {"label": label})
+    def _raise(*a_, **k):
+        raise SkippedGate("nothing-ahead")
+    monkeypatch.setattr(a.action_run, "__wrapped__", _raise)
+    out = m._run_action_step("wt-1", "myact", {"launch": True}, False)
+    assert out == {"key": "wt-1", "label": "myact",
+                   "status": "skipped", "detail": "nothing-ahead"}
+
+
+def test_action_step_skipped_dict_maps_to_skipped(monkeypatch):
+    import workagent.cli_action as a
+    import workagent.cli_flow as m
+    import workagent.store as st
+    monkeypatch.setattr(st, "get_action", lambda label: {"label": label})
+    monkeypatch.setattr(a.action_run, "__wrapped__",
+                        lambda *a_, **k: {"label": "myact", "key": "wt-1",
+                                          "skipped": "on-base"})
+    out = m._run_action_step("wt-1", "myact", {"launch": True}, False)
+    assert out == {"key": "wt-1", "label": "myact",
+                   "status": "skipped", "detail": "on-base"}
+
+
+def test_run_action_skip_records_skipped_and_continues(monkeypatch):
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    import json as _json
+    tpl = {"label": "skipflow", "name": "Skip Flow",
+           "steps": [{"kind": "start"},
+                     {"kind": "action", "action_label": "myact"},
+                     {"kind": "cleanup"}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.get_action", lambda l: {"label": l})
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [])
+    monkeypatch.setattr("workagent.store.create_flow",
+                        lambda **f: {"id": 9, "template_label": "skipflow",
+                                     "worktree_ref": "wt-1",
+                                     "repo_snapshot": {"repo": "r", "launch_ref": "wt-1",
+                                                       "default_branch": "main",
+                                                       "release_branch": ""},
+                                     "status": "pending", "current_step": 0,
+                                     "step_results": []})
+    updates = []
+    def _update(fid, **fields):
+        updates.append({"id": fid, **fields})
+        return updates[-1]
+    monkeypatch.setattr("workagent.store.update_flow", _update)
+    monkeypatch.setattr(cli_mod, "_resolve_ref",
+                        lambda ref: ("wt-1", {"worktree": "/tmp/wt", "repo": "r",
+                                             "branch": "b", "active": 1}, None))
+    monkeypatch.setattr(cli_mod, "_run_start_step",
+                        lambda *a, **k: {"key": "wt-1", "status": "started"})
+    monkeypatch.setattr(cli_mod, "_run_action_step",
+                        lambda *a, **k: {"key": "wt-1", "label": "myact",
+                                         "status": "skipped",
+                                         "detail": "nothing-ahead"})
+    ran = []
+    monkeypatch.setattr(cli_mod, "_run_cleanup_step",
+                        lambda *a, **k: ran.append("cleanup") or {"key": "wt-1",
+                                                                  "status": "cleaned"})
+    monkeypatch.setattr(cli_mod, "_tag_flow_session", lambda *a, **k: None)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["flow", "run", "skipflow", "wt-1", "--yes", "--json"])
+    assert res.exit_code == 0, res.output
+    assert ran == ["cleanup"]
+    done = [u for u in updates if u.get("status") == "done"][-1]
+    assert done["step_results"] == [
+        {"kind": "start", "status": "ok", "detail": "started"},
+        {"kind": "action", "status": "skipped", "detail": "nothing-ahead"},
+        {"kind": "cleanup", "status": "ok", "detail": "cleaned"}]
+    assert _json.loads(res.stdout) == {"flow": 9, "status": "done", "steps": 3}

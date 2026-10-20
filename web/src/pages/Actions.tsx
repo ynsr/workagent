@@ -35,6 +35,7 @@ import { Badge } from "@/components/ui/badge"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, exactDateTime, relativeDate, toCsv } from "@/lib/format"
 import { useActions, useCreateRun } from "@/lib/queries"
+import { ACTION_PRESETS } from "@/lib/actionPresets"
 import type { ActionRow } from "@/lib/api"
 
 const RUN_MODES = ["preview", "headless", "terminal"] as const
@@ -66,6 +67,17 @@ export function Actions() {
   const matched = typedLabel ? (actions.find((a) => a.label === typedLabel) ?? null) : null
   const effectiveLabel = editingLabel ?? matched?.label ?? null
   const isEdit = effectiveLabel !== null
+
+  function applyPreset(id: string) {
+    const preset = ACTION_PRESETS.find((p) => p.id === id)
+    if (!preset) return
+    setName(preset.name)
+    setIcon(preset.icon)
+    setPrompt(preset.prompt)
+    setPre(preset.pre_execution)
+    setPost(preset.post_execution)
+    setMode(preset.run_mode)
+  }
 
   function reset() {
     setName("")
@@ -287,6 +299,20 @@ export function Actions() {
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="action-preset">Start from preset</Label>
+              <select
+                id="action-preset"
+                defaultValue=""
+                onChange={(e) => applyPreset(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring"
+              >
+                <option value="">Select a preset…</option>
+                {ACTION_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
             <div className="grid gap-2">
               <Label htmlFor="action-name">Name</Label>
               <Input

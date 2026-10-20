@@ -236,9 +236,14 @@ def action_run(
     pre = (action.get("pre_execution") or "").strip()
     if pre:
         from . import release_gates as _gates
+        pre_env = {"WORKAGENT_PREVIEW": "1"} if mode == "preview" else None
         try:
             _gates.run_repo_command(label, "pre-execution", pre, wt, 600,
-                                    env_file)
+                                    env_file, pre_env)
+        except _gates.SkippedGate as e:
+            _print_result({"label": label, "key": key, "skipped": e.reason},
+                          json_output)
+            return {"label": label, "key": key, "skipped": e.reason}
         except HarnessError as e:
             eprint(f"{key}: pre-execution failed: {e} — skipping harness")
             _print_result({"label": label, "key": key, "skipped": "pre-execution failed"},
@@ -271,6 +276,9 @@ def action_run(
         try:
             _gates.run_repo_command(label, "post-execution", post, wt, 600,
                                     env_file)
+        except _gates.SkippedGate as e:
+            _print_result({**result, "skipped": e.reason}, json_output)
+            return {**result, "skipped": e.reason}
         except HarnessError as e:
             eprint(f"{key}: post-execution failed: {e}")
             _print_result({**result, "post_failed": str(e)}, json_output)

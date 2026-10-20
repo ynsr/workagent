@@ -64,6 +64,127 @@ def test_pre_fail_skips_harness(tmp_path, monkeypatch):
     assert "pre-execution failed" in res.stderr
 
 
+def _skip_action_fixtures(monkeypatch, tmp_path, **action_kwargs):
+    """Mirror test_pre_fail_skips_harness fixtures; stub harness + guard + config."""
+    import tempfile
+    from workagent import store_custom_actions as sca
+    from workagent import store_sqlite as sq
+    db = tmp_path / "s.db"
+    sq.init_db(db)
+    kwargs = {"name": "Skip Gate", "prompt": "p"}
+    kwargs.update(action_kwargs)
+    action = sca.create_action(db, **kwargs)
+    wt = tempfile.mkdtemp()
+    entry = {"worktree": wt, "branch": "b", "repo": wt, "active": 1}
+    monkeypatch.setattr("workagent.store.get_action", lambda label: action)
+    monkeypatch.setattr("workagent.store.load_links",
+                        lambda *a, **k: {"k": entry})
+    monkeypatch.setattr("workagent.worktrees.resolve_any",
+                        lambda ref, l: ("k", entry, None))
+    monkeypatch.setattr("workagent.worktrees.is_valid_worktree",
+                        lambda p: True)
+    monkeypatch.setattr("workagent.store.load_config",
+                        lambda: {"default_harness": "omp"})
+    monkeypatch.setattr("workagent.cli_action._guard_harness",
+                        lambda *a, **k: None)
+    called = []
+    def _fake_harness(*a, **k):
+        called.append(1)
+        return {"label": action["label"], "key": "k", "status": "acted"}
+    monkeypatch.setattr("workagent.cli_action._run_harness", _fake_harness)
+    return action, entry, called
+
+
+def test_pre_skip_prints_skipped_no_harness(tmp_path, monkeypatch):
+    import json as _json
+    import os
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent.release_gates import SkippedGate
+    action, entry, called = _skip_action_fixtures(
+        monkeypatch, tmp_path, pre_execution="exit 10")
+    seen = {}
+    def _pre(repo, key, command, cwd, timeout, env_file=None, extra_env=None):
+        seen["extra_env"] = extra_env
+        raise SkippedGate("would push 3 commits")
+    monkeypatch.setattr("workagent.release_gates.run_repo_command", _pre)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["action", "run", action["label"], "k",
+                         "--launch", "--yes", "--json"])
+    assert res.exit_code == 0, res.output
+    assert called == []
+    assert "pre-execution failed" not in res.stderr
+    body = _json.loads(res.stdout)
+    assert body == {"label": action["label"], "key": "k",
+                    "skipped": "would push 3 commits"}
+    assert "SKIP:" not in body["skipped"]
+    assert seen.get("extra_env") is None  # headless: no preview flag
+    assert "WORKAGENT_PREVIEW" not in os.environ
+
+
+def test_post_skip_returns_skip_result(tmp_path, monkeypatch):
+    import json as _json
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent.release_gates import SkippedGate
+    action, entry, called = _skip_action_fixtures(
+        monkeypatch, tmp_path, post_execution="exit 10")
+    def _post(repo, key, command, cwd, timeout, env_file=None, extra_env=None):
+        if key == "post-execution":
+            raise SkippedGate("mr-exists")
+    monkeypatch.setattr("workagent.release_gates.run_repo_command", _post)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["action", "run", action["label"], "k",
+                         "--launch", "--yes", "--json"])
+    assert res.exit_code == 0, res.output
+    assert called == [1]
+    body = _json.loads(res.stdout)
+    assert body["skipped"] == "mr-exists"
+    assert "SKIP:" not in body["skipped"]
+
+
+def test_pre_exit_1_still_fails_as_today(tmp_path, monkeypatch):
+    import json as _json
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent.errors import HarnessError
+    action, entry, called = _skip_action_fixtures(
+        monkeypatch, tmp_path, pre_execution="exit 1")
+    def _boom(*a, **k):
+        raise HarnessError("sh failed with exit 1")
+    monkeypatch.setattr("workagent.release_gates.run_repo_command", _boom)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["action", "run", action["label"], "k",
+                         "--launch", "--yes", "--json"])
+    assert res.exit_code == 0, res.output
+    assert called == []
+    assert "pre-execution failed" in res.stderr
+    assert _json.loads(res.stdout)["skipped"] == "pre-execution failed"
+
+
+def test_preview_passes_preview_env_to_pre(tmp_path, monkeypatch):
+    import os
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    action, entry, called = _skip_action_fixtures(
+        monkeypatch, tmp_path, pre_execution="echo hi")
+    seen = {}
+    def _pre(repo, key, command, cwd, timeout, env_file=None, extra_env=None):
+        seen["extra_env"] = extra_env
+    monkeypatch.setattr("workagent.release_gates.run_repo_command", _pre)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["action", "run", action["label"], "k",
+                         "--yes", "--json"])
+    assert res.exit_code == 0, res.output
+    assert called == [1]
+    assert seen.get("extra_env") == {"WORKAGENT_PREVIEW": "1"}
+    assert "WORKAGENT_PREVIEW" not in os.environ
+
+
 def test_update_changes_fields(tmp_path, monkeypatch):
     from typer.testing import CliRunner
     from workagent.cli_core import app

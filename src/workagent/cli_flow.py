@@ -241,10 +241,15 @@ def _run_action_step(key: str, action_label: str, config: dict, json_output: boo
     if not _headless(config):
         return _manual_step("action", ["run", action_label, key])
     from . import cli_action as _mod
-    _call(_mod.action_run.__wrapped__, action_label, key, launch=True, no_tty=True, yes=True, json_output=json_output,
-          **_pick(config, "harness", "extra_prompt", "env_file", "session_file"))
+    from .release_gates import SkippedGate
+    try:
+        out = _call(_mod.action_run.__wrapped__, action_label, key, launch=True, no_tty=True, yes=True, json_output=json_output,
+                    **_pick(config, "harness", "extra_prompt", "env_file", "session_file"))
+    except SkippedGate as e:
+        return {"key": key, "label": action_label, "status": "skipped", "detail": e.reason}
+    if isinstance(out, dict) and out.get("skipped"):
+        return {"key": key, "label": action_label, "status": "skipped", "detail": str(out["skipped"])}
     return {"key": key, "label": action_label, "status": "acted"}
-
 
 def _run_cleanup_step(key: str, config: dict, json_output: bool) -> dict:
     """Cleanup step (fixed squash + soft-delete; overrides rejected)."""
@@ -443,6 +448,12 @@ def flow_run(
             store.update_flow(fid, status="failed", current_step=idx,
                               step_results=results)
             raise typer.Exit(e.exit_code)
+        if outcome.get("status") == "skipped":
+            results.append({"kind": kind, "status": "skipped",
+                            "detail": str(outcome.get("detail", ""))})
+            store.update_flow(fid, current_step=idx + 1,
+                              step_results=results)
+            continue
         if outcome.get("skipped"):
             results.append({"kind": kind, "status": "skipped",
                             "detail": str(outcome["skipped"])})
