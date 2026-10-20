@@ -22,6 +22,72 @@ def _coerce(value: str) -> object:
 _LIST_KEYS = ("related_repo",)
 
 
+#: start-step config keys that must survive the terminal/manual handoff.
+START_FLAGS = (("repo", "--repo", "str"),
+               ("related_repo", "--related-repo", "list"),
+               ("depth", "--depth", "str"),
+               ("base", "--base", "str"),
+               ("harness", "--harness", "str"),
+               ("no_tty", "--no-tty", "bool"),
+               ("session_file", "--session-file", "str"),
+               ("env_file", "--env-file", "str"),
+               ("extra_prompt", "--extra-prompt", "str"))
+
+#: review/fix-comments config keys for the terminal/manual handoff
+#: (then_fix_comments stays banned inside flows — never forwarded).
+REVIEW_FLAGS = (("repo", "--repo", "str"),
+                ("depth", "--depth", "str"),
+                ("harness", "--harness", "str"),
+                ("no_tty", "--no-tty", "bool"),
+                ("new_fix_session", "--new-fix-session", "bool"),
+                ("session_file", "--session-file", "str"),
+                ("env_file", "--env-file", "str"),
+                ("extra_prompt", "--extra-prompt", "str"))
+
+#: sync-step config keys for the terminal/manual handoff.
+SYNC_FLAGS = (("merge", "--merge", "bool"),
+              ("harness", "--harness", "bool"),
+              ("session_file", "--session-file", "str"),
+              ("env_file", "--env-file", "str"),
+              ("extra_prompt", "--extra-prompt", "str"))
+
+#: custom-action config keys for the terminal/manual handoff.
+ACTION_FLAGS = (("harness", "--harness", "str"),
+                ("extra_prompt", "--extra-prompt", "str"),
+                ("env_file", "--env-file", "str"),
+                ("session_file", "--session-file", "str"))
+
+#: release-step config keys for the terminal/manual handoff.
+RELEASE_FLAGS = (("checks", "--checks", "str"),
+                 ("diff", "--diff", "str"),
+                 ("pre_release_timeout", "--pre-release-timeout", "str"),
+                 ("ci_timeout", "--ci-timeout", "str"),
+                 ("env_file", "--env-file", "str"))
+
+
+def flag_argv(config: dict, *specs: tuple[str, str, str]) -> list[str]:
+    """Render config keys as CLI argv fragments for terminal/manual steps.
+
+    Each spec is (config_key, flag, kind) with kind "str" | "bool" | "list".
+    Headless runners get these via ``_pick``; without this the spawned
+    terminal/manual command silently drops them (e.g. --repo → ambiguous
+    tracker error in the terminal while headless would have worked).
+    """
+    argv: list[str] = []
+    for key, flag, kind in specs:
+        val = config.get(key)
+        if kind == "bool":
+            if val:
+                argv.append(flag)
+        elif kind == "list":
+            items = val if isinstance(val, list) else ([val] if val else [])
+            for item in items:
+                if item is not None and str(item) != "":
+                    argv += [flag, str(item)]
+        elif val is not None and str(val) != "":
+            argv += [flag, str(val)]
+    return argv
+
 def normalize_config(config: object) -> dict:
     """Translate UI-only keys to real runner keys (idempotent).
 

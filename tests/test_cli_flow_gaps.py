@@ -170,3 +170,31 @@ def test_soft_delete_hides_flow_undelete_restores(tmp_path, monkeypatch):
     assert len(sf.list_flows(db, include_deleted_worktrees=True)) == 1
     sq.undelete_worktree(db, "wt-1")
     assert len(sf.list_flows(db)) == 1
+
+def test_terminal_start_forwards_repo_flags(monkeypatch):
+    """Terminal/manual start+review steps must carry --repo/--related-repo.
+
+    Regression: the spawned terminal ran bare `workagent start <ref>`,
+    so a multi-repo tracker (jira:IPG → 5 repos) errored with
+    "linked to multiple repos" even though the step config picked one.
+    """
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as m
+    spawned = {}
+    monkeypatch.setattr("workagent.cli_harness.spawn_in_terminal",
+                        lambda cmd, cwd="": spawned.update(cmd=cmd) or 4242)
+    out = m._run_start_step(
+        "jira:IPG-1052", "",
+        {"terminal": True, "repo": "projectx",
+         "related_repo": ["ipg-commons"]}, False)
+    assert out["preview"] is True and out["terminal_pid"] == 4242
+    assert "--repo projectx" in spawned["cmd"]
+    assert "--related-repo ipg-commons" in spawned["cmd"]
+    out = m._run_start_step("jira:IPG-1052", "", {"preview": True}, False)
+    assert out["preview"] is True and "manual_args" in out
+    out = m._run_review_step(
+        "wt-1", {"terminal": True, "repo": "projectx",
+                 "new_fix_session": True}, True, False)
+    assert "--repo projectx" in out["command"]
+    assert "--fix-comments" in out["command"]
+    assert "--new-fix-session" in out["command"]

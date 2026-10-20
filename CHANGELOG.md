@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Flow terminal/manual steps forward step-config flags (--repo/--related-repo/depth/harness/session/env/prompt; review +sync/action/release too) so spawned `workagent start` no longer hits ambiguous-tracker errors [no-issue]
 - Flows without a start step (cleanup_release) seed repo_snapshot at creation so release finds its repo; resume after a cleanup soft-delete sees the deleted link/flow rows [no-issue]
 - Flow resume gains `--skip-steps 0[,N]` + UI `Skip step N`: marks the paused resume step done-without-running (already finished by hand in the spawned terminal) and continues from the next step [no-issue]
 - Save-all runs: every worktree-attached attempt persists a session + runs row with full output (headless finish, action skips, review-all previews, cleanup, flow manual steps; 10k-line cap); unattached attempts write nothing (worktree FK restored); soft-deleted worktree rows hide their sessions/runs/flows from queries until restored or hard-deleted (CASCADE) [no-issue]

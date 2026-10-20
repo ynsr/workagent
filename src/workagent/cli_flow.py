@@ -226,10 +226,11 @@ def _call(fn, *args, **kwargs):
 def _run_start_step(ref: str, key: str, config: dict,
                     json_output: bool) -> dict:
     """Start step: adopt the worktree when it exists, else start the ref."""
+    extra = _futil.flag_argv(config, *_futil.START_FLAGS)
     if _is_terminal(config):
-        return _spawn_terminal_step("start", [ref])
+        return _spawn_terminal_step("start", [ref, *extra])
     if not _headless(config):
-        return _manual_step("start", [ref])
+        return _manual_step("start", [ref, *extra])
     from . import cli_start as _mod
     # Pass the original issue ref: start resolves links itself and adopts
     # the existing worktree (pre-resolving to a key breaks parse_ref).
@@ -248,10 +249,12 @@ def _run_review_step(key: str, config: dict, fix_comments: bool,
                      json_output: bool) -> dict:
     """Review (or Fix-comments) step with merged flags."""
     fix = bool(fix_comments or config.get("fix_comments", False))
+    fix_argv = ["--fix-comments"] if fix else []
+    extra = _futil.flag_argv(config, *_futil.REVIEW_FLAGS)
     if _is_terminal(config):
-        return _spawn_terminal_step("review", [key] + (["--fix-comments"] if fix else []))
+        return _spawn_terminal_step("review", [key, *fix_argv, *extra])
     if not _headless(config):
-        return _manual_step("review", [key] + (["--fix-comments"] if fix else []))
+        return _manual_step("review", [key, *fix_argv, *extra])
     from . import cli_review as _mod
     _call(_mod.review.__wrapped__, key, yes=True, launch=True, no_tty=True, json_output=json_output, fix_comments=fix,
           **_pick(config, "repo", "depth", "harness", "no_tty", "then_fix_comments",
@@ -261,11 +264,12 @@ def _run_review_step(key: str, config: dict, fix_comments: bool,
 
 def _run_sync_step(key: str, config: dict, json_output: bool) -> dict:
     """Sync step with merged flags."""
+    extra = _futil.flag_argv(config, *_futil.SYNC_FLAGS)
     if _is_terminal(config):
         wt = str((store.load_links().get(key, {}) or {}).get("worktree", "") or "")
-        return _spawn_terminal_step("sync", [key], wt)
+        return _spawn_terminal_step("sync", [key, *extra], wt)
     if not _headless(config):
-        return _manual_step("sync", [key])
+        return _manual_step("sync", [key, *extra])
     from . import cli_sync as _mod
     _call(_mod.sync_cmd.__wrapped__, key, yes=True, json_output=json_output,
           **_pick(config, "merge", "harness", "session_file", "env_file", "extra_prompt"))
@@ -276,11 +280,12 @@ def _run_action_step(key: str, action_label: str, config: dict, json_output: boo
     """Custom-action step (live label re-check for races)."""
     if store.get_action(action_label) is None:
         raise HarnessError(f"unknown action_label {action_label!r}", exit_code=2)
+    extra = _futil.flag_argv(config, *_futil.ACTION_FLAGS)
     if _is_terminal(config):
         wt = str((store.load_links().get(key, {}) or {}).get("worktree", "") or "")
-        return _spawn_terminal_step("action", ["run", action_label, key], wt)
+        return _spawn_terminal_step("action", ["run", action_label, key, *extra], wt)
     if not _headless(config):
-        return _manual_step("action", ["run", action_label, key])
+        return _manual_step("action", ["run", action_label, key, *extra])
     from . import cli_action as _mod
     from .release_gates import SkippedGate
     try:
@@ -319,10 +324,11 @@ def _run_release_step(repo_snapshot: dict, config: dict, json_output: bool) -> d
     if not repo:
         raise HarnessError("flow has no repo snapshot — cannot release",
                            exit_code=2)
+    extra = _futil.flag_argv(config, *_futil.RELEASE_FLAGS)
     if _is_terminal(config):
-        return _spawn_terminal_step("release", [repo])
+        return _spawn_terminal_step("release", [repo, *extra])
     if not _headless(config):
-        return _manual_step("release", [repo])
+        return _manual_step("release", [repo, *extra])
     lock = _lock.lock_path(str(_util.worktree_base()), repo)
     if _lock.locked(lock):
         return {"skipped": "release-locked", "repo": repo}
