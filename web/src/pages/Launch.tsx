@@ -164,14 +164,16 @@ function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
  * Submit opens the shared FlowWizard scoped to the ref. */
 function FlowTabFields({
   issuesNonce,
+  initialTemplate,
 }: {
   issuesNonce?: number
+  initialTemplate?: string
 }) {
   const { data } = useFlowTemplates()
   const templates = (data?.templates ?? []).filter(
     (t) => (t.steps ?? [])[0]?.kind === "start",
   )
-  const [templateLabel, setTemplateLabel] = useState("")
+  const [templateLabel, setTemplateLabel] = useState(initialTemplate ?? "")
   const [ref, setRef] = useState("")
   const [wizard, setWizard] = useState<FlowTemplateRow | null>(null)
   const template = templates.find((t) => t.label === templateLabel) ?? null
@@ -266,6 +268,7 @@ export function Launch() {
   const { data: repos } = useRepos()
   const modeParam = params.get("mode")
   const refParam = params.get("ref") ?? ""
+  const templateParam = params.get("template") ?? ""
   const modeKnown = modeParam === null || MODES.includes(modeParam as Mode)
 
   const [mode, setMode] = useState<Mode>(
@@ -534,7 +537,11 @@ export function Launch() {
           {mode === "start" ? (
             <StartFormFields form={form} onChange={update} idPrefix="launch" issuesNonce={mode === "start" && !refParam ? issuesNonce : undefined} />
           ) : mode === "flow" ? (
-            <FlowTabFields issuesNonce={!refParam ? issuesNonce : undefined} />
+            <FlowTabFields
+              key={templateParam}
+              issuesNonce={!refParam ? issuesNonce : undefined}
+              initialTemplate={templateParam || undefined}
+            />
           ) : (
             <LaunchOtherFields mode={mode} form={form} onChange={update} refParam={refParam} issuesNonce={issuesNonce} copy={copy} repoNames={repoNames} />
           )}
