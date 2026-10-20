@@ -163,24 +163,8 @@ def _manual_step(kind: str, args: list[str]) -> dict:
 
 
 def _spawn_terminal_step(kind: str, args: list[str], cwd: str = "") -> dict:
-    """Terminal-mode step: spawn the OS terminal via the same helper the
-    web 'Start in terminal' button uses, then pause for the human to
-    finish there. Spawn failure degrades to a plain manual pause (the
-    command is always printed either way)."""
-    import shlex
-    from . import cli_harness as _h
-    cmd = " ".join(shlex.quote(a) for a in [kind, *args] if a)
-    full = f"workagent {cmd}"
-    base = {"preview": True, "command": full,
-            "manual_kind": kind, "manual_args": [kind, *args]}
-    try:
-        tpid = _h.spawn_in_terminal(full, cwd)
-    except Exception as e:
-        return {**base, "terminal_error": str(e)}
-    out = {**base, "terminal_pid": tpid}
-    if cwd:
-        out["terminal_cwd"] = cwd
-    return out
+    """Terminal-mode step (delegates to cli_flow_util; keeps this file small)."""
+    return _futil.spawn_terminal_step(kind, args, cwd)
 
 def _headless(config: dict) -> bool:
     manual = ("preview", "dry_run", "terminal")

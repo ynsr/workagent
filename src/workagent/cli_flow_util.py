@@ -169,3 +169,34 @@ def has_banned(config: object, banned: tuple[str, ...]) -> str | None:
     """
     from . import store_flows as _sf
     return _sf._config_has_banned(config, banned)
+
+#: flow steps whose runners accept `--terminal` (the child spawns the
+#: harness in the OS terminal instead of printing its command). sync,
+#: cleanup and release have no such flag — their terminal steps degrade
+#: to a manual pause with the runnable command printed.
+TERMINAL_CAPABLE = ("start", "review", "action")
+
+
+def spawn_terminal_step(kind: str, args: list[str], cwd: str = "") -> dict:
+    """Terminal-mode step: spawn the OS terminal, then pause for the human.
+
+    *kind* selects terminal support: terminal-capable kinds get
+    ``--terminal`` appended so the child really runs the harness in the
+    new terminal instead of printing its command (preview). Other kinds
+    keep the command as-is (manual pause). Spawn failure degrades to a
+    plain manual pause — the command is always printed either way.
+    """
+    from . import cli_harness as _h
+    argv = [*args, "--terminal"] if kind in TERMINAL_CAPABLE else args
+    cmd = " ".join(shlex.quote(a) for a in [kind, *argv] if a)
+    full = f"workagent {cmd}"
+    base = {"preview": True, "command": full,
+            "manual_kind": kind, "manual_args": [kind, *argv]}
+    try:
+        tpid = _h.spawn_in_terminal(full, cwd)
+    except Exception as e:
+        return {**base, "terminal_error": str(e)}
+    out = {**base, "terminal_pid": tpid}
+    if cwd:
+        out["terminal_cwd"] = cwd
+    return out

@@ -198,3 +198,34 @@ def test_terminal_start_forwards_repo_flags(monkeypatch):
     assert "--repo projectx" in out["command"]
     assert "--fix-comments" in out["command"]
     assert "--use-review-session" in out["command"]
+
+
+def test_terminal_spawn_appends_terminal_flag(monkeypatch):
+    """Terminal steps must spawn with --terminal so the child really runs.
+
+    Regression: the flow spawned `workagent start <ref> --repo …` without
+    --terminal, so the child ran its preview branch and only printed the
+    harness command — the opened terminal never launched the agent.
+    sync/cleanup/release have no --terminal flag: they degrade to a
+    manual pause with the command printed.
+    """
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as m
+    import workagent.cli_flow_util as u
+    spawned = {}
+    monkeypatch.setattr("workagent.cli_harness.spawn_in_terminal",
+                        lambda cmd, cwd="": spawned.update(cmd=cmd) or 4242)
+    out = m._run_start_step("jira:IPG-1052", "",
+                            {"terminal": True, "repo": "projectx"}, False)
+    assert out["terminal_pid"] == 4242
+    assert spawned["cmd"].rstrip().endswith("--terminal")
+    assert "--repo projectx" in spawned["cmd"]
+    out = m._run_review_step("wt-1", {"terminal": True}, False, False)
+    assert out["command"].rstrip().endswith("--terminal")
+    out = u.spawn_terminal_step("sync", ["wt-1"], "")
+    assert "--terminal" not in out["command"]
+    assert out["command"] == "workagent sync wt-1"
+    out = u.spawn_terminal_step("cleanup", ["wt-1"], "")
+    assert "--terminal" not in out["command"]
+    out = u.spawn_terminal_step("release", ["myrepo"], "")
+    assert "--terminal" not in out["command"]
