@@ -525,3 +525,4 @@
 - Cleanup/link-remove soft-delete by default (7-day `link undelete` window; `serve` GCs expired; `--hard-delete` skips) [no-issue]
 - Fix `watch-and-exec` shim argv stripped by `--` harness-args split [no-issue]
 - Fix web `link undelete` rejected by subcommand allowlist [no-issue]
+- Fix flow headless steps execing interactively: force `no_tty` in seams [no-issue]

@@ -204,7 +204,7 @@ def _run_start_step(ref: str, key: str, config: dict,
     except HarnessError:
         pass
     out = _call(_mod.start.__wrapped__, target, yes=True, launch=True,
-                json_output=json_output,
+                no_tty=True, json_output=json_output,
                 **_pick(config, "repo", "related_repo", "depth",
                         "base", "harness", "no_tty", "session_file",
                         "env_file", "extra_prompt"))
@@ -220,7 +220,7 @@ def _run_review_step(key: str, config: dict, fix_comments: bool,
     if not _headless(config):
         return _manual_step("review", [key] + (["--fix-comments"] if fix else []))
     from . import cli_review as _mod
-    _call(_mod.review.__wrapped__, key, yes=True, launch=True, json_output=json_output, fix_comments=fix,
+    _call(_mod.review.__wrapped__, key, yes=True, launch=True, no_tty=True, json_output=json_output, fix_comments=fix,
           **_pick(config, "repo", "depth", "harness", "no_tty", "then_fix_comments",
                  "new_fix_session", "session_file", "env_file", "extra_prompt"))
     return {"key": key, "status": "reviewed", "fix_comments": fix_comments}
@@ -243,7 +243,7 @@ def _run_action_step(key: str, action_label: str, config: dict, json_output: boo
     if not _headless(config):
         return _manual_step("action", ["run", action_label, key])
     from . import cli_action as _mod
-    _call(_mod.action_run.__wrapped__, action_label, key, launch=True, yes=True, json_output=json_output,
+    _call(_mod.action_run.__wrapped__, action_label, key, launch=True, no_tty=True, yes=True, json_output=json_output,
           **_pick(config, "harness", "extra_prompt", "env_file", "session_file"))
     return {"key": key, "label": action_label, "status": "acted"}
 
