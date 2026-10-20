@@ -166,6 +166,32 @@ def _pick(config: dict, *names: str) -> dict:
     return {n: config[n] for n in names if n in config}
 
 
+def _call(fn, *args, **kwargs):
+    """Call a runner's ``__wrapped__`` with real bool/int/str values.
+
+    Click/typer stores ``OptionInfo(default=…)`` sentinels as defaults, and
+    those objects are truthy — forwarding them raw turns every omitted
+    ``terminal``/``dry_run`` into True inside the runner's guards. Unwrap
+    them to their declared defaults so headless flow steps really run
+    headless.
+    """
+    import inspect as _inspect
+    import typer.models
+    fixed = {k: (v.default if isinstance(v, typer.models.OptionInfo) else v)
+             for k, v in kwargs.items()}
+    try:
+        sig = _inspect.signature(fn)
+        for name, param in sig.parameters.items():
+            if name in fixed:
+                continue
+            d = param.default
+            if isinstance(d, typer.models.OptionInfo):
+                fixed[name] = d.default
+    except (TypeError, ValueError):
+        pass
+    return fn(*args, **fixed)
+
+
 def _run_start_step(ref: str, key: str, config: dict,
                     json_output: bool) -> dict:
     """Start step: adopt the worktree when it exists, else start the ref."""
@@ -177,11 +203,13 @@ def _run_start_step(ref: str, key: str, config: dict,
         target = _resolve_ref(target)[0] or target
     except HarnessError:
         pass
-    _mod.start.__wrapped__(target, yes=True, launch=True,
-                           json_output=json_output,
-                           **_pick(config, "repo", "related_repo", "depth",
-                                  "base", "harness", "no_tty", "session_file",
-                                  "env_file", "extra_prompt"))
+    out = _call(_mod.start.__wrapped__, target, yes=True, launch=True,
+                json_output=json_output,
+                **_pick(config, "repo", "related_repo", "depth",
+                        "base", "harness", "no_tty", "session_file",
+                        "env_file", "extra_prompt"))
+    if isinstance(out, dict) and out.get("preview"):
+        return out
     return {"key": target, "ref": ref, "status": "started"}
 
 
@@ -192,9 +220,9 @@ def _run_review_step(key: str, config: dict, fix_comments: bool,
     if not _headless(config):
         return _manual_step("review", [key] + (["--fix-comments"] if fix else []))
     from . import cli_review as _mod
-    _mod.review.__wrapped__(key, yes=True, launch=True, json_output=json_output, fix_comments=fix,
-                            **_pick(config, "repo", "depth", "harness", "no_tty", "then_fix_comments",
-                                   "new_fix_session", "session_file", "env_file", "extra_prompt"))
+    _call(_mod.review.__wrapped__, key, yes=True, launch=True, json_output=json_output, fix_comments=fix,
+          **_pick(config, "repo", "depth", "harness", "no_tty", "then_fix_comments",
+                 "new_fix_session", "session_file", "env_file", "extra_prompt"))
     return {"key": key, "status": "reviewed", "fix_comments": fix_comments}
 
 
@@ -203,8 +231,8 @@ def _run_sync_step(key: str, config: dict, json_output: bool) -> dict:
     if not _headless(config):
         return _manual_step("sync", [key])
     from . import cli_sync as _mod
-    _mod.sync_cmd.__wrapped__(key, yes=True, json_output=json_output,
-                              **_pick(config, "merge", "harness", "session_file", "env_file", "extra_prompt"))
+    _call(_mod.sync_cmd.__wrapped__, key, yes=True, json_output=json_output,
+          **_pick(config, "merge", "harness", "session_file", "env_file", "extra_prompt"))
     return {"key": key, "status": "synced"}
 
 
@@ -215,8 +243,8 @@ def _run_action_step(key: str, action_label: str, config: dict, json_output: boo
     if not _headless(config):
         return _manual_step("action", ["run", action_label, key])
     from . import cli_action as _mod
-    _mod.action_run.__wrapped__(action_label, key, launch=True, yes=True, json_output=json_output,
-                                **_pick(config, "harness", "extra_prompt", "env_file", "session_file"))
+    _call(_mod.action_run.__wrapped__, action_label, key, launch=True, yes=True, json_output=json_output,
+          **_pick(config, "harness", "extra_prompt", "env_file", "session_file"))
     return {"key": key, "label": action_label, "status": "acted"}
 
 
