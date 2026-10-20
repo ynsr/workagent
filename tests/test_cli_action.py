@@ -318,3 +318,49 @@ def test_update_new_label_passed_through(tmp_path, monkeypatch):
     assert seen == {"label": "foo", "new_label": "bar"}
     import json as _json
     assert _json.loads(res.stdout)["updated"] == "bar"
+
+def test_open_mr_preset_gate_detects_existing_mr(tmp_path, monkeypatch):
+    """Open MR preset pre-exec must SKIP when an open MR exists.
+
+    Regression: the gate used `glab mr list ... --state opened`, but glab
+    has no --state flag — the error was hidden by 2>/dev/null so the gate
+    always passed and the harness created duplicate MRs.
+    """
+    import re
+    import tempfile
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    src = open("web/src/lib/actionPresets.ts").read()
+    pre = re.search(r"const OPEN_MR_PRE_EXECUTION = `(.*?)`\n", src, re.S).group(1)
+    assert "--state" not in pre, "glab mr list has no --state flag"
+    assert "-F json" in pre
+    from workagent import store_custom_actions as sca
+    from workagent import store_sqlite as sq
+    db = tmp_path / "s.db"
+    sq.init_db(db)
+    action = sca.create_action(db, name="Open MR Test", prompt="p", pre_execution=pre)
+    wt = tempfile.mkdtemp()
+    entry = {"worktree": wt, "branch": "b", "repo": wt, "active": 1}
+    monkeypatch.setattr("workagent.store.get_action", lambda label: action)
+    monkeypatch.setattr("workagent.store.load_links", lambda *a, **k: {"k": entry})
+    monkeypatch.setattr("workagent.worktrees.resolve_any", lambda ref, l: ("k", entry, None))
+    monkeypatch.setattr("workagent.worktrees.is_valid_worktree", lambda p: True)
+    called = []
+    monkeypatch.setattr("workagent.cli_action._run_harness", lambda *a, **k: called.append(1))
+    monkeypatch.setattr("workagent.cli_action._guard_harness", lambda *a, **k: None)
+    # Fake git + glab: feature branch, 1 ahead of develop, open MR exists.
+    import os
+    import stat
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "git").write_text('#!/bin/sh\nif [ "$2" = "rev-parse" ]; then echo "feat/x"; elif [ "$2" = "symbolic-ref" ]; then echo "refs/remotes/origin/develop"; elif [ "$2" = "rev-list" ]; then echo 2; fi\nexit 0\n')
+    (bindir / "glab").write_text('#!/bin/sh\ne=0\nfor a in "$@"; do [ "$a" = "--state" ] && e=1; done\nif [ $e = 1 ]; then echo "Unknown flag: --state" >&2; exit 1; fi\necho \'[{"iid": 1, "state": "opened"}]\'\nexit 0\n')
+    for f in ("git", "glab"):
+        os.chmod(bindir / f, os.stat(bindir / f).st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["action", "run", action["label"], "k", "--launch", "--yes", "--json"])
+    assert res.exit_code == 0, res.output
+    assert called == [], "harness must not run when an open MR exists"
+    import json as _json
+    assert "already exists" in _json.loads(res.stdout)["skipped"]

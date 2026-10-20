@@ -36,7 +36,14 @@ if [ "$br" = "$base" ]; then echo "SKIP: on base branch $base" >&2; exit 10; fi
 git fetch origin >/dev/null 2>&1
 ahead=$(git rev-list --count "origin/$base..HEAD" 2>/dev/null) || exit 1
 if [ "$ahead" -eq 0 ]; then echo "SKIP: no commits ahead of origin/$base" >&2; exit 10; fi
-if glab mr list --source-branch "$br" --target-branch "$base" --state opened 2>/dev/null | grep -q .; then echo "SKIP: open MR already exists for $br -> $base" >&2; exit 10; fi
+if glab_out=$(glab mr list --source-branch "$br" --target-branch "$base" -F json 2>&1); then
+  if [ "$glab_out" != "[]" ]; then
+    mr_info=$(printf '%s' "$glab_out" | head -c 300)
+    echo "SKIP: open MR already exists for $br -> $base: $mr_info" >&2; exit 10
+  fi
+else
+  echo "pre-execution failed: glab mr list could not check for an existing MR — refusing to create a possible duplicate" >&2; echo "$glab_out" >&2; exit 1
+fi
 if [ "$WORKAGENT_PREVIEW" = "1" ]; then echo "SKIP: would push $ahead commits ($br -> origin/$br)" >&2; exit 10; fi
 git push origin HEAD || exit 1
 printf '{"append_prompt": "Resolved base branch: %s (from origin/HEAD). Target all glab commands and diffs at origin/%s."}' "$base" "$base"`
