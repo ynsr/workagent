@@ -1,5 +1,7 @@
 # Changelog
 ## Unreleased
+- Pre-exec exit-0 may print `{"append_prompt": "..."}` on stdout (last JSON line wins); appended between base prompt and --extra-prompt in action run + flows; Open MR preset reports resolved base branch via it [no-issue]
+- `backup export/import`: JSON snapshot of custom actions + flow templates in config dir; import replaces tables (confirm-gated, --yes), validates every row [no-issue]
 - Preset actions: `Start from preset` dropdown pre-fills the Actions form (first: Open MR with base-resolving pre-exec); pre/post exit 10 = skipped with SKIP: reason, flows continue past skipped action steps [no-issue]
 - Web `action add/update` + `flow template add/update` no longer need `confirm: true` (plain row writes); only run/delete stay confirm-gated [no-issue]
 - Flows: templates + runs chain Start → … → Cleanup → Release via wizard, dry-run/resume, CLI + web parity [no-issue]

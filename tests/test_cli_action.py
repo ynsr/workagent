@@ -210,3 +210,89 @@ def test_update_no_fields_exits_2(tmp_path):
     res = runner.invoke(cli_mod.app,
                         ["action", "update", "generate_post_prd"])
     assert res.exit_code == 2
+
+def test_extract_append_prompt_json_last_line():
+    from workagent.cli_action import extract_append_prompt
+    out = 'pushing stuff\n{"append_prompt": "Resolved base branch: main."}\n'
+    assert extract_append_prompt(out) == "Resolved base branch: main."
+
+
+def test_extract_append_prompt_garbage_ignored():
+    from workagent.cli_action import extract_append_prompt
+    assert extract_append_prompt("just some logs\nmore logs\n") == ""
+    assert extract_append_prompt("") == ""
+
+
+def test_extract_append_prompt_non_dict_ignored():
+    from workagent.cli_action import extract_append_prompt
+    assert extract_append_prompt('[1, 2, 3]\n"hello"\n42\n') == ""
+
+
+def test_extract_append_prompt_non_string_ignored():
+    from workagent.cli_action import extract_append_prompt
+    assert extract_append_prompt('{"append_prompt": 42}\n') == ""
+    assert extract_append_prompt('{"append_prompt": null}\n') == ""
+    assert extract_append_prompt('{"other": "x"}\n') == ""
+
+
+def test_extract_append_prompt_later_line_wins():
+    from workagent.cli_action import extract_append_prompt
+    out = ('{"append_prompt": "first"}\n'
+           'noise\n'
+           '{"append_prompt": "second"}\n')
+    assert extract_append_prompt(out) == "second"
+
+
+def test_action_run_appends_pre_before_extra(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent import cli_action as ca
+    action, entry, _called = _skip_action_fixtures(
+        monkeypatch, tmp_path, pre_execution="echo hi")
+    monkeypatch.setattr(
+        "workagent.release_gates.run_repo_command",
+        lambda *a, **k: 'log line\n{"append_prompt": "Resolved base branch: main."}\n')
+    seen = {}
+    def _fake_harness(harness_name, prompt, wt, repo, no_tty, use_launch,
+                      result, json_output, **kw):
+        seen["prompt"] = prompt
+        return {"label": action["label"], "key": "k", "status": "acted"}
+    monkeypatch.setattr("workagent.cli_action._run_harness", _fake_harness)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["action", "run", action["label"], "k",
+                         "--launch", "--yes", "--json",
+                         "--extra-prompt", "EXTRA-BITS"])
+    assert res.exit_code == 0, res.output
+    prompt = seen["prompt"]
+    assert "Resolved base branch: main." in prompt
+    assert "EXTRA-BITS" in prompt
+    assert prompt.index("Resolved base branch: main.") < prompt.index("EXTRA-BITS")
+    assert prompt.index("Related worktrees:") < prompt.index("Resolved base branch: main.")
+
+
+def test_action_run_non_json_pre_changes_nothing(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent import cli_action as ca
+    action, entry, _called = _skip_action_fixtures(
+        monkeypatch, tmp_path, pre_execution="echo hi")
+    monkeypatch.setattr(
+        "workagent.release_gates.run_repo_command",
+        lambda *a, **k: "just logs, no json\n")
+    seen = {}
+    def _fake_harness(harness_name, prompt, wt, repo, no_tty, use_launch,
+                      result, json_output, **kw):
+        seen["prompt"] = prompt
+        return {"label": action["label"], "key": "k", "status": "acted"}
+    monkeypatch.setattr("workagent.cli_action._run_harness", _fake_harness)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["action", "run", action["label"], "k",
+                         "--launch", "--yes", "--json",
+                         "--extra-prompt", "EXTRA-BITS"])
+    assert res.exit_code == 0, res.output
+    base = ca.build_action_prompt(action, entry, "k",
+                                  {"k": entry})
+    from workagent.cli_harness import append_extra_prompt as _aep
+    assert seen["prompt"] == _aep(base, "EXTRA-BITS")

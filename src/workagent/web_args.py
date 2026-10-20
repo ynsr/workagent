@@ -37,6 +37,8 @@ SPECS: dict[str, dict[str, Any]] = {
                "key": lambda args: f"action:{_first_positional(args, VAL_FLAGS['action run'])}:{_first_positional(args[1:], VAL_FLAGS['action run'])}" if args[:1] == ["run"] else "config"},
     "flow": {"confirm": False, "force": False, "confirm_subs": ("run", "delete"),
              "key": lambda args: f"flow:{_nth_positional(args, 1, VAL_FLAGS['flow run'])}:{_nth_positional(args, 2, VAL_FLAGS['flow run'])}" if args[:1] == ["run"] else "config"},
+    "backup": {"confirm": False, "force": False, "confirm_subs": ("import",),
+               "key": "config"},
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
@@ -81,6 +83,8 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "flow list": ("--json", "--csv"),
     "flow show": ("--json",),
     "flow run": ("--dry-run", "--yes", "--json", "--fresh"),
+    "backup export": ("--json",),
+    "backup import": ("--yes", "--json"),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "start": ("--repo", "--depth", "--base", "--harness", "--session-file", "--env-file", "--extra-prompt", "--related-repo"),
@@ -100,12 +104,15 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "flow template update": ("--name", "--steps", "--pre-execution", "--post-execution"),
     "flow list": ("--worktree",),
     "flow run": ("--step-config",),
+    "backup export": ("--path",),
+    "backup import": (),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "link": {"list", "set", "remove", "deactivate", "reactivate", "undelete"},
                                     "tracker": {"add", "list", "remove", "update"},
                                     "action": {"add", "list", "show", "run", "update", "delete"},
-                                    "flow": {"template", "list", "show", "run"}}
+                                    "flow": {"template", "list", "show", "run"},
+                                    "backup": {"export", "import"}}
 TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "delete"}
 def _needs_confirm(command: str, args: list[str]) -> bool:
     """True when the (sub)command needs confirm:true (destructive only).

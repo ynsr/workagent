@@ -37,6 +37,30 @@ def _db():
     return _sq.db_path()
 
 
+def extract_append_prompt(stdout: str) -> str:
+    """Extract pre-exec append_prompt from stdout (last JSON line wins).
+
+    Scans stdout lines from last to first; the first line that parses as
+    a JSON dict with a string ``append_prompt`` value wins. Returns the
+    stripped string, or "" when no such line exists. Pure function, no I/O.
+    """
+    if not isinstance(stdout, str) or not stdout:
+        return ""
+    for line in reversed(stdout.splitlines()):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            obj = json.loads(stripped)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(obj, dict):
+            val = obj.get("append_prompt")
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+    return ""
+
+
 def build_action_prompt(action: dict, entry: dict, key: str,
                         links: dict) -> str:
     """Action prompt + worktree-paths block (target first, then children)."""
@@ -234,12 +258,13 @@ def action_run(
         if (_sys.stdin.readline() or "").strip().lower() not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)
     pre = (action.get("pre_execution") or "").strip()
+    pre_stdout = ""
     if pre:
         from . import release_gates as _gates
         pre_env = {"WORKAGENT_PREVIEW": "1"} if mode == "preview" else None
         try:
-            _gates.run_repo_command(label, "pre-execution", pre, wt, 600,
-                                    env_file, pre_env)
+            pre_stdout = _gates.run_repo_command(label, "pre-execution", pre, wt, 600,
+                                    env_file, pre_env) or ""
         except _gates.SkippedGate as e:
             _print_result({"label": label, "key": key, "skipped": e.reason},
                           json_output)
@@ -257,6 +282,9 @@ def action_run(
             _guard_harness(key, wt)
         harness_name = harness_name or store.load_config().get("default_harness", "omp")
         prompt = build_action_prompt(action, entry, key, links)
+        appended = extract_append_prompt(pre_stdout)
+        if appended:
+            prompt = append_extra_prompt(prompt, appended)
         if extra_prompt and extra_prompt.strip():
             prompt = append_extra_prompt(prompt, extra_prompt)
         result = _run_harness(harness_name, prompt, wt, str(entry.get("repo", wt)),

@@ -38,14 +38,17 @@ class SkippedGate(HarnessError):
 
 def _run_group(argv: list[str], cwd: str, timeout_s: int,
                env_file: str | None = None,
-               extra_env: dict | None = None) -> None:
+               extra_env: dict | None = None) -> str:
     """Run argv in its own process group; timeout kills the group.
 
     The env file is sourced first via the parsed KEY=VAL overlay (same
     semantics as the headless harness launch) so repos.commands entries
     see the same env as login shells. *extra_env* (e.g. preview flag) is
     merged over the resolved env without affecting existing callers.
-    Exit 10 raises SkippedGate (reason = last SKIP:-prefixed output line);
+    stdout is captured and returned as text; both streams are echoed to
+    our stderr so logs are preserved (stderr streams live as today).
+    Exit 10 raises SkippedGate (reason = last SKIP:-prefixed line in the
+    combined stdout+stderr text);
     all other non-zero exits raise HarnessError exactly as before.
     """
     from . import env as _env
@@ -55,14 +58,16 @@ def _run_group(argv: list[str], cwd: str, timeout_s: int,
     if extra_env:
         merged.update(extra_env)
     proc = subprocess.Popen(
-        argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, start_new_session=True, env=merged,
     )
-    assert proc.stdout is not None
+    assert proc.stdout is not None and proc.stderr is not None
     try:
-        out, _ = proc.communicate(timeout=timeout_s)
+        out, err = proc.communicate(timeout=timeout_s)
         if out:
             print(out, end="", file=sys.stderr, flush=True)
+        if err:
+            print(err, end="", file=sys.stderr, flush=True)
     except subprocess.TimeoutExpired:
         assert proc.pid is not None
         os.killpg(proc.pid, signal.SIGTERM)
@@ -74,24 +79,25 @@ def _run_group(argv: list[str], cwd: str, timeout_s: int,
         raise HarnessError(f"command timed out: {' '.join(argv)}")
     if proc.returncode == SKIP_EXIT_CODE:
         reason = f"exit {SKIP_EXIT_CODE}"
-        for line in (out or "").splitlines():
+        for line in ((out or "") + "\n" + (err or "")).splitlines():
             stripped = line.strip()
             if stripped.upper().startswith("SKIP:"):
                 reason = stripped.split(":", 1)[1].strip() or reason
         raise SkippedGate(reason)
     if proc.returncode != 0:
         raise HarnessError(f"{' '.join(argv)} failed with exit {proc.returncode}")
-
+    return out or ""
 
 def run_repo_command(repo_name: str, key: str, command: str, cwd: str,
                      timeout_s: int, env_file: str | None = None,
-                     extra_env: dict | None = None) -> None:
+                     extra_env: dict | None = None) -> str:
     """Run any repos.commands entry with the env file sourced first.
 
     Shared choke point for every current and future commands-column
     execution: resolves the env file (None = configured default), logs
     the sourcing line, and runs via _run_group (own process group, whole
-    tree killed on timeout). Raises HarnessError on failure/timeout
+    tree killed on timeout). Returns the captured stdout text (stderr is
+    echoed live, not returned). Raises HarnessError on failure/timeout
     (SkippedGate, a HarnessError subclass, on exit 10),
     usage error when the command is blank.
     """
@@ -102,7 +108,7 @@ def run_repo_command(repo_name: str, key: str, command: str, cwd: str,
     known = set((_store.load_repos().get(repo_name) or {}).get("commands") or {})
     eprint(f"running {key} for {repo_name}: {command.strip()}"
            + ("" if key in known else f" (ad-hoc key, known: {sorted(known)})"))
-    _run_group(["/bin/sh", "-c", command.strip()], cwd, timeout_s, env_file,
+    return _run_group(["/bin/sh", "-c", command.strip()], cwd, timeout_s, env_file,
                extra_env)
 
 
