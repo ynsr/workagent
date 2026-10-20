@@ -341,7 +341,7 @@ def test_terminal_action_step_spawns_and_pauses(monkeypatch):
         "wt-1", "myact", {"terminal": True}, False)
     assert out["preview"] is True
     assert out["terminal_pid"] == 4242
-    assert spawned["cmd"] == "workagent action run myact wt-1"
+    assert spawned["cmd"] == "workagent action run myact wt-1 --terminal"
     assert spawned["cwd"] == "/tmp/wt"
 
 
