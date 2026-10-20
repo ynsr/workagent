@@ -177,21 +177,33 @@ def has_banned(config: object, banned: tuple[str, ...]) -> str | None:
 TERMINAL_CAPABLE = ("start", "review", "action")
 
 
-def spawn_terminal_step(kind: str, args: list[str], cwd: str = "") -> dict:
-    """Terminal-mode step: spawn the OS terminal, then pause for the human.
+def spawn_terminal_step(kind: str, args: list[str], cwd: str = "",
+                        branch: str = "", harness: str = "omp") -> dict:
+    """Terminal-mode step: mint the transcript scope, spawn, then pause.
 
     *kind* selects terminal support: terminal-capable kinds get
     ``--terminal`` appended so the child really runs the harness in the
     new terminal instead of printing its command (preview). Other kinds
     keep the command as-is (manual pause). Spawn failure degrades to a
     plain manual pause — the command is always printed either way.
+
+    Option A scope: the detached terminal mints its .jsonl seconds after
+    we return, so the scope (fresh session id + created parent dir) is
+    minted HERE and returned as ``session_scope``/``session_dir``. The
+    resume path re-resolves the minted file via
+    ``adopt_terminal_transcript`` — the file itself is never pre-touched
+    (omp rejects empty transcripts). Best effort: ("", "") on failure.
     """
+    scope_file, scope_dir = mint_terminal_scope(kind, branch, harness)
     from . import cli_harness as _h
     argv = [*args, "--terminal"] if kind in TERMINAL_CAPABLE else args
     cmd = " ".join(shlex.quote(a) for a in [kind, *argv] if a)
     full = f"workagent {cmd}"
     base = {"preview": True, "command": full,
             "manual_kind": kind, "manual_args": [kind, *argv]}
+    if scope_file:
+        base["session_scope"] = scope_file
+        base["session_dir"] = scope_dir
     try:
         tpid = _h.spawn_in_terminal(full, cwd)
     except Exception as e:
@@ -200,6 +212,136 @@ def spawn_terminal_step(kind: str, args: list[str], cwd: str = "") -> dict:
     if cwd:
         out["terminal_cwd"] = cwd
     return out
+
+
+def persist_terminal_pause(key_or_ref: str, manual_kind: str,
+                           manual_args: list, output: str, flow_id: int,
+                           terminal_pid=None, scope: str = "",
+                           scope_dir: str = "") -> str | None:
+    """Persist a terminal/manual pause session tagged with the flow.
+
+    The scope (fresh session id minted pre-spawn) pins the row id; the
+    resume path re-resolves the detached terminal's minted .jsonl via
+    `adopt_terminal_transcript`. Best effort — never raises.
+    """
+    from . import cli_harness as _h
+    from . import store_sqlite as _sq
+    meta = {"flow_id": flow_id, "mode": "flow-terminal",
+            "session_dir": scope_dir}
+    if terminal_pid is not None:
+        meta["terminal_pid"] = terminal_pid
+    try:
+        sid = _h.record_headless_attempt(
+            key_or_ref, manual_kind, manual_args, output, exit_code=0,
+            metadata=meta, session_file=scope or None)
+        if sid and scope:
+            try:
+                _sq.set_session_metadata(_sq.db_path(), sid, meta)
+            except Exception:
+                pass
+        return sid
+    except Exception:
+        return None
+
+
+
+def backfill_terminal_transcripts(flow_id: int, key: str, ref: str) -> None:
+    """Re-resolve every flow-tagged pause session's minted transcript.
+
+    The detached terminal mints its .jsonl after the pause row was
+    written; on resume each flow-tagged pause row re-resolves its scope
+    dir's newest transcript. Never raises.
+    """
+    from . import store_sqlite as _sq
+    try:
+        db = _sq.db_path()
+        if not db.exists():
+            return
+        rows = _sq.list_sessions(db, include_deleted_worktrees=True)
+    except Exception:
+        return
+    for s in rows:
+        try:
+            if (s.get("worktree_ref") or "") not in (key, ref):
+                continue
+            if (s.get("metadata") or {}).get("flow_id") != flow_id:
+                continue
+            if (s.get("metadata") or {}).get("mode") not in (
+                    "flow-terminal", "manual-step"):
+                continue
+            scope = str(s.get("file_path") or "")
+            sid = str(s.get("id") or "")
+            if scope and sid:
+                adopt_terminal_transcript(scope, sid)
+        except Exception:
+            continue
+
+#: flow-step kind → harness session type segment for the scope dir.
+#: sync/cleanup/release have no harness phase — their terminal/manual
+#: pause carries no session scope.
+_SESSION_TYPE = {"start": "start", "review": "review",
+                 "fix_comments": "fix_comments", "action": "action"}
+
+
+def mint_terminal_scope(kind: str, branch: str = "",
+                        harness: str = "omp") -> tuple[str, str]:
+    """Mint the pre-spawn transcript scope for a terminal flow step.
+
+    Returns (scope_session_file, scope_dir): the session id is fresh
+    (never reused), the parent dir is created, and the file itself is
+    NOT pre-touched — omp owns the minted filename under --session-dir
+    and rejects empty transcripts. Best effort: ("", "") on failure.
+    """
+    try:
+        from . import store_sqlite as _sq
+        stype = _SESSION_TYPE.get(kind, "")
+        path = _sq.session_file_path(_sq.gen_session_id(), harness,
+                                     branch=branch or None,
+                                     session_type=stype or None)
+        return str(path), str(path.parent)
+    except Exception:
+        return "", ""
+
+
+def adopt_terminal_transcript(scope_file: str, sid: str) -> str:
+    """Re-resolve a detached terminal step's minted .jsonl on resume.
+
+    The spawned terminal mints its transcript seconds after we return;
+    by resume time it exists under the scope dir. Mirrors the web
+    `_resolve_session_file` fallback: pinned path when ready, else the
+    newest non-empty .jsonl under the scope dir (persisted on the
+    session). Returns "" when nothing resumable is found. Never raises.
+    """
+    from pathlib import Path as _p
+    try:
+        from . import store_sqlite as _sq
+        p = _p(scope_file) if scope_file else None
+        if p is not None:
+            try:
+                if p.is_file() and p.stat().st_size > 0:
+                    return scope_file
+            except OSError:
+                pass
+        scope = p.parent if p is not None else None
+        if scope is None:
+            return ""
+        try:
+            if not scope.is_dir():
+                return ""
+        except OSError:
+            return ""
+        minted = _sq.newest_transcript(scope)
+        if minted is None:
+            return ""
+        try:
+            db = _sq.db_path()
+            if sid and db.exists():
+                _sq.set_session_file_path(db, sid, str(minted))
+        except Exception:
+            pass
+        return str(minted)
+    except Exception:
+        return ""
 
 
 def adopt_skipped_start_key(resolver, ref: str, key: str):

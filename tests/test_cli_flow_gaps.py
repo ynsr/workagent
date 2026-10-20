@@ -229,3 +229,53 @@ def test_terminal_spawn_appends_terminal_flag(monkeypatch):
     assert "--terminal" not in out["command"]
     out = u.spawn_terminal_step("release", ["myrepo"], "")
     assert "--terminal" not in out["command"]
+
+
+def test_terminal_spawn_mints_scope(monkeypatch, tmp_path):
+    """Option A: the detached spawn mints the transcript scope pre-spawn.
+
+    Regression: the paused step result held only the terminal pid, so the
+    harness-minted .jsonl in the detached terminal was unreachable from
+    the flow row. Now `session_scope`/`session_dir` ride on the outcome.
+    """
+    import workagent.cli_flow_util as u
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: tmp_path / "s.db")
+    monkeypatch.setattr("workagent.store.config_dir",
+                        lambda: tmp_path / "cfg")
+    monkeypatch.setattr("workagent.cli_harness.spawn_in_terminal",
+                        lambda cmd, cwd="": 4242)
+    out = u.spawn_terminal_step("start", ["jira:X-1"], "",
+                                branch="feat/x", harness="omp")
+    assert out["preview"] is True and out["terminal_pid"] == 4242
+    scope = out["session_scope"]
+    assert scope.endswith(".jsonl") and "feat" in out["session_dir"]
+    from pathlib import Path as _P
+    assert _P(out["session_dir"]).is_dir()
+    assert not _P(scope).exists()  # never pre-touched
+
+
+def test_adopt_terminal_transcript_resolves_minted(tmp_path, monkeypatch):
+    """Resume re-resolves the detached terminal's minted .jsonl."""
+    import workagent.cli_flow_util as u
+    import workagent.store_sqlite as sq
+    db = tmp_path / "s.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    monkeypatch.setattr("workagent.store.config_dir",
+                        lambda: tmp_path / "cfg")
+    scope_file, scope_dir = u.mint_terminal_scope("start", branch="feat/x")
+    sid = "abc123"
+    assert u.adopt_terminal_transcript(scope_file, sid) == ""  # nothing yet
+    from pathlib import Path as _P
+    minted = _P(scope_dir) / "minted.jsonl"
+    minted.write_text('{"x": 1}\n')
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+            " VALUES ('wt-1', '/tmp/wt', 'b', NULL, '2026-01-01', '{}')")
+    sq.insert_session(db, worktree_ref="wt-1", harness_name="omp",
+                      initiator_command="start", prompt="p",
+                      file_path=scope_file, session_id=sid)
+    assert u.adopt_terminal_transcript(scope_file, sid) == str(minted)
+    row = sq.get_session(db, sid, include_deleted_worktrees=True)
+    assert (row or {}).get("file_path") == str(minted)

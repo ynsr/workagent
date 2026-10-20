@@ -6,12 +6,11 @@ from typing import Optional
 
 import typer
 
+from . import cli_flow_steps as _steps
 from . import cli_flow_util as _futil
 from . import store, worktrees
 from . import store_flows as sf
 from .cli_core import (
-    EXIT_GENERAL,
-    EXIT_USAGE,
     _catch_harness_errors,
     _fail,
     _init_completions,
@@ -162,489 +161,67 @@ def _manual_step(kind: str, args: list[str]) -> dict:
             "manual_kind": kind, "manual_args": [kind, *args]}
 
 
-def _spawn_terminal_step(kind: str, args: list[str], cwd: str = "") -> dict:
-    """Terminal-mode step (delegates to cli_flow_util; keeps this file small)."""
-    return _futil.spawn_terminal_step(kind, args, cwd)
-
-def _headless(config: dict) -> bool:
-    manual = ("preview", "dry_run", "terminal")
-    return (bool(config.get("launch", True))
-            and not any(config.get(k) for k in manual))
-
-
-def _is_terminal(config: dict) -> bool:
-    """Normalized terminal-mode flag (run_mode: terminal → terminal: True)."""
-    return bool(config.get("terminal", False))
-
+def _spawn_terminal_step(kind: str, args: list[str], cwd: str = "",
+                         branch: str = "", harness: str = "omp") -> dict:
+    """Terminal-mode step (delegates to cli_flow_steps; keeps this file small)."""
+    return _futil.spawn_terminal_step(kind, args, cwd, branch, harness)
 
 def _pick(config: dict, *names: str) -> dict:
-    return {n: config[n] for n in names if n in config}
-
-
-def _call(fn, *args, **kwargs):
-    """Call a runner's ``__wrapped__`` with real bool/int/str values.
-
-    Click/typer stores ``OptionInfo(default=…)`` sentinels as defaults, and
-    those objects are truthy — forwarding them raw turns every omitted
-    ``terminal``/``dry_run`` into True inside the runner's guards. Unwrap
-    them to their declared defaults so headless flow steps really run
-    headless.
-    """
-    import inspect as _inspect
-    import typer.models
-    fixed = {k: (v.default if isinstance(v, typer.models.OptionInfo) else v)
-             for k, v in kwargs.items()}
-    try:
-        sig = _inspect.signature(fn)
-        for name, param in sig.parameters.items():
-            if name in fixed:
-                continue
-            d = param.default
-            if isinstance(d, typer.models.OptionInfo):
-                fixed[name] = d.default
-    except (TypeError, ValueError):
-        pass
-    return fn(*args, **fixed)
+    return _steps.pick(config, *names)
 
 
 def _run_start_step(ref: str, key: str, config: dict,
                     json_output: bool) -> dict:
-    """Start step: adopt the worktree when it exists, else start the ref."""
-    extra = _futil.flag_argv(config, *_futil.START_FLAGS)
-    if _is_terminal(config):
-        return _spawn_terminal_step("start", [ref, *extra])
-    if not _headless(config):
-        return _manual_step("start", [ref, *extra])
-    from . import cli_start as _mod
-    # Pass the original issue ref: start resolves links itself and adopts
-    # the existing worktree (pre-resolving to a key breaks parse_ref).
-    target = ref
-    out = _call(_mod.start.__wrapped__, target, yes=True, launch=True,
-                no_tty=True, json_output=json_output,
-                **_pick(config, "repo", "related_repo", "depth",
-                        "base", "harness", "no_tty", "session_file",
-                        "env_file", "extra_prompt"))
-    if isinstance(out, dict) and out.get("preview"):
-        return out
-    return {"key": target, "ref": ref, "status": "started"}
+    """Start step (delegates to cli_flow_steps; keeps this file small)."""
+    return _steps.run_start_step(ref, key, config, json_output,
+                                 _spawn_terminal_step, _manual_step)
 
 
 def _run_review_step(key: str, config: dict, fix_comments: bool,
                      json_output: bool) -> dict:
-    """Review (or Fix-comments) step with merged flags."""
-    fix = bool(fix_comments or config.get("fix_comments", False))
-    fix_argv = ["--fix-comments"] if fix else []
-    extra = _futil.flag_argv(config, *_futil.REVIEW_FLAGS)
-    if _is_terminal(config):
-        return _spawn_terminal_step("review", [key, *fix_argv, *extra])
-    if not _headless(config):
-        return _manual_step("review", [key, *fix_argv, *extra])
-    from . import cli_review as _mod
-    _call(_mod.review.__wrapped__, key, yes=True, launch=True, no_tty=True, json_output=json_output, fix_comments=fix,
-          **_pick(config, "repo", "depth", "harness", "no_tty", "then_fix_comments",
-                 "use_review_session", "session_file", "env_file", "extra_prompt"))
-    return {"key": key, "status": "reviewed", "fix_comments": fix_comments}
+    """Review step (delegates to cli_flow_steps; keeps this file small)."""
+    return _steps.run_review_step(key, config, fix_comments, json_output,
+                                  _spawn_terminal_step, _manual_step)
 
 
 def _run_sync_step(key: str, config: dict, json_output: bool) -> dict:
-    """Sync step with merged flags."""
-    extra = _futil.flag_argv(config, *_futil.SYNC_FLAGS)
-    if _is_terminal(config):
-        wt = str((store.load_links().get(key, {}) or {}).get("worktree", "") or "")
-        return _spawn_terminal_step("sync", [key, *extra], wt)
-    if not _headless(config):
-        return _manual_step("sync", [key, *extra])
-    from . import cli_sync as _mod
-    _call(_mod.sync_cmd.__wrapped__, key, yes=True, json_output=json_output,
-          **_pick(config, "merge", "harness", "session_file", "env_file", "extra_prompt"))
-    return {"key": key, "status": "synced"}
+    """Sync step (delegates to cli_flow_steps; keeps this file small)."""
+    return _steps.run_sync_step(key, config, json_output,
+                                _spawn_terminal_step, _manual_step)
 
 
 def _run_action_step(key: str, action_label: str, config: dict, json_output: bool) -> dict:
-    """Custom-action step (live label re-check for races)."""
-    if store.get_action(action_label) is None:
-        raise HarnessError(f"unknown action_label {action_label!r}", exit_code=2)
-    extra = _futil.flag_argv(config, *_futil.ACTION_FLAGS)
-    if _is_terminal(config):
-        wt = str((store.load_links().get(key, {}) or {}).get("worktree", "") or "")
-        return _spawn_terminal_step("action", ["run", action_label, key, *extra], wt)
-    if not _headless(config):
-        return _manual_step("action", ["run", action_label, key, *extra])
-    from . import cli_action as _mod
-    from .release_gates import SkippedGate
-    try:
-        out = _call(_mod.action_run.__wrapped__, action_label, key, launch=True, yes=True, json_output=json_output,
-                    **_pick(config, "harness", "extra_prompt", "env_file", "session_file"))
-    except SkippedGate as e:
-        return {"key": key, "label": action_label, "status": "skipped", "detail": e.reason}
-    if isinstance(out, dict) and out.get("skipped"):
-        return {"key": key, "label": action_label, "status": "skipped", "detail": str(out["skipped"])}
-    return {"key": key, "label": action_label, "status": "acted"}
+    """Custom-action step (delegates to cli_flow_steps; keeps this file small)."""
+    return _steps.run_action_step(key, action_label, config, json_output,
+                                  _spawn_terminal_step, _manual_step)
+
 
 def _run_cleanup_step(key: str, config: dict, json_output: bool) -> dict:
-    """Cleanup step (fixed squash + soft-delete; overrides rejected)."""
-    if _futil.has_banned(config, sf._BANNED_CLEANUP_FLAGS):
-        raise HarnessError("cleanup is fixed to squash + soft-delete — "
-                           "hard-delete/no-squash overrides rejected", exit_code=2)
-    if _is_terminal(config):
-        wt = str((store.load_links().get(key, {}) or {}).get("worktree", "") or "")
-        return _spawn_terminal_step("cleanup", [key], wt)
-    if not _headless(config):
-        return _manual_step("cleanup", [key])
-    entry = store.load_links().get(key) or {}
-    if not key or not entry:
-        raise HarnessError(f"no linked state for {key}", exit_code=2)
-    from . import cli_cleanup as _mod
-    _mod._cleanup_one(key, dict(entry), bool(config.get("force", False)), True, False, json_output,
-                      squash=True, merge=None, hard_delete=False)
-    return {"key": key, "status": "cleaned"}
+    """Cleanup step (delegates to cli_flow_steps; keeps this file small)."""
+    return _steps.run_cleanup_step(key, config, json_output,
+                                   _spawn_terminal_step, _manual_step)
 
 
 def _run_release_step(repo_snapshot: dict, config: dict, json_output: bool) -> dict:
-    """Release step from the flow's repo snapshot (never links)."""
-    from . import release_lock as _lock
-    from . import release_util as _util
-    repo = str((repo_snapshot or {}).get("repo", "") or "")
-    if not repo:
-        raise HarnessError("flow has no repo snapshot — cannot release",
-                           exit_code=2)
-    extra = _futil.flag_argv(config, *_futil.RELEASE_FLAGS)
-    if _is_terminal(config):
-        return _spawn_terminal_step("release", [repo, *extra])
-    if not _headless(config):
-        return _manual_step("release", [repo, *extra])
-    lock = _lock.lock_path(str(_util.worktree_base()), repo)
-    if _lock.locked(lock):
-        return {"skipped": "release-locked", "repo": repo}
-    from . import cli_release as _mod
-    out = _mod.run_release(repo, yes=True, dry_run=False, json_output=json_output,
-                           **_pick(config, "checks", "diff", "pre_release_timeout", "ci_timeout", "env_file"))
-    return {"repo": repo, "status": str((out or {}).get("status") or "released"), **(out or {})}
+    """Release step (delegates to cli_flow_steps; keeps this file small)."""
+    return _steps.run_release_step(repo_snapshot, config, json_output,
+                                    _spawn_terminal_step, _manual_step)
 
 
 def _run_repo_command(repo_name: str, phase: str, command: str, cwd: str) -> None:
-    from . import release_gates as _gates
-    _gates.run_repo_command(repo_name, phase, command, cwd, 600, None)
+    _steps.run_repo_command(repo_name, phase, command, cwd)
 
 
 def _tag_flow_session(key: str, flow_id: int) -> None:
     """Best-effort: stamp flow_id into the step's newest session metadata."""
-    try:
-        from . import store_sqlite as _sq
-        db = _sq.db_path()
-        mine = [s for s in _sq.list_sessions(db, include_deleted_worktrees=True)
-                if (s.get("worktree_ref") or "") == key]
-        if mine:
-            _sq.set_session_metadata(db, mine[0]["id"], {"flow_id": flow_id})
-    except Exception as e:
-        eprint(f"flow session tagging skipped: {e}")
-
-# ── flow run ──────────────────────────────────────────────────────────────
-
-def _find_resumable(template_label: str, ref: str,
-                    key: str) -> dict | None:
-    """Latest non-done flow for the template+ref pair (None: fresh)."""
-    for flow in reversed(store.list_flows(include_deleted_worktrees=True)):
-        if flow.get("template_label") != template_label:
-            continue
-        if flow.get("status") == "done":
-            continue
-        wref = flow.get("worktree_ref") or ""
-        if key and wref == key:
-            return flow
-        snap = flow.get("repo_snapshot") or {}
-        launch = snap.get("launch_ref") if isinstance(snap, dict) else ""
-        if not key and launch and launch == ref:
-            return flow
-        if not key and not wref and not launch:
-            return flow
-    return None
+    _steps.tag_flow_session(key, flow_id)
 
 
-@flow_app.command("run")
-@_catch_harness_errors
-def flow_run(
-    template: str = typer.Argument(..., help="Flow template label."),
-    ref: str = typer.Argument(..., autocompletion=_complete_refs, help="Issue ref or worktree key/branch/path."),
-    step_config: Optional[str] = typer.Option(None, "--step-config", help='Per-run step overrides as JSON ({"<index>": {...}}).'),
-    skip_steps: Optional[str] = typer.Option(None, "--skip-steps", help='Comma-separated step indexes to mark done-without-running on resume (e.g. "0" or "0,2"). Only paused/done work applies.'),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print the resolved chain without executing."),
-    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
-    fresh: bool = typer.Option(False, "--fresh", help="Force a new flow row instead of resuming."),
-    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
-) -> None:
-    """Run a flow template against an issue ref or worktree."""
-    tpl = store.get_template(template)
-    if tpl is None:
-        _fail(f"unknown flow template: {template!r}", EXIT_USAGE)
-    assert tpl is not None
-    steps = sf.validate_template(tpl.get("steps") or [],
-                                 get_action=store.get_action)
-    try:
-        overrides = json.loads(step_config or "{}")
-    except json.JSONDecodeError as e:
-        _fail(f"--step-config is not valid JSON: {e}", EXIT_USAGE)
-    if not isinstance(overrides, dict):
-        _fail("--step-config must be a JSON object", EXIT_USAGE)
-    merged_steps = [{**s, "config": _merge_config(
-        s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
-        for i, s in enumerate(steps)]
-    # Fail fast on per-run overrides (before any flow row exists): banned
-    # shortcut/cleanup flags rejected via the shared keys+values scanner.
-    for step in merged_steps:
-        hit = _futil.has_banned(step.get("config") or {}, sf._BANNED_STEP_FLAGS)
-        if hit:
-            _fail(f"{hit!r} is rejected inside flows — use an explicit "
-                  f"'fix_comments' step", EXIT_USAGE)
-        if step["kind"] == "cleanup":
-            hit = _futil.has_banned(step.get("config") or {}, sf._BANNED_CLEANUP_FLAGS)
-            if hit:
-                _fail(f"{hit!r} is rejected in cleanup steps — fixed to squash + soft-delete",
-                      EXIT_USAGE)
-    if dry_run:
-        _print_result({"template": tpl["label"], "ref": ref,
-                       "chain": merged_steps}, json_output)
-        return
-    import sys as _sys
-    if not yes and _sys.stdin.isatty():
-        eprint(f"run flow {tpl['label']} on {ref}? [y/N] ", end="")
-        if (_sys.stdin.readline() or "").strip().lower() not in ("y", "yes"):
-            _fail("aborted", EXIT_USAGE)
-    key, entry, parsed = _resolve_ref(ref)
-    flow = None if fresh else _find_resumable(tpl["label"], ref, key)
-    if flow is None:
-        snap: dict = {"launch_ref": ref}
-        # Templates without a start step (e.g. cleanup_release) never hit
-        # the start-step backfill below — seed repo info from the resolved
-        # link up front so the release step finds it (deleted row included:
-        # resume after cleanup soft-delete still needs the repo name).
-        link = entry or store.load_links(include_deleted=True).get(key, {})
-        repo = str((link or {}).get("repo", "") or "")
-        if repo:
-            info = store.load_repos().get(repo, {})
-            snap = {"repo": repo, "launch_ref": ref, "default_branch": str(
-                info.get("default_branch", "") or ""),
-                "release_branch": str(info.get("release_branch", "") or "")}
-        flow = store.create_flow(template_label=tpl["label"], worktree_ref=key,
-                                 repo_snapshot=snap)
-    fid = flow["id"]
-    if not (flow.get("repo_snapshot") or {}).get("repo"):
-        # Pre-fix rows (flow 26) carry {'launch_ref'} only — repair on
-        # resume from the deleted-aware link row instead of failing.
-        link = entry or store.load_links(include_deleted=True).get(key, {})
-        repo = str((link or {}).get("repo", "") or "")
-        if repo:
-            info = store.load_repos().get(repo, {})
-            store.update_flow(fid, repo_snapshot={
-                "repo": repo, "launch_ref": ref, "default_branch": str(
-                    info.get("default_branch", "") or ""),
-                "release_branch": str(info.get("release_branch", "") or "")})
-            flow = store.get_flow(fid, include_deleted_worktrees=True) or flow
-    store.update_flow(fid, status="running")
-    current = int(flow.get("current_step") or 0)
-    results = list(flow.get("step_results") or [])
-    if skip_steps:
-        wanted: set[int] = set()
-        for tok in str(skip_steps).split(","):
-            tok = tok.strip()
-            if not tok:
-                continue
-            try:
-                wanted.add(int(tok))
-            except ValueError:
-                _fail(f"--skip-steps takes comma-separated step indexes, got {tok!r}", EXIT_USAGE)
-        bad = sorted(i for i in wanted if i < 0 or i >= len(merged_steps))
-        if bad:
-            _fail(f"--skip-steps index out of range (0..{len(merged_steps) - 1}): {bad}", EXIT_USAGE)
-        for i in sorted(wanted):
-            if i < current:
-                continue  # already green — nothing to mark
-            if i > current:
-                _fail(f"--skip-steps {i} is beyond the resume cursor (step {current}) — "
-                      f"only the resume step can be marked done", EXIT_USAGE)
-            kind = merged_steps[i]["kind"]
-            if results and results[-1].get("kind") == kind and results[-1].get("status") == "paused":
-                results.pop()  # replace the stale paused entry for this step
-            results.append({"kind": kind, "status": "skipped",
-                            "detail": "marked done on resume (--skip-steps)"})
-            current = i + 1
-            if kind == "start":
-                # Skipped start = the human finished in the terminal (or the
-                # worktree already exists): adopt whatever the ref resolves
-                # to NOW so downstream steps get a real key. Without this
-                # the review step runs with key="" and fails "Needs input".
-                key, adopted = _futil.adopt_skipped_start_key(
-                    _resolve_ref, ref, key)
-                if adopted:
-                    entry = adopted
-                    wt_path = str(adopted.get("worktree", "") or wt_path)
-                    store.update_flow(fid, worktree_ref=key)
-    pre = (tpl.get("pre_execution") or "").strip()
-    wt_path = str((entry or {}).get("worktree", "") or "")
-    if pre and current == 0:
-        if key and wt_path:
-            try:
-                _run_repo_command(tpl["label"], "pre-execution", pre,
-                                  wt_path)
-            except HarnessError as e:
-                store.update_flow(fid, status="failed",
-                                  step_results=results + [{
-                                      "kind": "pre_execution",
-                                      "status": "failed", "detail": str(e)}])
-                _fail(f"pre-execution failed: {e}", EXIT_GENERAL)
-        # No worktree yet for issue flows: skip pre until step 0 lands
-        # (the Start step creates the worktree; see below).
-    for idx in range(current, len(merged_steps)):
-        step = merged_steps[idx]
-        kind = step["kind"]
-        config = step.get("config") or {}
-        try:
-            if kind == "start":
-                outcome = _run_start_step(ref, key, config, json_output)
-                if not outcome.get("preview"):
-                    new_key = str(outcome.get("key") or key or "")
-                    if new_key and new_key != key:
-                        key = new_key
-                        store.update_flow(fid, worktree_ref=key)
-                        links = store.load_links()
-                        entry = links.get(key, entry)
-                        wt_path = str((entry or {}).get("worktree", "")
-                                      or wt_path)
-                    if key and not (flow.get("repo_snapshot") or {}).get("repo"):
-                        repo = str((entry or {}).get("repo", "") or "")
-                        info = store.load_repos().get(repo, {})
-                        snap = {"repo": repo, "launch_ref": ref, "default_branch": str(
-                            info.get("default_branch", "") or ""),
-                            "release_branch": str(
-                            info.get("release_branch", "") or "")}
-                        store.update_flow(fid, repo_snapshot=snap)
-                        flow = store.get_flow(fid) or flow
-                    if pre and not wt_path:
-                        wt = str((store.load_links().get(key, {}) or {}
-                                 ).get("worktree", "") or "")
-                        if wt:  # deferred pre: worktree exists after step 0
-                            wt_path = wt
-                            _run_repo_command(tpl["label"], "pre-execution", pre, wt)
-            elif kind in ("review", "fix_comments"):
-                outcome = _run_review_step(key, config, kind == "fix_comments", json_output)
-            elif kind == "sync":
-                outcome = _run_sync_step(key, config, json_output)
-            elif kind == "action":
-                outcome = _run_action_step(key, str(step.get("action_label", "")), config, json_output)
-            elif kind == "cleanup":
-                outcome = _run_cleanup_step(key, config, json_output)
-            elif kind == "release":
-                snap = (store.get_flow(fid, include_deleted_worktrees=True) or {}).get("repo_snapshot") or {}
-                outcome = _run_release_step(snap, config, json_output)
-            else:  # pragma: no cover — validate_template guards kinds
-                raise HarnessError(f"unknown step kind {kind!r}",
-                                   exit_code=2)
-        except HarnessError as e:
-            results.append({"kind": kind, "status": "failed",
-                            "detail": str(e)})
-            store.update_flow(fid, status="failed", current_step=idx,
-                              step_results=results)
-            raise typer.Exit(e.exit_code)
-        if outcome.get("status") == "skipped":
-            results.append({"kind": kind, "status": "skipped",
-                            "detail": str(outcome.get("detail", ""))})
-            store.update_flow(fid, current_step=idx + 1,
-                              step_results=results)
-            continue
-        if outcome.get("skipped"):
-            results.append({"kind": kind, "status": "skipped",
-                            "detail": str(outcome["skipped"])})
-            store.update_flow(fid, current_step=idx + 1,
-                              step_results=results)
-            continue
-        if outcome.get("preview"):
-            detail = str(outcome.get("command", ""))
-            if outcome.get("terminal_pid") is not None:
-                detail = f"{detail} [terminal pid {outcome.get('terminal_pid')}]"
-            elif outcome.get("terminal_error"):
-                detail = f"{detail} [terminal spawn failed: {outcome.get('terminal_error')}]"
-            results.append({"kind": kind, "status": "paused",
-                            "detail": detail})
-            store.update_flow(fid, status="paused", current_step=idx,
-                              step_results=results)
-            cmd = outcome.get("command") or f"flow run {tpl['label']} {ref}"
-            try:
-                from . import cli_harness as _h
-                meta = {"flow_id": fid, "mode": "manual-step"}
-                if outcome.get("terminal_pid") is not None:
-                    meta["terminal_pid"] = outcome.get("terminal_pid")
-                _h.record_headless_attempt(
-                    key or ref, str(outcome.get("manual_kind") or kind),
-                    list(outcome.get("manual_args") or [kind]),
-                    f"harness command: {cmd}", exit_code=0,
-                    metadata=meta)
-            except Exception:
-                pass
-            if outcome.get("terminal_pid") is not None:
-                eprint(f"paused after step {idx} ({kind}) — terminal opened "
-                       f"(pid {outcome.get('terminal_pid')}): finish there, then re-run to resume:\n{cmd}")
-            else:
-                eprint(f"paused after step {idx} ({kind}) — preview/terminal "
-                       f"needs a human:\n{cmd}\nre-run to resume.")
-            _print_result({"flow": fid, "status": "paused",
-                           "step": idx, "kind": kind}, json_output)
-            return
-        results.append({"kind": kind, "status": "ok",
-                        "detail": str(outcome.get("status", ""))})
-        store.update_flow(fid, current_step=idx + 1,
-                          step_results=results)
-        _tag_flow_session(key, fid)
-    post = (tpl.get("post_execution") or "").strip()
-    if post:
-        snap_wt = wt_path or str(((store.load_links().get(key, {})
-                                           or {}).get("worktree", "")) or "")
-        if snap_wt:
-            try:
-                _run_repo_command(tpl["label"], "post-execution", post,
-                                  snap_wt)
-            except HarnessError as e:
-                store.update_flow(fid, status="failed",
-                                  step_results=results + [{
-                                      "kind": "post_execution",
-                                      "status": "failed", "detail": str(e)}])
-                _fail(f"post-execution failed: {e}", EXIT_GENERAL)
-    store.update_flow(fid, status="done", step_results=results)
-    _print_result({"flow": fid, "status": "done",
-                   "steps": len(merged_steps)}, json_output)
+def _find_resumable(template_label: str, ref: str, key: str):
+    """Latest non-done flow for the template+ref pair (delegated)."""
+    from . import cli_flow_run as _run
+    return _run._find_resumable(template_label, ref, key)
 
 
-@flow_app.command("list")
-def flow_list(
-    worktree: Optional[str] = typer.Option(None, "--worktree", help="Scope to one worktree ref."),
-    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
-    csv_output: bool = typer.Option(False, "--csv", help="Output as CSV (stdout; logs go to stderr)."),
-) -> None:
-    """List flow runs."""
-    items = [{"id": f["id"], "template": f["template_label"],
-              "worktree": f.get("worktree_ref", ""),
-              "status": f["status"],
-              "step": f.get("current_step", 0),
-              "updated": f.get("modified_at", "")}
-             for f in store.list_flows(worktree=worktree or "")]
-    _print_rows(items, json_output, csv_output,
-                ["id", "template", "worktree", "status", "step", "updated"],
-                "Flows", "(no flows)")
-
-
-@flow_app.command("show")
-@_catch_harness_errors
-def flow_show(
-    flow_id: int = typer.Argument(..., help="Flow id."),
-    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
-) -> None:
-    """Show one flow run (steps + per-step results + repo snapshot)."""
-    flow = store.get_flow(flow_id)
-    if flow is None:
-        _fail(f"unknown flow id: {flow_id!r}", EXIT_USAGE)
-    assert flow is not None
-    tpl = store.get_template(flow["template_label"])
-    out = {**flow,
-           "steps": json.dumps((tpl or {}).get("steps") or []),
-           "step_results": json.dumps(flow.get("step_results") or []),
-           "repo_snapshot": json.dumps(flow.get("repo_snapshot") or {})}
-    _print_result(out, json_output)
+# Run/list/show engine lives in cli_flow_run.py (500-line cap split).
+from . import cli_flow_run as _run_mod  # noqa: F401  (registers flow run/list/show)
