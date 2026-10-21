@@ -404,6 +404,8 @@ def test_merge_pr_github_accepted_but_still_open_raises(isolated_config, monkeyp
     with pytest.raises(HarnessError, match="still 'OPEN' on the host"):
         cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp")
     assert seen[0][:3] == ("gh", "pr", "merge")
+
+
 def test_cleanup_merged_state_skips_remote_close(isolated_config, monkeypatch, capsys):
     """Known-merged PR state skips the host close call entirely (no-op)."""
     store.record_link("jira:IPG-11", {"issue": "IPG-11", "worktree": "/tmp/wt",
@@ -434,6 +436,57 @@ def test_cleanup_merged_state_skips_remote_close(isolated_config, monkeypatch, c
     assert "skipping remote close" in capsys.readouterr().err
     assert out["remote_deleted"] is True  # merged source branch is deleted
     assert any("--delete" in str(c) for c in pushes)
+
+
+def test_merge_blocked_reason_discussions():
+    assert cli._merge_blocked_reason(
+        {"state": "opened", "mergeable": "discussions_not_resolved",
+         "merge_state": ""}) == "discussions_not_resolved"
+
+
+def test_merge_blocked_reason_empty_never_blocks():
+    """Unknown/offline state must not block: close-and-remove still works."""
+    assert cli._merge_blocked_reason(None) == ""
+    assert cli._merge_blocked_reason({"state": "", "mergeable": "",
+                                      "merge_state": ""}) == ""
+
+
+def test_cleanup_blocked_discussions_fails_closed(isolated_config, monkeypatch):
+    """Unresolved threads fail closed BEFORE the merge call: link kept."""
+    import pytest
+    import typer
+    store.record_link("jira:IPG-20", {"issue": "IPG-20", "worktree": "/tmp/wt",
+                                      "branch": "feat/20", "repo": "/tmp/proj",
+                                      "pr_url": "https://git.jibit.cloud/g/r/-/merge_requests/20"})
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda entry, refresh_pr=False: {"pr_data": {"state": "open"}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (
+                            url, {"state": "opened",
+                                  "mergeable": "discussions_not_resolved",
+                                  "merge_state": ""}, False))
+    def boom(*a, **k):
+        raise AssertionError("merge must not be attempted when blocked")
+    monkeypatch.setattr("workagent.cli.run_cmd", boom)
+    with pytest.raises(typer.exceptions.Exit):
+        cli._cleanup_one("jira:IPG-20", dict(store.load_links()["jira:IPG-20"]),
+                         force=False, yes=True, dry_run=False,
+                         json_output=True)
+    assert "jira:IPG-20" in store.load_links()
+
+
+def test_merge_pr_405_enriched(monkeypatch):
+    """Host 405 surfaces the resolution steps, not just the raw API error."""
+    from workagent.errors import HarnessError
+    import pytest
+    import workagent.cli_cleanup as _cc
+    def fake_run(*a, **k):
+        raise HarnessError("glab mr merge failed: 405 {message: 405 Method Not Allowed}")
+    monkeypatch.setattr(cli, "run_cmd", fake_run)
+    monkeypatch.setattr(_cc, "_fresh_pr_state", lambda url, cwd: None)
+    with pytest.raises(HarnessError, match="merge refused by the host"):
+        cli._merge_pr("https://git.jibit.cloud/g/r/-/merge_requests/20",
+                      squash=True, cwd="/tmp")
 
 
 def test_close_issue_treats_closed_as_success(isolated_config, monkeypatch, capsys):

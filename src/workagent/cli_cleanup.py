@@ -214,6 +214,42 @@ def _pr_conflicted(fresh: dict | None) -> bool:
                                    "cannot be merged", "unmergable"))
 
 
+_BLOCKED_MERGE_TOKENS = (
+    "discussions_not_resolved",
+    "unresolved",
+    "blocking_discussions",
+    "pipeline_failure",
+    "need_rebase",
+    "requested_changes",
+    "blocked_status",
+    "broken_status",
+    "approvals",
+    "draft",
+    "blocked",
+)
+
+
+def _merge_blocked_reason(fresh: dict | None) -> str:
+    """Non-conflict reason the host will refuse a merge, or "".
+
+    Separate from _pr_conflicted (destination-branch conflicts): covers
+    unresolved threads, pipeline gates, approvals, drafts, and rebase
+    requirements surfaced via detailed_merge_status / mergeStateStatus.
+    Unknown/empty state ("") never blocks — offline/cache-miss cleanup
+    still falls back to close-and-remove.
+    """
+    if not fresh:
+        return ""
+    vals = " ".join(str(fresh.get(k) or "") for k in
+                    ("mergeable", "merge_state")).lower()
+    if not vals.strip():
+        return ""
+    for tok in _BLOCKED_MERGE_TOKENS:
+        if tok in vals:
+            return tok
+    return ""
+
+
 def _fresh_pr_state(pr_url: str, host_cwd: str) -> dict | None:
     """Fresh PR/MR state (never cached); None on lookup failure (warned)."""
     if not pr_url:
@@ -330,6 +366,13 @@ def _merge_pr(pr_url: str, squash: bool = True, cwd: str | None = None,
                 or "already closed" in msg or "already been closed" in msg):
             eprint(f"note: {pr_url} already merged/closed; skipping merge.")
             return
+        if "405" in msg or "method not allowed" in msg:
+            raise HarnessError(
+                f"{pr_url} merge refused by the host (405 Method Not Allowed): "
+                f"the MR is not mergeable right now — e.g. unresolved discussions, "
+                f"a pipeline/approvals gate, or a merge-method restriction. "
+                f"Resolve it on the host, then re-run cleanup; nothing was torn down. "
+                f"Host said: {e}")
         raise
     verified = _fresh_pr_state(pr_url, str(cwd) if cwd else "")
     if verified is not None and (verified.get("state") or "").lower() not in (
@@ -423,6 +466,14 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
         # Rule 2: conflicted PR stays open; nothing is torn down.
         _fail(f"{pr_url} conflicts with its destination branch — remote branch kept.\n"
               "  Resolve the conflict on the host, then re-run cleanup.",
+              EXIT_GENERAL)
+    blocked_reason = _merge_blocked_reason(fresh)
+    if (not force and pr_url and fresh_state in open_states and blocked_reason):
+        # Same Rule 2 for non-conflict blockers (e.g. unresolved
+        # discussions, pipeline gate): the host would refuse the merge
+        # (405), so fail closed BEFORE attempting it — nothing torn down.
+        _fail(f"{pr_url} cannot merge yet ({blocked_reason}) — remote branch kept.\n"
+              "  Resolve it on the host (threads/pipeline/approvals), then re-run cleanup.",
               EXIT_GENERAL)
     if merge:
         try:

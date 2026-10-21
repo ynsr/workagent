@@ -184,6 +184,24 @@ def test_fetch_pr_merge_state_404_surfaces(monkeypatch):
         refs.fetch_pr_merge_state("https://github.com/o/r/pull/404")
 
 
+def test_fetch_pr_merge_state_gitlab_passes_json_flag(monkeypatch):
+    """glab mr view needs -F json: without it the parse fails and every
+    caller degrades to fresh=None (blind merge, no blocked-state gate)."""
+    import workagent.refs as r
+    calls = []
+    def fake(*a, **k):
+        calls.append(a)
+        return ('{"state": "opened", "detailed_merge_status": '
+                '"discussions_not_resolved", "has_conflicts": false}')
+    monkeypatch.setattr(r, "run_cmd", fake)
+    out = refs.fetch_pr_merge_state(
+        "https://git.jibit.cloud/server/projectx/-/merge_requests/1")
+    assert out == {"state": "opened",
+                   "mergeable": "discussions_not_resolved",
+                   "merge_state": ""}
+    assert "-F" in calls[0] and "json" in calls[0]
+
+
 def test_issue_url_stored_http_wins():
     assert refs.issue_url("jira:IPG-1", "https://x/browse/IPG-1") == "https://x/browse/IPG-1"
 

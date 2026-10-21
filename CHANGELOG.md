@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Cleanup fails closed on host merge blocks (unresolved discussions→405) pre-merge; fix glab JSON flag + matcher shadowing [IPG-1052]
 - Flow `--skip-steps 0` after a terminal Start adopts the terminal-made worktree (re-resolves the ref) so the review step runs seamlessly instead of failing "Needs input" [no-issue]
 - Fix skipped-start resume crashing review on `jira:KEY@repo` keys (resolver strips suffix; review + record_link see soft-deleted rows and revive them; ensure-branch reuses instead of UNIQUE-colliding INSERT) + missing HarnessError import in flow_run error handler [no-issue]
 - Flow terminal steps mint the transcript scope dir pre-spawn and backfill the detached .jsonl on resume (adopt_skipped_start_key + newest-transcript fallback); cli_flow split into cli_flow/cli_flow_run/cli_flow_steps [no-issue]

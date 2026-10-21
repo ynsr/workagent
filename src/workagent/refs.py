@@ -363,7 +363,8 @@ def fetch_pr_merge_state(pr_url: str, cwd: str | None = None) -> dict:
                 "merge_state": str(data.get("mergeStateStatus") or "")}
     m = _GITLAB_MR.match(pr_url or "")
     if m:
-        out = run_cmd("glab", "mr", "view", pr_url, cwd=cwd)
+        # -F json: without it glab prints human text and the JSON parse
+        out = run_cmd("glab", "mr", "view", pr_url, "-F", "json", cwd=cwd)
         try:
             data = json.loads(out or "{}")
         except json.JSONDecodeError:

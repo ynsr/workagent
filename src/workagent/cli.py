@@ -120,6 +120,7 @@ from .cli_cleanup import (  # noqa: F401  (test compatibility)
     _close_issue,
     _close_pr,
     _fresh_pr_state,
+    _merge_blocked_reason,
     _merge_pr,
     _pr_conflicted,
     _pr_missing,
