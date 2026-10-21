@@ -142,13 +142,25 @@ def _resolve_ref(ref: str) -> tuple[str, dict, dict | None]:
     try:
         return worktrees.resolve_any(ref, links)
     except worktrees.NoLinkedState as e:
+        from . import refs as _refs
+        # `key@repo` suffixes (adopt_skipped_start_key's output) are real
+        # link keys, not parseable refs — resolve the stripped base first
+        # so matching_issue_keys finds bare/suffixed kin.
+        base = ref
         try:
-            from . import refs as _refs
+            base, _ = _refs.split_issue_key(ref)
+        except Exception:
+            base = ref
+        if base != ref:
+            try:
+                return worktrees.resolve_any(base, links)
+            except worktrees.NoLinkedState:
+                pass
+        try:
             parsed = _refs.parse_ref(ref)
         except HarnessError:
             _fail(str(e), EXIT_USAGE)
         return "", {}, parsed
-
 
 def _merge_config(step: dict, overrides: dict) -> dict:
     return _futil.normalize_config({**(step.get("config") or {}), **overrides})

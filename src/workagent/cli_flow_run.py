@@ -19,8 +19,8 @@ from .cli_core import (
     app,
     eprint,
 )
-
 from .cli_core import _init_completions as _init_comp2
+from .errors import HarnessError
 
 _COMP2 = _init_comp2()
 _complete_refs = _COMP2["refs"]

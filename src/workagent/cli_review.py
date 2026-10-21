@@ -437,7 +437,7 @@ def review(
         parsed = None
     if parsed is None or parsed["kind"] not in ("pr", "mr"):
         # Worktree ref (key/branch/path): resolve to the recorded (or discovered) PR/MR.
-        links = store.load_links()
+        links = store.load_links(include_deleted=True)
         resolved = worktrees.resolve_worktree(ref, links)
         if resolved is not None:
             key = worktrees.pick_worktree(ref, resolved, links)
@@ -457,9 +457,9 @@ def review(
               f"https://{repo_hint}).", EXIT_USAGE)
     _pre_repo = ""
     if not repo:
-        _pre = worktrees.resolve_worktree(ref, store.load_links())
+        _pre = worktrees.resolve_worktree(ref, store.load_links(include_deleted=True))
         if isinstance(_pre, str):
-            _pre_repo = store.load_links().get(_pre, {}).get("repo", "")
+            _pre_repo = store.load_links(include_deleted=True).get(_pre, {}).get("repo", "")
     repo_dir, base_branch, tid, outcome = trackers.resolve_repo_for_ref(
         parsed, repo, Path.cwd(), depth=depth, yes=yes,
         persist=not dry_run, pinned=_pre_repo)

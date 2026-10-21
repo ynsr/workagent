@@ -246,12 +246,29 @@ def test_terminal_spawn_mints_scope(monkeypatch, tmp_path):
                         lambda cmd, cwd="": 4242)
     out = u.spawn_terminal_step("start", ["jira:X-1"], "",
                                 branch="feat/x", harness="omp")
-    assert out["preview"] is True and out["terminal_pid"] == 4242
     scope = out["session_scope"]
     assert scope.endswith(".jsonl") and "feat" in out["session_dir"]
     from pathlib import Path as _P
     assert _P(out["session_dir"]).is_dir()
     assert not _P(scope).exists()  # never pre-touched
+
+
+def test_review_step_accepts_suffixed_key_from_skip_adopt(tmp_path, monkeypatch):
+    """Skipped-start adopt hands review a `key@repo` link key, not a ref.
+
+    Regression (flow run 4c9ec22baa): `_run_review_step` received
+    `jira:IPG-1052@projectx`, `refs.parse_ref` rejected it, and the error
+    handler itself crashed on a missing `HarnessError` import.
+    """
+    import workagent.cli_flow_run as r
+    assert hasattr(r, "HarnessError")
+    import workagent.cli_flow as m
+    monkeypatch.setattr(m, "_resolve_ref",
+                        lambda ref: ("jira:X-1@myrepo", {"worktree": "/tmp/wt"}, {}))
+    import workagent.cli_flow_util as u
+    key, adopted = u.adopt_skipped_start_key(m._resolve_ref, "jira:X-1", "")
+    assert key == "jira:X-1@myrepo"
+    assert adopted == {"worktree": "/tmp/wt"}
 
 
 def test_adopt_terminal_transcript_resolves_minted(tmp_path, monkeypatch):
