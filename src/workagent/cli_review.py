@@ -260,7 +260,7 @@ def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
     (UNIQUE (repo_key, branch)), so the same branch in another repo is
     simply a different row — e.g. IPG-1002 in projectx vs ipg-commons.
     """
-    links = store.load_links()
+    links = store.load_links(include_deleted=True)
     reuse = worktrees.recorded_key("", head_ref, links, repo=str(repo_dir))
     if isinstance(reuse, str):
         entry = links.get(reuse, {})

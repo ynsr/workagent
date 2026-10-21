@@ -298,6 +298,13 @@ def test_review_key_for_reuses_soft_deleted_row(tmp_path, monkeypatch):
     row = s.load_links(include_deleted=True).get("jira:X-1@myrepo", {})
     assert row.get("deleted_at") in (None, "")
     assert row.get("pr_url") == "https://x/mr/1"
+    # `_ensure_branch_worktree` reuses the same deleted row instead of
+    # INSERTing a branch-name row that collides on UNIQUE(repo, branch).
+    import pathlib as _pl
+    wt = _pl.Path("/tmp/wt-x"); wt.mkdir(exist_ok=True)
+    key, _w, _b = r._ensure_branch_worktree(_pl.Path("myrepo"), "b",
+                                            "main", "https://x/mr/1")
+    assert key == "jira:X-1@myrepo"
 def test_adopt_terminal_transcript_resolves_minted(tmp_path, monkeypatch):
     """Resume re-resolves the detached terminal's minted .jsonl."""
     import workagent.cli_flow_util as u
