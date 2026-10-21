@@ -263,14 +263,41 @@ def test_review_step_accepts_suffixed_key_from_skip_adopt(tmp_path, monkeypatch)
     import workagent.cli_flow_run as r
     assert hasattr(r, "HarnessError")
     import workagent.cli_flow as m
+    import workagent.cli_flow_util as u
     monkeypatch.setattr(m, "_resolve_ref",
                         lambda ref: ("jira:X-1@myrepo", {"worktree": "/tmp/wt"}, {}))
-    import workagent.cli_flow_util as u
     key, adopted = u.adopt_skipped_start_key(m._resolve_ref, "jira:X-1", "")
     assert key == "jira:X-1@myrepo"
     assert adopted == {"worktree": "/tmp/wt"}
 
 
+def test_review_key_for_reuses_soft_deleted_row(tmp_path, monkeypatch):
+    """A cleanup soft-delete must not make review INSERT a colliding row.
+
+    Regression (run 4c9ec22baa follow-up): `_review_key_for` used the live
+    link view, missed the soft-deleted row for the same path/(repo,
+    branch), and `record_link` INSERTed a second row → UNIQUE
+    (repo_key, branch) violation. Deleted rows are now visible to the
+    key builder, and re-recording clears `deleted_at`.
+    """
+    import workagent.cli_review as r
+    import workagent.store as s
+    import workagent.store_sqlite as sq
+    db = tmp_path / "s.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO repos (key_ref, path, name) VALUES ('myrepo', 'myrepo', 'myrepo')")
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload, deleted_at)"
+            " VALUES ('jira:X-1@myrepo', '/tmp/wt-x', 'b', 'myrepo', '2026-01-01', '{}', '2026-01-02')")
+    assert r._review_key_for("https://x/mr/1", "/tmp/wt-x", "b",
+                             repo="myrepo") == "jira:X-1@myrepo"
+    s.record_link("jira:X-1@myrepo", {"pr_url": "https://x/mr/1"})
+    row = s.load_links(include_deleted=True).get("jira:X-1@myrepo", {})
+    assert row.get("deleted_at") in (None, "")
+    assert row.get("pr_url") == "https://x/mr/1"
 def test_adopt_terminal_transcript_resolves_minted(tmp_path, monkeypatch):
     """Resume re-resolves the detached terminal's minted .jsonl."""
     import workagent.cli_flow_util as u

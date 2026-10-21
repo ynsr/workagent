@@ -121,7 +121,7 @@ def _review_key_for(pr_url: str, worktree: str, branch: str, repo: str = "") -> 
     repo-scoped: the same branch name in another repo is a different
     worktree (e.g. IPG-1002 in projectx vs ipg-commons).
     """
-    return (worktrees.recorded_key(worktree, branch, store.load_links(), repo=repo)
+    return (worktrees.recorded_key(worktree, branch, store.load_links(include_deleted=True), repo=repo)
             or branch)
 
 

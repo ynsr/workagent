@@ -236,6 +236,8 @@ def record_link(issue_key: str, entry: dict) -> None:
         links = load_links(include_inactive=True, include_deleted=True)
         merged = {**links.get(issue_key, {}), **entry}
         merged.setdefault("added_at", _now_iso())
+        if merged.get("deleted_at"):
+            merged["deleted_at"] = None  # re-recording revives a soft-deleted row
         links[issue_key] = merged
         save_links(links)
         return
