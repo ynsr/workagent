@@ -3,8 +3,10 @@ import { useSearchParams } from "react-router-dom"
 import type { Repo } from "@/lib/api"
 
 /** An item counted by the tabs: a bare worktree path (Runs/Sessions) or a
- * status/link entry carrying the resolved main-checkout `repo` path. */
-export type RepoTabItem = string | { worktree?: string; repo?: string }
+ * status/link entry carrying the resolved main-checkout `repo` path.
+ * Sessions with a NULL worktree_ref (flow-owned rows) map to null and
+ * count under "(other)". */
+export type RepoTabItem = string | { worktree?: string; repo?: string } | null | undefined
 
 function normPath(p: string): string {
   return p.replace(/\\/g, "/").replace(/\/$/, "")
@@ -31,8 +33,8 @@ export function repoKeyForPath(itemPath: string, repos: Repo[]): string {
  * main-checkout `repo` path — match that directly against the registered
  * repo paths (exact, path, or name). Bare paths fall back to prefix match. */
 export function repoKeyForItem(item: RepoTabItem, repos: Repo[]): string {
+  if (item == null) return "(other)"
   if (typeof item === "string") return repoKeyForPath(item, repos)
-  const repo = (item.repo ?? "").trim()
   if (repo) {
     const norm = normPath(repo)
     for (const r of repos) {

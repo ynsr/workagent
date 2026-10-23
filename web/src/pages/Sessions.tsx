@@ -81,22 +81,22 @@ export function Sessions() {
   const allRows: SessionRow[] = data?.sessions ?? []
   const { data: repos } = useRepos()
   const { data: links } = useLinks()
-  const worktreePathOf = (ref: string) => links?.worktrees?.[ref]?.worktree ?? ref
-  const repoTabs = useRepoTabs(allRows.map((r) => worktreePathOf(r.worktree_ref)), repos)
+  const worktreePathOf = (ref: string | null) => links?.worktrees?.[ref ?? ""]?.worktree ?? ref ?? ""
+  const repoTabs = useRepoTabs(allRows.map((r) => worktreePathOf(r.worktree_ref) || null), repos)
   const repoFilter = repoTabs.repoFilter
-  const repoOf = (ref: string) => repoKeyForPath(worktreePathOf(ref), repos ?? [])
+  const repoOf = (ref: string | null) => repoKeyForPath(worktreePathOf(ref), repos ?? [])
   const worktreeOptions = useMemo(
-    () => ["(all worktrees)", ...new Set(allRows.map((r) => r.worktree_ref))].sort(),
+    () => ["(all worktrees)", ...new Set(allRows.map((r) => r.worktree_ref ?? "(no worktree)"))].sort(),
     [allRows],
   )
   const rows: SessionRow[] = useMemo(() => {
     let out = allRows
     if (repoFilter) out = out.filter((r) => repoOf(r.worktree_ref) === repoFilter)
-    if (worktreeFilter) out = out.filter((r) => r.worktree_ref === worktreeFilter)
+    if (worktreeFilter) out = out.filter((r) => (r.worktree_ref ?? "") === worktreeFilter)
     if (flowFilter) out = out.filter((r) => String((r.metadata as Record<string, unknown> | undefined)?.flow_id ?? "") === flowFilter)
     if (titleFilter) {
       out = out.filter((r) =>
-        `${r.id} ${r.worktree_ref} ${sessionTitle(r.worktree_ref, links?.worktrees?.[r.worktree_ref]?.branch ?? "")} ${r.initiator_command} ${r.harness_name} ${r.state}`.toLowerCase().includes(titleFilter),
+        `${r.id} ${r.worktree_ref} ${sessionTitle(r.worktree_ref ?? "", links?.worktrees?.[r.worktree_ref ?? ""]?.branch ?? "")} ${r.initiator_command} ${r.harness_name} ${r.state}`.toLowerCase().includes(titleFilter),
       )
     }
     return out
@@ -194,7 +194,7 @@ export function Sessions() {
                 {rows.map((s) => (
                   <TableRow key={s.id}>
                     <TableCell className="max-w-64 text-sm text-muted-foreground">
-                      <CopyCell text={sessionTitle(s.worktree_ref, links?.worktrees?.[s.worktree_ref]?.branch ?? "")} />
+                      <CopyCell text={sessionTitle(s.worktree_ref ?? "", links?.worktrees?.[s.worktree_ref ?? ""]?.branch ?? "")} />
                     </TableCell>
                     <TableCell className="font-mono text-[13px]">
                       <Link
@@ -205,7 +205,7 @@ export function Sessions() {
                       </Link>
                     </TableCell>
                     <TableCell className="max-w-48 font-mono text-[13px]">
-                      <CopyCell text={s.worktree_ref} />
+                      <CopyCell text={s.worktree_ref ?? "(no worktree)"} />
                     </TableCell>
                     <TableCell className="max-w-32 truncate" title={s.harness_name}>
                       {s.harness_name}
@@ -223,7 +223,7 @@ export function Sessions() {
                       {relativeTime(Date.parse(s.created_at) / 1000)}
                     </TableCell>
                     <TableCell>
-                      <SessionResumeActions sessionId={s.id} worktree={links?.worktrees?.[s.worktree_ref]?.worktree ?? s.worktree_ref} sessionFile={s.file_path} variant="icon" />
+                      <SessionResumeActions sessionId={s.id} worktree={links?.worktrees?.[s.worktree_ref ?? ""]?.worktree ?? s.worktree_ref ?? ""} sessionFile={s.file_path} variant="icon" />
                     </TableCell>
                   </TableRow>
                 ))}
