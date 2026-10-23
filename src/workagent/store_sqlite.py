@@ -40,16 +40,18 @@ CREATE TABLE IF NOT EXISTS worktrees (
 CREATE TABLE IF NOT EXISTS pr_cache (
   branch TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, checked_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (
-  id TEXT PRIMARY KEY NOT NULL, worktree_ref TEXT NOT NULL REFERENCES worktrees(ref_key) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY NOT NULL, worktree_ref TEXT REFERENCES worktrees(ref_key) ON DELETE CASCADE,
   state TEXT NOT NULL, harness_name TEXT NOT NULL DEFAULT '',
   initiator_command TEXT NOT NULL DEFAULT '', prompt TEXT NOT NULL DEFAULT '',
   file_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
-  session_type TEXT, metadata TEXT NOT NULL DEFAULT '{}');
+  session_type TEXT, metadata TEXT NOT NULL DEFAULT '{}',
+  flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL);
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   command TEXT NOT NULL, args TEXT NOT NULL,
   exit_code INTEGER, created_at TEXT NOT NULL,
-  output TEXT NOT NULL DEFAULT '', truncated INTEGER NOT NULL DEFAULT 0);
+  output TEXT NOT NULL DEFAULT '', truncated INTEGER NOT NULL DEFAULT 0,
+  flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL);
 CREATE TABLE IF NOT EXISTS issue_cache (
   source TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL,
   fetched_at TEXT NOT NULL);
@@ -156,6 +158,68 @@ def _migrate_runs_output(conn) -> None:
         conn.execute("ALTER TABLE runs ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0")
 
 
+def _migrate_flow_linkage(conn) -> None:
+    """Schema v15: sessions/runs gain flow_id; sessions.worktree_ref nullable.
+
+    flow_id is the query path (metadata.flow_id stays as history). NULL
+    worktree_ref = unattached flow row, exempt from the worktrees FK.
+    Idempotent: ADD COLUMN skipped when present; sessions rebuilt from the
+    canonical DDL only while worktree_ref is still NOT NULL.
+    """
+    import json as _json
+    info = list(conn.execute("PRAGMA table_info(sessions)"))
+    if not info:
+        return
+    cols = {r[1] for r in info}
+    if "flow_id" not in cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL")
+    rcols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+    if rcols and "flow_id" not in rcols:
+        conn.execute("ALTER TABLE runs ADD COLUMN flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL")
+    wr = next((r for r in info if r[1] == "worktree_ref"), None)
+    if wr is not None and wr[3] == 1 and wr[4] is None:
+        if conn.in_transaction:
+            conn.commit()
+        was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+        if was_on:
+            conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            ddl = _canonical_ddl()["sessions"]
+            conn.execute('DROP TABLE IF EXISTS "sessions_rebuild"')
+            conn.execute(ddl.replace("CREATE TABLE sessions", 'CREATE TABLE "sessions_rebuild"', 1))
+            new_cols = {r[1] for r in conn.execute('PRAGMA table_info("sessions_rebuild")')}
+            old_cols = [r[1] for r in info if r[1] in new_cols]
+            select = ", ".join(
+                "NULLIF(\"%s\", '')" % c if c == "worktree_ref" else '"%s"' % c
+                for c in old_cols)
+            columns = ", ".join('"%s"' % c for c in old_cols)
+            conn.execute(f'INSERT INTO "sessions_rebuild" ({columns}) SELECT {select} FROM "sessions"')
+            conn.execute('DROP TABLE "sessions"')
+            conn.execute('ALTER TABLE "sessions_rebuild" RENAME TO "sessions"')
+            if conn.in_transaction:
+                conn.commit()
+        finally:
+            if was_on:
+                conn.execute("PRAGMA foreign_keys = ON")
+    # Backfill flow_id from metadata.flow_id (integer ids of live flows only).
+    try:
+        live = {r[0] for r in conn.execute("SELECT id FROM flows")}
+    except Exception:
+        live = set()
+    for sid, meta in conn.execute("SELECT id, metadata FROM sessions"):
+        try:
+            m = _json.loads(meta or "{}")
+        except Exception:
+            continue
+        f = m.get("flow_id") if isinstance(m, dict) else None
+        if isinstance(f, int) and f in live:
+            conn.execute("UPDATE sessions SET flow_id = ? WHERE id = ? AND flow_id IS NULL", (f, sid))
+    try:
+        conn.execute("UPDATE runs SET flow_id = (SELECT flow_id FROM sessions WHERE sessions.id = runs.session_id)"
+                     " WHERE flow_id IS NULL")
+    except Exception:
+        pass
+
 def _migrate_sessions_no_fk(conn) -> None:
     """Schema v14: sessions.worktree_ref restores the worktrees FK (CASCADE).
 
@@ -163,7 +227,8 @@ def _migrate_sessions_no_fk(conn) -> None:
     never written (callers skip when no linked worktree exists), dangling
     refs from the FK-less window are purged, and hard-delete cascades
     again via the FK. Rebuilds the table from the canonical DDL when the
-    FK is missing. Idempotent: skipped once the FK exists.
+    FK is missing. NULL worktree_ref rows (flow-owned, v15) are exempt.
+    Idempotent: skipped once the FK exists.
     """
     info = list(conn.execute("PRAGMA table_info(sessions)"))
     if not info:
@@ -188,9 +253,10 @@ def _migrate_sessions_no_fk(conn) -> None:
         conn.execute('DROP TABLE "sessions"')
         conn.execute('ALTER TABLE "sessions_rebuild" RENAME TO "sessions"')
         # FK-less window may have left dangling refs: purge rows whose
-        # worktree is gone (CASCADE could not fire for them).
+        # worktree is gone (CASCADE could not fire for them). NULL-ref
+        # flow-owned rows are exempt (v15: no worktree attachment).
         try:
-            conn.execute("DELETE FROM sessions WHERE worktree_ref != ''"
+            conn.execute("DELETE FROM sessions WHERE worktree_ref IS NOT NULL AND worktree_ref != ''"
                          " AND worktree_ref NOT IN (SELECT ref_key FROM worktrees)")
         except Exception:
             pass
@@ -464,7 +530,7 @@ _REQUIRED_COLS = {
     "tracker_repos": ("tracker_key", "repo_key"),
     "worktrees": ("ref_key", "path", "branch", "added_at"),
     "pr_cache": ("branch", "payload", "checked_at"),
-    "sessions": ("id", "worktree_ref", "state", "created_at"),
+    "sessions": ("id", "state", "created_at"),
     "runs": ("session_id", "command", "args", "created_at"),
     "issue_cache": ("source", "payload", "fetched_at"),
     "pr_candidates_cache": ("source", "payload", "fetched_at"),
@@ -584,7 +650,10 @@ def _schema_current(path: Path) -> bool:
         if any(bool(entry[2]) and c == {"branch"} for entry, c in zip(widx, idx_cols)):
             return False
         scols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
-        if not {"harness_name", "session_type", "metadata"} <= scols:
+        if not {"harness_name", "session_type", "metadata", "flow_id"} <= scols:
+            return False
+        runcols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+        if "flow_id" not in runcols:
             return False
         for table in ("trackers", "repos"):
             fcols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
@@ -635,6 +704,7 @@ def init_db(path: Path) -> Path:
                 _migrate_repos_commands(conn)
                 _migrate_worktrees_deleted_at(conn)
                 _migrate_worktrees_related(conn)
+                _migrate_flow_linkage(conn)
                 _migrate_sessions_no_fk(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():
