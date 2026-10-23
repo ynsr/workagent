@@ -218,6 +218,7 @@ export interface CandidatesResponse {
  * worktree_ref is null for flow-owned rows recorded before a worktree is adopted. */
 export interface SessionRow {
   id: string; worktree_ref: string | null; state: string; harness_name: string;
+  initiator_command: string; file_path: string; created_at: string;
   /** Session kind: start | review | sync | fix_comments (null = pre-v6 row). */
   session_type?: string | null;
   /** Fix outcome etc. — review_comments_fixed_at + fixed_by_run_id on continue. */

@@ -35,6 +35,7 @@ export function repoKeyForPath(itemPath: string, repos: Repo[]): string {
 export function repoKeyForItem(item: RepoTabItem, repos: Repo[]): string {
   if (item == null) return "(other)"
   if (typeof item === "string") return repoKeyForPath(item, repos)
+  const repo = (item.repo ?? "").trim()
   if (repo) {
     const norm = normPath(repo)
     for (const r of repos) {

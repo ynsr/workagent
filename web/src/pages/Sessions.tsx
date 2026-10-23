@@ -254,10 +254,10 @@ export function SessionDetailPage() {
     <div>
       <PageHeader
         title={`Session ${shortId(s.id)}`}
-        description={`${s.worktree_ref} · ${s.harness_name} · ${s.initiator_command}`}
+        description={`${s.worktree_ref ?? "(no worktree)"} · ${s.harness_name} · ${s.initiator_command}`}
         actions={
           <>
-            <SessionResumeActions sessionId={s.id} worktree={links?.worktrees?.[s.worktree_ref]?.worktree ?? s.worktree_ref} sessionFile={s.file_path} transcript={s.transcript} variant="outline" />
+            <SessionResumeActions sessionId={s.id} worktree={links?.worktrees?.[s.worktree_ref ?? ""]?.worktree ?? s.worktree_ref ?? ""} sessionFile={s.file_path} transcript={s.transcript} variant="outline" />
             <Button variant="outline" size="sm" asChild>
               <Link to="/sessions">
                 <ArrowLeft aria-hidden /> Sessions
@@ -310,7 +310,7 @@ function SessionRunsCard({ s }: { s: SessionDetail }) {
     label: `#${r.id}`,
     command: r.command,
     args: r.args,
-    target: s.worktree_ref,
+    target: s.worktree_ref ?? "(no worktree)",
     state: r.exit_code === null ? undefined : r.exit_code === 0 ? "succeeded" : "failed",
     exitCode: r.exit_code,
     started: Date.parse(r.created_at) / 1000,
