@@ -485,7 +485,15 @@ def review(
     reuse_key = worktrees.resolve_worktree(head_ref or session_ref, store.load_links())
     if isinstance(reuse_key, str):
         _reuse_entry = store.load_links().get(reuse_key, {})
-        if _reuse_entry.get("branch", head_ref) == (head_ref or session_ref) and not _same_repo(_reuse_entry, repo_dir):
+        _reuse_branch = _reuse_entry.get("branch", "") or ""
+        if _reuse_branch and _reuse_branch != (head_ref or session_ref):
+            # Fuzzy hit (bare-ticket substring) on another branch — e.g. IPG-1054
+            # in ipg-commons vs projectx. Reusing it would review in the wrong
+            # worktree and stamp the wrong row. Treat as no reuse (strict) and let
+            # _ensure_branch_worktree create/reuse the right per-(repo, branch) row.
+            # Empty recorded branch (legacy rows) still reuses, as before.
+            reuse_key = None
+        elif not _same_repo(_reuse_entry, repo_dir):
             reuse_key = None  # same branch name, other repo — not our worktree
     if isinstance(reuse_key, str):
         reuse_entry = store.load_links().get(reuse_key, {})

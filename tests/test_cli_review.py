@@ -502,3 +502,39 @@ def test_review_same_branch_other_repo_creates_own_row(isolated_config, tmp_path
     assert links[fresh[0]]["pr_url"] == url
     assert links[fresh[0]]["repo"] == str(repo_dir)
     assert links[fresh[0]]["branch"] == "feat/IPG-1002--x"
+
+def test_review_different_branch_same_ticket_other_repo_creates_own_worktree(isolated_config, tmp_path, monkeypatch):
+    """Same ticket, other repo AND other branch: the bare-ticket fuzzy hit must not reuse."""
+    repo_dir = tmp_path / "projectx"
+    repo_dir.mkdir()
+    other_wt = tmp_path / "wt-commons"
+    other_wt.mkdir()
+    store.record_link("jira:IPG-1054@ipg-commons", {
+        "worktree": str(other_wt),
+        "branch": "feat/IPG-1054--ipg-commons-add-enabled-property-for-fibonacci-constant-cool",
+        "repo": "/repos/ipg-commons",
+        "pr_url": "https://git.example.com/server/ipg-commons/-/merge_requests/99",
+    })
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/IPG-1054--disable-fibonacci-cooldown-keep-constant"})
+    new_wt = tmp_path / "wt-projectx"
+    new_wt.mkdir()
+    started = []
+    def fake_start(repo, **kw):
+        started.append(kw)
+        return {"worktree_path": str(new_wt),
+                "branch": "feat/IPG-1054--disable-fibonacci-cooldown-keep-constant"}
+    monkeypatch.setattr(cli.gitwt, "start_worktree", fake_start)
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    url = "https://git.example.com/server/projectx/-/merge_requests/1791"
+    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
+    assert r.exit_code == 0, r.output
+    assert started != []  # a fresh projectx worktree is created, not the ipg-commons one
+    assert json.loads(r.stdout)["worktree_path"] == str(new_wt)
+    links = store.load_links()
+    old = links["jira:IPG-1054@ipg-commons"]
+    assert old["pr_url"].endswith("/merge_requests/99")  # untouched, not stamped
+    assert old["repo"] == "/repos/ipg-commons"
