@@ -440,10 +440,11 @@ def link_remove(
             store.remove_tracker_repo(tid)
         _print_result({"removed": tid}, json_output)
         return
-    resolved = worktrees.resolve_worktree(ref, store.load_links(include_inactive=True))
+    resolved = worktrees.resolve_worktree(ref, store.load_links(include_inactive=True,
+                                                                include_deleted=True))
     if resolved is None:
         _fail(f"no tracker mapping or worktree link for {ref}", EXIT_USAGE)
-    links = store.load_links(include_inactive=True)
+    links = store.load_links(include_inactive=True, include_deleted=True)
     if resolved in links:
         if hard_delete:
             store.delete_worktree_row(resolved)

@@ -55,6 +55,19 @@ def test_link_remove_hard_delete_drops_row(isolated_config, tmp_path, monkeypatc
                                                  include_deleted=True)
 
 
+def test_link_remove_hard_delete_resolves_soft_deleted(isolated_config, tmp_path, monkeypatch):
+    """`link remove --hard-delete` purges an already-soft-deleted row (deleted-table overlay path)."""
+    repo_dir = tmp_path / "proj"
+    wt_dir = tmp_path / "wt"
+    wt_dir.mkdir()
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    assert _invoke("link", "remove", "jira:IPG-929").exit_code == 0
+    assert store.load_links(include_inactive=True, include_deleted=True)["jira:IPG-929"]["deleted_at"]
+    r = _invoke("link", "remove", "jira:IPG-929", "--hard-delete")
+    assert r.exit_code == 0, r.output
+    assert "jira:IPG-929" not in store.load_links(include_inactive=True,
+                                                 include_deleted=True)
+
 def test_link_undelete_restores_soft_deleted(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"
     wt_dir = tmp_path / "wt"

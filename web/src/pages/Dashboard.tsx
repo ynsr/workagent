@@ -323,13 +323,13 @@ export function Dashboard() {
     setCleanupTarget(key)
   }
 
-  async function submitCleanup(key: string, opts: { force: boolean; hardDelete: boolean } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean }) {
+  async function submitCleanup(key: string, opts: { force: boolean; hardDelete: boolean } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean } | { action: "undelete" }) {
     setCleanupTarget(null)
     if ("action" in opts) {
       try {
-        const cmd = opts.action === "deactivate" ? ["deactivate", key] : ["remove", key, ...(opts.hardDelete ? ["--hard-delete"] : [])]
+        const cmd = opts.action === "deactivate" ? ["deactivate", key] : opts.action === "undelete" ? ["undelete", key] : ["remove", key, ...(opts.hardDelete ? ["--hard-delete"] : [])]
         const { run_id } = await createRun.mutateAsync({ command: "link", args: cmd, confirm: true })
-        runCreated(run_id, opts.action === "deactivate" ? `Deactivated ${key}` : `Deleted ${key} from DB`)
+        runCreated(run_id, opts.action === "deactivate" ? `Deactivated ${key}` : opts.action === "undelete" ? `Undeleted ${key}` : `Deleted ${key} from DB`)
       } catch (err) {
         toast.error(errorText(err))
       }
@@ -575,6 +575,7 @@ export function Dashboard() {
           Object.entries(deletedAll ?? {}).filter(([, e]) => !!e.deleted_at),
         )}
         actions={{
+          onCleanup: handleCleanup,
           onOpenWorktree: handleOpenWorktree,
           onOpenRun: handleOpenRun,
           onUndelete: handleUndelete,
@@ -603,8 +604,9 @@ export function Dashboard() {
       {cleanupTarget ? (
         <CleanupDialog
           worktreeKey={cleanupTarget}
-          invalid={worktrees?.[cleanupTarget]?.wt_valid === false}
-          sourceBranch={worktrees?.[cleanupTarget]?.branch}
+          invalid={(worktrees ?? deletedAll ?? {})[cleanupTarget]?.wt_valid === false}
+          deleted={!(worktrees ?? {})[cleanupTarget] && !!(deletedAll ?? {})[cleanupTarget]?.deleted_at}
+          sourceBranch={(worktrees ?? deletedAll ?? {})[cleanupTarget]?.branch}
           onClose={(res) => {
             if (!res) {
               setCleanupTarget(null)
