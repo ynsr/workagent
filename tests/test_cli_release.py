@@ -303,6 +303,7 @@ def _merge_state_script(monkeypatch, states):
     """Stub host MR state lookups with a canned sequence, instant clock."""
     import workagent.cli_release as rel
     from workagent import refs as _refs
+    monkeypatch.setattr(rel, "_wait_mr_mergeable", lambda *a, **k: None)
     seen = []
     def _fake(url, cwd=None):
         seen.append(url)
@@ -314,10 +315,10 @@ def _merge_state_script(monkeypatch, states):
     monkeypatch.setattr(rel, "_sleep", lambda s: now.__setitem__(0, now[0] + s))
     return seen
 
-
 def test_gitlab_ff_local_forces_immediate_merge(monkeypatch):
     rel = _flow_registry(monkeypatch)
     monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    monkeypatch.setattr(rel, "_wait_mr_mergeable", lambda *a, **k: None)
     calls = []
     monkeypatch.setattr(rel, "run_cmd", lambda *a, **k: calls.append(a) or "")
     seen = _merge_state_script(monkeypatch, ["merged"])
@@ -328,6 +329,19 @@ def test_gitlab_ff_local_forces_immediate_merge(monkeypatch):
     assert "--sha" in merge[0] and "abc123" in merge[0]
     assert seen == ["http://mr/1"]
 
+
+def test_gitlab_ff_already_merged_skips_merge_call(monkeypatch):
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    monkeypatch.setattr(rel, "_wait_mr_mergeable",
+                        lambda *a, **k: {"state": "merged", "mergeable": ""})
+    monkeypatch.setattr(rel, "_verify_head", lambda *a, **k: None)
+    calls = []
+    monkeypatch.setattr(rel, "run_cmd", lambda *a, **k: calls.append(a) or "")
+    out = rel._merge_pinned("glab", "/r", "master", "abc123", "http://mr/1",
+                            ["gitlab-mr-ff"], checks="local")
+    assert out == "gitlab-mr-ff"
+    assert not [c for c in calls if "merge" in c]
 
 def test_gitlab_ff_ci_waits_for_queued_merge(monkeypatch):
     rel = _flow_registry(monkeypatch)
@@ -357,14 +371,16 @@ def test_gitlab_ff_ci_never_merged_times_out(monkeypatch):
         raise AssertionError("expected timeout failure")
 
 
-def test_gitlab_ff_forced_merge_rejected_hints_ci(monkeypatch, capsys):
+def test_gitlab_ff_pipeline_gate_message_hints_ci(monkeypatch, capsys):
     import typer
     from workagent.errors import HarnessError
     rel = _flow_registry(monkeypatch)
     monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    monkeypatch.setattr(rel, "_wait_mr_mergeable", lambda *a, **k: None)
     def _fake(*a, **k):
         if "merge" in a:
-            raise HarnessError("405 Method Not Allowed: pipelines must succeed")
+            raise HarnessError("405 Method Not Allowed: "
+                               "merge_when_pipeline_succeeds blocked")
         return ""
     monkeypatch.setattr(rel, "run_cmd", _fake)
     try:
@@ -375,6 +391,60 @@ def test_gitlab_ff_forced_merge_rejected_hints_ci(monkeypatch, capsys):
     else:
         raise AssertionError("expected rejection failure")
     assert "--checks ci" in capsys.readouterr().err
+
+
+def test_gitlab_ff_transient_405_retries_once(monkeypatch):
+    from workagent.errors import HarnessError
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    monkeypatch.setattr(rel, "_wait_mr_mergeable", lambda *a, **k: None)
+    monkeypatch.setattr(rel, "_wait_mr_merged", lambda *a, **k: True)
+    monkeypatch.setattr(rel, "_verify_head", lambda *a, **k: None)
+    calls = []
+    def _fake(*a, **k):
+        calls.append(a)
+        if "merge" in a and sum("merge" in c for c in calls) == 1:
+            raise HarnessError("405 Method Not Allowed")
+        return ""
+    monkeypatch.setattr(rel, "run_cmd", _fake)
+    out = rel._merge_pinned("glab", "/r", "master", "abc123", "http://mr/1",
+                            ["gitlab-mr-ff"], checks="local")
+    assert out == "gitlab-mr-ff"
+    assert sum("merge" in c for c in calls) == 2
+
+
+def test_gitlab_ff_bare_405_not_mislabeled_as_pipeline(monkeypatch, capsys):
+    import typer
+    from workagent.errors import HarnessError
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    monkeypatch.setattr(rel, "_wait_mr_mergeable", lambda *a, **k: None)
+    monkeypatch.setattr(rel, "_verify_head", lambda *a, **k: None)
+    def _fake(*a, **k):
+        if "merge" in a:
+            raise HarnessError("405 Method Not Allowed")
+        return ""
+    monkeypatch.setattr(rel, "run_cmd", _fake)
+    try:
+        rel._merge_pinned("glab", "/r", "master", "abc123", "http://mr/1",
+                          ["gitlab-mr-ff"], checks="local")
+    except typer.Exit as e:
+        assert e.exit_code == 1
+    else:
+        raise AssertionError("expected rejection failure")
+    err = capsys.readouterr().err
+    assert "--checks ci" not in err
+    assert "405 Method Not Allowed" in err
+
+
+def test_wait_mr_mergeable_polls_past_checking(monkeypatch):
+    import workagent.cli_release as rel
+    states = [{"state": "opened", "mergeable": "checking"},
+              {"state": "opened", "mergeable": "mergeable"}]
+    monkeypatch.setattr(rel, "_mr_state_now", lambda *a, **k: states.pop(0))
+    monkeypatch.setattr(rel, "_sleep", lambda s: None)
+    out = rel._wait_mr_mergeable("/r", "http://mr/1", timeout_s=60)
+    assert out == {"state": "opened", "mergeable": "mergeable"}
 
 
 def test_release_no_gate_goes_to_mr(monkeypatch):

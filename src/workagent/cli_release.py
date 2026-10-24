@@ -24,8 +24,11 @@ from .errors import HarnessError, run_cmd
 _now = time.monotonic
 _sleep = time.sleep
 
-_PIPELINE_GATE_RE = _re.compile(r"405|pipeline.*must succeed|must succeed",
+_PIPELINE_GATE_RE = _re.compile(r"pipeline.*must succeed|must succeed|"
+                                r"merge_when_pipeline_succeeds",
                                 _re.IGNORECASE)
+_MERGEABLE_WAIT_S = 120
+_MERGEABLE_CHECKING = ("checking", "check_pending")
 
 
 @app.command("release")
@@ -214,8 +217,34 @@ def _wait_mr_merged(tool: str, path: str, mr_url: str, pinned: str,
 
 
 def _pipeline_gate_rejection(msg: str) -> bool:
-    """True when the host rejected a merge over its pipeline gate (405)."""
+    """True when the host rejected a merge over its pipeline gate."""
     return bool(_PIPELINE_GATE_RE.search(msg or ""))
+
+
+def _wait_mr_mergeable(path: str, mr_url: str,
+                       timeout_s: int = _MERGEABLE_WAIT_S) -> dict | None:
+    """Poll until the MR leaves the `checking` state; None on lookup failure.
+
+    GitLab reports `detailed_merge_status: checking` while it computes
+    mergeability — merging during that window 405s even on a mergeable MR.
+    Returns the last state (caller proceeds when the host never answers).
+    """
+    deadline = _now() + timeout_s
+    wait = 5.0
+    last: dict | None = None
+    while True:
+        fresh = _mr_state_now(mr_url, path)
+        if fresh is None:
+            return last
+        last = fresh
+        status = str(fresh.get("mergeable") or "").lower()
+        if status not in _MERGEABLE_CHECKING:
+            return fresh
+        if _now() + wait > deadline:
+            return fresh
+        eprint(f"MR mergeability checking; waiting for host verdict …")
+        _sleep(wait)
+        wait = min(wait * 2, 30.0)
 
 
 def _merge_pinned(tool: str, path: str, release_branch: str, pinned: str,
@@ -248,6 +277,13 @@ def _merge_pinned(tool: str, path: str, release_branch: str, pinned: str,
     for strat in strategy:
         try:
             if strat == "gitlab-mr-ff" and tool == "glab":
+                _rum = _wait_mr_mergeable(path, mr_url)
+                if _rum is not None:
+                    _rms = str(_rum.get("state") or "").lower()
+                    _rmm = str(_rum.get("mergeable") or "").lower()
+                    if _rms in ("merged",):
+                        _verify_head(path, release_branch, pinned)
+                        return strat
                 argv = ["glab", "mr", "merge", "--sha", pinned]
                 if force:
                     argv.append("--auto-merge=false")
@@ -255,12 +291,24 @@ def _merge_pinned(tool: str, path: str, release_branch: str, pinned: str,
                 try:
                     run_cmd(*argv, cwd=path)
                 except HarnessError as e:
-                    if force and _pipeline_gate_rejection(str(e)):
+                    _rmsg = str(e)
+                    if force and _pipeline_gate_rejection(_rmsg):
                         _fail(f"release merge rejected ({strat}): the project "
                               f"requires a successful pipeline before merging; "
                               f"re-run with --checks ci. MR left open: {mr_url}",
                               EXIT_GENERAL)
-                    raise
+                    if "405" in _rmsg:
+                        # Transient 405 (e.g. merged while `checking`): one
+                        # re-check + retry before failing with host detail.
+                        _rum = _wait_mr_mergeable(path, mr_url,
+                                                  timeout_s=_MERGEABLE_WAIT_S)
+                        if _rum is not None and str(
+                                _rum.get("state") or "").lower() == "merged":
+                            _verify_head(path, release_branch, pinned)
+                            return strat
+                        run_cmd(*argv, cwd=path)
+                    else:
+                        raise
                 if not _wait_mr_merged(tool, path, mr_url, pinned, ci_timeout_s):
                     _fail(f"release merge queued on the host but {mr_url} never "
                           f"reported merged within {ci_timeout_s}s; MR left open: "

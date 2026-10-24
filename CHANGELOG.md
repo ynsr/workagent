@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Cleanup fails closed on host merge blocks (unresolved discussions→405) pre-merge; fix glab JSON flag + matcher shadowing [IPG-1052]
+- Release merge waits out MR `checking` mergeability, retries one transient 405, hints `--checks ci` only on a real pipeline gate [no-issue]
 - `start --related-repo` no longer fails "branch not found" in the sibling repo: fan-out skips the pre-existing-branch check (the fresh main-repo branch is created there via `worktree add -b`) [no-issue]
 - Flow `--skip-steps 0` after a terminal Start adopts the terminal-made worktree (re-resolves the ref) so the review step runs seamlessly instead of failing "Needs input" [no-issue]
 - Fix skipped-start resume crashing review on `jira:KEY@repo` keys (resolver strips suffix; review + record_link see soft-deleted rows and revive them; ensure-branch reuses instead of UNIQUE-colliding INSERT) + missing HarnessError import in flow_run error handler [no-issue]
