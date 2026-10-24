@@ -556,50 +556,50 @@ export function Dashboard() {
             repoTabs={repos ? { ...repoTabs, repos } : undefined}
             selection={{ selected, onSelectionChange: setSelected }}
           />
-          <DeactivatedTable
-            worktrees={Object.fromEntries(
-              Object.entries(inactiveAll ?? {}).filter(
-                ([k, e]) => !(k in (worktrees ?? {})) && !e.deleted_at,
-              ),
-            )}
-            actions={{
-              onOpenWorktree: handleOpenWorktree,
-              onOpenRun: handleOpenRun,
-              onReactivate: handleReactivate,
-            }}
-          />
-          <DeletedTable
-            worktrees={Object.fromEntries(
-              Object.entries(deletedAll ?? {}).filter(([, e]) => !!e.deleted_at),
-            )}
-            actions={{
-              onOpenWorktree: handleOpenWorktree,
-              onOpenRun: handleOpenRun,
-              onUndelete: handleUndelete,
-            }}
-          />
-          <div className="mt-6">
-            <CandidatesCard />
-          </div>
-          <div className="mt-6">
-            <ReleaseCard />
-          </div>
-          <details className="mt-3 rounded-md border px-3 py-2 text-xs text-muted-foreground">
-            <summary className="cursor-pointer font-medium text-foreground">
-              Remote calls &amp; cache TTLs
-            </summary>
-            <ul className="mt-2 list-disc space-y-1 pl-5">
-              <li><span className="font-mono">gh pr list</span> / <span className="font-mono">glab mr list</span> per branch — PR result cached 3d, no-PR result 30min (refresh: Refresh PR).</li>
-              <li>CI pipeline lookup per PR branch — cached 10min.</li>
-              <li>Tracker issue lists (jira-cli / gh) — cached 1h (Issues/Candidates pages).</li>
-            </ul>
-          </details>
-          <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <SquareTerminal className="size-3.5" aria-hidden />
-            Sync, Review and Cleanup run as child processes — follow them under Runs.
-          </p>
         </div>
       )}
+      <DeactivatedTable
+        worktrees={Object.fromEntries(
+          Object.entries(inactiveAll ?? {}).filter(
+            ([k, e]) => !(k in (worktrees ?? {})) && !e.deleted_at,
+          ),
+        )}
+        actions={{
+          onOpenWorktree: handleOpenWorktree,
+          onOpenRun: handleOpenRun,
+          onReactivate: handleReactivate,
+        }}
+      />
+      <DeletedTable
+        worktrees={Object.fromEntries(
+          Object.entries(deletedAll ?? {}).filter(([, e]) => !!e.deleted_at),
+        )}
+        actions={{
+          onOpenWorktree: handleOpenWorktree,
+          onOpenRun: handleOpenRun,
+          onUndelete: handleUndelete,
+        }}
+      />
+      <div className="mt-6">
+        <CandidatesCard />
+      </div>
+      <div className="mt-6">
+        <ReleaseCard />
+      </div>
+      <details className="mt-3 rounded-md border px-3 py-2 text-xs text-muted-foreground">
+        <summary className="cursor-pointer font-medium text-foreground">
+          Remote calls &amp; cache TTLs
+        </summary>
+        <ul className="mt-2 list-disc space-y-1 pl-5">
+          <li><span className="font-mono">gh pr list</span> / <span className="font-mono">glab mr list</span> per branch — PR result cached 3d, no-PR result 30min (refresh: Refresh PR).</li>
+          <li>CI pipeline lookup per PR branch — cached 10min.</li>
+          <li>Tracker issue lists (jira-cli / gh) — cached 1h (Issues/Candidates pages).</li>
+        </ul>
+      </details>
+      <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <SquareTerminal className="size-3.5" aria-hidden />
+        Sync, Review and Cleanup run as child processes — follow them under Runs.
+      </p>
       {cleanupTarget ? (
         <CleanupDialog
           worktreeKey={cleanupTarget}
