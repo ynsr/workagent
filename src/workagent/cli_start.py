@@ -291,6 +291,7 @@ def _fan_out_related(parsed: dict, parent_key: str, branch: str,
             rec = dict(existing)
             rec["parent_key_ref"] = parent_key
             store.record_link(child_key, rec)
+            continue
         # The branch was just created in the main repo — it is expected NOT to
         # exist in the related repo yet; git-wt creates it via `worktree add -b`.
         wt = gitwt.start_worktree(repo_path, branch=branch, base=base_branch,
