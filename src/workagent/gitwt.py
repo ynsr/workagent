@@ -18,7 +18,8 @@ def require_git_wt() -> str:
 
 def start_worktree(repo: Path, branch: str | None = None, issue: str | None = None,
                    slug: str | None = None, link: str | None = None,
-                   base: str | None = None, depth: int = 7) -> dict:
+                   base: str | None = None, depth: int = 7,
+                   ensure_branch: bool = True) -> dict:
     """Create a worktree via `git-wt start --json`. Never fails on existing state.
 
     If the branch/worktree already exists, falls back to `git-wt start --resume`
@@ -26,10 +27,17 @@ def start_worktree(repo: Path, branch: str | None = None, issue: str | None = No
     After creation/resume, verifies the worktree upstream points at the feature
     branch — never the base/default branch — and repairs it if needed.
     Returns parsed result (with an extra `resumed: True` flag on fallback).
+
+    `ensure_branch=False` skips the pre-flight `_ensure_local_branch` check:
+    for creating a *new* branch via `--branch` (e.g. related-repo fan-out
+    passes the just-created main-repo branch), where the branch is expected
+    NOT to exist in this repo yet — `git-wt start` creates it via
+    `worktree add -b`. Keep the default True when checking out an existing
+    branch (PR/MR source, --base branch mode).
     """
     require_git_wt()
     _ = depth  # git-wt owns fetch depth today; kept for CLI compatibility
-    if branch:
+    if branch and ensure_branch:
         _ensure_local_branch(repo, branch)
     _fetch_base(repo, base)
     args = _start_args(repo, branch, issue, slug, link, base)

@@ -97,6 +97,56 @@ def test_ensure_local_branch_fetches_stale_mirror(tmp_path):
     assert _has_branch(repo, "feat/stale-mirror")
 
 
+def test_start_worktree_skips_branch_ensure_when_asked(tmp_path, monkeypatch):
+    """Fan-out: a branch fresh in the main repo need not exist in the sibling.
+
+    Regression: `_fan_out_related` passes the just-created feature branch,
+    which cannot exist in the related repo yet — `_ensure_local_branch`
+    errored "not found locally or as origin/<branch>" instead of letting
+    `git-wt start --branch` create it via `worktree add -b`.
+    """
+    from unittest.mock import patch
+
+    main = _origin_clone(tmp_path)
+    sibling = tmp_path / "sibling"
+    import subprocess as _sp
+    _sp.run(["git", "clone", "-q", str(tmp_path / "origin.git"), str(sibling)], check=True)
+    _git("checkout", "-qb", "feat/fresh--x", cwd=main)
+    (main / "n.txt").write_text("n\n", encoding="utf-8")
+    _git("add", "-A", cwd=main)
+    _git("commit", "-q", "-m", "feat", cwd=main)
+    assert not _has_branch(sibling, "feat/fresh--x")
+
+    # Default still guards checkout-existing flows (PR source, --base mode).
+    import pytest as _pytest
+    from workagent.errors import HarnessError as _HE
+    with _pytest.raises(_HE, match="not found locally"):
+        gitwt._ensure_local_branch(sibling, "feat/fresh--x")
+
+    # ... but start_worktree(ensure_branch=False) skips that check and
+    # defers to git-wt, which creates the missing branch itself.
+    seen = {}
+
+    def fake_run_start(args, repo):
+        seen["args"] = args
+        assert "--branch" in args and "feat/fresh--x" in args
+        wt = tmp_path / "wt-fresh"
+        import subprocess as _sp2
+        # A real git worktree so _repair_path_mismatch short-circuits
+        # (it only recreates via --resume when the path isn't one).
+        _sp2.run(["git", "worktree", "add", "-b", "feat/fresh--x",
+                  str(wt), "main"], cwd=str(sibling), check=True,
+                 capture_output=True)
+        return {"worktree_path": str(wt), "branch": "feat/fresh--x"}
+
+    monkeypatch.setattr(gitwt, "_run_start", fake_run_start)
+    monkeypatch.setattr(gitwt, "_fetch_base", lambda *a, **k: None)
+    monkeypatch.setattr(gitwt, "_ensure_upstream", lambda *a, **k: None)
+    out = gitwt.start_worktree(sibling, branch="feat/fresh--x", base="main",
+                               ensure_branch=False)
+    assert out["branch"] == "feat/fresh--x"
+    assert "--base" in seen["args"] and "main" in seen["args"]
+
 def test_ensure_upstream_drops_legacy_fake_ref(tmp_path):
     """A local-only update-ref origin/<branch> is dropped, not kept.
 
