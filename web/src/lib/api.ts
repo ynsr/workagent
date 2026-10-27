@@ -157,6 +157,7 @@ export interface ReleaseStatus {
   default_branch: string
   release_branch: string
   diff_count: number
+  behind?: number
   releasable: boolean
   reason: string
   stale?: boolean

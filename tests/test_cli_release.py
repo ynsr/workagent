@@ -750,3 +750,180 @@ def test_release_prints_subjects_before_gate(monkeypatch, capsys):
     assert "- feat: one" in err and "- fix: two" in err
     assert err.index("- fix: two") < err.index("released abc123")
     assert order == ["gate"]
+
+
+def test_fix_default_rebase_noop_when_not_behind(
+        isolated_config, tmp_path, monkeypatch):
+    """Task 5 Step 1 (verbatim): rebase is a no-op when default is not behind."""
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    from workagent import store as _store
+    (tmp_path / "r1").mkdir()
+    monkeypatch.setattr(_store, "load_repos", lambda: {"r1": {
+        "path": str(tmp_path / "r1"), "tool": "glab",
+        "default_branch": "main", "release_branch": "master",
+        "remote": "https://h/o/r.git"}})
+    from workagent import repos_release as _rr
+    monkeypatch.setattr(_rr, "_fetch_refs", lambda *a, **k: None)
+    monkeypatch.setattr(_rr, "_count_both", lambda *a, **k: (2, 0))
+    from workagent import cli_release_fix as _fix
+    monkeypatch.setattr(_fix, "_ci_status", lambda *a, **k: ("success", ""))
+    r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
+                                      "--action", "rebase",
+                                      "--dry-run", "--json"])
+    assert r.exit_code == 0, r.output
+    import json
+    out = json.loads(r.stdout)
+    assert out["action"] == "rebase" and out["behind"] == 0
+    assert "noop" in out["plan"].lower() or out.get("noop") is True
+
+
+_DEFAULT_SHA = "1111111111222222222233333333334444444444"
+_RELEASE_SHA = "5555555566666666777777778888888899999999aa"
+
+
+def _fix_repo(monkeypatch, tmp_path, *, behind=2, ci=("success", "")):
+    """Registry + git/CI seams for the `release fix-default` execute tests."""
+    from workagent import cli_release_fix as _fix
+    from workagent import repos_release as _rr
+    (tmp_path / "r1").mkdir(exist_ok=True)
+    monkeypatch.setattr(_store, "load_repos", lambda: {"r1": {
+        "path": str(tmp_path / "r1"), "tool": "glab",
+        "default_branch": "main", "release_branch": "master",
+        "remote": "https://h/o/r.git", "fetch_enabled": False}})
+    monkeypatch.setattr(_rr, "_fetch_refs", lambda *a, **k: None)
+    monkeypatch.setattr(_rr, "_count_both", lambda *a, **k: (4, behind))
+    monkeypatch.setattr(_fix, "_ci_status", lambda *a, **k: ci)
+    monkeypatch.setattr(_fix, "_branch_sha",
+                        lambda path, branch: {"main": _DEFAULT_SHA,
+                                              "master": _RELEASE_SHA}.get(branch, ""))
+    monkeypatch.setattr(_fix, "_ci_logs", lambda *a, **k: "job log tail")
+    return _fix
+
+
+def _record_launches(monkeypatch, calls):
+    """Capture backend.launch argv instead of spawning a real harness."""
+    from workagent import backend as _backend
+
+    def _launch(harness, prompt, workdir, no_tty, extra_args=None,
+                env_file=None, watch=None):
+        calls.append({"harness": harness, "prompt": prompt, "workdir": workdir,
+                      "no_tty": no_tty})
+        return 0
+
+    monkeypatch.setattr(_backend, "launch", _launch)
+
+
+def test_fix_default_rebase_remote_fail_falls_back_to_harness_prompt(
+        isolated_config, tmp_path, monkeypatch):
+    """Task 6 Step 1 (verbatim): remote rebase failure falls back to the harness."""
+    import json
+
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    from workagent.errors import HarnessError
+    _fix = _fix_repo(monkeypatch, tmp_path)
+    monkeypatch.setattr(_fix, "_find_or_open_mr",
+                        lambda *a, **k: "https://h/o/r/-/merge_requests/7")
+
+    def _boom(*a, **k):
+        raise HarnessError("rebase API unavailable")
+
+    monkeypatch.setattr(_fix, "_remote_rebase", _boom)
+    calls: list[dict] = []
+    _record_launches(monkeypatch, calls)
+    r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
+                                      "--action", "rebase",
+                                      "--run-mode", "headless", "--yes",
+                                      "--json"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert out["rebase"] == "harness"
+    assert "rebase" in out["harness_prompt"].lower()
+    assert _DEFAULT_SHA[:8] in out["harness_prompt"]
+    assert _RELEASE_SHA[:8] in out["harness_prompt"]
+    assert len(calls) == 1 and calls[0]["prompt"] == out["harness_prompt"]
+    assert calls[0]["no_tty"] is True
+
+
+def test_fix_default_preview_prints_command_without_p(
+        isolated_config, tmp_path, monkeypatch):
+    """Preview mode prints the harness command with no `-p` and runs nothing."""
+    import json
+
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    _fix = _fix_repo(monkeypatch, tmp_path, ci=("failure", "https://ci/jobs/9"))
+    opened: list = []
+    monkeypatch.setattr(_fix, "_find_or_open_mr",
+                        lambda *a, **k: opened.append(a) or "https://h/mr/1")
+    monkeypatch.setattr(_fix, "_remote_rebase",
+                        lambda *a, **k: opened.append(a))
+    calls: list[dict] = []
+    _record_launches(monkeypatch, calls)
+    r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
+                                      "--action", "both", "--json"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert out["run_mode"] == "preview"
+    assert " -p " not in out["harness_command"]
+    assert "Rebase main (" in out["harness_prompt"]
+    assert "Fix the failing CI on main: https://ci/jobs/9" in out["harness_prompt"]
+    assert "job log tail" in out["harness_prompt"]
+    assert opened == [] and calls == []
+
+
+def test_fix_default_headless_both_single_session_with_extra_prompt(
+        isolated_config, tmp_path, monkeypatch):
+    """`both` headless: one harness call carrying rebase then CI + extra prompt."""
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    from workagent.errors import HarnessError
+    _fix = _fix_repo(monkeypatch, tmp_path, ci=("failure", "https://ci/jobs/9"))
+    monkeypatch.setattr(_fix, "_find_or_open_mr",
+                        lambda *a, **k: "https://h/o/r/-/merge_requests/7")
+
+    def _boom(*a, **k):
+        raise HarnessError("rebase API unavailable")
+
+    monkeypatch.setattr(_fix, "_remote_rebase", _boom)
+    calls: list[dict] = []
+    _record_launches(monkeypatch, calls)
+    r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
+                                      "--action", "both", "--run-mode", "headless",
+                                      "--extra-prompt", "Prefer smaller commits",
+                                      "--yes", "--json"])
+    assert r.exit_code == 0, r.output
+    assert len(calls) == 1
+    prompt = calls[0]["prompt"]
+    assert "Prefer smaller commits" in prompt
+    assert prompt.count("Prefer smaller commits") == 1
+    assert prompt.index("Rebase main (") < prompt.index("Fix the failing CI on main")
+
+
+def test_fix_default_remote_rebase_success_skips_harness(
+        isolated_config, tmp_path, monkeypatch):
+    """A successful remote rebase leaves only the CI step for the harness."""
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    _fix = _fix_repo(monkeypatch, tmp_path, ci=("failure", "https://ci/jobs/9"))
+    monkeypatch.setattr(_fix, "_find_or_open_mr", lambda *a, **k: "https://h/mr/1")
+    monkeypatch.setattr(_fix, "_remote_rebase", lambda *a, **k: None)
+    calls: list[dict] = []
+    _record_launches(monkeypatch, calls)
+    r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
+                                      "--action", "both", "--run-mode", "headless",
+                                      "--yes", "--json"])
+    assert r.exit_code == 0, r.output
+    assert len(calls) == 1
+    assert "Rebase" not in calls[0]["prompt"]
+    assert "Fix the failing CI on main" in calls[0]["prompt"]
+
+
+def test_fix_default_bad_run_mode_exits_2(isolated_config, tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    _fix_repo(monkeypatch, tmp_path)
+    r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
+                                      "--run-mode", "streaming"])
+    assert r.exit_code == 2

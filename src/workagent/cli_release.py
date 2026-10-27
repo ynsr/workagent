@@ -31,9 +31,11 @@ _MERGEABLE_WAIT_S = 120
 _MERGEABLE_CHECKING = ("checking", "check_pending")
 
 
-@app.command("release")
+@app.command("release", context_settings={"allow_extra_args": True,
+                                          "ignore_unknown_options": True})
 @_catch_harness_errors
 def release(
+    ctx: typer.Context,
     repo: str = typer.Argument(..., help="Registered repo name or path."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
@@ -45,8 +47,40 @@ def release(
     ci_timeout: str = typer.Option("15m", "--ci-timeout",
                                    help="Timeout for the CI gate (e.g. 15m)."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before the pre-release gate command (default: env_file in config.json, auto-created)."),
+    action: str = typer.Option("both", "--action", help="fix-default action: rebase, ci, or both (only with `release fix-default NAME`)."),
+    run_mode: str = typer.Option("preview", "--run-mode", help="fix-default run mode: preview, headless, or terminal (only with `release fix-default NAME`)."),
+    extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the fix-default harness prompt."),
 ) -> None:
     """Ship default -> release via pinned-SHA MR merge (FF-only, never squash)."""
+    if repo == "fix-default":
+        # `release fix-default NAME ...`: dispatch here (not a Typer group:
+        # this command's required positional would swallow the subcommand
+        # name).
+        from . import cli_release_fix as _fix
+        params = [a for a in (ctx.args or []) if a != "--"]
+        for tok in params:
+            if tok.startswith("-"):
+                _fail(f"No such option: {tok}", EXIT_USAGE)
+        positionals = [a for a in params if not a.startswith("-")]
+        if len(positionals) != 1:
+            _fail("Missing argument 'NAME'." if not positionals
+                  else f"Unexpected argument: {positionals[1]}", EXIT_USAGE)
+        if action not in ("rebase", "ci", "both"):
+            _fail(f"Invalid value for '--action': {action!r} "
+                  "(use rebase, ci, or both).", EXIT_USAGE)
+        if run_mode not in _fix.RUN_MODES:
+            _fail(f"Invalid value for '--run-mode': {run_mode!r} (use "
+                  f"{', '.join(_fix.RUN_MODES)}).", EXIT_USAGE)
+        _fix.run_fix_default(positionals[0], action=action,
+                             run_mode=run_mode, extra_prompt=extra_prompt,
+                             yes=yes, dry_run=dry_run, json_output=json_output,
+                             env_file=env_file)
+        return
+    if action != "both":
+        _fail("--action is only valid with `release fix-default NAME`.", EXIT_USAGE)
+    if run_mode != "preview":
+        _fail("--run-mode is only valid with `release fix-default NAME`.",
+              EXIT_USAGE)
     result = run_release(repo, yes=yes, dry_run=dry_run, json_output=json_output,
                          checks=checks, diff=diff,
                          pre_release_timeout=pre_release_timeout, ci_timeout=ci_timeout,
