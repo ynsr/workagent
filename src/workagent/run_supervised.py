@@ -12,8 +12,7 @@ LOG_CAP_BYTES = 1_048_576
 
 def supervisor_argv(run_dir: Path, child_argv: list[str]) -> list[str]:
     return [sys.executable, "-m", "workagent", "_run-supervised",
-            "--run-dir", str(run_dir), "--", *child_argv]
-
+            "--run-dir", str(run_dir), *child_argv]
 
 def _append_capped(log_path: Path, chunk: bytes, state: dict) -> None:
     """Append *chunk*, head-truncating past LOG_CAP_BYTES (checked rarely).

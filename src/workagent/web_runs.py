@@ -155,6 +155,7 @@ class Run:
     lock: threading.RLock = field(default_factory=threading.RLock)
     session_file: str = ""
     worktree: str = ""
+    run_dir: str = ""
 
     def append(self, text: str) -> None:
         with self.lock:
@@ -300,61 +301,175 @@ def _persisted_row(run_id: str) -> dict | None:
 
 
 
-def _spawn(run: Run, registry: Registry) -> None:
-    def reader() -> None:
-        code: int | None = 1
-        try:
-            proc = subprocess.Popen(
-                run.argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, shell=False, start_new_session=True,
-                text=True, bufsize=1)
-            run.proc = proc
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                run.append(line)
-            code = proc.wait()
-        except OSError as e:  # spawn failure — surface in the buffer
-            run.append(f"[web] spawn failed: {e}\n")
-            code = 1
+def _run_dir(run: Run) -> Path:
+    """State dir for a run (cached on the Run; derived when missing)."""
+    if run.run_dir:
+        return Path(run.run_dir)
+    from . import run_store as _rs
+    return _rs.runs_root() / run.id
+
+
+def _finish_state(code: int | None) -> str:
+    if code == 0:
+        return "succeeded"
+    if code == 2:
+        return "needs_input"
+    if code is not None and code < 0:
+        return "cancelled"
+    return "failed"
+
+
+def _start_tailer(run: Run, registry: Registry, backfill: bool = False) -> None:
+    """Follow output.log into run.lines; close out when exit_code lands."""
+    from . import run_store as _rs
+    d = _run_dir(run)
+
+    def tailer() -> None:
+        offset = 0
+        if backfill:
+            # Post-restart adopt: load the tail (≤10k lines) without OOM.
+            try:
+                data = (d / "output.log").read_bytes()
+                lines = data.decode(errors="replace").splitlines()[-MAX_LINES:]
+                for ln in lines:
+                    run.append(ln + "\n")
+                offset = len(data)
+            except OSError:
+                offset = 0
+        else:
+            try:
+                offset = (d / "output.log").stat().st_size
+            except OSError:
+                offset = 0
+        while True:
+            try:
+                with open(d / "output.log", "rb") as fh:
+                    fh.seek(offset)
+                    chunk = fh.read()
+                    offset = fh.tell()
+            except OSError:
+                chunk = b""
+            if chunk:
+                run.append(chunk.decode(errors="replace"))
+                if (d / "truncated").exists():
+                    run.truncated = True
+            code = _rs.read_exit(d)
+            if code is not None:
+                with run.lock:
+                    run.exit_code = code
+                    if run.state == "running":
+                        run.state = _finish_state(code)
+                registry.release_target(run)
+                _mirror_run(run)
+                return
+            time.sleep(0.2)
+
+    threading.Thread(target=tailer, daemon=True).start()
+
+
+def _wait_log(run: Run, needle: str, timeout: float = 5.0) -> bool:
+    """Poll run.lines for *needle* (integration-test helper)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
         with run.lock:
-            run.exit_code = code
+            if any(needle in t for _, t in run.lines):
+                return True
+        time.sleep(0.05)
+    return False
+
+
+def _spawn(run: Run, registry: Registry) -> None:
+    from . import run_store as _rs
+    from .run_supervised import supervisor_argv
+    d = _rs.new_run_dir(run.id)
+    run.run_dir = str(d)
+    with run.lock:
+        created = run.created
+    _rs.write_meta(d, {"command": run.command, "args": run.args,
+                       "target": run.target, "created": created,
+                       "session_file": run.session_file,
+                       "worktree": run.worktree})
+    try:
+        subprocess.Popen(
+            supervisor_argv(d, run.argv), stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            shell=False, start_new_session=True, close_fds=True)
+    except OSError as e:  # spawn failure — surface in the buffer
+        run.append(f"[web] spawn failed: {e}\n")
+        with run.lock:
+            run.exit_code = 1
             if run.state == "running":
-                if code == 0:
-                    run.state = "succeeded"
-                elif code == 2:
-                    run.state = "needs_input"
-                elif code is not None and code < 0:
-                    run.state = "cancelled"
-                else:
-                    run.state = "failed"
+                run.state = "failed"
         registry.release_target(run)
         _mirror_run(run)
-
-    threading.Thread(target=reader, daemon=True).start()
+        return
+    _start_tailer(run, registry)
 
 
 def _cancel(run: Run) -> None:
+    from . import run_store as _rs
+    from . import store as _store
+    # Fake-spawned runs (tests): keep the old in-memory branch.
     proc = run.proc
-    if proc is None or proc.poll() is not None:
+    if proc is not None:
+        if proc.poll() is not None:
+            return
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+        def escalate() -> None:
+            try:
+                proc.wait(timeout=CANCEL_GRACE)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+            with run.lock:
+                if run.state == "running":
+                    run.state = "cancelled"
+
+        threading.Thread(target=escalate, daemon=True).start()
+        with run.lock:
+            if run.state == "running":
+                run.state = "cancelled"
+        return
+    # Detached path: pid group persisted in the run dir (works post-restart).
+    d = _run_dir(run)
+    pid, ticks = _rs.read_pid(d)
+    if pid is None:
+        return
+    if ticks is not None and _store._proc_start_ticks(pid) not in (None, ticks):
+        # Pid reused by an unrelated process: never kill it; close the run.
+        with run.lock:
+            run.exit_code = -1
+            if run.state == "running":
+                run.state = "failed"
+        _rs.write_exit(d, -1)
         return
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
+        os.killpg(pid, signal.SIGTERM)
     except (ProcessLookupError, PermissionError):
         pass
 
-    def escalate() -> None:
-        try:
-            proc.wait(timeout=CANCEL_GRACE)
-        except subprocess.TimeoutExpired:
+    def escalate_detached() -> None:
+        deadline = time.time() + CANCEL_GRACE
+        while time.time() < deadline:
+            if not _store._pid_alive(pid):
+                break
+            time.sleep(0.2)
+        else:
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
+                os.killpg(pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 pass
         with run.lock:
             if run.state == "running":
                 run.state = "cancelled"
 
-    threading.Thread(target=escalate, daemon=True).start()
+    threading.Thread(target=escalate_detached, daemon=True).start()
     with run.lock:
         if run.state == "running":
             run.state = "cancelled"

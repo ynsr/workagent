@@ -931,3 +931,18 @@ def test_session_resume_claims_terminal_lock(client, monkeypatch, tmp_path):
     finally:
         holder.kill()
         _store.clear_harness_run("k3")
+
+def test_spawn_writes_log_file_and_completes(client):
+    from workagent import web_runs
+    run = web_runs.Run(id="tail1", command="cleanup", args=["--dry-run"],
+                       target="cleanup:tail1", argv=["/bin/echo", "hi-tail"])
+    reg = client.app.state.registry
+    reg.runs[run.id] = run
+    web_runs._spawn(run, reg)
+    assert web_runs._wait_log(run, "hi-tail", timeout=5)
+    deadline = time.time() + 5
+    while run.state == "running" and time.time() < deadline:
+        time.sleep(0.05)
+    assert run.state == "succeeded"
+    assert any("hi-tail" in t for _, t in run.lines)
+    assert (web_runs._run_dir(run) / "exit_code").read_text().strip() == "0"

@@ -489,6 +489,7 @@ def test_specs_mirror_cli_flags():
     skip = {"", "completions", "completions install", "completions show",
             "serve", "doctor", "migrate", "candidates", "status", "cd",
             "watch-and-exec",  # hidden interactive shim, never web-invoked
+            "_run-supervised",  # hidden detach shim, never web-invoked
             "repo", "link", "tracker", "action", "backup"}  # bare groups never invoked; subcommands covered
     for path, (b, v) in sorted(inv.items()):
         if path in skip or path == "service" or path.startswith("service "):

@@ -655,10 +655,12 @@ def watch_and_exec(
     t = threading.Thread(target=_poll, name="workagent-minted-watch", daemon=True)
     t.start()
     os.execvp(argv[0], argv)
-@app.command("_run-supervised", hidden=True)
+@app.command("_run-supervised", hidden=True,
+              context_settings={"allow_extra_args": True,
+                                "ignore_unknown_options": True})
 def run_supervised_cmd(
+    ctx: typer.Context,
     run_dir: str = typer.Option(..., "--run-dir", help="Run state dir."),
-    argv: list[str] = typer.Argument(..., help="Child argv after --."),
 ) -> None:
     """Detach *argv* so it survives serve restarts; log + record exit.
 
@@ -668,4 +670,5 @@ def run_supervised_cmd(
     """
     from pathlib import Path as _Path
     from .run_supervised import run_supervised as _run
-    raise SystemExit(_run(_Path(run_dir), list(argv)))
+    child = [a for a in (ctx.args or []) if a != "--"]
+    raise SystemExit(_run(_Path(run_dir), child))
