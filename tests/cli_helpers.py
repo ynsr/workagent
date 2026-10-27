@@ -37,9 +37,6 @@ def _sync_mocks(monkeypatch, local_calls=None, rebase_calls=None, pulled=None):
                         lambda wt, br: (pulled.append((str(wt), br))
                                         if pulled is not None else None) or "reset")
     monkeypatch.setattr(cli.sync_mod, "push", lambda wt, br: None)
-    monkeypatch.setattr(cli.refs, "fetch_ci", lambda *a, **k: (None, None))
-    monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
-                        lambda *a, **k: None)
 
 
 def _start_mocks(monkeypatch, repo_dir):

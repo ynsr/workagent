@@ -97,8 +97,6 @@ def test_launch_shorthand_L_on_start_and_review(isolated_config, tmp_path, monke
                         lambda repo, **kw: {"worktree_path": str(worktree),
                                             "branch": "feat/33"})
     launched = []
-    import workagent.issue_comments as _ic
-    monkeypatch.setattr(_ic, "post_issue_comment", lambda *a, **k: False)
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
     # preview (no --launch): prints the command, launches nothing
     r = runner.invoke(cli.app, ["start", "o/r#33", "--no-tty", "--json"])
