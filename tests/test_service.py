@@ -134,3 +134,7 @@ def test_run_scheduled_prunes(tmp_path, monkeypatch):
     assert r.exit_code == 0, r.output
     kept = sorted((tmp_path).glob("backup-actions-flows-*.json"))
     assert len(kept) == 2
+
+def test_render_unit_uses_killmode_process():
+    from workagent.service import render_unit
+    assert "KillMode=process" in render_unit()

@@ -55,6 +55,7 @@ def render_unit(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> str:
         "\n"
         "[Service]\n"
         f"ExecStart={_serve_bin()} serve --host {host} --port {port}\n"
+        "KillMode=process\n"
         "Restart=on-failure\n"
         "RestartSec=5\n"
         "StartLimitBurst=3\n"

@@ -53,14 +53,22 @@ def check(json_output: bool = False) -> dict:
     status = "ok" if recorded == live else ("missing" if not recorded else "stale")
     result = {"status": status, "live_hash": live, "recorded_hash": recorded,
               "tools": tools, "receipt": str(receipt)}
-    if json_output:
-        return result
+    from .service import unit_path as _unit_path
+    try:
+        installed = _unit_path().read_text()
+        result["serve_killmode"] = ("ok" if "KillMode=process" in installed
+                                    else "legacy")
+    except OSError:
+        result["serve_killmode"] = "no-unit"
     for tool, ok in tools.items():
         print(f"{tool}: {'found' if ok else 'MISSING'}", file=sys.stderr)
     if status != "ok":
         print(f"doctor: {status} — reinstall with ./install.sh", file=sys.stderr)
     else:
         print("doctor: ok", file=sys.stderr)
+    if result.get("serve_killmode") == "legacy":
+        print("doctor: serve unit lacks KillMode=process — runs die on "
+              "restart; run `workagent service install --yes`", file=sys.stderr)
     return result
 
 
