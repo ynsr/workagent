@@ -157,6 +157,7 @@ export interface ReleaseStatus {
   default_branch: string
   release_branch: string
   diff_count: number
+  behind?: number
   releasable: boolean
   reason: string
   stale?: boolean
@@ -177,6 +178,8 @@ export interface CandidatePr {
   repo: string
   /** Registered repo display name (backend WS2 Task 5); absent until then. */
   repo_name?: string
+  /** PR/MR author login; "" or absent when unknown (old glab). */
+  author?: string
 }
 
 export interface CandidateWorktree {

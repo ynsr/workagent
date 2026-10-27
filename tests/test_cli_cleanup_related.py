@@ -1,4 +1,4 @@
-"""Cleanup cascade: parent teardown also cleans its child worktrees."""
+"""Cleanup independence: parent teardown never touches child worktrees."""
 from __future__ import annotations
 
 from tests.cli_helpers import runner
@@ -30,17 +30,31 @@ def _seeded(tmp_path, monkeypatch, parent="jira:IPG-1@main", child="jira:IPG-1@o
     return parent_wt, child_wt
 
 
-def test_cleanup_parent_cascades_to_children(isolated_config, tmp_path, monkeypatch):
+def test_cleanup_parent_leaves_children(isolated_config, tmp_path, monkeypatch):
     _seeded(tmp_path, monkeypatch)
     r = runner.invoke(cli.app, ["cleanup", "jira:IPG-1@main", "--yes",
                                 "--json", "--hard-delete"])
     assert r.exit_code == 0, r.output
     import json
     out = json.loads(r.stdout)
-    assert sorted(out["children"]) == ["jira:IPG-1@other"]
+    assert "children" not in out
     links = store.load_links(include_inactive=True, include_deleted=True)
     assert "jira:IPG-1@main" not in links
-    assert "jira:IPG-1@other" not in links
+    assert "jira:IPG-1@other" in links
+
+
+def test_cleanup_merged_cleans_parent_and_child_independently(
+        isolated_config, tmp_path, monkeypatch):
+    _seeded(tmp_path, monkeypatch)
+    r = runner.invoke(cli.app, ["cleanup", "--merged", "--yes", "--json",
+                                "--hard-delete"])
+    assert r.exit_code == 0, r.output
+    import json
+    rows = {row["key"]: row for row in json.loads(r.stdout)["results"]}
+    assert rows["jira:IPG-1@main"]["status"] == "cleaned"
+    assert rows["jira:IPG-1@other"]["status"] == "cleaned"
+    assert "skipped:cleaned-with-parent" not in {
+        row["status"] for row in rows.values()}
 
 
 def test_cleanup_child_direct_leaves_parent(isolated_config, tmp_path, monkeypatch):
@@ -53,41 +67,49 @@ def test_cleanup_child_direct_leaves_parent(isolated_config, tmp_path, monkeypat
     assert "jira:IPG-1@other" not in links
 
 
-def test_cleanup_dry_run_lists_children_without_teardown(isolated_config, tmp_path,
-                                                         monkeypatch):
+def test_cleanup_dry_run_does_not_list_children(isolated_config, tmp_path,
+                                                monkeypatch):
     _seeded(tmp_path, monkeypatch)
     r = runner.invoke(cli.app, ["cleanup", "jira:IPG-1@main", "--dry-run", "--json"])
     assert r.exit_code == 0, r.output
     import json
     out = json.loads(r.stdout)
-    assert out["children"] == ["jira:IPG-1@other"]
+    assert "children" not in out
     links = store.load_links(include_inactive=True, include_deleted=True)
     assert "jira:IPG-1@main" in links and "jira:IPG-1@other" in links
 
 
-def test_cleanup_soft_delete_marks_children_deleted(isolated_config, tmp_path,
-                                                    monkeypatch):
+def test_cleanup_soft_delete_marks_parent_only(isolated_config, tmp_path,
+                                               monkeypatch):
     _seeded(tmp_path, monkeypatch)
     r = runner.invoke(cli.app, ["cleanup", "jira:IPG-1@main", "--yes", "--json"])
     assert r.exit_code == 0, r.output
     import json
     out = json.loads(r.stdout)
-    assert out["children"] == ["jira:IPG-1@other"]
+    assert "children" not in out
     links = store.load_links(include_inactive=True, include_deleted=True)
     assert links["jira:IPG-1@main"]["deleted_at"]
-    assert links["jira:IPG-1@other"]["deleted_at"]
+    assert not links["jira:IPG-1@other"].get("deleted_at")
 
 
-def test_cleanup_merged_skips_children_of_cleaned_parents(isolated_config, tmp_path,
-                                                          monkeypatch):
+def test_cleanup_parent_with_live_harness_on_child(isolated_config, tmp_path,
+                                                   monkeypatch):
     _seeded(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli.store, "active_harness",
+                        lambda key: {"harness": "omp", "pid": 1}
+                        if key == "jira:IPG-1@other" else None)
+    import json
+    r = runner.invoke(cli.app, ["cleanup", "jira:IPG-1@main", "--yes",
+                                "--json", "--hard-delete"])
+    assert r.exit_code == 0, r.output
+    assert "children" not in json.loads(r.stdout)
+    links = store.load_links(include_inactive=True, include_deleted=True)
+    assert "jira:IPG-1@main" not in links
+    assert "jira:IPG-1@other" in links
     r = runner.invoke(cli.app, ["cleanup", "--merged", "--yes", "--json",
                                 "--hard-delete"])
     assert r.exit_code == 0, r.output
-    import json
     rows = {row["key"]: row for row in json.loads(r.stdout)["results"]}
-    assert rows["jira:IPG-1@main"]["status"] == "cleaned"
-    assert rows["jira:IPG-1@other"]["status"] == "skipped:cleaned-with-parent"
+    assert rows["jira:IPG-1@other"]["status"] == "skipped:live-harness"
     links = store.load_links(include_inactive=True, include_deleted=True)
-    assert "jira:IPG-1@main" not in links
-    assert "jira:IPG-1@other" not in links
+    assert "jira:IPG-1@other" in links

@@ -79,16 +79,28 @@ def _count_both(path: str, default_branch: str, release_branch: str) -> tuple[in
     return ahead, behind
 
 
+def _behind_count(path: str, default_branch: str, release_branch: str) -> int:
+    """Commits *release_branch* has that *default_branch* lacks (int >= 0).
+
+    Best-effort local rev-list (0 on unknown refs) — the behind signal is
+    advisory to the fix-default button, never a hard gate.
+    """
+    try:
+        return _count_both(path, default_branch, release_branch)[1]
+    except Exception:
+        return 0
+
+
 def _subjects(path: str, default_branch: str, release_branch: str) -> list[str]:
     """First-line subjects for origin/<release>..origin/<default> (oldest first)."""
     out = run_cmd("git", "-C", path, "log", "--format=%s", "--reverse",
                   f"origin/{release_branch}..origin/{default_branch}") or ""
     return [line for line in (s.strip() for s in out.splitlines()) if line]
 
-
 def _origin_tip(path: str, branch: str) -> str:
     """SHA of origin/<branch>."""
     return (run_cmd("git", "-C", path, "rev-parse", f"origin/{branch}") or "").strip()
+
 
 
 def _auth_ok(tool: str, path: str) -> bool:
@@ -217,7 +229,7 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
     except Exception:
         base_dir = ""
     base = {"repo": repo_name, "path": "", "default_branch": "", "release_branch": "",
-            "diff_count": 0, "releasable": False, "reason": "", "stale": False,
+            "diff_count": 0, "behind": 0, "releasable": False, "reason": "", "stale": False,
             "ci": "", "ci_url": "", "fetched_at": None, "releasing": False}
     if base_dir:
         try:
@@ -261,7 +273,11 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
     def _live() -> int:
         return release_diff_count(Path(str(info["path"])).expanduser(), default, release)
     def _finish(count: int, stale: bool, reason: str = "") -> dict:
-        base.update(diff_count=count, releasable=count > 0, stale=stale,
+        try:
+            behind = _behind_count(str(info["path"]), default, release)
+        except Exception:
+            behind = 0
+        base.update(diff_count=count, behind=behind, releasable=count > 0, stale=stale,
                     reason="" if count > 0 else "already in sync",
                     fetched_at=base.get("fetched_at") or (fetched_at or "") or None)
         if reason:

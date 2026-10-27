@@ -192,6 +192,7 @@ served cache window (slow). Read-only:
           "url": "https://github.com/o/r/pull/33", "branch": "feat/x",
           "target_branch": "main",
           "updated": "2026-09-20T10:00:00Z", "state": "OPEN",
+          "author": "octocat",
           "repo": "o/r", "repo_name": "proj"}],
  "issues": [{"key": "jira:IPG-981", "title": "…", "url": "…",
              "status": "To Do", "created": "2026-09-20T10:00:00.000+0000",
@@ -251,8 +252,8 @@ never mirrored (live registry only).
 `is_enabled` 0 = disabled (skipped by issue/PR fetching); updates run
 through `POST /api/runs` with `tracker update KEY [--vendor] [--remote-url] [--fetch/--no-fetch] [--enable/--disable]`.
 ### `GET /api/tracker-domains` → `{disabled_domains: [...]}`; `POST /api/tracker-domains` `{domains: [...]}` replaces the list (normalized lowercase/sorted; empty = all enabled). Trackers on a listed host (or subdomain) are skipped by fetching.
-### `GET /api/release/status?name=` → `{repo, path, default_branch, release_branch, diff_count, releasable, reason, stale, ci, ci_url, fetched_at, releasing}`
-Read-only releasability for one repo (1h fresh / 1d SWR diff cache). Always serves the cached row instantly and revalidates the diff in the background -- the ReleaseCard polls every 30 s, so fresh diffs swap in on the next poll without blocking or clearing the rendered rows. `releasable` = release branch set + diff > 0. `ci`/`ci_url` are the release branch's newest pipeline (`success|failure|running|not_started`, empty when the lookup soft-fails); `fetched_at` is the diff-cache stamp. `releasing` is True while the repo's release lock is held (a release is running). `POST /api/runs` `{command: "release", args: [repo, "--yes"]}` runs the release (confirm dialog appends `--yes`). New flags: `--checks ci|local|both|none` (default `ci`: local pre-release gate in a detached worktree at the pinned SHA, pinned-commit CI poll, or both), `--diff remote|local` (default `remote`), `--pre-release-timeout` (default `10m`), `--ci-timeout` (default `15m`), `--env-file <script>` (default `env_file` in `config.json`; sourced before the pre-release gate). Result summary: `{repo, pinned_sha, checks, strategy, mr_url, merged}` + stderr `released <sha> via <strategy> checks=<checks> <url>`.
+### `GET /api/release/status?name=` → `{repo, path, default_branch, release_branch, diff_count, behind, releasable, reason, stale, ci, ci_url, fetched_at, releasing}`
+Read-only releasability for one repo (1h fresh / 1d SWR diff cache). Always serves the cached row instantly and revalidates the diff in the background -- the ReleaseCard polls every 30 s, so fresh diffs swap in on the next poll without blocking or clearing the rendered rows. `releasable` = release branch set + diff > 0. `behind` = commits the release branch has that default lacks (local rev-list, 0 on unknown refs: drives the Fix-default button, never a gate); `ci`/`ci_url` are the release branch's newest pipeline (`success|failure|running|not_started`, empty when the lookup soft-fails); `fetched_at` is the diff-cache stamp. `releasing` is True while the repo's release lock is held (a release is running). `POST /api/runs` `{command: "release", args: [repo, "--yes"]}` runs the release (confirm dialog appends `--yes`). New flags: `--checks ci|local|both|none` (default `ci`: local pre-release gate in a detached worktree at the pinned SHA, pinned-commit CI poll, or both), `--diff remote|local` (default `remote`), `--pre-release-timeout` (default `10m`), `--ci-timeout` (default `15m`), `--env-file <script>` (default `env_file` in `config.json`; sourced before the pre-release gate). Result summary: `{repo, pinned_sha, checks, strategy, mr_url, merged}` + stderr `released <sha> via <strategy> checks=<checks> <url>`. `release fix-default REPO [--action rebase|ci|both] [--run-mode preview|headless|terminal] [--extra-prompt] [--dry-run] [--json] [--yes]`: rebase default onto release (remote rebase, harness fallback rewriting origin/default with force-push) and/or fix failing default CI via the harness; no-op (exit 0) when `behind` = 0 and CI is not failing. The ReleaseCard shows a "Fix default" button per releasable repo row when `behind > 0 || ci === "failure"`; its dialog (action segmented Both/Rebase/CI default Both, run-mode control, extra-prompt input, force-push warning for rebase/both) runs `createRun({command: "release", args: ["fix-default", repo, "--action", a, "--run-mode", m, ...extra]})`.
 ## Runs (mutating CLI commands as child processes)
 ### `POST /api/runs` → 202
 Request:
@@ -284,6 +285,15 @@ Request:
 - `start` takes repeatable `--related-repo <name>` (one child worktree per
   repo on the same branch; the Launch Start form multi-selects from every
   registered repo except the main one).
+- `link purge-deleted [--repo NAME] [--dry-run] [--json]` (planned — Task 2
+  `link` SPECS entry not yet landed): permanently drops soft-deleted
+  worktree rows from the database (bookkeeping only: worktree files and
+  branches are already gone; never touches disk). `--repo` scopes to one
+  repo display name (registered name, else the basename of the recorded
+  repo path); no `--repo` = all soft-deleted rows. Naming a repo with zero
+  deleted rows prints an empty result, exit 0. The Dashboard Deleted table
+  runs it via `createRun` with an irreversible confirm dialog and
+  invalidates `statusDeleted` on success.
 
 Response 202: `{"run_id": "abc123"}` — `409 {code:"conflict"}` when
 another run holds the same target key.

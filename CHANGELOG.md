@@ -227,6 +227,8 @@
 - Custom actions: `action add/list/show/run/delete` (label auto-normalized, Zap default icon, prompt/scripts + run_mode default) with per-worktree headless fan-out, pre/post shell gates, child-worktree paths in the prompt; Actions page + Dashboard Actions dropdown (selection-gated) [no-issue]
 - Dashboard empty state keeps deactivated/deleted tables, candidates and release visible below it [no-issue]
 - Deleted worktrees gain a cleanup (trash) overlay opening a deleted-mode card: restore or hard-delete purge; `link remove` resolves soft-deleted rows [no-issue]
+- `release fix-default REPO` rebases default onto release + fixes its CI via harness (noop exit 0 when in sync) [no-issue]
+- ReleaseCard fix-default modal: action/run-mode/extra-prompt → createRun release fix-default [no-issue]
 ## 0.2.1 — 2026-09-18
 
 - Fix Tab completion: typer 0.27 never registers its shell completion

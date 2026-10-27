@@ -271,12 +271,14 @@ def fetch_open_prs(tool: str, cwd: str | None = None) -> list[dict]:
     """All open PRs/MRs of the repo at *cwd*, normalized.
 
     Returns [{number, title, branch, target_branch, updated, url,
-    state:"OPEN"}]. Raises HarnessError when the host CLI fails (caller
-    decides).
+    author, state:"OPEN"}] (author is the login string, "" when unknown —
+    old glab output may lack author fields entirely). Raises HarnessError
+    when the host CLI fails (caller decides).
     """
     if tool == "gh":
         out = run_cmd("gh", "pr", "list", "--state", "open", "--limit", "100",
-                      "--json", "number,title,headRefName,baseRefName,updatedAt,url",
+                      "--json",
+                      "number,title,headRefName,baseRefName,updatedAt,url,author",
                       cwd=cwd)
         try:
             data = json.loads(out or "[]")
@@ -286,6 +288,7 @@ def fetch_open_prs(tool: str, cwd: str | None = None) -> list[dict]:
                  "branch": p.get("headRefName", ""),
                  "target_branch": p.get("baseRefName", ""),
                  "updated": p.get("updatedAt", ""), "url": p.get("url", ""),
+                 "author": (p.get("author") or {}).get("login", ""),
                  "state": "OPEN"} for p in data]
     if tool == "glab":
         try:
@@ -303,7 +306,12 @@ def fetch_open_prs(tool: str, cwd: str | None = None) -> list[dict]:
                  "branch": m.get("source_branch", ""),
                  "target_branch": m.get("target_branch", ""),
                  "updated": m.get("updated_at", ""),
-                 "url": m.get("web_url", ""), "state": "OPEN"} for m in data]
+                 "url": m.get("web_url", ""),
+                 "author": (((m.get("author") or {})
+                             if isinstance(m.get("author"), dict) else {})
+                            .get("username", "")
+                            or str(m.get("author", "") or "")),
+                 "state": "OPEN"} for m in data]
     raise HarnessError(f"unsupported host CLI: {tool}")
 
 

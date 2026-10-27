@@ -310,3 +310,75 @@ def test_candidate_prs_drops_linked_variants_and_release_mrs(isolated_config, tm
     assert [p["number"] for p in prs] == [4], (
         "slash-variant URLs, linked paths, and default->release MRs must be filtered")
     assert prs[0].get("repo_name") == "proj"
+
+
+def test_candidate_prs_include_author_and_compact_fields(
+        isolated_config, tmp_path, monkeypatch):
+    from workagent import cli_candidates as cc
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    cfg = store.load_config()
+    cfg["repos"] = {"r1": {"path": str(repo)}}
+    empty = tmp_path / "empty-scan"
+    empty.mkdir()
+    cfg["scan_root"] = str(empty)
+    store.save_config(cfg)
+    monkeypatch.setattr(cli, "_repo_tool", lambda path: "gh")
+    monkeypatch.setattr(cli.refs, "fetch_open_prs", lambda tool, cwd: [
+        {"number": 1730, "title": "T", "branch": "feat/x",
+         "target_branch": "main", "updated": "2026-01-01T00:00:00Z",
+         "url": "https://github.com/o/r/pull/1730", "state": "OPEN",
+         "author": "octocat"}])
+    prs, warnings = cc._candidate_prs()
+    assert prs[0]["author"] == "octocat"
+    assert prs[0]["key"] == "github:o/r#1730"
+
+
+def test_candidate_prs_fetcher_adds_author_and_missing_is_blank(
+        isolated_config, tmp_path, monkeypatch):
+    """gh nested author{login} and all glab author shapes (dict/str/absent)
+    normalize to a login string, never raise (old glab has no author)."""
+    import json
+    from workagent import refs
+    gh_calls = []
+    def gh_fake(*a, **k):
+        gh_calls.append(a)
+        return json.dumps([
+            {"number": 1730, "title": "T", "headRefName": "feat/x",
+             "baseRefName": "main", "updatedAt": "2026-01-01T00:00:00Z",
+             "url": "https://github.com/o/r/pull/1730",
+             "author": {"login": "octocat"}},
+            {"number": 1731, "title": "No author row",
+             "headRefName": "feat/y", "baseRefName": "main",
+             "updatedAt": "2026-01-02T00:00:00Z",
+             "url": "https://github.com/o/r/pull/1731"}])
+    monkeypatch.setattr(refs, "run_cmd", gh_fake)
+    prs = refs.fetch_open_prs("gh", "/repo")
+    by_num = {p["number"]: p for p in prs}
+    assert by_num[1730]["author"] == "octocat"
+    assert by_num[1731]["author"] == ""
+    assert any("author" in str(a) for a in gh_calls[0])
+    def glab_dict(*a, **k):
+        return json.dumps([
+            {"iid": 10, "title": "D", "source_branch": "feat/d",
+             "target_branch": "main", "updated_at": "2026-01-01T00:00:00Z",
+             "web_url": "https://git.x/g/r/-/merge_requests/10",
+             "state": "opened", "author": {"username": "alice"}}])
+    monkeypatch.setattr(refs, "run_cmd", glab_dict)
+    assert refs.fetch_open_prs("glab", "/repo")[0]["author"] == "alice"
+    def glab_str(*a, **k):
+        return json.dumps([
+            {"iid": 11, "title": "S", "source_branch": "feat/s",
+             "target_branch": "main", "updated_at": "2026-01-01T00:00:00Z",
+             "web_url": "https://git.x/g/r/-/merge_requests/11",
+             "state": "opened", "author": "bob"}])
+    monkeypatch.setattr(refs, "run_cmd", glab_str)
+    assert refs.fetch_open_prs("glab", "/repo")[0]["author"] == "bob"
+    def glab_none(*a, **k):
+        return json.dumps([
+            {"iid": 12, "title": "N", "source_branch": "feat/n",
+             "target_branch": "main", "updated_at": "2026-01-01T00:00:00Z",
+             "web_url": "https://git.x/g/r/-/merge_requests/12",
+             "state": "opened"}])
+    monkeypatch.setattr(refs, "run_cmd", glab_none)
+    assert refs.fetch_open_prs("glab", "/repo")[0]["author"] == ""

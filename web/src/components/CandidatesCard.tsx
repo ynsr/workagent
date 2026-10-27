@@ -250,10 +250,11 @@ export function CandidatesCard() {
                           </a>
                         </p>
                         <p className="truncate font-mono text-xs text-muted-foreground" title={`${pr.key} · ${pr.branch} · ${pr.repo}${exactDateTime(pr.updated) ? ` · updated ${exactDateTime(pr.updated)}` : ""}`}>
-                          {pr.key} · {pr.branch} · {pr.repo} · {relativeDate(pr.updated)}
+                          #{pr.number} · {pr.branch} · {relativeDate(pr.updated)}
                         </p>
                       </div>
                       <Badge variant="outline">{pr.state}</Badge>
+                      {pr.author ? <Badge variant="accent">{pr.author}</Badge> : null}
                       <Badge variant="secondary">{pr.repo_name ?? pr.repo}</Badge>
                       <Button
                         variant="ghost"
