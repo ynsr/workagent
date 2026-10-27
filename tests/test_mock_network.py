@@ -1,4 +1,4 @@
-"""--mock-network flag: network CLIs fail fast offline, git passes through."""
+"""Network-CLI guard (default-on): gh/glab/jira-cli fail fast, git passes through."""
 
 from __future__ import annotations
 

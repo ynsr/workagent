@@ -18,13 +18,24 @@ def pytest_addoption(parser):
     parser.addoption(
         "--mock-network",
         action="store_true",
-        default=False,
-        help="fail fast on network CLIs (gh/glab/jira-cli) instead of spawning them",
+        default=True,
+        help="fail fast on network CLIs (gh/glab/jira-cli) instead of spawning them (default: on)",
+    )
+    parser.addoption(
+        "--allow-network",
+        action="store_false",
+        dest="mock_network",
+        help="opt out of the network-CLI guard (real gh/glab/jira-cli calls allowed; may hang offline)",
     )
 
 
 def network_guard(real_run):
-    """Wrap subprocess.run: network CLIs raise FileNotFoundError, rest passes through."""
+    """Wrap subprocess.run: network CLIs fail fast, rest passes through.
+
+    gh/glab/jira-cli raise FileNotFoundError instantly (run_cmd converts to
+    HarnessError "command not found"); every other argv — including git —
+    delegates to the real run untouched.
+    """
 
     def _guard(*args, **kwargs):
         argv = args[0] if args else kwargs.get("args", [])
@@ -38,6 +49,10 @@ def network_guard(real_run):
 
 @pytest.fixture(autouse=True)
 def _mock_network_clis(request, monkeypatch):
+    # Default-on: gh/glab/jira-cli spawn → FileNotFoundError instantly
+    # (run_cmd converts to HarnessError "command not found"). Tests needing
+    # a specific CLI stub monkeypatch subprocess.run again — later patches
+    # compose over this one. --allow-network opts out for live-CLI runs.
     if not request.config.getoption("mock_network"):
         return
     import subprocess
