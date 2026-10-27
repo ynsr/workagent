@@ -655,3 +655,17 @@ def watch_and_exec(
     t = threading.Thread(target=_poll, name="workagent-minted-watch", daemon=True)
     t.start()
     os.execvp(argv[0], argv)
+@app.command("_run-supervised", hidden=True)
+def run_supervised_cmd(
+    run_dir: str = typer.Option(..., "--run-dir", help="Run state dir."),
+    argv: list[str] = typer.Argument(..., help="Child argv after --."),
+) -> None:
+    """Detach *argv* so it survives serve restarts; log + record exit.
+
+    Hidden shim: `web_runs._spawn` runs through here for every /api/runs
+    child. The supervisor double-detaches (setsid + own group), streams
+    child output to output.log, and writes pid/exit_code files.
+    """
+    from pathlib import Path as _Path
+    from .run_supervised import run_supervised as _run
+    raise SystemExit(_run(_Path(run_dir), list(argv)))
