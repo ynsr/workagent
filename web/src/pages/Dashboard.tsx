@@ -34,7 +34,7 @@ import { api, type WorktreeMap } from "@/lib/api"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
 import { queryKeys, useCreateRun, useFlows, useInfo, useRepos, useStatusAll, useStatusDeleted, useStatusInactive, useStopTerminal } from "@/lib/queries"
-import { useRepoTabs } from "@/lib/useRepoTabs"
+import { repoDisplayForEntry, useRepoTabs } from "@/lib/useRepoTabs"
 import { getShowWorktree, setShowWorktree as persistShowWorktree } from "@/lib/settings"
 
 const CSV_HEADERS = [
@@ -317,6 +317,35 @@ export function Dashboard() {
     }
   }
 
+  async function handleClearDeleted(repo: string | null) {
+    const deleted = Object.fromEntries(
+      Object.entries(deletedAll ?? {}).filter(([, e]) => !!e.deleted_at),
+    )
+    const inScope = Object.values(deleted).filter(
+      (e) => !repo || repoDisplayForEntry(e, repos ?? []) === repo,
+    ).length
+    const ok = await confirm({
+      action: "link remove",
+      title: "Purge deleted worktrees",
+      description: `Permanently drops ${inScope} soft-deleted row(s)${repo ? ` for repo ${repo}` : ""} from the database. Worktree files are already gone; this cannot be undone and undelete will no longer be possible.`,
+      destructive: true,
+      confirmLabel: repo ? `Purge ${repo}` : "Purge deleted",
+      details: [{ label: "Scope", value: repo ?? "All soft-deleted rows" }],
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "link",
+        args: ["purge-deleted", ...(repo ? ["--repo", repo] : []), "--yes"],
+        confirm: true,
+      })
+      runCreated(run_id, repo ? `Purged deleted (${repo})` : "Purged deleted")
+      void qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
   async function handleCleanup(key: string) {
     // Local dialog owns force state (CleanupDialog);
     // the shared confirm() extras snapshot would go stale on toggle.
@@ -574,6 +603,8 @@ export function Dashboard() {
         worktrees={Object.fromEntries(
           Object.entries(deletedAll ?? {}).filter(([, e]) => !!e.deleted_at),
         )}
+        repos={repos}
+        onClearDeleted={handleClearDeleted}
         actions={{
           onCleanup: handleCleanup,
           onOpenWorktree: handleOpenWorktree,

@@ -192,6 +192,7 @@ served cache window (slow). Read-only:
           "url": "https://github.com/o/r/pull/33", "branch": "feat/x",
           "target_branch": "main",
           "updated": "2026-09-20T10:00:00Z", "state": "OPEN",
+          "author": "octocat",
           "repo": "o/r", "repo_name": "proj"}],
  "issues": [{"key": "jira:IPG-981", "title": "…", "url": "…",
              "status": "To Do", "created": "2026-09-20T10:00:00.000+0000",
@@ -284,6 +285,15 @@ Request:
 - `start` takes repeatable `--related-repo <name>` (one child worktree per
   repo on the same branch; the Launch Start form multi-selects from every
   registered repo except the main one).
+- `link purge-deleted [--repo NAME] [--dry-run] [--json]` (planned — Task 2
+  `link` SPECS entry not yet landed): permanently drops soft-deleted
+  worktree rows from the database (bookkeeping only: worktree files and
+  branches are already gone; never touches disk). `--repo` scopes to one
+  repo display name (registered name, else the basename of the recorded
+  repo path); no `--repo` = all soft-deleted rows. Naming a repo with zero
+  deleted rows prints an empty result, exit 0. The Dashboard Deleted table
+  runs it via `createRun` with an irreversible confirm dialog and
+  invalidates `statusDeleted` on success.
 
 Response 202: `{"run_id": "abc123"}` — `409 {code:"conflict"}` when
 another run holds the same target key.

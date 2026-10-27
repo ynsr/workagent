@@ -500,7 +500,8 @@ def test_fetch_open_prs_gh(monkeypatch):
     assert prs == [{"number": 33, "title": "T1", "branch": "feat/x",
                     "target_branch": "main",
                     "updated": "2026-09-20T10:00:00Z",
-                    "url": "https://github.com/o/r/pull/33", "state": "OPEN"}]
+                    "url": "https://github.com/o/r/pull/33",
+                    "author": "", "state": "OPEN"}]
     assert calls[0][0][:5] == ("gh", "pr", "list", "--state", "open")
     assert calls[0][1].get("cwd") == "/repo"
 
@@ -521,6 +522,7 @@ def test_fetch_open_prs_glab_state_flag(monkeypatch):
     assert prs[0]["number"] == 1706 and prs[0]["branch"] == "feat/y"
     assert prs[0]["state"] == "OPEN" and prs[0]["updated"].endswith("Z")
     assert prs[0]["url"].endswith("/-/merge_requests/1706")
+    assert prs[0]["author"] == ""
     assert calls[0][:4] == ("glab", "mr", "list", "--state")
 
 

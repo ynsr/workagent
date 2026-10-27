@@ -47,6 +47,27 @@ export function repoKeyForItem(item: RepoTabItem, repos: Repo[]): string {
   return repoKeyForPath(item.worktree ?? "", repos)
 }
 
+/** Display label for a status/link entry's repo: the registered name when
+ * it resolves against `repos`, else the basename of the recorded `repo`
+ * path ("" when no repo recorded). Shared by StatusTable groupings and the
+ * DeletedTable repo filter so both spell names the same way. */
+export function repoDisplayForEntry(item: RepoTabItem, repos: Repo[]): string {
+  if (item != null && typeof item !== "string") {
+    const raw = (item.repo ?? "").trim()
+    if (raw) {
+      const key = repoKeyForItem(item, repos)
+      if (key !== "(other)") return key
+      const base = raw.replace(/\\/g, "/").replace(/\/$/, "").split("/").pop() ?? ""
+      if (base) return base
+    }
+  }
+  if (typeof item === "string" && item.trim()) {
+    const key = repoKeyForItem(item, repos)
+    if (key !== "(other)") return key
+  }
+  return ""
+}
+
 /** Repo tabs (?repo=) shared by Dashboard/Runs/Sessions: "All" + one tab per
  * registered repo name with at least one item + "(other)" when items fall
  * outside every repo path. A stale ?repo= value that matches no tab falls

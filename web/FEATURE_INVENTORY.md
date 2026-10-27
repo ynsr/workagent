@@ -57,6 +57,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `link remove REF [--repo] [--json] [--hard-delete]` | mutating | — | `link:remove` | yes-ish (soft-deletes link, 7-day `link undelete` window; `--hard-delete` drops immediately) | repo not linked (2) | none |
 | `link undelete REF [--json]` | mutating | — | `link:undelete` | no (clears deleted_at) | no worktree link (2) | none |
 | `link gc [--dry-run] [--json]` | mutating | — | `link:gc` | no (purges rows soft-deleted >7d: worktree dir + local branch + row) | | none |
+| `link purge-deleted [--repo NAME] [--dry-run] [--json]` | mutating | — | `link:purge-deleted` (planned — Task 2 SPECS entry not yet landed) | **yes** (permanently drops soft-deleted rows from the DB; worktree files already gone; irreversible, no undelete) | unknown flags (2) | none — Dashboard Deleted table: repo `<select>` lists only repos with deleted rows (default All), Clear button disabled when filtered empty, irreversible `confirm()` then `createRun link purge-deleted [--repo X] --yes`, invalidates `statusDeleted` |
 | `link list [--worktree] [--refresh-pr] [--json/--csv] [--include-deleted]` | read-only | `store.load_config()["trackers"]` + `_enrich_entry` | — | no | | none |
 | `tracker add KEY [--vendor] [--remote-url] [--fetch/--no-fetch] [--json]` | mutating | — | `config` | no (trackers table write) | `--vendor` outside the jira/github enum (2) | none — vendor/URL derive from the key when blank |
 | `tracker list [--json/--csv]` | read-only | `store_sqlite.load_tracker_rows` | — | no | | none |
