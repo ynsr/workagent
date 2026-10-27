@@ -94,8 +94,12 @@ def test_detect_unknown_host_falls_back_to_probe(tmp_path, monkeypatch):
     _host_configs(tmp_path, monkeypatch)
     calls = []
 
+    _real_run = subprocess.run
+
     def run(cmd, **k):
         calls.append(cmd[0])
+        if cmd[0] == "git":
+            return _real_run(cmd, **k)
         return subprocess.CompletedProcess(cmd, 0 if cmd[0] == "gh" else 1)
 
     monkeypatch.setattr(repos.subprocess, "run", run)

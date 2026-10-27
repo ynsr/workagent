@@ -334,8 +334,22 @@ had dropped older lines) — the log survives `serve` restarts.
 - `event: log`, `data: {"seq": N, "text": "…"}`, `id: N`. For `db-<id>`
   rows the stream replays the stored lines then the terminal state event.
 ### `POST /api/runs/{id}/cancel` → `{"id": …, "state": "cancelled"}`
-409 when the run already finished. Server sends SIGTERM to the process
-group, SIGKILL after 10 s.
+409 when the run already finished. Server sends SIGTERM to the detached
+process group (persisted pgid in the per-run state dir), SIGKILL after 10 s.
+The cancel path is ticks-guarded: a stale pid file pointing at an unrelated
+live process is never killed — the run is marked `failed` instead.
+### Detached runs (survive `serve` restarts)
+Every `POST /api/runs` child runs detached: `serve` spawns
+`workagent _run-supervised --run-dir <dir> <argv>`, which double-detaches
+the real child (own pgid), streams stdout/stderr straight to
+`<config_dir>/runs/<id>/output.log` (1 MiB head-truncation cap, `truncated`
+marker file + `truncated: true` in list/detail rows; RAM ring stays 10k
+lines), and writes `pid` (pid + start-ticks) / `exit_code` / `meta.json`.
+`serve` only tails the log file. At startup `serve` rehydrates live run
+dirs into a fresh registry (log backfill + tail continuity); finished-run
+dirs are pruned to the newest 100, running ones never. Only the
+supervisor writes `output.log`. The systemd unit uses `KillMode=process`
+so stop/re-install never kills detached children.
 
 ### `POST /api/runs/{id}/resume` → `{"id": …, "session_file": …, "worktree": …}`
 When the pinned `--session-file` path is missing/empty (first command run

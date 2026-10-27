@@ -521,6 +521,8 @@ def test_cleanup_repairs_stale_repo_from_live_worktree(isolated_config, tmp_path
                                    "branch": "feat/x", "repo": "/stale/checkout",
                                    "pr_url": "https://git.example.com/g/r/-/merge_requests/1"})
     seen = {}
+    import workagent.cli_cleanup as _cc
+    monkeypatch.setattr(_cc, "_repo_tool", lambda repo: None)
     monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
                         lambda repo, branch, **k: seen.setdefault("repo", str(repo)) or {"ok": True})
     monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
@@ -544,8 +546,12 @@ def test_cleanup_repairs_stale_repo_from_live_worktree(isolated_config, tmp_path
 
 def test_merge_pr_github_squash_default(isolated_config, monkeypatch):
     """GitHub merges pass --squash (gh requires an explicit strategy non-interactively)."""
+    import workagent.cli_cleanup as _cc
     seen = []
     monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    monkeypatch.setattr(_cc, "_fresh_pr_state",
+                        lambda url, cwd: {"state": "merged", "mergeable": "",
+                                          "merge_state": ""})
     cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp")
     assert seen[0][:4] == ("gh", "pr", "merge", "https://github.com/o/r/pull/9")
     assert "--squash" in seen[0]
@@ -553,8 +559,12 @@ def test_merge_pr_github_squash_default(isolated_config, monkeypatch):
 
 def test_merge_pr_github_no_squash_uses_merge(isolated_config, monkeypatch):
     """Long-lived sources (dev/develop/main/master) merge with --merge."""
+    import workagent.cli_cleanup as _cc
     seen = []
     monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    monkeypatch.setattr(_cc, "_fresh_pr_state",
+                        lambda url, cwd: {"state": "merged", "mergeable": "",
+                                          "merge_state": ""})
     cli._merge_pr("https://github.com/o/r/pull/9", squash=False, cwd="/tmp",
                   source_branch="develop")
     assert "--merge" in seen[0]
@@ -562,8 +572,12 @@ def test_merge_pr_github_no_squash_uses_merge(isolated_config, monkeypatch):
 
 def test_merge_pr_glab_uses_no_auto_merge(isolated_config, monkeypatch):
     """GitLab merges disable the auto-merge queue (IPG-1017: exit 0 + MR opened)."""
+    import workagent.cli_cleanup as _cc
     seen = []
     monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    monkeypatch.setattr(_cc, "_fresh_pr_state",
+                        lambda url, cwd: {"state": "merged", "mergeable": "",
+                                          "merge_state": ""})
     cli._merge_pr("https://git.jibit.cloud/x/-/merge_requests/1", squash=True, cwd="/tmp")
     assert seen[0][0] == "glab"
     assert "--auto-merge=false" in seen[0]
@@ -583,8 +597,12 @@ def test_merge_pr_no_squash_refused_for_feature_branch(isolated_config, monkeypa
 
 def test_merge_pr_feature_source_always_squashes(isolated_config, monkeypatch):
     """Feature sources squash even when squash=False is passed without --no-squash."""
+    import workagent.cli_cleanup as _cc
     seen = []
     monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    monkeypatch.setattr(_cc, "_fresh_pr_state",
+                        lambda url, cwd: {"state": "merged", "mergeable": "",
+                                          "merge_state": ""})
     cli._merge_pr("https://github.com/o/r/pull/9", squash=False, cwd="/tmp",
                   source_branch="feat/IPG-9--x")
     assert "--squash" in seen[0]

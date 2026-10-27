@@ -97,6 +97,8 @@ def test_launch_shorthand_L_on_start_and_review(isolated_config, tmp_path, monke
                         lambda repo, **kw: {"worktree_path": str(worktree),
                                             "branch": "feat/33"})
     launched = []
+    import workagent.issue_comments as _ic
+    monkeypatch.setattr(_ic, "post_issue_comment", lambda *a, **k: False)
     monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
     # preview (no --launch): prints the command, launches nothing
     r = runner.invoke(cli.app, ["start", "o/r#33", "--no-tty", "--json"])
@@ -358,6 +360,7 @@ def test_repo_add_derives_tracker_from_github_remote(isolated_config, tmp_path, 
     subprocess.run(["git", "-C", str(repo_dir), "remote", "add", "origin",
                     "https://github.com/owner/repo.git"], check=True)
     monkeypatch.setattr(cli.repos, "_detect_host_cli", lambda path: "gh")
+    monkeypatch.setattr(cli.repos, "default_branch", lambda path: "main")
     r = _invoke("repo", "add", "--name", "p", "--path", str(repo_dir), "--json")
     assert r.exit_code == 0, r.output
     out = json.loads(r.stdout)

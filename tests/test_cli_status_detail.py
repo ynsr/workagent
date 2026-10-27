@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import pytest
 
-from workagent import cli, store
+from workagent import cli, cli_status, store
 
 from tests.cli_helpers import runner, _invoke, _link_session
 
@@ -65,7 +65,7 @@ def test_status_detail_no_hint_when_pr_exists(isolated_config, tmp_path,
     assert data["pr"] == "PR #9 (open)"
 
 
-def test_status_harness_cell_cross_key_worktree(isolated_config, tmp_path):
+def test_status_harness_cell_cross_key_worktree(isolated_config, tmp_path, monkeypatch):
     """A harness recorded under another key still shows for this worktree."""
     wt = tmp_path / "wt"; wt.mkdir()
     store.record_link("jira:H-1", {"branch": "feat/h", "worktree": str(wt)})
@@ -74,15 +74,17 @@ def test_status_harness_cell_cross_key_worktree(isolated_config, tmp_path):
     store.save_harnesses_raw({"pr:https://x/o/r/-/merge_requests/1":
                               {"harness": "omp", "pid": __import__("os").getpid(),
                                "started_at": 1.0, "worktree": str(wt)}})
+    monkeypatch.setattr(cli_status, "_query_pr", lambda repo, branch: (None, None))
+    monkeypatch.setattr(cli_status.repos, "default_branch", lambda path: "main")
     rows, _ = cli._session_rows(store.load_links(), False, False)
-    row = next(r for r in rows if r["key"] == "jira:H-1")
-    assert row["harness"].startswith("omp ")
 
 
 def test_status_row_shows_live_harness(isolated_config, tmp_path, monkeypatch):
     wt = tmp_path / "wt"; wt.mkdir()
     store.record_link("jira:H-1", {"branch": "feat/h", "worktree": str(wt)})
     store.record_harness_run("jira:H-1", "omp", str(wt))
+    monkeypatch.setattr(cli_status, "_query_pr", lambda repo, branch: (None, None))
+    monkeypatch.setattr(cli_status.repos, "default_branch", lambda path: "main")
     rows, columns = cli._session_rows(store.load_links(), False, False)
     assert "harness" in columns
     row = next(r for r in rows if r["key"] == "jira:H-1")

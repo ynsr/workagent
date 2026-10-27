@@ -229,6 +229,7 @@
 - Deleted worktrees gain a cleanup (trash) overlay opening a deleted-mode card: restore or hard-delete purge; `link remove` resolves soft-deleted rows [no-issue]
 - `release fix-default REPO` rebases default onto release + fixes its CI via harness (noop exit 0 when in sync) [no-issue]
 - ReleaseCard fix-default modal: action/run-mode/extra-prompt → createRun release fix-default [no-issue]
+- Detached runs: web/terminal runs survive serve restarts (supervisor + log file + rehydrate; KillMode=process) [no-issue]
 ## 0.2.1 — 2026-09-18
 
 - Fix Tab completion: typer 0.27 never registers its shell completion

@@ -99,6 +99,9 @@ def test_sync_recorded_pr_seed_uses_local_merge(isolated_config, tmp_path,
                         lambda *a, **k: rebase.append(a) or {"status": "rebased"})
     monkeypatch.setattr(cli.sync_mod, "pull_rebased",
                         lambda *a, **k: {"status": "reset"})
+    monkeypatch.setattr(cli.refs, "fetch_ci", lambda *a, **k: (None, None))
+    monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
+                        lambda *a, **k: None)
     r = _invoke("sync", "IPG-929", "--yes", "--json")
     assert r.exit_code == 0, r.output
     assert json.loads(r.stdout)["strategy"] == "local-merge"

@@ -554,6 +554,14 @@ def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None,
 
 
 def _pid_alive(pid: int) -> bool:
+    # Zombie (state Z) counts as dead: SIGTERM'd children whose parent has
+    # not reaped them still answer kill(0), which made stop_terminal_run
+    # spin its full 10s SIGTERM wait on an already-dead process.
+    try:
+        if Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[0] == "Z":
+            return False
+    except (OSError, IndexError):
+        pass
     try:
         os.kill(pid, 0)
         return True

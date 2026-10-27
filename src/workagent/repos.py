@@ -387,16 +387,19 @@ def _detect_host_cli(path: Path) -> str | None:
     The origin host is matched against each CLI's known hosts (gh
     hosts.yml, glab config.yml); unknown hosts fall back to the legacy
     auth-status probe (gh first). Local file reads only — no CLI spawn
-    unless the host is unknown. Probe misses (~12s: gh 1.7s + glab 10s)
-    are memoized per directory for the process lifetime so repeated
-    status/sync calls in one run pay it once.
+    unless the host is unknown. Probe misses are memoized per directory
+    for the process lifetime so repeated status/sync calls in one run
+    pay it once; hits are never cached (the remote can change).
     """
     if str(path) in _NO_TOOL_DIRS:
         return None
-    host = None
     url = remote_url(path)
-    if url:
-        host = _remote_host(url)
+    if not url:
+        # No origin remote: nothing to match and the auth-status probe
+        # (gh+glab, ~15s+ offline) cannot attribute a host — skip it.
+        _NO_TOOL_DIRS.add(str(path))
+        return None
+    host = _remote_host(url)
     if host:
         if host in _known_gh_hosts():
             return "gh"
