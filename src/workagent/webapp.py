@@ -98,6 +98,11 @@ def create_app(static_dir: Path, host: str, port: int,
                allowed_hosts: list[str]) -> FastAPI:
     app = FastAPI(title="workagent", docs_url=None, redoc_url=None)
     registry = Registry()
+    try:
+        from .web_runs import rehydrate as _rehydrate
+        _rehydrate(registry)
+    except Exception as e:  # never fail startup: log and continue empty
+        print(f"[web] run rehydrate failed: {e}", file=sys.stderr, flush=True)
     allowed = set(allowed_hosts)
     network_exposed = not _is_loopback(host)
 

@@ -406,6 +406,40 @@ def _spawn(run: Run, registry: Registry) -> None:
     _start_tailer(run, registry)
 
 
+def rehydrate(registry: Registry) -> dict:
+    """Re-adopt live runs from disk after a serve restart."""
+    from . import run_store as _rs
+    from . import store as _store
+    adopted, closed = [], []
+    for d in _rs.iter_run_dirs():
+        if _rs.read_exit(d) is not None:
+            continue
+        with _rs.lock(d):
+            if _rs.read_exit(d) is not None:
+                continue
+            meta = _rs.read_meta(d)
+            pid, ticks = _rs.read_pid(d)
+            alive = (pid is not None and _store._pid_alive(pid)
+                     and _store._proc_start_ticks(pid) in (None, ticks))
+            if not alive:
+                _rs.write_exit(d, -1)
+                closed.append(d.name)
+                continue
+            run = Run(id=d.name, command=str(meta.get("command", "")),
+                      args=list(meta.get("args", [])),
+                      target=str(meta.get("target", f"run:{d.name}")))
+            run.run_dir = str(d)
+            run.session_file = str(meta.get("session_file", ""))
+            run.worktree = str(meta.get("worktree", ""))
+            with registry.lock:
+                registry.runs[run.id] = run
+                registry.targets.setdefault(run.target, run.id)
+            _start_tailer(run, registry, backfill=True)
+            adopted.append(d.name)
+    _rs.prune_finished()
+    return {"adopted": adopted, "closed": closed}
+
+
 def _cancel(run: Run) -> None:
     from . import run_store as _rs
     from . import store as _store

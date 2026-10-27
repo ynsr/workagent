@@ -946,3 +946,31 @@ def test_spawn_writes_log_file_and_completes(client):
     assert run.state == "succeeded"
     assert any("hi-tail" in t for _, t in run.lines)
     assert (web_runs._run_dir(run) / "exit_code").read_text().strip() == "0"
+
+def test_rehydrate_adopts_live_run(client):
+    import subprocess
+    from workagent import run_store, web_runs
+    d = run_store.new_run_dir("live1")
+    p = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    try:
+        from workagent import store
+        run_store.write_meta(d, {"command": "sync", "args": ["IPG-1"],
+                                 "target": "sync:IPG-1", "created": 0.0})
+        run_store.write_pid(d, p.pid, store._proc_start_ticks(p.pid))
+        out = web_runs.rehydrate(client.app.state.registry)
+        assert "live1" in out["adopted"]
+        run = client.app.state.registry.get("live1")
+        assert run.state == "running" and run.target == "sync:IPG-1"
+    finally:
+        p.kill()
+        p.wait()
+
+
+def test_rehydrate_closes_spawn_failure(client):
+    from workagent import run_store, web_runs
+    d = run_store.new_run_dir("ghost1")
+    run_store.write_meta(d, {"command": "sync", "args": [],
+                             "target": "sync:ghost1", "created": 0.0})
+    out = web_runs.rehydrate(client.app.state.registry)
+    assert "ghost1" in out["closed"]
+    assert run_store.read_exit(d) == -1
