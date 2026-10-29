@@ -243,8 +243,17 @@ export function StartFormFields({
           value={form.runMode}
           onChange={(v) => onChange("runMode", v)}
         />
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            id={`${idPrefix}-no-status`}
+            type="checkbox"
+            checked={form.noStatus}
+            onChange={(e) => onChange("noStatus", e.target.checked)}
+            className="size-4 accent-current"
+          />
+          Skip status updates
+        </label>
       </div>
-
       <div className="grid gap-2">
         <Label htmlFor={`${idPrefix}-extra-prompt`}>
           <FieldHelp label="Extra prompt" flag="--extra-prompt" description="Extra instructions appended to the agent prompt." />
@@ -275,9 +284,9 @@ export function buildStartArgs(form: StartFormValue): string[] {
   }
   if (form.depth.trim()) args.push("--depth", form.depth.trim())
   if (form.base.trim()) args.push("--base", form.base.trim())
+  if (form.noStatus) args.push("--no-status")
   args.push(...runModeArgs(form.runMode))
   args.push(...extraPromptArgs(form))
-  return args
 }
 /** Confirm-dialog detail rows for a start run. */
 export function startFlagList(form: StartFormValue): string {

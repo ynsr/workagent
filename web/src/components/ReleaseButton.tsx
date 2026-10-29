@@ -15,16 +15,10 @@ import {
 
 /** Release split button: main runs with last-used prefs; chevron picks checks+diff. */
 export function ReleaseButton({ repo, compact }: { repo: string; compact?: boolean }) {
-  const { data, isPending, isFetching } = useReleaseStatus(repo)
   const runConfirmed = useConfirmedRun()
   const [menuOpen, setMenuOpen] = useState(false)
   const [prefs, setPrefs] = useState(loadPrefs)
-  function pick(checks: Checks, diff: DiffMode) {
-    setPrefs({ checks, diff })
-    savePrefs(checks, diff)
-    setMenuOpen(false)
-  }
-  const releasable = data?.releasable === true
+  const [noStatus, setNoStatus] = useState(false)
   const releasing = data?.releasing === true
   const reason = releasing
     ? `release already running for ${repo}`
@@ -51,7 +45,7 @@ export function ReleaseButton({ repo, compact }: { repo: string; compact?: boole
         { label: "Diff", value: diff, mono: true },
       ],
       command: "release",
-      args: [repo, "--checks", checks, "--diff", diff, "--yes"],
+      args: [repo, "--checks", checks, "--diff", diff, "--yes", ...(noStatus ? ["--no-status"] : [])],
       successLabel: "released",
     })
   }
@@ -115,6 +109,10 @@ export function ReleaseButton({ repo, compact }: { repo: string; compact?: boole
               {d}
             </button>
           ))}
+          <label className="mt-1 flex items-center gap-2 border-t border-border px-2 pt-2 text-sm">
+            <input type="checkbox" checked={noStatus} onChange={(e) => setNoStatus(e.target.checked)} className="size-4 accent-current" />
+            Skip status updates
+          </label>
         </span>
       ) : null}
     </span>

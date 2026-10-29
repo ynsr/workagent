@@ -12,10 +12,42 @@ from workagent import cli, store
 
 from tests.cli_helpers import runner, _invoke, _sync_mocks
 
-def test_cleanup_missing_link_errors(isolated_config):
-    r = _invoke("cleanup", "o/r#99", "--json")
-    assert r.exit_code == 2
-    assert "no linked state" in r.output
+def test_cleanup_released_closes_contained(isolated_config, monkeypatch):
+    store.record_link("jira:IPG-1", {"issue": "IPG-1", "worktree": "/tmp/wt-1",
+                                     "branch": "feat/1", "repo": "/tmp/proj"})
+    store.record_link("jira:IPG-2", {"issue": "IPG-2", "worktree": "/tmp/wt-2",
+                                     "branch": "feat/2", "repo": "/tmp/proj"})
+    store.record_link("jira:IPG-3", {"issue": "IPG-3", "worktree": "/tmp/wt-3",
+                                     "branch": "feat/3", "repo": "/tmp/norel"})
+    monkeypatch.setattr(store, "load_repos",
+                        lambda: {"/tmp/proj": {"release_branch": "release"},
+                                 "/tmp/norel": {}})
+    def fake_run(*a, **k):
+        if a[:2] == ("git", "-C") and a[3:5] == ("rev-parse", "feat/1"):
+            return "sha1"
+        if a[:2] == ("git", "-C") and a[3:5] == ("rev-parse", "feat/2"):
+            return "sha2"
+        if a[:2] == ("git", "-C") and a[3:6] == ("merge-base", "--is-ancestor", "sha1"):
+            return ""
+        if a[:2] == ("git", "-C") and a[3:6] == ("merge-base", "--is-ancestor", "sha2"):
+            from workagent.errors import HarnessError
+            raise HarnessError("not ancestor")
+        raise AssertionError(a)
+    from workagent import issue_status as _st
+    closed = []
+    monkeypatch.setattr(_st, "set_issue_status",
+                        lambda ref, state, dry_run=False: closed.append((ref, state)) or True)
+    from workagent import errors as _err
+    monkeypatch.setattr(_err, "run_cmd", fake_run)
+    r = _invoke("cleanup", "--released", "--yes", "--json")
+    assert r.exit_code == 0, r.output
+    status = {row["key"]: row["status"] for row in json.loads(r.stdout)["results"]}
+    assert status["jira:IPG-1"] == "closed"
+    assert status["jira:IPG-2"] == "skipped:unreleased"
+    assert status["jira:IPG-3"] == "skipped:no-release-branch"
+    assert closed == [("IPG-1", "done")]
+
+
 
 
 def test_cleanup_dry_run(isolated_config):

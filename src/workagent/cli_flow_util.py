@@ -31,7 +31,9 @@ START_FLAGS = (("repo", "--repo", "str"),
                ("no_tty", "--no-tty", "bool"),
                ("session_file", "--session-file", "str"),
                ("env_file", "--env-file", "str"),
-               ("extra_prompt", "--extra-prompt", "str"))
+               ("extra_prompt", "--extra-prompt", "str"),
+               ("no_status", "--no-status", "bool"),
+               ("no_review", "--no-review", "bool"))
 
 #: review/fix-comments config keys for the terminal/manual handoff
 #: (then_fix_comments stays banned inside flows — never forwarded).
@@ -42,7 +44,8 @@ REVIEW_FLAGS = (("repo", "--repo", "str"),
                 ("use_review_session", "--use-review-session", "bool"),
                 ("session_file", "--session-file", "str"),
                 ("env_file", "--env-file", "str"),
-                ("extra_prompt", "--extra-prompt", "str"))
+                ("extra_prompt", "--extra-prompt", "str"),
+                ("no_status", "--no-status", "bool"))
 
 #: sync-step config keys for the terminal/manual handoff.
 SYNC_FLAGS = (("merge", "--merge", "bool"),
@@ -62,7 +65,8 @@ RELEASE_FLAGS = (("checks", "--checks", "str"),
                  ("diff", "--diff", "str"),
                  ("pre_release_timeout", "--pre-release-timeout", "str"),
                  ("ci_timeout", "--ci-timeout", "str"),
-                 ("env_file", "--env-file", "str"))
+                 ("env_file", "--env-file", "str"),
+                 ("no_status", "--no-status", "bool"))
 
 
 def flag_argv(config: dict, *specs: tuple[str, str, str]) -> list[str]:

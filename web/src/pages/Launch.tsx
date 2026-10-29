@@ -427,15 +427,12 @@ export function Launch() {
     const args = [refValue]
     // Preview/terminal are TTY copy-paste: no -p flag. Headless
     // (--no-tty, omp -p --auto-approve) only when actually running now.
-    if (form.runMode === "headless") args.push("--no-tty")
-    if (form.reviewAction === "fix" || form.fixComments) args.push("--fix-comments")
-    if (form.reviewAction === "review" && form.thenFixComments) args.push("--then-fix-comments")
     if (form.fixComments && form.useReviewSession) args.push("--use-review-session")
     if (repoValue) args.push("--repo", repoValue)
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
+    if (form.noStatus) args.push("--no-status")
     args.push(...runModeArgs(form.runMode))
     args.push(...extraPromptArgs(form))
-    return args
   }
 
   const extra = form.extraPrompt.trim()
@@ -587,9 +584,18 @@ export function Launch() {
                 description="Continue the latest review session instead of starting a fresh fix session."
               />
             ) : null}
+            {mode === "review" ? (
+              <CheckRow
+                id="launch-no-status"
+                checked={form.noStatus}
+                onChange={(v) => update("noStatus", v)}
+                label="Skip status updates"
+                flag="--no-status"
+                description="Skip automatic tracker issue status transitions."
+              />
+            ) : null}
           </div>
           {mode === "sync" ? <ExtraPromptField form={form} onChange={update} /> : null}
-
           <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200">
             <p className="flex items-start gap-2">
               <ShieldAlert aria-hidden className="mt-0.5 size-4 shrink-0" />

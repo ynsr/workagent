@@ -64,6 +64,7 @@ export interface LaunchForm {
   thenFixComments: boolean
   useReviewSession: boolean
   merge: boolean
+  noStatus: boolean
   extraPrompt: string
   relatedRepos: string[]
 }
@@ -80,6 +81,7 @@ export const INITIAL: LaunchForm = {
   thenFixComments: false,
   useReviewSession: false,
   merge: false,
+  noStatus: false,
   extraPrompt: "",
   relatedRepos: [],
 }

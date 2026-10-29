@@ -60,6 +60,8 @@ def start(
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path: resumed via omp --resume when non-empty, otherwise used as --session-dir scope for a fresh session."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before terminal/headless harness commands (default: env_file in config.json, auto-created)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
+    no_status: bool = typer.Option(False, "--no-status", help="Skip automatic issue status transitions."),
+    no_review: bool = typer.Option(False, "--no-review", help="Chain has no later review step: post-start status goes to 'ready to release' instead of 'code review'."),
 ) -> None:
     """Create worktree from issue and launch harness.
 
@@ -134,10 +136,20 @@ def start(
                            "key": key, "reused": True,
                            "tracker": trackers.tracker_id(parsed),
                            "tracker_link": "reused"}, json_output)
+            if not no_status:
+                from . import issue_status as _st
+                _st.set_issue_status(str(existing.get("issue_url", "") or ref), "in progress", dry_run=True)
             return
-        return _launch_in_worktree(key, existing, harness, no_tty, launch,
-                                   session_file, json_output, extra_prompt,
-                                   terminal=terminal, env_file=env_file)
+        if not no_status:
+            from . import issue_status as _st
+            _issue_ref = str(existing.get("issue_url", "") or existing.get("issue", "") or ref)
+            _st.set_issue_status(_issue_ref, "in progress", dry_run=False)
+        _reuse_ref = str(existing.get("issue_url", "") or existing.get("issue", "") or ref)
+        _launch_in_worktree(key, existing, harness, no_tty, launch,
+                            session_file, json_output, extra_prompt,
+                            terminal=terminal, env_file=env_file)
+        _start_post_status(_reuse_ref, launch, terminal, no_status, no_review)
+        return
     r, detected_default, tid, outcome = trackers.resolve_repo_for_ref(
         parsed, repo, Path.cwd(), depth=depth,
         yes=yes, persist=not dry_run)
@@ -202,6 +214,9 @@ def start(
         elif cwd_mode:
             result["branch"] = cwd_branch
         _print_result(result, json_output)
+        if not no_status:
+            from . import issue_status as _st
+            _st.set_issue_status(link_url or ref, "in progress", dry_run=True)
         return
     if branch_mode:
         wt = gitwt.start_worktree(r, branch=base, base=detected_default)
@@ -244,6 +259,17 @@ def start(
     _run_harness(harness_name, prompt, worktree, str(r), no_tty, launch,
                  result, json_output, run_key=key, session_file=session_file,
                  terminal=terminal, env_file=env_file)
+    _start_post_status(link_url or ref, launch, terminal, no_status, no_review)
+
+
+def _start_post_status(issue_ref: str, launch: bool, terminal: bool,
+                       no_status: bool, no_review: bool) -> None:
+    """Post-start transition after headless harness success (best effort)."""
+    if no_status or not launch or terminal:
+        return
+    from . import issue_status as _st
+    _st.set_issue_status(issue_ref, "ready to release" if no_review else "code review",
+                         dry_run=False)
 
 
 def _resolve_related_repos(related: list[str] | None, main_repo: Path,

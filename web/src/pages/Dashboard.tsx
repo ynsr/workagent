@@ -294,6 +294,48 @@ export function Dashboard() {
   }
 
 
+  async function handleCloseReleased() {
+    const targeting = selCount > 0
+    const ok = await confirm({
+      action: "cleanup",
+      title: targeting ? `Close released issues (${selCount} selected)` : "Close released issues",
+      description: targeting
+        ? "Closes the tracker issue for each selected worktree whose branch is contained in its repo release branch (merge-base --is-ancestor). Worktrees, branches, and PRs are left untouched — issue state only."
+        : "Closes the tracker issue for every active linked worktree whose branch is contained in its repo release branch (merge-base --is-ancestor). Worktrees, branches, and PRs are left untouched — issue state only.",
+      destructive: true,
+      confirmLabel: targeting ? `Close ${selCount}` : "Close released",
+      details: [{ label: "Scope", value: "Release-branch-contained links only" }],
+    })
+    if (!ok) return
+    if (!targeting) {
+      try {
+        const { run_id } = await createRun.mutateAsync({
+          command: "cleanup",
+          args: ["--released", "--yes"],
+          confirm: true,
+        })
+        runCreated(run_id, "Close released")
+      } catch (err) {
+        toast.error(errorText(err))
+      }
+      return
+    }
+    for (const key of [...selected].sort()) {
+      try {
+        const { run_id } = await createRun.mutateAsync({
+          command: "cleanup",
+          args: [key, "--released", "--yes"],
+          confirm: true,
+        })
+        toast.success(`Close ${key} started`, {
+          action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+        })
+      } catch (err) {
+        toast.error(`${key}: ${errorText(err)}`)
+      }
+    }
+  }
+
   async function handleCleanupMerged() {
     const ok = await confirm({
       action: "cleanup",
@@ -499,6 +541,11 @@ export function Dashboard() {
             <Button variant="outline" size="sm" onClick={handleFixAll} title={selCount > 0 ? `Fix PR comments on ${selCount} selected worktrees` : "Fix PR comments on every active linked worktree"}>
               {selCount > 0 ? `Fix (${selCount})` : "Fix all PR comments"}
             </Button>
+            <span title={selCount > 0 ? "Close issues for selected worktrees contained in the release branch" : "Close every released linked issue"}>
+              <Button variant="outline" size="sm" onClick={handleCloseReleased}>
+                {selCount > 0 ? `Close released (${selCount})` : "Close released"}
+              </Button>
+            </span>
             <span title={selCount > 0 ? "Clear selection to clean all merged (or Delete per row)" : "Clean every merged/closed linked worktree"}>
               <Button variant="outline" size="sm" onClick={handleCleanupMerged} disabled={selCount > 0}>
                 {scopeLabel("Cleanup")}

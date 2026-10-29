@@ -50,6 +50,7 @@ def release(
     action: str = typer.Option("both", "--action", help="fix-default action: rebase, ci, or both (only with `release fix-default NAME`)."),
     run_mode: str = typer.Option("preview", "--run-mode", help="fix-default run mode: preview, headless, or terminal (only with `release fix-default NAME`)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the fix-default harness prompt."),
+    no_status: bool = typer.Option(False, "--no-status", help="Skip automatic issue status transitions."),
 ) -> None:
     """Ship default -> release via pinned-SHA MR merge (FF-only, never squash)."""
     if repo == "fix-default":
@@ -84,7 +85,7 @@ def release(
     result = run_release(repo, yes=yes, dry_run=dry_run, json_output=json_output,
                          checks=checks, diff=diff,
                          pre_release_timeout=pre_release_timeout, ci_timeout=ci_timeout,
-                         env_file=env_file)
+                         env_file=env_file, no_status=no_status)
     _print_result(result, json_output)
 
 
@@ -399,7 +400,7 @@ def _resolve_name(repo: str, registry: dict) -> str:
 def run_release(repo: str, *, yes: bool, dry_run: bool, json_output: bool,
                 checks: str = "ci", diff: str = "remote",
                 pre_release_timeout: str = "10m", ci_timeout: str = "15m",
-                env_file: str | None = None) -> dict:
+                env_file: str | None = None, no_status: bool = False) -> dict:
     """Release flow returning a JSON-able result dict (raises via _fail)."""
     from . import release_lock as _lock
     from . import release_util as _util
@@ -421,7 +422,8 @@ def run_release(repo: str, *, yes: bool, dry_run: bool, json_output: bool,
         with _lock.held_lock(lock):
             return _run_locked(name, registry, yes=yes, dry_run=dry_run,
                                checks=checks, diff=diff, local_timeout=local_timeout,
-                               ci_timeout_s=ci_timeout_s, env_file=env_file)
+                               ci_timeout_s=ci_timeout_s, env_file=env_file,
+                               no_status=no_status)
     except KeyboardInterrupt:
         _fail("interrupted; worktree kept for inspection.", EXIT_GENERAL)
     raise AssertionError("unreachable")
@@ -429,7 +431,7 @@ def run_release(repo: str, *, yes: bool, dry_run: bool, json_output: bool,
 
 def _run_locked(name: str, registry: dict, *, yes: bool, dry_run: bool,
                 checks: str, diff: str, local_timeout: int, ci_timeout_s: int,
-                env_file: str | None = None) -> dict:
+                env_file: str | None = None, no_status: bool = False) -> dict:
     """Steps 1-7 inside the release lock."""
     from . import release_gates as gates
     from .release_util import worktree_base
@@ -456,8 +458,15 @@ def _run_locked(name: str, registry: dict, *, yes: bool, dry_run: bool,
             eprint(f"dry-run: would poll CI for {pinned}")
         mode = " (--auto-merge=false, immediate)" if checks in ("local", "none") else " (host default, wait for merged)"
         eprint(f"dry-run: would merge {pinned} via {strategy[0] if strategy else 'none'}{mode}")
+        if not no_status:
+            _release_dry_status(name, path, default, release_branch, pinned)
         return {"repo": name, "pinned_sha": pinned, "checks": checks,
                 "strategy": strategy, "mr_url": "", "merged": False, "dry_run": True}
+    try:
+        _fetch_branch(path, release_branch)
+        old_tip = _origin_tip_now(path, release_branch)
+    except Exception:
+        old_tip = ""
     mr_url = _find_or_open_mr(tool, path, default, release_branch, title)
     try:
         if checks in ("local", "both") and gate:
@@ -487,7 +496,48 @@ def _run_locked(name: str, registry: dict, *, yes: bool, dry_run: bool,
     except Exception:
         pass
     eprint(f"released {pinned} via {used} checks={checks} {mr_url}")
+    released = _release_mark_released(name, path, release_branch, old_tip, no_status)
     # No session/run row: releases are repo-scoped (keyed by repo name),
     # not worktree-attached — sessions/runs require a worktree FK.
     return {"repo": name, "pinned_sha": pinned, "checks": checks,
-            "strategy": used, "mr_url": mr_url, "merged": True}
+            "strategy": used, "mr_url": mr_url, "merged": True,
+            "released_issues": released}
+
+
+def _release_dry_status(name: str, path: str, default: str, release_branch: str,
+                        pinned: str) -> None:
+    """Dry-run: print the `released` transitions that would run."""
+    from . import issue_status as _st
+    try:
+        old_tip = _origin_tip_now(path, release_branch)
+    except Exception:
+        return
+    if not old_tip:
+        return
+    try:
+        refs = _st.discover_released_refs(path, old_tip, pinned)
+    except Exception:
+        return
+    for ref in refs:
+        _st.set_issue_status(ref, "released", dry_run=True)
+
+
+def _release_mark_released(name: str, path: str, release_branch: str,
+                           old_tip: str, no_status: bool) -> list[str]:
+    """Transition landed range issues to `released` (best effort)."""
+    if no_status:
+        return []
+    from . import issue_status as _st
+    try:
+        _fetch_branch(path, release_branch)
+        new_tip = _origin_tip_now(path, release_branch)
+    except HarnessError as e:
+        eprint(f"warning: release issue discovery failed ({e})")
+        return []
+    if not old_tip or not new_tip:
+        return []
+    released: list[str] = []
+    for ref in _st.discover_released_refs(path, old_tip, new_tip):
+        if _st.set_issue_status(ref, "released", dry_run=False):
+            released.append(ref)
+    return released

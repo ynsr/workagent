@@ -228,6 +228,73 @@ def _print_then_fix_hint(pr_url: str, harness_name: str,
     eprint(f"then-fix: after the review yields, run: workagent {cmd}")
 
 
+def _review_status(ref: str, fix_comments: bool,
+                   dry_run: bool, no_status: bool) -> None:
+    """Pre status transition for review/fix-comments (best effort)."""
+    if no_status or not ref:
+        return
+    from . import issue_status as _st
+    _st.set_issue_status(ref, "ready to release" if fix_comments else "code review",
+                         dry_run=dry_run)
+
+
+def _review_post_fix(ref: str, fix_comments: bool, launch: bool,
+                     terminal: bool, no_status: bool) -> None:
+    """Post status transition after a headless fix-comments run (best effort)."""
+    if no_status or not ref or not fix_comments or not launch or terminal:
+        return
+    from . import issue_status as _st
+    _st.set_issue_status(ref, "ready to release", dry_run=False)
+
+def _review_issue_ref(ref: str) -> str:
+    """Best-effort linked issue ref for a PR/MR URL or worktree key."""
+    try:
+        links = store.load_links(include_deleted=True)
+    except Exception:
+        return ""
+    entry = links.get(ref, {}) or {}
+    for cand in (str(entry.get("issue_url", "") or ""),
+                 str(entry.get("issue", "") or "")):
+        if cand and cand != ref:
+            try:
+                parsed = refs.parse_ref(cand)
+            except HarnessError:
+                continue
+            if parsed.get("kind") == "issue":
+                return cand
+    pr_url = str(entry.get("pr_url", "") or (ref if ref.startswith("http") else ""))
+    branch = str(entry.get("branch", "") or "")
+    if not pr_url and not branch:
+        for key, ent in (links or {}).items():
+            if str((ent or {}).get("pr_url", "") or "") == ref and key != ref:
+                pr_url = str((ent or {}).get("pr_url", "") or "")
+                branch = str((ent or {}).get("branch", "") or "")
+                break
+    if branch and branch != ref:
+        try:
+            parsed = refs.parse_ref(branch)
+        except HarnessError:
+            parsed = None
+        if parsed is not None and parsed.get("kind") == "issue":
+            return branch
+    if pr_url:
+        try:
+            info = refs.fetch_pr_info(refs.parse_ref(pr_url))
+        except HarnessError:
+            info = {}
+        for cand in (str((info or {}).get("issue_key", "") or ""),
+                     str((info or {}).get("body", "") or "")):
+            if not cand:
+                continue
+            try:
+                parsed = refs.parse_ref(cand)
+            except HarnessError:
+                parsed = None
+            if parsed is not None and parsed.get("kind") == "issue":
+                return cand
+    return ""
+
+
 def _run_then_fix(review_key: str, pr_url: str, harness_name: str,
                   use_review_session: bool, env_file: str | None,
                   extra_prompt: str | None, then_fix: bool,
@@ -329,11 +396,11 @@ def review(
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path: resumed via omp --resume when non-empty, otherwise used as --session-dir scope for a fresh session."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before terminal/headless harness commands (default: env_file in config.json, auto-created)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
+    no_status: bool = typer.Option(False, "--no-status", help="Skip automatic issue status transitions."),
 ) -> None:
     """Create worktree from PR/MR and launch review.
 
     Example:
-      workagent review https://github.com/OWNER/REPO/pull/33
       workagent review OWNER/REPO#33 --no-tty
       workagent review OWNER/REPO#33 --launch
       workagent review --all [--sequential] [--fix]
@@ -374,6 +441,8 @@ def review(
             argv = [sys.executable, "-m", "workagent", "review", pr, "--no-tty"]
             if env_file:
                 argv += ["--env-file", env_file]
+            if no_status:
+                argv += ["--no-status"]
             if fix_comments:
                 return argv + ["--fix-comments"]
             return argv + ["--post-comments"] + (["--fix"] if fix else [])
@@ -480,6 +549,8 @@ def review(
         _print_result({"dry_run": True, "repo": str(repo_dir), "pr_url": pr_url,
                        "harness": harness_name, "head_ref": head_ref,
                        "tracker": tid, "tracker_link": outcome}, json_output)
+        _review_status(_review_issue_ref(ref) or ref or "", fix_comments,
+                       dry_run=True, no_status=no_status)
         return
 
     reuse_key = worktrees.resolve_worktree(head_ref or session_ref, store.load_links())
@@ -532,6 +603,9 @@ def review(
                 _guard_harness(review_key, worktree)
                 _mark_reviewed(review_key, worktree)
             _apply_fix_session(result, review_key, fix_comments, use_review_session, session_file)
+            _review_status(_review_issue_ref(review_key) or _review_issue_ref(ref) or "", fix_comments,
+                           dry_run=False, no_status=no_status)
+            _post_status = _review_issue_ref(review_key) or _review_issue_ref(ref) or ""
             try:
                 _run_harness(harness_name, prompt, worktree, str(repo_dir),
                              no_tty, launch, result, json_output,
@@ -541,6 +615,7 @@ def review(
                 if launch:
                     _clear_reviewed(review_key)
                 raise
+            _review_post_fix(_post_status, fix_comments, launch, terminal, no_status)
             _run_then_fix(review_key, pr_url, harness_name, use_review_session,
                           env_file, extra_prompt, then_fix_comments,
                           launch, terminal)
@@ -570,6 +645,9 @@ def review(
         _guard_harness(review_key, worktree)
         _mark_reviewed(review_key, worktree)
     _apply_fix_session(result, review_key, fix_comments, use_review_session, session_file)
+    _review_status(_review_issue_ref(review_key) or _review_issue_ref(ref) or "", fix_comments,
+                   dry_run=False, no_status=no_status)
+    _post_ref = _review_issue_ref(review_key) or _review_issue_ref(ref) or ""
     try:
         _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
                      launch, result, json_output, run_key=review_key,
@@ -579,6 +657,7 @@ def review(
         if launch:
             _clear_reviewed(review_key)
         raise
+    _review_post_fix(_post_ref, fix_comments, launch, terminal, no_status)
     _run_then_fix(review_key, pr_url, harness_name, use_review_session,
                   env_file, extra_prompt, then_fix_comments,
                   launch, terminal)

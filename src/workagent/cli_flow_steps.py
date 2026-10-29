@@ -62,7 +62,8 @@ def run_start_step(ref: str, key: str, config: dict,
                 no_tty=True, json_output=json_output,
                 **pick(config, "repo", "related_repo", "depth",
                        "base", "harness", "no_tty", "session_file",
-                       "env_file", "extra_prompt"))
+                       "env_file", "extra_prompt", "no_status",
+                       "no_review"))
     if isinstance(out, dict) and out.get("preview"):
         return out
     return {"key": ref, "ref": ref, "status": "started"}
@@ -89,7 +90,7 @@ def run_review_step(key: str, config: dict, fix_comments: bool,
           json_output=json_output, fix_comments=fix,
           **pick(config, "repo", "depth", "harness", "no_tty",
                  "then_fix_comments", "use_review_session", "session_file",
-                 "env_file", "extra_prompt"))
+                 "env_file", "extra_prompt", "no_status"))
     return {"key": key, "status": "reviewed", "fix_comments": fix_comments}
 
 
@@ -194,7 +195,7 @@ def run_release_step(repo_snapshot: dict, config: dict, json_output: bool,
                            json_output=json_output,
                            **pick(config, "checks", "diff",
                                   "pre_release_timeout", "ci_timeout",
-                                  "env_file"))
+                                  "env_file", "no_status"))
     return {"repo": repo,
             "status": str((out or {}).get("status") or "released"),
             **(out or {})}

@@ -45,6 +45,7 @@ def cleanup(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
     merged: bool = typer.Option(False, "--merged", help="Clean every linked worktree whose PR/MR is merged/closed (requires --yes; skips live-harness and invalid worktrees)."),
+    released: bool = typer.Option(False, "--released", help="Close every linked issue contained in its repo release branch (requires --yes; skips invalid worktrees)."),
     no_squash: bool = typer.Option(False, "--no-squash", help="Merge open PRs with a merge commit instead of squash."),
     hard_delete: bool = typer.Option(False, "--hard-delete", help="Delete the row, worktree, and branch immediately (skip the 7-day soft-delete recovery window)."),
 ) -> None:
@@ -57,17 +58,88 @@ def cleanup(
     """
     if merged and ref:
         _fail("--merged takes no ref; it loops every linked worktree.", EXIT_USAGE)
-    if not ref and not merged:
+    # --released accepts an optional ref (Dashboard per-key close); --merged does not.
+    if merged and released:
+        _fail("--merged and --released cannot be combined.", EXIT_USAGE)
+    if not ref and not merged and not released:
         _fail("ref required.\n"
               "  Pass a ref, or use --merged to clean every merged/closed link.",
               EXIT_USAGE)
     if merged and not yes and not dry_run:
         _fail("--merged requires --yes (non-interactive).\n"
               "  Re-run with --yes, or add --dry-run to preview.", EXIT_USAGE)
-
+    if released and not ref and not yes and not dry_run:
+        _fail("--released requires --yes (non-interactive).\n"
+              "  Re-run with --yes, or add --dry-run to preview.", EXIT_USAGE)
     links = store.load_links()
-    if merged:
+    if merged or released:
         links = store.load_links(include_inactive=True)
+
+    if released:
+        from . import issue_status as _st
+        targets = dict(links)
+        if ref:
+            try:
+                rkey, rentry, _ = worktrees.resolve_any(ref, links)
+            except worktrees.NoLinkedState:
+                _fail(f"no linked state for {ref}.", EXIT_USAGE)
+            targets = {rkey: rentry} if rkey and rentry else {}
+            if not targets:
+                _fail(f"no linked state for {ref}.", EXIT_USAGE)
+        rows = []
+        for key, entry in targets.items():
+            if entry.get("active", 1) == 0:
+                rows.append({"key": key, "branch": entry.get("branch", ""),
+                             "status": "skipped:deactivated"})
+                continue
+            repo = str(entry.get("repo", "") or "")
+            branch = str(entry.get("branch", "") or "")
+            info = (store.load_repos().get(repo, {}) or {})
+            rel_branch = str(info.get("release_branch", "") or "")
+            if not repo or not branch or not rel_branch:
+                rows.append({"key": key, "branch": branch,
+                             "status": "skipped:no-release-branch"})
+                continue
+            wt = str(entry.get("worktree", "") or "")
+            tip = ""
+            try:
+                from .errors import run_cmd as _run
+                tip = (_run("git", "-C", wt if wt else repo, "rev-parse",
+                            branch, echo=False) or "").strip() if (wt or repo) else ""
+            except Exception:
+                tip = ""
+            contained = False
+            if tip:
+                try:
+                    from .errors import run_cmd as _run2
+                    _run2("git", "-C", wt if wt else repo, "merge-base",
+                          "--is-ancestor", tip, f"origin/{rel_branch}", echo=False)
+                    contained = True
+                except Exception:
+                    contained = False
+            if not contained:
+                rows.append({"key": key, "branch": branch, "status": "skipped:unreleased"})
+                continue
+            stored = entry.get("issue", "") or key
+            if dry_run:
+                try:
+                    from . import refs as _refs
+                    _refs.parse_ref(stored)
+                    rows.append({"key": key, "branch": branch, "status": "dry-run"})
+                except Exception:
+                    rows.append({"key": key, "branch": branch, "status": "skipped:no-issue"})
+                continue
+            ok = _st.set_issue_status(stored, "done", dry_run=False)
+            rows.append({"key": key, "branch": branch,
+                         "status": "closed" if ok else "failed"})
+        if json_output:
+            print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
+        else:
+            _print_rows(rows, json_output=False, csv_output=False,
+                        columns=["key", "branch", "status"],
+                        title="Close released",
+                        empty="no linked worktrees")
+        return
 
     if merged:
         # _status_cells(refresh_pr=True) is the merged/closed source of truth;
