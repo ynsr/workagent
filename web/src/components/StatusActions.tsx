@@ -114,6 +114,15 @@ export function RowActions({
           <Undo2 aria-hidden />
         </ActionIcon>
       ) : null}
+      {actions.onDestroyDeleted ? (
+        <ActionIcon
+          title={`Destroy ${worktreeKey} permanently (worktree dir + local branch + row; remote branches untouched)`}
+          onClick={() => actions.onDestroyDeleted?.(worktreeKey)}
+          destructive
+        >
+          <Trash2 aria-hidden />
+        </ActionIcon>
+      ) : null}
       {showRuns ? (
         <ActionIcon
           title={`Open runs for ${worktreeKey}`}

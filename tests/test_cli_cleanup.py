@@ -657,3 +657,26 @@ def test_merge_pr_glab_squash_flag(isolated_config, monkeypatch):
                   squash=True, cwd="/tmp", source_branch="develop")
     assert "--squash" not in seen[0]
     assert "--no-squash" not in seen[0]
+
+
+def test_destroy_deleted_tears_down_files(isolated_config, tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    wt = tmp_path / "wt"
+    repo.mkdir()
+    wt.mkdir()
+    store.record_link("jira:IPG-9", {"issue": "IPG-9", "branch": "feat/9",
+                                     "repo": str(repo), "worktree": str(wt),
+                                     "deleted_at": "2026-01-01T00:00:00+00:00"})
+    import workagent.cli_cleanup as _cc
+    import workagent.cli as _cli
+    monkeypatch.setattr(_cc.gitwt, "cleanup_worktree",
+                        lambda *a, **k: (wt.rmdir(), {"ok": True})[1])
+    seen = []
+    monkeypatch.setattr(_cli, "run_cmd",
+                        lambda *a, **k: seen.append(a) or "")
+    rows = _cc.destroy_deleted(["jira:IPG-9"])
+    assert rows == [{"key": "jira:IPG-9", "branch": "feat/9", "status": "destroyed"}]
+    assert ("git", "-C", str(repo), "branch", "-D", "feat/9") in [tuple(s) for s in seen]
+    links = store.load_links(include_inactive=True, include_deleted=True)
+    assert "jira:IPG-9" not in links
+    assert not wt.exists()

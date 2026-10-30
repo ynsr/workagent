@@ -246,6 +246,21 @@ def _review_post_fix(ref: str, fix_comments: bool, launch: bool,
     from . import issue_status as _st
     _st.set_issue_status(ref, "ready to release", dry_run=False)
 
+
+def _review_verdict_settle(ref: str, pr_url: str, cwd: str, no_status: bool,
+                           fix_comments: bool, launch: bool, terminal: bool) -> None:
+    """Post-review verdict transition (best effort).
+
+    Only for plain review runs (not --fix-comments) after headless success:
+    approved/merged → `ready to release`, changes-requested → `in progress`,
+    and only when the issue is currently in `code review`. Opt-out via
+    --no-status; dry-run/preview/terminal never settle.
+    """
+    if no_status or not ref or fix_comments or not launch or terminal:
+        return
+    from . import issue_status as _st
+    _st.settle_issue_post_review(ref, _st.pr_review_state(pr_url, cwd=cwd))
+
 def _review_issue_ref(ref: str) -> str:
     """Best-effort linked issue ref for a PR/MR URL or worktree key."""
     try:
@@ -616,6 +631,8 @@ def review(
                     _clear_reviewed(review_key)
                 raise
             _review_post_fix(_post_status, fix_comments, launch, terminal, no_status)
+            _review_verdict_settle(_post_status, pr_url, str(repo_dir), no_status,
+                                  fix_comments, launch, terminal)
             _run_then_fix(review_key, pr_url, harness_name, use_review_session,
                           env_file, extra_prompt, then_fix_comments,
                           launch, terminal)
@@ -658,6 +675,8 @@ def review(
             _clear_reviewed(review_key)
         raise
     _review_post_fix(_post_ref, fix_comments, launch, terminal, no_status)
+    _review_verdict_settle(_post_ref, pr_url, str(repo_dir), no_status,
+                           fix_comments, launch, terminal)
     _run_then_fix(review_key, pr_url, harness_name, use_review_session,
                   env_file, extra_prompt, then_fix_comments,
                   launch, terminal)

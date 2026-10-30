@@ -685,5 +685,39 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
             except HarnessError:
                 pass
         rows.append({"key": key, "branch": branch, "status": status})
-    return rows
 
+def destroy_deleted(keys: list[str], dry_run: bool = False) -> list[dict]:
+    """Permanently destroy soft-deleted rows: worktree dir + branches + row.
+
+    Unlike purge-deleted (row-only) this tears down surviving local state:
+    git-wt cleanup (worktree dir), local branch delete, then row drop.
+    Sessions/runs CASCADE with the row. Remote branches are NOT touched.
+    Returns per-key status dicts. Never raises for unknown keys.
+    """
+    from . import cli as _cli
+    links = store.load_links(include_inactive=True, include_deleted=True)
+    rows = []
+    for key in keys:
+        entry = links.get(key, {})
+        if not entry or not entry.get("deleted_at"):
+            rows.append({"key": key, "branch": str(entry.get("branch", "")),
+                         "status": "skipped:not-deleted"})
+            continue
+        branch = str(entry.get("branch", "") or "")
+        repo = str(entry.get("repo", "") or "")
+        if dry_run:
+            rows.append({"key": key, "branch": branch, "status": "destroy-dry-run"})
+            continue
+        if branch and repo:
+            try:
+                gitwt.cleanup_worktree(Path(repo), branch, delete_branch=False,
+                                       force=True, yes=True)
+            except HarnessError as e:
+                eprint(f"warning: git-wt cleanup failed for {key}: {e}")
+            try:
+                _cli.run_cmd("git", "-C", str(repo), "branch", "-D", branch)
+            except HarnessError:
+                pass
+        store.delete_worktree_row(key)
+        rows.append({"key": key, "branch": branch, "status": "destroyed"})
+    return rows

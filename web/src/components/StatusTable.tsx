@@ -12,6 +12,8 @@ export interface StatusTableActions {
   onReactivate?: (key: string) => void
   /** Restore a soft-deleted worktree (`link undelete` confirmed run). */
   onUndelete?: (key: string) => void
+  /** Permanently destroy a soft-deleted row: worktree dir + local branch + row. */
+  onDestroyDeleted?: (key: string) => void
   onOpenWorktree: (key: string) => void
   onOpenRun: (key: string) => void
   /** Navigate to the Sessions page filtered to this worktree. */

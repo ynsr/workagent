@@ -289,8 +289,7 @@ Request:
 - `start` takes repeatable `--related-repo <name>` (one child worktree per
   repo on the same branch; the Launch Start form multi-selects from every
   registered repo except the main one).
-- `link purge-deleted [--repo NAME] [--dry-run] [--json]` (planned — Task 2
-  `link` SPECS entry not yet landed): permanently drops soft-deleted
+- `link purge-deleted [--repo NAME] [--dry-run] [--json]`: permanently drops soft-deleted
   worktree rows from the database (bookkeeping only: worktree files and
   branches are already gone; never touches disk). `--repo` scopes to one
   repo display name (registered name, else the basename of the recorded
@@ -298,6 +297,12 @@ Request:
   deleted rows prints an empty result, exit 0. The Dashboard Deleted table
   runs it via `createRun` with an irreversible confirm dialog and
   invalidates `statusDeleted` on success.
+- `link destroy-deleted [REF] [--all] [--dry-run] [--json]`: permanently destroys
+  soft-deleted rows INCLUDING surviving local state — worktree dir teardown,
+  local branch delete, then row drop (sessions/runs CASCADE). Remote
+  branches are NOT touched. Single-ref or `--all`; missing `--repo` scoping
+  by design. The Dashboard Deleted table runs it per-row (trash icon) and
+  per-selection (Destroy (N) button) with the same irreversible confirm.
 
 Response 202: `{"run_id": "abc123"}` — `409 {code:"conflict"}` when
 another run holds the same target key.

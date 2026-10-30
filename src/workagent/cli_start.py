@@ -259,17 +259,44 @@ def start(
     _run_harness(harness_name, prompt, worktree, str(r), no_tty, launch,
                  result, json_output, run_key=key, session_file=session_file,
                  terminal=terminal, env_file=env_file)
-    _start_post_status(link_url or ref, launch, terminal, no_status, no_review)
+    _start_post_status(link_url or ref, launch, terminal, no_status, no_review,
+                       pr_url=_discover_branch_pr(str(r), branch))
+
+
+def _discover_branch_pr(repo: str, branch: str) -> str:
+    """Best-effort PR/MR URL for *branch* ("" when none). Never raises."""
+    try:
+        from pathlib import Path as _P
+        from . import repos as _repos
+        tool = _repos._detect_host_cli(_P(repo)) if repo else ""
+    except Exception:
+        return ""
+    try:
+        from . import refs as _refs
+        prs = _refs.fetch_pr_list_for_branch(tool, branch, cwd=repo) or []
+    except Exception:
+        return ""
+    for pr in prs or []:
+        url = str((pr or {}).get("url", "") or "")
+        if url:
+            return url
+    return ""
 
 
 def _start_post_status(issue_ref: str, launch: bool, terminal: bool,
-                       no_status: bool, no_review: bool) -> None:
-    """Post-start transition after headless harness success (best effort)."""
+                       no_status: bool, no_review: bool, pr_url: str = "") -> None:
+    """Post-start transition after headless harness success (best effort).
+
+    Done-branch: `code review` when a PR/MR exists (or one is expected via
+    no_review=False), else `done`. Opt-out via --no-status.
+    """
     if no_status or not launch or terminal:
         return
     from . import issue_status as _st
-    _st.set_issue_status(issue_ref, "ready to release" if no_review else "code review",
-                         dry_run=False)
+    if no_review:
+        _st.settle_issue_post_work(issue_ref, pr_url, dry_run=False)
+        return
+    _st.set_issue_status(issue_ref, "code review", dry_run=False)
 
 
 def _resolve_related_repos(related: list[str] | None, main_repo: Path,

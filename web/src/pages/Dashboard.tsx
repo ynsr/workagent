@@ -99,7 +99,7 @@ export function Dashboard() {
   const [cleanupTarget, setCleanupTarget] = useState<string | null>(null)
   // Bulk-action selection (StatusTable `?sel=` column). Empty = all linked.
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const selCount = selected.size
+  const [deletedSel, setDeletedSel] = useState<Set<string>>(new Set())
   // Prune keys that vanish from the table (cleanup/deactivation).
   useEffect(() => {
     if (worktrees && [...selected].some((k) => !(k in worktrees))) {
@@ -463,6 +463,58 @@ export function Dashboard() {
     }
   }
 
+  async function handleDestroyDeleted(key: string) {
+    const ok = await confirm({
+      action: "link destroy",
+      title: `Destroy ${key} permanently?`,
+      description:
+        "Removes the worktree directory, deletes the local branch, and drops the database row (sessions/runs cascade). Remote branches are NOT touched. This cannot be undone.",
+      destructive: true,
+      confirmLabel: `Destroy ${key}`,
+      details: [{ label: "Scope", value: key }],
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "link",
+        args: ["destroy-deleted", key],
+        confirm: true,
+      })
+      runCreated(run_id, `Destroyed ${key}`)
+      void qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  async function handleDestroyDeletedMany(keys: string[]) {
+    const ok = await confirm({
+      action: "link destroy",
+      title: `Destroy ${keys.length} deleted row(s) permanently?`,
+      description:
+        "Removes each worktree directory, deletes local branches, and drops the database rows (sessions/runs cascade). Remote branches are NOT touched. This cannot be undone.",
+      destructive: true,
+      confirmLabel: `Destroy ${keys.length}`,
+      details: [{ label: "Scope", value: keys.slice(0, 5).join(", ") + (keys.length > 5 ? ` +${keys.length - 5} more` : "") }],
+    })
+    if (!ok) return
+    for (const key of [...keys].sort()) {
+      try {
+        const { run_id } = await createRun.mutateAsync({
+          command: "link",
+          args: ["destroy-deleted", key],
+          confirm: true,
+        })
+        toast.success(`Destroy ${key} started`, {
+          action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+        })
+      } catch (err) {
+        toast.error(`${key}: ${errorText(err)}`)
+      }
+    }
+    void qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
+  }
+
   async function handleCopyJson() {
     if (!worktrees) return
     try {
@@ -652,8 +704,11 @@ export function Dashboard() {
         )}
         repos={repos}
         onClearDeleted={handleClearDeleted}
+        onDestroyDeleted={handleDestroyDeletedMany}
+        selection={{ selected: deletedSel, onSelectionChange: setDeletedSel }}
         actions={{
           onCleanup: handleCleanup,
+          onDestroyDeleted: handleDestroyDeleted,
           onOpenWorktree: handleOpenWorktree,
           onOpenRun: handleOpenRun,
           onUndelete: handleUndelete,

@@ -87,6 +87,68 @@ def _label_siblings(state: str) -> list[str]:
             if f"{_STATUS_PREFIX}{s}" != want]
 
 
+def _issue_state(number: str, tool: str, target: str) -> str:
+    """Best-effort current issue state (`""` when unknown). Never raises."""
+    try:
+        if tool == "jira-cli":
+            out = run_cmd("jira-cli", "issue", number, "--format", "json")
+            data = json.loads(out or "{}")
+            cur = data.get("status") or data.get("fields", {}).get("status") or {}
+            name = cur.get("name", "") if isinstance(cur, dict) else str(cur)
+            return str(name or "").strip().lower()
+        if tool == "gh":
+            out = run_cmd("gh", "issue", "view", target, "--json", "state,labels")
+            data = json.loads(out or "{}")
+            if str(data.get("state", "")).upper() == "CLOSED":
+                return "done"
+            for lb in data.get("labels") or []:
+                n = (lb.get("name", "") if isinstance(lb, dict) else str(lb))
+                if n.startswith(_STATUS_PREFIX):
+                    return n[len(_STATUS_PREFIX):].strip().lower()
+    except Exception:
+        pass
+    return ""
+
+
+def pr_review_state(pr_url: str, cwd: str | None = None) -> str:
+    """Best-effort PR/MR review verdict: approved | changes | open | merged | "".
+
+    gh: reviewDecision (APPROVED / CHANGES_REQUESTED). glab: best-effort from
+    `glab mr view -F json` approval fields; unknown → "" (never raises).
+    """
+    try:
+        parsed = _refs.parse_ref(pr_url)
+    except HarnessError:
+        return ""
+    try:
+        if parsed.get("tool") == "gh":
+            out = run_cmd("gh", "pr", "view", parsed["url"], "--json",
+                          "state,reviewDecision", cwd=cwd)
+            data = json.loads(out or "{}")
+            if str(data.get("state", "")).upper() == "MERGED":
+                return "merged"
+            dec = str(data.get("reviewDecision", "") or "").upper()
+            if dec == "APPROVED":
+                return "approved"
+            if dec in ("CHANGES_REQUESTED", "REVIEW_REQUIRED_CHANGES"):
+                return "changes"
+            return "open"
+        if parsed.get("tool") == "glab":
+            out = run_cmd("glab", "mr", "view", parsed["url"], "-F", "json", cwd=cwd)
+            data = json.loads(out or "{}")
+            st = str(data.get("state", "") or "").lower()
+            if st == "merged":
+                return "merged"
+            for key in ("approved", "approvals", "approved_by"):
+                val = data.get(key)
+                if val is True or (isinstance(val, list) and val):
+                    return "approved"
+            return "open" if st in ("opened", "open") else st
+    except Exception:
+        pass
+    return ""
+
+
 def set_issue_status(key_or_ref: str, state: str, *, dry_run: bool = False) -> bool:
     """Transition the issue at *key_or_ref* to *state*; True on success.
 
@@ -147,6 +209,37 @@ def set_issue_status(key_or_ref: str, state: str, *, dry_run: bool = False) -> b
         return False
     eprint(f"issue status -> {state}: {key_or_ref}")
     return True
+
+
+def settle_issue_post_work(issue_ref: str, pr_url: str = "", *, dry_run: bool = False) -> str:
+    """Done-branch: `code review` when a PR/MR exists, else `done`.
+
+    Returns the target state ("" when skipped). Best effort, never raises.
+    """
+    if not (issue_ref or "").strip():
+        return ""
+    target = "code review" if (pr_url or "").strip() else "done"
+    ok = set_issue_status(issue_ref, target, dry_run=dry_run)
+    return target if ok else ""
+
+
+def settle_issue_post_review(issue_ref: str, verdict: str, *, dry_run: bool = False) -> str:
+    """Review-branch: only from `code review`; approved→`ready to release`, changes→`in progress`."""
+    verdict = (verdict or "").strip().lower()
+    if verdict not in ("approved", "merged", "changes"):
+        return ""
+    if not (issue_ref or "").strip():
+        return ""
+    parsed = _parse(issue_ref)
+    if parsed is None:
+        return ""
+    cur = _issue_state(parsed.get("number", ""), parsed.get("tool", ""),
+                       parsed.get("url", "") or parsed.get("number", ""))
+    if cur and cur != "code review":
+        return ""
+    target = "ready to release" if verdict in ("approved", "merged") else "in progress"
+    ok = set_issue_status(issue_ref, target, dry_run=dry_run)
+    return target if ok else ""
 
 
 def discover_released_refs(path: str, old_tip: str, new_tip: str) -> list[str]:

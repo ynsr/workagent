@@ -528,6 +528,41 @@ def link_purge_deleted(
                 "Purge deleted", "(nothing to purge)")
 
 
+@link_app.command("destroy-deleted")
+@_catch_harness_errors
+def link_destroy_deleted(
+    ref: Optional[str] = typer.Argument(None, help="Worktree key (issue/PR ref, branch, or worktree path); omit with --all."),
+    all_rows: bool = typer.Option(False, "--all", help="Destroy every soft-deleted row."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List rows that would be destroyed without acting."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    yes: bool = typer.Option(False, "--yes", help="Accepted for scripting parity; destroy never prompts."),
+) -> None:
+    """Permanently destroy soft-deleted rows: worktree dir + local branch + row.
+
+    Unlike purge-deleted (row-only bookkeeping) this tears down surviving
+    local state too. Sessions/runs CASCADE. Remote branches are NOT touched.
+    """
+    from . import cli_cleanup as _cleanup
+    links = store.load_links(include_inactive=True, include_deleted=True)
+    targets: list[str] = []
+    if all_rows:
+        targets = sorted(k for k, v in links.items()
+                         if isinstance(v, dict) and v.get("deleted_at"))
+    elif ref:
+        resolved = worktrees.resolve_worktree(ref, links)
+        if resolved is None:
+            _fail(f"no worktree link for {ref}", EXIT_USAGE)
+        targets = [resolved]
+    else:
+        _fail("pass a ref, or use --all to destroy every soft-deleted row.", EXIT_USAGE)
+    rows = _cleanup.destroy_deleted(targets, dry_run=dry_run)
+    if json_output:
+        print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
+        return
+    _print_rows(rows, json_output, False, ["key", "branch", "status"],
+                "Destroy deleted", "(nothing to destroy)")
+
+
 @link_app.command("undelete")
 @_catch_harness_errors
 def link_undelete(

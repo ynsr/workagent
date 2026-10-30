@@ -91,3 +91,36 @@ def test_discover_released_refs(monkeypatch):
                                            "issue": "IPG-9"}})
     out = st.discover_released_refs("/repo", "old", "new")
     assert out == ["IPG-9", "IPG-10", "o/r#44"]
+
+
+def test_settle_post_work_pr_or_done(monkeypatch):
+    seen = []
+    monkeypatch.setattr(st, "set_issue_status",
+                        lambda ref, state, dry_run=False: seen.append((ref, state)) or True)
+    assert st.settle_issue_post_work("IPG-1", "https://github.com/o/r/pull/9") == "code review"
+    assert st.settle_issue_post_work("IPG-1", "") == "done"
+    assert seen == [("IPG-1", "code review"), ("IPG-1", "done")]
+    assert st.settle_issue_post_work("", "https://github.com/o/r/pull/9") == ""
+
+
+def test_settle_post_review_gated(monkeypatch):
+    seen = []
+    monkeypatch.setattr(st, "set_issue_status",
+                        lambda ref, state, dry_run=False: seen.append((ref, state)) or True)
+    monkeypatch.setattr(st, "_issue_state", lambda *a: "code review")
+    assert st.settle_issue_post_review("IPG-1", "approved") == "ready to release"
+    assert st.settle_issue_post_review("IPG-1", "changes") == "in progress"
+    assert st.settle_issue_post_review("IPG-1", "open") == ""
+    monkeypatch.setattr(st, "_issue_state", lambda *a: "in progress")
+    assert st.settle_issue_post_review("IPG-1", "approved") == ""
+    assert seen == [("IPG-1", "ready to release"), ("IPG-1", "in progress")]
+
+
+def test_pr_review_state_gh(monkeypatch):
+    def _run(*a, **k):
+        if a[:3] == ("gh", "pr", "view"):
+            assert "--json" in a
+            return '{"state": "OPEN", "reviewDecision": "APPROVED"}'
+        raise AssertionError(a)
+    monkeypatch.setattr(st, "run_cmd", _run)
+    assert st.pr_review_state("https://github.com/o/r/pull/5") == "approved"
