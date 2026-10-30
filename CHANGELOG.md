@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Removed row-only `link purge-deleted` and the Deleted-table Clear button; Deleted cleanup now goes through Destroy (worktree dir + local branch + row) [no-issue]
 - Lifecycle statuses: start/review settle issues to code review (no-review work to done), approved reviews to ready to release, changes-requested to in progress; `cleanup --released` closes contained issues [no-issue]
 - Cleanup fails closed on host merge blocks (unresolved discussions→405) pre-merge; fix glab JSON flag + matcher shadowing [IPG-1052]
 - Release merge waits out MR `checking` mergeability, retries one transient 405, hints `--checks ci` only on a real pipeline gate [no-issue]

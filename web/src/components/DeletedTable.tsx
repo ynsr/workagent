@@ -12,14 +12,12 @@ export function DeletedTable({
   worktrees,
   actions,
   repos,
-  onClearDeleted,
   onDestroyDeleted,
   selection,
 }: {
   worktrees: WorktreeMap
   actions: StatusTableActions
   repos?: Repo[]
-  onClearDeleted?: (repo: string | null) => void
   onDestroyDeleted?: (keys: string[]) => void
   selection?: StatusTableSelection
 }) {
@@ -65,21 +63,6 @@ export function DeletedTable({
                 title={`Permanently destroy ${selection.selected.size} selected soft-deleted row(s): worktree dir + local branch + row. Remote branches untouched.`}
               >
                 Destroy ({selection.selected.size})
-              </Button>
-            ) : null}
-            {onClearDeleted ? (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={Object.keys(filtered).length === 0}
-                onClick={() => onClearDeleted(null)}
-                title={
-                  Object.keys(filtered).length === 0
-                    ? "Nothing to purge"
-                    : `Permanently drop ${Object.keys(filtered).length} soft-deleted row(s) from the database`
-                }
-              >
-                Clear ({Object.keys(filtered).length})
               </Button>
             ) : null}
           </div>

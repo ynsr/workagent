@@ -289,14 +289,6 @@ Request:
 - `start` takes repeatable `--related-repo <name>` (one child worktree per
   repo on the same branch; the Launch Start form multi-selects from every
   registered repo except the main one).
-- `link purge-deleted [--repo NAME] [--dry-run] [--json]`: permanently drops soft-deleted
-  worktree rows from the database (bookkeeping only: worktree files and
-  branches are already gone; never touches disk). `--repo` scopes to one
-  repo display name (registered name, else the basename of the recorded
-  repo path); no `--repo` = all soft-deleted rows. Naming a repo with zero
-  deleted rows prints an empty result, exit 0. The Dashboard Deleted table
-  runs it via `createRun` with an irreversible confirm dialog and
-  invalidates `statusDeleted` on success.
 - `link destroy-deleted [REF] [--all] [--dry-run] [--json]`: permanently destroys
   soft-deleted rows INCLUDING surviving local state — worktree dir teardown,
   local branch delete, then row drop (sessions/runs CASCADE). Remote

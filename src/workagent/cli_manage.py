@@ -500,34 +500,6 @@ def link_gc(
                 "GC (soft-deleted)", "(nothing to purge)")
 
 
-@link_app.command("purge-deleted")
-@_catch_harness_errors
-def link_purge_deleted(
-    repo: Optional[str] = typer.Option(None, "--repo", help="Only purge deleted rows for this repo (name or path)."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="List rows that would be purged without acting."),
-    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
-    yes: bool = typer.Option(False, "--yes", help="Accepted for scripting parity; purge never prompts."),
-) -> None:
-    """Permanently drop soft-deleted worktree rows (bookkeeping only: files/branches already gone)."""
-    links = store.load_links(include_inactive=True, include_deleted=True)
-    targets = [k for k, v in links.items() if isinstance(v, dict) and v.get("deleted_at")]
-    if repo:
-        targets = [k for k in targets if str(links[k].get("repo", "")) in (repo,) or Path(str(links[k].get("repo", ""))).name == repo]
-    rows = []
-    for key in sorted(targets):
-        branch = str(links[key].get("branch", ""))
-        if dry_run:
-            rows.append({"key": key, "branch": branch, "status": "purge-dry-run"})
-            continue
-        store.delete_worktree_row(key)
-        rows.append({"key": key, "branch": branch, "status": "purged"})
-    if json_output:
-        print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
-        return
-    _print_rows(rows, json_output, False, ["key", "branch", "status"],
-                "Purge deleted", "(nothing to purge)")
-
-
 @link_app.command("destroy-deleted")
 @_catch_harness_errors
 def link_destroy_deleted(
@@ -539,8 +511,8 @@ def link_destroy_deleted(
 ) -> None:
     """Permanently destroy soft-deleted rows: worktree dir + local branch + row.
 
-    Unlike purge-deleted (row-only bookkeeping) this tears down surviving
-    local state too. Sessions/runs CASCADE. Remote branches are NOT touched.
+    Tears down surviving local state (git-wt cleanup + branch -D) then drops
+    the row. Sessions/runs CASCADE. Remote branches are NOT touched.
     """
     from . import cli_cleanup as _cleanup
     links = store.load_links(include_inactive=True, include_deleted=True)

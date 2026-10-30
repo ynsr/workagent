@@ -689,10 +689,10 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
 def destroy_deleted(keys: list[str], dry_run: bool = False) -> list[dict]:
     """Permanently destroy soft-deleted rows: worktree dir + branches + row.
 
-    Unlike purge-deleted (row-only) this tears down surviving local state:
-    git-wt cleanup (worktree dir), local branch delete, then row drop.
-    Sessions/runs CASCADE with the row. Remote branches are NOT touched.
-    Returns per-key status dicts. Never raises for unknown keys.
+    Tears down surviving local state: git-wt cleanup (worktree dir), local
+    branch delete, then row drop. Sessions/runs CASCADE with the row.
+    Remote branches are NOT touched. Returns per-key status dicts.
+    Never raises for unknown keys.
     """
     from . import cli as _cli
     links = store.load_links(include_inactive=True, include_deleted=True)
