@@ -28,22 +28,20 @@ export function isLongLivedSource(branch: string): boolean {
 export function CleanupDialog({
   worktreeKey,
   invalid,
-  deleted = false,
   sourceBranch,
   onClose,
 }: {
   worktreeKey: string
   invalid: boolean
-  deleted?: boolean
   sourceBranch?: string
-  onClose: (ok: false | { force: boolean; hardDelete: boolean } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean } | { action: "undelete" } | { action: "destroy" }) => void
+  onClose: (ok: false | { force: boolean; hardDelete: boolean } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean }) => void
 }): React.JSX.Element {
   const [force, setForce] = useState(invalid)
   const [hardDelete, setHardDelete] = useState(false)
   const effectiveForce = invalid || force
   const longLived = isLongLivedSource(sourceBranch ?? "")
-  const rows: [string, string][] = invalid || deleted
-    ? [["State check", deleted ? "Row is already soft-deleted — restoring or purging, no merge attempted" : "Skipped — entry is removed either way"]]
+  const rows: [string, string][] = invalid
+    ? [["State check", "Skipped — entry is removed either way"]]
     : [
         [
           "Mergeable PR",
@@ -76,18 +74,16 @@ export function CleanupDialog({
               aria-hidden
               className="inline-block h-2.5 w-2.5 rounded-full bg-destructive"
             />
-            {invalid ? `Delete invalid worktree ${worktreeKey}` : deleted ? `Clean up deleted worktree ${worktreeKey}` : `Remove worktree ${worktreeKey}`}
+            {invalid ? `Delete invalid worktree ${worktreeKey}` : `Remove worktree ${worktreeKey}`}
           </AlertDialogTitle>
           <AlertDialogDescription>
             {invalid
               ? "The recorded path is missing or not a live git worktree. The entry is removed either way. This cannot be undone."
-              : deleted
-                ? "This entry is already soft-deleted — the merge/close already ran (or nothing remote was ever done). Restore it, or purge the row now with Delete from DB + hard-delete (tears down worktree files and branches immediately)."
               : hardDelete
-                ? "Closes the tracker issue, removes the worktree, deletes the local branch, and merges or closes the PR. The remote branch is deleted only when the PR merges. This cannot be undone."
-                : "Closes or merges the PR, then soft-deletes the entry — worktree files, branch, and remote branch all survive, recoverable for 7 days via link undelete. Check hard-delete to tear everything down immediately."}
+              ? "Closes the tracker issue, removes the worktree, deletes the local branch, and merges or closes the PR. The remote branch is deleted only when the PR merges. This cannot be undone."
+              : "Closes or merges the PR, then soft-deletes the entry — worktree files, branch, and remote branch all survive, recoverable for 7 days via link undelete. Check hard-delete to tear everything down immediately."}
           </AlertDialogDescription>
-          {!invalid && !deleted ? (
+          {!invalid ? (
             <div className="overflow-x-auto rounded-md border">
               <table className="w-full min-w-130 text-left text-sm">
                 <caption className="px-3 pt-2 text-left text-xs font-medium text-muted-foreground">
@@ -117,7 +113,6 @@ export function CleanupDialog({
               </table>
             </div>
           ) : null}
-          {!deleted ? (
           <div className="grid gap-2.5">
             <CheckRow
               id="cleanup-force"
@@ -136,11 +131,10 @@ export function CleanupDialog({
               description="Delete the row, worktree, and branch immediately — skip the 7-day recovery window"
             />
           </div>
-          ) : null}
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={() => onClose(false)}>Cancel</AlertDialogCancel>
-          {!invalid && !deleted ? (
+          {!invalid ? (
             <AlertDialogAction
               title="link deactivate — hide from bulk ops; reversible, nothing on disk touched"
               onClick={() => onClose({ action: "deactivate" })}
@@ -148,36 +142,18 @@ export function CleanupDialog({
               Deactivate
             </AlertDialogAction>
           ) : null}
-          {deleted ? (
-            <AlertDialogAction
-              title="link undelete — restore the soft-deleted row"
-              onClick={() => onClose({ action: "undelete" })}
-            >
-              Restore
-            </AlertDialogAction>
-          ) : null}
-          {deleted ? (
-            <AlertDialogAction
-              title="link destroy-deleted — tear down worktree dir + local branch + row (DB and filesystem); remote branches untouched"
-              onClick={() => onClose({ action: "destroy" })}
-            >
-              Destroy (DB + files)
-            </AlertDialogAction>
-          ) : null}
           <AlertDialogAction
-            title={deleted ? "link remove --hard-delete — purge the row now" : "link remove — soft-delete the database row (recoverable 7 days); files/branch/PR untouched"}
-            onClick={() => onClose({ action: "deleteFromDb", hardDelete: deleted ? true : hardDelete })}
+            title="link remove — soft-delete the database row (recoverable 7 days); files/branch/PR untouched"
+            onClick={() => onClose({ action: "deleteFromDb", hardDelete })}
           >
             Delete from DB
           </AlertDialogAction>
-          {!deleted ? (
-            <AlertDialogAction
+          <AlertDialogAction
               autoFocus
               onClick={() => onClose({ force: effectiveForce, hardDelete })}
             >
               {invalid ? "Delete worktree" : "Remove worktree"}
             </AlertDialogAction>
-          ) : null}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

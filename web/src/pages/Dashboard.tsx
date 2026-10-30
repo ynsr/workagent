@@ -366,19 +366,13 @@ export function Dashboard() {
     setCleanupTarget(key)
   }
 
-  async function submitCleanup(key: string, opts: { force: boolean; hardDelete: boolean } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean } | { action: "undelete" } | { action: "destroy" }) {
+  async function submitCleanup(key: string, opts: { force: boolean; hardDelete: boolean } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean }) {
     setCleanupTarget(null)
     if ("action" in opts) {
       try {
-        if (opts.action === "destroy") {
-          const { run_id } = await createRun.mutateAsync({ command: "link", args: ["destroy-deleted", key], confirm: true })
-          runCreated(run_id, `Destroyed ${key}`)
-          void qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
-          return
-        }
-        const cmd = opts.action === "deactivate" ? ["deactivate", key] : opts.action === "undelete" ? ["undelete", key] : ["remove", key, ...(opts.hardDelete ? ["--hard-delete"] : [])]
+        const cmd = opts.action === "deactivate" ? ["deactivate", key] : ["remove", key, ...(opts.hardDelete ? ["--hard-delete"] : [])]
         const { run_id } = await createRun.mutateAsync({ command: "link", args: cmd, confirm: true })
-        runCreated(run_id, opts.action === "deactivate" ? `Deactivated ${key}` : opts.action === "undelete" ? `Undeleted ${key}` : `Deleted ${key} from DB`)
+        runCreated(run_id, opts.action === "deactivate" ? `Deactivated ${key}` : `Deleted ${key} from DB`)
       } catch (err) {
         toast.error(errorText(err))
       }
@@ -684,7 +678,6 @@ export function Dashboard() {
         onDestroyDeleted={handleDestroyDeletedMany}
         selection={{ selected: deletedSel, onSelectionChange: setDeletedSel }}
         actions={{
-          onCleanup: handleCleanup,
           onDestroyDeleted: handleDestroyDeleted,
           onOpenWorktree: handleOpenWorktree,
           onOpenRun: handleOpenRun,
@@ -714,9 +707,8 @@ export function Dashboard() {
       {cleanupTarget ? (
         <CleanupDialog
           worktreeKey={cleanupTarget}
-          invalid={(worktrees ?? deletedAll ?? {})[cleanupTarget]?.wt_valid === false}
-          deleted={!(worktrees ?? {})[cleanupTarget] && !!(deletedAll ?? {})[cleanupTarget]?.deleted_at}
-          sourceBranch={(worktrees ?? deletedAll ?? {})[cleanupTarget]?.branch}
+          invalid={(worktrees ?? {})[cleanupTarget]?.wt_valid === false}
+          sourceBranch={(worktrees ?? {})[cleanupTarget]?.branch}
           onClose={(res) => {
             if (!res) {
               setCleanupTarget(null)

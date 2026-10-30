@@ -7,7 +7,7 @@ import { repoDisplayForEntry } from "@/lib/useRepoTabs"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 
-/** Collapsed, searchable soft-deleted-worktrees section with undelete/destroy actions + per-repo purge. */
+/** Collapsed, searchable soft-deleted-worktrees section with undelete/destroy actions. */
 export function DeletedTable({
   worktrees,
   actions,
