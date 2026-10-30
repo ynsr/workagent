@@ -36,7 +36,7 @@ export function CleanupDialog({
   invalid: boolean
   deleted?: boolean
   sourceBranch?: string
-  onClose: (ok: false | { force: boolean; hardDelete: boolean } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean } | { action: "undelete" }) => void
+  onClose: (ok: false | { force: boolean; hardDelete: boolean } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean } | { action: "undelete" } | { action: "destroy" }) => void
 }): React.JSX.Element {
   const [force, setForce] = useState(invalid)
   const [hardDelete, setHardDelete] = useState(false)
@@ -154,6 +154,14 @@ export function CleanupDialog({
               onClick={() => onClose({ action: "undelete" })}
             >
               Restore
+            </AlertDialogAction>
+          ) : null}
+          {deleted ? (
+            <AlertDialogAction
+              title="link destroy-deleted — tear down worktree dir + local branch + row (DB and filesystem); remote branches untouched"
+              onClick={() => onClose({ action: "destroy" })}
+            >
+              Destroy (DB + files)
             </AlertDialogAction>
           ) : null}
           <AlertDialogAction

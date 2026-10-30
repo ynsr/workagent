@@ -25,7 +25,9 @@ export function commandAction(
     case "repo":
       return args[0] === "remove" ? "repo remove" : null
     case "link":
-      return args[0] === "remove" ? "link remove" : null
+      if (args[0] === "remove") return "link remove"
+      if (args[0] === "destroy-deleted") return "link destroy"
+      return null
     default:
       return null
   }

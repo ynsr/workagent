@@ -433,6 +433,7 @@ export function Launch() {
     if (form.noStatus) args.push("--no-status")
     args.push(...runModeArgs(form.runMode))
     args.push(...extraPromptArgs(form))
+    return args
   }
 
   const extra = form.extraPrompt.trim()

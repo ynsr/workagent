@@ -20,7 +20,7 @@ import {
 import { CiBadge, PrBadge } from "@/components/StateBadge"
 import { EmptyState } from "@/components/StatusFeedback"
 import { cn } from "@/lib/utils"
-import type { StatusTableActions, StatusTableSelection } from "@/components/StatusTable"
+import type { StatusTableActions, StatusTableEmbed, StatusTableSelection } from "@/components/StatusTable"
 
 import { RowActions } from "@/components/StatusActions"
 import { CopyCell } from "@/components/CopyCell"
@@ -88,6 +88,7 @@ export function StatusTable({
   className,
   repoTabs,
   selection,
+  embed,
 }: {
   worktrees: WorktreeMap
   actions: StatusTableActions
@@ -96,21 +97,26 @@ export function StatusTable({
   className?: string
   repoTabs?: { repoFilter: string; setRepo: (v: string) => void; tabs: { names: string[]; counts: Map<string, number>; other: number }; repos: Repo[] }
   selection?: StatusTableSelection
+  embed?: StatusTableEmbed
 }) {
   const [params, setParams] = useSearchParams()
-  const q = (params.get("q") ?? "").trim()
+  const selParam = embed?.selParam === undefined ? "sel" : embed.selParam
+  const filterParam = embed?.filterParam === undefined ? "q" : embed.filterParam
+  const q = filterParam === null ? "" : (params.get(filterParam) ?? "").trim()
   const [expanded, setExpanded] = useState<string | null>(null)
   const repoFilter = repoTabs?.repoFilter ?? ""
   // Selection: controlled when the parent passes `selected`, else internal.
-  // `?sel=` carries the keys across refresh/share; unknown keys dropped.
+  // `?sel=` carries the keys across refresh/share; unknown keys dropped
+  // (null selParam = internal-only, safe for embedded second tables).
   const [internalSel, setInternalSel] = useState<Set<string>>(new Set<string>())
   const sel = selection?.selected ?? internalSel
   function writeSel(next: Set<string>) {
     if (selection?.onSelectionChange) selection.onSelectionChange(next)
     else setInternalSel(next)
+    if (selParam === null) return
     const p = new URLSearchParams(params)
-    if (next.size > 0) p.set("sel", [...next].sort().join(","))
-    else p.delete("sel")
+    if (next.size > 0) p.set(selParam, [...next].sort().join(","))
+    else p.delete(selParam)
     setParams(p, { replace: true })
   }
 
@@ -150,10 +156,11 @@ export function StatusTable({
   // Hydrate `?sel=` once per worktree-set (unknown keys dropped).
   const hydratedFor = useRef<string>("")
   useEffect(() => {
+    if (selParam === null) return
     const known = Object.keys(worktrees).sort().join(",")
     if (hydratedFor.current === known) return
     hydratedFor.current = known
-    const raw = (params.get("sel") ?? "").split(",").map((s) => s.trim()).filter(Boolean)
+    const raw = (params.get(selParam) ?? "").split(",").map((s) => s.trim()).filter(Boolean)
     const valid = raw.filter((k) => k in worktrees)
     if (valid.length === 0) return
     const next = new Set(valid)
@@ -173,45 +180,28 @@ export function StatusTable({
   }, [visibleJoined])
 
   function setQuery(next: string) {
+    if (filterParam === null) return
     const p = new URLSearchParams(params)
-    if (next.trim()) p.set("q", next.trim())
-    else p.delete("q")
+    if (next.trim()) p.set(filterParam, next.trim())
+    else p.delete(filterParam)
     setParams(p, { replace: true })
   }
 
   function clearQuery() {
+    if (filterParam === null) return
     const p = new URLSearchParams(params)
-    p.delete("q")
+    p.delete(filterParam)
     setParams(p, { replace: true })
   }
 
   return (
     <div className={cn("min-w-0", className)}>
-      {repoTabs && (repoTabs.tabs.names.length > 0 || repoTabs.tabs.other > 0) ? (
-        <div role="group" aria-label="Filter by repo" className="mb-3 flex flex-wrap gap-1.5">
-          <RepoTab active={!repoFilter} label={`All repos (${repoTabs.tabs.names.reduce((n, name) => n + (repoTabs.tabs.counts.get(name) ?? 0), 0) + repoTabs.tabs.other})`} onClick={() => repoTabs.setRepo("")} />
-          {repoTabs.tabs.names.map((n) => (
-            <RepoTab
-              key={n}
-              active={repoFilter === n}
-              label={`${n} (${repoTabs.tabs.counts.get(n) ?? 0})`}
-              onClick={() => repoTabs.setRepo(n)}
-            />
-          ))}
-          {repoTabs.tabs.other > 0 ? (
-            <RepoTab
-              active={repoFilter === "(other)"}
-              label={`(other) (${repoTabs.tabs.other})`}
-              onClick={() => repoTabs.setRepo("(other)")}
-            />
-          ) : null}
-        </div>
-      ) : null}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+      {embed?.hideFilter ? null : (
+      <><div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="relative min-w-52 flex-1 sm:max-w-xs">
           <Search aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            value={params.get("q") ?? ""}
+            value={filterParam === null ? "" : (params.get(filterParam) ?? "")}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Filter by key, branch, PR, path…"
             aria-label="Filter worktrees"
@@ -243,6 +233,27 @@ export function StatusTable({
           </span>
         ) : null}
       </div>
+      {repoTabs && (repoTabs.tabs.names.length > 0 || repoTabs.tabs.other > 0) ? (
+        <div role="group" aria-label="Filter by repo" className="mb-3 flex flex-wrap gap-1.5">
+          <RepoTab active={!repoFilter} label={`All repos (${repoTabs.tabs.names.reduce((n, name) => n + (repoTabs.tabs.counts.get(name) ?? 0), 0) + repoTabs.tabs.other})`} onClick={() => repoTabs.setRepo("")} />
+          {repoTabs.tabs.names.map((n) => (
+            <RepoTab
+              key={n}
+              active={repoFilter === n}
+              label={`${n} (${repoTabs.tabs.counts.get(n) ?? 0})`}
+              onClick={() => repoTabs.setRepo(n)}
+            />
+          ))}
+          {repoTabs.tabs.other > 0 ? (
+            <RepoTab
+              active={repoFilter === "(other)"}
+              label={`(other) (${repoTabs.tabs.other})`}
+              onClick={() => repoTabs.setRepo("(other)")}
+            />
+          ) : null}
+        </div>
+      ) : null}</>
+      )}
 
       {keys.length === 0 && q ? (
         <EmptyState

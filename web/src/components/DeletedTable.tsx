@@ -57,11 +57,11 @@ export function DeletedTable({
               placeholder="Filter deleted worktrees (key, branch, repo…)"
               className="min-w-52 flex-1 placeholder:text-muted-foreground/60 placeholder:italic sm:max-w-xs"
             />
-            {onDestroyDeleted && selection && selection.selected && selection.selected.size > 0 ? (
+            {onDestroyDeleted && selection?.selected && selection.selected.size > 0 ? (
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => onDestroyDeleted([...selection.selected].sort())}
+                onClick={() => onDestroyDeleted([...(selection.selected ?? new Set<string>())].sort())}
                 title={`Permanently destroy ${selection.selected.size} selected soft-deleted row(s): worktree dir + local branch + row. Remote branches untouched.`}
               >
                 Destroy ({selection.selected.size})
@@ -87,6 +87,7 @@ export function DeletedTable({
             worktrees={filtered}
             actions={actions}
             selection={selection}
+            embed={{ hideFilter: true, selParam: null, filterParam: null }}
           />
         </div>
       ) : null}

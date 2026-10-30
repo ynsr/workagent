@@ -46,6 +46,7 @@ export function DeactivatedTable({
           <StatusTable
             worktrees={filtered}
             actions={actions}
+            embed={{ hideFilter: true, selParam: null, filterParam: null }}
           />
         </div>
       ) : null}

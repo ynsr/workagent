@@ -100,6 +100,7 @@ export function Dashboard() {
   // Bulk-action selection (StatusTable `?sel=` column). Empty = all linked.
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [deletedSel, setDeletedSel] = useState<Set<string>>(new Set())
+  const selCount = selected.size
   // Prune keys that vanish from the table (cleanup/deactivation).
   useEffect(() => {
     if (worktrees && [...selected].some((k) => !(k in worktrees))) {
@@ -394,10 +395,16 @@ export function Dashboard() {
     setCleanupTarget(key)
   }
 
-  async function submitCleanup(key: string, opts: { force: boolean; hardDelete: boolean } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean } | { action: "undelete" }) {
+  async function submitCleanup(key: string, opts: { force: boolean; hardDelete: boolean } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean } | { action: "undelete" } | { action: "destroy" }) {
     setCleanupTarget(null)
     if ("action" in opts) {
       try {
+        if (opts.action === "destroy") {
+          const { run_id } = await createRun.mutateAsync({ command: "link", args: ["destroy-deleted", key], confirm: true })
+          runCreated(run_id, `Destroyed ${key}`)
+          void qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
+          return
+        }
         const cmd = opts.action === "deactivate" ? ["deactivate", key] : opts.action === "undelete" ? ["undelete", key] : ["remove", key, ...(opts.hardDelete ? ["--hard-delete"] : [])]
         const { run_id } = await createRun.mutateAsync({ command: "link", args: cmd, confirm: true })
         runCreated(run_id, opts.action === "deactivate" ? `Deactivated ${key}` : opts.action === "undelete" ? `Undeleted ${key}` : `Deleted ${key} from DB`)

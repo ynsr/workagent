@@ -287,6 +287,7 @@ export function buildStartArgs(form: StartFormValue): string[] {
   if (form.noStatus) args.push("--no-status")
   args.push(...runModeArgs(form.runMode))
   args.push(...extraPromptArgs(form))
+  return args
 }
 /** Confirm-dialog detail rows for a start run. */
 export function startFlagList(form: StartFormValue): string {

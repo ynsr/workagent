@@ -36,3 +36,13 @@ export interface StatusTableSelection {
   /** Called with the filtered visible keys whenever they change. */
   onVisibleKeys?: (keys: string[]) => void
 }
+
+/** Embedded-table options: hide the inner filter toolbar and namespace URL params. */
+export interface StatusTableEmbed {
+  /** Skip the filter toolbar (parent owns the single filter input). */
+  hideFilter?: boolean
+  /** URL param carrying the selection (default "sel"); null = internal-only, never touches the URL. */
+  selParam?: string | null
+  /** URL param carrying the filter text (default "q"); null = ignore the URL filter. */
+  filterParam?: string | null
+}

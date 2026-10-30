@@ -15,10 +15,17 @@ import {
 
 /** Release split button: main runs with last-used prefs; chevron picks checks+diff. */
 export function ReleaseButton({ repo, compact }: { repo: string; compact?: boolean }) {
+  const { data, isPending, isFetching } = useReleaseStatus(repo)
   const runConfirmed = useConfirmedRun()
   const [menuOpen, setMenuOpen] = useState(false)
   const [prefs, setPrefs] = useState(loadPrefs)
   const [noStatus, setNoStatus] = useState(false)
+  function pick(checks: Checks, diff: DiffMode) {
+    setPrefs({ checks, diff })
+    savePrefs(checks, diff)
+    setMenuOpen(false)
+  }
+  const releasable = data?.releasable === true
   const releasing = data?.releasing === true
   const reason = releasing
     ? `release already running for ${repo}`
