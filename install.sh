@@ -3,13 +3,17 @@
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 NO_COMPONENT_TAGS=""
+ONLINE=""
 for arg in "$@"; do
   case "$arg" in
     --no-component-tags | --production | --clean) NO_COMPONENT_TAGS=1 ;;
+    --online) ONLINE=1 ;;
     -h | --help)
-      echo "Usage: ./install.sh [--no-component-tags|--production|--clean]"
+      echo "Usage: ./install.sh [--no-component-tags|--production|--clean] [--online]"
       echo "  Default: web UI build keeps devtools data-component tags."
       echo "  Opt-out: skip the componentTagger so web/dist has no extra attributes."
+      echo "  uv installs offline from cache first (no network wait);"
+      echo "  pass --online to skip the offline attempt (or it retries online on miss)."
       exit 0
       ;;
     *) echo "warning: unknown argument '$arg' (ignored)" ;;
@@ -51,7 +55,12 @@ fi
 # including the optional `web` extra so `workagent serve` works out of the box.
 if command -v uv &>/dev/null; then
   echo "==> Installing via uv (with web extra)..."
-  uv tool install --force --from "$DIR[web]" workagent
+  if [ -n "$ONLINE" ]; then
+    uv tool install --force --from "$DIR[web]" workagent
+  else
+    uv tool install --force --offline --from "$DIR[web]" workagent \
+      || uv tool install --force --from "$DIR[web]" workagent
+  fi
 elif command -v pipx &>/dev/null; then
   echo "==> uv not found; installing via pipx (with web extra)..."
   pipx install --force "$DIR[web]" --system-site-packages 2>/dev/null \
