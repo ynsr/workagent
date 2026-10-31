@@ -61,7 +61,7 @@ def start(
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before terminal/headless harness commands (default: env_file in config.json, auto-created)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
     no_status: bool = typer.Option(False, "--no-status", help="Skip automatic issue status transitions."),
-    no_review: bool = typer.Option(False, "--no-review", help="Chain has no later review step: post-start status goes to 'ready to release' instead of 'code review'."),
+    no_review: bool = typer.Option(False, "--no-review", help="Chain has no later review step: post-start status is 'done' when no PR/MR exists, else 'code review'."),
 ) -> None:
     """Create worktree from issue and launch harness.
 

@@ -51,14 +51,22 @@ def _parse(key_or_ref: str) -> dict | None:
 
 
 def _jira_state_variants(state: str) -> list[str]:
-    """Candidate remote state spellings for a canonical lifecycle state."""
+    """Candidate remote state spellings for a canonical lifecycle state.
+
+    Only names that exist in the IPG workflow (plus harmless case
+    alternates): To Do / In Progress / Review / Product Test /
+    Ready to Release / Blocked / Released / Done. Non-existent states
+    (e.g. a bare "Code Review") and cross-state fallbacks (Ready to
+    Release → Done) are deliberately absent: trying them burns a failing
+    move and can land the issue on a wrong terminal state.
+    """
     s = (state or "").strip().lower()
     variants = {
         "in progress": ["In Progress", "In progress"],
-        "code review": ["Code Review", "Code review", "In Review"],
-        "ready to release": ["Ready to Release", "Ready to release", "Done"],
-        "released": ["Released", "Done"],
-        "done": ["Done", "Closed"],
+        "code review": ["Review", "Code Review", "Code review"],
+        "ready to release": ["Ready to Release", "Ready to release"],
+        "released": ["Released"],
+        "done": ["Done"],
     }
     return variants.get(s, [state])
 
@@ -239,7 +247,11 @@ def settle_issue_post_work(issue_ref: str, pr_url: str = "", *, dry_run: bool = 
 
 
 def settle_issue_post_review(issue_ref: str, verdict: str, *, dry_run: bool = False) -> str:
-    """Review-branch: only from `code review`; approved→`ready to release`, changes→`in progress`."""
+    """Review-branch: only from a review state; approved→`ready to release`, changes→`in progress`.
+
+    The settled-from state is `review` in trackers that name it so (IPG),
+    else the canonical `code review` alias.
+    """
     verdict = (verdict or "").strip().lower()
     if verdict not in ("approved", "merged", "changes"):
         return ""
@@ -250,7 +262,7 @@ def settle_issue_post_review(issue_ref: str, verdict: str, *, dry_run: bool = Fa
         return ""
     cur = _issue_state(parsed.get("number", ""), parsed.get("tool", ""),
                        parsed.get("url", "") or parsed.get("number", ""))
-    if cur and cur != "code review":
+    if cur and cur not in ("code review", "review"):
         return ""
     target = "ready to release" if verdict in ("approved", "merged") else "in progress"
     ok = set_issue_status(issue_ref, target, dry_run=dry_run)

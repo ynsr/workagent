@@ -117,6 +117,45 @@ def test_settle_post_review_gated(monkeypatch):
     assert seen == [("IPG-1", "ready to release"), ("IPG-1", "in progress")]
 
 
+def test_jira_variants_match_ipg_workflow():
+    assert st._jira_state_variants("code review") == ["Review", "Code Review", "Code review"]
+    assert st._jira_state_variants("ready to release") == ["Ready to Release", "Ready to release"]
+    assert st._jira_state_variants("released") == ["Released"]
+    assert st._jira_state_variants("done") == ["Done"]
+
+
+def test_no_done_fallback_on_ready_to_release(monkeypatch):
+    calls = []
+    def _run(*a, **k):
+        calls.append(a)
+        raise HarnessError('invalid transition\nAvailable states for issue IPG-7: \'To Do\', \'Ready to Release\'')
+    monkeypatch.setattr(st, "run_cmd", _run)
+    assert st.set_issue_status("IPG-7", "ready to release") is False
+    tried = [c[4] for c in calls]
+    assert tried == ["Ready to Release", "Ready to release"]  # both case-variants are in the valid set
+
+
+def test_no_done_fallback_when_valid_listed(monkeypatch):
+    calls = []
+    def _run(*a, **k):
+        calls.append(a)
+        raise HarnessError('invalid transition\nAvailable states for issue IPG-7: \'To Do\', \'Done\'')
+    monkeypatch.setattr(st, "run_cmd", _run)
+    assert st.set_issue_status("IPG-7", "ready to release") is False
+    tried = [c[4] for c in calls]
+    assert tried == ["Ready to Release"]  # Ready to release skipped (not valid), Done never tried
+    assert "Done" not in tried
+
+
+def test_settle_post_review_accepts_bare_review(monkeypatch):
+    seen = []
+    monkeypatch.setattr(st, "set_issue_status",
+                        lambda ref, state, dry_run=False: seen.append((ref, state)) or True)
+    monkeypatch.setattr(st, "_issue_state", lambda *a: "review")
+    assert st.settle_issue_post_review("IPG-1", "approved") == "ready to release"
+    assert seen == [("IPG-1", "ready to release")]
+
+
 def test_pr_review_state_gh(monkeypatch):
     def _run(*a, **k):
         if a[:3] == ("gh", "pr", "view"):
