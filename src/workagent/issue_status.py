@@ -53,19 +53,18 @@ def _parse(key_or_ref: str) -> dict | None:
 def _jira_state_variants(state: str) -> list[str]:
     """Candidate remote state spellings for a canonical lifecycle state.
 
-    Only names that exist in the IPG workflow (plus harmless case
-    alternates): To Do / In Progress / Review / Product Test /
-    Ready to Release / Blocked / Released / Done. Non-existent states
-    (e.g. a bare "Code Review") and cross-state fallbacks (Ready to
-    Release → Done) are deliberately absent: trying them burns a failing
-    move and can land the issue on a wrong terminal state.
+    IPG workflow states: To Do / In Progress / Review / Product Test /
+    Ready to Release / Blocked / Released / Done. Bare "Code Review" does
+    not exist and is absent. Cross-state fallbacks pair Review with Ready
+    to Release in both directions; the release mark prefers Released over
+    Done.
     """
     s = (state or "").strip().lower()
     variants = {
         "in progress": ["In Progress", "In progress"],
-        "code review": ["Review", "Code Review", "Code review"],
-        "ready to release": ["Ready to Release", "Ready to release"],
-        "released": ["Released"],
+        "code review": ["Review", "Ready to Release", "Ready to release"],
+        "ready to release": ["Ready to Release", "Ready to release", "Review"],
+        "released": ["Released", "Done"],
         "done": ["Done"],
     }
     return variants.get(s, [state])

@@ -118,33 +118,43 @@ def test_settle_post_review_gated(monkeypatch):
 
 
 def test_jira_variants_match_ipg_workflow():
-    assert st._jira_state_variants("code review") == ["Review", "Code Review", "Code review"]
-    assert st._jira_state_variants("ready to release") == ["Ready to Release", "Ready to release"]
-    assert st._jira_state_variants("released") == ["Released"]
+    assert st._jira_state_variants("code review") == ["Review", "Ready to Release", "Ready to release"]
+    assert st._jira_state_variants("ready to release") == ["Ready to Release", "Ready to release", "Review"]
+    assert st._jira_state_variants("released") == ["Released", "Done"]
     assert st._jira_state_variants("done") == ["Done"]
 
 
-def test_no_done_fallback_on_ready_to_release(monkeypatch):
+def test_ready_to_release_falls_back_to_review(monkeypatch):
     calls = []
     def _run(*a, **k):
         calls.append(a)
-        raise HarnessError('invalid transition\nAvailable states for issue IPG-7: \'To Do\', \'Ready to Release\'')
+        raise HarnessError('invalid transition\nAvailable states for issue IPG-7: \'To Do\', \'Review\'')
     monkeypatch.setattr(st, "run_cmd", _run)
     assert st.set_issue_status("IPG-7", "ready to release") is False
     tried = [c[4] for c in calls]
-    assert tried == ["Ready to Release", "Ready to release"]  # both case-variants are in the valid set
+    assert tried == ["Ready to Release", "Review"]  # R2R fails; Review fallback tried (valid)
 
 
-def test_no_done_fallback_when_valid_listed(monkeypatch):
+def test_code_review_falls_back_to_ready_to_release(monkeypatch):
+    calls = []
+    def _run(*a, **k):
+        calls.append(a)
+        raise HarnessError('invalid transition\nAvailable states for issue IPG-7: \'Ready to Release\'')
+    monkeypatch.setattr(st, "run_cmd", _run)
+    assert st.set_issue_status("IPG-7", "code review") is False
+    tried = [c[4] for c in calls]
+    assert tried == ["Review", "Ready to Release", "Ready to release"]  # Review fails; R2R fallbacks tried (valid)
+
+
+def test_released_prefers_released_then_done(monkeypatch):
     calls = []
     def _run(*a, **k):
         calls.append(a)
         raise HarnessError('invalid transition\nAvailable states for issue IPG-7: \'To Do\', \'Done\'')
     monkeypatch.setattr(st, "run_cmd", _run)
-    assert st.set_issue_status("IPG-7", "ready to release") is False
+    assert st.set_issue_status("IPG-7", "released") is False
     tried = [c[4] for c in calls]
-    assert tried == ["Ready to Release"]  # Ready to release skipped (not valid), Done never tried
-    assert "Done" not in tried
+    assert tried == ["Released", "Done"]  # Released not valid; Done fallback tried
 
 
 def test_settle_post_review_accepts_bare_review(monkeypatch):

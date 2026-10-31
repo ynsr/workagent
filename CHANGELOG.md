@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Jira variants per request: code review→[Review, R2R], ready to release→[..., Review], released→[Released, Done]; Code Review dropped; transitions logged in AGENTS.md [IPG-1066]
 - Jira move variants now match the IPG workflow (Review first for code review; no Code Review/Closed phantoms; no Ready to Release→Done fallback) + verdict settle accepts bare Review [IPG-1066]
 - `jira` invocations inherit JIRA_API_TOKEN from ~/.secrets/.env when not already exported (fixes status-transition auth failures; token never logged) [IPG-1066]
 - Removed row-only `link purge-deleted` and the Deleted-table Clear button; Deleted cleanup now goes through Destroy (worktree dir + local branch + row) [no-issue]
