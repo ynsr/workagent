@@ -152,6 +152,44 @@ def validate_template(steps: list[dict] | str,
         out.append(norm)
     return out
 
+def collapse_first_start(steps: list[dict]) -> tuple[list[dict], bool]:
+    """Drop every 'start' except the chain's first step; return (chain, dropped)."""
+    out: list[dict] = []
+    dropped = False
+    for i, s in enumerate(steps or []):
+        if str(s.get("kind", "")) == "start" and i != 0:
+            dropped = True
+            continue
+        out.append(s)
+    return out, dropped
+
+
+def compose_chains(sources: list[tuple[str, list[dict]]]) -> tuple[list[dict], list[str], bool]:
+    """Concatenate (label, steps) pairs; collapse extra starts; index-mapped errors."""
+    from .errors import HarnessError
+    merged: list[dict] = []
+    origin: list[str] = []
+    for label, steps in sources:
+        for j, s in enumerate(steps or []):
+            origin.append(f"{label}:{j + 1}")
+            merged.append(dict(s))
+    kept: list[dict] = []
+    kept_origin: list[str] = []
+    dropped = False
+    for i, (s, o) in enumerate(zip(merged, origin)):
+        if str(s.get("kind", "")) == "start" and i != 0:
+            dropped = True
+            continue
+        kept.append(s)
+        kept_origin.append(o)
+    try:
+        norm = validate_template(kept)
+    except HarnessError as e:
+        raise HarnessError(
+            f"compose: {e} (sources: {', '.join(kept_origin)})",
+            exit_code=2) from None
+    return norm, [label for label, _ in sources], dropped
+
 
 def _row(r: sqlite3.Row | tuple) -> dict:
     if isinstance(r, sqlite3.Row):
@@ -164,6 +202,11 @@ def _row(r: sqlite3.Row | tuple) -> dict:
         d["steps"] = json.loads(d.get("steps") or "[]")
     except (json.JSONDecodeError, TypeError):
         d["steps"] = []
+    try:
+        parents = json.loads(d.get("parent_labels") or "[]")
+        d["parent_labels"] = parents if isinstance(parents, list) else []
+    except (json.JSONDecodeError, TypeError):
+        d["parent_labels"] = []
     return d
 
 
@@ -180,6 +223,12 @@ def _flow_row(r: sqlite3.Row | tuple) -> dict:
             d[key] = json.loads(d.get(key) or default)
         except (json.JSONDecodeError, TypeError):
             d[key] = json.loads(default)
+    raw = d.get("effective_steps") or ""
+    try:
+        eff = json.loads(raw) if str(raw).strip() else None
+        d["effective_steps"] = eff if isinstance(eff, list) else None
+    except (json.JSONDecodeError, TypeError):
+        d["effective_steps"] = None
     return d
 
 
@@ -203,7 +252,8 @@ def get_template(db: Path, label: str) -> dict | None:
 def create_template(db: Path, *, name: str, label: str = "",
                     steps: str | list = "[]",
                     pre_execution: str = "",
-                    post_execution: str = "") -> dict:
+                    post_execution: str = "",
+                    parent_labels: list[str] | None = None) -> dict:
     """Insert a flow template; label defaults to the normalized name."""
     from .errors import HarnessError
     if not (name or "").strip():
@@ -215,15 +265,20 @@ def create_template(db: Path, *, name: str, label: str = "",
             f"name {name!r} normalizes to an empty label — pass label",
             exit_code=2)
     norm = validate_template(steps)
+    parents = list(parent_labels or [])
+    if not all(isinstance(p, str) and p for p in parents):
+        raise HarnessError("parent_labels must be a list of label strings",
+                           exit_code=2)
     now = _now_iso()
     with _connect(db) as conn:
         try:
             cur = conn.execute(
                 "INSERT INTO flow_templates (label, name, steps,"
-                " pre_execution, post_execution, created_at, modified_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " pre_execution, post_execution, parent_labels,"
+                " created_at, modified_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (key, name.strip(), json.dumps(norm), pre_execution or "",
-                 post_execution or "", now, now))
+                 post_execution or "", json.dumps(parents), now, now))
         except sqlite3.IntegrityError:
             raise HarnessError(
                 f"template label {key!r} already exists",
@@ -244,7 +299,7 @@ def update_template(db: Path, label: str, **fields) -> dict:
     """
     from .errors import HarnessError
     allowed = {"name", "steps", "pre_execution", "post_execution",
-               "new_label"}
+               "parent_labels", "new_label"}
     unknown = set(fields) - allowed
     if unknown:
         raise HarnessError(f"unknown fields: {sorted(unknown)}",
@@ -254,6 +309,17 @@ def update_template(db: Path, label: str, **fields) -> dict:
     if "steps" in fields:
         norm = validate_template(fields["steps"])
         fields["steps"] = json.dumps(norm)
+    if "parent_labels" in fields:
+        parents = fields["parent_labels"]
+        if isinstance(parents, str):
+            try:
+                parents = json.loads(parents)
+            except json.JSONDecodeError:
+                parents = None
+        if not isinstance(parents, list) or not all(isinstance(p, str) for p in parents):
+            raise HarnessError("parent_labels must be a list of label strings",
+                               exit_code=2)
+        fields["parent_labels"] = json.dumps(list(parents))
     new_label = fields.pop("new_label", None)
     with _connect(db) as conn:
         conn.row_factory = sqlite3.Row
@@ -307,21 +373,24 @@ def delete_template(db: Path, label: str) -> None:
 
 
 def create_flow(db: Path, *, template_label: str, worktree_ref: str = "",
-                repo_snapshot: dict | str | None = None) -> dict:
+                repo_snapshot: dict | str | None = None,
+                effective_steps: list | str | None = None) -> dict:
     """Insert a flow run (status=pending, current_step=0)."""
     from .errors import HarnessError
     if not (template_label or "").strip():
         raise HarnessError("template_label is required", exit_code=2)
     snap = repo_snapshot if isinstance(repo_snapshot, str) \
         else json.dumps(repo_snapshot or {})
+    eff = (effective_steps if isinstance(effective_steps, str)
+           else json.dumps(effective_steps) if effective_steps is not None else "")
     now = _now_iso()
     with _connect(db) as conn:
         cur = conn.execute(
             "INSERT INTO flows (template_label, worktree_ref,"
             " repo_snapshot, status, current_step, step_results,"
-            " created_at, modified_at)"
-            " VALUES (?, ?, ?, 'pending', 0, '[]', ?, ?)",
-            (template_label, worktree_ref or "", snap, now, now))
+            " effective_steps, created_at, modified_at)"
+            " VALUES (?, ?, ?, 'pending', 0, '[]', ?, ?, ?)",
+            (template_label, worktree_ref or "", snap, eff, now, now))
         row_id = cur.lastrowid
         conn.row_factory = sqlite3.Row
         r = conn.execute("SELECT * FROM flows WHERE id = ?",
@@ -374,7 +443,7 @@ def update_flow(db: Path, flow_id: int, **fields) -> dict:
     """Update mutable flow fields; bumps modified_at."""
     from .errors import HarnessError
     allowed = {"worktree_ref", "repo_snapshot", "status", "current_step",
-               "step_results"}
+               "step_results", "effective_steps"}
     unknown = set(fields) - allowed
     if unknown:
         raise HarnessError(f"unknown fields: {sorted(unknown)}",
@@ -383,9 +452,9 @@ def update_flow(db: Path, flow_id: int, **fields) -> dict:
         raise HarnessError(
             f"status must be one of {', '.join(FLOW_STATUSES)}"
             f" (got {fields['status']!r})", exit_code=2)
-    for key in ("repo_snapshot", "step_results"):
+    for key in ("repo_snapshot", "step_results", "effective_steps"):
         if key in fields and not isinstance(fields[key], str):
-            fields[key] = json.dumps(fields[key])
+            fields[key] = "" if fields[key] is None else json.dumps(fields[key])
     with _connect(db) as conn:
         conn.row_factory = sqlite3.Row
         existing = conn.execute("SELECT * FROM flows WHERE id = ?",

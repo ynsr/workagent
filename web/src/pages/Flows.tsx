@@ -268,6 +268,11 @@ export function Flows() {
             </>
           }
         >
+          {(detail.effective_steps?.length ?? 0) > 0 ? (
+            <p className="mb-2 text-[13px] text-muted-foreground">
+              Steps modified at launch — showing the run's effective chain.
+            </p>
+          ) : null}
           <ol className="grid gap-2">
             {(detail.step_results ?? []).map((r, i) => (
               <li key={i} className="flex items-start gap-2 rounded-md border p-2 text-sm">

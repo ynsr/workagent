@@ -293,9 +293,9 @@ export type RunCommand =
   | "flow"
 
 export interface FlowStep { kind: string; action_label?: string; config?: Record<string, unknown> }
-export interface FlowTemplateRow { id: number; label: string; name: string; steps: FlowStep[]; pre_execution: string; post_execution: string; created_at: string; modified_at: string }
+export interface FlowTemplateRow { id: number; label: string; name: string; steps: FlowStep[]; pre_execution: string; post_execution: string; parent_labels?: string[]; created_at: string; modified_at: string }
 export interface FlowStepResult { kind: string; status: string; detail?: string }
-export interface FlowRow { id: number; template_label: string; worktree_ref: string; repo_snapshot: { repo?: string; launch_ref?: string; default_branch?: string; release_branch?: string }; status: string; current_step: number; step_results: FlowStepResult[]; created_at: string; modified_at: string }
+export interface FlowRow { id: number; template_label: string; worktree_ref: string; repo_snapshot: { repo?: string; launch_ref?: string; default_branch?: string; release_branch?: string }; status: string; current_step: number; step_results: FlowStepResult[]; effective_steps?: FlowStep[] | null; created_at: string; modified_at: string }
 
 /** Display label for a PR/MR URL: "PR #33" (GitHub) or "MR #42" (GitLab);
  * falls back to the raw URL when the kind cannot be determined. */

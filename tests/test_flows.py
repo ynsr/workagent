@@ -162,6 +162,31 @@ def test_template_rename_collision_rejected(tmp_path, monkeypatch):
     assert ei.value.exit_code == 2
     assert "two" in str(ei.value)
 
+def test_template_row_parses_parent_labels_default(tmp_path, monkeypatch):
+    from workagent import store_flows as sf
+    db = tmp_path / "state.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    row = sf.create_template(db, name="T", label="t", steps='[{"kind": "sync"}]')
+    assert row["parent_labels"] == []
+
+def test_compose_chains_collapses_second_start(tmp_path, monkeypatch):
+    from workagent import store_flows as sf
+    a = [{"kind": "start"}, {"kind": "sync"}]
+    b = [{"kind": "start"}, {"kind": "cleanup"}]
+    merged, parents, dropped = sf.compose_chains([("a", a), ("b", b)])
+    assert [s["kind"] for s in merged] == ["start", "sync", "cleanup"]
+    assert parents == ["a", "b"] and dropped is True
+
+
+def test_compose_chains_index_mapped_error(tmp_path, monkeypatch):
+    from workagent import store_flows as sf
+    from workagent.errors import HarnessError
+    import pytest
+    with pytest.raises(HarnessError) as ei:
+        sf.compose_chains([("a", [{"kind": "sync"}]),
+                           ("b", [{"kind": "release"}])])
+    assert "b:1" in str(ei.value)
+
 
 def test_action_rename_rewrites_template_steps(tmp_path, monkeypatch):
     from workagent import store, store_sqlite as sq
