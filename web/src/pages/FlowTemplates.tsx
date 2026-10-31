@@ -53,7 +53,8 @@ export function FlowTemplates() {
   const [adding, setAdding] = useState(false)
   const [detail, setDetail] = useState<FlowTemplateRow | null>(null)
   const [editingLabel, setEditingLabel] = useState<string | null>(null)
-  const labelValid = /^[a-z0-9_]+$/.test(label)
+  const [selected, setSelected] = useState<string[]>([])
+  const [lineageNote, setLineageNote] = useState<string | null>(null)
 
   function handleNameChange(value: string) {
     setName(value)
@@ -75,6 +76,7 @@ export function FlowTemplates() {
     setPre("")
     setPost("")
     setEditingLabel(null)
+    setLineageNote(null)
   }
 
   async function handleAdd() {
@@ -125,9 +127,52 @@ export function FlowTemplates() {
     setPost(row.post_execution ?? "")
   }
 
+  function handleClone(row: FlowTemplateRow) {
+    setDetail(null)
+    setEditingLabel(null)
+    setName(`${row.name} (copy)`)
+    setLabel("")
+    setLabelDirty(false)
+    setSteps(structuredClone(row.steps ?? []))
+    setPre(row.pre_execution ?? "")
+    setPost(row.post_execution ?? "")
+    setLineageNote(`Clone of ${row.label} — saving creates a new template with lineage.`)
+  }
+
+  function handleCompose() {
+    const rows = selected
+      .map((label) => templates.find((t) => t.label === label))
+      .filter((t): t is FlowTemplateRow => Boolean(t))
+    if (rows.length === 0) return
+    const merged: FlowStep[] = []
+    let startSeen = false
+    let dropped = false
+    for (const row of rows) {
+      for (const step of row.steps ?? []) {
+        if (step.kind === "start") {
+          if (startSeen) {
+            dropped = true
+            continue
+          }
+          startSeen = true
+        }
+        merged.push(structuredClone(step))
+      }
+    }
+    const parents = rows.map((r) => r.label)
+    setEditingLabel(null)
+    setName("")
+    setLabel("")
+    setLabelDirty(false)
+    setSteps(merged)
+    setSelected([])
+    setLineageNote(
+      `Composed from ${parents.join(", ")}${dropped ? " — extra 'start' steps collapsed" : ""}.`,
+    )
+  }
+
   async function handleRemove(row: FlowTemplateRow) {
     const ok = await confirm({
-      action: "flow template delete",
       title: `Delete flow template ${row.name}`,
       description: "Deletes the flow template row. Flow runs are untouched.",
       destructive: true,
@@ -211,20 +256,41 @@ export function FlowTemplates() {
               />
             ) : (
               <div className="relative">
-                {isFetching && !isPending ? <RefreshOverlay /> : null}
+                {selected.length > 0 ? (
+                  <div className="mb-2 flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={handleCompose}>
+                      Compose {selected.length} selected
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setSelected([])}>
+                      Clear
+                    </Button>
+                  </div>
+                ) : null}
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-8" aria-label="Select" />
                       <TableHead>Name</TableHead>
                       <TableHead>Label</TableHead>
                       <TableHead>Steps</TableHead>
                       <TableHead>Updated</TableHead>
-                      <TableHead className="w-28" aria-label="Actions" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {templates.map((t) => (
                       <TableRow key={t.label}>
+                        <TableCell>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${t.name}`}
+                            checked={selected.includes(t.label)}
+                            onChange={(e) =>
+                              setSelected((prev) =>
+                                e.target.checked ? [...prev, t.label] : prev.filter((l) => l !== t.label),
+                              )
+                            }
+                          />
+                        </TableCell>
                         <TableCell>
                           <button
                             type="button"
@@ -233,8 +299,10 @@ export function FlowTemplates() {
                           >
                             {t.name}
                           </button>
+                          {t.parent_labels?.length ? (
+                            <div className="text-xs text-muted-foreground">from {t.parent_labels.join(", ")}</div>
+                          ) : null}
                         </TableCell>
-                        <TableCell className="font-mono text-xs">{t.label}</TableCell>
                         <TableCell className="font-mono text-xs">
                           {t.steps?.length ?? 0}
                         </TableCell>
@@ -243,6 +311,9 @@ export function FlowTemplates() {
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-1">
+                            <Button variant="ghost" size="sm" title={`Clone ${t.name}`} onClick={() => handleClone(t)}>
+                              <Copy aria-hidden />
+                            </Button>
                             <Button variant="ghost" size="sm" title={`Edit ${t.name}`} onClick={() => handleEdit(t)}>
                               <Pencil aria-hidden />
                             </Button>
@@ -296,6 +367,9 @@ export function FlowTemplates() {
             </div>
             <div className="grid gap-2">
               <Label>Steps</Label>
+              {lineageNote ? (
+                <p className="text-xs text-muted-foreground">{lineageNote}</p>
+              ) : null}
               <ChainEditor mode="edit" steps={steps} onChange={setSteps} knownActions={knownActions} />
             </div>
             <ScriptField id="flow-pre" label="Pre-execution script" value={pre} onChange={setPre} placeholder={"#!/bin/bash\nmake lint"} />
