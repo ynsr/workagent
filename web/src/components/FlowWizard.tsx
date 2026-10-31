@@ -1,12 +1,12 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { ChainEditor, startRepoState } from "@/components/ChainEditor"
+import { ChainEditor, startRepoState, validateChain } from "@/components/ChainEditor"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { Button } from "@/components/ui/button"
 import { errorText } from "@/components/StatusFeedback"
 import { useCreateRun } from "@/lib/queries"
-import type { FlowTemplateRow } from "@/lib/api"
+import type { FlowStep, FlowTemplateRow } from "@/lib/api"
 
 /** Launch wizard modal: read-only chain + per-step override editors, confirm
  * fans out one `flow run` per ref (worktree key or issue ref). Shared by the
@@ -22,24 +22,30 @@ export function FlowWizard({
 }) {
   const navigate = useNavigate()
   const createRun = useCreateRun()
+  const [working, setWorking] = useState<FlowStep[]>(() => structuredClone(template.steps ?? []))
   const [overrides, setOverrides] = useState<Record<number, Record<string, unknown>>>({})
   const [running, setRunning] = useState(false)
 
+  const base = template.steps ?? []
+  const changed = JSON.stringify(working) !== JSON.stringify(base)
+  const chainErrors = validateChain(working)
   const active = Object.fromEntries(
     Object.entries(overrides).filter(([, v]) => Object.keys(v).length > 0),
   )
   const stepConfig = Object.keys(active).length > 0 ? JSON.stringify(active) : null
   const sorted = [...refs].sort()
-  const repoState = startRepoState(template.steps ?? [], overrides)
+  const repoState = startRepoState(working, overrides)
   const repoMissing = repoState === "missing"
-
+  const runDisabled = running || sorted.length === 0 || repoMissing || chainErrors.length > 0
   async function handleConfirm() {
     setRunning(true)
     for (const key of sorted) {
       try {
         const { run_id } = await createRun.mutateAsync({
           command: "flow",
-          args: ["run", template.label, key, ...(stepConfig ? ["--step-config", stepConfig] : []), "--yes"],
+          args: ["run", template.label, key,
+            ...(changed ? ["--steps", JSON.stringify(working)] : []),
+            ...(stepConfig ? ["--step-config", stepConfig] : []), "--yes"],
           confirm: true,
         })
         toast.success(`Flow ${template.label} on ${key} started`, {
@@ -63,8 +69,8 @@ export function FlowWizard({
         <Button
           size="sm"
           onClick={() => void handleConfirm()}
-          disabled={running || sorted.length === 0 || repoMissing}
-          title={repoMissing ? "Select a Repository on the Start step to run" : undefined}
+          disabled={runDisabled}
+          title={repoMissing ? "Select a Repository on the Start step to run" : chainErrors.length > 0 ? chainErrors[0] : undefined}
         >
           {running ? "Starting…" : sorted.length > 1 ? `Run on ${sorted.length} worktrees` : "Run flow"}
         </Button>
@@ -75,13 +81,26 @@ export function FlowWizard({
           Repository is required on the Start step — select one below to enable Run flow.
         </p>
       ) : null}
+      {changed ? (
+        <p className="mb-2 text-[13px] text-muted-foreground">
+          Steps edited for this run only — the template is untouched.
+        </p>
+      ) : null}
       <ChainEditor
-        mode="launch"
-        steps={template.steps ?? []}
-        overrides={overrides}
-        onOverridesChange={setOverrides}
+        mode="edit"
+        steps={working}
+        onChange={setWorking}
         knownActions={[]}
       />
+      <div className="mt-3">
+        <ChainEditor
+          mode="launch"
+          steps={working}
+          overrides={overrides}
+          onOverridesChange={setOverrides}
+          knownActions={[]}
+        />
+      </div>
     </ActionDialog>
   )
 }
