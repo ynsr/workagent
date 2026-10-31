@@ -81,7 +81,8 @@ def _import_templates(db, rows: list) -> dict:
             _fl.create_template(
                 db, name=name, label=label, steps=raw.get("steps", []),
                 pre_execution=raw.get("pre_execution", ""),
-                post_execution=raw.get("post_execution", ""))
+                post_execution=raw.get("post_execution", ""),
+                parent_labels=raw.get("parent_labels", []))
             created += 1
         except HarnessError as e:
             if "already exists" not in str(e):
@@ -90,7 +91,8 @@ def _import_templates(db, rows: list) -> dict:
                 db, label or _fl.normalize_label(name), name=name,
                 steps=raw.get("steps", []),
                 pre_execution=raw.get("pre_execution", ""),
-                post_execution=raw.get("post_execution", ""))
+                post_execution=raw.get("post_execution", ""),
+                parent_labels=raw.get("parent_labels", []))
             updated += 1
     return {"created": created, "updated": updated}
 

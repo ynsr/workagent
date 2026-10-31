@@ -58,3 +58,13 @@ def test_import_validates_rows(tmp_path, monkeypatch):
         raise AssertionError("invalid action accepted")
     # tables were cleared first — export is now empty, proving replace
     assert b.export_backup(db)["actions"] == []
+
+def test_backup_roundtrips_parent_labels(tmp_path, monkeypatch):
+    from workagent import store_backup as b
+    db = _db(tmp_path, monkeypatch)
+    b.import_backup(db, {"version": b.BACKUP_VERSION, "actions": [],
+                         "flow_templates": [{"name": "T", "label": "t",
+                                             "steps": [{"kind": "sync"}],
+                                             "parent_labels": ["base"]}]})
+    snap = b.export_backup(db)
+    assert snap["flow_templates"][0]["parent_labels"] == ["base"]

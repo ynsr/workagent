@@ -128,10 +128,11 @@ by the Dashboard Actions dropdown.)
   "name": "Full review cycle",
   "steps": [{"kind": "start"}, {"kind": "review"}, {"kind": "cleanup"}],
   "pre_execution": "", "post_execution": "",
+  "parent_labels": [],
   "created_at": "…", "modified_at": "…"}]}
 ```
-(Flow page source: `flow template add/list/show/update/delete` run as runs; detail 404s
- on unknown label. `flow template update OLD [--new-label NEW] ...` renames the label (flow history retargeted). Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection. `flow run TEMPLATE REF [--step-config JSON] [--skip-steps 0[,N]] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`
+(Flow page source: `flow template add/list/show/update/clone/compose/delete` run as runs; detail 404s
+ on unknown label. `flow template update OLD [--new-label NEW] ...` renames the label (flow history retargeted). `flow template clone SRC [--name] [--label]` duplicates one template (lineage in `parent_labels`); `flow template compose LABEL --from A,B [--name]` concatenates chains (keep-first-start, lineage recorded). Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection. `flow run TEMPLATE REF [--steps JSON] [--step-config JSON] [--skip-steps 0[,N]] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`
  with target key `flow:<template>:<ref>` — one run per template+worktree pair; `--skip-steps` marks the paused resume step done-without-running (already finished by hand in the spawned terminal) and advances the cursor; `flow list [--worktree REF] [--json/--csv]`
  and `flow show ID [--json]` run as runs. `GET /api/flows?worktree=` scopes the run list to one worktree.)
 ### `GET /api/links`
@@ -268,7 +269,7 @@ Request:
 - Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`,
   `action run`/`action delete`, `flow run`/`flow template delete`) need
   `confirm: true` → the server appends `--yes`. `action add`/`update` and
-  `flow template add`/`update` are plain row writes — no confirm needed.
+  `flow template add`/`update`/`clone`/`compose` are plain row writes — no confirm needed.
   `force: true` requires `confirm: true` and appends `--force` (cleanup, register, repo remove).
   `cleanup --released` (optional ref; Dashboard "Close released" button):
   closes the tracker issue (`done`) for links whose branch tip is an
