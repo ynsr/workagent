@@ -11,7 +11,7 @@ SRC = Path(__file__).resolve().parent.parent / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-NETWORK_CLIS = ("gh", "glab", "jira-cli")
+NETWORK_CLIS = ("gh", "glab", "jira")
 
 
 def pytest_addoption(parser):
@@ -19,20 +19,20 @@ def pytest_addoption(parser):
         "--mock-network",
         action="store_true",
         default=True,
-        help="fail fast on network CLIs (gh/glab/jira-cli) instead of spawning them (default: on)",
+        help="fail fast on network CLIs (gh/glab/jira) instead of spawning them (default: on)",
     )
     parser.addoption(
         "--allow-network",
         action="store_false",
         dest="mock_network",
-        help="opt out of the network-CLI guard (real gh/glab/jira-cli calls allowed; may hang offline)",
+        help="opt out of the network-CLI guard (real gh/glab/jira calls allowed; may hang offline)",
     )
 
 
 def network_guard(real_run):
     """Wrap subprocess.run: network CLIs fail fast, rest passes through.
 
-    gh/glab/jira-cli raise FileNotFoundError instantly (run_cmd converts to
+    gh/glab/jira raise FileNotFoundError instantly (run_cmd converts to
     HarnessError "command not found"); every other argv — including git —
     delegates to the real run untouched.
     """
@@ -49,8 +49,7 @@ def network_guard(real_run):
 
 @pytest.fixture(autouse=True)
 def _mock_network_clis(request, monkeypatch):
-    # Default-on: gh/glab/jira-cli spawn → FileNotFoundError instantly
-    # (run_cmd converts to HarnessError "command not found"). Tests needing
+    # Default-on: gh/glab/jira spawn → FileNotFoundError instantly
     # a specific CLI stub monkeypatch subprocess.run again — later patches
     # compose over this one. --allow-network opts out for live-CLI runs.
     if not request.config.getoption("mock_network"):

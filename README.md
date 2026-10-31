@@ -150,7 +150,7 @@ column (`behind|ahead` vs the remote-tracking base branch — no fetch;
 color for the state (open/merged/closed). `status <ref>` shows a detail
 panel (worktree, issue URL, PR title/author/URL, behind/ahead counts); both
 modes support `--json`. `--worktree` restores the worktree-path column.
-The issue URL is built from jira-cli's configured site (`<site>/browse/KEY`)
+The issue URL is built from jira's configured site (`<site>/browse/KEY`)
 or the GitHub repo in the worktree key; a stored URL wins.
 The PR/MR lookup CLI (gh/glab) is chosen from the repo's origin URL host
 (gh's known hosts vs glab's) and persisted per registered repo, so GitLab
@@ -230,9 +230,9 @@ Install it with `pipx install ./vendored/git-wt`.
 
 ## Caveats
 
-- Issue trackers: GitHub (`gh`), GitLab (`glab`), and Jira (`jira-cli`:
-  `KEY-123` or `https://<host>/browse/KEY-123`). Jira URLs are configured
-  via `jira-cli setup` (`~/.jira-cli.json`, `JIRA_URL`/`JIRA_USER`/`JIRA_PASS`).
+- Issue trackers: GitHub (`gh`), GitLab (`glab`), and Jira (`jira`:
+  `KEY-123` or `https://<host>/browse/KEY-123`). Jira is configured
+  via `jira init` (`~/.config/.jira/.config.yml`).
 - v1 supports the `omp` harness only; `ccline` comes later.
 - `workagent start` execs `omp` in TTY mode (replaces the process); use
   `--dry-run` to preview without launching, or `--no-tty` to run
@@ -241,7 +241,7 @@ Install it with `pipx install ./vendored/git-wt`.
 ## How It Works
 
 1. `start <issue>` → resolve repo (picker below, or `--repo`) → fetch
-   title/body via `gh`/`glab`/`jira-cli` → `git-wt start --link/--issue` →
+   title/body via `gh`/`glab`/`jira` → `git-wt start --link/--issue` →
 2. `review <PR>` → fetch head ref → worktree on that branch → exec `omp`
    with the pr-reviewer prompt. A worktree key/issue ref resolves to that
    worktree's recorded PR/MR.

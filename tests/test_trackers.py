@@ -130,56 +130,49 @@ def test_host_scoped_tracker_rejects_foreign_remote_repo(isolated_config, tmp_pa
 
 
 def test_list_my_issues_jira_request(isolated_config, tmp_path, monkeypatch):
-    cfg = tmp_path / "config.json"
-    cfg.write_text(json.dumps({"url": "https://jira.example.com"}))
+    cfg = tmp_path / "config.yml"
+    cfg.write_text("server: https://jira.example.com\n")
     monkeypatch.setattr(refs, "_JIRA_CONFIGS", (cfg,))
     calls = []
 
     def fake(*a, **k):
         calls.append(a)
-        return json.dumps({"issues": [
-            {"key": "IPG-981", "fields": {"summary": "T",
-                                          "status": {"name": "In Progress"},
-                                          "created": "2026-09-20T10:00:00.000+0000"}}]})
+        return json.dumps([{"key": "IPG-981", "summary": "T", "status": "In Progress",
+                            "created": "2026-09-20T10:00:00.000+0000"}])
 
     monkeypatch.setattr(trackers, "run_cmd", fake)
     rows = trackers.list_my_issues()
     assert rows[0]["key"] == "jira:IPG-981" and rows[0]["status"] == "In Progress"
     assert rows[0]["title"] == "T" and rows[0]["created"].endswith("+0000")
     assert rows[0]["url"] == "https://jira.example.com/browse/IPG-981"
-    assert calls[0][:3] == ("jira-cli", "request", "GET")
+    assert calls[0][:3] == ("jira", "issue", "list")
 
 
-def test_list_my_issues_jira_search_fallback(isolated_config, monkeypatch):
-    """This machine's jira-cli shim has no `request` subcommand; the search
-    seam returns a bare list of raw-API issue objects."""
+def test_list_my_issues_jira_flat_raw(isolated_config, monkeypatch):
+    """The new `jira issue list --raw` returns a flat list of issue dicts."""
     calls = []
 
     def fake(*a, **k):
         calls.append(a)
-        if a[:2] == ("jira-cli", "request"):
-            return "Unknown: request"  # shim: rc 0, not JSON
-        if a[:2] == ("jira-cli", "search"):
-            return json.dumps([{"key": "IPG-7", "fields": {
-                "summary": "S", "status": {"name": "To Do"},
-                "created": "2026-09-20T10:00:00.000+0000"}}])
-        raise HarnessError("command not found: gh")
+        return json.dumps([{"key": "IPG-7",
+                            "summary": "S", "status": "To Do",
+                            "created": "2026-09-20T10:00:00.000+0000"}])
 
     monkeypatch.setattr(trackers, "run_cmd", fake)
     rows = trackers.list_my_issues()
     assert rows[0]["key"] == "jira:IPG-7" and rows[0]["status"] == "To Do"
-    assert calls[1][1] == "search"
-    assert calls[1][2] == ('assignee = currentUser() AND '
-                           'created >= -90d ORDER BY created DESC')
+    assert calls[0][:2] == ("jira", "issue")
+    assert "project IS NOT EMPTY" in calls[0][calls[0].index("-q") + 1]
+
 
 def test_list_my_issues_jira_plain_fallback(isolated_config, monkeypatch):
-    """Stock jira-cli without request/search: plain issue list, 2+ space
-    column padding, right-anchored columns (…|status|created)."""
+    """Raw seam broken: plain issue list, 2+ space column padding,
+    right-anchored columns (…|status|created)."""
 
     def fake(*a, **k):
-        if a[:2] == ("jira-cli", "request") or a[:2] == ("jira-cli", "search"):
+        if a[:3] == ("jira", "issue", "list") and "--raw" in a:
             raise HarnessError("unknown command")
-        if a[0] == "jira-cli":
+        if a[0] == "jira":
             assert a[1:3] == ("issue", "list")
             return "\n".join([
                 "IPG-5    Fix login flow    In Progress    2026-09-20T10:00:00.000+0000",
@@ -199,11 +192,9 @@ def test_list_my_issues_jira_plain_unparseable_warns(isolated_config,
     through to the all-tiers warning, not report zero issues."""
 
     def fake(*a, **k):
-        if a[:2] == ("jira-cli", "request"):
-            return "Unknown: request"  # rc 0, not JSON
-        if a[:2] == ("jira-cli", "search"):
-            return "Unknown: search"  # rc 0, not JSON
-        if a[:2] == ("jira-cli", "issue"):
+        if a[0] == "jira" and "--raw" in a:
+            return "Unknown: raw"  # rc 0, not JSON
+        if a[:2] == ("jira", "issue"):
             return "Unknown: issue list"  # rc 0, no parseable rows
         raise HarnessError("command not found: gh")
 
@@ -221,7 +212,7 @@ def test_list_my_issues_gh_search(isolated_config, monkeypatch):
                  "title": "Crash on save", "updatedAt": "2026-09-21T08:47:57Z",
                  "url": "https://github.com/o/r/issues/7",
                  "createdAt": "2026-09-19T01:00:00Z"}])
-        raise HarnessError("command not found: jira-cli")
+        raise HarnessError("command not found: jira")
 
     monkeypatch.setattr(trackers, "run_cmd", fake)
     rows = trackers.list_my_issues()
@@ -354,8 +345,8 @@ def test_initial_query_is_assigned_or_created_90d():
     from workagent import trackers
     jql = trackers._issues_jql()
     assert jql == ("(reporter = currentUser() OR assignee = currentUser()) "
-                   "AND created >= -90d ORDER BY created DESC")
-    assert trackers._issues_jql(365, False) == "created >= -365d ORDER BY created DESC"
+                   "AND created >= -90d")
+    assert trackers._issues_jql(365, False) == "created >= -365d"
 
 
 def test_jql_split_tags_assignee_and_reporter():
@@ -363,8 +354,8 @@ def test_jql_split_tags_assignee_and_reporter():
     reporter-me); their union still covers the old OR query's slice."""
     from workagent import trackers
     split = trackers._issues_jql_split()
-    assert split == [("assigned_to_me", "assignee = currentUser() AND created >= -90d ORDER BY created DESC"),
-                     ("created_by_me", "reporter = currentUser() AND created >= -90d ORDER BY created DESC")]
+    assert split == [("assigned_to_me", "assignee = currentUser() AND created >= -90d"),
+                     ("created_by_me", "reporter = currentUser() AND created >= -90d")]
 
 
 def test_jira_rows_carry_query_origin(monkeypatch):
@@ -378,11 +369,11 @@ def test_jira_rows_carry_query_origin(monkeypatch):
             "created": "2026-09-20T10:00:00.000+0000",
             "reporter": {"name": "someone"}, "assignee": {"name": "me"}}}])
     def fake(*a, **k):
-        if a[:2] == ("jira-cli", "request"):
-            jql = a[3]
-            if jql.startswith("assignee"):
+        if a[:2] == ("jira", "issue"):
+            jql = a[a.index("-q") + 1] if "-q" in a else ""
+            if "assignee = currentUser()" in jql:
                 return payload("IPG-1")
-            return payload("IPG-1") if "reporter" in jql else "Unknown: request"
+            return payload("IPG-1") if "reporter = currentUser()" in jql else "Unknown: raw"
         raise HarnessError("command not found: gh")
     monkeypatch.setattr(trackers, "run_cmd", fake)
     rows = trackers._jira_my_issues([], days=90, mine=True)

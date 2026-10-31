@@ -26,7 +26,7 @@ Install locally:
 | Module | Responsibility |
 |--------|---------------|
 | `src/workagent/cli.py` | Typer app — `start`/`review`(+`--all`/`--sequential`/`--fix`)/`sync`/`cleanup`(+`--merged`)/`register`/`repo add\|list\|remove`/`link list\|set\|remove`/`status`/`candidates`/`cd`/`open`/`doctor`/`serve`/`service install\|uninstall\|start\|stop\|restart\|status\|logs`/`completions show\|install`; Rich tables/CSV/JSON output; `status`/`link list` tables carry branch/commits/PR/`ci` (success\|failure\|running\|not_started; ✓/✗/● rendered, `-` when none) + `wt_valid` in `--json` |
-| `src/workagent/refs.py` | issue/PR ref parsing (`OWNER/REPO#N`, Jira `KEY-123`/browse URLs, URLs, bare N) + `gh`/`glab`/`jira-cli` fetching; `fetch_open_prs` (open PR/MR rows) + `fetch_ci_status` (soft-fail CI lookup, None + stderr warning); recorded `pr_url` seeds the PR cell when cache/query find none; GitLab matches render `MR #N` |
+| `src/workagent/refs.py` | issue/PR ref parsing (`OWNER/REPO#N`, Jira `KEY-123`/browse URLs, URLs, bare N) + `gh`/`glab`/`jira` fetching; `fetch_open_prs` (open PR/MR rows) + `fetch_ci_status` (soft-fail CI lookup, None + stderr warning); recorded `pr_url` seeds the PR cell when cache/query find none; GitLab matches render `MR #N` |
 | `src/workagent/repos.py` | repo resolution (`--repo` name/path/URL, cwd, interactive pick), worktree→main-checkout resolution, default-branch detection, registry, `repo_names()` completion source, remote-host-aware gh/glab detection (`repos.<name>.tool` persisted in the registry) |
 | `src/workagent/pick.py` | shared arrow-key picker for every multi-choice prompt: stderr render, ↑/↓ + j/k + Enter, optional dim description per item, q/Esc aborts, `None` on non-TTY; raw-mode-safe `\r\n` terminators (no staircase); testable via `read`/`stream` seams |
 | `src/workagent/trackers.py` | tracker↔repo relation: canonical ids (`jira:PREFIX`, `github:O/R`, `gitlab:host/g/r`), `check_or_record` guard, `resolve_for_tracker` repo picker, `link` command data; `list_my_issues` (jira `_MY_ISSUES_JQL` reporter=me, all statuses, last year + gh authored-by-me last year; never raises, appends warnings) |
@@ -172,8 +172,8 @@ become `skipped:<reason>` rows — never torn down. Requires `--yes`
   none (display only — never drives sync strategy). User content in Rich
   output is `rich.markup.escape`d (PR titles contain `[`). Detail panel
   (`status <ref>`) shows the full issue URL via `refs.issue_url(key,
-  stored)` — jira site from jira-cli's config
-  (`~/.config/jira-cli/config.json`, fallback `~/.jira-cli.json`), GitHub
+  stored)` — jira site from jira's config
+  (`~/.config/.jira/.config.yml`, legacy `~/.config/jira-cli/config.json` fallback), GitHub
   issues URL from the key; a stored `issue_url`/http `issue` wins. A
   missing PR/MR yields a `create_hint` (GitHub web URL, else a
   `glab mr create` command).

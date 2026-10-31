@@ -82,17 +82,15 @@ def test_api_issues_selection_params_requery(client, monkeypatch):
 
 
 def test_api_issues_jira_ok(client, monkeypatch, tmp_path):
-    cfg = tmp_path / "config.json"
-    cfg.write_text(json.dumps({"url": "https://jira.example.com"}))
+    cfg = tmp_path / "config.yml"
+    cfg.write_text("server: https://jira.example.com\n")
     monkeypatch.setattr(refs, "_JIRA_CONFIGS", (cfg,))
 
     def fake(*a, **k):
         if a[0] == "gh":
             raise HarnessError("command not found: gh")
-        return json.dumps({"issues": [
-            {"key": "IPG-981", "fields": {"summary": "T",
-                                          "status": {"name": "In Progress"},
-                                          "created": "2026-09-20T10:00:00.000+0000"}}]})
+        return json.dumps([{"key": "IPG-981", "summary": "T", "status": "In Progress",
+                            "created": "2026-09-20T10:00:00.000+0000"}])
 
     monkeypatch.setattr(trackers, "run_cmd", fake)
     body = client.get("/api/issues").json()

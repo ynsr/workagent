@@ -3,9 +3,8 @@
 Canonical states: in progress / code review / ready to release / released / done.
 
 Tracker mapping:
-  jira-cli → discover-then-transition: `jira-cli issue KEY --format json`
-             lists available transitions; pick the target whose name matches
-             `state` (case-insensitive), run `jira-cli issue KEY transition <ID>`.
+  jira     → direct move: `jira issue move KEY "State"` (state names are the
+             canonical lifecycle states; error output lists valid states).
   gh       → label swap: `gh issue edit <target> --add-label "status: <state>"`
              `--remove-label` every other `status: *` sibling; `gh issue close
              --reason completed` when state == done.
@@ -51,33 +50,30 @@ def _parse(key_or_ref: str) -> dict | None:
     return parsed
 
 
-def _jira_transition_id(number: str, state: str) -> str | None:
-    """Transition ID whose target matches *state*; None when not offered."""
-    out = run_cmd("jira-cli", "issue", number, "--format", "json")
-    try:
-        data = json.loads(out or "{}")
-    except (json.JSONDecodeError, TypeError, ValueError):
-        raise HarnessError(f"cannot parse jira-cli output for {number}")
-    want = (state or "").strip().lower()
-    candidates = data.get("transitions") or data.get("availableTransitions") or []
-    if isinstance(candidates, dict):
-        candidates = list(candidates.values())
-    for t in candidates if isinstance(candidates, list) else []:
-        if not isinstance(t, dict):
+def _jira_state_variants(state: str) -> list[str]:
+    """Candidate remote state spellings for a canonical lifecycle state."""
+    s = (state or "").strip().lower()
+    variants = {
+        "in progress": ["In Progress", "In progress"],
+        "code review": ["Code Review", "Code review", "In Review"],
+        "ready to release": ["Ready to Release", "Ready to release", "Done"],
+        "released": ["Released", "Done"],
+        "done": ["Done", "Closed"],
+    }
+    return variants.get(s, [state])
+
+
+def _jira_move(number: str, state: str) -> None:
+    """Move a Jira issue to *state*; raises HarnessError with valid states."""
+    last: HarnessError | None = None
+    for variant in _jira_state_variants(state):
+        try:
+            run_cmd("jira", "issue", "move", number, variant, "--no-input")
+            return
+        except HarnessError as e:
+            last = e
             continue
-        target = t.get("to") or t.get("toStatus") or {}
-        name = t.get("name", "") if isinstance(target, str) else (
-            target.get("name", "") if isinstance(target, dict) else "")
-        if str(name).strip().lower() == want:
-            tid = t.get("id", "")
-            return str(tid) if str(tid) else None
-        # Some jira-cli builds nest under status: {name: ...}.
-        status = t.get("status") or {}
-        sname = status.get("name", "") if isinstance(status, dict) else ""
-        if str(sname).strip().lower() == want:
-            tid = t.get("id", "")
-            return str(tid) if str(tid) else None
-    return None
+    raise last if last is not None else HarnessError(f"cannot move {number} to {state}")
 
 
 def _label_siblings(state: str) -> list[str]:
@@ -90,10 +86,11 @@ def _label_siblings(state: str) -> list[str]:
 def _issue_state(number: str, tool: str, target: str) -> str:
     """Best-effort current issue state (`""` when unknown). Never raises."""
     try:
-        if tool == "jira-cli":
-            out = run_cmd("jira-cli", "issue", number, "--format", "json")
+        if tool == "jira":
+            out = run_cmd("jira", "issue", "view", number, "--raw")
             data = json.loads(out or "{}")
-            cur = data.get("status") or data.get("fields", {}).get("status") or {}
+            fields = data.get("fields", {}) if isinstance(data, dict) else {}
+            cur = fields.get("status", {}) if isinstance(fields, dict) else {}
             name = cur.get("name", "") if isinstance(cur, dict) else str(cur)
             return str(name or "").strip().lower()
         if tool == "gh":
@@ -167,15 +164,11 @@ def set_issue_status(key_or_ref: str, state: str, *, dry_run: bool = False) -> b
     number = parsed.get("number", "")
     url = parsed.get("url", "")
     try:
-        if tool == "jira-cli":
+        if tool == "jira":
             if dry_run:
-                eprint(f"dry-run: would transition {number} -> {state}")
+                eprint(f"dry-run: would move {number} -> {state}")
                 return True
-            tid = _jira_transition_id(number, state)
-            if tid is None:
-                eprint(f"warning: no {state!r} transition offered for {number} — skipping")
-                return False
-            run_cmd("jira-cli", "issue", number, "transition", tid)
+            _jira_move(number, state)
         elif tool == "gh":
             target = url or number
             if dry_run:

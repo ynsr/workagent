@@ -1,4 +1,4 @@
-"""Issue/PR link parsing and fetching via jira-cli/gh/glab.
+"""Issue/PR link parsing and fetching via jira/gh/glab.
 
 Supported inputs:
   - Jira key:          IPG-980 or jira:IPG-980 (issue_key() emits the prefixed form)
@@ -33,10 +33,10 @@ def parse_ref(ref: str) -> dict:
     """Parse an issue/PR ref into {kind, tool, repo, number, url}."""
     m = _JIRA_URL.match(ref)
     if m:
-        return {"kind": "issue", "tool": "jira-cli", "repo": "", "number": m.group(1), "url": ref}
+        return {"kind": "issue", "tool": "jira", "repo": "", "number": m.group(1), "url": ref}
     m = _JIRA_KEY.match(ref)
     if m:
-        return {"kind": "issue", "tool": "jira-cli", "repo": "", "number": m.group(1), "url": ref}
+        return {"kind": "issue", "tool": "jira", "repo": "", "number": m.group(1), "url": ref}
     m = _GITHUB_ISSUE.match(ref)
     if m:
         return {"kind": "issue", "tool": "gh", "repo": m.group(1), "number": m.group(2), "url": ref}
@@ -71,6 +71,29 @@ def slugify_repo(name: str) -> str:
     return re.sub(r"-{2,}", "-", slug)
 
 
+def _adf_text(node) -> str:
+    """Best-effort plain text from a Jira ADF description node/dict."""
+    if node is None:
+        return ""
+    if isinstance(node, str):
+        return node
+    if isinstance(node, list):
+        return "".join(_adf_text(n) for n in node)
+    if isinstance(node, dict):
+        if node.get("type") == "text":
+            return str(node.get("text", ""))
+        parts = [_adf_text(node.get("content", []))]
+        if node.get("type") == "hardBreak":
+            return "\n"
+        text = "".join(parts)
+        if node.get("type") in ("paragraph", "heading", "blockquote"):
+            return text + "\n"
+        if node.get("type") == "listItem":
+            return "- " + text + "\n"
+        return text
+    return str(node)
+
+
 def issue_key(parsed: dict, repo: str = "") -> str:
     """Stable key for links.json, e.g. 'jira:IPG-980' or 'github:owner/repo#22'.
 
@@ -79,7 +102,7 @@ def issue_key(parsed: dict, repo: str = "") -> str:
     branch-style slug of the repo/checkout name. GitHub/GitLab keys already
     embed the repo, so *repo* is ignored for them.
     """
-    if parsed["tool"] == "jira-cli":
+    if parsed["tool"] == "jira":
         base = f"jira:{parsed['number']}"
         suffix = slugify_repo(Path(repo).name if "/" in repo else repo) if repo else ""
         return f"{base}{_KEY_REPO_SEP}{suffix}" if suffix else base
@@ -117,14 +140,34 @@ def matching_issue_keys(want: str, links: dict) -> list[str]:
 
 
 _JIRA_CONFIGS = (
+    Path.home() / ".config" / ".jira" / ".config.yml",
     Path.home() / ".config" / "jira-cli" / "config.json",
     Path.home() / ".jira-cli.json",
 )
 
 
+def _jira_site_from_yaml(path: Path) -> str | None:
+    """Extract `server:` from the new jira CLI YAML config (no yaml dep)."""
+    try:
+        for line in path.read_text().splitlines():
+            m = re.match(r"\s*server\s*:\s*(\S+)", line)
+            if m:
+                return m.group(1).strip().strip("\"'").rstrip("/")
+    except OSError:
+        return None
+    return None
+
+
 def jira_site() -> str | None:
-    """Base site URL from jira-cli's config; None when unset/invalid."""
-    for path in _JIRA_CONFIGS:
+    """Base site URL from jira's config; None when unset/invalid.
+
+    Prefers the new CLI YAML (`~/.config/.jira/.config.yml`, `server:` key),
+    falls back to the legacy jira-cli JSON (`url` key).
+    """
+    yaml_site = _jira_site_from_yaml(_JIRA_CONFIGS[0])
+    if yaml_site:
+        return yaml_site
+    for path in _JIRA_CONFIGS[1:]:
         try:
             data = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError, ValueError):
@@ -139,7 +182,7 @@ def issue_url(key: str, stored: str | None = None) -> str | None:
     """Full issue URL for a session key; a stored http URL wins.
 
     jira:KEY[@repo] → <site>/browse/KEY (repo suffix stripped; site from
-    jira-cli config)
+    jira config)
     github:r#N → https://github.com/r/issues/N
     gitlab:…#N → None (the key does not carry the host)
     """
@@ -158,14 +201,21 @@ def issue_url(key: str, stored: str | None = None) -> str | None:
 
 
 def fetch_issue(parsed: dict) -> dict:
-    """Return {title, body} for an issue ref via jira-cli/gh/glab."""
-    if parsed["tool"] == "jira-cli":
-        out = run_cmd("jira-cli", "issue", parsed["number"], "--format", "json")
+    """Return {title, body} for an issue ref via jira/gh/glab."""
+    if parsed["tool"] == "jira":
+        out = run_cmd("jira", "issue", "view", parsed["number"], "--raw")
         try:
             data = json.loads(out or "{}")
         except json.JSONDecodeError:
-            raise HarnessError(f"cannot parse jira-cli output for {parsed['number']}")
-        return {"title": data.get("summary", ""), "body": data.get("description", "") or ""}
+            raise HarnessError(f"cannot parse jira output for {parsed['number']}")
+        fields = data.get("fields", data) if isinstance(data, dict) else {}
+        if not isinstance(fields, dict):
+            fields = {}
+        summary = fields.get("summary", data.get("summary", "") if isinstance(data, dict) else "")
+        desc = fields.get("description", "")
+        if isinstance(desc, dict):
+            desc = _adf_text(desc)
+        return {"title": str(summary or ""), "body": str(desc or "")}
     if parsed["tool"] == "gh":
         target = parsed["url"] if parsed["repo"] else parsed["number"]
         args = ["gh", "issue", "view", target, "--json", "title,body"]

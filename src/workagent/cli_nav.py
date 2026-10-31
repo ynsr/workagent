@@ -158,7 +158,7 @@ def register(
             issue_url = refs.issue_url(key_for_url) or None
         elif parsed["url"].startswith("http"):
             issue_url = parsed["url"]
-        elif parsed["tool"] == "jira-cli" and (site := refs.jira_site()):
+        elif parsed["tool"] == "jira" and (site := refs.jira_site()):
             issue_url = f"{site}/browse/{parsed['number']}"
         if key is None:
             key = refs.issue_key(parsed, Path(main_repo).name) if main_repo else refs.issue_key(parsed)

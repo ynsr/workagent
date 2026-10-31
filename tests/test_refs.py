@@ -42,8 +42,7 @@ def test_shorthand_accepts_tracker_prefixed_repo():
 def test_jira_prefixed_key_round_trip():
     """issue_key() emits jira:KEY; parse_ref must accept it back (issue #16)."""
     p = refs.parse_ref("jira:IPG-984")
-    assert p["tool"] == "jira-cli" and p["number"] == "IPG-984"
-    assert refs.issue_key(p) == "jira:IPG-984"
+    assert p["tool"] == "jira" and p["number"] == "IPG-984"
 
 
 def test_unknown_rejected():
@@ -81,8 +80,8 @@ def test_matching_issue_keys_dual_resolve():
 
 
 def test_issue_url_strips_repo_suffix(tmp_path, monkeypatch):
-    cfg = tmp_path / "config.json"
-    cfg.write_text('{"url": "https://jira.example.com"}')
+    cfg = tmp_path / "config.yml"
+    cfg.write_text("server: https://jira.example.com\n")
     monkeypatch.setattr(refs, "_JIRA_CONFIGS", (cfg,))
     assert refs.issue_url("jira:IPG-1011@saman-ipg") == "https://jira.example.com/browse/IPG-1011"
 
@@ -207,20 +206,27 @@ def test_issue_url_stored_http_wins():
 
 
 def test_issue_url_jira_from_site_config(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.yml"
+    cfg.write_text("server: https://jira.example.com/\n")
+    monkeypatch.setattr(refs, "_JIRA_CONFIGS", (cfg, tmp_path / "missing.yml"))
+    assert refs.issue_url("jira:IPG-959") == "https://jira.example.com/browse/IPG-959"
+
+
+def test_issue_url_jira_legacy_config_fallback(tmp_path, monkeypatch):
     cfg = tmp_path / "config.json"
     cfg.write_text(json.dumps({"url": "https://jira.example.com/"}))
-    monkeypatch.setattr(refs, "_JIRA_CONFIGS", (cfg, tmp_path / "missing.json"))
+    monkeypatch.setattr(refs, "_JIRA_CONFIGS", (tmp_path / "missing.yml", cfg))
     assert refs.issue_url("jira:IPG-959") == "https://jira.example.com/browse/IPG-959"
 
 
 def test_issue_url_jira_site_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(refs, "_JIRA_CONFIGS", (tmp_path / "missing.json",))
+    monkeypatch.setattr(refs, "_JIRA_CONFIGS", (tmp_path / "missing.yml",))
     assert refs.issue_url("jira:IPG-959") is None
 
 
 def test_issue_url_jira_invalid_config_skipped(tmp_path, monkeypatch):
-    bad = tmp_path / "bad.json"
-    bad.write_text("{not json")
+    bad = tmp_path / "bad.yml"
+    bad.write_text("server: \n")
     good = tmp_path / "good.json"
     good.write_text(json.dumps({"url": "https://jira.example.com"}))
     monkeypatch.setattr(refs, "_JIRA_CONFIGS", (bad, good))

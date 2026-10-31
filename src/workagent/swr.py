@@ -2,7 +2,7 @@
 
 The Dashboard StatusTable and the Candidates Unlinked PR/MRs tab block the
 user whenever the backend cache is expired: the API response waits for live
-host-CLI/network fetches (gh/glab/jira-cli) that take seconds. The fix is
+host-CLI/network fetches (gh/glab/jira) that take seconds. The fix is
 one shared rule — serve the stale rows now, revalidate in the background:
 
 - `serve_stale_or_refresh(stale, is_fresh, refresh)`: return stale when it

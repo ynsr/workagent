@@ -23,7 +23,7 @@ def _repo_with_branch(tmp_path, name: str):
 def test_jira_key_and_url_parse():
     for ref in ("IPG-980", "https://tribe.jibit.cloud/browse/IPG-980"):
         p = refs.parse_ref(ref)
-        assert p == {"kind": "issue", "tool": "jira-cli", "repo": "",
+        assert p == {"kind": "issue", "tool": "jira", "repo": "",
                      "number": "IPG-980", "url": ref}
     assert refs.issue_key(refs.parse_ref("IPG-980")) == "jira:IPG-980"
 
@@ -32,8 +32,9 @@ def test_fetch_jira_issue(monkeypatch):
     import json as _json
 
     def fake_run(*args, **kw):
-        assert args[:2] == ("jira-cli", "issue")
-        return _json.dumps({"summary": "Do things", "description": "Body text"})
+        assert args[:3] == ("jira", "issue", "view")
+        return _json.dumps({"fields": {"summary": "Do things",
+                                       "description": "Body text"}})
     monkeypatch.setattr(refs, "run_cmd", fake_run)
     out = refs.fetch_issue(refs.parse_ref("IPG-980"))
     assert out == {"title": "Do things", "body": "Body text"}

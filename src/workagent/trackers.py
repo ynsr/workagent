@@ -70,7 +70,7 @@ def normalize_id(raw: str) -> str:
 def tracker_id(parsed: dict) -> str:
     """Derive the tracker id for a parsed ref; ``""`` when unknowable."""
     tool = parsed.get("tool", "")
-    if tool == "jira-cli":
+    if tool == "jira":
         prefix = (parsed.get("number", "") or "").split("-", 1)[0]
         return f"jira:{prefix}" if prefix else ""
     repo = parsed.get("repo", "") or ""
@@ -401,9 +401,11 @@ _INITIAL_ISSUES_DAYS = 90
 
 def _issues_jql(days: int = _INITIAL_ISSUES_DAYS, mine: bool = True) -> str:
     """JQL for the issues listing: *days*-day window, optionally limited to
-    issues assigned to or reported by me. JQL relative offsets are days."""
+    issues assigned to or reported by me. JQL relative offsets are days.
+    No ORDER BY — the new `jira issue list -q` runs the JQL server-side
+    and rejects the clause (sorting happens at row level instead)."""
     who = "(reporter = currentUser() OR assignee = currentUser()) AND " if mine else ""
-    return f"{who}created >= -{days}d ORDER BY created DESC"
+    return f"{who}created >= -{days}d"
 
 
 def _issues_jql_split(days: int = _INITIAL_ISSUES_DAYS) -> list[tuple[str, str]]:
@@ -411,9 +413,21 @@ def _issues_jql_split(days: int = _INITIAL_ISSUES_DAYS) -> list[tuple[str, str]]
     reporter-me. The tag becomes the row's `assigned_to_me` /
     `created_by_me` flag, so the UI can split "assigned to me" from
     "reported by me" without knowing my login."""
-    base = f"created >= -{days}d ORDER BY created DESC"
+    base = f"created >= -{days}d"
     return [("assigned_to_me", f"assignee = currentUser() AND {base}"),
             ("created_by_me", f"reporter = currentUser() AND {base}")]
+
+
+def _scoped_jql(jql: str) -> str:
+    """Scope *jql* across all projects.
+
+    The new `jira issue list -q` runs the query server-side, where
+    ORDER BY is rejected — JQL carries only the conditions, and rows
+    sort client-side. The `project IS NOT EMPTY` prefix forces a
+    server-wide search instead of the project-context default without
+    changing the caller's conditions (mine/all scopes).
+    """
+    return f"project IS NOT EMPTY AND ({(jql or '').strip()})"
 
 def parse_created(value: str) -> datetime | None:
     """Parse an ISO-8601 `created` stamp (jira `+0000`, gh/glab `Z`) to an
@@ -447,9 +461,29 @@ def _jira_row(key: str, title: str, status: str, created: str,
             "reporter": reporter, "assignee": assignee, "description": description}
 
 
+def _jira_text(value) -> str:
+    """Best-effort plain text from a Jira summary/description value."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        from .refs import _adf_text as _adf
+    except Exception:
+        return ""
+    try:
+        return _adf(value)
+    except Exception:
+        return ""
+
+
 def _parse_jira_payload(out: str | None) -> list[dict] | None:
-    """Raw-API JSON (dict `{"issues":[…]}` or bare list) → rows; None when
-    the output is not a usable payload (treated as seam unavailable)."""
+    """Raw-API JSON (dict `{"issues":[...]}` or bare list) -> rows; None when
+    the output is not a usable payload (treated as seam unavailable).
+
+    Accepts the new CLI `issue list --raw` shape (list of flat dicts) as well
+    as raw Jira API objects with nested fields.
+    """
     try:
         data = json.loads(out or "")
     except (json.JSONDecodeError, TypeError, ValueError):
@@ -460,17 +494,52 @@ def _parse_jira_payload(out: str | None) -> list[dict] | None:
         return None
     rows = []
     for it in data:
+        if not isinstance(it, dict):
+            continue
         fields = it.get("fields") or {}
+        if not isinstance(fields, dict):
+            fields = {}
         key = str(it.get("key") or "")
         if not key:
             continue
-        rows.append(_jira_row(key, str(fields.get("summary") or ""),
-                              str((fields.get("status") or {}).get("name") or ""),
-                              str(fields.get("created") or ""),
-                              _jira_name(fields.get("reporter")),
-                              str(fields.get("description") or ""),
-                              _jira_name(fields.get("assignee"))))
+        summary = fields.get("summary", it.get("summary", ""))
+        status = fields.get("status", it.get("status", ""))
+        if isinstance(status, dict):
+            status = status.get("name", "")
+        rows.append(_jira_row(key, str(summary or ""),
+                              str(status or ""),
+                              str(fields.get("created", it.get("created", "")) or ""),
+                              _jira_name(fields.get("reporter", it.get("reporter"))),
+                              _jira_text(fields.get("description", it.get("description"))),
+                              _jira_name(fields.get("assignee", it.get("assignee")))))
     return rows
+
+
+def _jira_raw_pages(query: str, errors: list[str]) -> list[dict] | None:
+    """Fetch all `issue list --raw` pages (100/page, `--paginate FROM:LIMIT`).
+
+    Returns None when the raw seam is unavailable (caller falls back to
+    `--plain`); [] when the query genuinely matches nothing.
+    """
+    rows: list[dict] = []
+    offset = 0
+    while True:
+        try:
+            out = run_cmd("jira", "issue", "list", "-q", query,
+                          "--paginate", f"{offset}:100", "--raw")
+        except HarnessError as e:
+            errors.append(f"raw: {e}")
+            return None if offset == 0 and not rows else rows or None
+        page = _parse_jira_payload(out)
+        if page is None:
+            errors.append("raw: unavailable/invalid output")
+            return None if offset == 0 and not rows else rows or None
+        rows.extend(page)
+        if len(page) < 100:
+            return rows
+        offset += 100
+        if offset >= 1000:
+            return rows
 
 
 def _parse_jira_plain(out: str) -> list[dict] | None:
@@ -493,45 +562,35 @@ def _parse_jira_plain(out: str) -> list[dict] | None:
 
 def _jira_my_issues(warnings: list[str], days: int = _INITIAL_ISSUES_DAYS,
                     mine: bool = True) -> list[dict]:
-    """Jira rows via the first working seam: raw `request GET`, then
-    jira-cli's `search --format json` (shim installs), then stock
-    `issue list --plain`. All failing → [] + one collected warning.
+    """Jira rows via the new `jira` CLI: `--raw` JSON first (paginated),
+    then stock `issue list --plain`. All failing → [] + one collected warning.
 
     Mine-scoped rows carry their query origin: `assigned_to_me` /
     `created_by_me` (True when the row came back from the assignee /
     reporter query; both when it matched both — your PAN-1095 case).
-    The *issue list* seam carries no user fields, so its rows tag both
-    True (they matched the union JQL either way)."""
+    The *issue list --plain* seam carries no user fields, so its rows tag
+    both True (they matched the union JQL either way)."""
     jqls = (_issues_jql_split(days) if mine else [(None, _issues_jql(days, False))])
     out_rows: dict[str, dict] = {}
     errors = []
     for tag, jql in jqls:
-        attempts = (
-            ("request", ("jira-cli", "request", "GET",
-                         f"search?jql={quote(jql)}"
-                         "&maxResults=1000&fields=key,summary,status,created,reporter,assignee,description")),
-            ("search", ("jira-cli", "search", jql,
-                        "--limit", "1000", "--format", "json")),
-            ("issue list", ("jira-cli", "issue", "list", "--plain", "--no-headers",
-                            "--no-truncate", "--columns", "key,summary,status,created",
-                            "--jql", jql)),
-        )
+        query = _scoped_jql(jql)
         got: list[dict] | None = None
         used_plain = False
-        for kind, args in attempts:
-            try:
-                out = run_cmd(*args)
-            except HarnessError as e:
-                errors.append(f"{kind}: {e}")
-                continue
-            got = _parse_jira_payload(out) if kind != "issue list" \
-                else _parse_jira_plain(out or "")
-            used_plain = (kind == "issue list")
-            if got is not None:
-                break
-            errors.append(f"{kind}: unavailable/invalid output")
+        got = _jira_raw_pages(query, errors)
         if got is None:
-            continue
+            try:
+                out = run_cmd("jira", "issue", "list", "--plain", "--no-headers",
+                                "--no-truncate", "--columns", "key,summary,status,created",
+                                "--jql", query)
+            except HarnessError as e:
+                errors.append(f"issue list: {e}")
+                continue
+            got = _parse_jira_plain(out or "")
+            used_plain = True
+            if got is None:
+                errors.append("issue list: unavailable/invalid output")
+                continue
         for row in got:
             key = row["key"]
             if tag is None:

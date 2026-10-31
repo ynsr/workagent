@@ -163,7 +163,7 @@ session exists (caller falls through to a fresh `fix_comments` session):
 ```json
 {"status": "ok", "live_hash": "…", "recorded_hash": "…",
  "tools": {"git-wt": true, "omp": true, "gh": true, "glab": true,
-            "jira-cli": true}, "receipt": "/home/x/.local/share/…"}
+            "jira": true}, "receipt": "/home/x/.local/share/…"}
 ```
 
 ### `GET /api/issues`

@@ -89,7 +89,7 @@ def start(
                               session_file, extra_prompt, env_file=env_file)
     links = store.load_links()
     bare = refs.issue_key(parsed)
-    if parsed["tool"] == "jira-cli" and repo:
+    if parsed["tool"] == "jira" and repo:
         # Explicit --repo pins the worktree: suffix first so each repo gets
         # its own row. Dual-resolve: a bare legacy row for the same issue
         # in the SAME repo still reuses — else git-wt --resume returns the
@@ -174,14 +174,14 @@ def start(
         eprint(f"note: continuing on existing branch '{cwd_branch}' (current worktree); no new branch created.")
 
     issue = refs.fetch_issue(parsed)
-    if parsed["tool"] == "jira-cli":
+    if parsed["tool"] == "jira":
         key = refs.issue_key(parsed, Path(r).name)
     harness_name = harness or store.load_config().get("default_harness", "omp")
 
     # git-wt detects the tracker from a URL (--link must be a URL, never a
     # shorthand like `OWNER/REPO#N`); build full issue URLs from parsed refs.
     link_url: str | None = None
-    if parsed["tool"] == "jira-cli":
+    if parsed["tool"] == "jira":
         if parsed["url"].startswith("http"):
             link_url = parsed["url"]
         else:
@@ -197,7 +197,7 @@ def start(
     elif parsed["repo"]:
         link_url = parsed["url"] if parsed["url"].startswith("http") else None
     issue_id, slug = gitwt.build_branch_for_issue(parsed, issue["title"])
-    if parsed["tool"] == "jira-cli" and not issue_id:
+    if parsed["tool"] == "jira" and not issue_id:
         issue_id = parsed["number"]
     related_paths = _resolve_related_repos(related_repo, r, depth=depth)
 

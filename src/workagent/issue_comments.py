@@ -1,7 +1,7 @@
 """Post a text comment to a linked issue (best effort, never raises).
 
 Supports the three tracker tools via their CLIs:
-  jira-cli → jira-cli issue <KEY> add-comment --body <text>
+  jira     → jira issue comment add <KEY> <text>
   gh       → gh issue comment (<number>|<url>) --body <text>
   glab     → glab issue note <number-or-url> --message <text>
 Only issue refs are posted (never PR/MR notes); unparseable refs and
@@ -30,8 +30,8 @@ def post_issue_comment(issue_url: str, body: str) -> bool:
     number = parsed.get("number", "")
     url = parsed.get("url", "")
     try:
-        if tool == "jira-cli":
-            run_cmd("jira-cli", "issue", number, "add-comment", "--body", body)
+        if tool == "jira":
+            run_cmd("jira", "issue", "comment", "add", number, body, "--no-input")
         elif tool == "gh":
             target = number if parsed.get("repo") else url
             run_cmd("gh", "issue", "comment", target, "--body", body)

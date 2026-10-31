@@ -598,14 +598,13 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
 
 
 def _close_issue(parsed: dict, force: bool) -> None:
-    if parsed["tool"] == "jira-cli":
+    if parsed["tool"] == "jira":
         # Best effort: comment the resolution; transitions vary per project,
         # so leave status change to the user unless --force.
         try:
             from .errors import run_cmd as _run
-            _run("jira-cli", "issue", parsed["number"], "add-comment",
-                 "--body", "Resolved via workagent cleanup.")
-            eprint(f"commented on {parsed['number']} (status left unchanged)")
+            _run("jira", "issue", "comment", "add", parsed["number"],
+                 "Resolved via workagent cleanup.", "--no-input")
         except HarnessError as e:
             if not force:
                 raise

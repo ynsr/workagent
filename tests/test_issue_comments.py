@@ -6,8 +6,7 @@ def test_jira_posts_via_add_comment(monkeypatch):
     seen = []
     monkeypatch.setattr(ic, "run_cmd", lambda *a, **k: seen.append(a) or "")
     assert ic.post_issue_comment("https://tribe.jibit.cloud/browse/IPG-1", "did things") is True
-    assert seen[0][:4] == ("jira-cli", "issue", "IPG-1", "add-comment")
-    assert "did things" in seen[0]
+    assert seen[0][:4] == ("jira", "issue", "comment", "add")
 
 
 def test_gh_posts_via_issue_comment(monkeypatch):

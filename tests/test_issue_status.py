@@ -3,27 +3,22 @@ from workagent import issue_status as st
 from workagent.errors import HarnessError
 
 
-def _jira_ok(monkeypatch, tid="11"):
+def _jira_ok(monkeypatch):
     def _run(*a, **k):
-        if a[:3] == ("jira-cli", "issue", "IPG-1") and a[3:] == ("--format", "json"):
-            return '{"transitions": [{"id": "11", "name": "Start", "to": {"name": "In Progress"}}]}'
-        if a[:4] == ("jira-cli", "issue", "IPG-1", "transition"):
-            assert a[4] == tid
-            return ""
-        raise AssertionError(a)
+        assert a[:3] == ("jira", "issue", "move")
+        return ""
     monkeypatch.setattr(st, "run_cmd", _run)
 
 
-def test_jira_discovers_transition(monkeypatch):
+def test_jira_moves_to_state(monkeypatch):
     seen = []
     def _run(*a, **k):
         seen.append(a)
-        if a[3:] == ("--format", "json"):
-            return '{"transitions": [{"id": "21", "to": {"name": "Code Review"}}]}'
         return ""
     monkeypatch.setattr(st, "run_cmd", _run)
     assert st.set_issue_status("https://example.com/browse/IPG-7", "code review") is True
-    assert seen[1][:5] == ("jira-cli", "issue", "IPG-7", "transition", "21")
+    assert seen[0][:4] == ("jira", "issue", "move", "IPG-7")
+
 
 def test_gh_label_swap_and_close(monkeypatch):
     seen = []

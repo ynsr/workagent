@@ -200,7 +200,7 @@ def test_tracker_meta_derivation():
     """_tracker_meta derives mandatory vendor/remote_url from every key shape."""
     assert sq._tracker_meta("github:o/r") == ("github", "https://github.com/o/r")
     assert sq._tracker_meta("gitlab:h/g/r") == ("github", "https://h/g/r")
-    # jira remote_url uses jira-cli's configured site when available.
+    # jira remote_url uses jira's configured site when available.
     vendor, url = sq._tracker_meta("jira:IPG")
     assert vendor == "jira" and (url == "jira:IPG" or url.endswith("/browse/IPG"))
     assert sq._tracker_meta("weird") == ("github", "weird")
