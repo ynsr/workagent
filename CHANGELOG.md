@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- `jira` invocations inherit JIRA_API_TOKEN from ~/.secrets/.env when not already exported (fixes status-transition auth failures; token never logged) [IPG-1066]
 - Removed row-only `link purge-deleted` and the Deleted-table Clear button; Deleted cleanup now goes through Destroy (worktree dir + local branch + row) [no-issue]
 - Lifecycle statuses: start/review settle issues to code review (no-review work to done), approved reviews to ready to release, changes-requested to in progress; `cleanup --released` closes contained issues [no-issue]
 - Cleanup fails closed on host merge blocks (unresolved discussions→405) pre-merge; fix glab JSON flag + matcher shadowing [IPG-1052]
