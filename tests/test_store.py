@@ -67,6 +67,30 @@ def test_load_links_backfills_ref_key(isolated_config):
     assert links["jira:IPG-1"]["ref_key"] == "jira:IPG-1"
 
 
+def test_load_links_issue_fallback_strips_repo_suffix(tmp_path, monkeypatch):
+    """Link rows have no `issue` column; the ref_key fallback must not leak
+    the `@repo` suffix (release discovery got `IPG-934@projectx`, which
+    parse_ref rejected — only IPG-934 transitioned to released)."""
+    import sqlite3
+    from workagent import store_sqlite as sq
+    db = tmp_path / "s.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO repos (key_ref, path, name) VALUES ('myrepo', 'myrepo', 'myrepo')")
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+            " VALUES ('jira:IPG-934@projectx', '/tmp/wt', 'feat/IPG-934--x',"
+            " 'myrepo', '2026-01-01', '{}')")
+    with sq.connect(db) as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
+        assert "issue" not in cols  # fallback path is live, not vestigial
+    from workagent import store as _store
+    links = _store.load_links(include_deleted=True)
+    assert links["jira:IPG-934@projectx"]["issue"] == "IPG-934"
+
+
 def test_harness_run_roundtrip(isolated_config):
     store.record_harness_run("jira:IPG-1", "omp", "/tmp/wt-a")
     rec = store.active_harness("jira:IPG-1")

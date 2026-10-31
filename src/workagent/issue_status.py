@@ -39,9 +39,16 @@ _GH_REF_RE = re.compile(r"\b([\w.\-]+/[\w.\-]+)#(\d+)\b")
 
 
 def _parse(key_or_ref: str) -> dict | None:
-    """Parse an issue ref; None + warning when unparseable or not an issue."""
+    """Parse an issue ref; None + warning when unparseable or not an issue.
+
+    Link-key-shaped `IPG-934@projectx` refs are tolerated (repo suffix
+    stripped): link rows rebuild `issue` from the suffixed ref_key.
+    """
+    ref = (key_or_ref or "").strip()
+    if re.fullmatch(r"[A-Z][A-Z0-9_]*-\d+@[\w.-]+", ref):
+        ref = ref.split("@", 1)[0]
     try:
-        parsed = _refs.parse_ref((key_or_ref or "").strip())
+        parsed = _refs.parse_ref(ref)
     except HarnessError as e:
         eprint(f"warning: cannot set issue status ({e})")
         return None
@@ -300,12 +307,15 @@ def discover_released_refs(path: str, old_tip: str, new_tip: str) -> list[str]:
 
     def _add(ref: str) -> None:
         ref = (ref or "").strip()
+        # Link rows rebuild `issue` from the ref_key, repo suffix included
+        # (`IPG-934@projectx`); strip it — parse_ref only knows bare keys.
+        if re.fullmatch(r"[A-Z][A-Z0-9_]*-\d+@[\w.-]+", ref):
+            ref = ref.split("@", 1)[0]
         if ref and ref not in seen:
             seen.add(ref)
             found.append(ref)
 
     for sha in shas:
-        mapped = False
         try:
             branches_out = run_cmd("git", "-C", path, "branch", "-r",
                                    "--contains", sha) or ""
@@ -317,17 +327,18 @@ def discover_released_refs(path: str, old_tip: str, new_tip: str) -> list[str]:
             ref = branch_refs.get(name) or branch_refs.get(short, "")
             if ref:
                 _add(ref)
-                mapped = True
+        # Always scan the subject/body too: a mapped commit can carry other
+        # (or newer) keys than the link row, and the mapped ref may not
+        # parse at all — never let one source silence the other.
         try:
             show = run_cmd("git", "-C", path, "log", "-1",
                            "--format=%s%n%b", sha) or ""
         except HarnessError:
             show = ""
-        if not mapped:
-            for m in _JIRA_KEY_RE.finditer(show):
-                _add(m.group(1))
-            for m in _GH_REF_RE.finditer(show):
-                _add(f"{m.group(1)}#{m.group(2)}")
-            for m in re.finditer(r"(?:^|\s)#(\d+)\b", show):
-                _add(f"#{m.group(1)}")
+        for m in _JIRA_KEY_RE.finditer(show):
+            _add(m.group(1))
+        for m in _GH_REF_RE.finditer(show):
+            _add(f"{m.group(1)}#{m.group(2)}")
+        for m in re.finditer(r"(?:^|\s)#(\d+)\b", show):
+            _add(f"#{m.group(1)}")
     return found

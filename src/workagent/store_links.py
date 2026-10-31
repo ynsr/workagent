@@ -46,7 +46,10 @@ def load_links_rows(path: Path, include_inactive: bool = False,
                 "parent_key_ref": r.get("parent_key_ref", "") or "",
             })
             if "issue" not in entry and r["ref_key"].startswith("jira:"):
-                entry["issue"] = r["ref_key"].split(":", 1)[1]
+                # ref_key may carry a repo suffix (jira:IPG-934@projectx);
+                # never leak it into `issue` — downstream parse_ref handles
+                # only bare keys (release discovery strips defensively too).
+                entry["issue"] = r["ref_key"].split(":", 1)[1].split("@", 1)[0]
             out[r["ref_key"]] = entry
         return out
 

@@ -93,6 +93,36 @@ def test_discover_released_refs(monkeypatch):
     out = st.discover_released_refs("/repo", "old", "new")
     assert out == ["IPG-9", "IPG-10", "o/r#44"]
 
+def test_discover_released_refs_suffixed_branch_ref_and_scan(monkeypatch):
+    """Branch-mapped `issue@repo` refs must still parse, and mapped commits
+    must still be subject-scanned (release run 1d77abac2d4b: only IPG-934
+    moved; IPG-1066/IPG-938 were dropped as `KEY@projectx`, and the
+    `if not mapped` guard skipped the regex that would have found them)."""
+    def _run(*a, **k):
+        if a[3:5] == ("rev-list", "old..new"):
+            return "sha1\nsha2"
+        if a[3:6] == ("branch", "-r", "--contains"):
+            return "origin/feat/IPG-934--x" if a[6] == "sha1" else ""
+        if a[3] == "log":
+            return "feat: work [IPG-934]" if a[-1] == "sha1" else "fix: work [IPG-1066]"
+        raise AssertionError(a)
+    monkeypatch.setattr(st, "run_cmd", _run)
+    monkeypatch.setattr("workagent.store.load_links",
+                        lambda **k: {"jira:IPG-934@projectx": {
+                            "branch": "feat/IPG-934--x",
+                            "issue": "IPG-934@projectx"}})
+    out = st.discover_released_refs("/repo", "old", "new")
+    assert out == ["IPG-934", "IPG-1066"]
+
+
+def test_set_issue_status_accepts_suffixed_jira_ref(monkeypatch):
+    """Link-key-shaped `IPG-934@projectx` refs must transition, not warn."""
+    seen = []
+    monkeypatch.setattr(st, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    assert st.set_issue_status("IPG-934@projectx", "released") is True
+    assert seen[0][:4] == ("jira", "issue", "move", "IPG-934")
+
+
 
 def test_settle_post_work_pr_or_done(monkeypatch):
     seen = []
