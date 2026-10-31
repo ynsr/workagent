@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS flow_templates (
   name TEXT NOT NULL, steps TEXT NOT NULL DEFAULT '[]',
   pre_execution TEXT NOT NULL DEFAULT '',
   post_execution TEXT NOT NULL DEFAULT '',
+  parent_labels TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL, modified_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS flows (
   id INTEGER PRIMARY KEY AUTOINCREMENT, template_label TEXT NOT NULL,
@@ -81,6 +82,7 @@ CREATE TABLE IF NOT EXISTS flows (
   status TEXT NOT NULL DEFAULT 'pending',
   current_step INTEGER NOT NULL DEFAULT 0,
   step_results TEXT NOT NULL DEFAULT '[]',
+  effective_steps TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL, modified_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_flows_worktree ON flows(worktree_ref);
 """
@@ -157,6 +159,19 @@ def _migrate_runs_output(conn) -> None:
     if "truncated" not in cols:
         conn.execute("ALTER TABLE runs ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0")
 
+
+def _migrate_flow_template_lineage(conn) -> None:
+    """Schema v16: flow_templates gains parent_labels; flows gains effective_steps.
+
+    ALTER TABLE is enough (both columns carry defaults, so old rows read
+    back as []/NULL). Idempotent: skipped when present.
+    """
+    tcols = {r[1] for r in conn.execute("PRAGMA table_info(flow_templates)")}
+    if tcols and "parent_labels" not in tcols:
+        conn.execute("ALTER TABLE flow_templates ADD COLUMN parent_labels TEXT NOT NULL DEFAULT '[]'")
+    fcols = {r[1] for r in conn.execute("PRAGMA table_info(flows)")}
+    if fcols and "effective_steps" not in fcols:
+        conn.execute("ALTER TABLE flows ADD COLUMN effective_steps TEXT NOT NULL DEFAULT ''")
 
 def _migrate_flow_linkage(conn) -> None:
     """Schema v15: sessions/runs gain flow_id; sessions.worktree_ref nullable.
@@ -671,6 +686,12 @@ def _schema_current(path: Path) -> bool:
             return False
         if "flow_templates" not in tables or "flows" not in tables:
             return False
+        tcols2 = {r[1] for r in conn.execute("PRAGMA table_info(flow_templates)")}
+        if "parent_labels" not in tcols2:
+            return False
+        fcols2 = {r[1] for r in conn.execute("PRAGMA table_info(flows)")}
+        if "effective_steps" not in fcols2:
+            return False
         return True
     except Exception:
         return False
@@ -705,6 +726,7 @@ def init_db(path: Path) -> Path:
                 _migrate_worktrees_deleted_at(conn)
                 _migrate_worktrees_related(conn)
                 _migrate_flow_linkage(conn)
+                _migrate_flow_template_lineage(conn)
                 _migrate_sessions_no_fk(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():

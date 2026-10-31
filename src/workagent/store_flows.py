@@ -164,6 +164,11 @@ def _row(r: sqlite3.Row | tuple) -> dict:
         d["steps"] = json.loads(d.get("steps") or "[]")
     except (json.JSONDecodeError, TypeError):
         d["steps"] = []
+    try:
+        parents = json.loads(d.get("parent_labels") or "[]")
+        d["parent_labels"] = parents if isinstance(parents, list) else []
+    except (json.JSONDecodeError, TypeError):
+        d["parent_labels"] = []
     return d
 
 
@@ -180,6 +185,12 @@ def _flow_row(r: sqlite3.Row | tuple) -> dict:
             d[key] = json.loads(d.get(key) or default)
         except (json.JSONDecodeError, TypeError):
             d[key] = json.loads(default)
+    raw = d.get("effective_steps") or ""
+    try:
+        eff = json.loads(raw) if str(raw).strip() else None
+        d["effective_steps"] = eff if isinstance(eff, list) else None
+    except (json.JSONDecodeError, TypeError):
+        d["effective_steps"] = None
     return d
 
 
