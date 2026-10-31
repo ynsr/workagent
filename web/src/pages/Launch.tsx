@@ -427,6 +427,7 @@ export function Launch() {
     const args = [refValue]
     // Preview/terminal are TTY copy-paste: no -p flag. Headless
     // (--no-tty, omp -p --auto-approve) only when actually running now.
+    if (form.fixComments) args.push("--fix-comments")
     if (form.fixComments && form.useReviewSession) args.push("--use-review-session")
     if (repoValue) args.push("--repo", repoValue)
     if (form.depth.trim()) args.push("--depth", form.depth.trim())
