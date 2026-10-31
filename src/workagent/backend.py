@@ -162,6 +162,8 @@ def prompt_for_issue(title: str, body: str, issue_ref: str,
 
 def prompt_for_review(pr_url: str, worktree: str = "", branch: str = "") -> str:
     prompt = f"Review this PR/MR using auto-pr-reviewer skill: {pr_url}"
+    prompt += ("\n\nAt the end of the session, you MUST post all PR/MR review "
+               "comments and inline notes for every issue identified.")
     if worktree and branch:
         prompt += _push_target_lines(worktree, branch)
     return prompt

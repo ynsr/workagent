@@ -80,6 +80,12 @@ def test_prompt_includes_push_target():
     assert "Never create or push a different branch" in r
 
 
+
+def test_prompt_for_review_requires_posting_comments():
+    """Review sessions must end by posting all PR/MR comments and inline notes."""
+    r = backend.prompt_for_review("https://github.com/o/r/pull/5", worktree="/wt", branch="b")
+    assert "At the end of the session, you MUST post all PR/MR review comments and inline notes" in r
+    assert "Never create or push a different branch" in r  # push target still present
 def test_prompt_for_fix_comments_rules():
     """Issue #32: fix prompt carries resolve/validate/commit-push rules."""
     p = backend.prompt_for_fix_comments("https://x/pull/1", worktree="/wt", branch="pr-1")
