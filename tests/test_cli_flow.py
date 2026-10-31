@@ -38,6 +38,42 @@ def test_template_compose_concatenates_with_start_collapsed(tmp_path, monkeypatc
     assert created["parent_labels"] == ["a", "b"]
     assert "extra 'start' steps collapsed" in result.output
 
+def test_flow_run_steps_override_persisted(tmp_path, monkeypatch):
+    """--steps replaces the template chain; the run stores effective_steps."""
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    import json as _json
+    tpl = {"label": "t", "name": "T", "steps": [{"kind": "sync", "config": {}}],
+           "pre_execution": "", "post_execution": ""}
+    monkeypatch.setattr("workagent.store.get_template", lambda label: tpl)
+    monkeypatch.setattr("workagent.store.get_action", lambda label: None)
+    saved = {}
+    def fake_create(**fields):
+        saved.update(fields)
+        return {"id": 1, "template_label": "t", "worktree_ref": "k",
+                "repo_snapshot": {"repo": "r"}, "status": "pending",
+                "current_step": 0, "step_results": []}
+    monkeypatch.setattr("workagent.store.create_flow", fake_create)
+    monkeypatch.setattr("workagent.store.update_flow",
+                        lambda fid, **fields: {**saved, **fields})
+    monkeypatch.setattr("workagent.store.get_flow", lambda *a, **k: None)
+    monkeypatch.setattr("workagent.store.load_links", lambda **k: {})
+    monkeypatch.setattr("workagent.store.load_repos", lambda: {})
+    monkeypatch.setattr(cli_mod, "_resolve_ref",
+                        lambda ref: ("k", {"repo": "", "worktree": "/tmp/wt",
+                                           "branch": "b"}, None))
+    monkeypatch.setattr(cli_mod, "_run_sync_step",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            cli_mod.HarnessError("stop after persist", 1)))
+    runner = CliRunner()
+    result = runner.invoke(cli_mod.app,
+        ["flow", "run", "t", "k", "--steps", '[{"kind": "sync"}, {"kind": "cleanup"}]', "--yes"])
+    assert result.exit_code == 1  # halted at sync — after effective_steps persisted
+    eff = saved["effective_steps"]
+    eff = _json.loads(eff) if isinstance(eff, str) else eff
+    assert [s["kind"] for s in eff] == ["sync", "cleanup"]
+
 def test_run_dry_run_prints_chain(tmp_path, monkeypatch):
     from typer.testing import CliRunner
     import workagent.cli  # noqa: F401  (register commands)

@@ -109,7 +109,7 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "flow template clone": ("--name", "--label"),
     "flow template compose": ("--from", "--name"),
     "flow list": ("--worktree",),
-    "flow run": ("--step-config", "--skip-steps"),
+    "flow run": ("--step-config", "--skip-steps", "--steps"),
     "backup export": ("--path",),
     "backup import": (),
     "backup run-scheduled": ("--keep",),

@@ -105,6 +105,7 @@ def flow_run(
     template: str = typer.Argument(..., help="Flow template label."),
     ref: str = typer.Argument(..., autocompletion=_complete_refs, help="Issue ref or worktree key/branch/path."),
     step_config: Optional[str] = typer.Option(None, "--step-config", help='Per-run step overrides as JSON ({"<index>": {...}}).'),
+    steps_override: Optional[str] = typer.Option(None, "--steps", help="Full launch-time step chain as JSON (replaces the template chain for this run)."),
     skip_steps: Optional[str] = typer.Option(None, "--skip-steps", help='Comma-separated step indexes to mark done-without-running on resume (e.g. "0" or "0,2"). Only paused/done work applies.'),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the resolved chain without executing."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
@@ -116,14 +117,21 @@ def flow_run(
     if tpl is None:
         _fail(f"unknown flow template: {template!r}", EXIT_USAGE)
     assert tpl is not None
-    steps = sf.validate_template(tpl.get("steps") or [],
-                                 get_action=store.get_action)
+    if steps_override:
+        try:
+            base = json.loads(steps_override)
+        except json.JSONDecodeError as e:
+            _fail(f"--steps is not valid JSON: {e}", EXIT_USAGE)
+    else:
+        base = tpl.get("steps") or []
+    try:
+        steps = sf.validate_template(base, get_action=store.get_action)
+    except HarnessError as e:
+        _fail(f"--steps invalid: {e}", EXIT_USAGE)
     try:
         overrides = json.loads(step_config or "{}")
     except json.JSONDecodeError as e:
         _fail(f"--step-config is not valid JSON: {e}", EXIT_USAGE)
-    if not isinstance(overrides, dict):
-        _fail("--step-config must be a JSON object", EXIT_USAGE)
     merged_steps = [{**s, "config": _merge_config(
         s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
         for i, s in enumerate(steps)]
@@ -150,6 +158,15 @@ def flow_run(
             _fail("aborted", EXIT_USAGE)
     key, entry, parsed = _resolve_ref(ref)
     flow = None if fresh else _find_resumable(tpl["label"], ref, key)
+    if flow is not None and flow.get("effective_steps"):
+        try:
+            steps = sf.validate_template(flow["effective_steps"],
+                                         get_action=store.get_action)
+        except HarnessError as e:
+            _fail(f"stored effective steps invalid: {e}", EXIT_GENERAL)
+        merged_steps = [{**s, "config": _merge_config(
+            s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
+            for i, s in enumerate(steps)]
     if flow is None:
         snap: dict = {"launch_ref": ref}
         # Templates without a start step (e.g. cleanup_release) never hit
@@ -164,7 +181,8 @@ def flow_run(
                 info.get("default_branch", "") or ""),
                 "release_branch": str(info.get("release_branch", "") or "")}
         flow = store.create_flow(template_label=tpl["label"], worktree_ref=key,
-                                 repo_snapshot=snap)
+                                 repo_snapshot=snap,
+                                 effective_steps=merged_steps if steps_override else None)
     fid = flow["id"]
     if not (flow.get("repo_snapshot") or {}).get("repo"):
         # Pre-fix rows (flow 26) carry {'launch_ref'} only — repair on
@@ -386,8 +404,10 @@ def flow_show(
         _fail(f"unknown flow id: {flow_id!r}", EXIT_USAGE)
     assert flow is not None
     tpl = store.get_template(flow["template_label"])
+    eff = flow.get("effective_steps") or (tpl or {}).get("steps") or []
     out = {**flow,
-           "steps": json.dumps((tpl or {}).get("steps") or []),
+           "steps": json.dumps(eff),
+           "effective_steps": json.dumps(flow.get("effective_steps") or []),
            "step_results": json.dumps(flow.get("step_results") or []),
            "repo_snapshot": json.dumps(flow.get("repo_snapshot") or {})}
     _print_result(out, json_output)

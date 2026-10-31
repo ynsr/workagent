@@ -373,21 +373,24 @@ def delete_template(db: Path, label: str) -> None:
 
 
 def create_flow(db: Path, *, template_label: str, worktree_ref: str = "",
-                repo_snapshot: dict | str | None = None) -> dict:
+                repo_snapshot: dict | str | None = None,
+                effective_steps: list | str | None = None) -> dict:
     """Insert a flow run (status=pending, current_step=0)."""
     from .errors import HarnessError
     if not (template_label or "").strip():
         raise HarnessError("template_label is required", exit_code=2)
     snap = repo_snapshot if isinstance(repo_snapshot, str) \
         else json.dumps(repo_snapshot or {})
+    eff = (effective_steps if isinstance(effective_steps, str)
+           else json.dumps(effective_steps) if effective_steps is not None else "")
     now = _now_iso()
     with _connect(db) as conn:
         cur = conn.execute(
             "INSERT INTO flows (template_label, worktree_ref,"
             " repo_snapshot, status, current_step, step_results,"
-            " created_at, modified_at)"
-            " VALUES (?, ?, ?, 'pending', 0, '[]', ?, ?)",
-            (template_label, worktree_ref or "", snap, now, now))
+            " effective_steps, created_at, modified_at)"
+            " VALUES (?, ?, ?, 'pending', 0, '[]', ?, ?, ?)",
+            (template_label, worktree_ref or "", snap, eff, now, now))
         row_id = cur.lastrowid
         conn.row_factory = sqlite3.Row
         r = conn.execute("SELECT * FROM flows WHERE id = ?",
@@ -440,7 +443,7 @@ def update_flow(db: Path, flow_id: int, **fields) -> dict:
     """Update mutable flow fields; bumps modified_at."""
     from .errors import HarnessError
     allowed = {"worktree_ref", "repo_snapshot", "status", "current_step",
-               "step_results"}
+               "step_results", "effective_steps"}
     unknown = set(fields) - allowed
     if unknown:
         raise HarnessError(f"unknown fields: {sorted(unknown)}",
@@ -449,9 +452,9 @@ def update_flow(db: Path, flow_id: int, **fields) -> dict:
         raise HarnessError(
             f"status must be one of {', '.join(FLOW_STATUSES)}"
             f" (got {fields['status']!r})", exit_code=2)
-    for key in ("repo_snapshot", "step_results"):
+    for key in ("repo_snapshot", "step_results", "effective_steps"):
         if key in fields and not isinstance(fields[key], str):
-            fields[key] = json.dumps(fields[key])
+            fields[key] = "" if fields[key] is None else json.dumps(fields[key])
     with _connect(db) as conn:
         conn.row_factory = sqlite3.Row
         existing = conn.execute("SELECT * FROM flows WHERE id = ?",
