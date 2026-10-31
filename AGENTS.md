@@ -185,7 +185,7 @@ become `skipped:<reason>` rows — never torn down. Requires `--yes`
   web table/detail): `"<name> <pid>"` while a harness is live on the
   worktree, `""` (`—` in Rich tables) otherwise — `_harness_cell` in
   cli.py over `store.active_harness` (cross-key worktree fallback
-- Jira status transitions (`src/workagent/issue_status.py::_jira_state_variants`; verified live on IPG-1066):
+- Jira status transitions (`src/workagent/issue_status.py::_jira_state_variants`; live-verified on IPG-1066 2026-10-31, restored to In Progress):
   IPG workflow states: `To Do` / `In Progress` / `Review` / `Product Test` / `Ready to Release` / `Blocked` / `Released` / `Done`.
   | Canonical | Jira variants tried in order | Notes |
   |-----------|------------------------------|-------|
