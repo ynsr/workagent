@@ -247,8 +247,6 @@ def start(
     prompt = backend.prompt_for_issue(issue["title"], issue["body"], ref,
                                       worktree=worktree, branch=branch,
                                       related_paths=child_paths)
-    if no_tty:
-        prompt += ("\n\nWhen done: if there are any code changes, commit, push to this branch, and open a PR/MR to the default branch. If there are no code changes, do not commit — just report that.")
     prompt = append_extra_prompt(prompt, extra_prompt)
     result = {"worktree_path": worktree, "branch": branch,
               "base": detected_default if branch_mode else base_branch,

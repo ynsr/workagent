@@ -157,7 +157,7 @@ def test_start_headless_suffix_conditional_on_changes(isolated_config, tmp_path,
     r = runner.invoke(cli.app, ["start", "IPG-1011", "--no-tty", "--json"])
     assert r.exit_code == 0, r.output
     assert prompts, "expected _run_harness to capture the prompt"
-    assert "if there are any code changes" in prompts[0]
+    assert "if there are code changes" in prompts[0]
     assert "open a PR/MR to the default branch" in prompts[0]
     assert "do not commit" in prompts[0]
     assert "create an MR/PR to the default branch" not in prompts[0]

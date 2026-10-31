@@ -333,6 +333,9 @@ _CHANGELOG_RULE = (" If CHANGELOG.md conflicts: keep every not-yet-released"
                    " release and breaks auto-versioning). Union the two sides'"
                    " Unreleased bullets (deduped); leave already-released"
                    " sections byte-identical.")
+_PUSH_PROOF = (" After resolving: show `git status` clean and "
+               "`git log origin/<branch>..HEAD` empty as proof the push landed "
+               "— never stop on 'committed but unpushed'.")
 
 
 def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
@@ -349,7 +352,7 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
         prompt = append_extra_prompt(f"The branch {branch} has merge conflicts with "
                   f"{db} in files: {', '.join(conflicts)}. "
                   "Resolve them, complete the merge, commit, push to "
-                  f"origin/{branch}, and stop." + _CHANGELOG_RULE, extra_prompt)
+                  f"origin/{branch}, and stop." + _CHANGELOG_RULE + _PUSH_PROOF, extra_prompt)
         _cli._guard_harness(key, wt)
         _cli._run_harness("omp", prompt, wt, wt,
                      no_tty=bool(yes), launch=True,
@@ -362,7 +365,7 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
             prompt = append_extra_prompt(f"The branch {branch} has merge conflicts with "
                       f"{db} in files: {', '.join(conflicts)}. "
                       "Resolve them, complete the merge, commit, push to "
-                      f"origin/{branch}, and stop." + _CHANGELOG_RULE, extra_prompt)
+                      f"origin/{branch}, and stop." + _CHANGELOG_RULE + _PUSH_PROOF, extra_prompt)
             _cli._guard_harness(key, wt)
             _cli._run_harness("omp", prompt, wt, wt,
                          no_tty=False, launch=True,

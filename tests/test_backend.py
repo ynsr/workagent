@@ -75,7 +75,9 @@ def test_prompt_includes_push_target():
     p = backend.prompt_for_issue("T", "B", "o/r#22", worktree="/wt", branch="feat/x")
     assert "/wt" in p and "feat/x" in p
     assert "Never create or push a different branch" in p
-    assert backend.prompt_for_issue("T", "B", "o/r#22").endswith("B")  # no target → unchanged
+    assert "At the end of the session: if there are code changes" in p  # end-of-session duty
+    plain = backend.prompt_for_issue("T", "B", "o/r#22")
+    assert "At the end of the session: if there are code changes" in plain
     r = backend.prompt_for_review("https://x/pull/1", worktree="/wt", branch="pr-1")
     assert "Never create or push a different branch" in r
 
@@ -95,6 +97,7 @@ def test_prompt_for_fix_comments_rules():
     assert "natively marked resolved" in p
     assert "receiving-code-review skill" in p
     assert "validate" in p and "commit and push" in p
+    assert "At the end of the session, report per comment" in p  # closing report
     assert "Never create or push a different branch" in p
 
 

@@ -151,6 +151,9 @@ def prompt_for_issue(title: str, body: str, issue_ref: str,
                      worktree: str = "", branch: str = "",
                      related_paths: list[tuple[str, str]] | None = None) -> str:
     prompt = f"Work on issue {issue_ref}: {title}\n\n{body}".strip()
+    prompt += ("\n\nAt the end of the session: if there are code changes, "
+               "commit, push to this branch, and open a PR/MR to the default "
+               "branch. If there are no code changes, do not commit — just report that.")
     if worktree and branch:
         prompt += _push_target_lines(worktree, branch)
     if related_paths:
@@ -185,7 +188,9 @@ def prompt_for_fix_comments(pr_url: str, worktree: str = "", branch: str = "") -
         "`Status:\\s+RESOLVED` (case-insensitive); skip comments already resolved either way and, "
         "for each bot comment you resolve, both resolve it natively (where the host supports it) and "
         "insert `Status: RESOLVED` as the new second line.\n"
-        "- After fixing/applying the required changes, commit and push the code."
+        "- After fixing/applying the required changes, commit and push the code.\n\n"
+        "At the end of the session, report per comment: fixed, already-addressed, "
+        "or skipped with reason — and confirm every thread is resolved or closed."
     )
     if worktree and branch:
         prompt += _push_target_lines(worktree, branch)
