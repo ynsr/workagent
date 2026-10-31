@@ -114,6 +114,52 @@ def template_update(
     _print_result({"updated": row["label"], "id": row["id"],
                    "name": row["name"]}, json_output)
 
+@template_app.command("clone")
+@_catch_harness_errors
+def template_clone(
+    src: str = typer.Argument(..., help="Source template label."),
+    name: Optional[str] = typer.Option(None, "--name", help="Display name (default: '<src name> (copy)')."),
+    label: Optional[str] = typer.Option(None, "--label", help="Unique key (default: normalized name)."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Duplicate a flow template (lineage recorded in parent_labels)."""
+    row = store.get_template(src)
+    if row is None:
+        _fail(f"unknown flow template: {src!r}", EXIT_USAGE)
+    new = store.create_template(
+        name=name or f"{row['name']} (copy)", label=label or "",
+        steps=row.get("steps") or [],
+        pre_execution=row.get("pre_execution") or "",
+        post_execution=row.get("post_execution") or "",
+        parent_labels=[src])
+    _print_result({"cloned": new["label"], "id": new["id"], "from": src}, json_output)
+
+
+@template_app.command("compose")
+@_catch_harness_errors
+def template_compose(
+    label: str = typer.Argument(..., help="New template label."),
+    from_: str = typer.Option(..., "--from", help="Comma-separated source template labels in order."),
+    name: Optional[str] = typer.Option(None, "--name", help="Display name (default: label)."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Combine templates into one flat chain (keep-first-start; lineage recorded)."""
+    srcs = [s.strip() for s in (from_ or "").split(",") if s.strip()]
+    if not srcs:
+        _fail("--from needs at least one template label", EXIT_USAGE)
+    chains = []
+    for s in srcs:
+        row = store.get_template(s)
+        if row is None:
+            _fail(f"unknown flow template: {s!r}", EXIT_USAGE)
+        chains.append((s, row.get("steps") or []))
+    merged, parents, dropped = sf.compose_chains(chains)
+    new = store.create_template(name=name or label, label=label, steps=merged, parent_labels=parents)
+    out = {"composed": new["label"], "id": new["id"], "from": parents}
+    if dropped:
+        out["note"] = "extra 'start' steps collapsed (kept first)"
+    _print_result(out, json_output)
+
 
 @template_app.command("delete")
 @_catch_harness_errors

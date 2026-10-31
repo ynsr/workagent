@@ -80,6 +80,8 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "flow template list": ("--json", "--csv"),
     "flow template show": ("--json",),
     "flow template update": ("--json",),
+    "flow template clone": ("--json",),
+    "flow template compose": ("--json",),
     "flow template delete": ("--yes", "--json"),
     "flow list": ("--json", "--csv"),
     "flow show": ("--json",),
@@ -104,6 +106,8 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "action run": ("--harness", "--extra-prompt", "--env-file", "--session-file"),
     "flow template add": ("--name", "--label", "--steps", "--pre-execution", "--post-execution"),
     "flow template update": ("--name", "--steps", "--pre-execution", "--post-execution", "--new-label"),
+    "flow template clone": ("--name", "--label"),
+    "flow template compose": ("--from", "--name"),
     "flow list": ("--worktree",),
     "flow run": ("--step-config", "--skip-steps"),
     "backup export": ("--path",),
@@ -116,7 +120,7 @@ SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "action": {"add", "list", "show", "run", "update", "delete"},
                                     "flow": {"template", "list", "show", "run"},
                                     "backup": {"export", "import", "run-scheduled"}}
-TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "delete"}
+TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "clone", "compose", "delete"}
 def _needs_confirm(command: str, args: list[str]) -> bool:
     """True when the (sub)command needs confirm:true (destructive only).
 

@@ -1,6 +1,43 @@
 """CLI flow tests (Task 2 TDD)."""
 
 
+def test_template_clone_copies_steps_with_lineage(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    src = {"label": "base", "name": "Base", "steps": [{"kind": "sync", "config": {}}],
+           "pre_execution": "", "post_execution": ""}
+    monkeypatch.setattr("workagent.store.get_template", lambda label: src if label == "base" else None)
+    created = {}
+    def fake_create(**fields):
+        created.update(fields)
+        return {"id": 2, "label": fields.get("label") or "base_copy", "name": fields["name"]}
+    monkeypatch.setattr("workagent.store.create_template", fake_create)
+    runner = CliRunner()
+    result = runner.invoke(cli_mod.app, ["flow", "template", "clone", "base", "--name", "Base Copy"])
+    assert result.exit_code == 0, result.output
+    assert created["parent_labels"] == ["base"]
+
+def test_template_compose_concatenates_with_start_collapsed(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    rows = {
+        "a": {"label": "a", "name": "A", "steps": [{"kind": "start"}, {"kind": "sync"}]},
+        "b": {"label": "b", "name": "B", "steps": [{"kind": "start"}, {"kind": "cleanup"}]},
+    }
+    monkeypatch.setattr("workagent.store.get_template", lambda label: rows.get(label))
+    created = {}
+    def fake_create(**fields):
+        created.update(fields)
+        return {"id": 3, "label": fields.get("label") or "composed", "name": fields["name"]}
+    monkeypatch.setattr("workagent.store.create_template", fake_create)
+    runner = CliRunner()
+    result = runner.invoke(cli_mod.app, ["flow", "template", "compose", "composed", "--from", "a,b"])
+    assert result.exit_code == 0, result.output
+    assert created["parent_labels"] == ["a", "b"]
+    assert "extra 'start' steps collapsed" in result.output
+
 def test_run_dry_run_prints_chain(tmp_path, monkeypatch):
     from typer.testing import CliRunner
     import workagent.cli  # noqa: F401  (register commands)
