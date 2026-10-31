@@ -6,6 +6,7 @@
 - Release merge waits out MR `checking` mergeability, retries one transient 405, hints `--checks ci` only on a real pipeline gate [no-issue]
 - `start --related-repo` no longer fails "branch not found" in the sibling repo: fan-out skips the pre-existing-branch check (the fresh main-repo branch is created there via `worktree add -b`) [no-issue]
 - Flow `--skip-steps 0` after a terminal Start adopts the terminal-made worktree (re-resolves the ref) so the review step runs seamlessly instead of failing "Needs input" [no-issue]
+- `jira issue move` drops the unsupported `--no-input` flag (move takes only KEY STATE) and narrows retries from the valid-states list on failure [no-issue]
 - Replaced deprecated `jira-cli` with the `jira` CLI: `issue view --raw`, `issue list -q --paginate --raw` (100/page), `issue comment add`, `issue move` with legacy config fallback [no-issue]
 - Flow terminal steps mint the transcript scope dir pre-spawn and backfill the detached .jsonl on resume (adopt_skipped_start_key + newest-transcript fallback); cli_flow split into cli_flow/cli_flow_run/cli_flow_steps [no-issue]
 - Flow terminal steps append `--terminal` to the spawned command (start/review/action) so the child really launches the harness in the new terminal instead of printing; sync/cleanup/release degrade to manual pause [no-issue]

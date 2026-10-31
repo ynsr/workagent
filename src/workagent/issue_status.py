@@ -63,17 +63,39 @@ def _jira_state_variants(state: str) -> list[str]:
     return variants.get(s, [state])
 
 
+def _available_states(msg: str) -> list[str]:
+    """State names quoted in a failed `issue move` error
+    (`Available states for issue …: 'A', 'B'`); [] when absent."""
+    m = re.search(r"[Aa]vailable states.*?:(.*)$", msg or "")
+    if not m:
+        return []
+    return re.findall(r"'([^']+)'", m.group(1))
+
+
 def _jira_move(number: str, state: str) -> None:
-    """Move a Jira issue to *state*; raises HarnessError with valid states."""
+    """Move a Jira issue to *state*.
+
+    `issue move` takes no `--no-input` (all args are positional); a failed
+    variant whose error lists the valid transitions narrows the remaining
+    retries to those states, and the final error names them.
+    """
+    variants = _jira_state_variants(state)
     last: HarnessError | None = None
-    for variant in _jira_state_variants(state):
+    valid: set[str] = set()
+    for i, variant in enumerate(variants):
+        if valid and variant.lower() not in valid:
+            continue
         try:
-            run_cmd("jira", "issue", "move", number, variant, "--no-input")
+            run_cmd("jira", "issue", "move", number, variant)
             return
         except HarnessError as e:
             last = e
+            if i == 0:
+                valid = {s.lower() for s in _available_states(str(e))}
             continue
-    raise last if last is not None else HarnessError(f"cannot move {number} to {state}")
+    detail = f" (valid: {', '.join(sorted(valid))})" if valid else ""
+    raise HarnessError(f"cannot move {number} to {state}{detail}"
+                       + (f": {last}" if last else ""))
 
 
 def _label_siblings(state: str) -> list[str]:

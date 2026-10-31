@@ -3,14 +3,7 @@ from workagent import issue_status as st
 from workagent.errors import HarnessError
 
 
-def _jira_ok(monkeypatch):
-    def _run(*a, **k):
-        assert a[:3] == ("jira", "issue", "move")
-        return ""
-    monkeypatch.setattr(st, "run_cmd", _run)
-
-
-def test_jira_moves_to_state(monkeypatch):
+def test_jira_move_uses_no_extra_flags(monkeypatch):
     seen = []
     def _run(*a, **k):
         seen.append(a)
@@ -18,6 +11,19 @@ def test_jira_moves_to_state(monkeypatch):
     monkeypatch.setattr(st, "run_cmd", _run)
     assert st.set_issue_status("https://example.com/browse/IPG-7", "code review") is True
     assert seen[0][:4] == ("jira", "issue", "move", "IPG-7")
+    assert len(seen[0]) == 5  # KEY STATE only, no --no-input
+
+
+def test_jira_move_bad_state_reports_valid(monkeypatch):
+    calls = []
+    def _run(*a, **k):
+        calls.append(a)
+        raise HarnessError('invalid transition state "X"\n'
+                           "Available states for issue IPG-7: 'To Do', 'Done'")
+    monkeypatch.setattr(st, "run_cmd", _run)
+    assert st.set_issue_status("IPG-7", "in progress") is False
+    assert len(calls) == 1  # narrowing: 2nd variant skipped (not in valid set)
+    assert calls[0][4] == "In Progress"
 
 
 def test_gh_label_swap_and_close(monkeypatch):
