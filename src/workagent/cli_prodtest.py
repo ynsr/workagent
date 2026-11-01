@@ -370,10 +370,19 @@ def _run_locked(store_key: str, entry: dict, plan_file: Path | None, release_sha
                         "run_dir": str(out_dir), "release_sha": release_sha,
                         "fix_mode": fix_mode}
         eprint(f"run dir: {out_dir}  release: {release_sha}")
-        _run_harness_guarded(harness_name, prompt, worktree, repo or worktree,
-                             no_tty, launch, result, json_output, terminal,
-                             env_file, session_file, timeout_s,
-                             store_key if entry else None)
+        from .errors import HarnessTimeout as _HarnessTimeout
+        try:
+            _run_harness_guarded(harness_name, prompt, worktree, repo or worktree,
+                                 no_tty, launch, result, json_output, terminal,
+                                 env_file, session_file, timeout_s,
+                                 store_key if entry else None)
+        except _HarnessTimeout as e:
+            result["timeout"] = True
+            if launch and no_tty:
+                _finish_run(store_key, entry, plan_file, release_sha, issue_url,
+                            fix_mode, out_dir, timeout_s, result, timed_out=True)
+            _fail(f"prodtest run timed out after {timeout_s}s (budget + gate + slack); "
+                  f"marked BLOCKED", 1)
         if launch and no_tty:
             _finish_run(store_key, entry, plan_file, release_sha, issue_url,
                         fix_mode, out_dir, timeout_s, result)
@@ -389,40 +398,35 @@ def _run_harness_guarded(harness_name: str, prompt: str, worktree: str, fallback
                          no_tty: bool, launch: bool, result: dict, json_output: bool,
                          terminal: bool, env_file: str | None, session_file: str | None,
                          timeout_s: int, run_key: str | None) -> None:
-    """Headless harness call with the run timeout; overrun marks BLOCKED."""
-    import threading
+    """Headless harness call with the run timeout; overrun kills the group.
+
+    The harness child runs in its own process group (``start_new_session``,
+    mirroring ``release_gates._run_group``); on overrun the group gets
+    SIGTERM then SIGKILL synchronously, so no orphan survives. The lock and
+    the ephemeral checkout stay held until the kill completes — the caller
+    persists BLOCKED only after this raises.
+    """
     if not (launch and no_tty):
         _run_harness(harness_name, prompt, worktree, fallback_dir,
                      no_tty, launch, result, json_output,
                      run_key=run_key, session_file=session_file,
                      terminal=terminal, env_file=env_file)
         return
-    err: list = []
-
-    def _target() -> None:
-        try:
-            _run_harness(harness_name, prompt, worktree, fallback_dir,
-                         no_tty, launch, result, json_output,
-                         run_key=run_key, session_file=session_file,
-                         terminal=terminal, env_file=env_file)
-        except BaseException as e:  # noqa: BLE001 — re-raised on join
-            err.append(e)
-
-    worker = threading.Thread(target=_target, daemon=True)
-    worker.start()
-    worker.join(timeout_s)
-    if worker.is_alive():
-        result["timeout"] = True
-        _fail(f"prodtest run timed out after {timeout_s}s (budget + gate + slack); "
-              f"marked BLOCKED", 1)
-    if err:
-        raise err[0]
+    _run_harness(harness_name, prompt, worktree, fallback_dir,
+                 no_tty, launch, result, json_output,
+                 run_key=run_key, session_file=session_file,
+                 terminal=terminal, env_file=env_file,
+                 timeout_s=timeout_s)
 
 
 def _finish_run(store_key: str, entry: dict, plan_file: Path | None, release_sha: str,
                 issue_url: str, fix_mode: str, out_dir: Path, timeout_s: int,
-                result: dict) -> None:
-    """Best-effort post-harness: parse result, render/redact/persist, comment, status."""
+                result: dict, timed_out: bool = False) -> None:
+    """Best-effort post-harness: parse result, render/redact/persist, comment, status.
+
+    On *timed_out* (harness group already killed) the run is BLOCKED with a
+    redacted partial artifact — never left unpersisted.
+    """
     from . import harness_summary as _hs
     from . import issue_comments as _ic
     from . import prodtest_result as _pr
@@ -442,6 +446,12 @@ def _finish_run(store_key: str, entry: dict, plan_file: Path | None, release_sha
         eprint(f"warning: no PRODTEST_RUN_RESULT found ({e})")
     overall = str(payload.get("overall", "") or "").upper()
     status = {"PASS": "passed", "FAIL": "failed", "BLOCKED": "blocked"}.get(overall, "blocked")
+    if timed_out:
+        status = "blocked"
+        overall = overall or "BLOCKED"
+        payload = dict(payload) if isinstance(payload, dict) else {}
+        payload.setdefault("overall", "BLOCKED")
+        payload.setdefault("notes", f"timed out after {timeout_s}s; harness killed")
     run_id = str(payload.get("run_id", "") or result.get("session_id", "") or "")
 
     report = ""

@@ -20,7 +20,8 @@ class Harness:
 
     def launch(self, prompt: str, workdir: str, no_tty: bool,
                extra_args: list[str] | None = None,
-               env_file: str | None = None) -> int:
+               env_file: str | None = None,
+               timeout_s: "int | None" = None) -> int:
         raise NotImplementedError
 
     def session_file_flag(self, path: str) -> list[str]:
@@ -52,15 +53,33 @@ class OmpHarness(Harness):
             return ["omp", "-p", "--auto-approve", *(extra_args or []), prompt]
         return ["omp", *(extra_args or []), prompt]
 
-    def launch(self, prompt, workdir, no_tty, extra_args=None, env_file=None):
+    def launch(self, prompt, workdir, no_tty, extra_args=None, env_file=None,
+               timeout_s=None):
         from . import env as _env
+        from .errors import HarnessTimeout as _HarnessTimeout
         argv = self.command_argv(prompt, no_tty, extra_args)
         if shutil.which(argv[0]) is None:
             raise HarnessError(f"`{argv[0]}` not found on PATH")
         if no_tty:
             merged = _env.merged_env(env_file)
-            proc = subprocess.run(argv, cwd=workdir, env=merged)
-            return proc.returncode
+            if timeout_s is None:
+                proc = subprocess.run(argv, cwd=workdir, env=merged)
+                return proc.returncode
+            proc = subprocess.Popen(argv, cwd=workdir, env=merged,
+                                      start_new_session=True)
+            try:
+                proc.wait(timeout=timeout_s)
+                return proc.returncode
+            except subprocess.TimeoutExpired:
+                import os as _os
+                import signal as _signal
+                _os.killpg(proc.pid, _signal.SIGTERM)
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    _os.killpg(proc.pid, _signal.SIGKILL)
+                    proc.wait()
+                raise _HarnessTimeout(f"command timed out: {' '.join(argv)}")
         # TTY exec replaces this process: apply the parsed overlay to our
         # own environ first so the harness inherits it (same values the
         # headless child and the sourced shell command would see).
@@ -107,7 +126,8 @@ def cd_worktree(workdir: str) -> None:
 def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
            extra_args: list[str] | None = None,
            env_file: str | None = None,
-           watch: dict | None = None) -> int:
+           watch: dict | None = None,
+           timeout_s: "int | None" = None) -> int:
     """Exec the harness in the worktree. Returns its exit code.
 
     TTY mode: chdirs into the worktree and replaces this process (os.execvp)
@@ -136,8 +156,11 @@ def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
         cd_worktree(workdir)
         os.execvp(shim[0], shim)
         return 0  # unreachable; keeps type checkers quiet
+    _kw: dict = {}
+    if timeout_s is not None:
+        _kw["timeout_s"] = timeout_s
     return get_harness(harness).launch(prompt, workdir, no_tty, extra_args,
-                                       env_file=env_file)
+                                       env_file=env_file, **_kw)
 
 
 def _push_target_lines(worktree: str, branch: str) -> str:
