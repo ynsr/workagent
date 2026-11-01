@@ -101,6 +101,34 @@ def _has_unresolved_comments(entry: dict, pr_url: str) -> bool:
     return isinstance(n, int) and n > 0
 
 
+def _mr_touches_prodtest_plan(pr_url: str, cwd: str) -> bool:
+    """True when the MR diff contains a prodtest plan file (best effort)."""
+    from .errors import run_cmd
+    try:
+        parsed = refs.parse_ref(pr_url)
+        tool, number = parsed.get("tool", ""), str(parsed.get("number", "") or "")
+        if tool == "glab":
+            out = run_cmd("glab", "mr", "diff", str(number), "--name-only",
+                          cwd=cwd, echo=False) or ""
+            return ".workagent/prodtest/plans/" in out
+        if tool == "gh":
+            repo = parsed.get("repo", "") or ""
+            out = run_cmd("gh", "pr", "diff", str(number), "--repo", repo,
+                          "--name-only", cwd=cwd or None, echo=False) or ""
+            return ".workagent/prodtest/plans/" in out
+    except Exception:
+        return False
+    return False
+
+
+def _prodtest_checklist_block(plan_rel: str = ".workagent/prodtest/plans/") -> str:
+    """Review checklist block for prodtest plans (appended to review prompts)."""
+    return ("\n\nProdtest plan checklist:\n"
+            f"- Confirm the plan under {plan_rel} covers the MR diff "
+            "(subjects, risks, version gate).\n"
+            "- Flag missing subjects, stale diff hashes, or [HUMAN] placeholders.")
+
+
 def _same_repo(entry: dict, repo_dir: Path) -> bool:
     """True when the recorded entry belongs to ``repo_dir`` (or either side unrecorded)."""
     recorded = (entry.get("repo", "") or "").strip()
@@ -593,7 +621,8 @@ def review(
                 prompt = backend.prompt_for_fix_comments(pr_url, worktree=worktree, branch=branch)
             else:
                 prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
-
+                if _mr_touches_prodtest_plan(pr_url, str(repo_dir)):
+                    prompt += _prodtest_checklist_block()
             if post_comments and not fix_comments:
                 prompt += "\n\nAuto add all comments to the PR/MR at yielding and don't wait for user approval"
             if fix and not fix_comments:
@@ -648,6 +677,8 @@ def review(
         prompt = backend.prompt_for_fix_comments(pr_url, worktree=worktree, branch=branch)
     else:
         prompt = backend.prompt_for_review(pr_url, worktree=worktree, branch=branch)
+        if _mr_touches_prodtest_plan(pr_url, str(repo_dir)):
+            prompt += _prodtest_checklist_block()
 
     if post_comments and not fix_comments:
         prompt += "\n\nAuto add all comments to the PR/MR at yielding and don't wait for user approval"
