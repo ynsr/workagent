@@ -1,4 +1,4 @@
-"""`prodtest` command group: plan (run lands in Task 5)."""
+"""`prodtest` command group: plan + run."""
 from __future__ import annotations
 
 import json
@@ -199,3 +199,276 @@ def _finish_plan(key: str, issue_number: str | None, worktree: str, repo: str,
                               status="pending")
     except Exception as e:
         eprint(f"warning: prodtest state upsert failed: {e}")
+
+_FIX_MODES = ("report-only", "issue", "issue+mr")
+
+
+@prodtest_app.command("run")
+@_catch_harness_errors
+def prodtest_run(
+    ref: str = typer.Argument(..., help="Issue ref or worktree ref of the released work (key/branch/path)."),
+    fix_mode: str = typer.Option("report-only", "--fix-mode", help="Follow-up policy: report-only, issue, or issue+mr."),
+    skip_version_gate: bool = typer.Option(False, "--skip-version-gate", help="Proceed when the plan has no version_check (records skipped, low confidence)."),
+    run_dir: Optional[str] = typer.Option(None, "--run-dir", help="Directory for run outputs (default: worktree .workagent/prodtest/runs/<ts>-<issue>/)."),
+    launch: bool = typer.Option(False, "-L", "--launch", help="Launch the harness in the worktree (default: print the harness command)."),
+    terminal: bool = typer.Option(False, "--terminal", help="Open the harness command in the OS terminal (mutually exclusive with --launch)."),
+    no_tty: bool = typer.Option(False, "--no-tty", help="Run harness non-interactively."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print run plan without acting."),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
+    env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before harness commands."),
+    extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
+    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path for the harness session."),
+) -> None:
+    """Execute the production test plan for a released issue."""
+    if terminal and launch:
+        _fail("--terminal cannot be used with --launch (pick one run mode)", 2)
+    if fix_mode not in _FIX_MODES:
+        _fail(f"bad --fix-mode {fix_mode!r}: use report-only, issue, or issue+mr", 2)
+    if not isinstance(session_file, str):
+        session_file = None
+    if not isinstance(env_file, str):
+        env_file = None
+    if not isinstance(run_dir, str):
+        run_dir = None
+
+    key, entry, parsed = worktrees.resolve_any(ref, store.load_links(include_deleted=True))
+    issue_number: str | None = None
+    if entry.get("issue"):
+        issue_number = str(entry.get("issue", "") or "") or None
+    if parsed is not None and parsed.get("kind") == "issue":
+        issue_number = str(parsed.get("number", "") or "") or issue_number
+    if not issue_number and key.startswith("jira:"):
+        issue_number = key.split(":", 1)[1] or None
+    store_key = issue_number or key
+    item = store.get_prodtest(store_key)
+    release_sha = str((item or {}).get("release_sha", "") or "")
+    if not item or not release_sha:
+        _fail(f"no release recorded for {store_key}; release first", 2)
+
+    plan_path = str((item or {}).get("plan_path", "") or "")
+    plan_file = Path(plan_path) if plan_path else None
+    issue_url = str(entry.get("issue_url", "") or "")
+
+    if run_dir:
+        out_dir = Path(run_dir)
+    elif entry.get("worktree"):
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+        safe = "".join(c if (c.isalnum() or c in ("-", "_")) else "-" for c in store_key)
+        out_dir = Path(str(entry["worktree"])) / ".workagent" / "prodtest" / "runs" / f"{ts}-{safe}"
+    else:
+        out_dir = Path.cwd() / ".workagent" / "prodtest" / "runs" / store_key
+
+    if dry_run:
+        _print_result({"key": key, "issue": store_key, "run_dir": str(out_dir),
+                       "release_sha": release_sha, "plan_file": plan_path,
+                       "fix_mode": fix_mode, "skip_version_gate": skip_version_gate,
+                       "dry_run": True}, json_output)
+        return
+
+    from . import prodtest_lock as _lock
+    from . import prodtest_scripts as _ps
+    from .release_util import worktree_base
+
+    lock_base = str(store.config_dir())
+    if _lock.is_locked(lock_base, store_key):
+        _fail(f"prodtest run already in progress for {store_key}", 1)
+
+    timeout_s = _run_timeout_s(plan_file, skip_version_gate)
+
+    try:
+        with _lock.held_issue_lock(lock_base, store_key):
+            _run_locked(store_key, entry, plan_file, release_sha, issue_url,
+                        fix_mode, skip_version_gate, out_dir, timeout_s,
+                        launch, terminal, no_tty, json_output,
+                        harness, env_file, extra_prompt, session_file)
+    except KeyboardInterrupt:
+        _fail("interrupted; run checkout kept for inspection.", 1)
+
+
+def _run_timeout_s(plan_file: Path | None, skip_version_gate: bool) -> int:
+    """Budget + version-gate + slack timeout (seconds) from the plan file."""
+    budget_min, gate_s = 15, 300
+    if plan_file is not None and plan_file.exists():
+        try:
+            import yaml
+            plan = yaml.safe_load(plan_file.read_text(encoding="utf-8")) or {}
+            budget = plan.get("budget") or {}
+            if isinstance(budget.get("max_minutes"), int):
+                budget_min = budget["max_minutes"]
+            gate = ((plan.get("version_gate") or {}) if isinstance(plan.get("version_gate"), dict) else {})
+            if isinstance(gate.get("timeout_s"), int):
+                gate_s = gate["timeout_s"]
+            else:
+                vc = plan.get("version_check") or {}
+                if isinstance(vc, dict) and isinstance(vc.get("timeout_s"), int):
+                    gate_s = vc["timeout_s"]
+        except Exception:
+            pass
+    if skip_version_gate:
+        gate_s = 0
+    return budget_min * 60 + gate_s + 60
+
+
+def _run_locked(store_key: str, entry: dict, plan_file: Path | None, release_sha: str,
+                issue_url: str, fix_mode: str, skip_version_gate: bool,
+                out_dir: Path, timeout_s: int,
+                launch: bool, terminal: bool, no_tty: bool, json_output: bool,
+                harness: Optional[str], env_file: str | None,
+                extra_prompt: Optional[str], session_file: str | None) -> None:
+    """Run body inside the per-issue lock: checkout, validate, harness, persist."""
+    from . import release_worktree as _wt
+    from . import prodtest_scripts as _ps
+    from .release_util import worktree_base
+
+    repo = str(entry.get("repo", "") or "")
+    checkout: Path | None = None
+    if repo and Path(repo).is_dir():
+        dest = Path(str(worktree_base())) / f"prodtest-{store_key.replace('/', '-').replace(':', '-')}"
+        try:
+            checkout = _wt.prepare(repo, dest, release_sha)
+        except HarnessError as e:
+            _fail(f"checkout at {release_sha} failed: {e}", 1)
+    else:
+        eprint(f"warning: no repo checkout for {store_key}; skipping ephemeral checkout")
+
+    try:
+        manifest = (Path(repo) / ".workagent" / "prodtest.yaml") if repo else None
+        if plan_file is not None and plan_file.exists():
+            try:
+                validation = _ps.run_validate(
+                    str(plan_file), str(manifest) if manifest and manifest.exists() else None)
+            except Exception as e:
+                _fail(f"plan validation failed: {e}", 1)
+            if not validation.get("valid"):
+                for err in validation.get("errors", []):
+                    eprint(f"plan invalid: {err}")
+                _fail(f"plan {plan_file} invalid; fix the plan first", 1)
+        else:
+            eprint(f"warning: plan file {plan_file} missing; running without validation")
+
+        run_request = {
+            "checkout": str(checkout) if checkout else (repo or ""),
+            "release_sha": release_sha,
+            "plan_file": str(plan_file) if plan_file else "",
+            "issue": {"key": store_key, "url": issue_url or None},
+            "run_dir": str(out_dir),
+            "fix_mode": fix_mode,
+            "notifications_handled_by_harness": False,
+            "skip_version_gate": skip_version_gate,
+        }
+        prompt = ("Use the prodtest-run skill with run request: "
+                  + json.dumps(run_request, indent=2))
+        prompt = append_extra_prompt(prompt, extra_prompt)
+        harness_name = harness or store.load_config().get("default_harness", "omp")
+        worktree = str(entry.get("worktree", "") or repo or ".")
+        branch = str(entry.get("branch", "") or "")
+        result: dict = {"worktree_path": worktree, "branch": branch,
+                        "command": "prodtest run", "key": store_key,
+                        "run_dir": str(out_dir), "release_sha": release_sha,
+                        "fix_mode": fix_mode}
+        eprint(f"run dir: {out_dir}  release: {release_sha}")
+        _run_harness_guarded(harness_name, prompt, worktree, repo or worktree,
+                             no_tty, launch, result, json_output, terminal,
+                             env_file, session_file, timeout_s,
+                             store_key if entry else None)
+        if launch and no_tty:
+            _finish_run(store_key, entry, plan_file, release_sha, issue_url,
+                        fix_mode, out_dir, timeout_s, result)
+    finally:
+        if checkout is not None:
+            try:
+                _wt.finish(checkout, True)
+            except Exception as e:
+                eprint(f"warning: run checkout cleanup failed: {e}")
+
+
+def _run_harness_guarded(harness_name: str, prompt: str, worktree: str, fallback_dir: str,
+                         no_tty: bool, launch: bool, result: dict, json_output: bool,
+                         terminal: bool, env_file: str | None, session_file: str | None,
+                         timeout_s: int, run_key: str | None) -> None:
+    """Headless harness call with the run timeout; overrun marks BLOCKED."""
+    import threading
+    if not (launch and no_tty):
+        _run_harness(harness_name, prompt, worktree, fallback_dir,
+                     no_tty, launch, result, json_output,
+                     run_key=run_key, session_file=session_file,
+                     terminal=terminal, env_file=env_file)
+        return
+    err: list = []
+
+    def _target() -> None:
+        try:
+            _run_harness(harness_name, prompt, worktree, fallback_dir,
+                         no_tty, launch, result, json_output,
+                         run_key=run_key, session_file=session_file,
+                         terminal=terminal, env_file=env_file)
+        except BaseException as e:  # noqa: BLE001 — re-raised on join
+            err.append(e)
+
+    worker = threading.Thread(target=_target, daemon=True)
+    worker.start()
+    worker.join(timeout_s)
+    if worker.is_alive():
+        result["timeout"] = True
+        _fail(f"prodtest run timed out after {timeout_s}s (budget + gate + slack); "
+              f"marked BLOCKED", 1)
+    if err:
+        raise err[0]
+
+
+def _finish_run(store_key: str, entry: dict, plan_file: Path | None, release_sha: str,
+                issue_url: str, fix_mode: str, out_dir: Path, timeout_s: int,
+                result: dict) -> None:
+    """Best-effort post-harness: parse result, render/redact/persist, comment, status."""
+    from . import harness_summary as _hs
+    from . import issue_comments as _ic
+    from . import prodtest_result as _pr
+    from . import prodtest_scripts as _ps
+
+    session_file = str(result.get("session_file", "") or "")
+    stdout_text = ""
+    if session_file:
+        try:
+            stdout_text = _hs.last_assistant_text(session_file)
+        except Exception as e:
+            eprint(f"warning: summary parse failed: {e}")
+    payload: dict = {}
+    try:
+        payload = _pr.parse_result_line(stdout_text, str(out_dir), "PRODTEST_RUN")
+    except Exception as e:
+        eprint(f"warning: no PRODTEST_RUN_RESULT found ({e})")
+    overall = str(payload.get("overall", "") or "").upper()
+    status = {"PASS": "passed", "FAIL": "failed", "BLOCKED": "blocked"}.get(overall, "blocked")
+    run_id = str(payload.get("run_id", "") or result.get("session_id", "") or "")
+
+    report = ""
+    results_file = str(out_dir / "results.yaml")
+    report_file = str(out_dir / "report.md")
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        report = _ps.render(results_file)
+        Path(report_file).write_text(report, encoding="utf-8")
+    except Exception as e:
+        eprint(f"warning: report render failed: {e}")
+
+    try:
+        from . import prodtest_redact as _red
+        redacted = _red.redact(report) if report else ""
+        if redacted and issue_url:
+            _ic.post_issue_comment(issue_url, redacted)
+    except Exception as e:
+        eprint(f"warning: report comment post failed: {e}")
+
+    try:
+        store.upsert_prodtest(store_key, status=status,
+                              last_run_id=run_id or report_file)
+    except Exception as e:
+        eprint(f"warning: prodtest state upsert failed: {e}")
+
+    fix = payload.get("fix") or {}
+    if isinstance(fix, dict) and fix.get("decision") not in (None, "", "none"):
+        eprint(f"fix follow-up per manifest fix_policy: {fix.get('decision')} "
+               f"(mode {fix_mode})")
