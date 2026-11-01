@@ -108,7 +108,7 @@ function ExtraPromptField({ form, onChange, id = "launch-extra-prompt" }: {
   )
 }
 
-/** Review/Sync fields (kept on the Launch page; Start lives in StartForm). */
+/** Review/Sync/Prodtest fields (kept on the Launch page; Start lives in StartForm). */
 function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
   mode: Exclude<Mode, "flow">
   form: LaunchForm
@@ -133,7 +133,7 @@ function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
   return (
     <>
       <div className="grid gap-2">
-        <Label htmlFor="launch-ref">PR/MR ref</Label>
+        <Label htmlFor="launch-ref">{mode === "prodtest" ? "Issue ref" : "PR/MR ref"}</Label>
         <Input
           id="launch-ref"
           value={form.ref}
@@ -324,18 +324,18 @@ export function Launch() {
       toast.warning(`Unknown launch mode "${modeParam}" — form left blank`)
       return
     }
-    if ((modeParam === "sync" || modeParam === "review") && refParam && links) {
+    if ((modeParam === "sync" || modeParam === "review" || modeParam === "prodtest") && refParam && links) {
       setPrefillChecked(true)
       const entry = links.worktrees[refParam]
       if (modeParam === "sync" && !entry) {
         setForm((f) => (f.ref === refParam ? { ...f, ref: "" } : f))
         toast.warning(`No linked worktree for "${refParam}" — form left blank`)
       } else if (entry?.repo) {
-        // Review/Sync arrive from a worktree row: the worktree's repo wins.
+        // Review/Sync/Prodtest arrive from a worktree row: the worktree's repo wins.
         const repo: string = entry.repo
         setForm((f) => (f.repo ? f : { ...f, repo }))
       } else {
-        // Review of a PR ref (no linked worktree): ask the backend, which
+        // Review/Prodtest of a ref (no linked worktree): ask the backend, which
         // resolves linked-worktree → single-linked-tracker repo.
         api.defaultRepo(refParam).then(
           (r) => {
@@ -424,9 +424,13 @@ export function Launch() {
       return [refValue, ...(form.merge ? ["--merge"] : []), ...extraPromptArgs(form)]
     }
     if (mode === "start") return buildStartArgs(form)
+    if (mode === "prodtest") {
+      const args = ["run", refValue]
+      args.push(...runModeArgs(form.runMode))
+      args.push(...extraPromptArgs(form))
+      return args
+    }
     const args = [refValue]
-    // Preview/terminal are TTY copy-paste: no -p flag. Headless
-    // (--no-tty, omp -p --auto-approve) only when actually running now.
     if (form.fixComments) args.push("--fix-comments")
     if (form.fixComments && form.useReviewSession) args.push("--use-review-session")
     if (repoValue) args.push("--repo", repoValue)
@@ -436,7 +440,6 @@ export function Launch() {
     args.push(...extraPromptArgs(form))
     return args
   }
-
   const extra = form.extraPrompt.trim()
   const flagList = mode === "sync"
     ? [form.merge ? "--merge (local merge)" : "remote rebase (default)", extra ? `--extra-prompt ${extra}` : null].filter((v): v is string => v !== null)
@@ -454,7 +457,7 @@ export function Launch() {
       ].filter((v): v is string => v !== null)
   async function handleSubmit() {
     if (!refValue) return
-    if (mode !== "sync" && !repoValue) {
+    if (mode !== "sync" && mode !== "prodtest" && !repoValue) {
       toast.error("Pick a repo — none matches this ref (the server CWD is never used).")
       return
     }
@@ -548,7 +551,7 @@ export function Launch() {
           {mode === "flow" ? null : (
           <>
           <div className="flex flex-wrap gap-x-6 gap-y-3">
-            {mode === "review" ? (
+            {(mode === "review" || mode === "prodtest") ? (
               <RunModeSelect
                 idPrefix="launch"
                 value={form.runMode}
@@ -657,9 +660,9 @@ export function Launch() {
             <Button
                 type="button"
                 onClick={() => void handleSubmit()}
-                disabled={!refValue || submitting || (mode !== "sync" && !repoValue)}
+                disabled={!refValue || submitting || (mode !== "sync" && mode !== "prodtest" && !repoValue)}
                 title={
-                  mode !== "sync" && refValue && !repoValue
+                  mode !== "sync" && mode !== "prodtest" && refValue && !repoValue
                     ? "Pick a repo — none matches this ref"
                     : undefined
                 }

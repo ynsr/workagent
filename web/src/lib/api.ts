@@ -56,6 +56,25 @@ export interface WorktreeEntry {
   commits_detail?: CommitsDetail | null
   pr_detail?: PrDetail | null
   reviews_detail?: ReviewsDetail | null
+  /** Prodtest display status ("pending" | "pending_prodtest" | "running" | "passed" | "failed" | "blocked"); "-" when no plan. */
+  prodtest?: string
+  /** Stored prodtest item (status/risk/revision/last_run); null when no plan exists. */
+  prodtest_detail?: ProdtestDetail | null
+}
+
+/** Prodtest row cell: stored plan/run state for one issue. */
+export interface ProdtestDetail {
+  issue_key: string
+  plan_path?: string
+  plan_revision?: number
+  plan_risk?: string
+  plan_diff_hash?: string
+  release_sha?: string
+  released_at?: string
+  status?: string
+  last_run?: string
+  last_run_id?: string
+  updated_at?: string
 }
 
 /** Review-comment stats: done reviews + thread resolution. */
@@ -73,11 +92,10 @@ export interface WorktreeDetail extends WorktreeEntry {
   key: string
   commits: string
   pr: string
-  commits_detail?: CommitsDetail | null
-  pr_detail?: PrDetail | null
-  reviews_detail?: ReviewsDetail | null
   base_branch?: string
   create_hint?: string
+  prodtest?: string
+  prodtest_detail?: ProdtestDetail | null
 }
 
 export interface PathInfo {
@@ -291,6 +309,7 @@ export type RunCommand =
   | "tracker"
   | "action"
   | "flow"
+  | "prodtest"
 
 export interface FlowStep { kind: string; action_label?: string; config?: Record<string, unknown> }
 export interface FlowTemplateRow { id: number; label: string; name: string; steps: FlowStep[]; pre_execution: string; post_execution: string; parent_labels?: string[]; created_at: string; modified_at: string }

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { GitPullRequest, History, Play, RefreshCw, Rocket, Square, Trash2, Undo2, Wrench } from "lucide-react"
+import { FileCheck, GitPullRequest, History, Play, RefreshCw, Rocket, Square, Trash2, Undo2, Wrench } from "lucide-react"
 import type { WorktreeMap } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -78,6 +78,14 @@ export function RowActions({
           onClick={() => actions.onFixComments?.(worktreeKey)}
         >
           <Wrench aria-hidden />
+        </ActionIcon>
+      ) : null}
+      {actions.onGenerateProdtest ? (
+        <ActionIcon
+          title={`Generate prodtest plan for ${worktreeKey}`}
+          onClick={() => actions.onGenerateProdtest?.(worktreeKey)}
+        >
+          <FileCheck aria-hidden />
         </ActionIcon>
       ) : null}
       {actions.onCleanup ? (

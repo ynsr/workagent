@@ -40,7 +40,8 @@ SPECS: dict[str, dict[str, Any]] = {
     "backup": {"confirm": False, "force": False, "confirm_subs": ("import",),
                "key": "config"},
     "prodtest": {"confirm": True, "force": False,
-                 "key": lambda args: (f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest plan'])}" if args[:1] == ["plan"] else f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest run'])}") if args[:1] in (["plan"], ["run"]) else "config"},
+                 "key": lambda args: "prodtest:run-all" if args[:1] == ["run"] and "--all" in args
+                 else (f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest plan'])}" if args[:1] == ["plan"] else f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest run'])}") if args[:1] in (["plan"], ["run"]) else "config"},
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {

@@ -6,6 +6,7 @@ export const DESTRUCTIVE_COMMANDS: readonly string[] = [
   "sync",
   "start",
   "review",
+  "prodtest",
 ]
 
 /** Which confirmation opt-out bucket a (command, subcommand) pair belongs to. */
@@ -22,6 +23,8 @@ export function commandAction(
       return "start"
     case "review":
       return "review"
+    case "prodtest":
+      return "prodtest"
     case "repo":
       return args[0] === "remove" ? "repo remove" : null
     case "link":
@@ -43,6 +46,8 @@ export function commandLabel(command: string): string {
       return "Cleanup"
     case "sync":
       return "Sync"
+    case "prodtest":
+      return "Prodtest"
     case "register":
       return "Register"
     case "repo":

@@ -1,10 +1,10 @@
-export type Mode = "start" | "review" | "sync" | "flow"
+export type Mode = "start" | "review" | "sync" | "flow" | "prodtest"
 
 /** Issue #26: Launch never defaults to the serve CWD. The backend
  * `GET /api/default-repo?ref=` returns the linked-worktree repo for the
  * typed ref, else the single-linked repo — else no default. */
 
-export const MODES: readonly Mode[] = ["start", "review", "sync", "flow"]
+export const MODES: readonly Mode[] = ["start", "review", "sync", "flow", "prodtest"]
 
 export const COPY: Record<
   Mode,
@@ -50,6 +50,14 @@ export const COPY: Record<
     refHint: "Worktree key, issue/PR ref, or branch.",
     refPlaceholder: "jira:IPG-1, github:OWNER/REPO#33, or feat/IPG-929--x",
     confirmDesc: "Brings the worktree's branch up to date with its base branch (remote rebase by default; --merge merges locally).",
+  },
+  prodtest: {
+    label: "Prodtest",
+    title: "Run the prodtest plan",
+    description: "Issue key, OWNER/REPO#22, or a worktree ref (key/branch/path) — runs the stored plan at its release SHA.",
+    refHint: "Issue key, OWNER/REPO#22, or a worktree ref (key/branch/path).",
+    refPlaceholder: "IPG-932, OWNER/REPO#22, or jira:IPG-932@proj",
+    confirmDesc: "Runs the stored prodtest plan in an ephemeral read-only checkout at its release SHA.",
   },
 }
 
