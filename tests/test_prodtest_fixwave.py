@@ -177,6 +177,12 @@ def test_plan_binding_worktree_local_layout_blocks_on_mismatch(tmp_path, monkeyp
     monkeypatch.setattr(_e, "run_cmd", _fake_same)
     assert cli_prodtest._plan_release_binding("IPG-1", plan, "deadbeef", str(repo), None) is None
 
+    # Round 3: newline-terminated YAML plan identical to git-show bytes must pass
+    # (run_cmd strips stdout; working-tree read_bytes keeps the trailing newline).
+    plan.write_text("plan_version: 1\n")
+    monkeypatch.setattr(_e, "run_cmd", lambda *a, **k: "plan_version: 1")
+    assert cli_prodtest._plan_release_binding("IPG-1", plan, "deadbeef", str(repo), None) is None
+
 
 def test_plan_binding_unverifiable_blocks_by_default(tmp_path, monkeypatch):
     """Unverifiable plan at release blocks unless manifest opts into warn."""

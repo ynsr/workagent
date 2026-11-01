@@ -72,3 +72,30 @@ Worktree: `.worktrees/prodtest` @ `b8803b8` (parent `7b4fbe8`).
 - None new. `git show` byte comparison assumes the plan was committed to the MR/release
   history at the canonical path; a plan renamed out of `plans/` would surface as
   `blocked:plan-unverifiable-at-release` (correct fail-closed direction).
+
+---
+
+# Fix-wave round 3 — 2026-11-01 (review residual: stripped-vs-raw comparison)
+
+## Finding addressed
+- **(Important) false `blocked:plan-changed-since-release` on identical plans**
+  (`cli_prodtest.py` `_plan_release_binding`, worktree-local path): `run_cmd`
+  returns stripped stdout while the working-tree plan was read via raw
+  `read_bytes()`, so any normal newline-terminated YAML plan never equaled the
+  stripped `git show` bytes and identical plans reported
+  `blocked:plan-changed-since-release`. Fix: decode the working-tree bytes as
+  UTF-8 and compare symmetrically with `.strip()` on both sides, so
+  newline-terminated identical plans pass while genuinely changed plans still
+  block.
+
+## Tests
+- Extended `test_plan_binding_worktree_local_layout_blocks_on_mismatch` in
+  `tests/test_prodtest_fixwave.py` with a newline-terminated fixture
+  (`plan_version: 1\n` on disk vs stripped `plan_version: 1` from git-show)
+  asserting the binding passes (`None`).
+- `.venv/bin/python -m pytest tests/test_prodtest_fixwave.py tests/test_cli_prodtest_plan.py tests/test_cli_prodtest_run.py tests/test_prodtest_gates.py` → **33 passed**.
+
+## Concerns
+- `.strip()` on both sides also collapses leading/trailing-whitespace-only
+  differences (e.g. extra blank line at EOF); accepted — semantically identical
+  plans should not block the gate.

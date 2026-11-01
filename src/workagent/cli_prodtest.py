@@ -458,7 +458,13 @@ def _plan_release_binding(store_key: str, plan_file: Path | None, release_sha: s
         if _plan_manifest_allows_warn(checkout, repo):
             return "warn:plan-unverifiable-at-release"
         return "blocked:plan-unverifiable-at-release"
-    if (at_release or "").encode() != current:
+    # run_cmd returns stripped stdout while the working-tree plan is raw bytes,
+    # so normalize symmetrically: identical newline-terminated plans must pass.
+    try:
+        current_text = current.decode("utf-8")
+    except UnicodeDecodeError:
+        current_text = current.decode("utf-8", errors="replace")
+    if (at_release or "").strip() != current_text.strip():
         return "blocked:plan-changed-since-release"
     return None
 
