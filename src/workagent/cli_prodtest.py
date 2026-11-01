@@ -194,7 +194,10 @@ def _finish_plan(key: str, issue_number: str | None, worktree: str, repo: str,
         pass
 
     # P0: persist the plan diff hash from the dirty-tree tip so byte-identical
-    # plans pass the cleanup gate; preserve the release-recorded status.
+    # plans pass the cleanup gate. Preserve the release-recorded status only
+    # while it means "released, awaiting run" (pending_prodtest / running):
+    # a re-plan after a completed run (passed/failed/blocked) resets to
+    # pending so the new revision/hash goes through release + run again.
     diff_hash = ""
     try:
         from . import cli_cleanup as _cc
@@ -209,7 +212,9 @@ def _finish_plan(key: str, issue_number: str | None, worktree: str, repo: str,
     try:
         existing = store.get_prodtest(issue_number or key)
         if existing and (existing.get("release_sha") or ""):
-            status = str(existing.get("status", "") or "") or "pending_prodtest"
+            prev = str(existing.get("status", "") or "")
+            if prev in ("pending_prodtest", "running"):
+                status = prev
     except Exception:
         pass
     try:
@@ -371,13 +376,46 @@ def _run_locked(store_key: str, entry: dict, plan_file: Path | None, release_sha
 
 
 
+def _rel_plan_candidates(plan_file: Path) -> list[str]:
+    """Repo-relative candidate path for a plan file.
+
+    Production layout stores the plan worktree-local at
+    ``.workagent/prodtest/plans/<KEY>.yaml`` (committed in the MR branch but
+    not necessarily under the release checkout root). Derive the canonical
+    repo-relative path from the filename so ``git show
+    <release_sha>:<path>`` can resolve the plan bytes at release time.
+    """
+    name = Path(str(plan_file)).name
+    if not name:
+        return []
+    return [f".workagent/prodtest/plans/{name}"]
+
+
+def _plan_manifest_allows_warn(checkout: Path | None, repo: str) -> bool:
+    """True when the manifest fix_policy.plan_binding selects warn mode."""
+    try:
+        import yaml as _yaml
+        base = checkout if checkout is not None and checkout.is_dir() else (Path(repo) if repo else None)
+        man = (base / ".workagent" / "prodtest.yaml") if base is not None else None
+        if man is not None and man.exists():
+            policy = (_yaml.safe_load(man.read_text(encoding="utf-8")) or {}).get("fix_policy") or {}
+            if isinstance(policy, dict) and str(policy.get("plan_binding", "") or "").lower() == "warn":
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _plan_release_binding(store_key: str, plan_file: Path | None, release_sha: str,
                           repo: str, checkout: Path | None) -> str | None:
     """Plan-at-release-SHA binding: None = pass, 'blocked:…' / 'warn:…' otherwise.
 
     Compares the plan bytes at the release SHA (via the ephemeral checkout,
     falling back to ``repo``) against the working-tree plan: a mismatch means
-    the stored plan is not what was reviewed at release time. Never raises.
+    the stored plan is not what was reviewed at release time. Worktree-local
+    plans (the production layout) are resolved to their canonical
+    repo-relative ``.workagent/prodtest/plans/<KEY>.yaml`` path and read via
+    ``git show <release_sha>:<path>``. Never raises.
     """
     if plan_file is None or not str(plan_file):
         return "warn:missing-plan"
@@ -395,17 +433,31 @@ def _plan_release_binding(store_key: str, plan_file: Path | None, release_sha: s
         rel = Path(str(plan_file)).resolve().relative_to(Path(str(base)).resolve())
     except Exception:
         rel = None
-    if rel is None:
-        # Plan lives outside the repo (worktree-local copy): compare release
-        # ancestry instead — the checkout pins release_sha so serving its
-        # manifest/plan area is the binding.
-        return None
+    rels: list[str] = [rel.as_posix()] if rel is not None else []
+    if not rels:
+        # Worktree-local plan (production layout): resolve via the canonical
+        # repo-relative plan path so the gate actually fires on mismatch.
+        rels = _rel_plan_candidates(Path(str(plan_file)))
+    if not rels:
+        return "warn:plan-unverifiable-at-release"
+    at_release: str | None = None
     try:
         from .errors import run_cmd as _run
-        at_release = _run("git", "-C", str(base), "show", f"{release_sha}:{rel.as_posix()}",
-                          echo=False)
+        for cand in rels:
+            try:
+                at_release = _run("git", "-C", str(base), "show", f"{release_sha}:{cand}",
+                                  echo=False)
+                break
+            except Exception:
+                continue
     except Exception:
         return "warn:plan-unverifiable-at-release"
+    if at_release is None:
+        # Cannot prove the plan existed at the release SHA: block by default
+        # so the gate fires; warn only when the manifest opts into warn mode.
+        if _plan_manifest_allows_warn(checkout, repo):
+            return "warn:plan-unverifiable-at-release"
+        return "blocked:plan-unverifiable-at-release"
     if (at_release or "").encode() != current:
         return "blocked:plan-changed-since-release"
     return None
@@ -417,7 +469,7 @@ def _enforce_plan_release_binding(store_key: str, item: dict | None, plan_file: 
 
     ``manifest.fix_policy.plan_binding`` selects the mode: ``"fail"``
     (default) aborts the run, ``"warn"`` prints a loud warning and proceeds.
-    Missing/unverifiable plans only warn — validation below owns that path.
+    Missing plans only warn — validation below owns that path.
     """
     binding = _plan_release_binding(store_key, plan_file, release_sha, repo, checkout)
     if binding is None:

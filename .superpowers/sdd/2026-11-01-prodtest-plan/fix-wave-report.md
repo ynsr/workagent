@@ -38,3 +38,37 @@ Worktree: `.worktrees/prodtest` @ `b8803b8` (parent `7b4fbe8`).
 - `glab issue create` needs a project path/id context; bare-host repos only warn (harness owns follow-up there).
 - Frontend `tsc` not run (no node toolchain invoked); Launch/StartForm/launchConfig edits are small and mirror the existing ReviewAction pattern.
 - Web parity checklist: `web_args.py` needs no change (no new CLI flags — plan/run are existing subcommands).
+
+---
+
+# Fix-wave round 2 — 2026-11-01 (re-review residuals)
+
+## Findings addressed
+- **(1 Important) status preserve over-wide** (`cli_prodtest.py` `_finish_plan`): the
+  preserve-when-`release_sha`-set branch now only preserves statuses meaning
+  "released, awaiting run" (`pending_prodtest`, `running`). Re-plan after a
+  completed run (`passed`/`failed`/`blocked`) resets to `pending` with the new
+  revision/diff-hash, so the fresh plan goes through release + run again.
+- **(P1d-residual) binding silent pass for worktree-local plans** (`cli_prodtest.py`
+  `_plan_release_binding`): when the stored `plan_path` is not under the ephemeral
+  checkout/repo (the production worktree-local layout), the binding now resolves the
+  canonical repo-relative path `.workagent/prodtest/plans/<KEY>.yaml` (from the plan
+  filename) and compares working-tree bytes against
+  `git show <release_sha>:<repo-relative-plan>`. Unverifiable-at-release now returns
+  `blocked:plan-unverifiable-at-release` by default (fires the gate), downgraded to
+  `warn:plan-unverifiable-at-release` only when `manifest.fix_policy.plan_binding: warn`.
+  New `_rel_plan_candidates` + `_plan_manifest_allows_warn` helpers; never raises.
+
+## Tests
+- New in `tests/test_prodtest_fixwave.py`: `test_finish_plan_resets_status_after_completed_run`
+  (passed/failed/blocked → pending), `test_finish_plan_preserves_running`,
+  `test_plan_binding_worktree_local_layout_blocks_on_mismatch` (asserts the exact
+  `git show deadbeef:.workagent/prodtest/plans/IPG-1.yaml` probe + pass-on-match),
+  `test_plan_binding_unverifiable_blocks_by_default` (block default, warn with manifest opt-in).
+- `.venv/bin/python -m pytest tests/ -k prodtest` → **44 passed**.
+- Targeted: `test_prodtest_fixwave + test_cli_prodtest_plan + test_cli_prodtest_run + test_prodtest_gates` → **33 passed**.
+
+## Concerns
+- None new. `git show` byte comparison assumes the plan was committed to the MR/release
+  history at the canonical path; a plan renamed out of `plans/` would surface as
+  `blocked:plan-unverifiable-at-release` (correct fail-closed direction).

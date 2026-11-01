@@ -106,6 +106,101 @@ def test_plan_binding_blocks_on_mismatch(tmp_path):
     assert cli_prodtest._plan_release_binding("IPG-1", plan, "deadbeef", "", None) is None
 
 
+def test_finish_plan_resets_status_after_completed_run(isolated_config, tmp_path, monkeypatch):
+    """Re-plan after passed/failed/blocked resets to pending (round 2)."""
+    from workagent import store_sqlite as sq
+    sqm, db = _db(monkeypatch, tmp_path)
+    for terminal in ("passed", "failed", "blocked"):
+        sqm.upsert_prodtest(db, "IPG-2", release_sha="deadbeef", status=terminal)
+        wt = tmp_path / f"wt-{terminal}"
+        wt.mkdir(exist_ok=True)
+        plan = wt / "plan.yaml"
+        plan.write_text("plan_version: 1\n")
+        monkeypatch.setattr(cli_prodtest.repos, "default_branch", lambda repo: "main")
+        monkeypatch.setattr(cli_cleanup, "current_prodtest_diff", lambda repo, default: "abc123")
+        monkeypatch.setattr("workagent.harness_summary.last_assistant_text", lambda sf: "")
+        monkeypatch.setattr("workagent.prodtest_result.parse_result_line",
+                            lambda text, wt2, tag: {"revision": 1, "risk": ""})
+        monkeypatch.setattr("workagent.prodtest_scripts.run_validate",
+                            lambda plan2, manifest: {"valid": True, "errors": [], "warnings": []})
+        monkeypatch.setattr("workagent.errors.run_cmd", lambda *a, **k: "")
+        cli_prodtest._finish_plan("IPG-2", "IPG-2", str(wt), str(tmp_path),
+                                  "feat/x", plan, "", {"session_file": ""})
+        row = sqm.get_prodtest(db, "IPG-2")
+        assert row["status"] == "pending", (terminal, row)
+
+
+def test_finish_plan_preserves_running(isolated_config, tmp_path, monkeypatch):
+    """Running (released, awaiting run) is preserved like pending_prodtest."""
+    from workagent import store_sqlite as sq
+    sqm, db = _db(monkeypatch, tmp_path)
+    sqm.upsert_prodtest(db, "IPG-3", release_sha="deadbeef", status="running")
+    wt = tmp_path / "wt-running"
+    wt.mkdir()
+    plan = wt / "plan.yaml"
+    plan.write_text("plan_version: 1\n")
+    monkeypatch.setattr(cli_prodtest.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli_cleanup, "current_prodtest_diff", lambda repo, default: "abc123")
+    monkeypatch.setattr("workagent.harness_summary.last_assistant_text", lambda sf: "")
+    monkeypatch.setattr("workagent.prodtest_result.parse_result_line",
+                        lambda text, wt2, tag: {"revision": 1, "risk": ""})
+    monkeypatch.setattr("workagent.prodtest_scripts.run_validate",
+                        lambda plan2, manifest: {"valid": True, "errors": [], "warnings": []})
+    monkeypatch.setattr("workagent.errors.run_cmd", lambda *a, **k: "")
+    cli_prodtest._finish_plan("IPG-3", "IPG-3", str(wt), str(tmp_path),
+                              "feat/x", plan, "", {"session_file": ""})
+    row = sqm.get_prodtest(db, "IPG-3")
+    assert row["status"] == "running", row
+
+
+def test_plan_binding_worktree_local_layout_blocks_on_mismatch(tmp_path, monkeypatch):
+    """Worktree-local plan (production layout) binds via git show (round 2)."""
+    import workagent.errors as _e
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    plan = wt / "IPG-1.yaml"
+    plan.write_text("current")
+
+    def _fake_run(*a, **k):
+        assert "show" in a
+        # Production layout: canonical repo-relative plan path at release SHA.
+        assert a[-1] == "deadbeef:.workagent/prodtest/plans/IPG-1.yaml", a
+        return "at-release-bytes"
+    monkeypatch.setattr(_e, "run_cmd", _fake_run)
+    assert cli_prodtest._plan_release_binding("IPG-1", plan, "deadbeef", str(repo), None) == \
+        "blocked:plan-changed-since-release"
+
+    def _fake_same(*a, **k):
+        return "current"
+    monkeypatch.setattr(_e, "run_cmd", _fake_same)
+    assert cli_prodtest._plan_release_binding("IPG-1", plan, "deadbeef", str(repo), None) is None
+
+
+def test_plan_binding_unverifiable_blocks_by_default(tmp_path, monkeypatch):
+    """Unverifiable plan at release blocks unless manifest opts into warn."""
+    import workagent.errors as _e
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    plan = wt / "IPG-1.yaml"
+    plan.write_text("current")
+
+    def _boom(*a, **k):
+        raise RuntimeError("no such path at sha")
+    monkeypatch.setattr(_e, "run_cmd", _boom)
+    assert cli_prodtest._plan_release_binding("IPG-1", plan, "deadbeef", str(repo), None) == \
+        "blocked:plan-unverifiable-at-release"
+
+    man_dir = repo / ".workagent"
+    man_dir.mkdir()
+    (man_dir / "prodtest.yaml").write_text("fix_policy:\n  plan_binding: warn\n")
+    assert cli_prodtest._plan_release_binding("IPG-1", plan, "deadbeef", str(repo), None) == \
+        "warn:plan-unverifiable-at-release"
+
+
 def test_followup_creates_issue_on_fail(isolated_config, tmp_path, monkeypatch):
     calls = []
     import workagent.errors as _e
