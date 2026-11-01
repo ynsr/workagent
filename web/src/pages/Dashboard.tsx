@@ -561,7 +561,7 @@ export function Dashboard() {
     onFixComments: (key: string) =>
       navigate("/launch?mode=review&fixComments=1&ref=" + encodeURIComponent(key)),
     onGenerateProdtest: (key: string) =>
-      navigate("/launch?mode=prodtest&ref=" + encodeURIComponent(key)),
+      navigate("/launch?mode=prodtest&prodtestAction=plan&ref=" + encodeURIComponent(key)),
     onCleanup: handleCleanup,
     onOpenWorktree: handleOpenWorktree,
     onOpenRun: handleOpenRun,

@@ -519,7 +519,7 @@ def _prodtest_post_release(path: str, release_branch: str, pinned: str,
         except Exception as e:
             eprint(f"warning: prodtest state upsert failed for {ref}: {e}")
     for subject in subjects or []:
-        if not any(r and r in subject for r in released_set):
+        if not any(r and _re.search(rf"(?<![A-Z0-9-]){_re.escape(r)}(?![0-9])", subject or "") for r in released_set):
             eprint(f"warning: release subject has no prodtest plan coverage: {subject}")
 
 

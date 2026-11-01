@@ -293,6 +293,9 @@ export function Launch() {
       base.fixComments = urlFix || base.fixComments
       if (urlFix) base.reviewAction = "fix"
     }
+    if (modeParam === "prodtest" && params.get("prodtestAction") === "plan") {
+      base.prodtestAction = "plan"
+    }
     return base
   })
   const [submitting, setSubmitting] = useState(false)
