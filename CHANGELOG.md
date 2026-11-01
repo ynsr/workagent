@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Prodtest checks releases automatically: generates a test plan with the fix, then verifies it live after release [no-issue]
 - Release marks every shipped issue as released, not just the first one found [no-issue]
 - Jira variants per request: code review→[Review, R2R], ready to release→[..., Review], released→[Released, Done]; Code Review dropped; transitions logged in AGENTS.md [IPG-1066]
 - Jira move variants now match the IPG workflow (Review first for code review; no Code Review/Closed phantoms; no Ready to Release→Done fallback) + verdict settle accepts bare Review [IPG-1066]

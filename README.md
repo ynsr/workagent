@@ -172,6 +172,44 @@ Refs (`status`, `sync`, `review`, `cleanup`, `cd`) complete in the shell
 over worktree keys, branches, and worktree names.
 
 
+## Prodtest (`prodtest plan|run`)
+
+Post-release production testing in two steps. `prodtest plan <ref>` generates
+a test plan from the linked worktree (committed into the MR next to the code,
+so review sees it); `prodtest run <ref>` executes the plan against the
+released version after `release` records it.
+
+```bash
+workagent prodtest plan IPG-929          # generate (or --update) the plan
+workagent prodtest plan IPG-929 --dry-run --json
+workagent prodtest run IPG-929 --dry-run --json
+```
+
+Workflow: plan resolves the worktree + issue/MR, builds the prompt from the
+`prodtest-plan` skill, validates the emitted plan, commits it
+(`prodtest: plan rN for <KEY>`), pushes, and comments a summary on the issue.
+Run checks preconditions (release recorded, plan valid at the release SHA),
+takes an ephemeral read-only checkout at the release SHA under a per-issue
+lock, and persists a redacted report (`results.yaml` + rendered markdown,
+posted as an issue comment). Both commands support the usual
+`--launch/--terminal/--no-tty/--dry-run/--yes/--json` harness flags;
+`run` adds `--fix-mode report-only|issue|issue+mr` (follow-up policy),
+`--skip-version-gate`, and `--run-dir`.
+
+Manifest/skills: plan shape comes from the `prodtest-plan` skill
+(`plan_version`, `cases`, `smoke`, `budget`, `not_covered`) and is validated
+by the vendored `validate_plan.py`; run behavior follows the `prodtest-run`
+skill and renders via the vendored `render_report.py` (copies live under
+`src/workagent/prodtest_files/`). Result contract: the harness prints a
+`PRODTEST_*_RESULT:` payload line (or writes `result.json` in the run dir).
+See `docs/prodtest-demo.md` for a stub-harness PASS + FAIL transcript.
+
+Safety: the agent may only add `path_rules`/`smoke_cases`/`proposed_subjects`
+to the manifest; SQL checks are re-validated (single read-only statement);
+secrets are redacted before anything is persisted; an overrun run is marked
+`BLOCKED`. Cleanup warns on a missing plan and blocks on a stale/invalid one;
+rows with a pending/running prodtest survive `link gc` until the run lands.
+
 ## Web UI (`workagent serve`)
 
 `workagent serve` starts a local web server that mirrors the CLI: worktree
