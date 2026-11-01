@@ -79,8 +79,33 @@ fi
 if [ -d "$DIR/web" ]; then
   if command -v npm &>/dev/null; then
     echo "==> Building web UI..."
-    (cd "$DIR/web" && npm ci --no-fund --no-audit && npm run build) \
-      || echo "warning: web UI build failed — 'workagent serve' will refuse to start until 'cd web && npm ci && npm run build' succeeds."
+    if (cd "$DIR/web" && npm ci --no-fund --no-audit && npm run build); then
+      echo "  -> web UI built."
+    else
+      # Build failed: refuse to install when the bundle is stale or missing
+      # (silently serving an old dist/ is how UI changes go missing).
+      # A fresh dist/ with an unrelated build failure only warns.
+      WEB_DIST="$(python3 - "$DIR" <<'EOF'
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+src_dir = root / "web" / "src"
+dist_index = root / "web" / "dist" / "index.html"
+if not src_dir.is_dir():
+    print("ok")
+elif not dist_index.exists():
+    print("missing")
+else:
+    newest = max((p.stat().st_mtime for p in src_dir.rglob("*") if p.is_file()), default=0.0)
+    print("ok" if dist_index.stat().st_mtime >= newest else "stale")
+EOF
+)"
+      if [ "$WEB_DIST" != "ok" ]; then
+        echo "error: web UI build failed and web/dist is $WEB_DIST — fix the errors ('cd web && npm run build') and re-run ./install.sh."
+        exit 1
+      fi
+      echo "warning: web UI build failed, but the existing web/dist is newer than web/src — continuing with the current bundle."
+    fi
   else
     echo "warning: npm not found — web UI not built; install Node.js and run 'cd web && npm ci && npm run build' to enable 'workagent serve'."
   fi

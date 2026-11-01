@@ -23,15 +23,36 @@ def source_hash() -> str:
     return d.hexdigest()[:12]
 
 
+def web_dist_status() -> str:
+    """Freshness of the built web UI: ok|stale|missing.
+
+    Compares newest mtime under web/src against web/dist/index.html.
+    Missing dist counts as missing only when web/src exists; a source tree
+    without a web/ dir (installed copies) reports ok.
+    """
+    root = source_dir()
+    src_dir = root / "web" / "src"
+    dist_index = root / "web" / "dist" / "index.html"
+    if not src_dir.is_dir():
+        return "ok"
+    if not dist_index.exists():
+        return "missing"
+    newest_src = max(
+        (p.stat().st_mtime for p in src_dir.rglob("*") if p.is_file()),
+        default=0.0,
+    )
+    if dist_index.stat().st_mtime >= newest_src:
+        return "ok"
+    return "stale"
+
+
 def receipt_path() -> Path:
     home = Path(os.environ.get("HOME", str(Path.home())))
     return home / ".local" / "share" / "workagent" / "install-receipt.json"
 
-
 def source_dir() -> Path:
     # <project>/src/workagent/doctor.py → <project>
     return _pkg_dir().parent.parent
-
 
 def is_installed_copy() -> bool:
     """True when running from site-packages / pipx venv (not the source tree)."""
@@ -51,8 +72,11 @@ def check(json_output: bool = False) -> dict:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         recorded = ""
     status = "ok" if recorded == live else ("missing" if not recorded else "stale")
+    web = web_dist_status()
+    if web != "ok" and status == "ok":
+        status = web
     result = {"status": status, "live_hash": live, "recorded_hash": recorded,
-              "tools": tools, "receipt": str(receipt)}
+              "web_dist": web, "tools": tools, "receipt": str(receipt)}
     from .service import unit_path as _unit_path
     try:
         installed = _unit_path().read_text()
@@ -66,6 +90,9 @@ def check(json_output: bool = False) -> dict:
         print(f"doctor: {status} — reinstall with ./install.sh", file=sys.stderr)
     else:
         print("doctor: ok", file=sys.stderr)
+    if result.get("web_dist") != "ok":
+        print("doctor: web UI dist is stale or missing — run 'cd web && npm ci && npm run build', then ./install.sh",
+              file=sys.stderr)
     if result.get("serve_killmode") == "legacy":
         print("doctor: serve unit lacks KillMode=process — runs die on "
               "restart; run `workagent service install --yes`", file=sys.stderr)

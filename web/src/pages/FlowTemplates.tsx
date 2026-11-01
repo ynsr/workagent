@@ -55,6 +55,7 @@ export function FlowTemplates() {
   const [editingLabel, setEditingLabel] = useState<string | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [lineageNote, setLineageNote] = useState<string | null>(null)
+  const labelValid = /^[a-z0-9_]+$/.test(label)
 
   function handleNameChange(value: string) {
     setName(value)
@@ -326,6 +327,7 @@ export function FlowTemplates() {
                     ))}
                   </TableBody>
                 </Table>
+                {isFetching && !isPending ? <RefreshOverlay /> : null}
               </div>
             )}
           </CardContent>

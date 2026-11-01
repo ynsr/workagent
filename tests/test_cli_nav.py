@@ -44,6 +44,18 @@ def test_doctor_missing_and_ok(isolated_config, tmp_path, monkeypatch):
     assert "doctor: ok" in r.output
 
 
+def test_doctor_stale_when_web_dist_behind_src(isolated_config, tmp_path, monkeypatch):
+    from workagent import doctor as _doctor
+    monkeypatch.setenv("HOME", str(tmp_path))
+    receipt = tmp_path / ".local/share/workagent/install-receipt.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(json.dumps({"source_hash": _doctor.source_hash()}))
+    monkeypatch.setattr(_doctor, "web_dist_status", lambda: "stale")
+    r = _invoke("doctor")
+    assert r.exit_code == 1
+    assert "doctor: stale" in r.output
+    assert "web UI" in r.output
+
 def test_repo_list_csv(isolated_config, tmp_path):
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
