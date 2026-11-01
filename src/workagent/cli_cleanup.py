@@ -655,6 +655,23 @@ def _close_pr(parsed: dict, pr_url: str, force: bool, cwd: str | None = None) ->
         eprint(f"warning: {e}")
 
 
+def _prodtest_issue_key(key: str, entry: dict | None = None) -> str:
+    """Issue key for prodtest-block checks (`issue` field, else ref key)."""
+    e = entry or {}
+    stored = str(e.get("issue", "") or key or "")
+    if stored.startswith("jira:"):
+        stored = stored.split(":", 1)[1].split("@", 1)[0]
+    return stored
+
+
+def _prodtest_blocked(key: str, entry: dict | None = None) -> bool:
+    """True when a pending/running prodtest item blocks GC/destroy."""
+    try:
+        return bool(store.gc_blocked_by_prodtest(_prodtest_issue_key(key, entry)))
+    except Exception:
+        return False
+
+
 def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict]:
     """Purge worktree rows soft-deleted longer than *retention_days* ago.
 
@@ -663,6 +680,8 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
     store's view — gc_soft_deleted removed it; sessions/runs CASCADE).
     Remote branches are NOT touched: the merge-or-close at cleanup time
     already decided their fate. Returns per-row status dicts.
+    Rows blocked by a pending/running prodtest item are refused with
+    `skipped:prodtest-pending` (row and files survive).
     """
     from . import cli as _cli
     expired = store.gc_soft_deleted(retention_days=retention_days)
@@ -670,6 +689,10 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
     for r in expired:
         key, branch, repo = r["ref_key"], r.get("branch", ""), r.get("repo", "")
         status = "purged"
+        if _prodtest_blocked(key):
+            rows.append({"key": key, "branch": branch,
+                         "status": "skipped:prodtest-pending"})
+            continue
         if dry_run:
             rows.append({"key": key, "branch": branch, "status": "gc-dry-run"})
             continue
@@ -691,7 +714,8 @@ def destroy_deleted(keys: list[str], dry_run: bool = False) -> list[dict]:
     Tears down surviving local state: git-wt cleanup (worktree dir), local
     branch delete, then row drop. Sessions/runs CASCADE with the row.
     Remote branches are NOT touched. Returns per-key status dicts.
-    Never raises for unknown keys.
+    Keys blocked by a pending/running prodtest item are refused with
+    `skipped:prodtest-pending`. Never raises for unknown keys.
     """
     from . import cli as _cli
     links = store.load_links(include_inactive=True, include_deleted=True)
@@ -701,6 +725,10 @@ def destroy_deleted(keys: list[str], dry_run: bool = False) -> list[dict]:
         if not entry or not entry.get("deleted_at"):
             rows.append({"key": key, "branch": str(entry.get("branch", "")),
                          "status": "skipped:not-deleted"})
+            continue
+        if _prodtest_blocked(key, entry):
+            rows.append({"key": key, "branch": str(entry.get("branch", "")),
+                         "status": "skipped:prodtest-pending"})
             continue
         branch = str(entry.get("branch", "") or "")
         repo = str(entry.get("repo", "") or "")

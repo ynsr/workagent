@@ -85,6 +85,12 @@ CREATE TABLE IF NOT EXISTS flows (
   effective_steps TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL, modified_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_flows_worktree ON flows(worktree_ref);
+CREATE TABLE IF NOT EXISTS prodtest_items (
+  issue_key TEXT PRIMARY KEY NOT NULL, plan_path TEXT NOT NULL DEFAULT '',
+  plan_revision INTEGER NOT NULL DEFAULT 0, plan_risk TEXT NOT NULL DEFAULT '',
+  plan_diff_hash TEXT NOT NULL DEFAULT '', release_sha TEXT NOT NULL DEFAULT '',
+  released_at TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending',
+  last_run_id TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL);
 """
 
 
@@ -692,6 +698,8 @@ def _schema_current(path: Path) -> bool:
         fcols2 = {r[1] for r in conn.execute("PRAGMA table_info(flows)")}
         if "effective_steps" not in fcols2:
             return False
+        if "prodtest_items" not in tables:
+            return False
         return True
     except Exception:
         return False
@@ -1050,3 +1058,75 @@ def set_release_diff_cache(path: Path, repo_key: str, count: int) -> None:
             " ON CONFLICT(repo_key) DO UPDATE SET count=excluded.count,"
             " fetched_at=excluded.fetched_at",
             (repo_key, int(count), datetime.now(timezone.utc).isoformat()))
+#: Allowed prodtest item statuses — an enum, never free text.
+PRODTEST_STATUSES = ("pending", "pending_prodtest", "running",
+                     "passed", "failed", "blocked")
+
+_PRODTEST_COLS = ("plan_path", "plan_revision", "plan_risk",
+                  "plan_diff_hash", "release_sha", "released_at",
+                  "status", "last_run_id")
+
+
+def ensure_schema(path: Path) -> Path:
+    """Alias for init_db (creates current schema incl. prodtest_items)."""
+    return init_db(path)
+
+
+def upsert_prodtest(path: Path, key: str, **fields) -> dict:
+    """Create-or-update a prodtest item row; returns the stored row."""
+    from datetime import datetime, timezone
+    init_db(path)
+    status = str(fields.get("status", "pending"))
+    if status not in PRODTEST_STATUSES:
+        raise ValueError(
+            f"status must be one of {', '.join(PRODTEST_STATUSES)} (got {status!r})")
+    cols = ["issue_key"] + [c for c in _PRODTEST_COLS if c in fields]
+    vals = [key] + [fields[c] for c in cols[1:]]
+    sets = ", ".join(f"{c}=excluded.{c}" for c in cols[1:])
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(path) as conn:
+        conn.execute(
+            f"INSERT INTO prodtest_items (issue_key, {', '.join(cols[1:])}, updated_at)"
+            f" VALUES ({', '.join('?' * (len(cols) + 1))})"
+            f" ON CONFLICT(issue_key) DO UPDATE SET {sets}, updated_at=excluded.updated_at",
+            (*vals, now))
+    return get_prodtest(path, key)
+
+
+def get_prodtest(path: Path, key: str) -> dict | None:
+    """One prodtest item row as a dict; None when unknown."""
+    import sqlite3 as _s3
+    if not Path(path).exists():
+        return None
+    with connect(path) as conn:
+        conn.row_factory = _s3.Row
+        try:
+            row = conn.execute(
+                "SELECT * FROM prodtest_items WHERE issue_key = ?", (key,)).fetchone()
+        except _s3.OperationalError:
+            return None
+    return dict(row) if row is not None else None
+
+
+def set_prodtest_status(path: Path, key: str, status: str) -> dict:
+    """Set a prodtest item's status; ValueError on unknown status/key."""
+    if status not in PRODTEST_STATUSES:
+        raise ValueError(
+            f"status must be one of {', '.join(PRODTEST_STATUSES)} (got {status!r})")
+    from datetime import datetime, timezone
+    init_db(path)
+    with connect(path) as conn:
+        cur = conn.execute(
+            "UPDATE prodtest_items SET status = ?, updated_at = ? WHERE issue_key = ?",
+            (status, datetime.now(timezone.utc).isoformat(), key))
+        if cur.rowcount == 0:
+            raise ValueError(f"no prodtest item for {key}")
+    return get_prodtest(path, key)
+
+
+def gc_blocked_by_prodtest(path: Path, key: str) -> bool:
+    """True when GC must skip *key* (prodtest pending_prodtest/running)."""
+    if not Path(path).exists():
+        return False
+    row = get_prodtest(path, key)
+    return bool(row) and row.get("status") in ("pending_prodtest", "running")

@@ -833,3 +833,30 @@ def update_flow(flow_id: int, **fields) -> dict:
     """Update a flow run (delegates to store_flows)."""
     from . import store_sqlite as _sq
     return _fl.update_flow(_sq.db_path(), flow_id, **fields)
+
+
+def upsert_prodtest(key: str, **fields) -> dict:
+    """Create-or-update a prodtest item (delegates to store_sqlite)."""
+    from . import store_sqlite as _sq
+    return _sq.upsert_prodtest(_sq.db_path(), key, **fields)
+
+
+def get_prodtest(key: str) -> dict | None:
+    """One prodtest item by key; None when unknown."""
+    from . import store_sqlite as _sq
+    return _sq.get_prodtest(_sq.db_path(), key)
+
+
+def set_prodtest_status(key: str, status: str) -> dict:
+    """Set a prodtest item's status (delegates to store_sqlite)."""
+    from . import store_sqlite as _sq
+    return _sq.set_prodtest_status(_sq.db_path(), key, status)
+
+
+def gc_blocked_by_prodtest(key: str) -> bool:
+    """True when GC must skip *key* (prodtest pending/running)."""
+    from . import store_sqlite as _sq
+    try:
+        return bool(_sq.gc_blocked_by_prodtest(_sq.db_path(), key))
+    except Exception:
+        return False
