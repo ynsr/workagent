@@ -680,16 +680,25 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
     store's view — gc_soft_deleted removed it; sessions/runs CASCADE).
     Remote branches are NOT touched: the merge-or-close at cleanup time
     already decided their fate. Returns per-row status dicts.
-    Rows blocked by a pending/running prodtest item are refused with
+    Rows blocked by a pending/running prodtest item are never deleted
+    (the store-level GC skips them) and are reported here as
     `skipped:prodtest-pending` (row and files survive).
     """
     from . import cli as _cli
-    expired = store.gc_soft_deleted(retention_days=retention_days)
+    links = store.load_links(include_inactive=True, include_deleted=True)
+    blocked = {k for k, e in links.items()
+               if e.get("deleted_at") and _prodtest_blocked(k, e)}
     rows = []
+    if dry_run:
+        for key in sorted(blocked):
+            rows.append({"key": key,
+                         "branch": str(links[key].get("branch", "")),
+                         "status": "skipped:prodtest-pending"})
+    expired = store.gc_soft_deleted(retention_days=retention_days)
     for r in expired:
         key, branch, repo = r["ref_key"], r.get("branch", ""), r.get("repo", "")
         status = "purged"
-        if _prodtest_blocked(key):
+        if key in blocked or _prodtest_blocked(key):
             rows.append({"key": key, "branch": branch,
                          "status": "skipped:prodtest-pending"})
             continue
@@ -707,6 +716,8 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
             except HarnessError:
                 pass
         rows.append({"key": key, "branch": branch, "status": status})
+    return rows
+
 
 def destroy_deleted(keys: list[str], dry_run: bool = False) -> list[dict]:
     """Permanently destroy soft-deleted rows: worktree dir + branches + row.

@@ -1080,16 +1080,22 @@ def upsert_prodtest(path: Path, key: str, **fields) -> dict:
     if status not in PRODTEST_STATUSES:
         raise ValueError(
             f"status must be one of {', '.join(PRODTEST_STATUSES)} (got {status!r})")
-    cols = ["issue_key"] + [c for c in _PRODTEST_COLS if c in fields]
-    vals = [key] + [fields[c] for c in cols[1:]]
-    sets = ", ".join(f"{c}=excluded.{c}" for c in cols[1:])
+    extra = [c for c in _PRODTEST_COLS if c in fields]
     now = datetime.now(timezone.utc).isoformat()
     with connect(path) as conn:
-        conn.execute(
-            f"INSERT INTO prodtest_items (issue_key, {', '.join(cols[1:])}, updated_at)"
-            f" VALUES ({', '.join('?' * (len(cols) + 1))})"
-            f" ON CONFLICT(issue_key) DO UPDATE SET {sets}, updated_at=excluded.updated_at",
-            (*vals, now))
+        if not extra:
+            conn.execute(
+                "INSERT INTO prodtest_items (issue_key, updated_at)"
+                " VALUES (?, ?)"
+                " ON CONFLICT(issue_key) DO UPDATE SET updated_at=excluded.updated_at",
+                (key, now))
+        else:
+            sets = ", ".join(f"{c}=excluded.{c}" for c in extra)
+            conn.execute(
+                f"INSERT INTO prodtest_items (issue_key, {', '.join(extra)}, updated_at)"
+                f" VALUES ({', '.join('?' * (len(extra) + 2))})"
+                f" ON CONFLICT(issue_key) DO UPDATE SET {sets}, updated_at=excluded.updated_at",
+                (key, *[fields[c] for c in extra], now))
     return get_prodtest(path, key)
 
 

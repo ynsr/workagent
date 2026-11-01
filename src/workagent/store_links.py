@@ -178,6 +178,33 @@ def undelete_worktree(path: Path, key: str) -> None:
             raise HarnessError(f"no worktree link for {key}", exit_code=2)
 
 
+
+def _prodtest_blocked_conn(conn, ref_key: str, payload_issue: str = "") -> bool:
+    """True when a pending/running prodtest item blocks GC for *ref_key*."""
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(prodtest_items)")}
+    except Exception:
+        return False
+    if "issue_key" not in cols:
+        return False
+    candidates = {ref_key}
+    for cand in (ref_key, payload_issue or ""):
+        if cand.startswith("jira:"):
+            candidates.add(cand.split(":", 1)[1].split("@", 1)[0])
+        elif cand:
+            candidates.add(cand)
+    for cand in candidates:
+        try:
+            row = conn.execute(
+                "SELECT status FROM prodtest_items WHERE issue_key = ?",
+                (cand,)).fetchone()
+        except Exception:
+            continue
+        if row and row[0] in ("pending_prodtest", "running"):
+            return True
+    return False
+
+
 SOFT_DELETE_RETENTION_DAYS = 7
 
 
@@ -198,16 +225,30 @@ def gc_soft_deleted(path: Path, retention_days: int = SOFT_DELETE_RETENTION_DAYS
         if "deleted_at" not in cols:
             return []
         rows = [dict(r) for r in conn.execute(
-            "SELECT w.ref_key, w.path, w.branch,"
+            "SELECT w.ref_key, w.path, w.branch, w.payload,"
             " COALESCE(r.path, w.repo_key) AS repo"
             " FROM worktrees w LEFT JOIN repos r ON r.key_ref = w.repo_key"
             " WHERE w.deleted_at IS NOT NULL AND w.deleted_at != ''"
             " AND w.deleted_at < ?", (cutoff,))]
+        import json as _json
+        kept = []
+        for r in rows:
+            try:
+                issue = str(_json.loads(r.get("payload") or "{}").get("issue", "") or "")
+            except Exception:
+                issue = ""
+            if _prodtest_blocked_conn(conn, r["ref_key"], issue):
+                kept.append(r)
+        rows = [r for r in rows if r not in kept]
+        for r in kept:
+            del r["payload"]
         for r in rows:
             # flows have no hard FK to worktrees (pre-Start flows carry no
             # ref); purge them explicitly alongside the GC'd link row.
             conn.execute("DELETE FROM flows WHERE worktree_ref = ?", (r["ref_key"],))
             conn.execute("DELETE FROM worktrees WHERE ref_key = ?", (r["ref_key"],))
+        for r in rows:
+            r.pop("payload", None)
     return rows
 
 
