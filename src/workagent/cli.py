@@ -196,8 +196,8 @@ from .cli_sync import (  # noqa: F401  (test compatibility)
 )
 
 from . import cli_service  # noqa: F401  (registers `service`)
+from . import cli_action  # noqa: F401  (registers `action`)
 from . import cli_prodtest  # noqa: F401  (registers `prodtest`)
-from .cli_prodtest import prodtest_plan  # noqa: F401  (test compatibility)
 from . import cli_flow  # noqa: F401  (registers `flow`)
 from . import cli_backup  # noqa: F401  (registers `backup`)
 
