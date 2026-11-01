@@ -23,18 +23,11 @@ export function FlowWizard({
   const navigate = useNavigate()
   const createRun = useCreateRun()
   const [working, setWorking] = useState<FlowStep[]>(() => structuredClone(template.steps ?? []))
-  const [overrides, setOverrides] = useState<Record<number, Record<string, unknown>>>({})
   const [running, setRunning] = useState(false)
 
-  const base = template.steps ?? []
-  const changed = JSON.stringify(working) !== JSON.stringify(base)
   const chainErrors = validateChain(working)
-  const active = Object.fromEntries(
-    Object.entries(overrides).filter(([, v]) => Object.keys(v).length > 0),
-  )
-  const stepConfig = Object.keys(active).length > 0 ? JSON.stringify(active) : null
   const sorted = [...refs].sort()
-  const repoState = startRepoState(working, overrides)
+  const repoState = startRepoState(working)
   const repoMissing = repoState === "missing"
   const runDisabled = running || sorted.length === 0 || repoMissing || chainErrors.length > 0
   async function handleConfirm() {
@@ -43,9 +36,7 @@ export function FlowWizard({
       try {
         const { run_id } = await createRun.mutateAsync({
           command: "flow",
-          args: ["run", template.label, key,
-            ...(changed ? ["--steps", JSON.stringify(working)] : []),
-            ...(stepConfig ? ["--step-config", stepConfig] : []), "--yes"],
+          args: ["run", template.label, key, "--steps", JSON.stringify(working), "--yes"],
           confirm: true,
         })
         toast.success(`Flow ${template.label} on ${key} started`, {
@@ -81,17 +72,14 @@ export function FlowWizard({
           Repository is required on the Start step — select one below to enable Run flow.
         </p>
       ) : null}
-      {changed ? (
-        <p className="mb-2 text-[13px] text-muted-foreground">
-          Steps edited for this run only — the template is untouched.
-        </p>
-      ) : null}
+      <p className="mb-2 text-[13px] text-muted-foreground">
+        Steps edited for this run only — the template is untouched.
+      </p>
       <ChainEditor
         mode="edit"
         steps={working}
         onChange={setWorking}
-        overrides={overrides}
-        onOverridesChange={setOverrides}
+        overrides={{}}
         knownActions={[]}
       />
     </ActionDialog>

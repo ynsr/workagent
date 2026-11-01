@@ -85,15 +85,15 @@ export function validateChain(steps: FlowStep[]): string[] {
   return errors
 }
 
-/** Effective repo for the chain's start step (override wins over template).
+/** Effective repo for the chain's start step (wizard passes merged config).
  * Returns "ok" when no start step exists or a repo is set, else "missing". */
 export function startRepoState(
   steps: FlowStep[],
-  overrides: Record<number, Record<string, unknown>>,
+  _overrides?: Record<number, Record<string, unknown>>,
 ): "ok" | "missing" {
   const first = steps[0]
   if (!first || first.kind !== "start") return "ok"
-  const eff = overrides[0]?.repo ?? (first.config ?? {}).repo
+  const eff = (first.config ?? {}).repo
   return typeof eff === "string" && eff.trim() ? "ok" : "missing"
 }
 
@@ -402,33 +402,13 @@ export function ChainEditor({
                   </select>
                 </div>
               ) : null}
-              {mode === "edit" ? (
-                <>
-                  <StepConfigForm
-                    kind={step.kind}
-                    config={step.config ?? {}}
-                    onChange={(config) => setStep(i, { ...step, config })}
-                    idPrefix={`chain-step-${i}`}
-                  />
-                  <StepConfigForm
-                    kind={step.kind}
-                    config={overrides[i] ?? {}}
-                    hints={step.config ?? {}}
-                    onChange={(next) => setOverride(i, next)}
-                    idPrefix={`chain-override-${i}`}
-                    requiredRepo={step.kind === "start"}
-                  />
-                </>
-              ) : (
-                <StepConfigForm
-                  kind={step.kind}
-                  config={overrides[i] ?? {}}
-                  hints={step.config ?? {}}
-                  onChange={(next) => setOverride(i, next)}
-                  idPrefix={`chain-override-${i}`}
-                  requiredRepo={step.kind === "start"}
-                />
-              )}
+              <StepConfigForm
+                kind={step.kind}
+                config={mode === "edit" && overrides ? { ...(step.config ?? {}), ...(overrides[i] ?? {}) } : (step.config ?? {})}
+                onChange={(config) => mode === "edit" && overrides ? setOverride(i, config) : setStep(i, { ...step, config })}
+                idPrefix={`chain-step-${i}`}
+                requiredRepo={mode === "edit" && overrides ? step.kind === "start" : undefined}
+              />
             </li>
           ))}
         </ol>
