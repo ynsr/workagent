@@ -1,5 +1,5 @@
-import { REVIEW_ACTION_OPTIONS, RUN_MODE_OPTIONS } from "@/lib/launchConfig"
-import type { ReviewAction, RunMode } from "@/lib/launchConfig"
+import { PRODTEST_ACTION_OPTIONS, REVIEW_ACTION_OPTIONS, RUN_MODE_OPTIONS } from "@/lib/launchConfig"
+import type { ProdtestAction, ReviewAction, RunMode } from "@/lib/launchConfig"
 
 /** Persisted Launch tab prefs (`launch.prefs.v1`). Deep-link URL params
  * override stored values at load time; the active tab's slice is saved
@@ -16,6 +16,11 @@ export interface LaunchReviewPrefs {
   useReviewSession: boolean
 }
 
+export interface LaunchProdtestPrefs {
+  runMode: RunMode
+  prodtestAction: ProdtestAction
+}
+
 export interface LaunchSyncPrefs {
   merge: boolean
 }
@@ -23,6 +28,7 @@ export interface LaunchSyncPrefs {
 export interface LaunchPrefs {
   start: LaunchStartPrefs
   review: LaunchReviewPrefs
+  prodtest: LaunchProdtestPrefs
   sync: LaunchSyncPrefs
 }
 
@@ -30,11 +36,13 @@ const KEY = "launch.prefs.v1"
 
 const RUN_MODES: readonly string[] = RUN_MODE_OPTIONS.map((o) => o.value)
 const FIX_ACTIONS: readonly string[] = REVIEW_ACTION_OPTIONS.map((o) => o.value)
+const PRODTEST_ACTIONS: readonly string[] = PRODTEST_ACTION_OPTIONS.map((o) => o.value)
 
 export function loadLaunchPrefs(): LaunchPrefs {
   const fallback: LaunchPrefs = {
     start: { runMode: "preview", base: "" },
     review: { runMode: "preview", thenFix: false, fixAction: "review", useReviewSession: false },
+    prodtest: { runMode: "preview", prodtestAction: "run" },
     sync: { merge: false },
   }
   try {
@@ -43,6 +51,7 @@ export function loadLaunchPrefs(): LaunchPrefs {
     const p = JSON.parse(raw) as {
       start?: { runMode?: unknown; base?: unknown }
       review?: { runMode?: unknown; thenFix?: unknown; fixAction?: unknown; useReviewSession?: unknown }
+      prodtest?: { runMode?: unknown; prodtestAction?: unknown }
       sync?: { merge?: unknown }
     }
     return {
@@ -61,6 +70,14 @@ export function loadLaunchPrefs(): LaunchPrefs {
           ? (p.review.fixAction as ReviewAction)
           : "review",
         useReviewSession: p.review?.useReviewSession === true,
+      },
+      prodtest: {
+        runMode: typeof p.prodtest?.runMode === "string" && RUN_MODES.includes(p.prodtest.runMode)
+          ? (p.prodtest.runMode as RunMode)
+          : "preview",
+        prodtestAction: typeof p.prodtest?.prodtestAction === "string" && PRODTEST_ACTIONS.includes(p.prodtest.prodtestAction)
+          ? (p.prodtest.prodtestAction as ProdtestAction)
+          : "run",
       },
       sync: { merge: p.sync?.merge === true },
     }

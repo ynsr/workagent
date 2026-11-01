@@ -193,10 +193,30 @@ def _finish_plan(key: str, issue_number: str | None, worktree: str, repo: str,
     except OSError:
         pass
 
+    # P0: persist the plan diff hash from the dirty-tree tip so byte-identical
+    # plans pass the cleanup gate; preserve the release-recorded status.
+    diff_hash = ""
+    try:
+        from . import cli_cleanup as _cc
+        try:
+            default_branch = repos.default_branch(Path(repo)) if repo else "main"
+        except Exception:
+            default_branch = "main"
+        diff_hash = _cc.current_prodtest_diff(worktree, default_branch or "main")
+    except Exception as e:
+        eprint(f"warning: plan diff hash failed: {e}")
+    status = "pending"
+    try:
+        existing = store.get_prodtest(issue_number or key)
+        if existing and (existing.get("release_sha") or ""):
+            status = str(existing.get("status", "") or "") or "pending_prodtest"
+    except Exception:
+        pass
     try:
         store.upsert_prodtest(issue_number or key, plan_path=str(plan_file),
                               plan_revision=revision, plan_risk=risk,
-                              status="pending")
+                              plan_diff_hash=diff_hash,
+                              status=status)
     except Exception as e:
         eprint(f"warning: prodtest state upsert failed: {e}")
 
@@ -334,6 +354,103 @@ def _run_locked(store_key: str, entry: dict, plan_file: Path | None, release_sha
     else:
         eprint(f"warning: no repo checkout for {store_key}; skipping ephemeral checkout")
 
+    _enforce_plan_release_binding(store_key, item=None, plan_file=plan_file, release_sha=release_sha, repo=repo, checkout=checkout)
+    try:
+        _run_validated(store_key, entry, plan_file, release_sha, issue_url,
+                        fix_mode, skip_version_gate, out_dir, timeout_s,
+                        launch, terminal, no_tty, json_output,
+                        harness, env_file, extra_prompt, session_file,
+                        repo, checkout)
+    finally:
+        if checkout is not None:
+            try:
+                _wt.finish(checkout, True)
+            except Exception as e:
+                eprint(f"warning: run checkout cleanup failed: {e}")
+
+
+
+
+def _plan_release_binding(store_key: str, plan_file: Path | None, release_sha: str,
+                          repo: str, checkout: Path | None) -> str | None:
+    """Plan-at-release-SHA binding: None = pass, 'blocked:…' / 'warn:…' otherwise.
+
+    Compares the plan bytes at the release SHA (via the ephemeral checkout,
+    falling back to ``repo``) against the working-tree plan: a mismatch means
+    the stored plan is not what was reviewed at release time. Never raises.
+    """
+    if plan_file is None or not str(plan_file):
+        return "warn:missing-plan"
+    try:
+        current = Path(str(plan_file)).read_bytes()
+    except OSError:
+        return "warn:missing-plan"
+    base: Path | None = checkout if checkout is not None and checkout.is_dir() else None
+    if base is None and repo and Path(repo).is_dir():
+        base = Path(repo)
+    if base is None:
+        return None  # no checkout and no repo: per-skill preflight cannot run.
+    rel: Path | None = None
+    try:
+        rel = Path(str(plan_file)).resolve().relative_to(Path(str(base)).resolve())
+    except Exception:
+        rel = None
+    if rel is None:
+        # Plan lives outside the repo (worktree-local copy): compare release
+        # ancestry instead — the checkout pins release_sha so serving its
+        # manifest/plan area is the binding.
+        return None
+    try:
+        from .errors import run_cmd as _run
+        at_release = _run("git", "-C", str(base), "show", f"{release_sha}:{rel.as_posix()}",
+                          echo=False)
+    except Exception:
+        return "warn:plan-unverifiable-at-release"
+    if (at_release or "").encode() != current:
+        return "blocked:plan-changed-since-release"
+    return None
+
+
+def _enforce_plan_release_binding(store_key: str, item: dict | None, plan_file: Path | None,
+                                  release_sha: str, repo: str, checkout: Path | None) -> None:
+    """Fail or warn loudly on plan/release-SHA mismatch (manifest policy).
+
+    ``manifest.fix_policy.plan_binding`` selects the mode: ``"fail"``
+    (default) aborts the run, ``"warn"`` prints a loud warning and proceeds.
+    Missing/unverifiable plans only warn — validation below owns that path.
+    """
+    binding = _plan_release_binding(store_key, plan_file, release_sha, repo, checkout)
+    if binding is None:
+        return
+    mode = "fail"
+    try:
+        import yaml as _yaml
+        base = checkout if checkout is not None and checkout.is_dir() else (Path(repo) if repo else None)
+        man = (base / ".workagent" / "prodtest.yaml") if base is not None else None
+        if man is not None and man.exists():
+            policy = (_yaml.safe_load(man.read_text(encoding="utf-8")) or {}).get("fix_policy") or {}
+            if isinstance(policy, dict) and str(policy.get("plan_binding", "") or "").lower() == "warn":
+                mode = "warn"
+    except Exception:
+        mode = "fail"
+    msg = (f"plan/release binding {binding} for {store_key} at {release_sha}: "
+           "the working-tree plan differs from the plan at the release SHA "
+           "(re-run `prodtest plan`, re-review, and release again)")
+    if binding.startswith("blocked:") and mode == "fail":
+        _fail(msg, 1)
+    eprint(f"WARNING: {msg}")
+
+
+def _run_validated(store_key: str, entry: dict, plan_file: Path | None, release_sha: str,
+                   issue_url: str, fix_mode: str, skip_version_gate: bool,
+                   out_dir: Path, timeout_s: int,
+                   launch: bool, terminal: bool, no_tty: bool, json_output: bool,
+                   harness: Optional[str], env_file: str | None,
+                   extra_prompt: Optional[str], session_file: str | None,
+                   repo: str, checkout: Path | None) -> None:
+    """Validated run body: plan validation, harness dispatch, persistence."""
+    from . import release_worktree as _wt
+    from . import prodtest_scripts as _ps
     try:
         manifest = (Path(repo) / ".workagent" / "prodtest.yaml") if repo else None
         if plan_file is not None and plan_file.exists():
@@ -479,6 +596,85 @@ def _finish_run(store_key: str, entry: dict, plan_file: Path | None, release_sha
         eprint(f"warning: prodtest state upsert failed: {e}")
 
     fix = payload.get("fix") or {}
-    if isinstance(fix, dict) and fix.get("decision") not in (None, "", "none"):
-        eprint(f"fix follow-up per manifest fix_policy: {fix.get('decision')} "
+    _create_fix_followup(store_key, entry, issue_url, fix_mode, fix,
+                         overall, out_dir, report_file, release_sha)
+
+
+def _create_fix_followup(store_key: str, entry: dict, issue_url: str, fix_mode: str,
+                         fix: dict, overall: str, out_dir: Path,
+                         report_file: str, release_sha: str) -> None:
+    """File a follow-up issue for FAIL/BLOCKED runs (best effort, never raises).
+
+    Skill `prodtest-run` §8 assigns follow-up to the harness, but a harness
+    that only reports `fix.decision` without an `issue_url` leaves the loop
+    open. When ``fix_mode`` is ``issue``/``issue+mr`` and the verdict is not
+    PASS, create the linked follow-up issue here (jira/gh/glab by the source
+    issue URL) instead of merely logging. ``report-only`` keeps the old
+    log-only behavior; existing ``fix.issue_url`` values are never duplicated.
+    """
+    if not isinstance(fix, dict) or fix.get("decision") in (None, "", "none"):
+        return
+    decision = str(fix.get("decision", "") or "")
+    existing_url = str(fix.get("issue_url", "") or "")
+    if fix_mode == "report-only":
+        eprint(f"fix follow-up per manifest fix_policy: {decision} "
                f"(mode {fix_mode})")
+        return
+    if existing_url:
+        eprint(f"fix follow-up per manifest fix_policy: {decision} "
+               f"(mode {fix_mode}): {existing_url}")
+        return
+    verdict = str(overall or "").upper()
+    if verdict == "PASS":
+        eprint(f"fix follow-up per manifest fix_policy: {decision} "
+               f"(mode {fix_mode})")
+        return
+    summary = (f"[prodtest] {store_key}: {verdict} at "
+               f"{str(release_sha)[:12]} needs triage")
+    body_lines = [summary, "",
+                  f"Prodtest run for {store_key} finished {verdict} "
+                  f"(release {release_sha}).",
+                  f"Report: {report_file}",
+                  f"Run dir: {out_dir}"]
+    if decision:
+        body_lines.append(f"Harness fix decision: {decision}")
+    body_lines += ["", f"Original issue: {issue_url or store_key}"]
+    body = "\n".join(body_lines)
+    try:
+        from . import refs as _refs
+        from .errors import run_cmd as _run, HarnessError as _HE
+        target = (issue_url or "").strip()
+        try:
+            parsed = _refs.parse_ref(target) if target else None
+        except _HE:
+            parsed = None
+        tool = (parsed or {}).get("tool", "") if parsed else ""
+        number = str((parsed or {}).get("number", "") or "") if parsed else ""
+        if tool == "jira" and number:
+            out = _run("jira", "issue", "create", "--no-input",
+                       "-s", summary, "-b", body, echo=False)
+            eprint(f"filed follow-up issue for {store_key} ({(out or '').strip()})")
+        elif tool == "gh":
+            repo = str((parsed or {}).get("repo", "") or "")
+            args = ["gh", "issue", "create", "--title", summary, "--body", body]
+            if repo:
+                args += ["--repo", repo]
+            out = _run(*args, echo=False)
+            eprint(f"filed follow-up issue for {store_key} ({(out or '').strip()})")
+        elif tool == "glab":
+            repo = str((parsed or {}).get("repo", "") or "")
+            # glab resolves the project from cwd; without a repo path or a
+            # numeric project id the create call has nowhere to land.
+            if repo and not repo[0].isdigit():
+                eprint(f"warning: cannot file follow-up issue for {store_key}: "
+                       "glab needs a project path/id context (harness owns follow-up here)")
+            else:
+                out = _run("glab", "issue", "create", "--title", summary,
+                           "--description", body, echo=False)
+                eprint(f"filed follow-up issue for {store_key} ({(out or '').strip()})")
+        else:
+            eprint(f"warning: cannot file follow-up issue for {store_key}: "
+                   f"unparseable issue ref {target or store_key!r} "
+                   f"(mode {fix_mode})")
+    except Exception as e:
+        eprint(f"warning: follow-up issue create failed for {store_key}: {e}")

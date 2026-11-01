@@ -708,10 +708,12 @@ def prodtest_gate(key: str, item: dict | None, current_diff: str = "",
 def current_prodtest_diff(repo_dir: str, default_branch: str) -> str:
     """Best-effort current plan diff hash ('' on any failure; never raises)."""
     import subprocess
+    if not repo_dir or not Path(repo_dir).is_dir():
+        return ""
     script = Path(__file__).parent / "prodtest_files" / "diff_hash.sh"
     try:
         proc = subprocess.run(["bash", str(script), default_branch or "main"],
-                              cwd=repo_dir or None, capture_output=True,
+                              cwd=repo_dir, capture_output=True,
                               text=True, timeout=60)
     except Exception:
         return ""

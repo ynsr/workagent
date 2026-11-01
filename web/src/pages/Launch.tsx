@@ -18,7 +18,7 @@ import { api, type FlowTemplateRow } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
-import { ReviewActionSelect, RunModeSelect, StartFormFields, buildStartArgs } from "@/components/StartForm"
+import { ProdtestActionSelect, ReviewActionSelect, RunModeSelect, StartFormFields, buildStartArgs } from "@/components/StartForm"
 import { COPY, INITIAL, MODES, extraPromptArgs, isPrShaped, runModeArgs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
@@ -80,6 +80,12 @@ function prefsForMode(p: LaunchPrefs, mode: Mode): Partial<LaunchForm> {
       fixComments: p.review.fixAction === "fix",
       thenFixComments: p.review.thenFix,
       useReviewSession: p.review.useReviewSession,
+    }
+  }
+  if (mode === "prodtest") {
+    return {
+      runMode: p.prodtest.runMode as LaunchForm["runMode"],
+      prodtestAction: p.prodtest.prodtestAction as LaunchForm["prodtestAction"],
     }
   }
   return { runMode: p.start.runMode as LaunchForm["runMode"], base: p.start.base }
@@ -401,11 +407,13 @@ export function Launch() {
           useReviewSession: form.useReviewSession,
         },
       })
+    } else if (mode === "prodtest") {
+      saveLaunchPrefs({ ...prev, prodtest: { runMode: form.runMode, prodtestAction: form.prodtestAction } })
     } else {
       saveLaunchPrefs({ ...prev, sync: { merge: form.merge } })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, form.runMode, form.base, form.reviewAction, form.thenFixComments, form.useReviewSession, form.merge])
+  }, [mode, form.runMode, form.prodtestAction, form.base, form.reviewAction, form.thenFixComments, form.useReviewSession, form.merge])
 
   function switchMode(next: Mode) {
     setMode(next)
@@ -425,7 +433,7 @@ export function Launch() {
     }
     if (mode === "start") return buildStartArgs(form)
     if (mode === "prodtest") {
-      const args = ["run", refValue]
+      const args = [form.prodtestAction, refValue]
       args.push(...runModeArgs(form.runMode))
       args.push(...extraPromptArgs(form))
       return args
@@ -567,6 +575,13 @@ export function Launch() {
                   update("fixComments", v === "fix")
                   if (v === "review") update("thenFixComments", false)
                 }}
+              />
+            ) : null}
+            {mode === "prodtest" ? (
+              <ProdtestActionSelect
+                idPrefix="launch"
+                value={form.prodtestAction}
+                onChange={(v) => update("prodtestAction", v)}
               />
             ) : null}
             {mode === "review" && form.reviewAction === "review" ? (

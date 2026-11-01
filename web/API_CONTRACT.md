@@ -308,7 +308,9 @@ another run holds the same target key.
 re-include already-reviewed and unresolved-comment worktrees),
 `cleanup:<ref>` / `cleanup:all`, `action:<label>:<ref>` / `config` (template CRUD),
 `flow:<template>:<ref>` / `config` (template CRUD),
-`prodtest:<ref>` — one prodtest plan/run per issue ref
+`prodtest:<ref>` — one prodtest plan/run per issue ref. The Launch
+prodtest tab selects the subcommand: Plan emits `prodtest plan <ref>`,
+Run emits `prodtest run <ref>` (preview/headless/terminal flags unchanged).
 
 ### `GET /api/runs` → list
 ```json
@@ -389,5 +391,4 @@ preset as before).
   reconnect is built into EventSource).
 - Theme: `light | dark | system` in localStorage, follows
   `prefers-color-scheme` for `system`.
-- Confirmation opt-outs: localStorage key `workagent.confirm.optout` — JSON map `{"cleanup": true, ...}` resettable in Settings.
-- Launch prefs: localStorage key `launch.prefs.v1` — per-tab `{start:{runMode,base},review:{runMode,thenFix,fixAction,useReviewSession},sync:{merge}}`; only the active tab's slice persists on change, URL params (`ref`, `fixComments=1`) win for the live form and never persist. Repo tabs (`useRepoTabs`) show only repos with count > 0; a stale `?repo=` falls back to All. Candidates Review rows deep-link to `…/launch?mode=review&ref=<pr-url>` with the repo pre-selected.
+- Launch prefs: localStorage key `launch.prefs.v1` — per-tab `{start:{runMode,base},review:{runMode,thenFix,fixAction,useReviewSession},prodtest:{runMode,prodtestAction},sync:{merge}}`; only the active tab's slice persists on change, URL params (`ref`, `fixComments=1`) win for the live form and never persist. Repo tabs (`useRepoTabs`) show only repos with count > 0; a stale `?repo=` falls back to All. Candidates Review rows deep-link to `…/launch?mode=review&ref=<pr-url>` with the repo pre-selected.
