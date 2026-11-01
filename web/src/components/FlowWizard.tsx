@@ -90,17 +90,10 @@ export function FlowWizard({
         mode="edit"
         steps={working}
         onChange={setWorking}
+        overrides={overrides}
+        onOverridesChange={setOverrides}
         knownActions={[]}
       />
-      <div className="mt-3">
-        <ChainEditor
-          mode="launch"
-          steps={working}
-          overrides={overrides}
-          onOverridesChange={setOverrides}
-          knownActions={[]}
-        />
-      </div>
     </ActionDialog>
   )
 }

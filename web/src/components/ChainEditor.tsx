@@ -403,12 +403,22 @@ export function ChainEditor({
                 </div>
               ) : null}
               {mode === "edit" ? (
-                <StepConfigForm
-                  kind={step.kind}
-                  config={step.config ?? {}}
-                  onChange={(config) => setStep(i, { ...step, config })}
-                  idPrefix={`chain-step-${i}`}
-                />
+                <>
+                  <StepConfigForm
+                    kind={step.kind}
+                    config={step.config ?? {}}
+                    onChange={(config) => setStep(i, { ...step, config })}
+                    idPrefix={`chain-step-${i}`}
+                  />
+                  <StepConfigForm
+                    kind={step.kind}
+                    config={overrides[i] ?? {}}
+                    hints={step.config ?? {}}
+                    onChange={(next) => setOverride(i, next)}
+                    idPrefix={`chain-override-${i}`}
+                    requiredRepo={step.kind === "start"}
+                  />
+                </>
               ) : (
                 <StepConfigForm
                   kind={step.kind}
