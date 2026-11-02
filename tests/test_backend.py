@@ -77,7 +77,7 @@ def test_prompt_includes_push_target():
     assert "Never create or push a different branch" in p
     assert "At the end of the session: if there are code changes" in p  # end-of-session duty
     plain = backend.prompt_for_issue("T", "B", "o/r#22")
-    assert "At the end of the session: if there are code changes" in plain
+    assert "Only push and open a PR/MR for production-affecting changes" in plain
     r = backend.prompt_for_review("https://x/pull/1", worktree="/wt", branch="pr-1")
     assert "Never create or push a different branch" in r
 
