@@ -399,9 +399,18 @@ export function Dashboard() {
     setCleanupTarget(key)
   }
 
-  async function submitCleanup(key: string, opts: { force: boolean; hardDelete: boolean } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean }) {
+  async function submitCleanup(key: string, opts: { force: boolean; hardDelete: boolean } | { action: "mergeOnly" } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean }) {
     setCleanupTarget(null)
     if ("action" in opts) {
+      if (opts.action === "mergeOnly") {
+        try {
+          const { run_id } = await createRun.mutateAsync({ command: "cleanup", args: [key, "--merge-only"], confirm: true })
+          runCreated(run_id, `Merge PR ${key}`)
+        } catch (err) {
+          toast.error(errorText(err))
+        }
+        return
+      }
       try {
         const cmd = opts.action === "deactivate" ? ["deactivate", key] : ["remove", key, ...(opts.hardDelete ? ["--hard-delete"] : [])]
         const { run_id } = await createRun.mutateAsync({ command: "link", args: cmd, confirm: true })

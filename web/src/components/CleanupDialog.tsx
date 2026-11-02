@@ -34,7 +34,7 @@ export function CleanupDialog({
   worktreeKey: string
   invalid: boolean
   sourceBranch?: string
-  onClose: (ok: false | { force: boolean; hardDelete: boolean } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean }) => void
+  onClose: (ok: false | { force: boolean; hardDelete: boolean } | { action: "mergeOnly" } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean }) => void
 }): React.JSX.Element {
   const [force, setForce] = useState(invalid)
   const [hardDelete, setHardDelete] = useState(false)
@@ -148,12 +148,20 @@ export function CleanupDialog({
           >
             Delete from DB
           </AlertDialogAction>
+          {!invalid ? (
+            <AlertDialogAction
+              title="cleanup --merge-only — squash-merge the open PR/MR; worktree, branch, and link all survive"
+              onClick={() => onClose({ action: "mergeOnly" })}
+            >
+              Merge PR only
+            </AlertDialogAction>
+          ) : null}
           <AlertDialogAction
               autoFocus
               onClick={() => onClose({ force: effectiveForce, hardDelete })}
             >
               {invalid ? "Delete worktree" : "Remove worktree"}
-            </AlertDialogAction>
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

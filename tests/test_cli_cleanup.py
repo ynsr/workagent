@@ -201,6 +201,43 @@ def test_cleanup_merged_loop_soft_deletes_by_default(isolated_config, monkeypatc
     row = store.load_links(include_deleted=True)["jira:IPG-1"]
     assert row["deleted_at"]
 
+
+def test_cleanup_merge_only_merges_without_teardown(isolated_config, monkeypatch):
+    """--merge-only squash-merges the open PR, keeps worktree/branch/row."""
+    store.record_link("jira:IPG-30", {"issue": "IPG-30", "worktree": "/tmp/wt-30",
+                                      "branch": "feat/30", "repo": "/tmp/proj",
+                                      "pr_url": "https://github.com/o/r/pull/30"})
+    monkeypatch.setattr(
+        cli, "_status_cells",
+        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+    merged = []
+    monkeypatch.setattr(cli, "_merge_pr",
+                        lambda url, squash=True, cwd=None, source_branch="",
+                        no_squash=False: merged.append((url, squash)))
+    monkeypatch.setattr(cli, "_fresh_pr_state",
+                        lambda url, cwd: {"state": "open"})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no teardown")))
+    r = _invoke("cleanup", "jira:IPG-30", "--merge-only", "--json")
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert out["status"] == "merged" and out["pr_url"].endswith("/pull/30")
+    assert merged == [("https://github.com/o/r/pull/30", True)]
+    assert "jira:IPG-30" in store.load_links()  # row survives
+
+
+def test_cleanup_merge_only_refuses_without_open_pr(isolated_config, monkeypatch):
+    """--merge-only with no open PR fails closed, nothing torn down."""
+    store.record_link("jira:IPG-31", {"issue": "IPG-31", "worktree": "/tmp/wt-31",
+                                      "branch": "feat/31", "repo": "/tmp/proj"})
+    monkeypatch.setattr(
+        cli, "_status_cells",
+        lambda entry, refresh_pr=False: {"pr_data": None})
+    r = _invoke("cleanup", "jira:IPG-31", "--merge-only", "--json")
+    assert r.exit_code != 0
+
 def test_cleanup_merged_skips_live_harness_and_invalid(isolated_config,
                                                        tmp_path, monkeypatch):
     wt_ok = tmp_path / "wt-ok"; wt_ok.mkdir()

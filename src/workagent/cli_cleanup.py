@@ -69,6 +69,7 @@ def cleanup(
     merged: bool = typer.Option(False, "--merged", help="Clean every linked worktree whose PR/MR is merged/closed (requires --yes; skips live-harness and invalid worktrees)."),
     released: bool = typer.Option(False, "--released", help="Close every linked issue contained in its repo release branch (requires --yes; skips invalid worktrees)."),
     no_squash: bool = typer.Option(False, "--no-squash", help="Merge open PRs with a merge commit instead of squash."),
+    merge_only: bool = typer.Option(False, "--merge-only", help="Merge the open PR/MR (squash) without deleting anything: worktree, branch, and link all survive."),
     hard_delete: bool = typer.Option(False, "--hard-delete", help="Delete the row, worktree, and branch immediately (skip the 7-day soft-delete recovery window)."),
 ) -> None:
     """Close issue + remove worktree/branch/PR.
@@ -83,7 +84,11 @@ def cleanup(
     # --released accepts an optional ref (Dashboard per-key close); --merged does not.
     if merged and released:
         _fail("--merged and --released cannot be combined.", EXIT_USAGE)
-    if not ref and not merged and not released:
+    if merge_only and (merged or released):
+        _fail("--merge-only cannot be combined with --merged/--released.", EXIT_USAGE)
+    if merge_only and not ref:
+        _fail("--merge-only takes a ref (per-worktree merge, no teardown).", EXIT_USAGE)
+    if not ref and not merged and not released and not merge_only:
         _fail("ref required.\n"
               "  Pass a ref, or use --merged to clean every merged/closed link.",
               EXIT_USAGE)
@@ -280,6 +285,12 @@ def cleanup(
                        "merge": entry.get("pr_url", "")}, json_output)
         return
 
+    if merge_only:
+        result = _merge_only_one(key, dict(entry), force, json_output,
+                                 squash=not no_squash)
+        if json_output:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        return
     if not yes and not force and sys.stdin.isatty():
         try:
             answer = input(f"Remove worktree + delete branch '{branch}'? [y/N] ").strip().lower()
@@ -292,6 +303,85 @@ def cleanup(
                           squash=not no_squash, hard_delete=hard_delete)
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+def _merge_only_one(key: str, entry: dict, force: bool, json_output: bool,
+                    squash: bool = True) -> dict:
+    """Squash-merge the open PR/MR for *key*; tear nothing down.
+
+    Shared resolution/startup with _cleanup_one up to PR dispatch, then
+    stops: no issue close, no git-wt cleanup, no branch delete, no row
+    change. Conflicted/blocked PRs fail closed (exit 1) unless --force.
+    """
+    from . import cli as _cli  # shim: tests patch cli.*
+    repo = Path(entry.get("repo", "")).expanduser()
+    branch = entry.get("branch", "")
+    pr_url = entry.get("pr_url", "")
+    worktree = entry.get("worktree", "")
+    stored_ref = entry.get("issue", "") or entry.get("pr_url", "") or key
+    effective = worktrees.effective_repo_for_entry(dict(entry), default=repo) or repo
+    repo = effective
+    host_cwd = worktree if worktree and Path(worktree).is_dir() else str(repo)
+    try:
+        parsed = refs.parse_ref(key if not key.startswith("pr:") else stored_ref)
+    except HarnessError:
+        try:
+            parsed = refs.parse_ref(stored_ref)
+        except HarnessError:
+            parsed = {"kind": "", "tool": "", "repo": "", "number": "",
+                      "url": pr_url or stored_ref}
+    _sc2 = _cli._status_cells
+    state = (_sc2(dict(entry), refresh_pr=False).get("pr_data")
+             or {}).get("state", "")
+    tool = _repo_tool(str(repo))
+    recorded_url = pr_url
+    pr_url, fresh, picked = _cli._resolve_branch_pr(branch, recorded_url, host_cwd,
+                                                     tool=tool)
+    if picked:
+        eprint(f"note: acting on {pr_url} (latest for branch {branch}).")
+    fresh_state = ((fresh or {}).get("state") or "").lower()
+    if not force and pr_url and fresh_state in ("open", "opened"):
+        gate = row_prodtest_gate(key, dict(entry))
+        if gate == "blocked:stale":
+            _fail(f"prodtest plan is stale for {_prodtest_issue_key(key, entry)} — "
+                  "run `workagent prodtest plan` first (or re-run with --force).",
+                  EXIT_GENERAL)
+        if gate == "blocked:invalid-plan":
+            _fail(f"prodtest plan is invalid for {_prodtest_issue_key(key, entry)} — "
+                  "fix the plan (or re-run with --force).", EXIT_GENERAL)
+    open_states = ("open", "opened")
+    if pr_url and fresh_state in open_states:
+        if not force and _pr_conflicted(fresh):
+            _fail(f"{pr_url} conflicts with its destination branch — remote branch kept.\n"
+                  "  Resolve the conflict on the host, then re-run.",
+                  EXIT_GENERAL)
+        blocked_reason = _merge_blocked_reason(fresh)
+        if not force and blocked_reason:
+            _fail(f"{pr_url} cannot merge yet ({blocked_reason}) — remote branch kept.\n"
+                  "  Resolve it on the host (threads/pipeline/approvals), then re-run.",
+                  EXIT_GENERAL)
+        try:
+            _cli._merge_pr(pr_url, squash=squash, cwd=host_cwd,
+                           source_branch=branch, no_squash=not squash)
+        except HarnessError as e:
+            if force and not _pr_missing(str(e)):
+                eprint(f"note: {pr_url} could not be merged ({e}); left open.")
+                return {"key": key, "branch": branch, "status": "merge-failed",
+                        "pr_url": pr_url}
+            raise
+        if not json_output:
+            eprint(f"{key}: merged {pr_url} (worktree/branch/link kept)")
+        return {"key": key, "branch": branch, "status": "merged",
+                "pr_url": pr_url}
+    if pr_url and fresh_state in ("merged", "closed"):
+        if not json_output:
+            eprint(f"note: {pr_url} already {fresh_state}; nothing to merge.")
+        return {"key": key, "branch": branch, "status": "already-merged",
+                "pr_url": pr_url}
+    parsed_kind = parsed.get("kind", "")
+    _fail(f"no open PR/MR to merge for {key} ({parsed_kind or 'no PR tracked'}).\n"
+          "  Push the branch and open a PR first, then re-run --merge-only.",
+          EXIT_GENERAL)
 
 
 def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,

@@ -278,6 +278,9 @@ Request:
   closes the tracker issue (`done`) for links whose branch tip is an
   ancestor of `origin/<release_branch>`; worktrees/branches/PRs untouched.
   Best-effort per link (`closed | skipped:* | failed`), never aborts the loop.
+  `cleanup <ref> --merge-only` (Dashboard "Merge PR only" button):
+  squash-merges the open PR/MR (merge commit for long-lived sources);
+  worktree, branch, and link all survive.
 - Lifecycle status: `start`/`review`/`release` update the tracker issue
 - `repo remove` of a repo with linked worktrees → 400
   `{code: "worktrees_exist"}` unless `force: true` (cascades them).

@@ -49,7 +49,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
               "--yes", "--json", "--no-status", "--no-review"),
     "review": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
                "--yes", "--json", "--all", "--sequential", "--fix", "--fix-comments", "--then-fix-comments", "--use-review-session", "--force-all", "--post-comments", "--no-status"),
-    "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--released", "--no-squash", "--hard-delete"),
+    "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--released", "--no-squash", "--hard-delete", "--merge-only"),
     "release": ("--yes", "--dry-run", "--json", "--no-status"),
     "open": (),
     "sync": ("-m", "--merge", "--harness", "--all", "--yes", "--force",
