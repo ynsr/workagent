@@ -75,3 +75,16 @@ def test_token_never_echoed(tmp_path, monkeypatch, capsys):
     assert "s3cr3t-value" not in err
     assert "$ jira issue move IPG-1 Done" in err
     assert "JIRA_API_TOKEN" not in os.environ  # file value not leaked into process env
+
+def test_run_cmd_honors_env_file_no_proxy(tmp_path, monkeypatch):
+    """run_cmd child env honors NO_PROXY from env.sh (Dashboard gh stall)."""
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "env.sh").write_text('export NO_PROXY="localhost,chat.jibit.cloud"\n')
+    monkeypatch.setenv("WORKAGENT_CONFIG_DIR", str(cfg))
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+    seen = _capture_run(monkeypatch)
+    E.run_cmd("gh", "pr", "list", echo=False)
+    child = seen.get("env") or {}
+    assert child.get("NO_PROXY", "") == "localhost,chat.jibit.cloud"
