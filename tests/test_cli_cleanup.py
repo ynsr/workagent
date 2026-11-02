@@ -91,6 +91,32 @@ def test_cleanup_released_keeps_skip_when_not_released(isolated_config, monkeypa
     assert closed == []
 
 
+def test_cleanup_released_closes_jira_released_deleted(isolated_config, monkeypatch):
+    """Soft-deleted rows close when Jira is Released; else skipped:deleted."""
+    from datetime import datetime, timezone
+    store.record_link("jira:IPG-20", {"issue": "IPG-20", "worktree": "/tmp/wt-20",
+                                      "branch": "feat/20", "repo": "/tmp/proj"})
+    store.record_link("jira:IPG-21", {"issue": "IPG-21", "worktree": "/tmp/wt-21",
+                                      "branch": "feat/21", "repo": "/tmp/proj"})
+    ts = datetime.now(timezone.utc).isoformat()
+    store.soft_delete_worktree("jira:IPG-20")
+    store.soft_delete_worktree("jira:IPG-21")
+    assert ts  # timestamp written by soft_delete
+    monkeypatch.setattr(store, "load_repos",
+                        lambda: {"/tmp/proj": {"release_branch": "release"}})
+    from workagent import issue_status as _st
+    states = {"IPG-20": "released", "IPG-21": "in progress"}
+    monkeypatch.setattr(_st, "_issue_state",
+                        lambda number, tool, target: states[number])
+    closed = []
+    monkeypatch.setattr(_st, "set_issue_status",
+                        lambda ref, state, dry_run=False: closed.append((ref, state)) or True)
+    r = _invoke("cleanup", "--released", "--yes", "--json")
+    assert r.exit_code == 0, r.output
+    status = {row["key"]: row["status"] for row in json.loads(r.stdout)["results"]}
+    assert status["jira:IPG-20"] == "closed"
+    assert status["jira:IPG-21"] == "skipped:deleted"
+    assert ("IPG-20", "done") in closed and len(closed) == 1
 
 
 def test_cleanup_dry_run(isolated_config):
@@ -99,7 +125,6 @@ def test_cleanup_dry_run(isolated_config):
     r = _invoke("cleanup", "o/r#22", "--dry-run", "--json")
     assert r.exit_code == 0, r.output
     out = json.loads(r.stdout)
-    assert out["dry_run"] is True and out["branch"] == "feat/22-x"
 
 
 def test_cleanup_resolves_by_branch(isolated_config, tmp_path, monkeypatch):

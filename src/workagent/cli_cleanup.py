@@ -95,8 +95,8 @@ def cleanup(
               "  Re-run with --yes, or add --dry-run to preview.", EXIT_USAGE)
     links = store.load_links()
     if merged or released:
-        links = store.load_links(include_inactive=True)
-
+        links = store.load_links(include_inactive=True,
+                                 include_deleted=released)
     if released:
         from . import issue_status as _st
 
@@ -131,12 +131,24 @@ def cleanup(
             try:
                 rkey, rentry, _ = worktrees.resolve_any(ref, links)
             except worktrees.NoLinkedState:
-                _fail(f"no linked state for {ref}.", EXIT_USAGE)
+                if released:
+                    # Per-ref close must also reach soft-deleted rows.
+                    all_links = store.load_links(include_inactive=True,
+                                                 include_deleted=True)
+                    try:
+                        rkey, rentry, _ = worktrees.resolve_any(ref, all_links)
+                    except worktrees.NoLinkedState:
+                        _fail(f"no linked state for {ref}.", EXIT_USAGE)
+                else:
+                    _fail(f"no linked state for {ref}.", EXIT_USAGE)
             targets = {rkey: rentry} if rkey and rentry else {}
-            if not targets:
-                _fail(f"no linked state for {ref}.", EXIT_USAGE)
         rows = []
         for key, entry in targets.items():
+            if entry.get("deleted_at"):
+                decided = _close_if_jira_released(key, entry)
+                rows.append(decided or {"key": key, "branch": entry.get("branch", ""),
+                                        "status": "skipped:deleted"})
+                continue
             if entry.get("active", 1) == 0:
                 decided = _close_if_jira_released(key, entry)
                 rows.append(decided or {"key": key, "branch": entry.get("branch", ""),

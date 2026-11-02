@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Close released now sweeps soft-deleted worktrees: Jira Released closes them, else skipped:deleted [no-issue]
 - Doctor test isolates web-dist freshness so receipt ok/stale stays deterministic [no-issue]
 - Prodtest run threads stored plan revision through the lock, warns on store/disk divergence, owns checkout teardown once, drops racy pre-check [no-issue]
 - `prodtest run --all` runs every released plan sequentially in-process with skipped rows, continuing past failures; Dashboard + Launch use it [no-issue]
