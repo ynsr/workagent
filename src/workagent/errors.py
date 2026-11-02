@@ -57,15 +57,23 @@ class HarnessError(Exception):
 
 
 def run_cmd(*args: str, cwd=None, check: bool = True, timeout: int = 60,
-            echo: bool = True) -> str | None:
+            echo: bool = True, use_proxy: bool = True) -> str | None:
     """Run a command, return stripped stdout. Raises HarnessError on failure.
 
     The full argv is echoed to stderr first (suppressible via echo=False)
     so CLI output and web run logs capture exactly what ran.
     `jira` invocations additionally inherit JIRA_API_TOKEN from
     ~/.secrets/.env when it is not already exported (never logged).
+    `use_proxy` (default True): ensure the local egress proxy env
+    (http_proxy/https_proxy/...) is present when its listener is up —
+    direct port-53 DNS is blocked on this workstation, so external
+    fetches (gh/glab) fail without it. Explicit user config always wins.
     """
     import sys
+    if use_proxy:
+        from .env import ensure_proxy_env
+
+        ensure_proxy_env()
     if echo:
         print(f"$ {' '.join(args)}", file=sys.stderr, flush=True)
     env = None

@@ -132,3 +132,52 @@ def test_pre_release_gate_sources_env(tmp_path, isolated_config):
     env_file.write_text("export TEST_WA_GATE=gate789\n")
     g.run_local_gate(str(src), "proj", sha,
                      "test \"$TEST_WA_GATE\" = gate789", 60)
+
+def test_ensure_proxy_env_sets_when_listener_up(monkeypatch):
+    monkeypatch.setattr(env, "_proxy_listener_up", lambda port: True)
+    d: dict[str, str] = {}
+    env.ensure_proxy_env(d)
+    assert d["http_proxy"] == env.PROXY_ADDR
+    assert d["https_proxy"] == env.PROXY_ADDR
+    assert d["HTTP_PROXY"] == env.PROXY_ADDR
+    assert d["HTTPS_PROXY"] == env.PROXY_ADDR
+
+
+def test_ensure_proxy_env_respects_existing(monkeypatch):
+    monkeypatch.setattr(env, "_proxy_listener_up", lambda port: True)
+    d = {"http_proxy": "http://custom:9999"}
+    env.ensure_proxy_env(d)
+    assert d["http_proxy"] == "http://custom:9999"
+    assert "https_proxy" not in d
+
+
+def test_ensure_proxy_env_skips_when_listener_down(monkeypatch):
+    monkeypatch.setattr(env, "_proxy_listener_up", lambda port: False)
+    d: dict[str, str] = {}
+    env.ensure_proxy_env(d)
+    assert d == {}
+
+
+def test_run_cmd_ensures_proxy(monkeypatch):
+    import subprocess
+
+    from workagent import errors as E
+
+    for v in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setattr(env, "_proxy_listener_up", lambda port: True)
+    seen = {}
+
+    def _fake(argv, **kw):
+        seen["proxy"] = __import__("os").environ.get("http_proxy")
+
+        class _P:
+            returncode = 0
+            stdout = "ok"
+            stderr = ""
+
+        return _P()
+
+    monkeypatch.setattr(subprocess, "run", _fake)
+    E.run_cmd("gh", "pr", "view", "1", echo=False)
+    assert seen["proxy"] == env.PROXY_ADDR

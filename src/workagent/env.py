@@ -11,10 +11,54 @@ parsed `KEY=VAL` export for direct-exec launches (subprocess env=).
 The default file content is seeded on first launch (ensure_env_file).
 """
 from __future__ import annotations
-
 import os
 import shlex
+import socket
 from pathlib import Path
+
+#: Local egress proxy address (xray on :10808 on this workstation). Mirrors
+#: the guard block in ~/.config/workagent/env.sh and the egress-proxy.sh
+#: reference: direct port-53 DNS is blocked, so external fetches (gh/glab,
+#: uv, curl) only work through the proxy. WORKAGENT_PROXY_ADDR/PORT env
+#: overrides exist for tests and non-standard machines.
+PROXY_ADDR = "http://127.0.0.1:10808"
+PROXY_PORT = 10808
+
+
+def _proxy_listener_up(port: int) -> bool:
+    """True when something listens on 127.0.0.1:<port> (egress proxy up)."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+            return True
+    except OSError:
+        return False
+
+
+def ensure_proxy_env(target: dict[str, str] | None = None) -> dict[str, str]:
+    """Export http(s)_proxy into *target* when the egress proxy is up.
+
+    Python port of the env.sh guard: sets http_proxy/https_proxy (+ upper
+    case, ALL_PROXY/all_proxy) to PROXY_ADDR only when the listener is up
+    and no proxy is already set — explicit user config always wins.
+    Defaults to os.environ; pass a dict for dry-run/test overlays.
+    """
+    d = target if target is not None else os.environ
+    if d.get("http_proxy") or d.get("HTTP_PROXY"):
+        return d
+    addr = os.environ.get("WORKAGENT_PROXY_ADDR", PROXY_ADDR)
+    try:
+        port = int(os.environ.get("WORKAGENT_PROXY_PORT", str(PROXY_PORT)))
+    except ValueError:
+        port = PROXY_PORT
+    if not _proxy_listener_up(port):
+        return d
+    d["http_proxy"] = addr
+    d["https_proxy"] = addr
+    d["HTTP_PROXY"] = addr
+    d["HTTPS_PROXY"] = addr
+    d.setdefault("ALL_PROXY", addr)
+    d.setdefault("all_proxy", addr)
+    return d
 
 DEFAULT_ENV_CONTENT = """\
 export VISUAL="${VISUAL:-code --wait}"
@@ -136,9 +180,10 @@ def merged_env(env_file: str | Path | None) -> dict[str, str]:
     Single choke point for every direct-exec child (headless harness,
     pre-release gate, and any future repos.commands runner): parse the
     file once here instead of reimplementing the merge per caller.
+    The egress proxy guard applies too, so direct-exec children inherit
+    working external fetches even when the serve/CLI process env lacks it.
     """
-    import os as _os
-    merged = dict(_os.environ)
+    merged = ensure_proxy_env(dict(os.environ))
     merged.update(launch_env(env_file))
     return merged
 
