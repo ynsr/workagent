@@ -83,6 +83,24 @@ def test_status_query_uses_short_timeout(isolated_config, tmp_path, monkeypatch)
     assert seen.get("timeout") is not None and seen["timeout"] <= 15
 
 
+def test_status_deleted_row_with_missing_repo_keeps_query_alive(
+    isolated_config, tmp_path, monkeypatch):
+    """Deleted rows pointing at a stale registry repo (FK conflict) must not
+    kill the whole status query — tool refresh degrades to a warning."""
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    # Simulate a stale registry row whose tool refresh raises (e.g. pytest
+    # tmp repo leaked into the DB with an FK conflict on UPDATE).
+    from workagent import errors as _err
+    def boom(*a, **k):
+        raise _err.HarnessError("FOREIGN KEY constraint failed")
+    monkeypatch.setattr("workagent.store_sqlite.register_repo_row_unlinked", boom)
+    monkeypatch.setattr("workagent.store_sqlite.register_repo_row", boom)
+    data = json.loads(_invoke("status", "--json").stdout)
+    assert "jira:IPG-929" in data
+
+
 def test_status_cache_reused_until_tip_or_ttl(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)

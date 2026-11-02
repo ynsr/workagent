@@ -49,22 +49,28 @@ def _repo_tool(repo: str) -> str | None:
     if entry is not None and (tool != entry.get("tool")
                               or remote != entry.get("remote")):
         from . import store_sqlite as sq
-        if store._sqlite_path() is not None:
-            row = sq.load_repos(sq.db_path()).get(hit[0], {})
-            tids = row.get("trackers", []) or ([row["tracker"]] if row.get("tracker") else [])
-            if tids:
-                sq.register_repo_row(sq.db_path(), hit[0], repo,
-                                     tids[0], remote=remote, tool=tool)
+        try:
+            if store._sqlite_path() is not None:
+                row = sq.load_repos(sq.db_path()).get(hit[0], {})
+                tids = row.get("trackers", []) or ([row["tracker"]] if row.get("tracker") else [])
+                if tids:
+                    sq.register_repo_row(sq.db_path(), hit[0], repo,
+                                         tids[0], remote=remote, tool=tool)
+                else:
+                    # Repo survived a `tracker remove` cascade unlinked: refresh
+                    # tool/remote only (derivation may need network), never crash
+                    # on the mandatory-tracker guard.
+                    cur = row.get("remote", "")
+                    sq.register_repo_row_unlinked(sq.db_path(), hit[0], repo,
+                                                  remote=remote or cur, tool=tool)
             else:
-                # Repo survived a `tracker remove` cascade unlinked: refresh
-                # tool/remote only (derivation may need network), never crash
-                # on the mandatory-tracker guard.
-                cur = row.get("remote", "")
-                sq.register_repo_row_unlinked(sq.db_path(), hit[0], repo,
-                                              remote=remote or cur, tool=tool)
-        else:
-            cfg = store.load_config()
-            cfg["repos"][hit[0]]["tool"] = tool
-            cfg["repos"][hit[0]]["remote"] = remote
-            store.save_config(cfg)
+                cfg = store.load_config()
+                cfg["repos"][hit[0]]["tool"] = tool
+                cfg["repos"][hit[0]]["remote"] = remote
+                store.save_config(cfg)
+        except Exception as e:
+            # Read path (status/serve): a stale registry row (e.g. pytest tmp
+            # repo leaked into the live DB) must not 500 the whole query.
+            from .cli_core import eprint as _eprint
+            _eprint(f"warning: repo tool refresh failed for {repo}: {e}")
     return tool
