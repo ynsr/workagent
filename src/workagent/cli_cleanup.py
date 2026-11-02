@@ -99,6 +99,33 @@ def cleanup(
 
     if released:
         from . import issue_status as _st
+
+        def _close_if_jira_released(key: str, entry: dict) -> dict | None:
+            """Close guard for skipped rows: Jira Released -> done, else keep skip.
+
+            Returns the result row when the Jira status is Released, else None
+            (caller keeps the original skip). Non-issue refs, unknown states,
+            and non-Released states all keep the skip. Worktree/branch/PR
+            untouched — issue state only.
+            """
+            stored = entry.get("issue", "") or key
+            try:
+                parsed = _st._parse(stored)
+            except Exception:
+                return None
+            if parsed is None:
+                return None
+            cur = _st._issue_state(parsed.get("number", ""), parsed.get("tool", ""),
+                                   parsed.get("url", ""))
+            if cur != "released":
+                return None
+            if dry_run:
+                return {"key": key, "branch": entry.get("branch", ""),
+                        "status": "dry-run"}
+            ok = _st.set_issue_status(stored, "done", dry_run=False)
+            return {"key": key, "branch": entry.get("branch", ""),
+                    "status": "closed" if ok else "failed"}
+
         targets = dict(links)
         if ref:
             try:
@@ -111,16 +138,18 @@ def cleanup(
         rows = []
         for key, entry in targets.items():
             if entry.get("active", 1) == 0:
-                rows.append({"key": key, "branch": entry.get("branch", ""),
-                             "status": "skipped:deactivated"})
+                decided = _close_if_jira_released(key, entry)
+                rows.append(decided or {"key": key, "branch": entry.get("branch", ""),
+                                        "status": "skipped:deactivated"})
                 continue
             repo = str(entry.get("repo", "") or "")
             branch = str(entry.get("branch", "") or "")
             info = (store.load_repos().get(repo, {}) or {})
             rel_branch = str(info.get("release_branch", "") or "")
             if not repo or not branch or not rel_branch:
-                rows.append({"key": key, "branch": branch,
-                             "status": "skipped:no-release-branch"})
+                decided = _close_if_jira_released(key, entry)
+                rows.append(decided or {"key": key, "branch": branch,
+                                        "status": "skipped:no-release-branch"})
                 continue
             wt = str(entry.get("worktree", "") or "")
             tip = ""

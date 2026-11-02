@@ -47,6 +47,49 @@ def test_cleanup_released_closes_contained(isolated_config, monkeypatch):
     assert status["jira:IPG-3"] == "skipped:no-release-branch"
     assert closed == [("IPG-1", "done")]
 
+def test_cleanup_released_closes_jira_released_skips(isolated_config, monkeypatch):
+    """Skipped rows (deactivated/no-release-branch) close when Jira is Released."""
+    store.record_link("jira:IPG-10", {"issue": "IPG-10", "worktree": "/tmp/wt-10",
+                                      "branch": "feat/10", "repo": "/tmp/proj",
+                                      "active": 0})
+    store.record_link("jira:IPG-11", {"issue": "IPG-11", "worktree": "/tmp/wt-11",
+                                      "branch": "feat/11", "repo": "/tmp/norel"})
+    monkeypatch.setattr(store, "load_repos",
+                        lambda: {"/tmp/proj": {"release_branch": "release"},
+                                 "/tmp/norel": {}})
+    from workagent import issue_status as _st
+    monkeypatch.setattr(_st, "_issue_state",
+                        lambda number, tool, target: "released")
+    closed = []
+    monkeypatch.setattr(_st, "set_issue_status",
+                        lambda ref, state, dry_run=False: closed.append((ref, state)) or True)
+    r = _invoke("cleanup", "--released", "--yes", "--json")
+    assert r.exit_code == 0, r.output
+    status = {row["key"]: row["status"] for row in json.loads(r.stdout)["results"]}
+    assert status["jira:IPG-10"] == "closed"
+    assert status["jira:IPG-11"] == "closed"
+    assert ("IPG-10", "done") in closed and ("IPG-11", "done") in closed
+
+
+def test_cleanup_released_keeps_skip_when_not_released(isolated_config, monkeypatch):
+    """Skipped rows stay skipped when Jira is not Released."""
+    store.record_link("jira:IPG-12", {"issue": "IPG-12", "worktree": "/tmp/wt-12",
+                                      "branch": "feat/12", "repo": "/tmp/proj",
+                                      "active": 0})
+    monkeypatch.setattr(store, "load_repos",
+                        lambda: {"/tmp/proj": {"release_branch": "release"}})
+    from workagent import issue_status as _st
+    monkeypatch.setattr(_st, "_issue_state",
+                        lambda number, tool, target: "in progress")
+    closed = []
+    monkeypatch.setattr(_st, "set_issue_status",
+                        lambda ref, state, dry_run=False: closed.append((ref, state)) or True)
+    r = _invoke("cleanup", "--released", "--yes", "--json")
+    assert r.exit_code == 0, r.output
+    status = {row["key"]: row["status"] for row in json.loads(r.stdout)["results"]}
+    assert status["jira:IPG-12"] == "skipped:deactivated"
+    assert closed == []
+
 
 
 
