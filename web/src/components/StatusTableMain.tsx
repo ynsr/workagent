@@ -8,24 +8,35 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { WorktreeDetail } from "@/components/WorktreeDetail"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { CiBadge, PrBadge } from "@/components/StateBadge"
 import { EmptyState } from "@/components/StatusFeedback"
 import { cn } from "@/lib/utils"
 import type { StatusTableActions, StatusTableEmbed, StatusTableSelection } from "@/components/StatusTable"
-
 import { RowActions } from "@/components/StatusActions"
 import { CopyCell } from "@/components/CopyCell"
 import { CommitsCell, ProdtestCell, ReviewsCell, matchesQuery } from "@/components/StatusCells"
 import { exactDateTime, relativeDate, shortWorktreePath } from "@/lib/format"
+
+export type PrStatusFilter = "" | "open" | "merged" | "closed" | "none"
+export type IssueFilter = "" | "linked" | "branch-only"
+
+/** PR state for filtering: lowercased pr_detail.state, "none" when no PR. */
+export function prStatusOf(entry: WorktreeMap[string]): "open" | "merged" | "closed" | "none" {
+  const s = (entry.pr_detail?.state ?? "").trim().toLowerCase()
+  if (s === "open" || s === "opened") return "open"
+  if (s === "merged") return "merged"
+  if (s === "closed" || s === "close") return "closed"
+  return "none"
+}
+
+/** Issue presence: a linked tracker issue (issue key or issue_url) vs a branch-only row. */
+export function hasLinkedIssue(entry: WorktreeMap[string]): boolean {
+  return Boolean((entry.issue ?? "").trim() || (entry.issue_url ?? "").trim())
+}
 function RepoTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
     <button
@@ -99,10 +110,16 @@ export function StatusTable({
   selection?: StatusTableSelection
   embed?: StatusTableEmbed
 }) {
-  const [params, setParams] = useSearchParams()
   const selParam = embed?.selParam === undefined ? "sel" : embed.selParam
+  const [params, setParams] = useSearchParams()
   const filterParam = embed?.filterParam === undefined ? "q" : embed.filterParam
+  const prParam = filterParam === null ? null : `${filterParam}_pr`
+  const issueParam = filterParam === null ? null : `${filterParam}_issue`
+  const authorParam = filterParam === null ? null : `${filterParam}_author`
   const q = filterParam === null ? "" : (params.get(filterParam) ?? "").trim()
+  const prFilter = (prParam === null ? "" : (params.get(prParam) ?? "").trim().toLowerCase()) as PrStatusFilter
+  const issueFilter = (issueParam === null ? "" : (params.get(issueParam) ?? "").trim()) as IssueFilter
+  const authorFilter = authorParam === null ? "" : (params.get(authorParam) ?? "").trim()
   const [expanded, setExpanded] = useState<string | null>(null)
   const repoFilter = repoTabs?.repoFilter ?? ""
   // Selection: controlled when the parent passes `selected`, else internal.
@@ -120,8 +137,17 @@ export function StatusTable({
     setParams(p, { replace: true })
   }
 
+  const authorOptions = useMemo(() => {
+    const names = new Set<string>()
+    for (const entry of Object.values(worktrees)) {
+      const a = (entry?.pr_detail?.author ?? "").trim()
+      if (a) names.add(a)
+    }
+    return [...names].sort((a, b) => a.localeCompare(b))
+  }, [worktrees])
   const keys = useMemo(() => {
     const needle = q.toLowerCase()
+    const authorNeedle = authorFilter.toLowerCase()
     const visible = Object.keys(worktrees).filter((key) => {
       const entry = worktrees[key]
       if (!entry) return false
@@ -130,6 +156,10 @@ export function StatusTable({
         const want = repoFilter === "(other)" ? "(other)" : repoFilter
         if (k !== want) return false
       }
+      if (prFilter && prStatusOf(entry) !== prFilter) return false
+      if (issueFilter === "linked" && !hasLinkedIssue(entry)) return false
+      if (issueFilter === "branch-only" && hasLinkedIssue(entry)) return false
+      if (authorNeedle && !((entry.pr_detail?.author ?? "").toLowerCase().includes(authorNeedle))) return false
       return !needle || matchesQuery(key, entry, needle)
     })
     const byAdded = (a: string, b: string) =>
@@ -152,7 +182,7 @@ export function StatusTable({
       }
     }
     return [...parents.flatMap((p) => [p, ...(childrenOf.get(p) ?? [])]), ...orphans.sort(byAdded)]
-  }, [worktrees, q, repoFilter, repoTabs])
+  }, [worktrees, q, repoFilter, repoTabs, prFilter, issueFilter, authorFilter])
   // Hydrate `?sel=` once per worktree-set (unknown keys dropped).
   const hydratedFor = useRef<string>("")
   useEffect(() => {
@@ -179,20 +209,25 @@ export function StatusTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleJoined])
 
-  function setQuery(next: string) {
-    if (filterParam === null) return
+  function setParam(param: string | null, next: string) {
+    if (param === null) return
     const p = new URLSearchParams(params)
-    if (next.trim()) p.set(filterParam, next.trim())
-    else p.delete(filterParam)
+    if (next.trim()) p.set(param, next.trim())
+    else p.delete(param)
     setParams(p, { replace: true })
   }
 
-  function clearQuery() {
+  function clearFilters() {
     if (filterParam === null) return
     const p = new URLSearchParams(params)
     p.delete(filterParam)
+    if (prParam) p.delete(prParam)
+    if (issueParam) p.delete(issueParam)
+    if (authorParam) p.delete(authorParam)
     setParams(p, { replace: true })
   }
+
+  const hasActiveFilters = Boolean(q || prFilter || issueFilter || authorFilter)
 
   return (
     <div className={cn("min-w-0", className)}>
@@ -202,12 +237,47 @@ export function StatusTable({
           <Search aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={filterParam === null ? "" : (params.get(filterParam) ?? "")}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => setParam(filterParam, e.target.value)}
             placeholder="Filter by key, branch, PR, path…"
             aria-label="Filter worktrees"
             className="pl-8"
           />
         </div>
+        <Select value={prFilter || "all"} onValueChange={(v) => setParam(prParam, v === "all" ? "" : v)}>
+          <SelectTrigger size="sm" aria-label="Filter by PR status" className="w-36">
+            <SelectValue placeholder="PR status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">PR: all</SelectItem>
+            <SelectItem value="open">PR: open</SelectItem>
+            <SelectItem value="merged">PR: merged</SelectItem>
+            <SelectItem value="closed">PR: closed</SelectItem>
+            <SelectItem value="none">PR: none</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={issueFilter || "all"} onValueChange={(v) => setParam(issueParam, v === "all" ? "" : v)}>
+          <SelectTrigger size="sm" aria-label="Filter by issue" className="w-36">
+            <SelectValue placeholder="Issue" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Issue: all</SelectItem>
+            <SelectItem value="linked">Issue: linked</SelectItem>
+            <SelectItem value="branch-only">Issue: branch-only</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={authorFilter || "all"} onValueChange={(v) => setParam(authorParam, v === "all" ? "" : v)}>
+          <SelectTrigger size="sm" aria-label="Filter by PR author" className="w-40">
+            <SelectValue placeholder="Author" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Author: all</SelectItem>
+            {authorOptions.map((a) => (
+              <SelectItem key={a} value={a}>
+                {a}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         {sel.size > 0 ? (
           <span className="inline-flex items-center gap-1.5 rounded-full border bg-muted px-3 py-1 text-sm">
             <span>{sel.size} selected</span>
@@ -220,19 +290,18 @@ export function StatusTable({
             </button>
           </span>
         ) : null}
-        {q ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full border bg-muted px-3 py-1 text-sm">
-            <span className="font-mono text-[13px]">{q}</span>
-            <button
-              aria-label={`Clear worktree filter ${q}`}
-              onClick={clearQuery}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <XCircle aria-hidden className="size-4" />
-            </button>
-          </span>
+        {hasActiveFilters ? (
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="inline-flex items-center gap-1.5 rounded-full border bg-muted px-3 py-1 text-sm text-muted-foreground hover:text-foreground"
+          >
+            Clear filters
+            <XCircle aria-hidden className="size-4" />
+          </button>
         ) : null}
       </div>
+
       {repoTabs && (repoTabs.tabs.names.length > 0 || repoTabs.tabs.other > 0) ? (
         <div role="group" aria-label="Filter by repo" className="mb-3 flex flex-wrap gap-1.5">
           <RepoTab active={!repoFilter} label={`All repos (${repoTabs.tabs.names.reduce((n, name) => n + (repoTabs.tabs.counts.get(name) ?? 0), 0) + repoTabs.tabs.other})`} onClick={() => repoTabs.setRepo("")} />
@@ -255,13 +324,13 @@ export function StatusTable({
       ) : null}</>
       )}
 
-      {keys.length === 0 && q ? (
+      {keys.length === 0 && hasActiveFilters ? (
         <EmptyState
           title="No worktrees match this filter"
-          description={`Nothing matches "${q}".`}
+          description="Nothing matches the current filters."
         >
-          <Button variant="outline" size="sm" onClick={clearQuery}>
-            Clear filter
+          <Button variant="outline" size="sm" onClick={clearFilters}>
+            Clear filters
           </Button>
         </EmptyState>
       ) : (

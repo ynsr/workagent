@@ -3,8 +3,6 @@ import { Link, useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
-  Copy,
-  Download,
   FolderGit2,
   RefreshCw,
   Rocket,
@@ -14,6 +12,7 @@ import {
 import { CandidatesCard } from "@/components/CandidatesCard"
 import { ReleaseCard } from "@/components/ReleaseCard"
 import { ActionsMenu } from "@/components/ActionsMenu"
+import { DashboardBulkMenu } from "@/components/DashboardBulkMenu"
 import { FlowsMenu } from "@/components/FlowsMenu"
 import { CleanupDialog } from "@/components/CleanupDialog"
 import { DeactivatedTable } from "@/components/DeactivatedTable"
@@ -587,7 +586,7 @@ export function Dashboard() {
         title="Dashboard"
         description="Linked issue ↔ PR ↔ worktrees. Refreshes every 15 s while the tab is visible."
         actions={
-          <>
+          <div className="flex flex-wrap items-center gap-2">
             <ActionsMenu selected={selected} />
             <FlowsMenu selected={selected} />
             <span aria-hidden className="mx-1 hidden h-6 w-px self-center bg-border sm:block" />
@@ -600,15 +599,23 @@ export function Dashboard() {
               <RefreshCw className={refreshingPr ? "animate-spin" : undefined} aria-hidden />
               Refresh PR
             </Button>
-            <Button variant="outline" size="sm" onClick={handleSyncAll} title={selCount > 0 ? `Sync ${selCount} selected worktrees` : "Sync every active linked worktree"}>
-              {scopeLabel("Sync")}
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleReviewAll} title={selCount > 0 ? `Review ${selCount} selected worktrees` : "Review every active linked worktree"}>
-              {scopeLabel("Review")}
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleFixAll} title={selCount > 0 ? `Fix PR comments on ${selCount} selected worktrees` : "Fix PR comments on every active linked worktree"}>
-              {selCount > 0 ? `Fix (${selCount})` : "Fix all PR comments"}
-            </Button>
+            <DashboardBulkMenu
+              syncLabel={scopeLabel("Sync")}
+              syncTitle={selCount > 0 ? `Sync ${selCount} selected worktrees` : "Sync every active linked worktree"}
+              onSync={() => void handleSyncAll()}
+              reviewLabel={scopeLabel("Review")}
+              reviewTitle={selCount > 0 ? `Review ${selCount} selected worktrees` : "Review every active linked worktree"}
+              onReview={() => void handleReviewAll()}
+              fixLabel={selCount > 0 ? `Fix (${selCount})` : "Fix all PR comments"}
+              fixTitle={selCount > 0 ? `Fix PR comments on ${selCount} selected worktrees` : "Fix PR comments on every active linked worktree"}
+              onFix={() => void handleFixAll()}
+              cleanupLabel={scopeLabel("Cleanup")}
+              cleanupDisabled={selCount > 0}
+              cleanupTitle={selCount > 0 ? "Clear selection to clean all merged (or Delete per row)" : "Clean every merged/closed linked worktree"}
+              onCleanup={() => void handleCleanupMerged()}
+              onCopyJson={() => void handleCopyJson()}
+              onDownloadCsv={handleDownloadCsv}
+            />
             <Button variant="outline" size="sm" onClick={handleProdtestRunAll} title={selCount > 0 ? `Run prodtest on ${selCount} selected worktrees` : "Run stored prodtest plans on every active linked worktree with a release"}>
               {scopeLabel("Prodtest")}
             </Button>
@@ -617,17 +624,6 @@ export function Dashboard() {
                 {selCount > 0 ? `Close released (${selCount})` : "Close released"}
               </Button>
             </span>
-            <span title={selCount > 0 ? "Clear selection to clean all merged (or Delete per row)" : "Clean every merged/closed linked worktree"}>
-              <Button variant="outline" size="sm" onClick={handleCleanupMerged} disabled={selCount > 0}>
-                {scopeLabel("Cleanup")}
-              </Button>
-            </span>
-            <Button variant="outline" size="sm" onClick={handleCopyJson}>
-              <Copy aria-hidden /> JSON
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleDownloadCsv}>
-              <Download aria-hidden /> CSV
-            </Button>
             <label className="flex min-h-9 items-center gap-2 rounded-md border px-3 text-sm">
               <Switch
                 checked={showWorktree}
@@ -636,7 +632,7 @@ export function Dashboard() {
               />
               Worktree paths
             </label>
-          </>
+          </div>
         }
       />
 

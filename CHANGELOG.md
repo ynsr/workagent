@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Cleanup gains Merge PR only: squash-merge the open PR/MR with no teardown via --merge-only and the dialog button [no-issue]
+- Dashboard top bar collapses Sync/Review/Fix-all/Cleanup/JSON/CSV into one Bulk actions menu; StatusTable gains PR-status, issue-presence, author filters [no-issue]
 - Close released now sweeps soft-deleted worktrees: Jira Released closes them, else skipped:deleted [no-issue]
 - Doctor test isolates web-dist freshness so receipt ok/stale stays deterministic [no-issue]
 - Prodtest run threads stored plan revision through the lock, warns on store/disk divergence, owns checkout teardown once, drops racy pre-check [no-issue]
