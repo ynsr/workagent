@@ -76,7 +76,7 @@ def test_row_gate_skipped_prodtest_stale_in_merged_loop(isolated_config, tmp_pat
     monkeypatch.setattr("workagent.cli_cleanup.worktrees.is_valid_worktree", lambda p: True)
     monkeypatch.setattr("workagent.cli.worktrees.is_valid_worktree", lambda p: True)
     monkeypatch.setattr(cli, "_status_cells",
-                        lambda entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
     monkeypatch.setattr(cc, "current_prodtest_diff", lambda repo, default: "new")
     monkeypatch.setattr(cc, "run_validate",
                         lambda plan, manifest: {"valid": True, "errors": [], "warnings": []})
@@ -104,7 +104,7 @@ def test_row_gate_warn_missing_passes_merged_loop(isolated_config, tmp_path, mon
     monkeypatch.setattr("workagent.cli_cleanup.worktrees.is_valid_worktree", lambda p: True)
     monkeypatch.setattr("workagent.cli.worktrees.is_valid_worktree", lambda p: True)
     monkeypatch.setattr(cli, "_status_cells",
-                        lambda entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
     monkeypatch.setattr(cc, "current_prodtest_diff", lambda repo, default: "")
     cleaned = []
     def _fake_cleanup(key, entry, *a, **k):

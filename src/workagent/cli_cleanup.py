@@ -217,7 +217,7 @@ def cleanup(
             branch = entry.get("branch", "")
             from . import cli as _cli
             _sc = _cli._status_cells
-            state = ((_sc(dict(entry), refresh_pr=True).get("pr_data")
+            state = ((_sc(key, dict(entry), refresh_pr=True).get("pr_data")
                      or {}).get("state", "") or "").upper()
             if state not in ("MERGED", "CLOSED"):
                 rows.append({"key": key, "branch": branch,
@@ -331,7 +331,7 @@ def _merge_only_one(key: str, entry: dict, force: bool, json_output: bool,
             parsed = {"kind": "", "tool": "", "repo": "", "number": "",
                       "url": pr_url or stored_ref}
     _sc2 = _cli._status_cells
-    state = (_sc2(dict(entry), refresh_pr=False).get("pr_data")
+    state = (_sc2(key, dict(entry), refresh_pr=False).get("pr_data")
              or {}).get("state", "")
     tool = _repo_tool(str(repo))
     recorded_url = pr_url
@@ -431,7 +431,7 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
                 "pr_url": pr_url, "force": force, "status": "dry-run",
                 "merge": pr_url or ""}
     _sc2 = _cli._status_cells
-    state = (_sc2(dict(entry), refresh_pr=False).get("pr_data")
+    state = (_sc2(key, dict(entry), refresh_pr=False).get("pr_data")
              or {}).get("state", "")
     tool = _repo_tool(str(repo))
     recorded_url = pr_url

@@ -18,7 +18,7 @@ def _seeded(tmp_path, monkeypatch, parent="jira:IPG-1@main", child="jira:IPG-1@o
                               "parent_key_ref": parent})
     monkeypatch.setattr(cli.cli_cleanup, "_pr_conflicted", lambda fresh: False)
     monkeypatch.setattr(cli, "_status_cells",
-                        lambda entry, refresh_pr=False: {"pr_data": {"state": "closed"}})
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "closed"}})
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
     monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)

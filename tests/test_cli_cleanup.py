@@ -164,7 +164,7 @@ def test_cleanup_merged_loop(isolated_config, monkeypatch):
                                      "branch": "feat/2", "repo": "/tmp/proj"})
     monkeypatch.setattr(
         cli, "_status_cells",
-        lambda entry, refresh_pr=False: {"pr_data": {"state":
+        lambda key, entry, refresh_pr=False: {"pr_data": {"state":
             "MERGED" if entry.get("branch") == "feat/1" else "OPEN"}})
     cleaned = []
     monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
@@ -187,7 +187,7 @@ def test_cleanup_merged_loop_soft_deletes_by_default(isolated_config, monkeypatc
                                      "branch": "feat/1", "repo": "/tmp/proj"})
     monkeypatch.setattr(
         cli, "_status_cells",
-        lambda entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
+        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
     cleaned = []
     monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
                         lambda repo, branch, **k: cleaned.append(branch) or {"ok": True})
@@ -209,7 +209,7 @@ def test_cleanup_merge_only_merges_without_teardown(isolated_config, monkeypatch
                                       "pr_url": "https://github.com/o/r/pull/30"})
     monkeypatch.setattr(
         cli, "_status_cells",
-        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
     merged = []
     monkeypatch.setattr(cli, "_merge_pr",
                         lambda url, squash=True, cwd=None, source_branch="",
@@ -234,7 +234,7 @@ def test_cleanup_merge_only_refuses_without_open_pr(isolated_config, monkeypatch
                                       "branch": "feat/31", "repo": "/tmp/proj"})
     monkeypatch.setattr(
         cli, "_status_cells",
-        lambda entry, refresh_pr=False: {"pr_data": None})
+        lambda key, entry, refresh_pr=False: {"pr_data": None})
     r = _invoke("cleanup", "jira:IPG-31", "--merge-only", "--json")
     assert r.exit_code != 0
 
@@ -246,7 +246,7 @@ def test_cleanup_merged_skips_live_harness_and_invalid(isolated_config,
     store.record_link("jira:IPG-4", {"issue": "IPG-4", "worktree": str(tmp_path / "gone"),
                                      "branch": "feat/4", "repo": "/tmp/proj"})
     monkeypatch.setattr(cli, "_status_cells",
-                        lambda entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
     monkeypatch.setattr(cli.store, "active_harness",
                         lambda key: {"harness": "omp", "pid": 1}
                         if key == "jira:IPG-3" else None)
@@ -268,7 +268,7 @@ def test_cleanup_merged_requires_yes_noninteractive(isolated_config, monkeypatch
     store.record_link("jira:IPG-1", {"issue": "IPG-1", "worktree": "/tmp/wt-1",
                                      "branch": "feat/1", "repo": "/tmp/proj"})
     monkeypatch.setattr(cli, "_status_cells",
-                        lambda entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "MERGED"}})
     r = _invoke("cleanup", "--merged", "--json")
     assert r.exit_code == 2
     assert "--yes" in r.output
@@ -307,7 +307,7 @@ def test_cleanup_merges_open_pr_first(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: calls.append("close"))
     monkeypatch.setattr(cli, "_status_cells",
-                        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
     monkeypatch.setattr(cli, "_resolve_branch_pr",
                         lambda branch, url, cwd, tool=None: (
                             url, {"state": "OPEN", "mergeable": "MERGEABLE",
@@ -336,7 +336,7 @@ def test_cleanup_merge_failure_keeps_worktree(isolated_config, tmp_path, monkeyp
                                      "pr_url": "https://github.com/o/r/pull/9"})
     from workagent.errors import HarnessError
     monkeypatch.setattr(cli, "_status_cells",
-                        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
     monkeypatch.setattr(cli, "_resolve_branch_pr",
                         lambda branch, url, cwd, tool=None: (
                             url, {"state": "OPEN", "mergeable": "CONFLICTING",
@@ -364,7 +364,7 @@ def test_cleanup_picks_latest_open_pr(isolated_config, monkeypatch, capsys):
     monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_status_cells",
-                        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
     monkeypatch.setattr(cli.refs, "fetch_pr_list_for_branch",
                         lambda tool, branch, cwd=None: [
                             {"number": 1, "state": "merged",
@@ -404,7 +404,7 @@ def test_cleanup_force_conflict_leaves_pr_open_keeps_remote(isolated_config, mon
     closed = []
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: closed.append(True))
     monkeypatch.setattr(cli, "_status_cells",
-                        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
     monkeypatch.setattr(cli, "_resolve_branch_pr",
                         lambda branch, url, cwd, tool=None: (
                             url, {"state": "OPEN", "mergeable": "CONFLICTING",
@@ -431,7 +431,7 @@ def test_cleanup_404_close_keeps_remote_and_link(isolated_config, monkeypatch):
                                       "branch": "feat/14", "repo": "/tmp/proj",
                                       "pr_url": "https://github.com/o/r/pull/404"})
     monkeypatch.setattr(cli, "_status_cells",
-                        lambda entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
     monkeypatch.setattr(cli, "_resolve_branch_pr",
                         lambda branch, url, cwd, tool=None: (url, None, False))
     def boom(parsed, url, force, cwd=None):
@@ -455,7 +455,7 @@ def test_cleanup_unknown_pr_state_closes_without_merge(isolated_config, monkeypa
     monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: calls.append("close"))
     monkeypatch.setattr(cli, "_status_cells",
-                        lambda entry, refresh_pr=False: {"pr_data": {"state": ""}})
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": ""}})
     monkeypatch.setattr(cli, "_resolve_branch_pr", lambda branch, url, cwd, tool=None: (url, None, False))
     monkeypatch.setattr("workagent.cli.run_cmd",
                         lambda *a, **k: calls.append("merge") or "")
@@ -554,7 +554,7 @@ def test_cleanup_merged_state_skips_remote_close(isolated_config, monkeypatch, c
     monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: calls.append("close"))
     monkeypatch.setattr(cli, "_status_cells",
-                        lambda entry, refresh_pr=False: {"pr_data": {"state": "merged"}})
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "merged"}})
     monkeypatch.setattr(cli, "_resolve_branch_pr",
                         lambda branch, url, cwd, tool=None: (
                             url, {"state": "MERGED", "mergeable": "",
@@ -596,7 +596,7 @@ def test_cleanup_blocked_discussions_fails_closed(isolated_config, monkeypatch):
                                       "branch": "feat/20", "repo": "/tmp/proj",
                                       "pr_url": "https://git.jibit.cloud/g/r/-/merge_requests/20"})
     monkeypatch.setattr(cli, "_status_cells",
-                        lambda entry, refresh_pr=False: {"pr_data": {"state": "open"}})
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "open"}})
     monkeypatch.setattr(cli, "_resolve_branch_pr",
                         lambda branch, url, cwd, tool=None: (
                             url, {"state": "opened",
@@ -671,7 +671,7 @@ def test_cleanup_repairs_stale_repo_from_live_worktree(isolated_config, tmp_path
         seen["wt_alive_at_close"] = Path(cwd).is_dir()
     monkeypatch.setattr(cli, "_close_pr", close)
     monkeypatch.setattr(cli, "_status_cells",
-                        lambda entry, refresh_pr=False: {"pr_data": {"state": ""}})
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": ""}})
     cli._cleanup_one("jira:X-1", dict(store.load_links()["jira:X-1"]),
                      force=False, yes=True, dry_run=False, json_output=True,
                      hard_delete=True)
