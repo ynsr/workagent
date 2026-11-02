@@ -139,7 +139,7 @@ function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
   return (
     <>
       <div className="grid gap-2">
-        <Label htmlFor="launch-ref">{mode === "prodtest" ? "Issue ref" : "PR/MR ref"}</Label>
+        <Label htmlFor="launch-ref">{mode === "prodtest" ? "Issue ref (empty = run --all)" : "PR/MR ref"}</Label>
         <Input
           id="launch-ref"
           value={form.ref}
@@ -436,7 +436,10 @@ export function Launch() {
     }
     if (mode === "start") return buildStartArgs(form)
     if (mode === "prodtest") {
-      const args = [form.prodtestAction, refValue]
+      // Empty ref + run action = bulk: `prodtest run --all`.
+      const args = form.prodtestAction === "run" && !refValue
+        ? ["run", "--all"]
+        : [form.prodtestAction, refValue]
       args.push(...runModeArgs(form.runMode))
       args.push(...extraPromptArgs(form))
       return args
@@ -467,7 +470,8 @@ export function Launch() {
         extra ? `--extra-prompt ${extra}` : null,
       ].filter((v): v is string => v !== null)
   async function handleSubmit() {
-    if (!refValue) return
+    const prodtestRunAll = mode === "prodtest" && form.prodtestAction === "run" && !refValue
+    if (!refValue && !prodtestRunAll) return
     if (mode !== "sync" && mode !== "prodtest" && !repoValue) {
       toast.error("Pick a repo — none matches this ref (the server CWD is never used).")
       return

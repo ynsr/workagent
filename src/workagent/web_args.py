@@ -96,7 +96,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "prodtest plan": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
                       "--yes", "--json", "--update"),
     "prodtest run": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
-                     "--yes", "--json", "--skip-version-gate"),
+                     "--yes", "--json", "--skip-version-gate", "--all"),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "prodtest": (),

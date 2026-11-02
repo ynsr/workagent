@@ -315,19 +315,17 @@ export function Dashboard() {
       details: [scopeDetail("Every active linked worktree with a release")],
     })
     if (!ok) return
-    for (const key of eligible) {
-      try {
-        const { run_id } = await createRun.mutateAsync({
-          command: "prodtest",
-          args: ["run", key],
-          confirm: true,
-        })
-        toast.success(`Prodtest ${key} started`, {
-          action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
-        })
-      } catch (err) {
-        toast.error(`${key}: ${errorText(err)}`)
-      }
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "prodtest",
+        args: ["run", "--all"],
+        confirm: true,
+      })
+      toast.success(`Prodtest run --all started (${eligible.length} eligible)`, {
+        action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+    } catch (err) {
+      toast.error(`prodtest run --all: ${errorText(err)}`)
     }
   }
   async function handleCloseReleased() {

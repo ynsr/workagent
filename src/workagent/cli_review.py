@@ -158,7 +158,7 @@ def _prodtest_fix_warning(pr_url: str, repo_dir: str) -> str:
             default = "main"
         current = _cc.current_prodtest_diff(repo, default or "main")
         gate = _cc.prodtest_gate(key, item, current_diff=current, config={"mode": "block"},
-                                manifest_path=_cc.manifest_path_for(key) if not repo else None)
+                                manifest_path=_cc.manifest_path_for(key, repo_dir=repo))
         if gate == "blocked:stale":
             return (warn + " the stored plan diff hash does not match the current "
                     "diff — re-run `prodtest plan` first, then re-review.")

@@ -149,3 +149,71 @@ def test_run_timeout_kills_harness_and_marks_blocked(isolated_config, tmp_path, 
     # Partial artifact exists and is not empty.
     report = tmp_path / "run-out" / "report.md"
     assert report.exists() and report.stat().st_size > 0
+
+def test_stored_divergence_warns_on_revision_mismatch(tmp_path):
+    from workagent import cli_prodtest as _cp
+    plan = tmp_path / "plan.yaml"
+    plan.write_text("revision: 2\ncases: []\n")
+    msg = _cp._plan_stored_divergence({"plan_path": str(plan), "plan_revision": 3}, plan)
+    assert msg and "plan_revision" in msg
+    assert _cp._plan_stored_divergence({"plan_path": str(plan), "plan_revision": 2}, plan) is None
+
+
+def test_cap_report_truncates_with_note():
+    from workagent import cli_prodtest as _cp
+    long_text = "x" * (_cp._REPORT_POST_CAP + 100)
+    out = _cp._cap_report(long_text)
+    assert len(out) < len(long_text)
+    assert "truncated" in out
+    assert _cp._cap_report("short") == "short"
+
+
+def test_validate_results_flags_unknown_cases(tmp_path, monkeypatch):
+    import yaml
+    from workagent import cli_prodtest as _cp
+    plan = tmp_path / "plan.yaml"
+    plan.write_text(yaml.safe_dump({"cases": [{"id": "C1"}]}))
+    results = tmp_path / "results.yaml"
+    results.write_text(yaml.safe_dump({"cases": [{"id": "C1"}, {"id": "EVIL"}]}))
+    monkeypatch.setattr(_cp, "eprint", lambda *a, **k: None)
+    out = _cp._validate_results_for_post(str(results), plan, type("P", (), {
+        "render": staticmethod(lambda f: "# report")})())
+    assert "EVIL" in out
+
+
+def _run_all_links(monkeypatch, links):
+    from workagent import cli
+    monkeypatch.setattr(cli.store, "load_links", lambda **k: links)
+    monkeypatch.setattr(cli.store, "get_prodtest", lambda key: {
+        "A": {"release_sha": "sha1", "plan_path": "p.yaml"},
+        "B": {"release_sha": "", "plan_path": "p.yaml"},
+        "C": {"plan_path": "p.yaml"},
+    }.get(key))
+
+
+def test_run_all_dry_run_lists_eligible_and_skips(isolated_config, tmp_path, monkeypatch):
+    import json
+    from workagent import cli
+    _run_all_links(monkeypatch, {
+        "jira:A": {"worktree": str(tmp_path), "issue": "A"},
+        "jira:B": {"worktree": str(tmp_path), "issue": "B"},
+        "jira:C": {"worktree": str(tmp_path), "issue": "C"},
+    })
+    r = runner.invoke(cli.app, ["prodtest", "run", "--all", "--dry-run", "--json"])
+    assert r.exit_code == 0, r.output
+    rows = json.loads(r.stdout)["results"]
+    by_key = {row["key"]: row for row in rows}
+    assert by_key["jira:A"]["status"] == "dry-run"
+    assert by_key["jira:B"]["status"] == "skipped:no-release"
+    assert by_key["jira:C"]["status"] == "skipped:no-release"
+
+
+def test_run_all_rejects_ref_and_run_dir(isolated_config, tmp_path, monkeypatch):
+    from workagent import cli
+    _run_all_links(monkeypatch, {})
+    r = runner.invoke(cli.app, ["prodtest", "run", "IPG-9", "--all", "--json"])
+    assert r.exit_code == 2, r.output
+    r = runner.invoke(cli.app, ["prodtest", "run", "--all", "--run-dir", "x"])
+    assert r.exit_code == 2, r.output
+    r = runner.invoke(cli.app, ["prodtest", "run", "--all", "--session-file", "x"])
+    assert r.exit_code == 2, r.output

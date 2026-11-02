@@ -308,9 +308,11 @@ another run holds the same target key.
 re-include already-reviewed and unresolved-comment worktrees),
 `cleanup:<ref>` / `cleanup:all`, `action:<label>:<ref>` / `config` (template CRUD),
 `flow:<template>:<ref>` / `config` (template CRUD),
-`prodtest:<ref>` — one prodtest plan/run per issue ref. The Launch
+`prodtest:<ref>` / `prodtest:run-all` — one prodtest plan/run per issue ref. The Launch
 prodtest tab selects the subcommand: Plan emits `prodtest plan <ref>`,
-Run emits `prodtest run <ref>` (preview/headless/terminal flags unchanged).
+Run emits `prodtest run <ref>` (preview/headless/terminal flags unchanged);
+`prodtest run --all` runs every released/stored plan sequentially in-process
+(dry-run rows / `skipped:<reason>` / continue-past-failure).
 
 ### `GET /api/runs` → list
 ```json
