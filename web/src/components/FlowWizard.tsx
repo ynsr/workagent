@@ -5,7 +5,7 @@ import { ChainEditor, startRepoState, validateChain } from "@/components/ChainEd
 import { ActionDialog } from "@/components/LinkDialogs"
 import { Button } from "@/components/ui/button"
 import { errorText } from "@/components/StatusFeedback"
-import { useCreateRun } from "@/lib/queries"
+import { useActions, useCreateRun } from "@/lib/queries"
 import type { FlowStep, FlowTemplateRow } from "@/lib/api"
 
 /** Launch wizard modal: read-only chain + per-step override editors, confirm
@@ -22,8 +22,10 @@ export function FlowWizard({
 }) {
   const navigate = useNavigate()
   const createRun = useCreateRun()
+  const { data: actionsData } = useActions()
   const [working, setWorking] = useState<FlowStep[]>(() => structuredClone(template.steps ?? []))
   const [running, setRunning] = useState(false)
+  const knownActions = (actionsData?.actions ?? []).map((a) => ({ label: a.label, name: a.name }))
 
   const chainErrors = validateChain(working)
   const sorted = [...refs].sort()
@@ -79,8 +81,7 @@ export function FlowWizard({
         mode="edit"
         steps={working}
         onChange={setWorking}
-        overrides={{}}
-        knownActions={[]}
+        knownActions={knownActions}
       />
     </ActionDialog>
   )

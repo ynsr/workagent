@@ -404,10 +404,10 @@ export function ChainEditor({
               ) : null}
               <StepConfigForm
                 kind={step.kind}
-                config={mode === "edit" && overrides ? { ...(step.config ?? {}), ...(overrides[i] ?? {}) } : (step.config ?? {})}
-                onChange={(config) => mode === "edit" && overrides ? setOverride(i, config) : setStep(i, { ...step, config })}
+                config={mode === "edit" && onOverridesChange ? { ...(step.config ?? {}), ...(overrides[i] ?? {}) } : (step.config ?? {})}
+                onChange={(config) => mode === "edit" && onOverridesChange ? setOverride(i, config) : setStep(i, { ...step, config })}
                 idPrefix={`chain-step-${i}`}
-                requiredRepo={mode === "edit" && overrides ? step.kind === "start" : undefined}
+                requiredRepo={mode === "edit" && onOverridesChange ? step.kind === "start" : undefined}
               />
             </li>
           ))}

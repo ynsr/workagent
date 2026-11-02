@@ -268,6 +268,11 @@
 
 ## Unreleased
 - Issue lifecycle statuses: start/review/release transition tracker issues (`in progress`→`code review`→`ready to release`→`released`; Jira discover-then-transition, gh/glab `status:*` labels; `--no-status` opts out; `cleanup --released` + Dashboard Close-released closes branch-contained issues as `done`) [no-issue]
+- Flow wizard: custom-action dropdown lists saved actions; fix-comments same-session checkbox toggles [no-issue]
+- Status queries use a short timeout so Dashboard rows never stall on slow host CLIs [no-issue]
+- Shell commands inherit proxy/NO_PROXY from env.sh so gh/glab work behind the egress proxy [no-issue]
+- Close-released also closes deactivated/release-branch-less rows whose Jira issue is already Released [no-issue]
+- Start prompt: push and open a PR/MR only for production-affecting changes [no-issue]
 - Session transcripts scope to `sessions/omp/<branch>/<action>/` in preview/headless/interactive for start/review/fix-comments/sync.
 - Release flow per-repo flock lock; `/api/release/status` exposes `releasing`, ReleaseCard/Repos dot + disabled button. [no-issue]
 - Fix #22: `start` passes full GitHub issue URLs to `git-wt --link`
