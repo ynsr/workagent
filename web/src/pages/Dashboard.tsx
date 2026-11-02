@@ -294,7 +294,40 @@ export function Dashboard() {
     }
   }
 
-
+  async function handleProdtestRunAll() {
+    const targeting = selCount > 0
+    const eligible = (targeting ? [...selected].sort() : Object.keys(worktrees ?? {}).sort())
+      .filter((key) => {
+        const e = (worktrees ?? {})[key]
+        return e && e.prodtest_detail && e.prodtest_detail.release_sha
+      })
+    if (eligible.length === 0) {
+      toast.error("No worktree with a recorded release and stored plan — release first, then generate a plan.")
+      return
+    }
+    const ok = await confirm({
+      action: "prodtest",
+      title: targeting ? `Run prodtest on ${eligible.length} selected worktrees` : `Run prodtest on ${eligible.length} worktrees`,
+      description:
+        "Runs the stored prodtest plan for each worktree in an ephemeral read-only checkout at its release SHA (non-TTY). Skips worktrees with no recorded release or no stored plan.",
+      destructive: true,
+      confirmLabel: `Run prodtest (${eligible.length})`,
+      details: [scopeDetail("Every active linked worktree with a release")],
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "prodtest",
+        args: ["run", "--all"],
+        confirm: true,
+      })
+      toast.success(`Prodtest run --all started (${eligible.length} eligible)`, {
+        action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+    } catch (err) {
+      toast.error(`prodtest run --all: ${errorText(err)}`)
+    }
+  }
   async function handleCloseReleased() {
     const targeting = selCount > 0
     const ok = await confirm({
@@ -525,6 +558,8 @@ export function Dashboard() {
       navigate("/launch?mode=review&ref=" + encodeURIComponent(key)),
     onFixComments: (key: string) =>
       navigate("/launch?mode=review&fixComments=1&ref=" + encodeURIComponent(key)),
+    onGenerateProdtest: (key: string) =>
+      navigate("/launch?mode=prodtest&prodtestAction=plan&ref=" + encodeURIComponent(key)),
     onCleanup: handleCleanup,
     onOpenWorktree: handleOpenWorktree,
     onOpenRun: handleOpenRun,
@@ -564,6 +599,9 @@ export function Dashboard() {
             </Button>
             <Button variant="outline" size="sm" onClick={handleFixAll} title={selCount > 0 ? `Fix PR comments on ${selCount} selected worktrees` : "Fix PR comments on every active linked worktree"}>
               {selCount > 0 ? `Fix (${selCount})` : "Fix all PR comments"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleProdtestRunAll} title={selCount > 0 ? `Run prodtest on ${selCount} selected worktrees` : "Run stored prodtest plans on every active linked worktree with a release"}>
+              {scopeLabel("Prodtest")}
             </Button>
             <span title={selCount > 0 ? "Close issues for selected worktrees contained in the release branch" : "Close every released linked issue"}>
               <Button variant="outline" size="sm" onClick={handleCloseReleased}>

@@ -33,6 +33,7 @@ def test_repo_add_list_remove(isolated_config, tmp_path):
 def test_doctor_missing_and_ok(isolated_config, tmp_path, monkeypatch):
     from workagent import doctor as _doctor
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(_doctor, "web_dist_status", lambda: "ok")
     r = _invoke("doctor")
     assert r.exit_code == 1
     assert "doctor: missing" in r.output

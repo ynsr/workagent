@@ -1,5 +1,10 @@
 # Changelog
 ## Unreleased
+- Doctor test isolates web-dist freshness so receipt ok/stale stays deterministic [no-issue]
+- Prodtest run threads stored plan revision through the lock, warns on store/disk divergence, owns checkout teardown once, drops racy pre-check [no-issue]
+- `prodtest run --all` runs every released plan sequentially in-process with skipped rows, continuing past failures; Dashboard + Launch use it [no-issue]
+- Prodtest follow-up reports are capped before posting and results cases are validated against the plan [no-issue]
+- Prodtest checks releases automatically: generates a test plan with the fix, then verifies it live after release [no-issue]
 - Release marks every shipped issue as released, not just the first one found [no-issue]
 - Jira variants per request: code review→[Review, R2R], ready to release→[..., Review], released→[Released, Done]; Code Review dropped; transitions logged in AGENTS.md [IPG-1066]
 - Jira move variants now match the IPG workflow (Review first for code review; no Code Review/Closed phantoms; no Ready to Release→Done fallback) + verdict settle accepts bare Review [IPG-1066]

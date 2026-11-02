@@ -7,6 +7,8 @@ export interface StatusTableActions {
   onReview?: (key: string) => void
   /** Navigate to Launch with mode=review&fixComments=1&ref=key. */
   onFixComments?: (key: string) => void
+  /** Generate a prodtest plan for this worktree (overlay button). */
+  onGenerateProdtest?: (key: string) => void
   onCleanup?: (key: string) => void
   /** Reactivate a deactivated worktree (`link reactivate` confirmed run). */
   onReactivate?: (key: string) => void

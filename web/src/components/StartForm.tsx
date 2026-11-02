@@ -6,8 +6,8 @@ import { Label } from "@/components/ui/label"
 import { errorText } from "@/components/StatusFeedback"
 import { useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
-import { RUN_MODE_OPTIONS, REVIEW_ACTION_OPTIONS, INITIAL, extraPromptArgs, runModeArgs } from "@/lib/launchConfig"
-import type { LaunchForm, RunMode, ReviewAction } from "@/lib/launchConfig"
+import { RUN_MODE_OPTIONS, REVIEW_ACTION_OPTIONS, PRODTEST_ACTION_OPTIONS, INITIAL, extraPromptArgs, runModeArgs } from "@/lib/launchConfig"
+import type { LaunchForm, RunMode, ReviewAction, ProdtestAction } from "@/lib/launchConfig"
 import { RelatedReposSelect } from "@/components/RelatedReposSelect"
 import { loadLaunchPrefs } from "@/lib/launchPrefs"
 import { FieldHelp } from "@/components/FieldHelp"
@@ -85,6 +85,46 @@ export function ReviewActionSelect({ idPrefix, value, onChange }: {
             key={opt.value}
             type="button"
             id={`${idPrefix}-action-${opt.value}`}
+            role="radio"
+            aria-checked={value === opt.value}
+            title={opt.hint}
+            onClick={() => onChange(opt.value)}
+            className={value === opt.value
+              ? "bg-primary px-3 py-1.5 font-medium text-primary-foreground"
+              : "bg-transparent px-3 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+
+/** Two-option Plan/Run segmented control for the Prodtest tab. Plan
+ * generates the prod test plan; Run executes the stored plan at its
+ * release SHA. */
+export function ProdtestActionSelect({ idPrefix, value, onChange }: {
+  idPrefix: string
+  value: ProdtestAction
+  onChange: (v: ProdtestAction) => void
+}) {
+  return (
+    <div className="grid gap-1">
+      <Label>
+        Action
+      </Label>
+      <div
+        role="radiogroup"
+        aria-label="Prodtest action"
+        className="flex w-fit divide-x overflow-hidden rounded-md border text-sm"
+      >
+        {PRODTEST_ACTION_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            id={`${idPrefix}-prodtest-${opt.value}`}
             role="radio"
             aria-checked={value === opt.value}
             title={opt.hint}

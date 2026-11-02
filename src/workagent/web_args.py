@@ -39,6 +39,9 @@ SPECS: dict[str, dict[str, Any]] = {
              "key": lambda args: f"flow:{_nth_positional(args, 1, VAL_FLAGS['flow run'])}:{_nth_positional(args, 2, VAL_FLAGS['flow run'])}" if args[:1] == ["run"] else "config"},
     "backup": {"confirm": False, "force": False, "confirm_subs": ("import",),
                "key": "config"},
+    "prodtest": {"confirm": True, "force": False,
+                 "key": lambda args: "prodtest:run-all" if args[:1] == ["run"] and "--all" in args
+                 else (f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest plan'])}" if args[:1] == ["plan"] else f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest run'])}") if args[:1] in (["plan"], ["run"]) else "config"},
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
@@ -89,8 +92,16 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "backup export": ("--json",),
     "backup import": ("--yes", "--json"),
     "backup run-scheduled": ("--json",),
+    "prodtest": (),
+    "prodtest plan": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
+                      "--yes", "--json", "--update"),
+    "prodtest run": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
+                     "--yes", "--json", "--skip-version-gate", "--all"),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
+    "prodtest": (),
+    "prodtest plan": ("--harness", "--session-file", "--env-file", "--extra-prompt"),
+    "prodtest run": ("--fix-mode", "--run-dir", "--harness", "--session-file", "--env-file", "--extra-prompt"),
     "start": ("--repo", "--depth", "--base", "--harness", "--session-file", "--env-file", "--extra-prompt", "--related-repo"),
     "review": ("--repo", "--depth", "--harness", "--session-file", "--env-file", "--extra-prompt"),
     "sync": ("--session-file", "--env-file", "--extra-prompt"),
@@ -119,7 +130,8 @@ SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "tracker": {"add", "list", "remove", "update"},
                                     "action": {"add", "list", "show", "run", "update", "delete"},
                                     "flow": {"template", "list", "show", "run"},
-                                    "backup": {"export", "import", "run-scheduled"}}
+                                    "backup": {"export", "import", "run-scheduled"},
+                                    "prodtest": {"plan", "run"}}
 TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "clone", "compose", "delete"}
 def _needs_confirm(command: str, args: list[str]) -> bool:
     """True when the (sub)command needs confirm:true (destructive only).

@@ -50,6 +50,30 @@ export function ReviewsCell({ entry }: { entry: WorktreeMap[string] }) {
     </Badge>
   )
 }
+/** Prodtest badge: done|risk|revN or status; "—" when no plan exists. */
+export function ProdtestCell({ entry }: { entry: WorktreeMap[string] }) {
+  const d = entry.prodtest_detail
+  if (!d) return <span className="font-mono text-[13px] text-muted-foreground">—</span>
+  const status = entry.prodtest ?? d.status ?? "-"
+  const risk = d.plan_risk ? ` · ${d.plan_risk}` : ""
+  const rev = d.plan_revision ? ` · rev${d.plan_revision}` : ""
+  const report = d.last_run ? ` · ${d.last_run}` : ""
+  const title = `prodtest ${status}${risk}${rev}${report} (${d.issue_key})`
+  return (
+    <Badge
+      variant="secondary"
+      title={title}
+      aria-label={title}
+      className="cursor-default rounded-full font-mono font-normal"
+    >
+      <span className="text-muted-foreground">{status}</span>
+      {d.plan_risk ? <span aria-hidden className="text-muted-foreground/60">·</span> : null}
+      {d.plan_risk ? <span>{d.plan_risk}</span> : null}
+      {d.plan_revision ? <span aria-hidden className="text-muted-foreground/60">·</span> : null}
+      {d.plan_revision ? <span className="text-muted-foreground">rev{d.plan_revision}</span> : null}
+    </Badge>
+  )
+}
 
 export function matchesQuery(key: string, entry: WorktreeMap[string], q: string): boolean {
   const hay = [

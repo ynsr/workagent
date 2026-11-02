@@ -24,7 +24,7 @@ import type { StatusTableActions, StatusTableEmbed, StatusTableSelection } from 
 
 import { RowActions } from "@/components/StatusActions"
 import { CopyCell } from "@/components/CopyCell"
-import { CommitsCell, ReviewsCell, matchesQuery } from "@/components/StatusCells"
+import { CommitsCell, ProdtestCell, ReviewsCell, matchesQuery } from "@/components/StatusCells"
 import { exactDateTime, relativeDate, shortWorktreePath } from "@/lib/format"
 function RepoTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
@@ -289,6 +289,7 @@ export function StatusTable({
                   <TableHead>PR / MR</TableHead>
                   <TableHead className="w-14 text-center">CI</TableHead>
                   <TableHead className="w-20 text-center">Reviews</TableHead>
+                  <TableHead className="w-20 text-center">Prodtest</TableHead>
                   <TableHead>Added</TableHead>
                 </TableRow>
               </TableHeader>
@@ -393,6 +394,9 @@ export function StatusTable({
                         <TableCell className="text-center">
                           <ReviewsCell entry={entry} />
                         </TableCell>
+                        <TableCell className="text-center">
+                          <ProdtestCell entry={entry} />
+                        </TableCell>
                         <TableCell
                           className="whitespace-nowrap text-[13px] text-muted-foreground"
                           title={exactDateTime(entry.added_at) || "first-seen stamp missing"}
@@ -411,7 +415,7 @@ export function StatusTable({
                       </TableRow>
                       <TableRow className="hover:bg-transparent">
                         <TableCell
-                          colSpan={8}
+                          colSpan={9}
                           className={detailOpen ? "py-1" : "border-0 !p-0"}
                         >
                           <DetailReveal open={detailOpen}>
@@ -511,6 +515,12 @@ export function StatusTable({
                       <dt className="w-16 shrink-0 text-xs text-muted-foreground">Reviews</dt>
                       <dd>
                         <ReviewsCell entry={entry} />
+                      </dd>
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <dt className="w-16 shrink-0 text-xs text-muted-foreground">Prodtest</dt>
+                      <dd>
+                        <ProdtestCell entry={entry} />
                       </dd>
                     </div>
                     <div className="flex items-baseline gap-2">

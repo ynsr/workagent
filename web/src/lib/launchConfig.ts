@@ -1,10 +1,10 @@
-export type Mode = "start" | "review" | "sync" | "flow"
+export type Mode = "start" | "review" | "sync" | "flow" | "prodtest"
 
 /** Issue #26: Launch never defaults to the serve CWD. The backend
  * `GET /api/default-repo?ref=` returns the linked-worktree repo for the
  * typed ref, else the single-linked repo — else no default. */
 
-export const MODES: readonly Mode[] = ["start", "review", "sync", "flow"]
+export const MODES: readonly Mode[] = ["start", "review", "sync", "flow", "prodtest"]
 
 export const COPY: Record<
   Mode,
@@ -51,8 +51,22 @@ export const COPY: Record<
     refPlaceholder: "jira:IPG-1, github:OWNER/REPO#33, or feat/IPG-929--x",
     confirmDesc: "Brings the worktree's branch up to date with its base branch (remote rebase by default; --merge merges locally).",
   },
+  prodtest: {
+    label: "Prodtest",
+    title: "Plan or run the prodtest",
+    description: "Issue key, OWNER/REPO#22, or a worktree ref — generate the plan or run it at its release SHA.",
+    refHint: "Issue key, OWNER/REPO#22, or a worktree ref.",
+    refPlaceholder: "IPG-932, OWNER/REPO#22, or jira:IPG-932@proj",
+    confirmDesc: "Runs the prodtest plan or run command (harness flags per run mode).",
+  },
 }
 
+/** Prodtest-tab action selector: Plan (generate) vs Run (execute at release SHA). */
+export type ProdtestAction = "plan" | "run"
+export const PRODTEST_ACTION_OPTIONS: readonly { value: ProdtestAction; label: string; hint: string }[] = [
+  { value: "plan", label: "Plan", hint: "prodtest plan — generate the plan" },
+  { value: "run", label: "Run", hint: "prodtest run — execute at the release SHA" },
+]
 export interface LaunchForm {
   ref: string
   repo: string
@@ -67,6 +81,7 @@ export interface LaunchForm {
   noStatus: boolean
   extraPrompt: string
   relatedRepos: string[]
+  prodtestAction: ProdtestAction
 }
 export const INITIAL: LaunchForm = {
   ref: "",
@@ -84,7 +99,9 @@ export const INITIAL: LaunchForm = {
   noStatus: false,
   extraPrompt: "",
   relatedRepos: [],
+  prodtestAction: "run",
 }
+
 
 /** Extra user instructions appended via --extra-prompt (all modes). */
 export function extraPromptArgs(form: Pick<LaunchForm, "extraPrompt">): string[] {

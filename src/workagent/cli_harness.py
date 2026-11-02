@@ -185,7 +185,8 @@ def _rescope_session_path(session_path: str, harness_name: str, branch: str,
 def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: str,
                  no_tty: bool, launch: bool, result: dict, json_output: bool,
                  run_key: str | None = None, session_file: str | None = None,
-                 terminal: bool = False, env_file: str | None = None) -> None:
+                 terminal: bool = False, env_file: str | None = None,
+                 timeout_s: "int | None" = None) -> None:
     """Launch the harness in the worktree with --launch; without it print the exact
     command instead and hand the worktree to the user (shell exec on TTY).
 
@@ -401,9 +402,15 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
              if not no_tty and finish_sid and scope_dir is not None else None)
     try:
         extra = harness.session_file_flag(session_path) if session_path else None
+        # Only pass timeout_s when set: third-party/test launch wrappers
+        # predate the timeout kwarg and would choke on it.
+        _launch_kw: dict = {}
+        if timeout_s is not None:
+            _launch_kw["timeout_s"] = timeout_s
         backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty,
                        (_HARNESS_ARGS + extra) if extra else _HARNESS_ARGS,
-                       env_file=str(env_path) if env_path else None, watch=watch)
+                       env_file=str(env_path) if env_path else None, watch=watch,
+                       **_launch_kw)
         minted = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
         if minted is not None and minted != before:
             if finish_sid:

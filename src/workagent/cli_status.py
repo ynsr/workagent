@@ -221,7 +221,34 @@ def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
     cells["ci"], cells["ci_url"] = _ci_cell(entry, cells, refresh_pr)
     cells["reviews_detail"] = _reviews_cell(entry, cells, refresh_pr)
     cells["reviews"] = _fmt_reviews(cells["reviews_detail"])
+    cells["prodtest_detail"] = _prodtest_cell(entry)
+    cells["prodtest"] = _fmt_prodtest(cells["prodtest_detail"])
     return cells
+
+
+def _prodtest_cell(entry: dict) -> dict | None:
+    """Prodtest item for a worktree entry, keyed by issue (else ref key).
+
+    Returns the stored item (status/risk/revision/last_run) or None when
+    no item exists. Never raises — a store failure yields no cell.
+    """
+    from . import cli_cleanup as _cc
+    try:
+        item = store.get_prodtest(_cc._prodtest_issue_key(
+            str(entry.get("key", "") or ""), entry))
+    except Exception:
+        return None
+    if not item:
+        return None
+    out = dict(item)
+    out["last_run"] = item.get("last_run_id", "") or ""
+    return out
+
+
+def _fmt_prodtest(item: dict | None) -> str:
+    if not item:
+        return "-"
+    return str(item.get("status", "") or "-")
 
 
 def _ci_cell(entry: dict, cells: dict, refresh_pr: bool) -> tuple[str | None, str]:
@@ -314,6 +341,8 @@ def _session_rows(links: dict, show_worktree: bool, refresh: bool
                "commits": cells["commits"], "pr": cells["pr"],
                "ci": cells["ci"] or "", "ci_url": cells["ci_url"] or "",
                "reviews": cells["reviews"],
+               "prodtest": cells["prodtest"],
+               "prodtest_detail": cells["prodtest_detail"],
                "_pr_state": (cells["pr_data"] or {}).get("state", "")}
         if show_worktree:
             row["worktree"] = v.get("worktree", "?")
@@ -347,6 +376,8 @@ def _enrich_entry(key: str, entry: dict, refresh: bool) -> dict:
             "commits": cells["commits"], "pr": cells["pr"],
             "ci": cells["ci"], "ci_url": cells["ci_url"],
             "reviews": cells["reviews"],
+            "prodtest": cells["prodtest"],
+            "prodtest_detail": cells["prodtest_detail"],
             "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),
             "commits_detail": cells["ab"], "pr_detail": cells["pr_data"],
             "reviews_detail": cells["reviews_detail"]}
@@ -361,6 +392,8 @@ def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
               "ci": cells["ci"], "ci_url": cells["ci_url"],
               "reviews": cells["reviews"],
               "reviews_detail": cells["reviews_detail"],
+              "prodtest": cells["prodtest"],
+              "prodtest_detail": cells["prodtest_detail"],
               "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),
               "issue_url": refs.issue_url(key, entry.get("issue"))}
     if not cells["pr_data"]:

@@ -18,7 +18,7 @@ import { api, type FlowTemplateRow } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
-import { ReviewActionSelect, RunModeSelect, StartFormFields, buildStartArgs } from "@/components/StartForm"
+import { ProdtestActionSelect, ReviewActionSelect, RunModeSelect, StartFormFields, buildStartArgs } from "@/components/StartForm"
 import { COPY, INITIAL, MODES, extraPromptArgs, isPrShaped, runModeArgs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
@@ -82,6 +82,12 @@ function prefsForMode(p: LaunchPrefs, mode: Mode): Partial<LaunchForm> {
       useReviewSession: p.review.useReviewSession,
     }
   }
+  if (mode === "prodtest") {
+    return {
+      runMode: p.prodtest.runMode as LaunchForm["runMode"],
+      prodtestAction: p.prodtest.prodtestAction as LaunchForm["prodtestAction"],
+    }
+  }
   return { runMode: p.start.runMode as LaunchForm["runMode"], base: p.start.base }
 }
 
@@ -108,7 +114,7 @@ function ExtraPromptField({ form, onChange, id = "launch-extra-prompt" }: {
   )
 }
 
-/** Review/Sync fields (kept on the Launch page; Start lives in StartForm). */
+/** Review/Sync/Prodtest fields (kept on the Launch page; Start lives in StartForm). */
 function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
   mode: Exclude<Mode, "flow">
   form: LaunchForm
@@ -133,7 +139,7 @@ function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
   return (
     <>
       <div className="grid gap-2">
-        <Label htmlFor="launch-ref">PR/MR ref</Label>
+        <Label htmlFor="launch-ref">{mode === "prodtest" ? "Issue ref (empty = run --all)" : "PR/MR ref"}</Label>
         <Input
           id="launch-ref"
           value={form.ref}
@@ -287,6 +293,9 @@ export function Launch() {
       base.fixComments = urlFix || base.fixComments
       if (urlFix) base.reviewAction = "fix"
     }
+    if (modeParam === "prodtest" && params.get("prodtestAction") === "plan") {
+      base.prodtestAction = "plan"
+    }
     return base
   })
   const [submitting, setSubmitting] = useState(false)
@@ -324,18 +333,18 @@ export function Launch() {
       toast.warning(`Unknown launch mode "${modeParam}" — form left blank`)
       return
     }
-    if ((modeParam === "sync" || modeParam === "review") && refParam && links) {
+    if ((modeParam === "sync" || modeParam === "review" || modeParam === "prodtest") && refParam && links) {
       setPrefillChecked(true)
       const entry = links.worktrees[refParam]
       if (modeParam === "sync" && !entry) {
         setForm((f) => (f.ref === refParam ? { ...f, ref: "" } : f))
         toast.warning(`No linked worktree for "${refParam}" — form left blank`)
       } else if (entry?.repo) {
-        // Review/Sync arrive from a worktree row: the worktree's repo wins.
+        // Review/Sync/Prodtest arrive from a worktree row: the worktree's repo wins.
         const repo: string = entry.repo
         setForm((f) => (f.repo ? f : { ...f, repo }))
       } else {
-        // Review of a PR ref (no linked worktree): ask the backend, which
+        // Review/Prodtest of a ref (no linked worktree): ask the backend, which
         // resolves linked-worktree → single-linked-tracker repo.
         api.defaultRepo(refParam).then(
           (r) => {
@@ -401,11 +410,13 @@ export function Launch() {
           useReviewSession: form.useReviewSession,
         },
       })
+    } else if (mode === "prodtest") {
+      saveLaunchPrefs({ ...prev, prodtest: { runMode: form.runMode, prodtestAction: form.prodtestAction } })
     } else {
       saveLaunchPrefs({ ...prev, sync: { merge: form.merge } })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, form.runMode, form.base, form.reviewAction, form.thenFixComments, form.useReviewSession, form.merge])
+  }, [mode, form.runMode, form.prodtestAction, form.base, form.reviewAction, form.thenFixComments, form.useReviewSession, form.merge])
 
   function switchMode(next: Mode) {
     setMode(next)
@@ -424,9 +435,16 @@ export function Launch() {
       return [refValue, ...(form.merge ? ["--merge"] : []), ...extraPromptArgs(form)]
     }
     if (mode === "start") return buildStartArgs(form)
+    if (mode === "prodtest") {
+      // Empty ref + run action = bulk: `prodtest run --all`.
+      const args = form.prodtestAction === "run" && !refValue
+        ? ["run", "--all"]
+        : [form.prodtestAction, refValue]
+      args.push(...runModeArgs(form.runMode))
+      args.push(...extraPromptArgs(form))
+      return args
+    }
     const args = [refValue]
-    // Preview/terminal are TTY copy-paste: no -p flag. Headless
-    // (--no-tty, omp -p --auto-approve) only when actually running now.
     if (form.fixComments) args.push("--fix-comments")
     if (form.fixComments && form.useReviewSession) args.push("--use-review-session")
     if (repoValue) args.push("--repo", repoValue)
@@ -436,7 +454,6 @@ export function Launch() {
     args.push(...extraPromptArgs(form))
     return args
   }
-
   const extra = form.extraPrompt.trim()
   const flagList = mode === "sync"
     ? [form.merge ? "--merge (local merge)" : "remote rebase (default)", extra ? `--extra-prompt ${extra}` : null].filter((v): v is string => v !== null)
@@ -453,8 +470,9 @@ export function Launch() {
         extra ? `--extra-prompt ${extra}` : null,
       ].filter((v): v is string => v !== null)
   async function handleSubmit() {
-    if (!refValue) return
-    if (mode !== "sync" && !repoValue) {
+    const prodtestRunAll = mode === "prodtest" && form.prodtestAction === "run" && !refValue
+    if (!refValue && !prodtestRunAll) return
+    if (mode !== "sync" && mode !== "prodtest" && !repoValue) {
       toast.error("Pick a repo — none matches this ref (the server CWD is never used).")
       return
     }
@@ -548,7 +566,7 @@ export function Launch() {
           {mode === "flow" ? null : (
           <>
           <div className="flex flex-wrap gap-x-6 gap-y-3">
-            {mode === "review" ? (
+            {(mode === "review" || mode === "prodtest") ? (
               <RunModeSelect
                 idPrefix="launch"
                 value={form.runMode}
@@ -564,6 +582,13 @@ export function Launch() {
                   update("fixComments", v === "fix")
                   if (v === "review") update("thenFixComments", false)
                 }}
+              />
+            ) : null}
+            {mode === "prodtest" ? (
+              <ProdtestActionSelect
+                idPrefix="launch"
+                value={form.prodtestAction}
+                onChange={(v) => update("prodtestAction", v)}
               />
             ) : null}
             {mode === "review" && form.reviewAction === "review" ? (
@@ -657,9 +682,9 @@ export function Launch() {
             <Button
                 type="button"
                 onClick={() => void handleSubmit()}
-                disabled={!refValue || submitting || (mode !== "sync" && !repoValue)}
+                disabled={!refValue || submitting || (mode !== "sync" && mode !== "prodtest" && !repoValue)}
                 title={
-                  mode !== "sync" && refValue && !repoValue
+                  mode !== "sync" && mode !== "prodtest" && refValue && !repoValue
                     ? "Pick a repo — none matches this ref"
                     : undefined
                 }

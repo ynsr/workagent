@@ -47,10 +47,13 @@ pipeline status for the PR — `success` | `failure` | `running` |
 `not_started` — or `null` when there is no PR or the lookup failed
 (cached within max(10 min * 10, 1 day) while the branch tip is unchanged). `ci_url` is the
 latest CI job page (GitLab `.../-/jobs/<id>`, GitHub check details URL)
-or `""` when unknown — the CI badge links there. `reviews` is the
-display string `"R|U|R"` (done reviews | unresolved | resolved);
 `reviews_detail` is `{"reviews", "unresolved", "resolved"}` or
 `null` when there is no PR or the lookup failed (same 10-min/tip cache).
+`prodtest` is the stored prodtest item status (`pending` | `pending_prodtest` |
+`running` | `passed` | `failed` | `blocked`), `-` when no plan exists;
+`prodtest_detail` is `{"issue_key", "plan_path", "plan_revision", "plan_risk",
+`plan_diff_hash`, "release_sha", "released_at", "status", "last_run",
+`last_run_id`, "updated_at"}` or `null`.
 `active` is `0` on deactivated rows (`link deactivate`), `1` otherwise;
 `deleted_at` is the soft-delete stamp (`link remove`), `""` on live rows —
 the Dashboard deactivated/deleted tables filter on these flags.
@@ -263,7 +266,7 @@ Request:
  "confirm": true, "force": false}
 ```
 - `command`: one of `start | review | cleanup | release | sync | open | register |
-  repo | link | action | flow` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`).
+  repo | link | action | flow | prodtest` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`; prodtest: `["plan", REF, …]` / `["run", REF, …]`).
 - Global `-v` may be passed as `args[0]`.
 - `start`/`review`/`sync`/`release` take `--env-file <script>`: a shell script sourced before every harness command including the preview (`source <file> && …`; headless children also get it parsed into their environment) and before the release pre-release gate. Default: `env_file` in `config.json` (auto-created as `<config_dir>/env.sh` on first launch with `VISUAL`/`EDITOR`/`NO_PROXY`/`PI_EDIT_VARIANT` defaults). Delete the file to opt out; session-resume endpoints reuse the originating run's explicit `--env-file` or the configured default.
 - Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`,
@@ -304,7 +307,12 @@ another run holds the same target key.
 `start`, `review:<ref>` / `review:all` (`--all`, plus `--force-all` to
 re-include already-reviewed and unresolved-comment worktrees),
 `cleanup:<ref>` / `cleanup:all`, `action:<label>:<ref>` / `config` (template CRUD),
-`flow:<template>:<ref>` / `config` (template CRUD)
+`flow:<template>:<ref>` / `config` (template CRUD),
+`prodtest:<ref>` / `prodtest:run-all` — one prodtest plan/run per issue ref. The Launch
+prodtest tab selects the subcommand: Plan emits `prodtest plan <ref>`,
+Run emits `prodtest run <ref>` (preview/headless/terminal flags unchanged);
+`prodtest run --all` runs every released/stored plan sequentially in-process
+(dry-run rows / `skipped:<reason>` / continue-past-failure).
 
 ### `GET /api/runs` → list
 ```json
@@ -385,5 +393,4 @@ preset as before).
   reconnect is built into EventSource).
 - Theme: `light | dark | system` in localStorage, follows
   `prefers-color-scheme` for `system`.
-- Confirmation opt-outs: localStorage key `workagent.confirm.optout` — JSON map `{"cleanup": true, ...}` resettable in Settings.
-- Launch prefs: localStorage key `launch.prefs.v1` — per-tab `{start:{runMode,base},review:{runMode,thenFix,fixAction,useReviewSession},sync:{merge}}`; only the active tab's slice persists on change, URL params (`ref`, `fixComments=1`) win for the live form and never persist. Repo tabs (`useRepoTabs`) show only repos with count > 0; a stale `?repo=` falls back to All. Candidates Review rows deep-link to `…/launch?mode=review&ref=<pr-url>` with the repo pre-selected.
+- Launch prefs: localStorage key `launch.prefs.v1` — per-tab `{start:{runMode,base},review:{runMode,thenFix,fixAction,useReviewSession},prodtest:{runMode,prodtestAction},sync:{merge}}`; only the active tab's slice persists on change, URL params (`ref`, `fixComments=1`) win for the live form and never persist. Repo tabs (`useRepoTabs`) show only repos with count > 0; a stale `?repo=` falls back to All. Candidates Review rows deep-link to `…/launch?mode=review&ref=<pr-url>` with the repo pre-selected.

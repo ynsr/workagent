@@ -497,11 +497,30 @@ def _run_locked(name: str, registry: dict, *, yes: bool, dry_run: bool,
         pass
     eprint(f"released {pinned} via {used} checks={checks} {mr_url}")
     released = _release_mark_released(name, path, release_branch, old_tip, no_status)
+    _prodtest_post_release(path, release_branch, pinned, subjects, released)
     # No session/run row: releases are repo-scoped (keyed by repo name),
     # not worktree-attached — sessions/runs require a worktree FK.
     return {"repo": name, "pinned_sha": pinned, "checks": checks,
             "strategy": used, "mr_url": mr_url, "merged": True,
             "released_issues": released}
+
+
+def _prodtest_post_release(path: str, release_branch: str, pinned: str,
+                           subjects: list[str], released: list[str]) -> None:
+    """Record release SHA + pending_prodtest; warn on unresolved subjects."""
+    from datetime import datetime, timezone
+    from . import store as _store
+    released_at = datetime.now(timezone.utc).isoformat()
+    released_set = set(released or [])
+    for ref in released or []:
+        try:
+            _store.upsert_prodtest(ref, release_sha=pinned, released_at=released_at,
+                                   status="pending_prodtest")
+        except Exception as e:
+            eprint(f"warning: prodtest state upsert failed for {ref}: {e}")
+    for subject in subjects or []:
+        if not any(r and _re.search(rf"(?<![A-Za-z0-9-]){_re.escape(r)}(?![0-9])", subject or "") for r in released_set):
+            eprint(f"warning: release subject has no prodtest plan coverage: {subject}")
 
 
 def _release_dry_status(name: str, path: str, default: str, release_branch: str,

@@ -49,6 +49,8 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `sync --yes/--force/-y` | mutating | — | `sync:<ref>` | yes-ish | | runs omp headless on conflicts (`omp -p --auto-approve`) |
 | `sync --dry-run` | read-only-ish | — | `sync:<ref>` | no | | none |
 | `sync --json` | mutating | — | `sync:<ref>` | yes-ish | | |
+| `prodtest plan REF [--update] [--harness/--launch/--terminal/--no-tty/--dry-run/--yes/--json] [--session-file/--env-file/--extra-prompt]` | mutating | — | `prodtest:<ref>` | no (spawns agent) | no linked state (2), launch+terminal (2) | TTY confirm; non-TTY needs `--yes` |
+| `prodtest run REF [--fix-mode report-only\|issue\|issue+mr] [--skip-version-gate] [--run-dir] [--launch/--terminal/--no-tty/--dry-run/--yes/--json] [--harness/--session-file/--env-file/--extra-prompt]` / `prodtest run --all` | mutating | — | `prodtest:<ref>` / `prodtest:run-all` | yes (ephemeral checkout run) | no release recorded (2), bad fix-mode (2), held lock (1), ref with --all (2), --run-dir/--session-file with --all (2) | TTY confirm; non-TTY needs `--yes`; per-issue lock + timeout kill; `--all` runs eligible keys sequentially in-process with `skipped:<reason>` rows, continuing past failures |
 | `repo add --name --path [--tracker] [--fetch/--no-fetch] [--release-branch] [--pre-release] [--json]` | mutating | — | `repo:add` | no (config write) | path missing | none |
 | `repo list [--json/--csv]` | read-only | `store.load_config()["repos"]` | — | no | | none |
 | `repo remove NAME [--json]` | mutating | — | `repo:remove` | yes-ish (registry write) | unknown repo (2) | none |
@@ -115,6 +117,7 @@ flags, `--force`-required conflicts (register), repo-picker aborts.
 
 - `start` — one agent launch at a time (also protects git-wt index writes).
 - `review:<ref>` — one review per PR ref; `review:all` for bulk.
+- `prodtest:<ref>` — one prodtest plan/run per issue ref; `prodtest:run-all` for `run --all` (single sequential bulk run in-process).
 - `cleanup:<normalized ref>` — one cleanup per session ref; `--merged`
   keys as `cleanup:all` (one bulk sweep at a time).
 - Dashboard toolbar acts on the `?sel=` selection when non-empty (N sequential
@@ -128,6 +131,7 @@ flags, `--force`-required conflicts (register), repo-picker aborts.
 ## Destructive commands requiring `confirm: true` at the API
 
 - `cleanup` (closes tracker issue, removes worktree + branch, closes PR)
+- `prodtest` (`plan`/`run`) — require `confirm: true` (the Dashboard bulk button + the Launch prodtest tab confirm before spawning runs).
 - `repo remove` (registry write)
 - `link remove` (drops tracker relation or session link)
 - `sync` (without `--dry-run`) — mutates branches (server rebase rewrites

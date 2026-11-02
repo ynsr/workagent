@@ -56,6 +56,13 @@ class HarnessError(Exception):
         self.exit_code = exit_code
 
 
+class HarnessTimeout(HarnessError):
+    """Headless harness call exceeded its timeout (child already killed)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, exit_code=1)
+
+
 def run_cmd(*args: str, cwd=None, check: bool = True, timeout: int = 60,
             echo: bool = True, use_proxy: bool = True) -> str | None:
     """Run a command, return stripped stdout. Raises HarnessError on failure.
