@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Every command now picks up shell settings and secrets automatically, so saved tokens and proxy work everywhere [no-issue]
 - Cleanup gains Merge PR only: squash-merge the open PR/MR with no teardown via --merge-only and the dialog button [no-issue]
 - Dashboard top bar collapses Sync/Review/Fix-all/Cleanup/JSON/CSV into one Bulk actions menu; StatusTable gains PR-status, issue-presence, author filters [no-issue]
 - StatusTable gains linked-issue status column/filter/badge (jira/gh, 10-min cache, Refresh PR refetches) replacing presence-only filter [no-issue]

@@ -357,7 +357,11 @@ def completions_install(
 
 
 def main() -> None:
-    _completions.ensure_completion_classes()  # typer 0.27: harness server needs registered classes
+    try:
+        from .env import apply_env_file as _apply_env
+        _apply_env()
+    except Exception:
+        pass
     # watch-and-exec owns its argv after -- (backend shim); the harness-args
     # split must not strip it or the shim sees an empty argv (exit 2).
     raw = sys.argv[1:]

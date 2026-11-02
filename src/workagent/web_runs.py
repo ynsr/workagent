@@ -390,6 +390,11 @@ def _spawn(run: Run, registry: Registry) -> None:
                        "session_file": run.session_file,
                        "worktree": run.worktree})
     try:
+        from .env import apply_env_file as _apply_env
+        _apply_env()
+    except Exception:
+        pass
+    try:
         subprocess.Popen(
             supervisor_argv(d, run.argv), stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

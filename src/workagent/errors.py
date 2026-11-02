@@ -69,6 +69,9 @@ def run_cmd(*args: str, cwd=None, check: bool = True, timeout: int = 60,
 
     The full argv is echoed to stderr first (suppressible via echo=False)
     so CLI output and web run logs capture exactly what ran.
+    The env file (~/.config/workagent/env.sh) is applied to this process
+    first, so every child (git/jira/gh/glab/uv) inherits it — including
+    `source`d secrets and the proxy guard — without per-call wiring.
     `jira` invocations additionally inherit JIRA_API_TOKEN from
     ~/.secrets/.env when it is not already exported (never logged).
     `use_proxy` (default True): ensure the local egress proxy env
@@ -77,35 +80,25 @@ def run_cmd(*args: str, cwd=None, check: bool = True, timeout: int = 60,
     fetches (gh/glab) fail without it. Explicit user config always wins.
     """
     import sys
+    from .env import apply_env_file as _apply_env, ensure_proxy_env as _ensure_proxy_env
+    _applied: dict[str, str] = {}
+    try:
+        _applied = _apply_env()
+    except Exception:
+        _applied = {}
     if use_proxy:
-        from .env import ensure_proxy_env
-
-        ensure_proxy_env()
-    env = None
+        _ensure_proxy_env()
+    # Freshly-sourced vars are passed explicitly so the child's env is
+    # pinned even if the caller mocks subprocess (and visible in tests);
+    # otherwise inherit os.environ (None) — explicit exports already won
+    # inside apply_env_file. Jira token overlays the same way.
+    env = dict(os.environ) if _applied else None
     if args and Path(str(args[0])).name == "jira":
         token = _jira_api_token()
         if token and not os.environ.get("JIRA_API_TOKEN"):
-            env = dict(os.environ)
+            if env is None:
+                env = dict(os.environ)
             env["JIRA_API_TOKEN"] = token
-    # Env-file parity (Dashboard gh stall): overlay NO_PROXY/proxy keys from
-    # env.sh without clobbering explicit config. run_cmd never sourced the
-    # file, so file-only NO_PROXY (e.g. chat.jibit.cloud) was invisible here.
-    try:
-        from .env import parse_env_file, resolve_env_file
-        _ef = resolve_env_file()
-        if _ef is not None:
-            _parsed = parse_env_file(_ef)
-            _overlay = {k: v for k, v in _parsed.items() if k in (
-                "NO_PROXY", "no_proxy", "http_proxy", "https_proxy",
-                "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy")}
-            if _overlay:
-                if env is None:
-                    env = dict(os.environ)
-                for _k, _v in _overlay.items():
-                    env.setdefault(_k, _v)
-    except Exception:
-        pass
-    if echo:
         print(f"$ {' '.join(args)}", file=sys.stderr, flush=True)
     try:
         proc = subprocess.run(

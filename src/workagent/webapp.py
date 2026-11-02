@@ -436,6 +436,11 @@ def _is_ip(hostname: str) -> bool:
 def run_server(host: str, port: int, static_dir: Path,
                allowed_hosts: list[str]) -> None:
     try:
+        from .env import apply_env_file as _apply_env
+        _apply_env()
+    except Exception:
+        pass
+    try:
         from .cli_cleanup import gc_soft_deleted
         purged = gc_soft_deleted()
         if purged:
