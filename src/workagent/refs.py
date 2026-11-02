@@ -28,7 +28,9 @@ _JIRA_URL = re.compile(r"^https?://[^/]+/browse/([A-Z][A-Z0-9_]*-\d+)/*$")
 _JIRA_KEY = re.compile(r"^(?:jira:)?([A-Z][A-Z0-9_]*-\d+)$")
 _SHORTHAND = re.compile(r"^(?:github:)?([^/\s]+/[^/\s#]+)#(\d+)$")
 
-
+#: Short timeout for status-table host calls (Dashboard polls every 15s;
+#: a hung gh at the 60s default stalls every row sequentially).
+STATUS_TIMEOUT = 12
 def parse_ref(ref: str) -> dict:
     """Parse an issue/PR ref into {kind, tool, repo, number, url}."""
     m = _JIRA_URL.match(ref)
@@ -365,18 +367,20 @@ def fetch_open_prs(tool: str, cwd: str | None = None) -> list[dict]:
     raise HarnessError(f"unsupported host CLI: {tool}")
 
 
-def fetch_pr_list_for_branch(tool: str, branch: str, cwd: str | None = None) -> list[dict]:
+def fetch_pr_list_for_branch(tool: str, branch: str, cwd: str | None = None,
+                              timeout: int | None = None) -> list[dict]:
     """All PRs/MRs for a head branch (any state), normalized.
 
     Returns [{number, state, title, author, created_at, url, target_branch}]
     with state in open|merged|closed. `cwd` should be the repo path so
-    gh/glab find the right host/remote.
+    gh/glab find the right host/remote. `timeout` bounds the host calls
+    (status path passes STATUS_TIMEOUT); None keeps the run_cmd default.
     """
     if tool == "gh":
         out = run_cmd("gh", "pr", "list", "--head", branch, "--state", "all",
                       "--limit", "50", "--json",
                       "number,state,title,author,createdAt,url,baseRefName",
-                      cwd=cwd)
+                      cwd=cwd, timeout=timeout or 60)
         try:
             data = json.loads(out or "[]")
         except json.JSONDecodeError:
@@ -387,7 +391,7 @@ def fetch_pr_list_for_branch(tool: str, branch: str, cwd: str | None = None) -> 
                  "created_at": p.get("createdAt", ""), "url": p.get("url", ""),
                  "target_branch": p.get("baseRefName", "")} for p in data]
     out = run_cmd("glab", "mr", "list", "--source-branch", branch, "--all", "-F", "json",
-                  cwd=cwd)
+                  cwd=cwd, timeout=timeout or 60)
     try:
         data = json.loads(out or "[]")
     except json.JSONDecodeError:

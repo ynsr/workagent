@@ -113,14 +113,16 @@ def _query_pr(repo: str, branch: str) -> tuple[dict | None, str | None]:
     if not tool or not branch:
         return None, None
     try:
-        return refs.latest_pr(refs.fetch_pr_list_for_branch(tool, branch, cwd=repo)), tool
+        return refs.latest_pr(refs.fetch_pr_list_for_branch(
+            tool, branch, cwd=repo, timeout=refs.STATUS_TIMEOUT)), tool
     except HarnessError as e:
         eprint(f"warning: {tool} pr lookup failed for {branch}: {e}")
         other = "glab" if tool == "gh" else "gh"
         if shutil.which(other) is None:
             raise
         try:
-            return refs.latest_pr(refs.fetch_pr_list_for_branch(other, branch, cwd=repo)), other
+            return refs.latest_pr(refs.fetch_pr_list_for_branch(
+                other, branch, cwd=repo, timeout=refs.STATUS_TIMEOUT)), other
         except HarnessError as e2:
             eprint(f"warning: {other} pr lookup failed for {branch}: {e2}")
             raise
