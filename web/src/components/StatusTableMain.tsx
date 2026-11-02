@@ -10,9 +10,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { WorktreeDetail } from "@/components/WorktreeDetail"
-
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { CiBadge, PrBadge } from "@/components/StateBadge"
+import { CiBadge, IssueStatusBadge, PrBadge } from "@/components/StateBadge"
 import { EmptyState } from "@/components/StatusFeedback"
 import { cn } from "@/lib/utils"
 import type { StatusTableActions, StatusTableEmbed, StatusTableSelection } from "@/components/StatusTable"
@@ -22,7 +21,7 @@ import { CommitsCell, ProdtestCell, ReviewsCell, matchesQuery } from "@/componen
 import { exactDateTime, relativeDate, shortWorktreePath } from "@/lib/format"
 
 export type PrStatusFilter = "" | "open" | "merged" | "closed" | "none"
-export type IssueFilter = "" | "linked" | "branch-only"
+export type IssueFilter = "" | "none" | "not-done" | string
 
 /** PR state for filtering: lowercased pr_detail.state, "none" when no PR. */
 export function prStatusOf(entry: WorktreeMap[string]): "open" | "merged" | "closed" | "none" {
@@ -33,9 +32,36 @@ export function prStatusOf(entry: WorktreeMap[string]): "open" | "merged" | "clo
   return "none"
 }
 
-/** Issue presence: a linked tracker issue (issue key or issue_url) vs a branch-only row. */
-export function hasLinkedIssue(entry: WorktreeMap[string]): boolean {
-  return Boolean((entry.issue ?? "").trim() || (entry.issue_url ?? "").trim())
+/**
+ * Issue status for filtering: lowercased `issue_status`, "" when the
+ * worktree has no linked issue or the status is unknown.
+ */
+export function issueStatusOf(entry: WorktreeMap[string]): string {
+  return (entry.issue_status ?? "").trim().toLowerCase()
+}
+
+/**
+ * Distinct linked issue statuses across rows (sorted), for the filter
+ * dropdown. Unknown/absent statuses are not listed.
+ */
+export function issueStatusOptions(worktrees: WorktreeMap): string[] {
+  const names = new Set<string>()
+  for (const entry of Object.values(worktrees)) {
+    const s = issueStatusOf(entry)
+    if (s) names.add(s)
+  }
+  return [...names].sort((a, b) => a.localeCompare(b))
+}
+
+/**
+ * "Not Done" grouping: open or in-progress tracker states (To Do, In
+ * Progress, Code Review, Product Test, ...); Done/Released/Resolved and
+ * unknown are done.
+ */
+export function isIssueNotDone(status: string): boolean {
+  const s = (status ?? "").trim().toLowerCase()
+  if (!s || s === "done" || s === "released" || s === "resolved" || s === "closed") return false
+  return true
 }
 function RepoTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
@@ -145,6 +171,7 @@ export function StatusTable({
     }
     return [...names].sort((a, b) => a.localeCompare(b))
   }, [worktrees])
+  const statusOptions = useMemo(() => issueStatusOptions(worktrees), [worktrees])
   const keys = useMemo(() => {
     const needle = q.toLowerCase()
     const authorNeedle = authorFilter.toLowerCase()
@@ -157,8 +184,9 @@ export function StatusTable({
         if (k !== want) return false
       }
       if (prFilter && prStatusOf(entry) !== prFilter) return false
-      if (issueFilter === "linked" && !hasLinkedIssue(entry)) return false
-      if (issueFilter === "branch-only" && hasLinkedIssue(entry)) return false
+      if (issueFilter === "none" && issueStatusOf(entry)) return false
+      else if (issueFilter === "not-done" && !isIssueNotDone(issueStatusOf(entry))) return false
+      else if (issueFilter && issueFilter !== "none" && issueFilter !== "not-done" && issueStatusOf(entry) !== issueFilter) return false
       if (authorNeedle && !((entry.pr_detail?.author ?? "").toLowerCase().includes(authorNeedle))) return false
       return !needle || matchesQuery(key, entry, needle)
     })
@@ -256,13 +284,18 @@ export function StatusTable({
           </SelectContent>
         </Select>
         <Select value={issueFilter || "all"} onValueChange={(v) => setParam(issueParam, v === "all" ? "" : v)}>
-          <SelectTrigger size="sm" aria-label="Filter by issue" className="w-36">
-            <SelectValue placeholder="Issue" />
+          <SelectTrigger size="sm" aria-label="Filter by issue status" className="w-44">
+            <SelectValue placeholder="Issue status" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Issue: all</SelectItem>
-            <SelectItem value="linked">Issue: linked</SelectItem>
-            <SelectItem value="branch-only">Issue: branch-only</SelectItem>
+            <SelectItem value="not-done">Issue: not done</SelectItem>
+            {statusOptions.map((s) => (
+              <SelectItem key={s} value={s}>
+                {`Issue: ${s}`}
+              </SelectItem>
+            ))}
+            <SelectItem value="none">Issue: none</SelectItem>
           </SelectContent>
         </Select>
         <Select value={authorFilter || "all"} onValueChange={(v) => setParam(authorParam, v === "all" ? "" : v)}>
@@ -353,6 +386,7 @@ export function StatusTable({
                     />
                   </TableHead>
                   <TableHead>Worktree</TableHead>
+                  <TableHead className="w-28 text-center">Issue</TableHead>
                   <TableHead>{showWorktree ? "Path" : "Branch"}</TableHead>
                   <TableHead className="w-20">Behind|Ahead</TableHead>
                   <TableHead>PR / MR</TableHead>
@@ -424,6 +458,9 @@ export function StatusTable({
                               invalid
                             </Badge>
                           ) : null}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <IssueStatusBadge status={entry.issue_status} />
                         </TableCell>
                         {showWorktree ? (
                           <TableCell className="max-w-48 font-mono text-[13px]">
@@ -558,6 +595,14 @@ export function StatusTable({
                         {showWorktree ? shortWorktreePath(entry.worktree) || "—" : entry.branch ?? "—"}
                       </dd>
                     </div>
+                    {entry.issue_status ? (
+                      <div className="flex items-baseline gap-2">
+                        <dt className="w-16 shrink-0 text-xs text-muted-foreground">Issue</dt>
+                        <dd>
+                          <IssueStatusBadge status={entry.issue_status} />
+                        </dd>
+                      </div>
+                    ) : null}
                     <div className="flex items-baseline gap-2">
                       <dt className="w-16 shrink-0 text-xs text-muted-foreground">Commits</dt>
                       <dd>

@@ -435,7 +435,8 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
         merged = dict(entry)
         for k in ("ci", "ci_checked_at", "ci_sha", "ci_url",
                   "reviews", "unresolved", "resolved",
-                  "reviews_checked_at", "reviews_sha"):
+                  "reviews_checked_at", "reviews_sha",
+                  "issue_status", "issue_status_checked_at"):
             if k in prev and k not in merged:
                 merged[k] = prev[k]
         cache[key] = merged
@@ -450,7 +451,8 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
             merged = dict(entry)
             for k in ("ci", "ci_checked_at", "ci_sha", "ci_url",
                       "reviews", "unresolved", "resolved",
-                      "reviews_checked_at", "reviews_sha"):
+                      "reviews_checked_at", "reviews_sha",
+                      "issue_status", "issue_status_checked_at"):
                 if k in prev and k not in merged:
                     merged[k] = prev[k]
             cache[key] = merged
@@ -550,7 +552,37 @@ def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None,
             _atomic_replace(path, cache)
         _locked(lock, _update)
 
+def cache_issue_status(branch: str, issue_status: str | None, repo: str = "") -> None:
+    """Record the linked-issue status on a branch's pr_cache entry.
 
+    Mirrors cache_ci_status: a None/empty status (lookup failed or no
+    linked issue) writes nothing so the next run retries.
+    """
+    if not issue_status:
+        return
+    key = pr_cache_key(repo, branch)
+    if _sqlite_path() is not None:
+        cache = load_pr_cache()
+        entry = cache.get(key) or dict(cache.get(branch) or {})
+        cache[key] = entry
+        entry["issue_status"] = issue_status
+        entry["issue_status_checked_at"] = datetime.now(timezone.utc).isoformat()
+        _write_pr_cache(cache)
+        return
+    path = config_dir() / "pr_cache.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.parent / (path.name + ".lock"), "w") as lock:
+        def _update() -> None:
+            cache = _read_json(path, {})
+            prev = cache.get(branch) or {}
+            entry = cache.get(key)
+            if entry is None:
+                entry = dict(prev)
+                cache[key] = entry
+            entry["issue_status"] = issue_status
+            entry["issue_status_checked_at"] = datetime.now(timezone.utc).isoformat()
+            _atomic_replace(path, cache)
+        _locked(lock, _update)
 
 
 def _pid_alive(pid: int) -> bool:

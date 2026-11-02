@@ -157,6 +157,8 @@ from .cli_status import (  # noqa: F401  (test/webapp compatibility)
     _pr_cells,
     _status_cells,
     _ci_cell,
+    _issue_usable,
+    _issue_cell,
     _reviews_usable,
     _reviews_cell,
     _fmt_reviews,

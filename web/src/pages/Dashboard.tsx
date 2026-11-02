@@ -740,6 +740,7 @@ export function Dashboard() {
         <ul className="mt-2 list-disc space-y-1 pl-5">
           <li><span className="font-mono">gh pr list</span> / <span className="font-mono">glab mr list</span> per branch — PR result cached 3d, no-PR result 30min (refresh: Refresh PR).</li>
           <li>CI pipeline lookup per PR branch — cached 10min.</li>
+          <li>Linked-issue status (jira/gh) — cached 10min (refresh: Refresh PR).</li>
           <li>Tracker issue lists (jira / gh) — cached 1h (Issues/Candidates pages).</li>
         </ul>
       </details>

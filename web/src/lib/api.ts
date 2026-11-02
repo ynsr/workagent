@@ -56,6 +56,8 @@ export interface WorktreeEntry {
   commits_detail?: CommitsDetail | null
   pr_detail?: PrDetail | null
   reviews_detail?: ReviewsDetail | null
+  /** Lowercased tracker status of the linked issue (jira/gh); absent when no linked issue or unknown. */
+  issue_status?: string | null
   /** Prodtest display status ("pending" | "pending_prodtest" | "running" | "passed" | "failed" | "blocked"); "-" when no plan. */
   prodtest?: string
   /** Stored prodtest item (status/risk/revision/last_run); null when no plan exists. */

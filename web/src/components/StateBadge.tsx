@@ -64,6 +64,30 @@ export function PrBadge({ pr }: { pr: PrDetail | null | undefined }) {
   )
 }
 
+const ISSUE_DONE_STATES: Record<string, true> = { done: true, released: true, resolved: true, closed: true }
+const ISSUE_PROGRESS_STYLES: Record<string, string> = {
+  "to do": "border-border bg-muted text-muted-foreground",
+  "in progress": "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  review: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  "code review": "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+}
+
+/** Linked-issue status badge; renders nothing when the worktree has no linked issue or the status is unknown. */
+export function IssueStatusBadge({ status }: { status?: string | null }) {
+  const s = (status ?? "").trim().toLowerCase()
+  if (!s) return null
+  const style =
+    ISSUE_DONE_STATES[s]
+      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+      : (ISSUE_PROGRESS_STYLES[s] ??
+        "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300")
+  return (
+    <Badge variant="outline" className={style} title={`Issue status: ${s}`}>
+      {s}
+    </Badge>
+  )
+}
+
 
 type CiState = "success" | "failure" | "running" | "not_started"
 

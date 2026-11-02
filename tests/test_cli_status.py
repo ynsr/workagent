@@ -194,7 +194,7 @@ def test_status_cells_recorded_pr_wins(isolated_config, tmp_path):
     entry = {"worktree": str(tmp_path / "gone"), "branch": "feat/x",
              "repo": str(tmp_path / "repo"),
              "pr_url": "https://git.jibit.cloud/g/p/-/merge_requests/1706"}
-    cells = cli._status_cells(entry)
+    cells = cli._status_cells("k", entry)
     assert cells["pr"] == "MR #1706"
     assert cells["pr_data"]["url"].endswith("/merge_requests/1706")
 
@@ -206,7 +206,7 @@ def test_status_cells_cached_pr_beats_recorded(isolated_config, tmp_path):
     entry = {"worktree": str(tmp_path / "gone"), "branch": "feat/x",
              "repo": str(tmp_path / "repo"),
              "pr_url": "https://git.jibit.cloud/g/p/-/merge_requests/1706"}
-    cells = cli._status_cells(entry)
+    cells = cli._status_cells("k", entry)
     assert cells["pr"] == "PR #5 (open)"
     assert cells["pr_data"]["number"] == 5
 
@@ -235,7 +235,7 @@ def test_negative_cache_swr_window():
 
 
 def test_status_cells_partial_entry():
-    cells = cli._status_cells({"worktree": "", "branch": "", "repo": ""})
+    cells = cli._status_cells("k", {"worktree": "", "branch": "", "repo": ""})
     assert cells["pr"] == "-" and cells["commits"] == "-"
 
 
@@ -255,12 +255,12 @@ def test_status_cells_ci_cache_reuse(isolated_config, tmp_path, monkeypatch):
                         or ("success", "https://ci.example.com/jobs/7")))
     monkeypatch.setattr(cli.refs, "fetch_pr_comment_stats",
                         lambda tool, url, cwd=None: {"reviews": 0, "unresolved": 0, "resolved": 0})
-    c1 = cli._status_cells(entry)
+    c1 = cli._status_cells("k", entry)
     assert c1["ci"] == "success"
     assert c1["ci_url"] == "https://ci.example.com/jobs/7"
     assert fetches == ["https://x/mr/9"]
     # same tip, fresh checked_at -> served from cache, no second fetch
-    c2 = cli._status_cells(entry)
+    c2 = cli._status_cells("k", entry)
     assert c2["ci"] == "success"
     assert len(fetches) == 1
     cached = store.load_pr_cache()[store.pr_cache_key("/repo", "feat/x")]
@@ -268,13 +268,13 @@ def test_status_cells_ci_cache_reuse(isolated_config, tmp_path, monkeypatch):
     assert "ci_checked_at" in cached
     # branch tip moved -> refetch
     tips["HEAD"] = "a2"
-    c3 = cli._status_cells(entry)
+    c3 = cli._status_cells("k", entry)
     assert c3["ci"] == "success"
     assert len(fetches) == 2
     assert store.load_pr_cache()[store.pr_cache_key("/repo", "feat/x")]["ci_sha"] == "a2"
     # --refresh-pr forces a refetch even on an unchanged tip
     tips["HEAD"] = "a1"
-    cli._status_cells(entry, refresh_pr=True)
+    cli._status_cells("k", entry, refresh_pr=True)
     assert len(fetches) == 3
 
 
@@ -300,18 +300,18 @@ def test_status_cells_ci_reuse_within_swr(isolated_config, tmp_path,
     cache[store.pr_cache_key("/repo", "feat/x")]["ci_checked_at"] = (
         datetime.now(timezone.utc) - timedelta(hours=20)).isoformat()
     store.save_pr_cache(cache)
-    assert cli._status_cells(entry)["ci"] == "success"  # 20h < 1d SWR: reused
+    assert cli._status_cells("k", entry)["ci"] == "success"  # 20h < 1d SWR: reused
     assert len(fetches) == 0
     cache = store.load_pr_cache()
     cache[store.pr_cache_key("/repo", "feat/x")]["ci_checked_at"] = (
         datetime.now(timezone.utc) - timedelta(hours=36)).isoformat()
     store.save_pr_cache(cache)
-    assert cli._status_cells(entry)["ci"] == "failure"  # 36h > 1d SWR: refetched
+    assert cli._status_cells("k", entry)["ci"] == "failure"  # 36h > 1d SWR: refetched
     assert len(fetches) == 1
 
 
 def test_status_cells_ci_none_without_pr(isolated_config):
-    cells = cli._status_cells({"worktree": "", "branch": "feat/x",
+    cells = cli._status_cells("k", {"worktree": "", "branch": "feat/x",
                                "repo": "/repo"})
     assert cells["ci"] is None
     assert cells["ci_url"] == ""

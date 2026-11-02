@@ -204,3 +204,33 @@ def test_pr_review_state_gh(monkeypatch):
         raise AssertionError(a)
     monkeypatch.setattr(st, "run_cmd", _run)
     assert st.pr_review_state("https://github.com/o/r/pull/5") == "approved"
+
+
+def test_issue_cell_caches_and_reuses_status(isolated_config, tmp_path, monkeypatch):
+    """issue_status rides pr_cache (10-min SWR), re-queried on refresh."""
+    from workagent import cli as cli, store
+    wt = tmp_path / "wt"; wt.mkdir()
+    entry = {"issue": "IPG-1", "worktree": str(wt), "branch": "feat/a",
+             "repo": str(tmp_path)}
+    calls = []
+    def _state(number, tool, target):
+        calls.append((number, tool))
+        return "in progress"
+    monkeypatch.setattr("workagent.issue_status._issue_state", _state)
+    assert cli._issue_cell("jira:IPG-1", entry) == "in progress"
+    assert len(calls) == 1
+    # cached: second call serves without a host hit
+    assert cli._issue_cell("jira:IPG-1", entry) == "in progress"
+    assert len(calls) == 1
+    cached = store.load_pr_cache()[store.pr_cache_key(str(tmp_path), "feat/a")]
+    assert cached["issue_status"] == "in progress"
+    assert "issue_status_checked_at" in cached
+    # refresh forces a live re-query
+    assert cli._issue_cell("jira:IPG-1", entry, refresh_pr=True) == "in progress"
+    assert len(calls) == 2
+
+
+def test_issue_cell_none_without_linked_issue(isolated_config, tmp_path):
+    from workagent import cli as cli
+    entry = {"worktree": str(tmp_path), "branch": "feat/x", "repo": str(tmp_path)}
+    assert cli._issue_cell("feat/x", entry) is None

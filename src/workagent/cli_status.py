@@ -208,7 +208,7 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
     return _seed_recorded_pr(cells, entry)
 
 
-def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
+def _status_cells(key: str, entry: dict, refresh_pr: bool = False) -> dict:
     """_pr_cells plus the CI pipeline and review-comment cells.
 
     CI resolves after the PR: no PR -> no CI cell. A cached ``ci`` is
@@ -218,11 +218,15 @@ def _status_cells(entry: dict, refresh_pr: bool = False) -> dict:
     persisted via store.cache_ci_status. Review stats ({reviews,
     unresolved, resolved} via refs.fetch_pr_comment_stats) follow the same
     tip/refresh rules and ride in ``reviews``/``reviews_detail``.
+    ``issue_status`` is the lowercased tracker status of the linked issue
+    (None for branch-only rows), cached 10 min and re-queried on
+    --refresh-pr.
     """
     cells = _pr_cells(entry, refresh_pr)
     cells["ci"], cells["ci_url"] = _ci_cell(entry, cells, refresh_pr)
     cells["reviews_detail"] = _reviews_cell(entry, cells, refresh_pr)
     cells["reviews"] = _fmt_reviews(cells["reviews_detail"])
+    cells["issue_status"] = _issue_cell(key, entry, refresh_pr)
     cells["prodtest_detail"] = _prodtest_cell(entry)
     cells["prodtest"] = _fmt_prodtest(cells["prodtest_detail"])
     return cells
@@ -326,6 +330,62 @@ def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool) -> dict | None:
         store.cache_review_stats(branch, stats, sha=branch_tip or "", repo=repo)
     return stats
 
+def _issue_usable(cached: dict) -> bool:
+    """Cached issue status still servable (stale-while-revalidate):
+    checked within max(10 min * 10, 1 day)."""
+    ts = cached.get("issue_status_checked_at", "")
+    if not ts:
+        return False
+    try:
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
+    except ValueError:
+        return False
+    return age < timedelta(seconds=_CI_SWR_SECONDS)
+
+
+def _issue_cell(key: str, entry: dict, refresh_pr: bool = False) -> str | None:
+    """Lowercased tracker status for the linked issue, else None.
+
+    Optional: only worktrees with a linked issue (``issue``/``issue_url``
+    or the link key itself) get a status; branch-only rows stay None.
+    Cached 10 min (same window as CI/reviews) keyed by (repo, branch);
+    --refresh-pr forces a live re-query. Never raises — unknown/failed
+    lookups return None (nothing cached, next run retries). Jira + GitHub
+    only (no glab status reader exists).
+    """
+    stored = str(entry.get("issue", "") or "").strip()
+    stored_url = str(entry.get("issue_url", "") or "").strip()
+    branch = entry.get("branch", "")
+    repo = entry.get("repo", "")
+    cached = store.lookup_pr_cache(branch, repo) if branch else None
+    if not refresh_pr and cached and _issue_usable(cached) \
+            and cached.get("issue_status"):
+        return cached.get("issue_status")
+    from . import issue_status as _st
+    parsed = None
+    for cand in (stored, key, stored_url or None):
+        if not cand:
+            continue
+        try:
+            parsed = _st._parse(cand)
+        except Exception:
+            parsed = None
+        if parsed is not None:
+            break
+    if parsed is None:
+        return (cached or {}).get("issue_status") or None
+    tool = parsed.get("tool", "")
+    if tool not in ("jira", "gh"):
+        return (cached or {}).get("issue_status") or None
+    cur = _st._issue_state(parsed.get("number", ""), tool,
+                           parsed.get("url", "") or parsed.get("number", ""))
+    if not cur:
+        return (cached or {}).get("issue_status") or None
+    if branch:
+        store.cache_issue_status(branch, cur, repo=repo)
+    return cur
+
+
 
 def _fmt_reviews(stats: dict | None) -> str:
     if not stats:
@@ -337,7 +397,7 @@ def _session_rows(links: dict, show_worktree: bool, refresh: bool
                   ) -> tuple[list[dict], list[str]]:
     rows = []
     for k, v in links.items():
-        cells = _status_cells(v, refresh)
+        cells = _status_cells(k, v, refresh)
         row = {"key": k, "branch": v.get("branch", "?"),
                "harness": _harness_cell(k, v.get("worktree", "")),
                "commits": cells["commits"], "pr": cells["pr"],
@@ -373,11 +433,12 @@ def _colorize_session(row: dict) -> dict:
 
 
 def _enrich_entry(key: str, entry: dict, refresh: bool) -> dict:
-    cells = _status_cells(entry, refresh)
+    cells = _status_cells(key, entry, refresh)
     return {**entry, "harness": _harness_cell(key, entry.get("worktree", "")),
             "commits": cells["commits"], "pr": cells["pr"],
             "ci": cells["ci"], "ci_url": cells["ci_url"],
             "reviews": cells["reviews"],
+            "issue_status": cells["issue_status"],
             "prodtest": cells["prodtest"],
             "prodtest_detail": cells["prodtest_detail"],
             "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),
@@ -385,7 +446,7 @@ def _enrich_entry(key: str, entry: dict, refresh: bool) -> dict:
             "reviews_detail": cells["reviews_detail"]}
 
 def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
-    cells = _status_cells(entry, refresh)
+    cells = _status_cells(key, entry, refresh)
     detail = {"key": key, **entry,
               "harness": _harness_cell(key, entry.get("worktree", "")),
               "commits": cells["commits"],
@@ -394,6 +455,7 @@ def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
               "ci": cells["ci"], "ci_url": cells["ci_url"],
               "reviews": cells["reviews"],
               "reviews_detail": cells["reviews_detail"],
+              "issue_status": cells["issue_status"],
               "prodtest": cells["prodtest"],
               "prodtest_detail": cells["prodtest_detail"],
               "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),

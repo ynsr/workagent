@@ -36,13 +36,18 @@ Jira rows are keyed `jira:KEY@repo` (e.g. `jira:IPG-932@projectx`); bare
     "active": 1, "deleted_at": "",
     "commits_detail": {"behind": 0, "ahead": 1},
     "pr_detail": {"number": 1706, "state": "open", "title": "…",
-                   "author": "…", "url": "https://…", "tool": "glab"}
+                   "author": "…", "url": "https://…", "tool": "glab"},
+    "issue_status": "in progress",
 }
 ```
 `harness` is `"<name> <pid>"` while a harness is live on the worktree,
 `""` otherwise. `commits` is the display string `"B|A"`; prefer
 `commits_detail`.
-`pr_detail` is `null` when no open/known PR. `ci` is the latest CI
+`pr_detail` is `null` when no open/known PR. `issue_status` is the
+lowercased tracker status of the linked issue (`in progress`, `review`,
+`done`, ...) or `null` when the worktree has no linked issue, the tracker
+is unsupported (Jira + GitHub only), or the lookup failed (cached within
+max(10 min * 10, 1 day); re-queried when `refresh=true`). `ci` is the latest CI
 pipeline status for the PR — `success` | `failure` | `running` |
 `not_started` — or `null` when there is no PR or the lookup failed
 (cached within max(10 min * 10, 1 day) while the branch tip is unchanged). `ci_url` is the

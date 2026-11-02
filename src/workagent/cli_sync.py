@@ -217,7 +217,7 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
                 "merge, and push") if sync_mod.merge_in_progress(Path(wt)) else ""
         _fail(f"{key}: worktree has uncommitted changes: {', '.join(dirty)}"
               f"{hint}", EXIT_GENERAL)
-    cells = _cli._status_cells(entry, refresh_pr=False)
+    cells = _cli._status_cells(key, entry, refresh_pr=False)
     pr = cells["pr_data"]
     tool = store.get_cached_pr_tool(branch, repo) or _cli._repo_tool(repo)
     db = cells["base_branch"] or _cli._repo_default_branch(repo)
