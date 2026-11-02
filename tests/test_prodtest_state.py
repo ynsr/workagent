@@ -81,7 +81,7 @@ def test_upsert_prodtest_no_fields(tmp_path):
     assert row["status"] == "pending"
 
 
-def test_cli_destroy_refuses_prodtest_blocked(tmp_path, monkeypatch):
+def test_cli_destroy_refuses_prodtest_blocked(tmp_path, monkeypatch, isolated_config):
     import workagent.cli_cleanup as cc
     from workagent import store
     from workagent import store_sqlite as sq

@@ -367,12 +367,17 @@ def fetch_open_prs(tool: str, cwd: str | None = None) -> list[dict]:
     raise HarnessError(f"unsupported host CLI: {tool}")
 
 
+# fail fast: cold gh under proxy takes ~30s, warm ~0.02s;
+# the persistent pr_cache serves rows while gh is slow.
+STATUS_TIMEOUT = 12
+
+
 def fetch_pr_list_for_branch(tool: str, branch: str, cwd: str | None = None,
-                              timeout: int | None = None) -> list[dict]:
+                             timeout: int | None = None) -> list[dict]:
     """All PRs/MRs for a head branch (any state), normalized.
 
     Returns [{number, state, title, author, created_at, url, target_branch}]
-    with state in open|merged|closed. `cwd` should be the repo path so
+    with state in open|merged/closed. `cwd` should be the repo path so
     gh/glab find the right host/remote. `timeout` bounds the host calls
     (status path passes STATUS_TIMEOUT); None keeps the run_cmd default.
     """
