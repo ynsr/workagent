@@ -150,6 +150,8 @@ def test_loop_terminal_after_cap(monkeypatch):
         run_once=lambda p: {"exit_code": 0, "transcript": "broken"},
         run_judge=lambda p: "nope\nINCOMPLETE_OR_FAILED_JOB")
     assert res["verdict"] == "MAX_RETRIES_EXCEEDED" and res["attempts"] == 4
+    assert len(res["runs"]) == res["attempts"] == 4
+    assert [("terminal" in r["trace"]) for r in res["runs"]] == [False, False, False, True]
 
 
 def test_waiting_exits_without_retry(monkeypatch):
@@ -178,8 +180,9 @@ def test_nonzero_exit_skips_judge(monkeypatch):
         run_judge=lambda p: (judge_calls.append(p) or "ok\nJOB_DONE"))
     assert res["verdict"] == "JOB_DONE" and res["attempts"] == 2
     assert len(judge_calls) == 1
-    assert res["trace"][0]["phase"] == "gates"
-    assert "exit code 2" in res["trace"][0]["reasons"][0]
+    assert res["runs"][0]["trace"]["phase"] == "gates"
+    assert "exit code 2" in res["runs"][0]["trace"]["reasons"][0]
+    assert len(res["runs"]) == 2 and res["runs"][1]["trace"]["terminal"] == "JOB_DONE"
 
 
 def test_dirty_tree_triggers_continuation(monkeypatch):
@@ -206,6 +209,9 @@ def test_dirty_tree_triggers_continuation(monkeypatch):
     assert res["verdict"] == "JOB_DONE" and res["attempts"] == 1
     assert len(seen) == 2
     assert "a.txt" in seen[1] and "origin/feat/x" in seen[1]
+    assert [r["output"] for r in res["runs"]] == ["work in progress", "committed\nJOB_DONE"]
+    assert [r["trace"]["phase"] for r in res["runs"]] == ["dirty-gate", "judge"]
+    assert len(res["runs"]) == len(seen)
 
 
 def test_dirty_continuation_intentional_accepts(monkeypatch):
@@ -224,6 +230,7 @@ def test_dirty_continuation_intentional_accepts(monkeypatch):
         run_judge=lambda p: (judge_calls.append(p) or "unreachable"))
     assert res["verdict"] == "INTENTIONALLY_UNCOMMITTED_CHANGES"
     assert judge_calls == []
+    assert [r["trace"].get("terminal") for r in res["runs"]] == [None, "INTENTIONALLY_UNCOMMITTED_CHANGES"]
 
 
 def test_gate_fail_skips_judge(monkeypatch):
@@ -250,7 +257,7 @@ def test_gate_fail_skips_judge(monkeypatch):
         run_judge=lambda p: (judge_calls.append(p) or "ok\nJOB_DONE"))
     assert res["verdict"] == "JOB_DONE" and res["attempts"] == 2
     assert len(judge_calls) == 1
-    assert res["trace"][0]["phase"] == "gates"
+    assert res["runs"][0]["trace"]["phase"] == "gates"
     assert gate_calls[0][2] is False
 
 def test_runs_validation_column_roundtrip(isolated_config, monkeypatch):
@@ -350,3 +357,105 @@ def test_headless_retry_resumes_and_judge_is_fresh(monkeypatch, tmp_path, isolat
     assert "--session-dir" in calls[1] and "--session-dir" in calls[3]
     assert calls[1][-1] != calls[3][-1]
     assert [row["validation"]["attempt"] for row in sq.list_runs(db)] == [2, 1]
+
+
+def test_dirty_continuation_crash_never_judges(monkeypatch):
+    from workagent import cli_validate as cv
+    monkeypatch.setattr(cv, "dirty_gate",
+                        lambda wt, br: {"dirty": True, "porcelain": " M a.txt"})
+    judge_calls = []
+    once = [{"exit_code": 0, "transcript": "work in progress"},
+            {"exit_code": 1, "transcript": "crashed\nJOB_DONE"}]
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it",
+        session_type="start", max_retries=0,
+        run_once=lambda p: once.pop(0),
+        run_judge=lambda p: (judge_calls.append(p) or "ok\nJOB_DONE"))
+    assert judge_calls == []
+    assert res["verdict"] == "MAX_RETRIES_EXCEEDED"
+    assert len(res["runs"]) == 2
+    assert res["runs"][1]["exit_code"] == 1
+    assert res["runs"][1]["trace"]["phase"] == "gates"
+
+
+def _headless_fake(monkeypatch, tmp_path, isolated_config, cont_text, cont_exit):
+    """Fake harness for _run_harness headless: main run mints a transcript,
+    --resume runs are continuations (cont_text / cont_exit), judge runs use a
+    workagent-judge-* session dir and are counted separately."""
+    import json
+    from pathlib import Path
+    from workagent import backend, cli_harness as hh, store_sqlite as sq
+
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES (?, ?, 'b', NULL, '2026-01-01', '{}')", ("k", str(tmp_path)))
+    monkeypatch.setattr(hh.store, "record_harness_run", lambda *a: None)
+    monkeypatch.setattr(hh.store, "clear_harness_run", lambda *a: None)
+    judge_calls = []
+    main_calls = []
+
+    def _write(target, text):
+        target.write_text(json.dumps({"message": {"role": "assistant", "content":
+                          [{"type": "text", "text": text}]}}) + "\n")
+
+    def launch(name, prompt, workdir, no_tty, extra_args=None, **kwargs):
+        if "--resume" in extra_args:
+            _write(Path(extra_args[extra_args.index("--resume") + 1]), cont_text)
+            return cont_exit
+        directory = extra_args[extra_args.index("--session-dir") + 1]
+        if "workagent-judge-" in directory:
+            judge_calls.append(prompt)
+            _write(Path(directory) / "judge.jsonl", "ok\nJOB_DONE")
+            return 0
+        main_calls.append(prompt)
+        _write(Path(directory) / "minted.jsonl", "work in progress")
+        return 0
+
+    monkeypatch.setattr(backend, "launch", launch)
+    return db, judge_calls, main_calls, hh
+
+
+def test_dirty_continuation_pairs_db_rows(monkeypatch, tmp_path, isolated_config):
+    from workagent import cli_validate as cv, store_sqlite as sq
+    db, judge_calls, main_calls, hh = _headless_fake(
+        monkeypatch, tmp_path, isolated_config, "committed\nJOB_DONE", 0)
+    states = [{"dirty": True, "porcelain": " M a.txt"},
+              {"dirty": False, "porcelain": ""}]
+    monkeypatch.setattr(cv, "dirty_gate", lambda wt, br: states.pop(0))
+    monkeypatch.setattr(cv, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True, "checks": {},
+                                                  "reasons": []})
+    result = {"command": "start", "branch": "b", "key": "k"}
+    hh._run_harness("omp", "do it", str(tmp_path), str(tmp_path), True, True,
+                    result, True, run_key="k")
+    rows = sorted(sq.list_runs(db), key=lambda r: r["id"])
+    assert len(main_calls) == 1 and len(judge_calls) == 1
+    assert len(rows) == 2
+    assert rows[0]["output"].endswith("work in progress")
+    assert rows[1]["output"].endswith("committed\nJOB_DONE")
+    assert rows[0]["validation"]["phase"] == "dirty-gate"
+    assert rows[1]["validation"]["phase"] == "judge"
+    assert rows[1]["validation"]["terminal"] == "JOB_DONE"
+    assert rows[1]["exit_code"] == 0
+
+
+def test_crashed_continuation_never_judges_db(monkeypatch, tmp_path, isolated_config):
+    from workagent import cli_validate as cv, store_sqlite as sq
+    import pytest
+    import typer
+    db, judge_calls, main_calls, hh = _headless_fake(
+        monkeypatch, tmp_path, isolated_config, "crashed\nJOB_DONE", 1)
+    monkeypatch.setattr(cv, "dirty_gate",
+                        lambda wt, br: {"dirty": True, "porcelain": " M a.txt"})
+    result = {"command": "start", "branch": "b", "key": "k"}
+    with pytest.raises(typer.Exit) as exc:
+        hh._run_harness("omp", "do it", str(tmp_path), str(tmp_path), True, True,
+                        result, True, run_key="k")
+    assert exc.value.exit_code == 1
+    assert judge_calls == []
+    rows = sorted(sq.list_runs(db), key=lambda r: r["id"])
+    assert rows and rows[-1]["validation"]["terminal"] == "MAX_RETRIES_EXCEEDED"
+    assert all(r["validation"]["phase"] != "judge" for r in rows)
+    assert rows[-1]["exit_code"] == 1

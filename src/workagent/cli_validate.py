@@ -171,82 +171,86 @@ def judge_prompt(original: str, previous: str, gates: dict, diff_stat: str) -> s
 
 
 def validate_headless(*, worktree: str, branch: str, prompt: str,
-                       session_type: str | None,
-                       run_once, run_judge,
-                       max_retries: int = 3) -> dict:
+                      session_type: str | None,
+                      run_once, run_judge,
+                      max_retries: int = 3) -> dict:
     """Retry loop. run_once(prompt)->{exit_code, transcript}; run_judge(prompt)->text.
+
+    Every run_once call (main attempt or dirty continuation) appends exactly one
+    record to ``runs``: {"exit_code", "output", "trace"}, where ``trace`` is the
+    decision taken on that run's output. The terminal verdict is stored as
+    ``trace["terminal"]`` on the last record; no extra entry is appended.
 
     Order per attempt: run_once -> WAITING short-circuit -> exit-code gate
     (non-zero = failed attempt, no judge spent) -> Phase-1 dirty gate for
-    start/fix_comments (dirty = continuation via run_once(continue_prompt);
-    INTENTIONAL accepts, clean proceeds) -> Phase-2 deterministic gates
-    (fail = retry without judge) -> judge. Never raises on judge failure
-    (counts as a failed attempt with reasons). WAITING_USER_RESPONSE exits
+    start/fix_comments (dirty = continuation via run_once(continue_prompt),
+    which takes the same WAITING / exit-code / INTENTIONAL checks) -> Phase-2
+    deterministic gates (fail = retry without judge) -> judge. Judge failure
+    never raises (counts as a failed attempt). WAITING_USER_RESPONSE exits
     without consuming a retry. expect_changes is True for start/fix_comments
     (code-change sessions) and False otherwise.
     """
     expect_changes = session_type in ("start", "fix_comments")
-    trace: list[dict] = []
+    runs: list[dict] = []
     attempts = 0
+
+    def _run(run_prompt: str) -> tuple[int, str]:
+        try:
+            out = run_once(run_prompt) or {}
+        except Exception as e:
+            out = {"exit_code": 1, "transcript": f"harness error: {e}"}
+        try:
+            code = int(out.get("exit_code", 0))
+        except (TypeError, ValueError):
+            code = 1
+        text = str(out.get("transcript", "") or "")
+        runs.append({"exit_code": code, "output": text, "trace": None})
+        return code, text
+
+    def _decide(phase: str, verdict: str, parse: str, text: str,
+                reasons: list[str] | None = None) -> None:
+        """Attach this decision to the latest run's record (one per run)."""
+        entry = {"attempt": attempts, "phase": phase, "verdict": verdict,
+                 "parse": parse, "tail": text[-2000:]}
+        if reasons is not None:
+            entry["reasons"] = reasons
+        runs[-1]["trace"] = entry
+
+    def _finish(verdict: str, waiting: bool = False) -> dict:
+        runs[-1]["trace"]["terminal"] = verdict
+        return {"verdict": verdict, "attempts": attempts,
+                "runs": runs, "waiting": waiting}
+
+    def _retry(phase: str, parse: str, text: str, reasons: list[str]) -> dict | None:
+        """Counted failed attempt on the latest run; terminal dict once capped."""
+        _decide(phase, "INCOMPLETE_OR_FAILED_JOB", parse, text, reasons)
+        return _finish("MAX_RETRIES_EXCEEDED") if attempts > max_retries else None
+
+    def _exit_prompt(code: int, transcript: str) -> str:
+        return (f"Continue the unfinished job. The previous run "
+                f"exited with code {code}. Stderr/output tail:\n"
+                f"{transcript[-2000:]}\n"
+                f"End your reply with only JOB_DONE as the last line.")
+
     current_prompt = prompt
     while True:
         attempts += 1
-        try:
-            out = run_once(current_prompt) or {}
-        except Exception as e:
-            out = {"exit_code": 1, "transcript": f"harness error: {e}"}
-        exit_code = out.get("exit_code", 0)
-        try:
-            exit_code = int(exit_code)
-        except (TypeError, ValueError):
-            exit_code = 1
-        transcript = str(out.get("transcript", "") or "")
-        tail = transcript[-2000:]
+        code, transcript = _run(current_prompt)
         token, mode = parse_verdict(transcript)
         if token == "WAITING_USER_RESPONSE":
-            trace.append({"attempt": attempts, "phase": "main",
-                          "verdict": token, "parse": mode,
-                          "tail": tail})
-            return {"verdict": token, "attempts": attempts,
-                    "trace": trace, "waiting": True}
-
-        def _retry(phase: str, verdict: str, reasons: list[str],
-                   next_prompt: str) -> dict | None:
-            """Append a failed-attempt trace entry; terminal verdict or None."""
-            trace.append({"attempt": attempts, "phase": phase,
-                          "verdict": verdict, "parse": mode,
-                          "reasons": reasons, "tail": tail})
-            if attempts > max_retries:
-                trace.append({"attempt": attempts, "phase": "terminal",
-                              "verdict": "MAX_RETRIES_EXCEEDED",
-                              "parse": "none", "tail": ""})
-                return {"verdict": "MAX_RETRIES_EXCEEDED",
-                        "attempts": attempts, "trace": trace,
-                        "waiting": False}
-            return None
-
-        if exit_code != 0:
-            done = _retry("gates", "INCOMPLETE_OR_FAILED_JOB",
-                          [f"harness exit code {exit_code}: {tail[-500:]}"],
-                          (f"Continue the unfinished job. The previous run "
-                           f"exited with code {exit_code}. Stderr/output tail:\n"
-                           f"{tail[-2000:]}\n"
-                           f"End your reply with only JOB_DONE as the last line."))
+            _decide("main", token, mode, transcript)
+            return _finish(token, waiting=True)
+        if code != 0:
+            done = _retry("gates", mode, transcript,
+                          [f"harness exit code {code}: {transcript[-500:]}"])
             if done is not None:
                 return done
-            current_prompt = (f"Continue the unfinished job. The previous run "
-                              f"exited with code {exit_code}. Stderr/output tail:\n"
-                              f"{tail[-2000:]}\n"
-                              f"End your reply with only JOB_DONE as the last line.")
+            current_prompt = _exit_prompt(code, transcript)
             continue
-        if (session_type in ("start", "fix_comments")
-                and token == "INTENTIONALLY_UNCOMMITTED_CHANGES"):
-            trace.append({"attempt": attempts, "phase": "dirty-gate",
-                          "verdict": token, "parse": mode,
-                          "tail": tail})
-            return {"verdict": token, "attempts": attempts,
-                    "trace": trace, "waiting": False}
-        if session_type in ("start", "fix_comments"):
+        if expect_changes and token == "INTENTIONALLY_UNCOMMITTED_CHANGES":
+            _decide("dirty-gate", token, mode, transcript)
+            return _finish(token)
+        if expect_changes:
             try:
                 dirty = dirty_gate(worktree, branch)
             except Exception as e:
@@ -254,64 +258,48 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                          "error": f"dirty gate error: {e}"}
             if dirty.get("dirty"):
                 porcelain = str(dirty.get("porcelain", "") or "")
-                try:
-                    cont = run_once(continue_prompt(porcelain, branch)) or {}
-                except Exception as e:
-                    cont = {"exit_code": 1,
-                            "transcript": f"harness error: {e}"}
-                ctranscript = str(cont.get("transcript", "") or "")
-                ctoken, cmode = parse_verdict(ctranscript)
-                if ctoken == "WAITING_USER_RESPONSE":
-                    trace.append({"attempt": attempts, "phase": "dirty-gate",
-                                  "verdict": ctoken, "parse": cmode,
-                                  "tail": ctranscript[-2000:]})
-                    return {"verdict": ctoken, "attempts": attempts,
-                            "trace": trace, "waiting": True}
-                if (ctoken == "INTENTIONALLY_UNCOMMITTED_CHANGES"
-                        and session_type in ("start", "fix_comments")):
-                    trace.append({"attempt": attempts, "phase": "dirty-gate",
-                                  "verdict": ctoken, "parse": cmode,
-                                  "tail": ctranscript[-2000:]})
-                    return {"verdict": ctoken, "attempts": attempts,
-                            "trace": trace, "waiting": False}
+                _decide("dirty-gate", "INCOMPLETE_OR_FAILED_JOB", mode, transcript,
+                        [f"uncommitted changes; continuation issued: {porcelain[-500:]}"])
+                code, transcript = _run(continue_prompt(porcelain, branch))
+                token, mode = parse_verdict(transcript)
+                if token == "WAITING_USER_RESPONSE":
+                    _decide("dirty-gate", token, mode, transcript)
+                    return _finish(token, waiting=True)
+                if code != 0:
+                    done = _retry("gates", mode, transcript,
+                                  [f"harness exit code {code}: {transcript[-500:]}"])
+                    if done is not None:
+                        return done
+                    current_prompt = _exit_prompt(code, transcript)
+                    continue
+                if token == "INTENTIONALLY_UNCOMMITTED_CHANGES":
+                    _decide("dirty-gate", token, mode, transcript)
+                    return _finish(token)
                 try:
                     recheck = dirty_gate(worktree, branch)
                 except Exception as e:
-                    recheck = {"dirty": True,
-                               "porcelain": f"dirty gate error: {e}"}
-                transcript = ctranscript
-                tail = transcript[-2000:]
-                token, mode = ctoken, cmode
+                    recheck = {"dirty": True, "porcelain": f"dirty gate error: {e}"}
                 if recheck.get("dirty"):
-                    done = _retry(
-                        "dirty-gate", "INCOMPLETE_OR_FAILED_JOB",
-                        [f"uncommitted changes remain: "
-                         f"{str(recheck.get('porcelain', ''))[-500:]}"],
-                        (f"Continue the unfinished job. Uncommitted changes "
-                         f"remain:\n{str(recheck.get('porcelain', ''))[-2000:]}\n"
-                         f"Commit and push to origin/{branch}, then end your "
-                         f"reply with only JOB_DONE as the last line."))
+                    remaining = str(recheck.get("porcelain", "") or "")
+                    done = _retry("dirty-gate", mode, transcript,
+                                  [f"uncommitted changes remain: {remaining[-500:]}"])
                     if done is not None:
                         return done
                     current_prompt = (
                         f"Continue the unfinished job. Uncommitted changes "
-                        f"remain:\n{str(recheck.get('porcelain', ''))[-2000:]}\n"
+                        f"remain:\n{remaining[-2000:]}\n"
                         f"Commit and push to origin/{branch}, then end your "
                         f"reply with only JOB_DONE as the last line.")
                     continue
         try:
-            gates = run_deterministic_gates(worktree, exit_code,
-                                            transcript[-4000:],
+            gates = run_deterministic_gates(worktree, code, transcript[-4000:],
                                             expect_changes)
         except Exception as e:
             gates = {"passed": False, "checks": {},
                      "reasons": [f"deterministic gates crashed: {e}"]}
         if not gates.get("passed", False):
             reasons = [str(r) for r in gates.get("reasons", [])]
-            done = _retry("gates", "INCOMPLETE_OR_FAILED_JOB", reasons,
-                          (f"Continue the unfinished job. Deterministic gates "
-                           f"failed: {'; '.join(reasons)[:2000]}\n"
-                           f"End your reply with only JOB_DONE as the last line."))
+            done = _retry("gates", mode, transcript, reasons)
             if done is not None:
                 return done
             current_prompt = (
@@ -332,15 +320,11 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
         except Exception as e:
             judge_text = f"judge crashed: {e}\nINCOMPLETE_OR_FAILED_JOB"
         jtoken, jmode = parse_verdict(judge_text or "")
-        trace.append({"attempt": attempts, "phase": "judge",
-                      "verdict": jtoken or "INCOMPLETE_OR_FAILED_JOB",
-                      "parse": jmode, "tail": tail})
+        _decide("judge", jtoken or "INCOMPLETE_OR_FAILED_JOB", jmode, transcript)
         if jtoken == "JOB_DONE":
-            return {"verdict": "JOB_DONE", "attempts": attempts,
-                    "trace": trace, "waiting": False}
+            return _finish("JOB_DONE")
         if attempts > max_retries:
-            return {"verdict": "MAX_RETRIES_EXCEEDED", "attempts": attempts,
-                    "trace": trace, "waiting": False}
+            return _finish("MAX_RETRIES_EXCEEDED")
         current_prompt = (f"Continue the unfinished job. The validation judge "
                           f"reported: {(judge_text or '')[-2000:]}\n"
                           f"End your reply with only JOB_DONE as the last line.")

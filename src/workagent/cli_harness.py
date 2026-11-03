@@ -414,19 +414,14 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             from . import cli_validate as _cv, harness_summary as _hs
 
             current_path = session_path
-            attempts = []
 
             def run_once(attempt_prompt):
                 nonlocal current_path
                 flags = harness.session_file_flag(current_path) if current_path else []
-                try:
-                    code = backend.launch(harness_name, attempt_prompt, worktree or fallback_dir,
-                                          True, _HARNESS_ARGS + flags,
-                                          env_file=str(env_path) if env_path else None,
-                                          watch=None, **_launch_kw)
-                except Exception as exc:
-                    attempts.append((1, f"harness error: {exc}"))
-                    raise
+                code = backend.launch(harness_name, attempt_prompt, worktree or fallback_dir,
+                                      True, _HARNESS_ARGS + flags,
+                                      env_file=str(env_path) if env_path else None,
+                                      watch=None, **_launch_kw)
                 minted = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
                 if minted is not None and minted != before:
                     current_path = str(minted)
@@ -435,7 +430,6 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                     if finish_sid:
                         _sq.set_session_file_path(db, finish_sid, current_path)
                 text = _hs.last_assistant_text(current_path) if current_path else ""
-                attempts.append((code, text))
                 return {"exit_code": code, "transcript": text}
 
             def run_judge(judge_prompt):
@@ -458,12 +452,14 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             exit_code = 2 if verdict == "WAITING_USER_RESPONSE" else (
                 0 if verdict in ("JOB_DONE", "INTENTIONALLY_UNCOMMITTED_CHANGES") else 1)
             if finish_sid and run_key:
-                for trace, (attempt_code, text) in zip(validation["trace"], attempts):
+                last = len(validation["runs"]) - 1
+                for index, run in enumerate(validation["runs"]):
                     try:
                         _sq.insert_run(db, finish_sid, str(result.get("command", harness_name)),
-                                       [run_key], exit_code if trace is validation["trace"][-1] else attempt_code,
-                                       output=[f"harness command: {full_cmd}", text],
-                                       validation=trace)
+                                       [run_key],
+                                       exit_code if index == last else run["exit_code"],
+                                       output=[f"harness command: {full_cmd}", run["output"]],
+                                       validation=run["trace"])
                     except Exception as e:
                         eprint(f"warning: run record failed: {e}")
         else:
