@@ -109,8 +109,34 @@ def test_launch_shorthand_L_on_start_and_review(isolated_config, tmp_path, monke
     monkeypatch.setattr(cli.gitwt, "start_worktree",
                         lambda repo, **kw: {"worktree_path": str(worktree),
                                             "branch": "feat/33"})
+    from workagent import cli_validate as _cv_nav
+    monkeypatch.setattr(_cv_nav, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(_cv_nav, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True,
+                                                  "checks": {"diff": {"detail": "ok"}},
+                                                  "reasons": []})
     launched = []
-    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    def _fake_launch_nav(harness, prompt, workdir, no_tty, extra_args=None,
+                         env_file=None, watch=None, **kwargs):
+        import json as _json_nav
+        from pathlib import Path as _Path_nav
+        launched.append((harness, prompt, workdir, no_tty))
+        _args_nav = list(extra_args or [])
+        for _i_nav, _a_nav in enumerate(_args_nav[:-1]):
+            if _a_nav == "--session-dir" and "workagent-judge-" in str(_args_nav[_i_nav + 1]):
+                _d_nav = _Path_nav(str(_args_nav[_i_nav + 1]))
+                _d_nav.mkdir(parents=True, exist_ok=True)
+                (_d_nav / "judge.jsonl").write_text(_json_nav.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "ok\nJOB_DONE"}]}}) + "\n")
+                return 0
+        if "--session-dir" in _args_nav:
+            _d_nav = _Path_nav(_args_nav[_args_nav.index("--session-dir") + 1])
+            _d_nav.mkdir(parents=True, exist_ok=True)
+            (_d_nav / "minted-by-omp.jsonl").write_text(_json_nav.dumps({"message": {
+                "role": "assistant", "content": [{"type": "text",
+                                                  "text": "did the work\nJOB_DONE"}]}}) + "\n")
+        return 0
+    monkeypatch.setattr(cli.backend, "launch", _fake_launch_nav)
     # preview (no --launch): prints the command, launches nothing
     r = runner.invoke(cli.app, ["start", "o/r#33", "--no-tty", "--json"])
     assert r.exit_code == 0, r.output

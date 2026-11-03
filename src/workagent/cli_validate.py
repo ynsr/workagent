@@ -195,8 +195,15 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
     attempts = 0
 
     def _run(run_prompt: str) -> tuple[int, str]:
+        # Fatal harness errors (missing binary, spawn failure) propagate:
+        # callers translate them into documented exit codes and bookkeeping
+        # (e.g. review clears the reviewed mark). Only unexpected breakage
+        # inside run_once degrades to a failed attempt.
+        from .errors import HarnessError as _HarnessError
         try:
             out = run_once(run_prompt) or {}
+        except _HarnessError:
+            raise
         except Exception as e:
             out = {"exit_code": 1, "transcript": f"harness error: {e}"}
         try:
