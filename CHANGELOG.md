@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Headless runs now double-check finished work and retry on their own until the job is done [no-issue]
 - Cleanup no longer crashes on start: missing link key passed to the status lookup [no-issue]
 - Every command now picks up shell settings and secrets automatically, so saved tokens and proxy work everywhere [no-issue]
 - Cleanup gains Merge PR only: squash-merge the open PR/MR with no teardown via --merge-only and the dialog button [no-issue]

@@ -9,6 +9,16 @@ import sys
 
 from .errors import HarnessError
 
+VERDICT_SUFFIX = (
+    "\n\nAt the very end of your reply, print exactly one line containing "
+    "only one of: JOB_DONE, INCOMPLETE_OR_FAILED_JOB, "
+    "INTENTIONALLY_UNCOMMITTED_CHANGES. INTENTIONALLY_UNCOMMITTED_CHANGES "
+    "is only valid when uncommitted changes remain that are intentional "
+    "and must stay uncommitted; otherwise use JOB_DONE (done) or "
+    "INCOMPLETE_OR_FAILED_JOB (not done). "
+    "If you are blocked waiting on a human decision, print only "
+    "WAITING_USER_RESPONSE instead.")
+
 
 class Harness:
     """AI harness: argv, launch, transcript-file flag."""
@@ -23,6 +33,12 @@ class Harness:
                env_file: str | None = None,
                timeout_s: "int | None" = None) -> int:
         raise NotImplementedError
+
+    #: argv fragment for bare judge sessions: no skills/tools/rules/context
+    #: files — the judge prompt carries everything inline. Harness-specific;
+    #: omitted when empty so other harnesses keep their launch shape.
+    judge_argv: list[str] = []
+
 
     def session_file_flag(self, path: str) -> list[str]:
         """Argv fragment routing a transcript path to the harness.
@@ -52,6 +68,13 @@ class OmpHarness(Harness):
         if no_tty:
             return ["omp", "-p", "--auto-approve", *(extra_args or []), prompt]
         return ["omp", *(extra_args or []), prompt]
+
+    # Bare judge sessions: cheap model, no repo-touching surface. Verified
+    # against `omp -h`: each flag exists (--smol bare selects the configured
+    # cheap model). Judge prompts carry task + transcript + gates inline.
+    judge_argv: list[str] = ["--smol", "--no-skills", "--no-tools",
+                             "--no-rules", "--no-context-files",
+                             "--no-lsp", "--no-extensions", "--no-pty"]
 
     def launch(self, prompt, workdir, no_tty, extra_args=None, env_file=None,
                timeout_s=None):

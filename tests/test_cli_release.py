@@ -1,5 +1,5 @@
 import pytest
-
+from workagent import backend
 from workagent import cli_release as _rel
 from workagent import release_gates as rel_gates
 from workagent import store as _store
@@ -802,13 +802,48 @@ def _fix_repo(monkeypatch, tmp_path, *, behind=2, ci=("success", "")):
 
 
 def _record_launches(monkeypatch, calls):
-    """Capture backend.launch argv instead of spawning a real harness."""
+    """Capture backend.launch argv instead of spawning a real harness.
+
+    Mints a JOB_DONE transcript + stubs gates clean so the headless
+    validation loop accepts the fake run (same pattern as the Task 6
+    start/review mock fix). Records {"prompt", "workdir", "no_tty",
+    "extra_args"} per main (non-judge) call; judge calls are answered
+    but not recorded.
+    """
     from workagent import backend as _backend
+    from workagent import cli_validate as _cv_fix
+    monkeypatch.setattr(_cv_fix, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(_cv_fix, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True,
+                                                  "checks": {"diff": {"detail": "ok"}},
+                                                  "reasons": []})
 
     def _launch(harness, prompt, workdir, no_tty, extra_args=None,
-                env_file=None, watch=None):
+                env_file=None, watch=None, **kwargs):
+        import json as _json_fix
+        from pathlib import Path as _Path_fix
+        _args_fix = list(extra_args or [])
+        for _i_fix, _a_fix in enumerate(_args_fix[:-1]):
+            if _a_fix == "--session-dir" and "workagent-judge-" in str(_args_fix[_i_fix + 1]):
+                _d_fix = _Path_fix(str(_args_fix[_i_fix + 1]))
+                _d_fix.mkdir(parents=True, exist_ok=True)
+                (_d_fix / "judge.jsonl").write_text(_json_fix.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "ok\nJOB_DONE"}]}}) + "\n")
+                return 0
+        if "--session-dir" in _args_fix:
+            _d_fix = _Path_fix(_args_fix[_args_fix.index("--session-dir") + 1])
+            _d_fix.mkdir(parents=True, exist_ok=True)
+            (_d_fix / "minted-by-omp.jsonl").write_text(_json_fix.dumps({"message": {
+                "role": "assistant", "content": [{"type": "text",
+                                                  "text": "did the work\nJOB_DONE"}]}}) + "\n")
+        else:
+            _d_fix = _Path_fix(str(workdir))
+            _d_fix.mkdir(parents=True, exist_ok=True)
+            (_d_fix / "minted-by-omp.jsonl").write_text(_json_fix.dumps({"message": {
+                "role": "assistant", "content": [{"type": "text",
+                                                  "text": "did the work\nJOB_DONE"}]}}) + "\n")
         calls.append({"harness": harness, "prompt": prompt, "workdir": workdir,
-                      "no_tty": no_tty})
+                      "no_tty": no_tty, "extra_args": _args_fix})
         return 0
 
     monkeypatch.setattr(_backend, "launch", _launch)
@@ -842,7 +877,7 @@ def test_fix_default_rebase_remote_fail_falls_back_to_harness_prompt(
     assert "rebase" in out["harness_prompt"].lower()
     assert _DEFAULT_SHA[:8] in out["harness_prompt"]
     assert _RELEASE_SHA[:8] in out["harness_prompt"]
-    assert len(calls) == 1 and calls[0]["prompt"] == out["harness_prompt"]
+    assert len(calls) == 1 and calls[0]["prompt"] == out["harness_prompt"] + backend.VERDICT_SUFFIX
     assert calls[0]["no_tty"] is True
 
 

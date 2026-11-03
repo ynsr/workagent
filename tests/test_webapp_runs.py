@@ -596,8 +596,32 @@ def test_preview_launch_collision_adopts_existing(isolated_config, tmp_path, mon
                                       session_file=pinned)
     assert first == sid
     warned = []
-    monkeypatch.setattr(_h, "eprint", lambda *a: warned.append(a))
-    monkeypatch.setattr(_h.backend, "launch", lambda *a, **k: 0)
+    from workagent import cli_validate as _cv_col
+    monkeypatch.setattr(_cv_col, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(_cv_col, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True,
+                                                  "checks": {"diff": {"detail": "ok"}},
+                                                  "reasons": []})
+    def _fake_col(name, prompt, workdir, no_tty, extra_args=None,
+                  env_file=None, watch=None, **kwargs):
+        import json as _jc
+        pth = __import__("pathlib").Path
+        a = list(extra_args or [])
+        for i, x in enumerate(a[:-1]):
+            if x == "--session-dir" and "workagent-judge-" in str(a[i + 1]):
+                d = pth(str(a[i + 1])); d.mkdir(parents=True, exist_ok=True)
+                (d / "judge.jsonl").write_text(_jc.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "ok\nJOB_DONE"}]}}) + "\n")
+                return 0
+        if "--resume" in a:
+            t = pth(a[a.index("--resume") + 1]); t.parent.mkdir(parents=True, exist_ok=True)
+            t.write_text(_jc.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\nJOB_DONE"}]}}) + "\n")
+            return 0
+        if "--session-dir" in a:
+            d = pth(a[a.index("--session-dir") + 1]); d.mkdir(parents=True, exist_ok=True)
+            (d / (sid + ".jsonl")).write_text(_jc.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\nJOB_DONE"}]}}) + "\n")
+        return 0
+    monkeypatch.setattr(_h.backend, "launch", _fake_col)
     result = {"key": "k", "command": "start", "branch": "b"}
     _h._run_harness("omp", "P", "/wt", "/r", True, True, result, True,
                     run_key="k", session_file=pinned)
@@ -723,7 +747,32 @@ def test_launch_rescopes_branchless_pinned_path(isolated_config, tmp_path, monke
     sid = "2026-10-09T11-24-01-825Z-4557"
     pinned = str(sq.session_file_path(sid, "omp", session_type="review"))  # branch-less, as the web mints it
     assert "/feat/my-branch/" not in pinned
-    monkeypatch.setattr(_h.backend, "launch", lambda *a, **k: 0)
+    from workagent import cli_validate as _cv_rsc
+    monkeypatch.setattr(_cv_rsc, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(_cv_rsc, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True,
+                                                  "checks": {"diff": {"detail": "ok"}},
+                                                  "reasons": []})
+    def _fake_rsc(name, prompt, workdir, no_tty, extra_args=None,
+                  env_file=None, watch=None, **kwargs):
+        import json as _jr
+        pth = __import__("pathlib").Path
+        a = list(extra_args or [])
+        for i, x in enumerate(a[:-1]):
+            if x == "--session-dir" and "workagent-judge-" in str(a[i + 1]):
+                d = pth(str(a[i + 1])); d.mkdir(parents=True, exist_ok=True)
+                (d / "judge.jsonl").write_text(_jr.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "ok\nJOB_DONE"}]}}) + "\n")
+                return 0
+        if "--resume" in a:
+            t = pth(a[a.index("--resume") + 1]); t.parent.mkdir(parents=True, exist_ok=True)
+            t.write_text(_jr.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\nJOB_DONE"}]}}) + "\n")
+            return 0
+        if "--session-dir" in a:
+            d = pth(a[a.index("--session-dir") + 1]); d.mkdir(parents=True, exist_ok=True)
+            (d / (sid + ".jsonl")).write_text(_jr.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\nJOB_DONE"}]}}) + "\n")
+        return 0
+    monkeypatch.setattr(_h.backend, "launch", _fake_rsc)
     result = {"key": "k5", "command": "review", "branch": "feat/my-branch"}
     _h._run_harness("omp", "P", "/wt5", "/r", True, True, result, True,
                     run_key="k5", session_file=pinned)
