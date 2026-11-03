@@ -145,8 +145,42 @@ def test_review_reuses_existing_worktree_by_branch(isolated_config, tmp_path, mo
     monkeypatch.setattr(cli.gitwt, "start_worktree",
                         lambda repo, **kw: started.append(kw) or {"worktree_path": "SHOULD-NOT-HAPPEN",
                                                                   "branch": kw.get("branch")})
-    launched = []
-    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    from workagent import cli_validate as _cv_reuse
+    monkeypatch.setattr(_cv_reuse, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(_cv_reuse, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True,
+                                                  "checks": {"diff": {"detail": "ok"}},
+                                                  "reasons": []})
+    import json as _json_reuse
+    from pathlib import Path as _Path_reuse
+    _launched_reuse = []
+    launched = _launched_reuse
+    def _headless_launch_reuse(harness, prompt, workdir, no_tty, extra_args=None,
+                         env_file=None, watch=None, **kwargs):
+        _args_reuse = list(extra_args or [])
+        _launched_reuse.append((harness, prompt, workdir, no_tty, _args_reuse))
+        for _i_reuse, _a_reuse in enumerate(_args_reuse[:-1]):
+            if _a_reuse == "--session-dir" and "workagent-judge-" in str(_args_reuse[_i_reuse + 1]):
+                _d_reuse = _Path_reuse(str(_args_reuse[_i_reuse + 1]))
+                _d_reuse.mkdir(parents=True, exist_ok=True)
+                (_d_reuse / "judge.jsonl").write_text(_json_reuse.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\\nJOB_DONE"}]}}) + "\n")
+                return 0
+        if "--resume" in _args_reuse:
+            _t_reuse = _Path_reuse(_args_reuse[_args_reuse.index("--resume") + 1])
+            _t_reuse.parent.mkdir(parents=True, exist_ok=True)
+            _t_reuse.write_text(_json_reuse.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\\nJOB_DONE"}]}}) + "\n")
+            return 0
+        if "--session-dir" in _args_reuse:
+            _d_reuse = _Path_reuse(_args_reuse[_args_reuse.index("--session-dir") + 1])
+            _d_reuse.mkdir(parents=True, exist_ok=True)
+            (_d_reuse / "minted-by-omp.jsonl").write_text(_json_reuse.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\\nJOB_DONE"}]}}) + "\n")
+            return 0
+        _w_reuse = _Path_reuse(str(workdir))
+        _w_reuse.mkdir(parents=True, exist_ok=True)
+        (_w_reuse / "minted-by-omp.jsonl").write_text(_json_reuse.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\\nJOB_DONE"}]}}) + "\n")
+        return 0
+    monkeypatch.setattr(cli.backend, "launch", _headless_launch_reuse)
     monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     r = runner.invoke(cli.app, ["review", "feat/IPG-929--x", "--no-tty", "--launch", "--json"])
     assert r.exit_code == 0, r.output
@@ -214,7 +248,30 @@ def test_run_harness_derives_fix_comments_type(isolated_config, tmp_path, monkey
                      " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
     monkeypatch.setattr(_h.store, "record_harness_run", lambda *a: None)
     monkeypatch.setattr(_h.store, "clear_harness_run", lambda *a: None)
-    monkeypatch.setattr(_h.backend, "launch", lambda *a, **k: None)
+    from workagent import cli_validate as _cv_fctype
+    monkeypatch.setattr(_cv_fctype, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(_cv_fctype, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True,
+                                                  "checks": {"diff": {"detail": "ok"}},
+                                                  "reasons": []})
+    import json as _json_fc
+    from pathlib import Path as _Path_fc
+    def _launch_fc(harness, prompt, workdir, no_tty, extra_args=None,
+                   env_file=None, watch=None, **kwargs):
+        _a = list(extra_args or [])
+        for _k, _v in enumerate(_a[:-1]):
+            if _v == "--session-dir" and "workagent-judge-" in str(_a[_k + 1]):
+                _d = _Path_fc(str(_a[_k + 1]))
+                _d.mkdir(parents=True, exist_ok=True)
+                (_d / "judge.jsonl").write_text(_json_fc.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\nJOB_DONE"}]}}) + "\n")
+                return 0
+        if "--session-dir" in _a:
+            _d = _Path_fc(_a[_a.index("--session-dir") + 1])
+            _d.mkdir(parents=True, exist_ok=True)
+            (_d / "minted-by-omp.jsonl").write_text(_json_fc.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\nJOB_DONE"}]}}) + "\n")
+        return 0
+    monkeypatch.setattr(_h.backend, "launch", _launch_fc)
     result = {"command": "review", "fix_comments": True}
     _h._run_harness("omp", "Fix all open (not-resolved) review comments on this PR/MR: u",
                     "/tmp", "/tmp", True, True, result, False, run_key="k")
@@ -295,7 +352,7 @@ def test_fix_comments_minted_filename_resumes_in_all_modes(isolated_config, tmp_
     minted = wt / "sessions" / "omp" / "feat" / "fix" / "review"
     minted.mkdir(parents=True)
     transcript = minted / "2026-10-14T07-00-00-123Z-4242.jsonl"
-    transcript.write_text('{"a": 1}\n')
+    transcript.write_text('{"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\\nJOB_DONE"}]}}\n')
     sq.insert_session(db, worktree_ref="feat/fix", harness_name="omp",
                       initiator_command="review", prompt="p",
                       file_path=str(transcript), session_id="rev-minted",
@@ -317,8 +374,25 @@ def test_fix_comments_minted_filename_resumes_in_all_modes(isolated_config, tmp_
     assert out.get("reuse_session_id") == "rev-minted"
     # headless: launch argv carries --resume on the minted file
     seen: dict = {}
-    def _fake_launch(harness, prompt, workdir, no_tty, args, env_file=None, watch=None):
-        seen["args"] = list(args)
+    from workagent import cli_validate as _cv_fctype
+    monkeypatch.setattr(_cv_fctype, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(_cv_fctype, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True,
+                                                  "checks": {"diff": {"detail": "ok"}},
+                                                  "reasons": []})
+    calls = []
+    def _fake_launch(harness, prompt, workdir, no_tty, args, env_file=None, watch=None, **kwargs):
+        import json as _json_fctype
+        from pathlib import Path as _Path_fctype
+        seen["args"] = list(args or [])
+        calls.append(list(args or []))
+        for _i_fctype, _a_fctype in enumerate(list(args or [])[:-1]):
+            if _a_fctype == "--session-dir" and "workagent-judge-" in str(list(args)[_i_fctype + 1]):
+                _d_fctype = _Path_fctype(list(args)[_i_fctype + 1])
+                _d_fctype.mkdir(parents=True, exist_ok=True)
+                (_d_fctype / "judge.jsonl").write_text(_json_fctype.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "ok\nJOB_DONE"}]}}) + "\n")
+        return 0
     monkeypatch.setattr(cli.backend, "launch", _fake_launch)
     monkeypatch.setattr(_h.store, "record_harness_run", lambda *a, **k: None)
     monkeypatch.setattr(_h.store, "clear_harness_run", lambda *a, **k: None)
@@ -326,7 +400,7 @@ def test_fix_comments_minted_filename_resumes_in_all_modes(isolated_config, tmp_
                                 "--use-review-session",
                                 "--no-tty", "--launch", "--yes", "--json"])
     assert r.exit_code == 0, r.output
-    assert "--resume" in seen["args"] and str(transcript) in seen["args"]
+    assert "--resume" in calls[0] and str(transcript) in calls[0]
     # terminal: spawned shell command carries --resume on the minted file
     spawned: dict = {}
     monkeypatch.setattr(_h, "spawn_in_terminal",
@@ -366,13 +440,41 @@ def test_fix_comments_launch_keeps_review_path(isolated_config, monkeypatch):
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
                      " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
     review_path = str(sq.session_file_path("rev-1896", "omp", branch="feat/x", session_type="review"))
+    import json as _json_fctype
+    from pathlib import Path as _Path_fctype
+    _Path_fctype(review_path).parent.mkdir(parents=True, exist_ok=True)
+    _Path_fctype(review_path).write_text(_json_fctype.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "prior review\nJOB_DONE"}]}}) + "\n")
     sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="review",
                       prompt="p", file_path=review_path, session_id="rev-1896",
                       session_type="review")
     sq.finish_session(db, "rev-1896", "finished")
     monkeypatch.setattr(_h.store, "record_harness_run", lambda *a: None)
     monkeypatch.setattr(_h.store, "clear_harness_run", lambda *a: None)
-    monkeypatch.setattr(_h.backend, "launch", lambda *a, **k: None)
+    from workagent import cli_validate as _cv2
+    monkeypatch.setattr(_cv2, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(_cv2, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True,
+                                                  "checks": {"diff": {"detail": "ok"}},
+                                                  "reasons": []})
+
+    def _reuse_launch(harness, prompt, workdir, no_tty, extra_args=None,
+                      env_file=None, watch=None, **kwargs):
+        import json as _json_fctype
+        from pathlib import Path as _Path_fctype
+        _args_fctype = list(extra_args or [])
+        if _args_fctype and _args_fctype[0] == "--resume":
+            _Path_fctype(_args_fctype[1]).write_text(_json_fctype.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\nJOB_DONE"}]}}) + "\n",
+                                       encoding="utf-8")
+            return 0
+        for _i_fctype, _a_fctype in enumerate(_args_fctype[:-1]):
+            if _a_fctype == "--session-dir" and "workagent-judge-" in str(_args_fctype[_i_fctype + 1]):
+                _d_fctype = _Path_fctype(str(_args_fctype[_i_fctype + 1]))
+                _d_fctype.mkdir(parents=True, exist_ok=True)
+                (_d_fctype / "judge.jsonl").write_text(_json_fctype.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "ok\nJOB_DONE"}]}}) + "\n")
+                return 0
+        raise AssertionError(f"unexpected launch args: {_args_fctype!r}")
+    monkeypatch.setattr(_h.backend, "launch", _reuse_launch)
     result = {"command": "review", "fix_comments": True, "branch": "feat/x",
               "reuse_session_id": "rev-1896", "session_file": review_path}
     _h._run_harness("omp", "Fix all open (not-resolved) review comments on this PR/MR: u",
@@ -396,7 +498,41 @@ def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
                         lambda repo, **kw: {"worktree_path": str(worktree),
                                             "branch": "feat/33"})
     launched = []
-    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+    from workagent import cli_validate as _cv_tip
+    monkeypatch.setattr(_cv_tip, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(_cv_tip, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True,
+                                                  "checks": {"diff": {"detail": "ok"}},
+                                                  "reasons": []})
+    import json as _json_tip
+    from pathlib import Path as _Path_tip
+    _launched_tip = launched
+    def _headless_launch_tip(harness, prompt, workdir, no_tty, extra_args=None,
+                         env_file=None, watch=None, **kwargs):
+        _args_tip = list(extra_args or [])
+        _launched_tip.append((harness, prompt, workdir, no_tty, _args_tip))
+        for _i_tip, _a_tip in enumerate(_args_tip[:-1]):
+            if _a_tip == "--session-dir" and "workagent-judge-" in str(_args_tip[_i_tip + 1]):
+                _d_tip = _Path_tip(str(_args_tip[_i_tip + 1]))
+                _d_tip.mkdir(parents=True, exist_ok=True)
+                (_d_tip / "judge.jsonl").write_text(_json_tip.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\\nJOB_DONE"}]}}) + "\n")
+                return 0
+        if "--resume" in _args_tip:
+            _t_tip = _Path_tip(_args_tip[_args_tip.index("--resume") + 1])
+            _t_tip.parent.mkdir(parents=True, exist_ok=True)
+            _t_tip.write_text(_json_tip.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\\nJOB_DONE"}]}}) + "\n")
+            return 0
+        if "--session-dir" in _args_tip:
+            _d_tip = _Path_tip(_args_tip[_args_tip.index("--session-dir") + 1])
+            _d_tip.mkdir(parents=True, exist_ok=True)
+            (_d_tip / "minted-by-omp.jsonl").write_text(_json_tip.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\\nJOB_DONE"}]}}) + "\n")
+            return 0
+        _w_tip = _Path_tip(str(workdir))
+        _w_tip.mkdir(parents=True, exist_ok=True)
+        (_w_tip / "minted-by-omp.jsonl").write_text(_json_tip.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\\nJOB_DONE"}]}}) + "\n")
+        return 0
+    monkeypatch.setattr(cli.backend, "launch", _headless_launch_tip)
     monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     url = "https://github.com/o/r/pull/33"
     key = "feat/33"
@@ -458,7 +594,32 @@ def test_review_new_pr_keys_row_by_branch(isolated_config, tmp_path, monkeypatch
     monkeypatch.setattr(cli.gitwt, "start_worktree",
                         lambda repo, **kw: {"worktree_path": str(worktree),
                                             "branch": "feat/77"})
-    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    from workagent import cli_validate as _cv_newpr
+    monkeypatch.setattr(_cv_newpr, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(_cv_newpr, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True,
+                                                  "checks": {"diff": {"detail": "ok"}},
+                                                  "reasons": []})
+
+    def _launch77(harness, prompt, workdir, no_tty, extra_args=None,
+                  env_file=None, watch=None, **kwargs):
+        import json as _json77
+        from pathlib import Path as _Path77
+        _args_newpr = list(extra_args or [])
+        for _i_newpr, _a_newpr in enumerate(_args_newpr[:-1]):
+            if _a_newpr == "--session-dir" and "workagent-judge-" in str(_args_newpr[_i_newpr + 1]):
+                _d_newpr = _Path77(str(_args_newpr[_i_newpr + 1]))
+                _d_newpr.mkdir(parents=True, exist_ok=True)
+                (_d_newpr / "judge.jsonl").write_text(_json77.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\\nJOB_DONE"}]}}) + "\n")
+                return 0
+        if "--session-dir" in _args_newpr:
+            _d_newpr = _Path77(_args_newpr[_args_newpr.index("--session-dir") + 1])
+            _d_newpr.mkdir(parents=True, exist_ok=True)
+            (_d_newpr / "minted-by-omp.jsonl").write_text(_json77.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "did the work\\nJOB_DONE"}]}}) + "\n")
+            return 0
+        return 0
+    monkeypatch.setattr(cli.backend, "launch", _launch77)
     monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     url = "https://github.com/o/r/pull/77"
     r = runner.invoke(cli.app, ["review", url, "--no-tty", "--launch", "--json"])
