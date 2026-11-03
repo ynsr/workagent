@@ -9,6 +9,12 @@ import sys
 
 from .errors import HarnessError
 
+VERDICT_SUFFIX = (
+    "\n\nAt the very end of your reply, print exactly one line containing "
+    "only one of: JOB_DONE, INCOMPLETE_OR_FAILED_JOB. "
+    "If you are blocked waiting on a human decision, print only "
+    "WAITING_USER_RESPONSE instead.")
+
 
 class Harness:
     """AI harness: argv, launch, transcript-file flag."""

@@ -169,3 +169,77 @@ def test_runs_validation_column_roundtrip(isolated_config, monkeypatch):
     rows = sq.list_runs(db)
     row = next(r for r in rows if r["id"] == rid)
     assert row["validation"] == {"attempt": 1, "verdict": "JOB_DONE"}
+
+
+def test_run_harness_headless_validates(monkeypatch, tmp_path, isolated_config, capsys):
+    import json
+    import pytest
+    import typer
+    from workagent import backend, cli_harness as hh, store_sqlite as sq
+
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES (?, ?, 'b', NULL, '2026-01-01', '{}')", ("k", str(tmp_path)))
+    monkeypatch.setattr(hh.store, "record_harness_run", lambda *a: None)
+    monkeypatch.setattr(hh.store, "clear_harness_run", lambda *a: None)
+    launched = []
+
+    def launch(name, prompt, workdir, no_tty, extra_args=None, **kwargs):
+        launched.append(prompt)
+        directory = extra_args[extra_args.index("--session-dir") + 1]
+        from pathlib import Path
+        Path(directory, "minted.jsonl").write_text(json.dumps({"message": {
+            "role": "assistant", "content": [{"type": "text", "text":
+                "Need a decision\nWAITING_USER_RESPONSE"}]}}) + "\n")
+        return 0
+
+    monkeypatch.setattr(backend, "launch", launch)
+    result = {"command": "start", "branch": "b", "key": "k"}
+    with pytest.raises(typer.Exit) as exc:
+        hh._run_harness("omp", "do it", str(tmp_path), str(tmp_path), True, True,
+                        result, True, run_key="k")
+    assert exc.value.exit_code == 2
+    assert len(launched) == 1 and launched[0].endswith(backend.VERDICT_SUFFIX)
+    assert str(tmp_path) in capsys.readouterr().err
+    rows = sq.list_runs(db)
+    assert rows[0]["validation"]["verdict"] == "WAITING_USER_RESPONSE"
+    assert result["session_file"].endswith("minted.jsonl")
+
+
+def test_headless_retry_resumes_and_judge_is_fresh(monkeypatch, tmp_path, isolated_config):
+    import json
+    from pathlib import Path
+    from workagent import backend, cli_harness as hh, store_sqlite as sq
+
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES (?, ?, 'b', NULL, '2026-01-01', '{}')", ("k", str(tmp_path)))
+    monkeypatch.setattr(hh.store, "record_harness_run", lambda *a: None)
+    monkeypatch.setattr(hh.store, "clear_harness_run", lambda *a: None)
+    monkeypatch.setattr(hh, "_publish_headless_summary", lambda *a: None)
+    calls = []
+
+    def launch(name, prompt, workdir, no_tty, extra_args=None, **kwargs):
+        calls.append(extra_args[:])
+        if "--resume" in extra_args:
+            path = Path(extra_args[extra_args.index("--resume") + 1])
+        else:
+            path = Path(extra_args[extra_args.index("--session-dir") + 1]) / "minted.jsonl"
+        text = ("INCOMPLETE_OR_FAILED_JOB" if len(calls) == 2 else "JOB_DONE")
+        path.write_text(json.dumps({"message": {"role": "assistant", "content":
+                        [{"type": "text", "text": text}]}}) + "\n")
+        return 0
+
+    monkeypatch.setattr(backend, "launch", launch)
+    result = {"command": "start", "branch": "b", "key": "k"}
+    hh._run_harness("omp", "do it", str(tmp_path), str(tmp_path), True, True,
+                    result, True, run_key="k")
+    assert len(calls) == 4
+    assert "--resume" in calls[2] and calls[2][-1] == result["session_file"]
+    assert "--session-dir" in calls[1] and "--session-dir" in calls[3]
+    assert calls[1][-1] != calls[3][-1]
+    assert [row["validation"]["attempt"] for row in sq.list_runs(db)] == [2, 1]

@@ -216,6 +216,8 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # the preview shows the exact same wrapped command.
     env_path = _env.ensure_env_file(env_file)
     harness = backend.get_harness(harness_name)
+    if no_tty and launch and not terminal:
+        prompt += backend.VERDICT_SUFFIX
     action = _session_action(result)
     branch0 = str(result.get("branch", "") or "")
     if result.get("reuse_session_id"):
@@ -402,35 +404,78 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
              if not no_tty and finish_sid and scope_dir is not None else None)
     try:
         extra = harness.session_file_flag(session_path) if session_path else None
-        # Only pass timeout_s when set: third-party/test launch wrappers
-        # predate the timeout kwarg and would choke on it.
         _launch_kw: dict = {}
         if timeout_s is not None:
             _launch_kw["timeout_s"] = timeout_s
-        backend.launch(harness_name, prompt, worktree or fallback_dir, no_tty,
-                       (_HARNESS_ARGS + extra) if extra else _HARNESS_ARGS,
-                       env_file=str(env_path) if env_path else None, watch=watch,
-                       **_launch_kw)
-        minted = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
-        if minted is not None and minted != before:
-            if finish_sid:
+        exit_code = 0
+        validation = None
+        if no_tty:
+            import tempfile
+            from . import cli_validate as _cv, harness_summary as _hs
+
+            current_path = session_path
+            attempts = []
+
+            def run_once(attempt_prompt):
+                nonlocal current_path
+                flags = harness.session_file_flag(current_path) if current_path else []
+                try:
+                    code = backend.launch(harness_name, attempt_prompt, worktree or fallback_dir,
+                                          True, _HARNESS_ARGS + flags,
+                                          env_file=str(env_path) if env_path else None,
+                                          watch=None, **_launch_kw)
+                except Exception as exc:
+                    attempts.append((1, f"harness error: {exc}"))
+                    raise
+                minted = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
+                if minted is not None and minted != before:
+                    current_path = str(minted)
+                if current_path and Path(current_path).is_file():
+                    result["session_file"] = current_path
+                    if finish_sid:
+                        _sq.set_session_file_path(db, finish_sid, current_path)
+                text = _hs.last_assistant_text(current_path) if current_path else ""
+                attempts.append((code, text))
+                return {"exit_code": code, "transcript": text}
+
+            def run_judge(judge_prompt):
+                with tempfile.TemporaryDirectory(prefix="workagent-judge-") as directory:
+                    judge_path = str(Path(directory) / "judge.jsonl")
+                    flags = harness.session_file_flag(judge_path)
+                    code = backend.launch(harness_name, judge_prompt, worktree or fallback_dir,
+                                          True, _HARNESS_ARGS + flags,
+                                          env_file=str(env_path) if env_path else None,
+                                          watch=None, **_launch_kw)
+                    minted = _sq.newest_transcript(Path(directory))
+                    if code != 0 or minted is None:
+                        raise RuntimeError(f"judge failed (exit {code}) or produced no transcript")
+                    return _hs.last_assistant_text(str(minted))
+
+            validation = _cv.validate_headless(
+                worktree=worktree or fallback_dir, branch=branch, prompt=prompt,
+                session_type=stype, run_once=run_once, run_judge=run_judge)
+            verdict = validation["verdict"]
+            exit_code = 2 if verdict == "WAITING_USER_RESPONSE" else (
+                0 if verdict in ("JOB_DONE", "INTENTIONALLY_UNCOMMITTED_CHANGES") else 1)
+            if finish_sid and run_key:
+                for trace, (attempt_code, text) in zip(validation["trace"], attempts):
+                    try:
+                        _sq.insert_run(db, finish_sid, str(result.get("command", harness_name)),
+                                       [run_key], exit_code if trace is validation["trace"][-1] else attempt_code,
+                                       output=[f"harness command: {full_cmd}", text],
+                                       validation=trace)
+                    except Exception as e:
+                        eprint(f"warning: run record failed: {e}")
+        else:
+            backend.launch(harness_name, prompt, worktree or fallback_dir, False,
+                           (_HARNESS_ARGS + extra) if extra else _HARNESS_ARGS,
+                           env_file=str(env_path) if env_path else None, watch=watch,
+                           **_launch_kw)
+            minted = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
+            if minted is not None and minted != before and finish_sid:
                 _sq.set_session_file_path(db, finish_sid, str(minted))
         if finish_sid:
-            _sq.finish_session(db, finish_sid, "finished")
-        if finish_sid and no_tty and run_key:
-            # CLI headless owns the row (web children get mirrored on the
-            # same session; the mirror skips when a run row already
-            # exists for it). Output = last assistant text; the full log
-            # lives in the transcript the session row points at.
-            try:
-                from . import harness_summary as _hs
-                _sq.insert_run(
-                    db, finish_sid, str(result.get("command", harness_name)),
-                    [run_key], 0,
-                    output=[f"harness command: {full_cmd}",
-                            _hs.last_assistant_text(str(result.get("session_file", "") or "") or (str(minted) if minted else ""))])
-            except Exception as e:
-                eprint(f"warning: run record failed: {e}")
+            _sq.finish_session(db, finish_sid, "failed" if exit_code == 1 else "finished")
         if no_tty and run_key:
             _publish_headless_summary(result, json_output)
     except Exception:
@@ -446,6 +491,14 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         if run_key:
             store.clear_harness_run(run_key)
     _print_result(result, json_output)
+    if exit_code:
+        if exit_code == 2:
+            eprint(f"waiting for user response: worktree {worktree or fallback_dir}; "
+                   f"session {result.get('session_file', session_path)}")
+        else:
+            eprint(f"headless validation failed: {validation['verdict']} "
+                   f"after {validation['attempts']} attempts")
+        raise typer.Exit(exit_code)
 
 
 def _publish_headless_summary(result: dict, json_output: bool = False) -> None:
