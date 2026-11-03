@@ -275,17 +275,27 @@ def latest_review_session(path: Path, worktree_ref: str,
 
 def insert_run(path: Path, session_id: str, command: str,
                args: list[str], exit_code: int | None,
-               output: list[str] | None = None, truncated: bool = False) -> int:
+               output: list[str] | None = None, truncated: bool = False,
+               validation: dict | None = None) -> int:
     import json
     created = datetime.now(timezone.utc).isoformat()
     lines = list(output or [])[-MAX_RUN_OUTPUT_LINES:]
     truncated = bool(truncated) or (output is not None and len(list(output)) > len(lines))
+    val = json.dumps(validation or {})
     with _connect(path) as conn:
-        cur = conn.execute(
-            "INSERT INTO runs (session_id, command, args, exit_code, created_at,"
-            " output, truncated) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (session_id, command, json.dumps(args), exit_code, created,
-             "\n".join(lines), 1 if truncated else 0))
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+        if "validation" in cols:
+            cur = conn.execute(
+                "INSERT INTO runs (session_id, command, args, exit_code, created_at,"
+                " output, truncated, validation) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (session_id, command, json.dumps(args), exit_code, created,
+                 "\n".join(lines), 1 if truncated else 0, val))
+        else:
+            cur = conn.execute(
+                "INSERT INTO runs (session_id, command, args, exit_code, created_at,"
+                " output, truncated) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (session_id, command, json.dumps(args), exit_code, created,
+                 "\n".join(lines), 1 if truncated else 0))
         return cur.lastrowid
 
 #: Sessions/runs of soft-deleted worktrees stay in the DB (restorable via
@@ -305,8 +315,10 @@ def list_runs(path: Path, limit: int = 200,
         return []
     with _connect(path) as conn:
         conn.row_factory = sqlite3.Row
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+        vsel = ", r.validation" if "validation" in cols else ""
         q = ("SELECT r.id, r.session_id, r.command, r.args, r.exit_code,"
-             " r.created_at, r.output, r.truncated,"
+             " r.created_at, r.output, r.truncated" + vsel + ","
              " s.file_path AS session_file, s.worktree_ref"
              " FROM runs r LEFT JOIN sessions s ON s.id = r.session_id"
              " LEFT JOIN worktrees w ON w.ref_key = s.worktree_ref")
@@ -321,6 +333,11 @@ def list_runs(path: Path, limit: int = 200,
                 d["args"] = json.loads(d["args"])
             except Exception:
                 d["args"] = []
+            try:
+                v = json.loads(d.get("validation") or "{}")
+            except Exception:
+                v = {}
+            d["validation"] = v if isinstance(v, dict) else {}
             out.append(d)
         return out
 
@@ -374,7 +391,15 @@ def get_session(path: Path, sid: str,
         out["runs"] = [dict(r) for r in conn.execute(
             "SELECT * FROM runs WHERE session_id = ? ORDER BY id", (sid,))]
         for r in out["runs"]:
-            r["args"] = json.loads(r["args"])
+            try:
+                r["args"] = json.loads(r["args"])
+            except Exception:
+                r["args"] = []
+            try:
+                v = json.loads(r.get("validation") or "{}")
+            except Exception:
+                v = {}
+            r["validation"] = v if isinstance(v, dict) else {}
         return out
 
 

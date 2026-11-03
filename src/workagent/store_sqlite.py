@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS runs (
   command TEXT NOT NULL, args TEXT NOT NULL,
   exit_code INTEGER, created_at TEXT NOT NULL,
   output TEXT NOT NULL DEFAULT '', truncated INTEGER NOT NULL DEFAULT 0,
+  validation TEXT NOT NULL DEFAULT '{}',
   flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL);
 CREATE TABLE IF NOT EXISTS issue_cache (
   source TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL,
@@ -164,6 +165,18 @@ def _migrate_runs_output(conn) -> None:
         conn.execute("ALTER TABLE runs ADD COLUMN output TEXT NOT NULL DEFAULT ''")
     if "truncated" not in cols:
         conn.execute("ALTER TABLE runs ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0")
+
+
+def _migrate_runs_validation(conn) -> None:
+    """Schema v17: runs gains validation (per-attempt validate_headless trace).
+    ALTER TABLE is enough (NOT NULL DEFAULT '{}', so old rows read back as
+    no validation data). Idempotent: skipped once the column exists.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+    if not cols:
+        return
+    if "validation" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN validation TEXT NOT NULL DEFAULT '{}'")
 
 
 def _migrate_flow_template_lineage(conn) -> None:
@@ -647,7 +660,7 @@ def _schema_current(path: Path) -> bool:
         if not {"trackers", "repos", "worktrees", "sessions", "runs"} <= tables:
             return False
         cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
-        if not {"output", "truncated"} <= cols:
+        if not {"output", "truncated", "validation"} <= cols:
             return False
         wcols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
         if "active" not in wcols:
@@ -674,7 +687,7 @@ def _schema_current(path: Path) -> bool:
         if not {"harness_name", "session_type", "metadata", "flow_id"} <= scols:
             return False
         runcols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
-        if "flow_id" not in runcols:
+        if not {"flow_id", "validation"} <= runcols:
             return False
         for table in ("trackers", "repos"):
             fcols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
@@ -723,6 +736,7 @@ def init_db(path: Path) -> Path:
                 conn.executescript(SCHEMA)
                 _migrate_v2(conn)
                 _migrate_runs_output(conn)
+                _migrate_runs_validation(conn)
                 _migrate_worktrees_active(conn)
                 _migrate_worktrees_branch_scope(conn)
                 _migrate_sessions_harness(conn)

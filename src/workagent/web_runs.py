@@ -283,7 +283,8 @@ def _persisted_summary(row: dict) -> dict:
             "created": created, "target": target,
             "session_file": session_file, "worktree": worktree,
             "last_seq": max((ln["seq"] for ln in _persisted_lines(row)), default=-1) + 1,
-            "session_id": row.get("session_id")}
+            "session_id": row.get("session_id"),
+            "validation": row.get("validation") if isinstance(row.get("validation"), dict) else {}}
 def _persisted_row(run_id: str) -> dict | None:
     """Fetch a runs-table row for a `db-<id>` run id (None otherwise)."""
     if not run_id.startswith("db-"):

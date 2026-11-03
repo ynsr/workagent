@@ -150,3 +150,22 @@ def test_waiting_exits_without_retry():
         run_judge=lambda p: "unreachable")
     assert res["verdict"] == "WAITING_USER_RESPONSE" and res["waiting"] is True
     assert len(seen) == 1
+
+
+def test_runs_validation_column_roundtrip(isolated_config, monkeypatch):
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+            " VALUES (?, ?, ?, NULL, '2026-01-01', '{}')", ("k", "/tmp/wt", "b"))
+    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
+                            initiator_command="start", prompt="p",
+                            file_path="/tmp/x.jsonl",
+                            session_id="test-sid")
+    rid = sq.insert_run(db, sid, "start", ["k"], 0, output=["hi"],
+                        validation={"attempt": 1, "verdict": "JOB_DONE"})
+    rows = sq.list_runs(db)
+    row = next(r for r in rows if r["id"] == rid)
+    assert row["validation"] == {"attempt": 1, "verdict": "JOB_DONE"}
