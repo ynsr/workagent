@@ -68,3 +68,67 @@ def pick_verdict(candidates: list[str]) -> str | None:
         if tok in present:
             return tok
     return None
+
+
+def _git(*args: str, cwd: str = "") -> tuple[int, str]:
+    import subprocess
+    try:
+        r = subprocess.run(["git", *args], cwd=cwd or None,
+                           capture_output=True, text=True, timeout=30)
+        return r.returncode, (r.stdout or "").strip()
+    except Exception as e:
+        return 128, f"git error: {e}"
+
+
+def _git_porcelain(worktree: str) -> str:
+    code, out = _git("status", "--porcelain", cwd=worktree)
+    return out if code == 0 else f"GIT_ERROR:{out}"
+
+
+def _git_diff_stat(worktree: str) -> str:
+    code, out = _git("diff", "--stat", "HEAD", "--", cwd=worktree)
+    return out if code == 0 else ""
+
+
+def _branch_pushed(worktree: str) -> tuple[bool, str]:
+    code, head = _git("rev-parse", "HEAD", cwd=worktree)
+    if code != 0:
+        return False, "no HEAD"
+    code, upstream = _git("rev-parse", "@{u}", cwd=worktree)
+    if code != 0:
+        porcelain = _git_porcelain(worktree)
+        return (not porcelain, "no upstream, clean" if not porcelain else "no upstream, dirty tree")
+    code, base = _git("merge-base", "HEAD", "@{u}", cwd=worktree)
+    if code != 0:
+        return False, "no merge-base with upstream"
+    return (base == head, "in sync" if base == head else "local differs from upstream")
+
+
+def run_deterministic_gates(worktree: str, exit_code: int,
+                            transcript: str,
+                            expect_changes: bool) -> dict:
+    """Zero-LLM gates. Never raises; git failures are failed checks."""
+    checks: dict = {}
+    reasons: list[str] = []
+    checks["exit_code"] = {"ok": exit_code == 0,
+                           "detail": f"exit={exit_code}"}
+    if exit_code != 0:
+        reasons.append(f"harness exit code {exit_code}")
+    pushed, pdetail = _branch_pushed(worktree)
+    checks["pushed"] = {"ok": pushed, "detail": pdetail}
+    if not pushed:
+        reasons.append(f"not pushed: {pdetail}")
+    has_text = bool((transcript or "").strip())
+    checks["transcript"] = {"ok": has_text,
+                            "detail": "non-empty" if has_text else "empty transcript tail"}
+    if not has_text:
+        reasons.append("empty transcript tail")
+    if expect_changes:
+        stat = _git_diff_stat(worktree)
+        ok = bool(stat.strip())
+        checks["diff"] = {"ok": ok, "detail": stat[:500] if ok else "empty diff"}
+        if not ok:
+            reasons.append("expected code changes but diff is empty")
+    else:
+        checks["diff"] = {"ok": True, "detail": "no changes expected"}
+    return {"passed": not reasons, "checks": checks, "reasons": reasons}
