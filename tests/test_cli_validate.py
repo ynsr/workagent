@@ -105,8 +105,18 @@ def test_judge_prompt_caps_context():
     assert len(p) < 16000 and "JOB_DONE" in p and "INCOMPLETE_OR_FAILED_JOB" in p
 
 
-def test_loop_passes_first_try():
+def _pass_gates(monkeypatch):
     from workagent import cli_validate as cv
+    monkeypatch.setattr(cv, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(cv, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True, "checks": {},
+                                                  "reasons": []})
+
+
+def test_loop_passes_first_try(monkeypatch):
+    from workagent import cli_validate as cv
+    _pass_gates(monkeypatch)
     calls = []
     res = cv.validate_headless(
         worktree="/wt", branch="feat/x", prompt="do it",
@@ -116,8 +126,9 @@ def test_loop_passes_first_try():
     assert res["verdict"] == "JOB_DONE" and res["attempts"] == 1
 
 
-def test_loop_retries_then_succeeds():
+def test_loop_retries_then_succeeds(monkeypatch):
     from workagent import cli_validate as cv
+    _pass_gates(monkeypatch)
     outputs = [{"exit_code": 0, "transcript": "half done"},
                {"exit_code": 0, "transcript": "finished now\nJOB_DONE"}]
     judge_calls = []
@@ -130,8 +141,9 @@ def test_loop_retries_then_succeeds():
     assert res["verdict"] == "JOB_DONE" and res["attempts"] >= 2
 
 
-def test_loop_terminal_after_cap():
+def test_loop_terminal_after_cap(monkeypatch):
     from workagent import cli_validate as cv
+    _pass_gates(monkeypatch)
     res = cv.validate_headless(
         worktree="/wt", branch="feat/x", prompt="do it",
         session_type="sync", max_retries=3,
@@ -140,8 +152,9 @@ def test_loop_terminal_after_cap():
     assert res["verdict"] == "MAX_RETRIES_EXCEEDED" and res["attempts"] == 4
 
 
-def test_waiting_exits_without_retry():
+def test_waiting_exits_without_retry(monkeypatch):
     from workagent import cli_validate as cv
+    _pass_gates(monkeypatch)
     seen = []
     res = cv.validate_headless(
         worktree="/wt", branch="feat/x", prompt="do it",
@@ -151,6 +164,94 @@ def test_waiting_exits_without_retry():
     assert res["verdict"] == "WAITING_USER_RESPONSE" and res["waiting"] is True
     assert len(seen) == 1
 
+
+def test_nonzero_exit_skips_judge(monkeypatch):
+    from workagent import cli_validate as cv
+    _pass_gates(monkeypatch)
+    judge_calls = []
+    once = [{"exit_code": 2, "transcript": "boom\nstderr tail"},
+            {"exit_code": 0, "transcript": "recovered\nJOB_DONE"}]
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it",
+        session_type="sync", max_retries=3,
+        run_once=lambda p: once.pop(0),
+        run_judge=lambda p: (judge_calls.append(p) or "ok\nJOB_DONE"))
+    assert res["verdict"] == "JOB_DONE" and res["attempts"] == 2
+    assert len(judge_calls) == 1
+    assert res["trace"][0]["phase"] == "gates"
+    assert "exit code 2" in res["trace"][0]["reasons"][0]
+
+
+def test_dirty_tree_triggers_continuation(monkeypatch):
+    from workagent import cli_validate as cv
+    states = [{"dirty": True, "porcelain": " M a.txt"},
+              {"dirty": False, "porcelain": ""}]
+    monkeypatch.setattr(cv, "dirty_gate", lambda wt, br: states.pop(0))
+    monkeypatch.setattr(cv, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True, "checks": {},
+                                                  "reasons": []})
+    seen = []
+
+    def fake_once(p):
+        seen.append(p)
+        if len(seen) == 1:
+            return {"exit_code": 0, "transcript": "work in progress"}
+        return {"exit_code": 0, "transcript": "committed\nJOB_DONE"}
+
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it",
+        session_type="start", max_retries=3,
+        run_once=fake_once,
+        run_judge=lambda p: "ok\nJOB_DONE")
+    assert res["verdict"] == "JOB_DONE" and res["attempts"] == 1
+    assert len(seen) == 2
+    assert "a.txt" in seen[1] and "origin/feat/x" in seen[1]
+
+
+def test_dirty_continuation_intentional_accepts(monkeypatch):
+    from workagent import cli_validate as cv
+    monkeypatch.setattr(cv, "dirty_gate",
+                        lambda wt, br: {"dirty": True, "porcelain": " M a.txt"})
+    judge_calls = []
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it",
+        session_type="fix_comments",
+        run_once=lambda p: {"exit_code": 0,
+                            "transcript": ("keeping local\n"
+                                           "INTENTIONALLY_UNCOMMITTED_CHANGES")}
+        if "uncommitted" in p else {"exit_code": 0,
+                                    "transcript": "work in progress"},
+        run_judge=lambda p: (judge_calls.append(p) or "unreachable"))
+    assert res["verdict"] == "INTENTIONALLY_UNCOMMITTED_CHANGES"
+    assert judge_calls == []
+
+
+def test_gate_fail_skips_judge(monkeypatch):
+    from workagent import cli_validate as cv
+    monkeypatch.setattr(cv, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    gate_calls = []
+
+    def fake_gates(wt, code, tx, exp):
+        gate_calls.append((code, tx, exp))
+        if len(gate_calls) == 1:
+            return {"passed": False, "checks": {},
+                    "reasons": ["not pushed: ahead by 1"]}
+        return {"passed": True, "checks": {}, "reasons": []}
+
+    monkeypatch.setattr(cv, "run_deterministic_gates", fake_gates)
+    judge_calls = []
+    once = [{"exit_code": 0, "transcript": "first try"},
+            {"exit_code": 0, "transcript": "second try\nJOB_DONE"}]
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it",
+        session_type="sync", max_retries=3,
+        run_once=lambda p: once.pop(0),
+        run_judge=lambda p: (judge_calls.append(p) or "ok\nJOB_DONE"))
+    assert res["verdict"] == "JOB_DONE" and res["attempts"] == 2
+    assert len(judge_calls) == 1
+    assert res["trace"][0]["phase"] == "gates"
+    assert gate_calls[0][2] is False
 
 def test_runs_validation_column_roundtrip(isolated_config, monkeypatch):
     from workagent import store_sqlite as sq
@@ -220,7 +321,13 @@ def test_headless_retry_resumes_and_judge_is_fresh(monkeypatch, tmp_path, isolat
                      " VALUES (?, ?, 'b', NULL, '2026-01-01', '{}')", ("k", str(tmp_path)))
     monkeypatch.setattr(hh.store, "record_harness_run", lambda *a: None)
     monkeypatch.setattr(hh.store, "clear_harness_run", lambda *a: None)
-    monkeypatch.setattr(hh, "_publish_headless_summary", lambda *a: None)
+    from workagent import cli_validate as cv
+    # Wiring test (resume + fresh judge), not a gate test: stub gates clean.
+    monkeypatch.setattr(cv, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(cv, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True, "checks": {},
+                                                  "reasons": []})
     calls = []
 
     def launch(name, prompt, workdir, no_tty, extra_args=None, **kwargs):
