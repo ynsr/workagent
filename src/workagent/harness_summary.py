@@ -24,11 +24,15 @@ def _texts(content) -> list[str]:
 
 
 
-def tool_error_rate(transcript) -> tuple[int, int] | None:
+def tool_error_rate(transcript, since_line: int = 0) -> tuple[int, int] | None:
     """(errors, total) over toolResult lines in a .jsonl transcript.
 
     None when no path/unreadable. Tolerant by design: unparseable lines
     are skipped; zero toolResults pass (None, never a 0/0 fail).
+
+    ``since_line`` scopes the scan to lines appended after that 0-based
+    file offset — retries resuming the same transcript must only score
+    the current attempt's tool calls, never earlier attempts' failures.
 
     A toolResult counts as an error when its payload carries an explicit
     error flag or its text starts with an error-like word."""
@@ -43,6 +47,7 @@ def tool_error_rate(transcript) -> tuple[int, int] | None:
         lines = Path(transcript).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return None
+    lines = lines[max(0, since_line):]
 
     def _is_error(data: dict) -> bool:
         msg = data.get("message")
@@ -93,12 +98,15 @@ def tool_error_rate(transcript) -> tuple[int, int] | None:
 
 
 
-def last_assistant_text(transcript: str | Path) -> str:
+def last_assistant_text(transcript: str | Path, max_chars: int | None = 4000) -> str:
     """Last plain-text assistant message in *transcript* ("" when none).
 
     Skips toolCall/toolResult/user/system lines and malformed JSON.
-    Truncates to 4000 chars.
+    Truncates to ``max_chars`` for display (default 4000); pass None
+    for the full text (validation must see the true final line, where
+    the verdict token lives — truncating the head drops it).
     """
+    limit = max_chars
     try:
         path = Path(transcript)
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -121,6 +129,6 @@ def last_assistant_text(transcript: str | Path) -> str:
         texts = _texts(msg.get("content"))
         if texts:
             last = "\n".join(texts).strip()
-    if len(last) > _MAX_CHARS:
-        last = last[:_MAX_CHARS].rstrip() + "\n…(truncated)"
+    if limit is not None and len(last) > limit:
+        last = last[:limit].rstrip() + "\n…(truncated)"
     return last

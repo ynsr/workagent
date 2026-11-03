@@ -44,7 +44,7 @@ def test_gates_pass_clean_pushed(tmp_path, monkeypatch):
     monkeypatch.setattr(cv, "_git", lambda *args, cwd="": (0, ""))
     monkeypatch.setattr(cv, "_git_porcelain", lambda wt: "")
     monkeypatch.setattr(cv, "_git_diff_stat", lambda wt: " f.txt | 1 +")
-    monkeypatch.setattr(cv, "_branch_pushed", lambda wt: (True, "in sync"))
+    monkeypatch.setattr(cv, "_branch_pushed", lambda wt, branch="": (True, "in sync"))
     res = cv.run_deterministic_gates(str(wt), 0, "work summary", True)
     assert res["passed"] is True
     assert res["reasons"] == []
@@ -63,7 +63,7 @@ def test_gates_fail_dirty_when_changes_unexpected(tmp_path, monkeypatch):
     monkeypatch.setattr(cv, "_git", lambda *a, **k: (0, ""))
     monkeypatch.setattr(cv, "_git_porcelain", lambda wt: " M f.txt")
     monkeypatch.setattr(cv, "_git_diff_stat", lambda wt: " f.txt | 1 +")
-    monkeypatch.setattr(cv, "_branch_pushed", lambda wt: (False, "ahead by 1"))
+    monkeypatch.setattr(cv, "_branch_pushed", lambda wt, branch="": (False, "ahead by 1"))
     res = cv.run_deterministic_gates(str(tmp_path), 0, "summary", True)
     assert res["passed"] is False
     assert any("push" in r.lower() for r in res["reasons"])
@@ -74,7 +74,7 @@ def test_gates_fail_empty_transcript(tmp_path, monkeypatch):
     monkeypatch.setattr(cv, "_git", lambda *a, **k: (0, ""))
     monkeypatch.setattr(cv, "_git_porcelain", lambda wt: "")
     monkeypatch.setattr(cv, "_git_diff_stat", lambda wt: "")
-    monkeypatch.setattr(cv, "_branch_pushed", lambda wt: (True, "no upstream, clean"))
+    monkeypatch.setattr(cv, "_branch_pushed", lambda wt, branch="": (True, "no upstream, clean"))
     res = cv.run_deterministic_gates(str(tmp_path), 0, "", False)
     assert res["passed"] is False
 
@@ -287,8 +287,7 @@ def test_runs_validation_column_roundtrip(isolated_config, monkeypatch):
 def test_run_harness_headless_validates(monkeypatch, tmp_path, isolated_config, capsys):
     import json
     import pytest
-    import typer
-    from workagent import backend, cli_harness as hh, store_sqlite as sq
+    from workagent import backend, cli_harness as hh, errors, store_sqlite as sq
 
     db = sq.db_path()
     sq.init_db(db)
@@ -310,7 +309,7 @@ def test_run_harness_headless_validates(monkeypatch, tmp_path, isolated_config, 
 
     monkeypatch.setattr(backend, "launch", launch)
     result = {"command": "start", "branch": "b", "key": "k"}
-    with pytest.raises(typer.Exit) as exc:
+    with pytest.raises(errors.HarnessError) as exc:
         hh._run_harness("omp", "do it", str(tmp_path), str(tmp_path), True, True,
                         result, True, run_key="k")
     assert exc.value.exit_code == 2
@@ -449,15 +448,14 @@ def test_dirty_continuation_pairs_db_rows(monkeypatch, tmp_path, isolated_config
 
 
 def test_crashed_continuation_never_judges_db(monkeypatch, tmp_path, isolated_config):
-    from workagent import cli_validate as cv, store_sqlite as sq
+    from workagent import cli_validate as cv, errors, store_sqlite as sq
     import pytest
-    import typer
     db, judge_calls, main_calls, hh = _headless_fake(
         monkeypatch, tmp_path, isolated_config, "crashed\nJOB_DONE", 1)
     monkeypatch.setattr(cv, "dirty_gate",
                         lambda wt, br: {"dirty": True, "porcelain": " M a.txt"})
     result = {"command": "start", "branch": "b", "key": "k"}
-    with pytest.raises(typer.Exit) as exc:
+    with pytest.raises(errors.HarnessError) as exc:
         hh._run_harness("omp", "do it", str(tmp_path), str(tmp_path), True, True,
                         result, True, run_key="k")
     assert exc.value.exit_code == 1
@@ -606,7 +604,7 @@ def test_error_rate_gate_trips_at_half(tmp_path, monkeypatch):
     """Finding 5: >=50% tool errors fail; empty toolResults pass."""
     from workagent import cli_validate as cv
     monkeypatch.setattr(cv, "_git", lambda *a, **k: (0, "aaa"))
-    monkeypatch.setattr(cv, "_branch_pushed", lambda wt: (True, "in sync"))
+    monkeypatch.setattr(cv, "_branch_pushed", lambda wt, branch="": (True, "in sync"))
     bad = _tool_jsonl(tmp_path / "bad.jsonl", [True, True, False, False])
     res = cv.run_deterministic_gates(
         str(tmp_path), 0, "summary", False, transcript_path=bad)
@@ -671,3 +669,95 @@ def test_skip_records_phase_and_saves_attempts(monkeypatch):
     assert judge_calls == []
     assert res["runs"][0]["trace"]["phase"] == "judge-skipped"
     assert res["runs"][0]["trace"]["terminal"] == "JOB_DONE"
+
+
+def test_fence_parse_needs_opener_and_last_line():
+    """Bot 1: stray closer is not a fence; paired fence uses last line."""
+    from workagent import cli_validate as cv
+    assert cv.parse_verdict("```\nsome text\nJOB_DONE\n```") == ("JOB_DONE", "exact")
+    assert cv.parse_verdict("output\nJOB_DONE\n'''") == (None, "none")
+    assert cv.parse_verdict("```\nJOB_DONE\nINCOMPLETE_OR_FAILED_JOB\n```") == (
+        "INCOMPLETE_OR_FAILED_JOB", "exact")
+
+
+def test_verdict_scans_full_text_with_tail_summary(monkeypatch):
+    """Bot 2: full-tail scan for verdict, 4000-char summary for display."""
+    from workagent import cli_validate as cv
+    transcript = "JOB_DONE\n" + ("x\n" * 2000) + "WAITING_USER_RESPONSE"
+    token, mode = cv.parse_verdict(transcript[-4000:])
+    assert (token, mode) == ("WAITING_USER_RESPONSE", "exact")
+
+
+def test_branch_pushed_falls_back_to_remote_tip(monkeypatch):
+    """Bot 3: no-upstream `@{u}` compares against origin/<branch>."""
+    from workagent import cli_validate as cv
+
+    def fake_git(*args, cwd=""):
+        if args[:2] == ("rev-parse", "HEAD"):
+            return 0, "abc123\n"
+        if args[:3] == ("rev-parse", "--verify", "refs/remotes/origin/mybranch"):
+            return 0, "def456\n"
+        if args[:2] == ("rev-parse", "@{u}"):
+            return 128, "fatal: no upstream"
+        if args[:2] == ("rev-list", "--count"):
+            if args[2].startswith("@{u}"):
+                return 128, "fatal: no upstream"
+            if args[2] == "origin/mybranch..HEAD":
+                return 0, "2\n"
+            raise AssertionError(args)
+        if args[:3] == ("ls-remote", "origin", "refs/heads/mybranch"):
+            return 1, ""
+        raise AssertionError(args)
+
+    monkeypatch.setattr(cv, "_git", fake_git)
+    ok, detail = cv._branch_pushed("/wt", "mybranch")
+    assert ok is False and "ahead" in detail
+
+
+def test_tool_error_scope_is_per_attempt(tmp_path, monkeypatch):
+    """Bot 6: same-transcript resume scores only lines since attempt start."""
+    import json
+    from workagent import cli_validate as cv
+    path = tmp_path / "t.jsonl"
+    bad = {"message": {"role": "assistant",
+                       "content": [{"type": "toolResult", "isError": True}]}}
+    good = {"message": {"role": "assistant",
+                        "content": [{"type": "toolResult",
+                                     "text": "ok"}]}}
+    path.write_text("\n".join(json.dumps(bad) for _ in range(4)) + "\n")
+    monkeypatch.setattr(cv, "_git", lambda *a, **k: (0, "aaa"))
+    monkeypatch.setattr(cv, "_branch_pushed", lambda wt, branch="": (True, "in sync"))
+    failing = cv.run_deterministic_gates(
+        str(tmp_path), 0, "summary", False, transcript_path=str(path),
+        tool_since_line=0)
+    assert failing["passed"] is False
+    with path.open("a") as fh:
+        fh.write("\n".join(json.dumps(good) for _ in range(4)) + "\n")
+    attempt_only = cv.run_deterministic_gates(
+        str(tmp_path), 0, "summary", False, transcript_path=str(path),
+        tool_since_line=4)
+    assert attempt_only["passed"] is True
+
+
+def test_git_status_error_fails_gates(monkeypatch):
+    """Bot 7: git status failure is a failed check, not clean/dirty."""
+    from workagent import cli_validate as cv
+    monkeypatch.setattr(cv, "_git", lambda *a, **k: (128, "fatal: not a repo"))
+    gates = cv.run_deterministic_gates("/wt", 0, "tail", True,
+                                       transcript_path=None)
+    assert gates["passed"] is False
+    assert any("git error" in r for r in gates["reasons"])
+    gate = cv.dirty_gate("/wt", "b")
+    assert gate.get("error")
+
+
+def test_skip_bar_for_review_and_clean_sync():
+    """Bot 8: review sessions and do-nothing syncs always run the judge."""
+    from workagent import cli_validate as cv
+    delivered = {"passed": True, "checks": {
+        "pushed": {"detail": "in sync"},
+        "diff": {"detail": "pushed and clean; work delivered"}}}
+    assert cv._judge_may_skip("JOB_DONE", "exact", delivered, True,
+                              "review") is False
+    assert cv._judge_may_skip("JOB_DONE", "exact", delivered, True,
+                              "start") is False

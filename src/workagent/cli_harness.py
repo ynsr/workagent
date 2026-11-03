@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import backend, store
 from .cli_core import _HARNESS_ARGS, _fail, _print_result, app, eprint
+from .errors import HarnessError
 from .web_args import ApiError
 
 import typer
@@ -429,7 +430,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                     result["session_file"] = current_path
                     if finish_sid:
                         _sq.set_session_file_path(db, finish_sid, current_path)
-                text = _hs.last_assistant_text(current_path) if current_path else ""
+                text = _hs.last_assistant_text(current_path, max_chars=None) if current_path else ""
                 return {"exit_code": code, "transcript": text,
                         "transcript_path": current_path}
 
@@ -446,7 +447,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                     minted = _sq.newest_transcript(Path(directory))
                     if code != 0 or minted is None:
                         raise RuntimeError(f"judge failed (exit {code}) or produced no transcript")
-                    return _hs.last_assistant_text(str(minted))
+                    return _hs.last_assistant_text(str(minted), max_chars=None)
 
             validation = _cv.validate_headless(
                 worktree=worktree or fallback_dir, branch=branch, prompt=prompt,
@@ -495,10 +496,15 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         if exit_code == 2:
             eprint(f"waiting for user response: worktree {worktree or fallback_dir}; "
                    f"session {result.get('session_file', session_path)}")
-        else:
-            eprint(f"headless validation failed: {validation['verdict']} "
-                   f"after {validation['attempts']} attempts")
-        raise typer.Exit(exit_code)
+            raise HarnessError(
+                f"waiting for user response: worktree {worktree or fallback_dir}",
+                exit_code=2)
+        eprint(f"headless validation failed: {validation['verdict']} "
+               f"after {validation['attempts']} attempts")
+        raise HarnessError(
+            f"headless validation failed: {validation['verdict']} "
+            f"after {validation['attempts']} attempts",
+            exit_code=exit_code)
 
 
 def _publish_headless_summary(result: dict, json_output: bool = False) -> None:

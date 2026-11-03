@@ -38,7 +38,13 @@ def _match_verdict_line(raw: str) -> tuple[str | None, str]:
 
 
 def parse_verdict(text: str) -> tuple[str | None, str]:
-    """Last non-empty line → (token, mode). No token → (None, "none")."""
+    """Last non-empty line → (token, mode). No token → (None, "none").
+
+    A trailing fence closer only counts when a matching opener exists
+    above it; the verdict is then the last content line inside the
+    block. A stray closer (no opener) yields (None, "none") — an
+    earlier mid-message token must never be revived.
+    """
     lines = [ln for ln in (text or "").splitlines() if ln.strip()]
     if not lines:
         return None, "none"
@@ -46,18 +52,22 @@ def parse_verdict(text: str) -> tuple[str | None, str]:
     if token is not None:
         return token, mode
     # Trailing fence closer (``` / '''): the verdict may sit inside the
-    # block, e.g. "```\nINCOMPLETE_OR_FAILED_JOB\n```". Scan back to the
-    # opening marker without looking past it (mid-transcript tokens stay
-    # ignored).
+    # block, e.g. "```\nINCOMPLETE_OR_FAILED_JOB\n```". Require the
+    # matching opener; only the last content line inside the block
+    # counts, and scanning stops at the opener.
     if lines[-1].strip() in ("```", "'''"):
         fence = lines[-1].strip()
-        for ln in reversed(lines[:-1]):
-            s = ln.strip()
-            if s.startswith(fence):
-                break
-            token, mode = _match_verdict_line(s)
-            if token is not None:
-                return token, mode
+        opener = next(
+            (i for i in range(len(lines) - 2, -1, -1)
+             if lines[i].strip() == fence or lines[i].strip().startswith(fence)),
+            None,
+        )
+        if opener is None:
+            return None, "none"
+        inner = [ln for ln in lines[opener + 1:-1] if ln.strip()]
+        if not inner:
+            return None, "none"
+        return _match_verdict_line(inner[-1].strip())
     return None, "none"
 
 
@@ -82,17 +92,24 @@ def _git(*args: str, cwd: str = "") -> tuple[int, str]:
 
 def _git_porcelain(worktree: str) -> str:
     code, out = _git("status", "--porcelain", cwd=worktree)
-    return out if code == 0 else f"GIT_ERROR:{out}"
+    if code == 0:
+        return out
+    # Never masquerade a git failure as a clean or dirty tree: callers
+    # must fail closed (git-error check) instead of issuing a commit
+    # continuation against the error text.
+    raise RuntimeError(f"git status failed: {out or f'exit {code}'}")
 
 
 def _git_diff_stat(worktree: str) -> str:
     code, out = _git("diff", "--stat", "HEAD", "--", cwd=worktree)
-    return out if code == 0 else ""
+    if code == 0:
+        return out
+    raise RuntimeError(f"git diff failed: {out or f'exit {code}'}")
 
 
-def _unpushed_count(worktree: str) -> int | None:
-    """Commits on HEAD not on @{u} (None when no upstream / git fails)."""
-    code, out = _git("rev-list", "--count", "@{u}..HEAD", cwd=worktree)
+def _unpushed_count(worktree: str, ref: str = "@{u}") -> int | None:
+    """Commits on HEAD not on *ref* (None when unknown / git fails)."""
+    code, out = _git("rev-list", "--count", f"{ref}..HEAD", cwd=worktree)
     if code != 0:
         return None
     try:
@@ -101,14 +118,43 @@ def _unpushed_count(worktree: str) -> int | None:
         return None
 
 
-def _branch_pushed(worktree: str) -> tuple[bool, str]:
+def _remote_tip(worktree: str, branch: str) -> tuple[str | None, str | None]:
+    """Resolve (ref, sha) for origin/<branch> (ls-remote first, then the
+    local remote-tracking ref). (None, None) when the branch was never
+    pushed — a falsy head means the upstream SHA cannot be established."""
+    code, head = _git("rev-parse", "HEAD", cwd=worktree)
+    head = head.strip() if code == 0 else ""
+    if not head:
+        return None, None
+    code, out = _git("ls-remote", "origin", f"refs/heads/{branch}", cwd=worktree)
+    if code == 0 and out.strip():
+        return f"origin/{branch}", out.strip().split()[0]
+    code, sha = _git("rev-parse", "--verify", f"refs/remotes/origin/{branch}",
+                      cwd=worktree)
+    if code == 0 and sha.strip():
+        return f"origin/{branch}", sha.strip()
+    return None, None
+
+
+def _branch_pushed(worktree: str, branch: str = "") -> tuple[bool, str]:
     code, head = _git("rev-parse", "HEAD", cwd=worktree)
     if code != 0:
         return False, "no HEAD"
     code, upstream = _git("rev-parse", "@{u}", cwd=worktree)
     if code != 0:
-        porcelain = _git_porcelain(worktree)
-        return (not porcelain, "no upstream, clean" if not porcelain else "no upstream, dirty tree")
+        if not branch:
+            porcelain = _git_porcelain(worktree)
+            return (not porcelain, "no upstream, clean" if not porcelain else "no upstream, dirty tree")
+        ref, remote = _remote_tip(worktree, branch)
+        if remote is None:
+            porcelain = _git_porcelain(worktree)
+            return (not porcelain, "no upstream, clean" if not porcelain else "no upstream, dirty tree")
+        if head == remote:
+            return True, f"in sync with {ref}"
+        ahead = _unpushed_count(worktree, ref)
+        if ahead is not None and ahead > 0:
+            return False, f"ahead of {ref} by {ahead} (unpushed)"
+        return False, f"not in sync with {ref}"
     if head == upstream:
         return True, "in sync"
     ahead = _unpushed_count(worktree)
@@ -123,23 +169,42 @@ def _branch_pushed(worktree: str) -> tuple[bool, str]:
     return False, "behind upstream"
 
 
-def _tool_error_rate(transcript_path: str | None) -> tuple[int, int] | None:
+def _transcript_lines(path: str | None) -> int:
+    """Readable line count of a .jsonl file (0 when missing/unreadable)."""
+    if not path:
+        return 0
+    try:
+        from pathlib import Path as _Path
+        with _Path(path).open(encoding="utf-8", errors="replace") as fh:
+            return sum(1 for _ in fh)
+    except OSError:
+        return 0
+
+def _tool_error_rate(transcript_path: str | None,
+                     since_line: int = 0) -> tuple[int, int] | None:
     """(errors, total) over toolResult lines; None when none/unreadable."""
     try:
         from .harness_summary import tool_error_rate as _scan
     except Exception:
         return None
     try:
-        return _scan(transcript_path) if transcript_path else None
+        return _scan(transcript_path, since_line) if transcript_path else None
+    except TypeError:
+        # Test fakes with the legacy 1-arg shape: same result, whole file.
+        try:
+            from .harness_summary import tool_error_rate as _legacy
+            return _legacy(transcript_path) if transcript_path else None
+        except Exception:
+            return None
     except Exception:
         return None
-
-
 
 def run_deterministic_gates(worktree: str, exit_code: int,
                             transcript: str,
                             expect_changes: bool,
-                            transcript_path: str | None = None) -> dict:
+                            transcript_path: str | None = None,
+                            branch: str = "",
+                            tool_since_line: int = 0) -> dict:
     """Zero-LLM gates. Never raises; git failures are failed checks."""
     checks: dict = {}
     reasons: list[str] = []
@@ -147,7 +212,10 @@ def run_deterministic_gates(worktree: str, exit_code: int,
                            "detail": f"exit={exit_code}"}
     if exit_code != 0:
         reasons.append(f"harness exit code {exit_code}")
-    pushed, pdetail = _branch_pushed(worktree)
+    try:
+        pushed, pdetail = _branch_pushed(worktree, branch)
+    except RuntimeError as e:
+        pushed, pdetail = False, f"git error: {e}"
     checks["pushed"] = {"ok": pushed, "detail": pdetail}
     if not pushed:
         reasons.append(f"not pushed: {pdetail}")
@@ -156,7 +224,8 @@ def run_deterministic_gates(worktree: str, exit_code: int,
                             "detail": "non-empty" if has_text else "empty transcript tail"}
     if not has_text:
         reasons.append("empty transcript tail")
-    err_rate = _tool_error_rate(transcript_path) if transcript_path else None
+    err_rate = (_tool_error_rate(transcript_path, tool_since_line)
+                if transcript_path else None)
     if err_rate is not None and err_rate[1] > 0:
         errors, total = err_rate
         ok = errors * 2 < total
@@ -171,8 +240,13 @@ def run_deterministic_gates(worktree: str, exit_code: int,
         # pushed gate already owns delivery verification. Fail only when
         # there is no sign of work at all (behind/diverged, or clean with
         # nothing delivered).
-        ahead = _unpushed_count(worktree)
-        stat = _git_diff_stat(worktree)
+        try:
+            ahead = _unpushed_count(worktree)
+            stat = _git_diff_stat(worktree)
+        except RuntimeError as e:
+            checks["diff"] = {"ok": False, "detail": f"git error: {e}"}
+            reasons.append(f"git error during diff check: {e}")
+            return {"passed": False, "checks": checks, "reasons": reasons}
         dirty = bool(stat.strip())
         if ahead is None:
             # No upstream: clean tree means nothing verifiable was delivered.
@@ -195,7 +269,10 @@ def run_deterministic_gates(worktree: str, exit_code: int,
 
 def dirty_gate(worktree: str, branch: str) -> dict:
     """Phase-1 gate (start/fix_comments): dirty worktree → continuation."""
-    porcelain = _git_porcelain(worktree)
+    try:
+        porcelain = _git_porcelain(worktree)
+    except RuntimeError as e:
+        return {"dirty": False, "porcelain": "", "error": str(e)}
     return {"dirty": bool(porcelain.strip()), "porcelain": porcelain}
 
 
@@ -215,7 +292,7 @@ def continue_prompt(porcelain: str, branch: str) -> str:
 def judge_prompt(original: str, previous: str, gates: dict, diff_stat: str) -> str:
     """Fresh-session judge prompt: validate only, end with one token."""
     orig = (original or "")[:8000]
-    prev = (previous or "")[:4000]
+    prev = (previous or "")[-4000:]
     stat = (diff_stat or "")[:2000]
     return (
         "Validate the previous harness session. Do not do the work again.\n\n"
@@ -229,14 +306,17 @@ def judge_prompt(original: str, previous: str, gates: dict, diff_stat: str) -> s
     )
 
 def _judge_may_skip(token: str | None, mode: str, gates: dict,
-                    expect_changes: bool) -> bool:
+                    expect_changes: bool,
+                    session_type: str | None = None) -> bool:
     """Cost-cap: skip the LLM judge when evidence is already conclusive.
 
     Skip only when ALL hold: gates pass, the worker self-attests JOB_DONE
-    as an exact token, and (for code-change sessions) the diff check shows
-    delivered work. WORKAGENT_ALWAYS_JUDGE=1 forces the old always-judge
-    behavior. Skips are recorded as phase "judge-skipped" so the audit
-    trace shows the judge was bypassed, not run."""
+    as an exact token, the diff check shows real delivered work (never a
+    bare clean tree, never an unverifiable no-upstream state), and the
+    session has a task-specific gate (reviews have none — always judge).
+    WORKAGENT_ALWAYS_JUDGE=1 forces the old always-judge behavior.
+    Skips are recorded as phase "judge-skipped" so the audit trace shows
+    the judge was bypassed, not run."""
     import os as _os
     if _os.environ.get("WORKAGENT_ALWAYS_JUDGE") == "1":
         return False
@@ -244,13 +324,25 @@ def _judge_may_skip(token: str | None, mode: str, gates: dict,
         return False
     if not gates.get("passed", False):
         return False
+    if session_type == "review":
+        # Reviews carry no code-change gate: an exact JOB_DONE on a clean
+        # tree proves nothing about the review itself. Always judge.
+        return False
     if expect_changes:
         try:
-            diff_detail = ((gates.get("checks", {}) or {}).get("diff", {})
-                           or {}).get("detail", "")
+            checks = gates.get("checks", {}) or {}
+            pushed_detail = ((checks.get("pushed", {}) or {}).get("detail", "")
+                             or "")
+            diff_detail = ((checks.get("diff", {}) or {}).get("detail", "")
+                           or "")
         except Exception:
             return False
         if "no upstream" in str(diff_detail):
+            return False
+        # Clean-at-upstream with no diff signal is a do-nothing run: the
+        # pushed gate passes ("in sync") and the diff gate passes on the
+        # verified push — but nothing proves the task did anything.
+        if str(pushed_detail) == "in sync" and "work delivered" in str(diff_detail):
             return False
     return True
 
@@ -317,6 +409,10 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
         # (e.g. review clears the reviewed mark). Only unexpected breakage
         # inside run_once degrades to a failed attempt.
         from .errors import HarnessError as _HarnessError
+        # Line count at attempt start: the tool-error gate only scores
+        # toolResults appended by this attempt (same-file resume would
+        # otherwise re-score earlier attempts' failures forever).
+        start_lines = _transcript_lines(transcript_path)
         try:
             out = run_once(run_prompt) or {}
         except _HarnessError:
@@ -330,7 +426,9 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
         text = str(out.get("transcript", "") or "")
         path = out.get("transcript_path") or transcript_path
         runs.append({"exit_code": code, "output": text, "trace": None,
-                     "transcript_path": path})
+                     "transcript_path": path,
+                     "tool_since_line": start_lines
+                     if path == transcript_path else 0})
         return code, text
 
     def _decide(phase: str, verdict: str, parse: str, text: str,
@@ -359,6 +457,16 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                 f"exited with code {code}. Stderr/output tail:\n"
                 f"{transcript[-2000:]}\n"
                 f"End your reply with only JOB_DONE as the last line.")
+    def _unfinish_waiting(verdict: str) -> dict:
+        """WAITING exits without consuming retry budget: the count was
+        already incremented for this run, so step it back before
+        persisting — a resume re-runs attempt N, not N+1."""
+        nonlocal attempts
+        attempts = max(0, attempts - 1)
+        runs[-1]["trace"]["terminal"] = verdict
+        _save_attempts()
+        return {"verdict": verdict, "attempts": attempts,
+                "runs": runs, "waiting": True}
 
     current_prompt = prompt
     while True:
@@ -367,7 +475,7 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
         token, mode = parse_verdict(transcript)
         if token == "WAITING_USER_RESPONSE":
             _decide("main", token, mode, transcript)
-            return _finish(token, waiting=True)
+            return _unfinish_waiting(token)
         if code != 0:
             done = _retry("gates", mode, transcript,
                           [f"harness exit code {code}: {transcript[-500:]}"])
@@ -384,6 +492,17 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
             except Exception as e:
                 dirty = {"dirty": False, "porcelain": "",
                          "error": f"dirty gate error: {e}"}
+            if dirty.get("error"):
+                done = _retry("dirty-gate", mode, transcript,
+                              [f"git error: {dirty['error']}"[-500:]])
+                if done is not None:
+                    return done
+                current_prompt = (
+                    f"Continue the unfinished job. The validation could not "
+                    f"read the worktree state ({dirty['error']}). "
+                    f"Fix the git/worktree problem, then end your reply "
+                    f"with only JOB_DONE as the last line.")
+                continue
             if dirty.get("dirty"):
                 porcelain = str(dirty.get("porcelain", "") or "")
                 _decide("dirty-gate", "INCOMPLETE_OR_FAILED_JOB", mode, transcript,
@@ -392,7 +511,7 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                 token, mode = parse_verdict(transcript)
                 if token == "WAITING_USER_RESPONSE":
                     _decide("dirty-gate", token, mode, transcript)
-                    return _finish(token, waiting=True)
+                    return _unfinish_waiting(token)
                 if code != 0:
                     done = _retry("gates", mode, transcript,
                                   [f"harness exit code {code}: {transcript[-500:]}"])
@@ -407,6 +526,17 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                     recheck = dirty_gate(worktree, branch)
                 except Exception as e:
                     recheck = {"dirty": True, "porcelain": f"dirty gate error: {e}"}
+                if recheck.get("error"):
+                    done = _retry("dirty-gate", mode, transcript,
+                                  [f"git error: {recheck['error']}"[-500:]])
+                    if done is not None:
+                        return done
+                    current_prompt = (
+                        f"Continue the unfinished job. The validation could not "
+                        f"read the worktree state ({recheck['error']}). "
+                        f"Fix the git/worktree problem, then end your reply "
+                        f"with only JOB_DONE as the last line.")
+                    continue
                 if recheck.get("dirty"):
                     remaining = str(recheck.get("porcelain", "") or "")
                     done = _retry("dirty-gate", mode, transcript,
@@ -422,10 +552,22 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
         try:
             import inspect as _inspect
             try:
-                _takes_path = len(_inspect.signature(run_deterministic_gates).parameters) >= 5
+                _params = _inspect.signature(run_deterministic_gates).parameters
+                _takes_offset = len(_params) >= 7
+                _takes_branch = len(_params) >= 6
+                _takes_path = len(_params) >= 5
             except (TypeError, ValueError):
-                _takes_path = True
-            if _takes_path:
+                _takes_offset = _takes_branch = _takes_path = True
+            if _takes_offset:  # real 7-arg gates: score this attempt only
+                gates = run_deterministic_gates(
+                    worktree, code, transcript[-4000:], expect_changes,
+                    runs[-1].get("transcript_path"), branch,
+                    runs[-1].get("tool_since_line", 0))
+            elif _takes_branch:
+                gates = run_deterministic_gates(
+                    worktree, code, transcript[-4000:], expect_changes,
+                    runs[-1].get("transcript_path"), branch)
+            elif _takes_path:
                 gates = run_deterministic_gates(
                     worktree, code, transcript[-4000:], expect_changes,
                     runs[-1].get("transcript_path"))
@@ -446,7 +588,7 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                 f"{'; '.join(reasons)[:2000]}\n"
                 f"End your reply with only JOB_DONE as the last line.")
             continue
-        if _judge_may_skip(token, mode, gates, expect_changes):
+        if _judge_may_skip(token, mode, gates, expect_changes, session_type):
             _decide("judge-skipped", "JOB_DONE", mode, transcript)
             return _finish("JOB_DONE")
         try:
