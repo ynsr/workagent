@@ -761,3 +761,60 @@ def test_skip_bar_for_review_and_clean_sync():
                               "review") is False
     assert cv._judge_may_skip("JOB_DONE", "exact", delivered, True,
                               "start") is False
+
+
+def test_max_retries_defaults_and_precedence(monkeypatch, isolated_config):
+    """Retry cap: explicit kwarg > env > config > default 3."""
+    from workagent import cli_validate as cv
+    monkeypatch.delenv("WORKAGENT_MAX_RETRIES", raising=False)
+    assert cv._resolve_max_retries(None) == cv.DEFAULT_MAX_RETRIES == 3
+    assert cv._resolve_max_retries(0) == 0
+    assert cv._resolve_max_retries(7) == 7
+    # Env beats config; explicit beats env.
+    monkeypatch.setenv("WORKAGENT_MAX_RETRIES", "5")
+    assert cv._resolve_max_retries(None) == 5
+    assert cv._resolve_max_retries(2) == 2
+    # Garbage falls through to the next source, never crashes.
+    monkeypatch.setenv("WORKAGENT_MAX_RETRIES", "abc")
+    assert cv._resolve_max_retries(None) == cv.DEFAULT_MAX_RETRIES
+    monkeypatch.setenv("WORKAGENT_MAX_RETRIES", "-4")
+    assert cv._resolve_max_retries(None) == cv.DEFAULT_MAX_RETRIES
+
+
+def test_max_retries_config_key(monkeypatch, isolated_config):
+    """validation.max_retries in config.json is honoured without env."""
+    import json
+    from workagent import cli_validate as cv, store
+    monkeypatch.delenv("WORKAGENT_MAX_RETRIES", raising=False)
+    cfg_path = store.config_dir() / "config.json"
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+    cfg["validation"] = {"max_retries": 1}
+    cfg_path.write_text(json.dumps(cfg))
+    assert cv._resolve_max_retries(None) == 1
+
+
+def test_retry_cap_controls_loop(monkeypatch, isolated_config):
+    """A configured cap 0 fails on the first attempt; 6 allows six."""
+    from workagent import cli_validate as cv
+    monkeypatch.setattr(cv, "dirty_gate", lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setenv("WORKAGENT_MAX_RETRIES", "0")
+    calls = []
+
+    def run_once(prompt):
+        calls.append(prompt)
+        return {"exit_code": 1, "transcript": "boom"}
+
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it", session_type="sync",
+        run_once=run_once, run_judge=lambda p: "ok\nJOB_DONE")
+    assert res["verdict"] == "MAX_RETRIES_EXCEEDED"
+    assert len(calls) == 1
+
+    monkeypatch.setenv("WORKAGENT_MAX_RETRIES", "6")
+    calls.clear()
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it", session_type="sync",
+        run_once=run_once, run_judge=lambda p: "ok\nJOB_DONE")
+    assert res["verdict"] == "MAX_RETRIES_EXCEEDED"
+    assert len(calls) == 7

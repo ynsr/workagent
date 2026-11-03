@@ -346,6 +346,41 @@ def _judge_may_skip(token: str | None, mode: str, gates: dict,
             return False
     return True
 
+DEFAULT_MAX_RETRIES = 3
+
+
+def _resolve_max_retries(explicit: int | None = None) -> int:
+    """Effective retry cap: explicit kwarg > env > config > default (3).
+
+    ``WORKAGENT_MAX_RETRIES`` wins over the ``validation.max_retries``
+    config key. Unusable values (non-integer, negative, bool) fall
+    through to the next source instead of failing the run. Zero is
+    valid: the first failed attempt returns MAX_RETRIES_EXCEEDED."""
+    if isinstance(explicit, int) and not isinstance(explicit, bool) and explicit >= 0:
+        return explicit
+    import os as _os
+    candidates: list = [_os.environ.get("WORKAGENT_MAX_RETRIES")]
+    try:
+        from . import store as _store
+        cfg = _store.load_config().get("validation", {}) or {}
+        candidates.append(cfg.get("max_retries") if isinstance(cfg, dict) else None)
+    except Exception:
+        pass
+    for raw in candidates:
+        if isinstance(raw, bool):
+            continue
+        if isinstance(raw, int) and raw >= 0:
+            return raw
+        if isinstance(raw, str) and raw.strip():
+            try:
+                value = int(raw.strip())
+            except ValueError:
+                continue
+            if value >= 0:
+                return value
+    return DEFAULT_MAX_RETRIES
+
+
 def _attempt_store():
     """Session-metadata seam: (load, save) or (None, None) when unavailable."""
     try:
@@ -358,7 +393,7 @@ def _attempt_store():
 def validate_headless(*, worktree: str, branch: str, prompt: str,
                       session_type: str | None,
                       run_once, run_judge,
-                      max_retries: int = 3,
+                      max_retries: int | None = None,
                       transcript_path: str | None = None,
                       session_db=None, session_id: str | None = None) -> dict:
     """Retry loop. run_once(prompt)->{exit_code, transcript[, transcript_path]}.
@@ -381,7 +416,11 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
     never raises (counts as a failed attempt). WAITING_USER_RESPONSE exits
     without consuming a retry. expect_changes is True for start/fix_comments
     (code-change sessions) and False otherwise.
+    ``max_retries`` is None by default and resolves through
+    _resolve_max_retries (env WORKAGENT_MAX_RETRIES, then the
+    validation.max_retries config key, then DEFAULT_MAX_RETRIES).
     """
+    max_retries = _resolve_max_retries(max_retries)
     expect_changes = session_type in ("start", "fix_comments")
     runs: list[dict] = []
     attempts = 0

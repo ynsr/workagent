@@ -69,9 +69,11 @@ judge, so an empty diff behind a `JOB_DONE` claim fails validation.
 
 - Loop lives in new `src/workagent/cli_validate.py` (≤500 lines),
   called from the `_run_harness` headless path only.
-- Shared counter `validation_attempts` in session metadata; max 3
-  re-runs (4 attempts total). 4th failure → `MAX_RETRIES_EXCEEDED`,
-  exit 1 with attempts summary.
+- Shared counter `validation_attempts` in session metadata; default
+  max 3 re-runs (4 attempts total). The cap is configurable —
+  `WORKAGENT_MAX_RETRIES` env var, else `validation.max_retries` in
+  `config.json`, else 3 (see `cli_validate._resolve_max_retries`).
+  Exceeding it → `MAX_RETRIES_EXCEEDED`, exit 1 with attempts summary.
 - `ALTER TABLE runs ADD COLUMN validation TEXT NOT NULL DEFAULT '{}'`
   (additive; old rows read as `{}`). One `insert_run` per attempt with
   `validation` = `{attempt, phase, deterministic_gates, judge_session_id,
