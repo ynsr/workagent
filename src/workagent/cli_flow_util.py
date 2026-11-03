@@ -60,6 +60,13 @@ ACTION_FLAGS = (("harness", "--harness", "str"),
                 ("env_file", "--env-file", "str"),
                 ("session_file", "--session-file", "str"))
 
+#: prodtest-plan step config keys for the terminal/manual handoff.
+PRODTEST_PLAN_FLAGS = (("update", "--update", "bool"),
+                       ("harness", "--harness", "str"),
+                       ("session_file", "--session-file", "str"),
+                       ("env_file", "--env-file", "str"),
+                       ("extra_prompt", "--extra-prompt", "str"))
+
 #: release-step config keys for the terminal/manual handoff.
 RELEASE_FLAGS = (("checks", "--checks", "str"),
                  ("diff", "--diff", "str"),

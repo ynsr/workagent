@@ -15,6 +15,7 @@ export const STEP_KINDS = [
   "fix_comments",
   "sync",
   "action",
+  "prodtest_plan",
   "cleanup",
   "release",
 ] as const
@@ -74,7 +75,16 @@ export function validateChain(steps: FlowStep[]): string[] {
     if (!step.action_label?.trim()) errors.push(`Step ${i + 1}: 'action' step needs an action label.`)
   })
   steps.forEach((step, i) => {
-    const cfg = JSON.stringify(step.config ?? {})
+    if (step.kind !== "prodtest_plan") return
+    if (cleanups.length > 0 && i >= Math.min(...cleanups)) {
+      errors.push(`Step ${i + 1}: 'prodtest_plan' steps must come before 'cleanup'.`)
+    }
+  })
+  steps.forEach((step, i) => {
+    const cfgObj = { ...(step.config ?? {}) }
+    // merge_only selects merge-PR-only mode — not a banned override.
+    delete (cfgObj as Record<string, unknown>).merge_only
+    const cfg = JSON.stringify(cfgObj)
     if (/then-fix-comments|then_fix_comments/.test(cfg)) {
       errors.push(`Step ${i + 1}: then-fix-comments is rejected inside flows — use an explicit 'fix_comments' step.`)
     }
@@ -141,10 +151,14 @@ function StepConfigForm({
   // Per-kind named fields (mirrors the cli_flow _pick allowlists):
   // start → related_repo + extra_prompt; review/fix_comments/action → extra_prompt;
   // fix_comments → use_review_session checkbox (default off: fresh fix session).
+  // cleanup → merge_only checkbox (merge-PR-only: keep worktree/branch/link).
+  // prodtest_plan → update checkbox (regenerate an existing plan).
   const showRelated = kind === "start"
   const showRepo = kind === "start"
-  const showExtraPrompt = kind === "start" || kind === "review" || kind === "fix_comments" || kind === "action"
+  const showExtraPrompt = kind === "start" || kind === "review" || kind === "fix_comments" || kind === "action" || kind === "prodtest_plan"
   const showNewFixSession = kind === "fix_comments"
+  const showMergeOnly = kind === "cleanup"
+  const showUpdate = kind === "prodtest_plan"
   function patch(key: string, value: unknown) {
     const next = { ...config }
     const hint = key === "run_mode" ? hintRunMode : hints?.[key]
@@ -217,6 +231,30 @@ function StepConfigForm({
             className="size-4 accent-current"
           />
           Use review session{hintUseReviewSession ? " (template: on)" : " (default: fresh fix session)"}
+        </label>
+      ) : null}
+      {showMergeOnly ? (
+        <label className="flex items-center gap-2 text-sm sm:col-span-2">
+          <input
+            id={`${idPrefix}-merge-only`}
+            type="checkbox"
+            checked={config.merge_only === true}
+            onChange={(e) => patch("merge_only", e.target.checked || undefined)}
+            className="size-4 accent-current"
+          />
+          Merge PR only (keep worktree, branch, and link)
+        </label>
+      ) : null}
+      {showUpdate ? (
+        <label className="flex items-center gap-2 text-sm sm:col-span-2">
+          <input
+            id={`${idPrefix}-update`}
+            type="checkbox"
+            checked={config.update === true}
+            onChange={(e) => patch("update", e.target.checked || undefined)}
+            className="size-4 accent-current"
+          />
+          Update existing plan (regenerate)
         </label>
       ) : null}
       <div className="sm:col-span-2">

@@ -81,6 +81,29 @@ def test_validate_template_accepts_valid_chains(tmp_path):
     assert ok[3]["action_label"] == "lint"
 
 
+def test_validate_template_prodtest_plan_rules(tmp_path):
+    from workagent import store_flows as sf
+    # prodtest_plan must come before cleanup.
+    _rejects([{"kind": "start"}, {"kind": "cleanup"},
+              {"kind": "prodtest_plan"}], "prodtest_plan")
+    ok = sf.validate_template(
+        [{"kind": "start"}, {"kind": "prodtest_plan"}, {"kind": "cleanup"}])
+    assert [s["kind"] for s in ok] == ["start", "prodtest_plan", "cleanup"]
+
+
+def test_validate_template_cleanup_merge_only(tmp_path):
+    from workagent import store_flows as sf
+    # merge_only selects merge-PR-only mode — not a banned override.
+    ok = sf.validate_template(
+        [{"kind": "start"},
+         {"kind": "cleanup", "config": {"merge_only": True}}])
+    assert ok[1]["config"] == {"merge_only": True}
+    # Other hard-delete/no-squash overrides stay banned.
+    _rejects([{"kind": "start"},
+              {"kind": "cleanup", "config": {"hard_delete": True}}],
+             "hard_delete")
+
+
 def test_validate_template_action_without_cleanup(tmp_path):
     from workagent import store_flows as sf
     ok = sf.validate_template(

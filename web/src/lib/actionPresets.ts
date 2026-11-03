@@ -45,8 +45,18 @@ else
   echo "pre-execution failed: glab mr list could not check for an existing MR — refusing to create a possible duplicate" >&2; echo "$glab_out" >&2; exit 1
 fi
 if [ "$WORKAGENT_PREVIEW" = "1" ]; then echo "SKIP: would push $ahead commits ($br -> origin/$br)" >&2; exit 10; fi
-git push origin HEAD || exit 1
 printf '{"append_prompt": "Resolved base branch: %s (from origin/HEAD). Target all glab commands and diffs at origin/%s."}' "$base" "$base"`
+
+const JUDGEMENT_PROMPT = `Judge the current worktree state as a strict reviewer.
+
+Steps:
+1. Run \`git status -sb\` and \`git diff --stat\` to see uncommitted and committed-but-unpushed work.
+2. Compare the branch against its base (\`git log origin/<base>..HEAD --oneline\` and the three-dot diff) to list what this work delivers.
+3. Check that tests/lint evidence exists where the diff warrants it (do not invent results — report only what you can observe).
+4. End with exactly one verdict line: JOB_DONE or INCOMPLETE_OR_FAILED_JOB, plus 1–3 reason lines.
+
+Rules: read-only — do not modify files, commit, push, or open/merge any PR/MR. Report findings only.
+`
 
 export const ACTION_PRESETS: ActionPreset[] = [
   {
@@ -55,6 +65,15 @@ export const ACTION_PRESETS: ActionPreset[] = [
     icon: "GitMerge",
     prompt: OPEN_MR_PROMPT,
     pre_execution: OPEN_MR_PRE_EXECUTION,
+    post_execution: "",
+    run_mode: "headless",
+  },
+  {
+    id: "judgement",
+    name: "Judgement",
+    icon: "Scale",
+    prompt: JUDGEMENT_PROMPT,
+    pre_execution: "",
     post_execution: "",
     run_mode: "headless",
   },

@@ -1,6 +1,7 @@
 import { MessagesSquare } from "lucide-react"
 import type { WorktreeMap } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
+import { cn } from "@/lib/utils"
 
 export function CommitsCell({ entry }: { entry: WorktreeMap[string] }) {
   const behind = entry.commits_detail?.behind
@@ -50,6 +51,16 @@ export function ReviewsCell({ entry }: { entry: WorktreeMap[string] }) {
     </Badge>
   )
 }
+
+const PRODTEST_TONE: Record<string, string> = {
+  pending: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  pending_prodtest: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  running: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  passed: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  failed: "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300",
+  blocked: "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+}
+
 /** Prodtest badge: done|risk|revN or status; "—" when no plan exists. */
 export function ProdtestCell({ entry }: { entry: WorktreeMap[string] }) {
   const d = entry.prodtest_detail
@@ -59,14 +70,15 @@ export function ProdtestCell({ entry }: { entry: WorktreeMap[string] }) {
   const rev = d.plan_revision ? ` · rev${d.plan_revision}` : ""
   const report = d.last_run ? ` · ${d.last_run}` : ""
   const title = `prodtest ${status}${risk}${rev}${report} (${d.issue_key})`
+  const tone = PRODTEST_TONE[status] ?? ""
   return (
     <Badge
-      variant="secondary"
+      variant="outline"
       title={title}
       aria-label={title}
-      className="cursor-default rounded-full font-mono font-normal"
+      className={cn("cursor-default rounded-full font-mono font-normal", tone)}
     >
-      <span className="text-muted-foreground">{status}</span>
+      <span>{status}</span>
       {d.plan_risk ? <span aria-hidden className="text-muted-foreground/60">·</span> : null}
       {d.plan_risk ? <span>{d.plan_risk}</span> : null}
       {d.plan_revision ? <span aria-hidden className="text-muted-foreground/60">·</span> : null}

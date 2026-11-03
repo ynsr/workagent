@@ -66,6 +66,10 @@ def _run_review_step(*a, **k):
     return _seam("_run_review_step")(*a, **k)
 
 
+def _run_prodtest_plan_step(*a, **k):
+    return _seam("_run_prodtest_plan_step")(*a, **k)
+
+
 def _run_start_step(*a, **k):
     return _seam("_run_start_step")(*a, **k)
 
@@ -294,6 +298,8 @@ def flow_run(
                 outcome = _run_sync_step(key, config, json_output)
             elif kind == "action":
                 outcome = _run_action_step(key, str(step.get("action_label", "")), config, json_output)
+            elif kind == "prodtest_plan":
+                outcome = _run_prodtest_plan_step(key, config, json_output)
             elif kind == "cleanup":
                 outcome = _run_cleanup_step(key, config, json_output)
             elif kind == "release":

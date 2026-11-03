@@ -9,7 +9,7 @@ from pathlib import Path
 from .store_custom_actions import normalize_label, validate_label
 
 STEP_KINDS = ("start", "review", "fix_comments", "sync", "action",
-              "cleanup", "release")
+              "prodtest_plan", "cleanup", "release")
 
 FLOW_STATUSES = ("pending", "running", "paused", "failed", "done")
 
@@ -131,6 +131,12 @@ def validate_template(steps: list[dict] | str,
         if get_action is not None and get_action(label) is None:
             raise HarnessError(f"unknown action_label {label!r}",
                                exit_code=2)
+    for i, k in enumerate(kinds):
+        if k != "prodtest_plan":
+            continue
+        if cleanups and i >= min(cleanups):
+            raise HarnessError("'prodtest_plan' steps must come before 'cleanup'",
+                               exit_code=2)
     for step, k in zip(steps, kinds):
         config = step.get("config", {})
         banned = _config_has_banned(config, _BANNED_STEP_FLAGS)
@@ -139,7 +145,11 @@ def validate_template(steps: list[dict] | str,
                 f"{banned!r} is rejected inside flows — use an explicit "
                 f"'fix_comments' step", exit_code=2)
         if k == "cleanup":
-            banned = _config_has_banned(config, _BANNED_CLEANUP_FLAGS)
+            cfg = dict(config or {})
+            # merge_only selects merge-PR-only mode (no teardown); all
+            # other hard-delete/no-squash overrides stay banned.
+            cfg.pop("merge_only", None)
+            banned = _config_has_banned(cfg, _BANNED_CLEANUP_FLAGS)
             if banned:
                 raise HarnessError(
                     f"{banned!r} is rejected in cleanup steps — cleanup "

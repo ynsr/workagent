@@ -254,8 +254,13 @@ def _run_action_step(key: str, action_label: str, config: dict, json_output: boo
                                   _spawn_terminal_step, _manual_step)
 
 
+def _run_prodtest_plan_step(key: str, config: dict, json_output: bool) -> dict:
+    """Prodtest-plan step (delegates to cli_flow_steps; keeps this file small)."""
+    return _steps.run_prodtest_plan_step(key, config, json_output,
+                                         _spawn_terminal_step, _manual_step)
+
+
 def _run_cleanup_step(key: str, config: dict, json_output: bool) -> dict:
-    """Cleanup step (delegates to cli_flow_steps; keeps this file small)."""
     return _steps.run_cleanup_step(key, config, json_output,
                                    _spawn_terminal_step, _manual_step)
 

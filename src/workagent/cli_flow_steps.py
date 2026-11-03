@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .cli_flow_util import (
     ACTION_FLAGS,
+    PRODTEST_PLAN_FLAGS,
     RELEASE_FLAGS,
     REVIEW_FLAGS,
     START_FLAGS,
@@ -147,6 +148,30 @@ def run_action_step(key: str, action_label: str, config: dict,
     return {"key": key, "label": action_label, "status": "acted"}
 
 
+def run_prodtest_plan_step(key: str, config: dict, json_output: bool,
+                           spawn, manual) -> dict:
+    """Prodtest-plan step: generate/update the plan for the flow worktree."""
+    from . import cli_prodtest as _mod
+    from . import store as _store
+    extra = flag_argv(config, *PRODTEST_PLAN_FLAGS)
+    if bool(config.get("terminal", False)):
+        links = _store.load_links()
+        wt = str((links.get(key, {}) or {}).get("worktree", "") or "")
+        harness = str(config.get("harness", "") or "omp")
+        dlinks = _store.load_links(include_deleted=True)
+        branch = str((dlinks.get(key, {}) or {}).get("branch", "") or "")
+        return spawn("prodtest", ["plan", key, *extra], wt,
+                     branch=branch, harness=harness)
+    if not (bool(config.get("launch", True))
+            and not any(config.get(k) for k in ("preview", "dry_run", "terminal"))):
+        return manual("prodtest", ["plan", key, *extra])
+    _call(_mod.prodtest_plan.__wrapped__, key, yes=True, launch=True,
+          no_tty=True, json_output=json_output,
+          **pick(config, "update", "harness", "env_file",
+                 "session_file", "extra_prompt"))
+    return {"key": key, "status": "prodtest-planned"}
+
+
 def run_cleanup_step(key: str, config: dict, json_output: bool,
                      spawn, manual) -> dict:
     """Cleanup step (fixed squash + soft-delete; overrides rejected)."""
@@ -154,9 +179,26 @@ def run_cleanup_step(key: str, config: dict, json_output: bool,
     from . import store as _store
     from . import store_flows as _sfx
     from .errors import HarnessError as _HE
-    if has_banned(config, _sfx._BANNED_CLEANUP_FLAGS):
+    cfg = dict(config or {})
+    merge_only = bool(cfg.pop("merge_only", False))
+    if has_banned(cfg, _sfx._BANNED_CLEANUP_FLAGS):
         raise _HE("cleanup is fixed to squash + soft-delete — "
                   "hard-delete/no-squash overrides rejected", exit_code=2)
+    if merge_only:
+        # Merge-PR-only mode: squash-merge the open PR, keep worktree /
+        # branch / link. Mirrors `cleanup --merge-only`.
+        if bool(config.get("terminal", False)):
+            wt = str((_store.load_links().get(key, {}) or {}).get("worktree", "") or "")
+            return spawn("cleanup", [key, "--merge-only"], wt)
+        if not (bool(config.get("launch", True))
+                and not any(config.get(k) for k in ("preview", "dry_run", "terminal"))):
+            return manual("cleanup", [key, "--merge-only"])
+        entry = _store.load_links().get(key) or {}
+        if not key or not entry:
+            raise _HE(f"no linked state for {key}", exit_code=2)
+        _mod._merge_only_one(key, dict(entry), bool(config.get("force", False)),
+                             json_output, squash=True)
+        return {"key": key, "status": "merged", "merge_only": True}
     if bool(config.get("terminal", False)):
         wt = str((_store.load_links().get(key, {}) or {}).get("worktree", "") or "")
         return spawn("cleanup", [key], wt)

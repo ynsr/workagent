@@ -43,16 +43,28 @@ export function RunStateBadge({
   )
 }
 
+const STATUS_TONE = {
+  active:
+    "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  review:
+    "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  done:
+    "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  closed:
+    "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+  muted: "border-border bg-muted text-muted-foreground",
+} as const
+
 const PR_STATE_STYLES: Record<string, string> = {
-  open: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  merged: "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300",
-  closed: "border-border bg-muted text-muted-foreground",
+  open: STATUS_TONE.active,
+  merged: STATUS_TONE.done,
+  closed: STATUS_TONE.muted,
 }
 
 /** PR/MR state badge from pr_detail; falls back to the display string. */
 export function PrBadge({ pr }: { pr: PrDetail | null | undefined }) {
   if (!pr) return null
-  const style = PR_STATE_STYLES[pr.state] ?? PR_STATE_STYLES.closed
+  const style = PR_STATE_STYLES[pr.state] ?? STATUS_TONE.muted
   return (
     <Badge
       variant="outline"
@@ -64,12 +76,13 @@ export function PrBadge({ pr }: { pr: PrDetail | null | undefined }) {
   )
 }
 
-const ISSUE_DONE_STATES: Record<string, true> = { done: true, released: true, resolved: true, closed: true }
+const ISSUE_DONE_STATES: Record<string, true> = { done: true, released: true, resolved: true }
 const ISSUE_PROGRESS_STYLES: Record<string, string> = {
-  "to do": "border-border bg-muted text-muted-foreground",
-  "in progress": "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  review: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-  "code review": "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  "to do": STATUS_TONE.muted,
+  "in progress": STATUS_TONE.active,
+  review: STATUS_TONE.review,
+  "code review": STATUS_TONE.review,
+  "product test": STATUS_TONE.review,
 }
 
 /** Linked-issue status badge; renders nothing when the worktree has no linked issue or the status is unknown. */
@@ -78,9 +91,8 @@ export function IssueStatusBadge({ status }: { status?: string | null }) {
   if (!s) return null
   const style =
     ISSUE_DONE_STATES[s]
-      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-      : (ISSUE_PROGRESS_STYLES[s] ??
-        "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300")
+      ? STATUS_TONE.done
+      : (ISSUE_PROGRESS_STYLES[s] ?? STATUS_TONE.muted)
   return (
     <Badge variant="outline" className={style} title={`Issue status: ${s}`}>
       {s}

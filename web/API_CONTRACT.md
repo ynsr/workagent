@@ -139,10 +139,8 @@ by the Dashboard Actions dropdown.)
   "parent_labels": [],
   "created_at": "…", "modified_at": "…"}]}
 ```
-(Flow page source: `flow template add/list/show/update/clone/compose/delete` run as runs; detail 404s
- on unknown label. `flow template update OLD [--new-label NEW] ...` renames the label (flow history retargeted). `flow template clone SRC [--name] [--label]` duplicates one template (lineage in `parent_labels`); `flow template compose LABEL --from A,B [--name]` concatenates chains (keep-first-start, lineage recorded). Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection. `flow run TEMPLATE REF [--steps JSON] [--step-config JSON] [--skip-steps 0[,N]] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`
- with target key `flow:<template>:<ref>` — one run per template+worktree pair; `--skip-steps` marks the paused resume step done-without-running (already finished by hand in the spawned terminal) and advances the cursor; `flow list [--worktree REF] [--json/--csv]`
- and `flow show ID [--json]` run as runs. `GET /api/flows?worktree=` scopes the run list to one worktree.)
+ (Flow page source: `flow template add/list/show/update/clone/compose/delete` run as runs; detail 404s
+ on unknown label. Step kinds: `start | review | fix_comments | sync | action | prodtest_plan | cleanup | release` — `action` steps carry `action_label` (a custom action; the Judgement preset ships with the Actions page), `prodtest_plan` generates the worktree's prod-test plan (config `update`), and `cleanup` accepts `merge_only` to merge the PR/MR squash-style without tearing down the worktree/branch/link. `flow template update OLD [--new-label NEW] ...` renames the label (flow history retargeted). `flow template clone SRC [--name] [--label]` duplicates one template (lineage in `parent_labels`); `flow template compose LABEL --from A,B [--name]` concatenates chains (keep-first-start, lineage recorded). Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection. `flow run TEMPLATE REF [--steps JSON] [--step-config JSON] [--skip-steps 0[,N]] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`
 ### `GET /api/links`
 ```json
 {"trackers": {"jira:IPG": {"repos": ["/home/x/projects/projectx"]}},
