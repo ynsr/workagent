@@ -77,3 +77,29 @@ def test_gates_fail_empty_transcript(tmp_path, monkeypatch):
     monkeypatch.setattr(cv, "_branch_pushed", lambda wt: (True, "no upstream, clean"))
     res = cv.run_deterministic_gates(str(tmp_path), 0, "", False)
     assert res["passed"] is False
+
+
+def test_dirty_gate_clean(tmp_path, monkeypatch):
+    from workagent import cli_validate as cv
+    monkeypatch.setattr(cv, "_git_porcelain", lambda wt: "")
+    assert cv.dirty_gate(str(tmp_path), "feat/x") == {"dirty": False, "porcelain": ""}
+
+
+def test_dirty_gate_dirty_lists_files(tmp_path, monkeypatch):
+    from workagent import cli_validate as cv
+    monkeypatch.setattr(cv, "_git_porcelain", lambda wt: " M a.txt\n?? b.txt")
+    res = cv.dirty_gate(str(tmp_path), "feat/x")
+    assert res["dirty"] is True and "a.txt" in res["porcelain"]
+
+
+def test_continue_prompt_carries_token_rule():
+    from workagent import cli_validate as cv
+    p = cv.continue_prompt(" M a.txt", "feat/x")
+    assert "INTENTIONALLY_UNCOMMITTED_CHANGES" in p and "feat/x" in p and "a.txt" in p
+
+
+def test_judge_prompt_caps_context():
+    from workagent import cli_validate as cv
+    big = "x" * 20000
+    p = cv.judge_prompt(big, big, {"passed": True, "checks": {}, "reasons": []}, "")
+    assert len(p) < 16000 and "JOB_DONE" in p and "INCOMPLETE_OR_FAILED_JOB" in p

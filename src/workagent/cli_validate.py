@@ -132,3 +132,39 @@ def run_deterministic_gates(worktree: str, exit_code: int,
     else:
         checks["diff"] = {"ok": True, "detail": "no changes expected"}
     return {"passed": not reasons, "checks": checks, "reasons": reasons}
+
+
+def dirty_gate(worktree: str, branch: str) -> dict:
+    """Phase-1 gate (start/fix_comments): dirty worktree → continuation."""
+    porcelain = _git_porcelain(worktree)
+    return {"dirty": bool(porcelain.strip()), "porcelain": porcelain}
+
+
+def continue_prompt(porcelain: str, branch: str) -> str:
+    """Resume-same-session prompt for uncommitted changes."""
+    return (
+        "The previous session ended with uncommitted changes:\n"
+        f"{porcelain.strip()}\n\n"
+        f"Continue the unfinished job: commit and push to origin/{branch}. "
+        "Never create or push a different branch.\n"
+        "If the remaining changes are intentional and must stay uncommitted, "
+        "reply with only INTENTIONALLY_UNCOMMITTED_CHANGES as the last line and exit.\n"
+        "Otherwise end your reply with only JOB_DONE as the last line."
+    )
+
+
+def judge_prompt(original: str, previous: str, gates: dict, diff_stat: str) -> str:
+    """Fresh-session judge prompt: validate only, end with one token."""
+    orig = (original or "")[:8000]
+    prev = (previous or "")[:4000]
+    stat = (diff_stat or "")[:2000]
+    return (
+        "Validate the previous harness session. Do not do the work again.\n\n"
+        f"Original task:\n{orig}\n\n"
+        f"Previous session output:\n{prev}\n\n"
+        f"Deterministic gate results: {gates}\n"
+        f"Worktree diff stat: {stat or '(empty)'}\n\n"
+        "If the job is complete, end your reply with exactly one line: JOB_DONE\n"
+        "If it is incomplete or failed, end with exactly one line: "
+        "INCOMPLETE_OR_FAILED_JOB (put 1-3 reason lines directly above it)."
+    )
