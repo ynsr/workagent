@@ -459,3 +459,159 @@ def test_crashed_continuation_never_judges_db(monkeypatch, tmp_path, isolated_co
     assert rows and rows[-1]["validation"]["terminal"] == "MAX_RETRIES_EXCEEDED"
     assert all(r["validation"]["phase"] != "judge" for r in rows)
     assert rows[-1]["exit_code"] == 1
+
+def _git_seq(monkeypatch, mapping):
+    """Stub cv._git by (args-tuple-prefix) -> (code, out)."""
+    from workagent import cli_validate as cv
+
+    def _fake(*args, cwd=""):
+        for prefix, result in mapping.items():
+            if tuple(args[:len(prefix)]) == prefix:
+                return result
+        raise AssertionError(f"unexpected git call: {args}")
+
+    monkeypatch.setattr(cv, "_git", _fake)
+
+
+def test_diff_gate_passes_on_unpushed_commits(tmp_path, monkeypatch):
+    """Finding 1: committed-but-unpushed work must pass the diff sub-gate.
+
+    The full gate still fails on `pushed` until the push lands (by design:
+    the harness retries after pushing); what must not happen is the diff
+    gate ALSO failing on the empty working tree."""
+    from workagent import cli_validate as cv
+    _git_seq(monkeypatch, {
+        ("rev-parse", "HEAD"): (0, "aaa"),
+        ("rev-parse", "@{u}"): (0, "bbb"),
+        ("rev-list", "--count", "@{u}..HEAD"): (0, "2"),
+        ("diff", "--stat", "HEAD"): (0, ""),
+    })
+    res = cv.run_deterministic_gates(str(tmp_path), 0, "did work", True)
+    assert res["checks"]["diff"]["ok"] is True
+    # Only the pushed gate blocks, naming the unpushed commits.
+    assert res["reasons"] == ["not pushed: ahead of upstream by 2 (unpushed)"]
+
+
+def test_diff_gate_passes_on_uncommitted_changes(tmp_path, monkeypatch):
+    """Finding 1: uncommitted changes still pass when nothing is pushed."""
+    from workagent import cli_validate as cv
+    _git_seq(monkeypatch, {
+        ("rev-parse", "HEAD"): (0, "aaa"),
+        ("rev-parse", "@{u}"): (0, "aaa"),
+        ("rev-list", "--count", "@{u}..HEAD"): (0, "0"),
+        ("diff", "--stat", "HEAD"): (0, " f.txt | 1 +"),
+    })
+    res = cv.run_deterministic_gates(str(tmp_path), 0, "did work", True)
+    assert res["passed"] is True
+
+
+def test_diff_gate_fails_when_pushed_clean(tmp_path, monkeypatch):
+    """Finding 1: pushed+clean must still fail expect_changes."""
+    from workagent import cli_validate as cv
+    _git_seq(monkeypatch, {
+        ("rev-parse", "HEAD"): (0, "aaa"),
+        ("rev-parse", "@{u}"): (0, "aaa"),
+        ("rev-list", "--count", "@{u}..HEAD"): (0, "0"),
+        ("diff", "--stat", "HEAD"): (0, ""),
+    })
+    res = cv.run_deterministic_gates(str(tmp_path), 0, "did work", True)
+    assert res["passed"] is False
+    assert res["checks"]["diff"]["ok"] is False
+
+
+def test_behind_upstream_reports_not_pushed(tmp_path, monkeypatch):
+    """Finding 2: behind-upstream must fail the pushed gate distinctly."""
+    from workagent import cli_validate as cv
+    _git_seq(monkeypatch, {
+        ("rev-parse", "HEAD"): (0, "aaa"),
+        ("rev-parse", "@{u}"): (0, "bbb"),
+        ("rev-list", "--count", "@{u}..HEAD"): (0, "0"),
+        ("diff", "--stat", "HEAD"): (0, ""),
+    })
+    ok, detail = cv._branch_pushed(str(tmp_path))
+    assert ok is False and detail == "behind upstream"
+    res = cv.run_deterministic_gates(str(tmp_path), 0, "summary", False)
+    assert res["passed"] is False
+    assert "behind upstream" in res["reasons"][0]
+
+
+def test_ahead_upstream_reports_unpushed(tmp_path, monkeypatch):
+    """Finding 2: ahead-of-upstream reports the unpushed count."""
+    from workagent import cli_validate as cv
+    _git_seq(monkeypatch, {
+        ("rev-parse", "HEAD"): (0, "aaa"),
+        ("rev-parse", "@{u}"): (0, "bbb"),
+        ("rev-list", "--count", "@{u}..HEAD"): (0, "3"),
+        ("diff", "--stat", "HEAD"): (0, ""),
+    })
+    ok, detail = cv._branch_pushed(str(tmp_path))
+    assert ok is False and "ahead of upstream by 3" in detail
+
+
+def test_attempts_persist_across_calls(monkeypatch):
+    """Finding 3: validation_attempts round-trips via the metadata seam."""
+    from workagent import cli_validate as cv
+    saved = {}
+    monkeypatch.setattr(cv, "_attempt_store", lambda: (
+        lambda db, sid, include_deleted_worktrees=False: {
+            "metadata": {"validation_attempts": saved.get(sid, 0)}},
+        lambda db, sid, patch: saved.update({sid: patch["validation_attempts"]})
+        or patch))
+    _pass_gates(monkeypatch)
+    first = cv.validate_headless(
+        worktree="/wt", branch="b", prompt="do it", session_type="sync",
+        run_once=lambda p: {"exit_code": 0, "transcript": "broken"},
+        run_judge=lambda p: "nope\nINCOMPLETE_OR_FAILED_JOB",
+        max_retries=0, session_db="db", session_id="s1")
+    assert first["attempts"] == 1 and saved["s1"] == 1
+    second = cv.validate_headless(
+        worktree="/wt", branch="b", prompt="do it", session_type="sync",
+        run_once=lambda p: {"exit_code": 0, "transcript": "fixed\nJOB_DONE"},
+        run_judge=lambda p: "ok\nJOB_DONE",
+        max_retries=3, session_db="db", session_id="s1")
+    # Prior counter (1) is preserved: the resumed loop continues at 2.
+    assert second["attempts"] == 2 and saved["s1"] == 2
+
+
+def test_suffix_carries_intentional_token():
+    """Finding 4: headless prompts know the INTENTIONAL verdict token."""
+    from workagent import backend
+    assert "INTENTIONALLY_UNCOMMITTED_CHANGES" in backend.VERDICT_SUFFIX
+    assert "WAITING_USER_RESPONSE" in backend.VERDICT_SUFFIX
+
+
+def _tool_jsonl(path, results):
+    import json
+    lines = []
+    for i, err in enumerate(results):
+        content = [{"type": "text", "text": "error: boom"}] if err else [
+            {"type": "text", "text": "ok"}]
+        lines.append(json.dumps({"message": {"role": "toolResult",
+            "toolCallId": f"c{i}", "content": content}}))
+    # One unparseable line + one non-tool line: both must be skipped.
+    lines += ["not json", json.dumps({"message": {"role": "assistant",
+        "content": [{"type": "text", "text": "done"}]}})]
+    path.write_text("\n".join(lines) + "\n")
+    return str(path)
+
+
+def test_error_rate_gate_trips_at_half(tmp_path, monkeypatch):
+    """Finding 5: >=50% tool errors fail; empty toolResults pass."""
+    from workagent import cli_validate as cv
+    monkeypatch.setattr(cv, "_git", lambda *a, **k: (0, "aaa"))
+    monkeypatch.setattr(cv, "_branch_pushed", lambda wt: (True, "in sync"))
+    bad = _tool_jsonl(tmp_path / "bad.jsonl", [True, True, False, False])
+    res = cv.run_deterministic_gates(
+        str(tmp_path), 0, "summary", False, transcript_path=bad)
+    assert res["passed"] is False
+    assert any("tool error rate 2/4" in r for r in res["reasons"])
+    good = _tool_jsonl(tmp_path / "good.jsonl", [True, False, False, False])
+    res = cv.run_deterministic_gates(
+        str(tmp_path), 0, "summary", False, transcript_path=good)
+    assert res["passed"] is True
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("not json\n")
+    res = cv.run_deterministic_gates(
+        str(tmp_path), 0, "summary", False, transcript_path=str(empty))
+    assert res["passed"] is True
+    assert res["checks"]["tool_errors"]["detail"] == "no toolResults to score"

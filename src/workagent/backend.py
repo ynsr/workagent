@@ -11,7 +11,11 @@ from .errors import HarnessError
 
 VERDICT_SUFFIX = (
     "\n\nAt the very end of your reply, print exactly one line containing "
-    "only one of: JOB_DONE, INCOMPLETE_OR_FAILED_JOB. "
+    "only one of: JOB_DONE, INCOMPLETE_OR_FAILED_JOB, "
+    "INTENTIONALLY_UNCOMMITTED_CHANGES. INTENTIONALLY_UNCOMMITTED_CHANGES "
+    "is only valid when uncommitted changes remain that are intentional "
+    "and must stay uncommitted; otherwise use JOB_DONE (done) or "
+    "INCOMPLETE_OR_FAILED_JOB (not done). "
     "If you are blocked waiting on a human decision, print only "
     "WAITING_USER_RESPONSE instead.")
 

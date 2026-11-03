@@ -90,6 +90,17 @@ def _git_diff_stat(worktree: str) -> str:
     return out if code == 0 else ""
 
 
+def _unpushed_count(worktree: str) -> int | None:
+    """Commits on HEAD not on @{u} (None when no upstream / git fails)."""
+    code, out = _git("rev-list", "--count", "@{u}..HEAD", cwd=worktree)
+    if code != 0:
+        return None
+    try:
+        return max(0, int(out.strip()))
+    except (TypeError, ValueError):
+        return None
+
+
 def _branch_pushed(worktree: str) -> tuple[bool, str]:
     code, head = _git("rev-parse", "HEAD", cwd=worktree)
     if code != 0:
@@ -98,15 +109,37 @@ def _branch_pushed(worktree: str) -> tuple[bool, str]:
     if code != 0:
         porcelain = _git_porcelain(worktree)
         return (not porcelain, "no upstream, clean" if not porcelain else "no upstream, dirty tree")
-    code, base = _git("merge-base", "HEAD", "@{u}", cwd=worktree)
-    if code != 0:
-        return False, "no merge-base with upstream"
-    return (base == head, "in sync" if base == head else "local differs from upstream")
+    if head == upstream:
+        return True, "in sync"
+    ahead = _unpushed_count(worktree)
+    if ahead is None:
+        code, base = _git("merge-base", "HEAD", "@{u}", cwd=worktree)
+        if code != 0:
+            return False, "no merge-base with upstream"
+        # merge-base==HEAD means strictly behind; anything else diverged.
+        return False, ("behind upstream" if base == head else "diverged from upstream")
+    if ahead > 0:
+        return False, f"ahead of upstream by {ahead} (unpushed)"
+    return False, "behind upstream"
+
+
+def _tool_error_rate(transcript_path: str | None) -> tuple[int, int] | None:
+    """(errors, total) over toolResult lines; None when none/unreadable."""
+    try:
+        from .harness_summary import tool_error_rate as _scan
+    except Exception:
+        return None
+    try:
+        return _scan(transcript_path) if transcript_path else None
+    except Exception:
+        return None
+
 
 
 def run_deterministic_gates(worktree: str, exit_code: int,
                             transcript: str,
-                            expect_changes: bool) -> dict:
+                            expect_changes: bool,
+                            transcript_path: str | None = None) -> dict:
     """Zero-LLM gates. Never raises; git failures are failed checks."""
     checks: dict = {}
     reasons: list[str] = []
@@ -123,15 +156,35 @@ def run_deterministic_gates(worktree: str, exit_code: int,
                             "detail": "non-empty" if has_text else "empty transcript tail"}
     if not has_text:
         reasons.append("empty transcript tail")
-    if expect_changes:
-        stat = _git_diff_stat(worktree)
-        ok = bool(stat.strip())
-        checks["diff"] = {"ok": ok, "detail": stat[:500] if ok else "empty diff"}
+    err_rate = _tool_error_rate(transcript_path) if transcript_path else None
+    if err_rate is not None and err_rate[1] > 0:
+        errors, total = err_rate
+        ok = errors * 2 < total
+        checks["tool_errors"] = {"ok": ok, "detail": f"{errors}/{total} toolResults errored"}
         if not ok:
-            reasons.append("expected code changes but diff is empty")
+            reasons.append(f"tool error rate {errors}/{total} >= 50%")
+    else:
+        checks["tool_errors"] = {"ok": True, "detail": "no toolResults to score"}
+    if expect_changes:
+        # Semantics: committed+pushed trees end clean, so a raw working-tree
+        # diff can never see start/fix work. Pass when the work is present
+        # as unpushed commits OR uncommitted changes.
+        ahead = _unpushed_count(worktree)
+        stat = _git_diff_stat(worktree)
+        dirty = bool(stat.strip())
+        if ahead is None:
+            ok = dirty
+            detail = stat[:500] if dirty else "no upstream; no uncommitted changes"
+        else:
+            ok = ahead > 0 or dirty
+            detail = stat[:500] if ok else "committed and pushed; no unpushed or uncommitted changes"
+        checks["diff"] = {"ok": ok, "detail": detail}
+        if not ok:
+            reasons.append("expected code changes but none found (no unpushed commits, no uncommitted changes)")
     else:
         checks["diff"] = {"ok": True, "detail": "no changes expected"}
     return {"passed": not reasons, "checks": checks, "reasons": reasons}
+
 
 
 def dirty_gate(worktree: str, branch: str) -> dict:
@@ -170,16 +223,32 @@ def judge_prompt(original: str, previous: str, gates: dict, diff_stat: str) -> s
     )
 
 
+def _attempt_store():
+    """Session-metadata seam: (load, save) or (None, None) when unavailable."""
+    try:
+        from . import store_sessions as _ss
+        return _ss.get_session, _ss.set_session_metadata
+    except Exception:
+        return None, None
+
+
 def validate_headless(*, worktree: str, branch: str, prompt: str,
                       session_type: str | None,
                       run_once, run_judge,
-                      max_retries: int = 3) -> dict:
-    """Retry loop. run_once(prompt)->{exit_code, transcript}; run_judge(prompt)->text.
+                      max_retries: int = 3,
+                      transcript_path: str | None = None,
+                      session_db=None, session_id: str | None = None) -> dict:
+    """Retry loop. run_once(prompt)->{exit_code, transcript[, transcript_path]}.
 
     Every run_once call (main attempt or dirty continuation) appends exactly one
     record to ``runs``: {"exit_code", "output", "trace"}, where ``trace`` is the
     decision taken on that run's output. The terminal verdict is stored as
     ``trace["terminal"]`` on the last record; no extra entry is appended.
+
+    ``session_db``/``session_id`` persist ``validation_attempts`` into session
+    metadata (best effort, via store_sessions.set_session_metadata) so a
+    WAITING resume restarts validation where it stopped. ``run_once`` may
+    return ``transcript_path`` to retarget the tool-error scan per attempt.
 
     Order per attempt: run_once -> WAITING short-circuit -> exit-code gate
     (non-zero = failed attempt, no judge spent) -> Phase-1 dirty gate for
@@ -193,6 +262,23 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
     expect_changes = session_type in ("start", "fix_comments")
     runs: list[dict] = []
     attempts = 0
+
+    _get_session, _set_meta = _attempt_store()
+    if session_db is not None and session_id and _get_session is not None:
+        try:
+            row = _get_session(session_db, session_id, include_deleted_worktrees=True)
+            prior = ((row or {}).get("metadata") or {}).get("validation_attempts", 0)
+            attempts = max(0, int(prior))
+        except Exception:
+            pass
+
+    def _save_attempts() -> None:
+        if session_db is None or not session_id or _set_meta is None:
+            return
+        try:
+            _set_meta(session_db, session_id, {"validation_attempts": attempts})
+        except Exception:
+            pass
 
     def _run(run_prompt: str) -> tuple[int, str]:
         # Fatal harness errors (missing binary, spawn failure) propagate:
@@ -211,7 +297,9 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
         except (TypeError, ValueError):
             code = 1
         text = str(out.get("transcript", "") or "")
-        runs.append({"exit_code": code, "output": text, "trace": None})
+        path = out.get("transcript_path") or transcript_path
+        runs.append({"exit_code": code, "output": text, "trace": None,
+                     "transcript_path": path})
         return code, text
 
     def _decide(phase: str, verdict: str, parse: str, text: str,
@@ -225,8 +313,10 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
 
     def _finish(verdict: str, waiting: bool = False) -> dict:
         runs[-1]["trace"]["terminal"] = verdict
+        _save_attempts()
         return {"verdict": verdict, "attempts": attempts,
                 "runs": runs, "waiting": waiting}
+
 
     def _retry(phase: str, parse: str, text: str, reasons: list[str]) -> dict | None:
         """Counted failed attempt on the latest run; terminal dict once capped."""
@@ -299,8 +389,19 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                         f"reply with only JOB_DONE as the last line.")
                     continue
         try:
-            gates = run_deterministic_gates(worktree, code, transcript[-4000:],
-                                            expect_changes)
+            import inspect as _inspect
+            try:
+                _takes_path = len(_inspect.signature(run_deterministic_gates).parameters) >= 5
+            except (TypeError, ValueError):
+                _takes_path = True
+            if _takes_path:
+                gates = run_deterministic_gates(
+                    worktree, code, transcript[-4000:], expect_changes,
+                    runs[-1].get("transcript_path"))
+            else:
+                # Test fakes with the legacy 4-arg shape: same result, no scan.
+                gates = run_deterministic_gates(worktree, code, transcript[-4000:],
+                                                expect_changes)
         except Exception as e:
             gates = {"passed": False, "checks": {},
                      "reasons": [f"deterministic gates crashed: {e}"]}

@@ -430,7 +430,8 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                     if finish_sid:
                         _sq.set_session_file_path(db, finish_sid, current_path)
                 text = _hs.last_assistant_text(current_path) if current_path else ""
-                return {"exit_code": code, "transcript": text}
+                return {"exit_code": code, "transcript": text,
+                        "transcript_path": current_path}
 
             def run_judge(judge_prompt):
                 with tempfile.TemporaryDirectory(prefix="workagent-judge-") as directory:
@@ -447,7 +448,8 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
 
             validation = _cv.validate_headless(
                 worktree=worktree or fallback_dir, branch=branch, prompt=prompt,
-                session_type=stype, run_once=run_once, run_judge=run_judge)
+                session_type=stype, run_once=run_once, run_judge=run_judge,
+                session_db=db if db.exists() else None, session_id=finish_sid)
             verdict = validation["verdict"]
             exit_code = 2 if verdict == "WAITING_USER_RESPONSE" else (
                 0 if verdict in ("JOB_DONE", "INTENTIONALLY_UNCOMMITTED_CHANGES") else 1)
