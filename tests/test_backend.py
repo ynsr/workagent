@@ -136,6 +136,19 @@ def test_omp_session_file_routes_via_resume(tmp_path):
     assert "--session-file" not in argv
 
 
+def test_omp_judge_argv_is_bare():
+    """Bare judge sessions skip skills/tools/rules/context + cheap model."""
+    from workagent.backend import Harness, OmpHarness
+    assert Harness.judge_argv == []
+    flags = OmpHarness.judge_argv
+    for want in ("--smol", "--no-skills", "--no-tools", "--no-rules",
+                 "--no-context-files", "--no-lsp", "--no-extensions", "--no-pty"):
+        assert want in flags
+    argv = OmpHarness().command_argv("judge this", True, flags)
+    assert argv[:3] == ["omp", "-p", "--auto-approve"]
+    assert argv[-1] == "judge this" and "--smol" in argv
+
+
 def test_preview_command_sources_env(tmp_path, monkeypatch, isolated_config):
     from workagent import cli_harness as _h
     worktree = tmp_path / "wt"

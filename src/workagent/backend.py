@@ -34,6 +34,12 @@ class Harness:
                timeout_s: "int | None" = None) -> int:
         raise NotImplementedError
 
+    #: argv fragment for bare judge sessions: no skills/tools/rules/context
+    #: files — the judge prompt carries everything inline. Harness-specific;
+    #: omitted when empty so other harnesses keep their launch shape.
+    judge_argv: list[str] = []
+
+
     def session_file_flag(self, path: str) -> list[str]:
         """Argv fragment routing a transcript path to the harness.
 
@@ -62,6 +68,13 @@ class OmpHarness(Harness):
         if no_tty:
             return ["omp", "-p", "--auto-approve", *(extra_args or []), prompt]
         return ["omp", *(extra_args or []), prompt]
+
+    # Bare judge sessions: cheap model, no repo-touching surface. Verified
+    # against `omp -h`: each flag exists (--smol bare selects the configured
+    # cheap model). Judge prompts carry task + transcript + gates inline.
+    judge_argv: list[str] = ["--smol", "--no-skills", "--no-tools",
+                             "--no-rules", "--no-context-files",
+                             "--no-lsp", "--no-extensions", "--no-pty"]
 
     def launch(self, prompt, workdir, no_tty, extra_args=None, env_file=None,
                timeout_s=None):

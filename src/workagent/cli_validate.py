@@ -166,18 +166,24 @@ def run_deterministic_gates(worktree: str, exit_code: int,
     else:
         checks["tool_errors"] = {"ok": True, "detail": "no toolResults to score"}
     if expect_changes:
-        # Semantics: committed+pushed trees end clean, so a raw working-tree
-        # diff can never see start/fix work. Pass when the work is present
-        # as unpushed commits OR uncommitted changes.
+        # Semantics: committed+pushed trees end clean, so the check must not
+        # demand uncommitted/unpushed work on top of a verified push — the
+        # pushed gate already owns delivery verification. Fail only when
+        # there is no sign of work at all (behind/diverged, or clean with
+        # nothing delivered).
         ahead = _unpushed_count(worktree)
         stat = _git_diff_stat(worktree)
         dirty = bool(stat.strip())
         if ahead is None:
+            # No upstream: clean tree means nothing verifiable was delivered.
             ok = dirty
             detail = stat[:500] if dirty else "no upstream; no uncommitted changes"
+        elif pushed and not dirty:
+            ok = True
+            detail = "pushed and clean; work delivered"
         else:
             ok = ahead > 0 or dirty
-            detail = stat[:500] if ok else "committed and pushed; no unpushed or uncommitted changes"
+            detail = stat[:500] if ok else "behind/diverged; no unpushed or uncommitted changes"
         checks["diff"] = {"ok": ok, "detail": detail}
         if not ok:
             reasons.append("expected code changes but none found (no unpushed commits, no uncommitted changes)")
@@ -222,6 +228,31 @@ def judge_prompt(original: str, previous: str, gates: dict, diff_stat: str) -> s
         "INCOMPLETE_OR_FAILED_JOB (put 1-3 reason lines directly above it)."
     )
 
+def _judge_may_skip(token: str | None, mode: str, gates: dict,
+                    expect_changes: bool) -> bool:
+    """Cost-cap: skip the LLM judge when evidence is already conclusive.
+
+    Skip only when ALL hold: gates pass, the worker self-attests JOB_DONE
+    as an exact token, and (for code-change sessions) the diff check shows
+    delivered work. WORKAGENT_ALWAYS_JUDGE=1 forces the old always-judge
+    behavior. Skips are recorded as phase "judge-skipped" so the audit
+    trace shows the judge was bypassed, not run."""
+    import os as _os
+    if _os.environ.get("WORKAGENT_ALWAYS_JUDGE") == "1":
+        return False
+    if token != "JOB_DONE" or mode != "exact":
+        return False
+    if not gates.get("passed", False):
+        return False
+    if expect_changes:
+        try:
+            diff_detail = ((gates.get("checks", {}) or {}).get("diff", {})
+                           or {}).get("detail", "")
+        except Exception:
+            return False
+        if "no upstream" in str(diff_detail):
+            return False
+    return True
 
 def _attempt_store():
     """Session-metadata seam: (load, save) or (None, None) when unavailable."""
@@ -415,7 +446,9 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                 f"{'; '.join(reasons)[:2000]}\n"
                 f"End your reply with only JOB_DONE as the last line.")
             continue
-        diff_stat = ""
+        if _judge_may_skip(token, mode, gates, expect_changes):
+            _decide("judge-skipped", "JOB_DONE", mode, transcript)
+            return _finish("JOB_DONE")
         try:
             checks = gates.get("checks", {}) or {}
             diff_detail = (checks.get("diff", {}) or {}).get("detail", "")

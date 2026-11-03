@@ -179,10 +179,13 @@ def test_nonzero_exit_skips_judge(monkeypatch):
         run_once=lambda p: once.pop(0),
         run_judge=lambda p: (judge_calls.append(p) or "ok\nJOB_DONE"))
     assert res["verdict"] == "JOB_DONE" and res["attempts"] == 2
-    assert len(judge_calls) == 1
+    # Recovered attempt self-attests exact JOB_DONE with gates passing:
+    # cost-cap skips the judge (phase recorded, not run).
+    assert judge_calls == []
     assert res["runs"][0]["trace"]["phase"] == "gates"
     assert "exit code 2" in res["runs"][0]["trace"]["reasons"][0]
     assert len(res["runs"]) == 2 and res["runs"][1]["trace"]["terminal"] == "JOB_DONE"
+    assert res["runs"][1]["trace"]["phase"] == "judge-skipped"
 
 
 def test_dirty_tree_triggers_continuation(monkeypatch):
@@ -210,7 +213,7 @@ def test_dirty_tree_triggers_continuation(monkeypatch):
     assert len(seen) == 2
     assert "a.txt" in seen[1] and "origin/feat/x" in seen[1]
     assert [r["output"] for r in res["runs"]] == ["work in progress", "committed\nJOB_DONE"]
-    assert [r["trace"]["phase"] for r in res["runs"]] == ["dirty-gate", "judge"]
+    assert [r["trace"]["phase"] for r in res["runs"]] == ["dirty-gate", "judge-skipped"]
     assert len(res["runs"]) == len(seen)
 
 
@@ -233,7 +236,7 @@ def test_dirty_continuation_intentional_accepts(monkeypatch):
     assert [r["trace"].get("terminal") for r in res["runs"]] == [None, "INTENTIONALLY_UNCOMMITTED_CHANGES"]
 
 
-def test_gate_fail_skips_judge(monkeypatch):
+def test_gate_fail_retries_without_judge(monkeypatch):
     from workagent import cli_validate as cv
     monkeypatch.setattr(cv, "dirty_gate",
                         lambda wt, br: {"dirty": False, "porcelain": ""})
@@ -256,7 +259,9 @@ def test_gate_fail_skips_judge(monkeypatch):
         run_once=lambda p: once.pop(0),
         run_judge=lambda p: (judge_calls.append(p) or "ok\nJOB_DONE"))
     assert res["verdict"] == "JOB_DONE" and res["attempts"] == 2
-    assert len(judge_calls) == 1
+    # Second attempt self-attests exact JOB_DONE with gates passing:
+    # cost-cap skips the (mechanics-verified) judge.
+    assert len(judge_calls) == 0
     assert res["runs"][0]["trace"]["phase"] == "gates"
     assert gate_calls[0][2] is False
 
@@ -329,7 +334,9 @@ def test_headless_retry_resumes_and_judge_is_fresh(monkeypatch, tmp_path, isolat
     monkeypatch.setattr(hh.store, "record_harness_run", lambda *a: None)
     monkeypatch.setattr(hh.store, "clear_harness_run", lambda *a: None)
     from workagent import cli_validate as cv
-    # Wiring test (resume + fresh judge), not a gate test: stub gates clean.
+    # Wiring test (resume + fresh judge), not a gate test: stub gates clean
+    # and force the judge path (cost-cap would otherwise skip it here).
+    monkeypatch.setenv("WORKAGENT_ALWAYS_JUDGE", "1")
     monkeypatch.setattr(cv, "dirty_gate",
                         lambda wt, br: {"dirty": False, "porcelain": ""})
     monkeypatch.setattr(cv, "run_deterministic_gates",
@@ -431,12 +438,12 @@ def test_dirty_continuation_pairs_db_rows(monkeypatch, tmp_path, isolated_config
     hh._run_harness("omp", "do it", str(tmp_path), str(tmp_path), True, True,
                     result, True, run_key="k")
     rows = sorted(sq.list_runs(db), key=lambda r: r["id"])
-    assert len(main_calls) == 1 and len(judge_calls) == 1
+    assert len(main_calls) == 1 and len(judge_calls) == 0
     assert len(rows) == 2
     assert rows[0]["output"].endswith("work in progress")
     assert rows[1]["output"].endswith("committed\nJOB_DONE")
     assert rows[0]["validation"]["phase"] == "dirty-gate"
-    assert rows[1]["validation"]["phase"] == "judge"
+    assert rows[1]["validation"]["phase"] == "judge-skipped"
     assert rows[1]["validation"]["terminal"] == "JOB_DONE"
     assert rows[1]["exit_code"] == 0
 
@@ -505,8 +512,8 @@ def test_diff_gate_passes_on_uncommitted_changes(tmp_path, monkeypatch):
     assert res["passed"] is True
 
 
-def test_diff_gate_fails_when_pushed_clean(tmp_path, monkeypatch):
-    """Finding 1: pushed+clean must still fail expect_changes."""
+def test_diff_gate_passes_when_pushed_clean(tmp_path, monkeypatch):
+    """Pushed+clean is delivered work: diff passes, whole gate passes."""
     from workagent import cli_validate as cv
     _git_seq(monkeypatch, {
         ("rev-parse", "HEAD"): (0, "aaa"),
@@ -515,8 +522,8 @@ def test_diff_gate_fails_when_pushed_clean(tmp_path, monkeypatch):
         ("diff", "--stat", "HEAD"): (0, ""),
     })
     res = cv.run_deterministic_gates(str(tmp_path), 0, "did work", True)
-    assert res["passed"] is False
-    assert res["checks"]["diff"]["ok"] is False
+    assert res["passed"] is True
+    assert res["checks"]["diff"]["ok"] is True
 
 
 def test_behind_upstream_reports_not_pushed(tmp_path, monkeypatch):
@@ -615,3 +622,52 @@ def test_error_rate_gate_trips_at_half(tmp_path, monkeypatch):
         str(tmp_path), 0, "summary", False, transcript_path=str(empty))
     assert res["passed"] is True
     assert res["checks"]["tool_errors"]["detail"] == "no toolResults to score"
+
+
+def test_skip_needs_exact_job_done(monkeypatch):
+    """Cost-cap: tolerant mentions and INCOMPLETE never skip the judge."""
+    from workagent import cli_validate as cv
+    gates = {"passed": True, "checks": {"diff": {"detail": "pushed and clean; work delivered"}}}
+    assert cv._judge_may_skip("JOB_DONE", "exact", gates, True) is True
+    assert cv._judge_may_skip("JOB_DONE", "tolerant", gates, True) is False
+    assert cv._judge_may_skip("INCOMPLETE_OR_FAILED_JOB", "exact", gates, True) is False
+    assert cv._judge_may_skip(None, "none", gates, True) is False
+
+
+def test_skip_needs_gates_and_no_upstream_bar(monkeypatch):
+    """Cost-cap: failed gates or unverifiable no-upstream trees run the judge."""
+    from workagent import cli_validate as cv
+    failed = {"passed": False, "checks": {"diff": {"detail": "pushed and clean; work delivered"}}}
+    assert cv._judge_may_skip("JOB_DONE", "exact", failed, True) is False
+    no_upstream = {"passed": True, "checks": {"diff": {"detail": "no upstream; no uncommitted changes"}}}
+    assert cv._judge_may_skip("JOB_DONE", "exact", no_upstream, True) is False
+    # Non-code sessions have no diff bar: gates + exact token skip.
+    assert cv._judge_may_skip("JOB_DONE", "exact", {"passed": True, "checks": {}}, False) is True
+
+
+def test_skip_opt_out_forces_judge(monkeypatch):
+    """WORKAGENT_ALWAYS_JUDGE=1 restores the old always-judge behavior."""
+    from workagent import cli_validate as cv
+    gates = {"passed": True, "checks": {"diff": {"detail": "pushed and clean; work delivered"}}}
+    assert cv._judge_may_skip("JOB_DONE", "exact", gates, True) is True
+    monkeypatch.setenv("WORKAGENT_ALWAYS_JUDGE", "1")
+    assert cv._judge_may_skip("JOB_DONE", "exact", gates, True) is False
+
+
+def test_skip_records_phase_and_saves_attempts(monkeypatch):
+    """End-to-end: skip finishes JOB_DONE with phase judge-skipped."""
+    from workagent import cli_validate as cv
+    monkeypatch.setattr(cv, "dirty_gate", lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(cv, "run_deterministic_gates",
+                        lambda wt, code, tx, exp: {"passed": True, "checks": {},
+                                                  "reasons": []})
+    judge_calls = []
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it",
+        session_type="sync", max_retries=3,
+        run_once=lambda p: {"exit_code": 0, "transcript": "all good\nJOB_DONE"},
+        run_judge=lambda p: (judge_calls.append(p) or "ok\nJOB_DONE"))
+    assert res["verdict"] == "JOB_DONE" and res["attempts"] == 1
+    assert judge_calls == []
+    assert res["runs"][0]["trace"]["phase"] == "judge-skipped"
+    assert res["runs"][0]["trace"]["terminal"] == "JOB_DONE"

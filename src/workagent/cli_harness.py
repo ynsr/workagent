@@ -437,8 +437,10 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                 with tempfile.TemporaryDirectory(prefix="workagent-judge-") as directory:
                     judge_path = str(Path(directory) / "judge.jsonl")
                     flags = harness.session_file_flag(judge_path)
+                    # Bare judge session: cheap model, no skills/tools/rules/
+                    # context (judge_argv) — prompt carries everything inline.
                     code = backend.launch(harness_name, judge_prompt, worktree or fallback_dir,
-                                          True, _HARNESS_ARGS + flags,
+                                          True, _HARNESS_ARGS + harness.judge_argv + flags,
                                           env_file=str(env_path) if env_path else None,
                                           watch=None, **_launch_kw)
                     minted = _sq.newest_transcript(Path(directory))
