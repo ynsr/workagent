@@ -168,3 +168,56 @@ def judge_prompt(original: str, previous: str, gates: dict, diff_stat: str) -> s
         "If it is incomplete or failed, end with exactly one line: "
         "INCOMPLETE_OR_FAILED_JOB (put 1-3 reason lines directly above it)."
     )
+
+
+def validate_headless(*, worktree: str, branch: str, prompt: str,
+                       session_type: str | None,
+                       run_once, run_judge,
+                       max_retries: int = 3) -> dict:
+    """Retry loop. run_once(prompt)->{exit_code, transcript}; run_judge(prompt)->text.
+
+    Never raises on judge failure (counts as a failed attempt with reasons).
+    Judges Phase-1 continuations too: INTENTIONALLY_UNCOMMITTED_CHANGES
+    short-circuits; WAITING_USER_RESPONSE exits 2 without consuming retry.
+    """
+    trace: list[dict] = []
+    attempts = 0
+    current_prompt = prompt
+    while True:
+        attempts += 1
+        try:
+            out = run_once(current_prompt) or {}
+        except Exception as e:
+            out = {"exit_code": 1, "transcript": f"harness error: {e}"}
+        transcript = str(out.get("transcript", "") or "")
+        token, mode = parse_verdict(transcript)
+        if token == "WAITING_USER_RESPONSE":
+            trace.append({"attempt": attempts, "phase": "main",
+                          "verdict": token, "parse": mode,
+                          "tail": transcript[-2000:]})
+            return {"verdict": token, "attempts": attempts,
+                    "trace": trace, "waiting": True}
+        if (session_type in ("start", "fix_comments")
+                and token == "INTENTIONALLY_UNCOMMITTED_CHANGES"):
+            trace.append({"attempt": attempts, "phase": "dirty-gate",
+                          "verdict": token, "parse": mode,
+                          "tail": transcript[-2000:]})
+            return {"verdict": token, "attempts": attempts,
+                    "trace": trace, "waiting": False}
+        try:
+            judge_text = run_judge(judge_prompt(prompt, transcript, {}, ""))
+        except Exception as e:
+            judge_text = f"judge crashed: {e}\nINCOMPLETE_OR_FAILED_JOB"
+        jtoken, jmode = parse_verdict(judge_text or "")
+        trace.append({"attempt": attempts, "phase": "judge",
+                      "verdict": jtoken or "INCOMPLETE_OR_FAILED_JOB",
+                      "parse": jmode, "tail": transcript[-2000:]})
+        if jtoken == "JOB_DONE":
+            return {"verdict": "JOB_DONE", "attempts": attempts,
+                    "trace": trace, "waiting": False}
+        if attempts > max_retries:
+            return {"verdict": "MAX_RETRIES_EXCEEDED", "attempts": attempts,
+                    "trace": trace, "waiting": False}
+        current_prompt = (f"Continue the unfinished job. The validation judge "
+                          f"reported: {(judge_text or '')[-2000:]}\n"
+                          f"End your reply with only JOB_DONE as the last line.")

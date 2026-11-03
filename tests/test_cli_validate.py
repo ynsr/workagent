@@ -103,3 +103,50 @@ def test_judge_prompt_caps_context():
     big = "x" * 20000
     p = cv.judge_prompt(big, big, {"passed": True, "checks": {}, "reasons": []}, "")
     assert len(p) < 16000 and "JOB_DONE" in p and "INCOMPLETE_OR_FAILED_JOB" in p
+
+
+def test_loop_passes_first_try():
+    from workagent import cli_validate as cv
+    calls = []
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it",
+        session_type="sync",
+        run_once=lambda p: {"exit_code": 0, "transcript": "all good\nJOB_DONE"},
+        run_judge=lambda p: "looks complete\nJOB_DONE")
+    assert res["verdict"] == "JOB_DONE" and res["attempts"] == 1
+
+
+def test_loop_retries_then_succeeds():
+    from workagent import cli_validate as cv
+    outputs = [{"exit_code": 0, "transcript": "half done"},
+               {"exit_code": 0, "transcript": "finished now\nJOB_DONE"}]
+    judge_calls = []
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it",
+        session_type="sync",
+        run_once=lambda p: outputs.pop(0),
+        run_judge=lambda p: (judge_calls.append(p) or "still broken\nINCOMPLETE_OR_FAILED_JOB")
+        if not judge_calls else "fixed\nJOB_DONE")
+    assert res["verdict"] == "JOB_DONE" and res["attempts"] >= 2
+
+
+def test_loop_terminal_after_cap():
+    from workagent import cli_validate as cv
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it",
+        session_type="sync", max_retries=3,
+        run_once=lambda p: {"exit_code": 0, "transcript": "broken"},
+        run_judge=lambda p: "nope\nINCOMPLETE_OR_FAILED_JOB")
+    assert res["verdict"] == "MAX_RETRIES_EXCEEDED" and res["attempts"] == 4
+
+
+def test_waiting_exits_without_retry():
+    from workagent import cli_validate as cv
+    seen = []
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it",
+        session_type="sync",
+        run_once=lambda p: (seen.append(p) or {"exit_code": 0, "transcript": "need input\nWAITING_USER_RESPONSE"}),
+        run_judge=lambda p: "unreachable")
+    assert res["verdict"] == "WAITING_USER_RESPONSE" and res["waiting"] is True
+    assert len(seen) == 1
