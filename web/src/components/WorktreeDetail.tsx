@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { Copy, FolderOpen, History, Rocket, Workflow } from "lucide-react"
+import { Copy, FolderOpen, History, Rocket, SquareTerminal, Workflow } from "lucide-react"
 import type { WorktreeEntry } from "@/lib/api"
 import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -66,6 +67,31 @@ export function WorktreeDetail({
     () => new Set(worktreeKey ? [worktreeKey] : []),
     [worktreeKey],
   )
+  // Bare-harness + prodtest terminal launches: the backend pins a session
+  // row + transcript path, spawns the terminal, and records a run so the
+  // StatusTable overlay re-run path finds them like other harness modes.
+  const qc = useQueryClient()
+  const [pendingMode, setPendingMode] = useState<"harness" | "prodtest" | null>(null)
+  const launchTerminal = useMutation({
+    mutationFn: async (mmode: "harness" | "prodtest") => {
+      const res = await fetch(`/api/worktrees/${encodeURIComponent(worktreeKey ?? "")}/terminal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: mmode }),
+      })
+      if (!res.ok) throw new Error(`terminal launch failed: ${res.status}`)
+      return res.json() as Promise<{ id: string }>
+    },
+    onSuccess: () => {
+      toast.success("Terminal opened")
+      void qc.invalidateQueries({ queryKey: ["sessions"] })
+    },
+    onError: (err: unknown) => toast.error(errorText(err)),
+  })
+  const launchMode = (mmode: "harness" | "prodtest") => {
+    setPendingMode(mmode)
+    launchTerminal.mutate(mmode, { onSettled: () => setPendingMode(null) })
+  }
   const [draft, setDraft] = useState<WorktreeDetailDraft>(() => ({
     branch: entry.branch ?? "",
     worktree: entry.worktree ?? "",
@@ -280,6 +306,19 @@ export function WorktreeDetail({
           </Button>
         ) : null}
         {worktreeKey ? <ActionsMenu selected={scoped} compact /> : null}
+        {worktreeKey ? (
+          <>
+            <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden />
+            <Button variant="outline" size="sm" disabled={launchTerminal.isPending || networkExposed} title="Open a bare AI harness in the OS terminal (no initial prompt)" onClick={() => launchMode("harness")}>
+              <SquareTerminal aria-hidden className="size-4" />
+              {pendingMode === "harness" && launchTerminal.isPending ? "Opening…" : "Harness"}
+            </Button>
+            <Button variant="outline" size="sm" disabled={launchTerminal.isPending || networkExposed} title="Run the prod test plan in the OS terminal" onClick={() => launchMode("prodtest")}>
+              <SquareTerminal aria-hidden className="size-4" />
+              {pendingMode === "prodtest" && launchTerminal.isPending ? "Opening…" : "ProdTest"}
+            </Button>
+          </>
+        ) : null}
         <span className="flex-1" />
         <Button variant="outline" size="sm" onClick={onClose}>
           Close

@@ -674,8 +674,20 @@ def _gh_my_issues(warnings: list[str], days: int = _INITIAL_ISSUES_DAYS,
     return list(rows.values())
 
 
-_CACHE_TTL_SECONDS = 3600
-_CACHE_SWR_SECONDS = max(_CACHE_TTL_SECONDS * 10, 24 * 3600)
+def _cache_ttl_seconds() -> int:
+    """Fresh TTL for issue rows (default 1h; WORKAGENT_ISSUES_TTL_SECONDS)."""
+    from .swr import cache_ttl as _ttl
+    return _ttl("WORKAGENT_ISSUES_TTL_SECONDS", 3600)
+
+
+def _cache_swr_seconds() -> int:
+    """SWR window for issue rows (env or max(ttl*10, 1d))."""
+    from .swr import cache_swr as _swr_window
+    return _swr_window(_cache_ttl_seconds(), "WORKAGENT_ISSUES_SWR_SECONDS")
+
+
+_CACHE_TTL_SECONDS = _cache_ttl_seconds()
+_CACHE_SWR_SECONDS = _cache_swr_seconds()
 
 
 def _cache_key(source: str, days: int, mine: bool) -> str:
@@ -728,9 +740,9 @@ def _cached_source(source: str, fetch, warn: list,
                - datetime.fromisoformat(fetched_at)).total_seconds()
     except ValueError:
         return _live()
-    if age < _CACHE_TTL_SECONDS:
+    if age < _cache_ttl_seconds():
         return cached
-    if age < _CACHE_SWR_SECONDS:
+    if age < _cache_swr_seconds():
         payload, _stale = _swr.serve_stale_or_refresh(cached, False, _live, key)
         return payload
     return _live()

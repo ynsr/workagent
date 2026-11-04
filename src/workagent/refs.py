@@ -30,7 +30,23 @@ _SHORTHAND = re.compile(r"^(?:github:)?([^/\s]+/[^/\s#]+)#(\d+)$")
 
 #: Short timeout for status-table host calls (Dashboard polls every 15s;
 #: a hung gh at the 60s default stalls every row sequentially).
-STATUS_TIMEOUT = 12
+#: Overridable via WORKAGENT_STATUS_TIMEOUT (seconds; unset/invalid → 12).
+def _status_timeout() -> int:
+    """Host-CLI per-call timeout (default 12s; WORKAGENT_STATUS_TIMEOUT)."""
+    import os
+    raw = str(os.environ.get("WORKAGENT_STATUS_TIMEOUT", "")).strip()
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError:
+            pass
+        else:
+            if value > 0:
+                return value
+    return 12
+
+
+STATUS_TIMEOUT = _status_timeout()
 def parse_ref(ref: str) -> dict:
     """Parse an issue/PR ref into {kind, tool, repo, number, url}."""
     m = _JIRA_URL.match(ref)
@@ -369,7 +385,7 @@ def fetch_open_prs(tool: str, cwd: str | None = None) -> list[dict]:
 
 # fail fast: cold gh under proxy takes ~30s, warm ~0.02s;
 # the persistent pr_cache serves rows while gh is slow.
-STATUS_TIMEOUT = 12
+# (STATUS_TIMEOUT is defined once near the top of this module.)
 
 
 def fetch_pr_list_for_branch(tool: str, branch: str, cwd: str | None = None,

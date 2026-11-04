@@ -77,7 +77,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "action list": ("--json", "--csv"),
     "action show": ("--json",),
     "action run": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
-    "action update": ("--json", "--protected", "--no-protected",
+    "action update": ("--json", "--yes", "--protected", "--no-protected",
                       "--dedicated-top-bar", "--no-dedicated-top-bar",
                       "--dedicated-overlay", "--no-dedicated-overlay"),
     "action delete": ("--yes", "--json"),

@@ -12,7 +12,13 @@ import time
 
 from .errors import HarnessError, run_cmd
 
-_TTL = 600
+def _ttl() -> int:
+    """Fresh TTL for the merge-capability memo (default 10m; WORKAGENT_RELEASE_CAPS_TTL_SECONDS)."""
+    from .swr import cache_ttl as _cache_ttl
+    return _cache_ttl("WORKAGENT_RELEASE_CAPS_TTL_SECONDS", 600)
+
+
+_TTL = _ttl()
 _CACHE: dict[tuple[str, str, str], tuple[float, dict]] = {}
 _AUTH_RE = re.compile(r"401|403|auth|token|unauthorized", re.IGNORECASE)
 
@@ -80,7 +86,7 @@ def invalidate(tool: str, path: str, release_branch: str) -> None:
 def get_caps(tool: str, path: str, release_branch: str) -> dict:
     key = (tool, path, release_branch)
     hit = _CACHE.get(key)
-    if hit and time.monotonic() - hit[0] < _TTL:
+    if hit and time.monotonic() - hit[0] < _ttl():
         return hit[1]
     if tool == "glab":
         method = _glab_merge_method(path)

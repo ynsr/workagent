@@ -179,6 +179,7 @@ def action_update(
     dedicated_top_bar: Optional[bool] = typer.Option(None, "--dedicated-top-bar/--no-dedicated-top-bar", help="Set/unset the dedicated top-bar button."),
     dedicated_overlay: Optional[bool] = typer.Option(None, "--dedicated-overlay/--no-dedicated-overlay", help="Set/unset the dedicated overlay button."),
     new_label: Optional[str] = typer.Option(None, "--new-label", help="Rename to a new label (^[a-z0-9_]+$; flow steps referencing it are rewritten)."),
+    yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; update prompts nothing so this is a no-op."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Update a custom action (rename via --new-label; flow steps cascade)."""

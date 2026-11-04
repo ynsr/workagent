@@ -69,11 +69,8 @@ from .cli_harness import _guard_harness, _harness_cell, _launch_in_worktree, _ru
 from .cli_repo_util import (  # noqa: F401,E402
     _CI_STYLES,
     _CI_SYMBOLS,
-    _CI_TTL_SECONDS,
     _DB_CACHE,
-    _NEGATIVE_TTL_SECONDS,
     _PR_STYLES,
-    _STATUS_TTL_SECONDS,
     _repo_default_branch,
     _repo_tool,
 )

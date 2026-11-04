@@ -160,8 +160,20 @@ def validate_release(name: str, diff_mode: str = "remote") -> dict:
             "commit_subjects": _subjects(path, default, release)}
 
 
-_RELEASE_DIFF_TTL_SECONDS = 3600
-_RELEASE_DIFF_SWR_SECONDS = max(_RELEASE_DIFF_TTL_SECONDS * 10, 24 * 3600)
+def _diff_ttl_seconds() -> int:
+    """Fresh TTL for the release diff count (default 1h; WORKAGENT_RELEASE_DIFF_TTL_SECONDS)."""
+    from .swr import cache_ttl as _ttl
+    return _ttl("WORKAGENT_RELEASE_DIFF_TTL_SECONDS", 3600)
+
+
+def _diff_swr_seconds() -> int:
+    """SWR window for the release diff count (env or max(ttl*10, 1d))."""
+    from .swr import cache_swr as _swr_window
+    return _swr_window(_diff_ttl_seconds(), "WORKAGENT_RELEASE_DIFF_SWR_SECONDS")
+
+
+_RELEASE_DIFF_TTL_SECONDS = _diff_ttl_seconds()
+_RELEASE_DIFF_SWR_SECONDS = _diff_swr_seconds()
 
 
 def backfill_release_branches() -> None:
@@ -288,7 +300,7 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(fetched_at)).total_seconds()
         except Exception:
             age = float("inf")
-        if age < _RELEASE_DIFF_TTL_SECONDS:
+        if age < _diff_ttl_seconds():
             if background and db is not None:
                 def _refresh() -> None:
                     try:
@@ -298,7 +310,7 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
                 _swr.serve_stale_or_refresh(stale=True, is_fresh=False, refresh=_refresh,
                                             key=f"release:{repo_name}")
             return _finish(cached, False)
-        if age < _RELEASE_DIFF_SWR_SECONDS:
+        if age < _diff_swr_seconds():
             def _refresh() -> None:
                 try:
                     _sq.set_release_diff_cache(db, repo_name, _live())

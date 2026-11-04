@@ -20,6 +20,62 @@ one shared rule — serve the stale rows now, revalidate in the background:
 """
 from __future__ import annotations
 
+import os
+
+#: Floor for stale-while-revalidate windows: expired rows stay servable
+#: for at least a day while a background refresh runs (Dashboard tables
+#: render instantly). Every cache below derives its SWR window as
+#: ``max(ttl * 10, _SWR_FLOOR_SECONDS)`` unless overridden per-cache.
+#:
+#: Per-cache overrides (all optional, seconds, invalid → default):
+#: - WORKAGENT_STATUS_TTL_SECONDS / WORKAGENT_STATUS_SWR_SECONDS
+#:   (positive PR cell; defaults 259200 / 2592000)
+#: - WORKAGENT_NEGATIVE_TTL_SECONDS / WORKAGENT_NEGATIVE_SWR_SECONDS
+#:   (cached no-PR result; defaults 1800 / 86400)
+#: - WORKAGENT_CI_TTL_SECONDS / WORKAGENT_CI_SWR_SECONDS
+#:   (CI pipeline + review stats + issue status cells; defaults 600 / 86400)
+#: - WORKAGENT_ISSUES_TTL_SECONDS / WORKAGENT_ISSUES_SWR_SECONDS
+#:   (tracker issue rows; defaults 3600 / 86400)
+#: - WORKAGENT_PRS_CACHE_TTL_SECONDS / WORKAGENT_PRS_CACHE_SWR_SECONDS
+#:   (unlinked PR/MR candidates; defaults 600 / 86400)
+#: - WORKAGENT_RELEASE_DIFF_TTL_SECONDS / WORKAGENT_RELEASE_DIFF_SWR_SECONDS
+#:   (release ahead/behind diff; defaults 3600 / 86400)
+#: - WORKAGENT_RELEASE_CAPS_TTL_SECONDS (merge-capability memo; default 600)
+#: - WORKAGENT_STATUS_TIMEOUT (host-CLI per-call timeout; default 12)
+_SWR_FLOOR_SECONDS = 24 * 3600
+
+
+def _env_seconds(name: str, default: int) -> int:
+    """Env override for *name* in seconds; invalid/unset → *default*."""
+    raw = os.environ.get(name, "")
+    if not str(raw).strip():
+        return default
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
+def cache_ttl(env_name: str, default: int) -> int:
+    """Fresh TTL for one cache, overridable via ``env_name``."""
+    return _env_seconds(env_name, default)
+
+
+def cache_swr(ttl_value: int, swr_env_name: str) -> int:
+    """SWR window for one cache: explicit env wins, else max(ttl*10, 1 day)."""
+    raw = os.environ.get(swr_env_name, "")
+    if str(raw).strip():
+        try:
+            value = int(str(raw).strip())
+        except ValueError:
+            pass
+        else:
+            if value >= 0:
+                return value
+    return max(ttl_value * 10, _SWR_FLOOR_SECONDS)
+
+
 import threading
 from collections.abc import Callable
 from typing import Any

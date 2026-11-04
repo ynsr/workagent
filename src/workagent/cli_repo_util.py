@@ -6,19 +6,55 @@ from pathlib import Path
 from . import repos, store
 from .errors import HarnessError
 
+from .swr import cache_swr as _cache_swr
+from .swr import cache_ttl as _cache_ttl
+
 _PR_STYLES = {"open": "bright_green", "merged": "bright_magenta", "closed": "bright_red"}
-_CI_TTL_SECONDS = 600
 _CI_SYMBOLS = {"success": "✓", "failure": "✗", "running": "●"}
 _CI_STYLES = {"success": "bright_green", "failure": "bright_red", "running": "cyan"}
 _DB_CACHE: dict[str, str] = {}
-_STATUS_TTL_SECONDS = 3 * 24 * 3600
-_NEGATIVE_TTL_SECONDS = 30 * 60
-# Stale-while-revalidate windows: cached rows stay servable for
-# max(fresh TTL * 10, 1 day) while a refetch refreshes them in the
-# background (Dashboard tables render the cache instantly).
-_STATUS_SWR_SECONDS = max(_STATUS_TTL_SECONDS * 10, 24 * 3600)
-_NEGATIVE_SWR_SECONDS = max(_NEGATIVE_TTL_SECONDS * 10, 24 * 3600)
-_CI_SWR_SECONDS = max(_CI_TTL_SECONDS * 10, 24 * 3600)
+# Fresh TTLs (seconds), each overridable via its WORKAGENT_* env var
+# (unset/invalid → default). SWR windows: explicit WORKAGENT_*_SWR_SECONDS
+# wins, else max(ttl * 10, 1 day) — cached rows stay servable while a
+# background refetch refreshes them (Dashboard tables render instantly).
+def _status_ttl() -> int:
+    """Fresh TTL for positive PR cells (default 3d)."""
+    return _cache_ttl("WORKAGENT_STATUS_TTL_SECONDS", 3 * 24 * 3600)
+
+
+def _negative_ttl() -> int:
+    """Fresh TTL for cached no-PR results (default 30m)."""
+    return _cache_ttl("WORKAGENT_NEGATIVE_TTL_SECONDS", 30 * 60)
+
+
+def _ci_ttl() -> int:
+    """Fresh TTL for CI/review/issue cells (default 10m)."""
+    return _cache_ttl("WORKAGENT_CI_TTL_SECONDS", 600)
+
+
+# Module-level defaults (import-time snapshot; callers needing live env
+# overrides use the _*_swr() functions below).
+_STATUS_TTL_SECONDS = _status_ttl()
+_NEGATIVE_TTL_SECONDS = _negative_ttl()
+_CI_TTL_SECONDS = _ci_ttl()
+_STATUS_SWR_SECONDS = _cache_swr(_STATUS_TTL_SECONDS, "WORKAGENT_STATUS_SWR_SECONDS")
+_NEGATIVE_SWR_SECONDS = _cache_swr(_NEGATIVE_TTL_SECONDS, "WORKAGENT_NEGATIVE_SWR_SECONDS")
+_CI_SWR_SECONDS = _cache_swr(_CI_TTL_SECONDS, "WORKAGENT_CI_SWR_SECONDS")
+
+
+def _status_swr() -> int:
+    """SWR window for positive PR cells (env or max(ttl*10, 1d))."""
+    return _cache_swr(_status_ttl(), "WORKAGENT_STATUS_SWR_SECONDS")
+
+
+def _negative_swr() -> int:
+    """SWR window for cached no-PR results (env or max(ttl*10, 1d))."""
+    return _cache_swr(_negative_ttl(), "WORKAGENT_NEGATIVE_SWR_SECONDS")
+
+
+def _ci_swr() -> int:
+    """SWR window for CI/review/issue cells (env or max(ttl*10, 1d))."""
+    return _cache_swr(_ci_ttl(), "WORKAGENT_CI_SWR_SECONDS")
 
 
 def _repo_default_branch(repo: str) -> str | None:

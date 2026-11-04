@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -187,6 +188,39 @@ def _open_terminal(worktree: str, session_file: str,
     from . import webapp as _w
     return _w._open_terminal(worktree, session_file, env_file)
 
+
+def _open_terminal_watch(worktree: str, session_file: str, sid: str,
+                         scope_dir: str, before: str,
+                         env_file: str | None = None,
+                         harness_name: str = "omp") -> int | None:
+    """Spawn the OS terminal on a bare session file via the watch shim.
+
+    A bare terminal launch has no prompt/command for the harness: build the
+    bare `<harness> --session-dir <scope>` shell command (mirrors
+    `web_runs._resume_shell_command` fresh-file branch — omp mints the
+    .jsonl on first write) and spawn the terminal on it through
+    `cli_harness.spawn_in_terminal` with the `watch-and-exec` watcher
+    encoded in the shell command, so the minted transcript lands on the
+    session row seconds after start like headless/interactive launches.
+    Best effort on the watch encoding — the spawn must succeed even when
+    the shim argv cannot be built.
+    """
+    import shlex as _shlex
+    from pathlib import Path as _Path
+    from . import env as _env
+    from .cli_harness import spawn_in_terminal as _spawn_term
+    scope = scope_dir or (str(_Path(session_file).parent) if session_file else "")
+    harness_cmd = f"{harness_name} --session-dir {_shlex.quote(scope)}" if scope else harness_name
+    full_cmd = _env.wrap_command(f"cd {_shlex.quote(worktree)} && {harness_cmd}",
+                                 _env.resolve_env_file(env_file))
+    shim_argv = [sys.executable, "-m", "workagent", "watch-and-exec",
+                 "--sid", str(sid), "--scope-dir", scope or worktree,
+                 "--before", before or "", "--", "bash", "-lc", full_cmd]
+    shim_cmd = " ".join(_shlex.quote(a) for a in shim_argv)
+    try:
+        return _spawn_term(shim_cmd, worktree)
+    except Exception:
+        return _spawn_term(full_cmd, worktree)
 
 def _env_file_arg(args: list[str]) -> str:
     """Explicit --env-file passthrough from run args ("" when absent)."""
@@ -488,6 +522,87 @@ def register_runs_routes(app, registry) -> None:
         if not _store.stop_terminal_run(ref):
             raise ApiError("not_found", f"no live terminal agent for {ref}", 404)
         return {"worktree_ref": ref, "stopped": True}
+
+    @app.post("/api/worktrees/{ref_key}/terminal")
+    async def launch_worktree_terminal(ref_key: str, body: dict) -> dict:
+        """Spawn a bare harness in the OS terminal for a worktree (no prompt).
+
+        Body: {"mode": "harness" | "prodtest"}. Creates a session row with a
+        pinned transcript path (session_type from mode), spawns the terminal
+        on it, claims the terminal lock, and records a runs row — so the
+        StatusTable overlay re-run path finds it like other harness modes.
+        """
+        from . import store as _store
+        from . import store_sqlite as _sq
+        from . import worktrees as _wts
+        mode = str((body or {}).get("mode", "harness") or "harness")
+        if mode not in ("harness", "prodtest"):
+            raise ApiError("bad_arg", f"unknown terminal mode: {mode!r}", 400)
+        links = _store.load_links()
+        key = ref_key if ref_key in links else ""
+        if not key:
+            resolved = _wts.resolve_worktree(ref_key, links)
+            if isinstance(resolved, list):
+                raise ApiError("ambiguous", f"ambiguous worktree ref {ref_key!r}", 400)
+            if isinstance(resolved, str):
+                key = resolved
+        if not key or key not in links or not isinstance(links[key], dict):
+            raise ApiError("not_found", f"no linked worktree for {ref_key!r}", 404)
+        entry = links[key] or {}
+        worktree = str(entry.get("worktree") or "")
+        if not worktree:
+            raise ApiError("no_worktree", f"no worktree for {key!r}", 404)
+        harness_name = str(_store.load_config().get("default_harness", "omp") or "omp")
+        branch = str(entry.get("branch") or "")
+        db = _sq.db_path()
+        sid = _sq.gen_session_id()
+        if mode == "prodtest":
+            command = "prodtest run"
+            stype: str | None = "prodtest_run"
+            meta: dict = {}
+        else:
+            command = "harness"
+            stype = None
+            meta = {}
+        try:
+            session_path = str(_sq.session_file_path(sid, harness_name, branch=branch or None, session_type=stype))
+        except Exception:
+            session_path = ""
+        if (blocker := _live_terminal_blocker(worktree, key)) is not None:
+            raise ApiError("conflict", _conflict_msg(worktree, blocker), 409)
+        # Claim the slot BEFORE the spawn: two concurrent POSTs must not
+        # both pass the blocker check above. Re-claimed with the real pid
+        # after a successful spawn (record_harness_run overwrites own slot).
+        _claim_terminal_lock(worktree, key, None)
+        try:
+            if db.exists() and key in _store.load_links(include_inactive=True, include_deleted=True):
+                nsid = _sq.insert_session(db, worktree_ref=key, harness_name=harness_name, initiator_command=command, prompt="", file_path=session_path, session_id=sid, session_type=stype, metadata=meta)
+                sid = nsid
+        except Exception:
+            pass
+        scope_dir = str(Path(session_path).parent) if session_path else worktree
+        try:
+            before = _sq.newest_transcript(Path(scope_dir)) if scope_dir else None
+        except Exception:
+            before = None
+        try:
+            pid = _open_terminal_watch(worktree, session_path or sid, sid, scope_dir, str(before) if before else "", harness_name=harness_name)
+        except Exception:
+            from . import store as _store2
+            try:
+                _store2.clear_harness_run(key)
+            except Exception:
+                pass
+            raise
+        _claim_terminal_lock(worktree, key, pid)
+        try:
+            if db.exists() and key in _store.load_links(include_inactive=True, include_deleted=True):
+                _sq.finish_session(db, sid, "preview")
+                _sq.insert_run(db, sid, command, [key], 0, output=[f"terminal pid: {pid}"])
+        except Exception:
+            pass
+        return {"id": sid, "session_file": session_path, "worktree": worktree, "mode": mode}
+
 
     @app.post("/api/sessions/{sid}/resume")
     async def resume_session(sid: str) -> dict:

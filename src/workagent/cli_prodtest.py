@@ -17,6 +17,28 @@ prodtest_app = typer.Typer(help="Generate and run production test plans.", no_ar
 app.add_typer(prodtest_app, name="prodtest")
 
 
+def _resolve_plan_file(entry: dict, issue_key: str, stored: str) -> Path | None:
+    """Plan file for *issue_key*: stored path when it exists, else the
+
+    canonical on-disk ``.workagent/prodtest/plans/<KEY>.yaml`` under the
+    linked worktree. Returns None when neither resolves to a real file.
+    Best effort, never raises.
+    """
+    try:
+        if stored and Path(stored).is_file():
+            return Path(stored)
+    except Exception:
+        pass
+    try:
+        wt = str((entry or {}).get("worktree", "") or "")
+        safe = "".join(c if (c.isalnum() or c in ("-", "_")) else "-" for c in (issue_key or ""))
+        cand = Path(wt) / ".workagent" / "prodtest" / "plans" / f"{safe}.yaml"
+        if safe and cand.is_file():
+            return cand
+    except Exception:
+        pass
+    return None
+
 def _plan_filename(issue_number: str | None, mr_number: str | None) -> str:
     if issue_number:
         safe = "".join(c if (c.isalnum() or c in ("-", "_")) else "-" for c in issue_number)
@@ -277,15 +299,17 @@ def prodtest_run(
              extra_prompt, session_file)
 
 
-def _prodtest_eligibility(links: dict) -> tuple[list[tuple[str, dict, str]], list[dict]]:
-    """Eligible (key, entry, store_key) runs + skip rows for ``--all``.
+def _prodtest_eligibility(links: dict) -> tuple[list[tuple[str, dict, str, Path | None]], list[dict]]:
+    """Eligible (key, entry, store_key, plan_file) runs + skip rows for ``--all``.
 
-    Eligible = active link + prodtest row with non-empty ``release_sha`` and
-    ``plan_path``. Everything else becomes a ``skipped:<reason>`` row — never
-    torn down, never failed. Never raises on store errors.
+    Eligible = active link + prodtest row with non-empty ``release_sha`` and a
+    plan file that resolves — the stored ``plan_path`` when it exists, else
+    the canonical on-disk plan under the linked worktree. Everything else
+    becomes a ``skipped:<reason>`` row — never torn down, never failed.
+    Never raises on store errors.
     """
     from . import prodtest_lock as _lock
-    eligible: list[tuple[str, dict, str]] = []
+    eligible: list[tuple[str, dict, str, Path | None]] = []
     skipped: list[dict] = []
     lock_base = str(store.config_dir())
     for key in sorted(links):
@@ -301,7 +325,8 @@ def _prodtest_eligibility(links: dict) -> tuple[list[tuple[str, dict, str]], lis
         if not item or not str((item or {}).get("release_sha", "") or ""):
             skipped.append({"key": key, "status": "skipped:no-release"})
             continue
-        if not str((item or {}).get("plan_path", "") or ""):
+        plan_file = _resolve_plan_file(entry, store_key, str((item or {}).get("plan_path", "") or ""))
+        if plan_file is None:
             skipped.append({"key": key, "status": "skipped:no-plan"})
             continue
         wt = str(entry.get("worktree", "") or "")
@@ -314,7 +339,7 @@ def _prodtest_eligibility(links: dict) -> tuple[list[tuple[str, dict, str]], lis
                 continue
         except Exception:
             pass
-        eligible.append((key, dict(entry), store_key))
+        eligible.append((key, dict(entry), store_key, plan_file))
     return eligible, skipped
 
 
@@ -328,7 +353,7 @@ def _run_all(fix_mode: str, skip_version_gate: bool, launch: bool, terminal: boo
     eligible, skipped = _prodtest_eligibility(links)
     rows: list[dict] = list(skipped)
     if dry_run:
-        for key, entry, store_key in eligible:
+        for key, entry, store_key, _plan in eligible:
             cmd = f"prodtest run {store_key} --no-tty"
             if launch:
                 cmd += " --launch"
@@ -341,7 +366,7 @@ def _run_all(fix_mode: str, skip_version_gate: bool, launch: bool, terminal: boo
         _print_result({"results": rows}, json_output)
         return
     if not launch:
-        for key, entry, store_key in eligible:
+        for key, entry, store_key, _plan in eligible:
             argv = [sys.executable, "-m", "workagent", "prodtest", "run",
                     store_key, "--no-tty"]
             _h.record_headless_attempt(
@@ -353,7 +378,7 @@ def _run_all(fix_mode: str, skip_version_gate: bool, launch: bool, terminal: boo
         _print_result({"results": rows}, json_output)
         return
     failures = 0
-    for key, entry, store_key in eligible:
+    for key, entry, store_key, _plan in eligible:
         try:
             _run_one(store_key, fix_mode, skip_version_gate, None, launch,
                      terminal, no_tty, False, True, json_output, harness,
@@ -410,7 +435,7 @@ def _run_one(ref: str,
         _fail(f"no release recorded for {store_key}; release first", 2)
 
     plan_path = str((item or {}).get("plan_path", "") or "")
-    plan_file = Path(plan_path) if plan_path else None
+    plan_file = _resolve_plan_file(entry, store_key, plan_path)
     issue_url = str(entry.get("issue_url", "") or "")
 
     if run_dir:
@@ -425,7 +450,8 @@ def _run_one(ref: str,
 
     if dry_run:
         _print_result({"key": key, "issue": store_key, "run_dir": str(out_dir),
-                       "release_sha": release_sha, "plan_file": plan_path,
+                       "release_sha": release_sha,
+                       "plan_file": str(plan_file) if plan_file else plan_path,
                        "fix_mode": fix_mode, "skip_version_gate": skip_version_gate,
                        "dry_run": True}, json_output)
         return

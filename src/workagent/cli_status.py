@@ -28,12 +28,12 @@ from .cli_harness import _harness_cell
 from .cli_repo_util import (
     _CI_STYLES,
     _CI_SYMBOLS,
-    _CI_SWR_SECONDS,
-    _NEGATIVE_SWR_SECONDS,
     _PR_STYLES,
-    _STATUS_SWR_SECONDS,
+    _ci_swr,
+    _negative_swr,
     _repo_default_branch,
     _repo_tool,
+    _status_swr,
 )
 from .errors import HarnessError, run_cmd
 
@@ -57,7 +57,10 @@ from .cli_status_cells import (  # noqa: F401,E402
 def _cache_usable(cached: dict) -> bool:
     """Cached PR cell still servable (stale-while-revalidate): age within
     max(fresh TTL * 10, 1 day) — 30d for a cached PR, 1d for a cached
-    no-PR result. Reused only while branch/base tips are unchanged."""
+    no-PR result. Reused only while branch/base tips are unchanged.
+
+    TTL/SWR windows resolve from WORKAGENT_* env (see swr helpers).
+    """
     ts = cached.get("checked_at", "")
     if not ts:
         return False
@@ -65,7 +68,7 @@ def _cache_usable(cached: dict) -> bool:
         age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
     except ValueError:
         return False
-    swr = _STATUS_SWR_SECONDS if cached.get("pr") else _NEGATIVE_SWR_SECONDS
+    swr = _status_swr() if cached.get("pr") else _negative_swr()
     return age < timedelta(seconds=swr)
 
 
@@ -92,7 +95,7 @@ def _fetch_origins(links: dict, refresh: bool) -> None:
 
 def _ci_usable(cached: dict) -> bool:
     """Cached CI still servable (stale-while-revalidate): checked within
-    max(10 min * 10, 1 day)."""
+    max(10 min * 10, 1 day) (WORKAGENT_CI_*_SECONDS override)."""
     ts = cached.get("ci_checked_at", "")
     if not ts:
         return False
@@ -100,7 +103,7 @@ def _ci_usable(cached: dict) -> bool:
         age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
     except ValueError:
         return False
-    return age < timedelta(seconds=_CI_SWR_SECONDS)
+    return age < timedelta(seconds=_ci_swr())
 
 
 def _query_pr(repo: str, branch: str) -> tuple[dict | None, str | None]:
@@ -288,7 +291,7 @@ def _ci_cell(entry: dict, cells: dict, refresh_pr: bool) -> tuple[str | None, st
 
 def _reviews_usable(cached: dict) -> bool:
     """Cached review-comment stats still servable (stale-while-revalidate):
-    checked within max(10 min * 10, 1 day)."""
+    checked within max(10 min * 10, 1 day) (WORKAGENT_CI_*_SECONDS override)."""
     ts = cached.get("reviews_checked_at", "")
     if not ts:
         return False
@@ -296,7 +299,7 @@ def _reviews_usable(cached: dict) -> bool:
         age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
     except ValueError:
         return False
-    return age < timedelta(seconds=_CI_SWR_SECONDS)
+    return age < timedelta(seconds=_ci_swr())
 
 
 def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool) -> dict | None:
@@ -332,7 +335,7 @@ def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool) -> dict | None:
 
 def _issue_usable(cached: dict) -> bool:
     """Cached issue status still servable (stale-while-revalidate):
-    checked within max(10 min * 10, 1 day)."""
+    checked within max(10 min * 10, 1 day) (WORKAGENT_CI_*_SECONDS override)."""
     ts = cached.get("issue_status_checked_at", "")
     if not ts:
         return False
@@ -340,7 +343,7 @@ def _issue_usable(cached: dict) -> bool:
         age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
     except ValueError:
         return False
-    return age < timedelta(seconds=_CI_SWR_SECONDS)
+    return age < timedelta(seconds=_ci_swr())
 
 
 def _issue_cell(key: str, entry: dict, refresh_pr: bool = False) -> str | None:

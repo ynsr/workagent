@@ -181,24 +181,30 @@ def test_validate_results_flags_unknown_cases(tmp_path, monkeypatch):
     assert "EVIL" in out
 
 
-def _run_all_links(monkeypatch, links):
+def _run_all_links(monkeypatch, links, plan_path="p.yaml"):
     from workagent import cli
     monkeypatch.setattr(cli.store, "load_links", lambda **k: links)
     monkeypatch.setattr(cli.store, "get_prodtest", lambda key: {
-        "A": {"release_sha": "sha1", "plan_path": "p.yaml"},
-        "B": {"release_sha": "", "plan_path": "p.yaml"},
-        "C": {"plan_path": "p.yaml"},
+        "A": {"release_sha": "sha1", "plan_path": plan_path},
+        "B": {"release_sha": "", "plan_path": plan_path},
+        "C": {"plan_path": plan_path},
+        "D": {"release_sha": "sha2", "plan_path": ""},
     }.get(key))
 
 
 def test_run_all_dry_run_lists_eligible_and_skips(isolated_config, tmp_path, monkeypatch):
     import json
     from workagent import cli
+    plan = tmp_path / "p.yaml"
+    plan.write_text("plan_version: 1\n")
+    (tmp_path / ".workagent" / "prodtest" / "plans").mkdir(parents=True)
+    (tmp_path / ".workagent" / "prodtest" / "plans" / "D.yaml").write_text("plan_version: 1\n")
     _run_all_links(monkeypatch, {
         "jira:A": {"worktree": str(tmp_path), "issue": "A"},
         "jira:B": {"worktree": str(tmp_path), "issue": "B"},
         "jira:C": {"worktree": str(tmp_path), "issue": "C"},
-    })
+        "jira:D": {"worktree": str(tmp_path), "issue": "D"},
+    }, plan_path=str(plan))
     r = runner.invoke(cli.app, ["prodtest", "run", "--all", "--dry-run", "--json"])
     assert r.exit_code == 0, r.output
     rows = json.loads(r.stdout)["results"]
@@ -206,6 +212,8 @@ def test_run_all_dry_run_lists_eligible_and_skips(isolated_config, tmp_path, mon
     assert by_key["jira:A"]["status"] == "dry-run"
     assert by_key["jira:B"]["status"] == "skipped:no-release"
     assert by_key["jira:C"]["status"] == "skipped:no-release"
+    # Empty stored plan_path but a valid canonical on-disk plan → eligible.
+    assert by_key["jira:D"]["status"] == "dry-run"
 
 
 def test_run_all_rejects_ref_and_run_dir(isolated_config, tmp_path, monkeypatch):

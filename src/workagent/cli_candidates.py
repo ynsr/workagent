@@ -109,8 +109,20 @@ def _candidate_prs() -> tuple[list[dict], list[str]]:
     return prs, warnings
 
 
-_PRS_CACHE_TTL_SECONDS = 600  # 10min fresh — mirrors the per-PR lookup TTL
-_PRS_CACHE_SWR_SECONDS = max(_PRS_CACHE_TTL_SECONDS * 10, 24 * 3600)  # 1d floor
+def _prs_cache_ttl() -> int:
+    """Fresh TTL for unlinked PR/MR cache (default 10m; WORKAGENT_PRS_CACHE_TTL_SECONDS)."""
+    from .swr import cache_ttl as _ttl
+    return _ttl("WORKAGENT_PRS_CACHE_TTL_SECONDS", 600)
+
+
+def _prs_cache_swr() -> int:
+    """SWR window for unlinked PR/MR cache (env or max(ttl*10, 1d))."""
+    from .swr import cache_swr as _swr_window
+    return _swr_window(_prs_cache_ttl(), "WORKAGENT_PRS_CACHE_SWR_SECONDS")
+
+
+_PRS_CACHE_TTL_SECONDS = _prs_cache_ttl()  # 10min fresh — mirrors the per-PR lookup TTL
+_PRS_CACHE_SWR_SECONDS = _prs_cache_swr()  # 1d floor
 
 
 def _candidate_prs_cached(force: bool = False) -> tuple[list[dict], list[str], bool]:
@@ -141,7 +153,7 @@ def _candidate_prs_cached(force: bool = False) -> tuple[list[dict], list[str], b
     if cached and fetched_at:
         try:
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(fetched_at)).total_seconds()
-            fresh = age < _PRS_CACHE_TTL_SECONDS
+            fresh = age < _prs_cache_ttl()
         except ValueError:
             pass
     if fresh:

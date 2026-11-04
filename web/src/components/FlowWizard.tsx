@@ -70,7 +70,10 @@ export function FlowWizard({
   async function handleSaveAs() {
     const name = window.prompt("New template name:", `${template.name} (copy)`)
     if (!name || !name.trim()) return
-    const label = window.prompt("New template label (a-z, 0-9, _):")
+    const suggested =
+      name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/_{2,}/g, "_") ||
+      `${template.label}_copy`
+    const label = window.prompt("New template label (a-z, 0-9, _):", suggested)
     if (!label || !label.trim()) return
     setSaving(true)
     try {
