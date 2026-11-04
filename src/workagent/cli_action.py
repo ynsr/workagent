@@ -110,6 +110,7 @@ def action_add(
     sort_order: int = typer.Option(0, "--sort-order", help="Management-table ordering weight."),
     dedicated_top_bar: bool = typer.Option(False, "--dedicated-top-bar/--no-dedicated-top-bar", help="Show a dedicated top-bar button."),
     dedicated_overlay: bool = typer.Option(False, "--dedicated-overlay/--no-dedicated-overlay", help="Show a dedicated worktree-row overlay button."),
+    yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; add prompts nothing so this is a no-op."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Add a custom action.

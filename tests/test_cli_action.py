@@ -378,7 +378,7 @@ def test_action_add_display_flags(tmp_path, monkeypatch):
     runner = CliRunner()
     result = runner.invoke(cli_mod.app, ["action", "add", "--name", "Lint",
         "--prompt", "lint it", "--protected", "--sort-order", "4",
-        "--dedicated-overlay"])
+        "--dedicated-overlay", "--yes"])
     assert result.exit_code == 0, result.output
     assert created.get("protected") is True
     assert created.get("sort_order") == 4
@@ -396,7 +396,7 @@ def test_action_update_display_flags(tmp_path, monkeypatch):
     monkeypatch.setattr("workagent.store.update_action", fake_update)
     runner = CliRunner()
     result = runner.invoke(cli_mod.app, ["action", "update", "lint",
-        "--no-protected", "--sort-order", "6", "--dedicated-top-bar"])
+        "--no-protected", "--sort-order", "6", "--dedicated-top-bar", "--yes"])
     assert result.exit_code == 0, result.output
     assert updated.get("protected") is False
     assert updated.get("sort_order") == 6

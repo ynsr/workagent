@@ -47,6 +47,7 @@ def template_add(
     sort_order: int = typer.Option(0, "--sort-order", help="Management-table ordering weight."),
     dedicated_top_bar: bool = typer.Option(False, "--dedicated-top-bar/--no-dedicated-top-bar", help="Show a dedicated top-bar button."),
     dedicated_overlay: bool = typer.Option(False, "--dedicated-overlay/--no-dedicated-overlay", help="Show a dedicated worktree-row overlay button."),
+    yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; add prompts nothing so this is a no-op."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Add a flow template (steps required — the wizard builds them)."""
@@ -109,6 +110,7 @@ def template_update(
     dedicated_top_bar: Optional[bool] = typer.Option(None, "--dedicated-top-bar/--no-dedicated-top-bar", help="Set/unset the dedicated top-bar button."),
     dedicated_overlay: Optional[bool] = typer.Option(None, "--dedicated-overlay/--no-dedicated-overlay", help="Set/unset the dedicated overlay button."),
     new_label: Optional[str] = typer.Option(None, "--new-label", help="Rename to a new label (^[a-z0-9_]+$; flows history retargeted)."),
+    yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; update prompts nothing so this is a no-op."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Update a flow template (rename via --new-label; flows history retargeted)."""
@@ -143,6 +145,7 @@ def template_clone(
     src: str = typer.Argument(..., help="Source template label."),
     name: Optional[str] = typer.Option(None, "--name", help="Display name (default: '<src name> (copy)')."),
     label: Optional[str] = typer.Option(None, "--label", help="Unique key (default: normalized name)."),
+    yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; clone prompts nothing so this is a no-op."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Duplicate a flow template (lineage recorded in parent_labels)."""
@@ -164,6 +167,7 @@ def template_compose(
     label: str = typer.Argument(..., help="New template label."),
     from_: str = typer.Option(..., "--from", help="Comma-separated source template labels in order."),
     name: Optional[str] = typer.Option(None, "--name", help="Display name (default: label)."),
+    yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; compose prompts nothing so this is a no-op."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Combine templates into one flat chain (keep-first-start; lineage recorded)."""

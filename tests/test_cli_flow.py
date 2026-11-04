@@ -702,7 +702,7 @@ def test_template_add_display_flags(tmp_path, monkeypatch):
     runner = CliRunner()
     result = runner.invoke(cli_mod.app, ["flow", "template", "add", "--name", "Full",
         "--steps", '[{"kind": "cleanup"}]', "--protected",
-        "--sort-order", "5", "--dedicated-top-bar", "--dedicated-overlay"])
+        "--sort-order", "5", "--dedicated-top-bar", "--dedicated-overlay", "--yes"])
     assert result.exit_code == 0, result.output
     assert created.get("protected") is True
     assert created.get("sort_order") == 5
@@ -721,7 +721,7 @@ def test_template_update_display_flags(tmp_path, monkeypatch):
     monkeypatch.setattr("workagent.store.update_template", fake_update)
     runner = CliRunner()
     result = runner.invoke(cli_mod.app, ["flow", "template", "update", "full",
-        "--protected", "--sort-order", "9", "--no-dedicated-top-bar"])
+        "--protected", "--sort-order", "9", "--no-dedicated-top-bar", "--yes"])
     assert result.exit_code == 0, result.output
     assert updated.get("protected") is True
     assert updated.get("sort_order") == 9
