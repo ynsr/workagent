@@ -20,7 +20,7 @@ Date: 2026-11-04. Status: design approved, not implemented.
 
 ## Changes
 
-### 1. Schema (`store_sqlite.py`, `store_flows.py`, `store_custom_actions.py`)
+- `sort_order` has no uniqueness constraint; ties break by `id`.
 
 - `flow_templates` + `custom_actions` each gain:
   `protected INTEGER NOT NULL DEFAULT 0`,
