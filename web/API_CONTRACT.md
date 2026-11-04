@@ -123,6 +123,8 @@ Candidates/Launch issue fetch per tracker — `tracker add
   "name": "Generate Post PRD", "icon": "Zap", "prompt": "…",
   "pre_execution": "", "post_execution": "",
   "default_options": {"run_mode": "preview"},
+  "protected": false, "sort_order": 0,
+  "dedicated_top_bar": false, "dedicated_overlay": false,
   "created_at": "…", "modified_at": "…"}]}
 ```
 (CRUD page source: `action add/list/show/update/delete` run as runs; detail 404s
@@ -137,6 +139,8 @@ by the Dashboard Actions dropdown.)
   "steps": [{"kind": "start"}, {"kind": "review"}, {"kind": "cleanup"}],
   "pre_execution": "", "post_execution": "",
   "parent_labels": [],
+  "protected": false, "sort_order": 0,
+  "dedicated_top_bar": false, "dedicated_overlay": false,
   "created_at": "…", "modified_at": "…"}]}
 ```
  (Flow page source: `flow template add/list/show/update/clone/compose/delete` run as runs; detail 404s
