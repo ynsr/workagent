@@ -85,7 +85,7 @@ def derive_session_type(command: str, fix_comments: bool = False) -> str | None:
         return "fix_comments"
     if c in ("start", "review", "sync", "flow"):
         return c
-    if c == "action":
+    if c in ("action", "adhoc"):
         return "custom_action"
     first_two = " ".join(c.split()[:2])
     if first_two == "prodtest plan":

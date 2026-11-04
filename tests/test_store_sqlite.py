@@ -530,6 +530,11 @@ def test_derive_session_type_matrix():
     assert derive_session_type("cleanup", False) is None
     assert derive_session_type("", False) is None
 
+
+def test_derive_session_type_adhoc_is_custom_action():
+    from workagent.store_sessions import derive_session_type
+    assert derive_session_type("adhoc", False) == "custom_action"
+
 def test_set_session_metadata_merges(tmp_path):
     from workagent import store_sqlite as sq
     db = tmp_path / "state.db"
