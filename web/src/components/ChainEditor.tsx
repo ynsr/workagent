@@ -159,6 +159,9 @@ function StepConfigForm({
   const showNewFixSession = kind === "fix_comments"
   const showMergeOnly = kind === "cleanup"
   const showUpdate = kind === "prodtest_plan"
+  const showRelease = kind === "release"
+  const releaseChecks = typeof config.checks === "string" ? config.checks : "ci"
+  const releaseDiff = typeof config.diff === "string" ? config.diff : "remote"
   function patch(key: string, value: unknown) {
     const next = { ...config }
     const hint = key === "run_mode" ? hintRunMode : hints?.[key]
@@ -256,6 +259,36 @@ function StepConfigForm({
           />
           Update existing plan (regenerate)
         </label>
+      ) : null}
+      {showRelease ? (
+        <>
+          <div className="grid gap-1.5">
+            <Label htmlFor={`${idPrefix}-checks`}>Checks</Label>
+            <select
+              id={`${idPrefix}-checks`}
+              value={releaseChecks}
+              onChange={(e) => patch("checks", e.target.value)}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring"
+            >
+              <option value="ci">ci</option>
+              <option value="local">local</option>
+              <option value="both">both</option>
+              <option value="none">none</option>
+            </select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor={`${idPrefix}-diff`}>Diff</Label>
+            <select
+              id={`${idPrefix}-diff`}
+              value={releaseDiff}
+              onChange={(e) => patch("diff", e.target.value)}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring"
+            >
+              <option value="remote">remote</option>
+              <option value="local">local</option>
+            </select>
+          </div>
+        </>
       ) : null}
       <div className="sm:col-span-2">
         <button

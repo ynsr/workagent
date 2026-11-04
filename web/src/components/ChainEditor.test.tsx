@@ -51,3 +51,21 @@ describe("ChainEditor fix-comments checkbox", () => {
     expect(next[0]?.config?.use_review_session).toBe(true)
   })
 })
+
+describe("ChainEditor release selects", () => {
+  it("shows Checks and Diff selects only for release steps", () => {
+    const release: FlowStep[] = [{ kind: "release", config: {} }]
+    const { unmount } = render(
+      <ChainEditor mode="edit" steps={release} onChange={() => undefined} knownActions={[]} />,
+    )
+    expect(screen.getByLabelText("Checks")).toBeInTheDocument()
+    expect(screen.getByLabelText("Diff")).toBeInTheDocument()
+    unmount()
+    const cleanup: FlowStep[] = [{ kind: "cleanup", config: {} }]
+    render(
+      <ChainEditor mode="edit" steps={cleanup} onChange={() => undefined} knownActions={[]} />,
+    )
+    expect(screen.queryByLabelText("Checks")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Diff")).not.toBeInTheDocument()
+  })
+})
