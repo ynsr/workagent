@@ -22,9 +22,13 @@ function startsWithStart(t: FlowTemplateRow): boolean {
 export function FlowsMenu({ selected }: { selected: Set<string> }) {
   const navigate = useNavigate()
   const { data } = useFlowTemplates()
-  const templates = data?.templates ?? []
+  const templates: FlowTemplateRow[] = data?.templates ?? []
+  const sorted = [...templates].sort(
+    (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id,
+  )
   const hasSelection = selected.size > 0
-  const listed = templates.filter((t) =>
+  const topBar = sorted.filter((t) => t.dedicated_top_bar)
+  const listed = sorted.filter((t) =>
     hasSelection ? !startsWithStart(t) : startsWithStart(t),
   )
   const [open, setOpen] = useState(false)
@@ -41,6 +45,18 @@ export function FlowsMenu({ selected }: { selected: Set<string> }) {
 
   return (
     <>
+      {topBar.map((t) => (
+        <Button
+          key={`top-${t.label}`}
+          variant="outline"
+          size="sm"
+          title={hasSelection ? `Run ${t.name} on ${selected.size} selected worktrees` : `Open ${t.name} in Launch → Flow tab`}
+          onClick={() => handlePick(t)}
+        >
+          <Workflow aria-hidden className="size-4" />
+          {t.name}
+        </Button>
+      ))}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button

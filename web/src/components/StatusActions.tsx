@@ -1,11 +1,11 @@
-import type { ReactNode } from "react"
-import { FileCheck, GitPullRequest, History, Play, RefreshCw, Rocket, Square, Trash2, Undo2, Wrench } from "lucide-react"
-import type { WorktreeMap } from "@/lib/api"
-import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
-import { useSessions } from "@/lib/queries"
-import { SessionResumeActions } from "@/components/RunActions"
-import type { StatusTableActions } from "@/components/StatusTable"
+import { useState } from "react"
+import { useNavigate } from "react-router-dom"
+import { toast } from "sonner"
+import { FileCheck, GitPullRequest, History, Play, RefreshCw, Rocket, Square, Trash2, Undo2, Workflow, Wrench, Zap } from "lucide-react"
+import { FlowWizard } from "@/components/FlowWizard"
+import type { FlowTemplateRow, WorktreeMap } from "@/lib/api"
+import { useActions, useCreateRun, useFlowTemplates } from "@/lib/queries"
+import { errorText } from "@/components/StatusFeedback"
 
 export function ActionIcon({
   title,
@@ -38,6 +38,54 @@ export function ActionIcon({
   )
 }
 
+/** Dedicated overlay buttons for flagged templates/actions on one worktree row. */
+function DedicatedOverlay({ worktreeKey }: { worktreeKey: string }) {
+  const navigate = useNavigate()
+  const createRun = useCreateRun()
+  const { data: flowData } = useFlowTemplates()
+  const { data: actionData } = useActions()
+  const sortedTemplates = [...(flowData?.templates ?? [])].sort(
+    (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id,
+  )
+  const sortedActions = [...(actionData?.actions ?? [])].sort(
+    (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id,
+  )
+  const flaggedTemplates = sortedTemplates.filter((t) => t.dedicated_overlay)
+  const flaggedActions = sortedActions.filter((a) => a.dedicated_overlay)
+  const [wizard, setWizard] = useState<FlowTemplateRow | null>(null)
+  if (flaggedTemplates.length === 0 && flaggedActions.length === 0) return null
+  async function handleAction(label: string, name: string) {
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "action",
+        args: ["run", label, worktreeKey, "--launch", "--yes"],
+        confirm: false,
+      })
+      toast.success(`Action ${name} started on ${worktreeKey}`, {
+        action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+    } catch (err) {
+      toast.error(`${worktreeKey}: ${errorText(err)}`)
+    }
+  }
+  return (
+    <>
+      {flaggedTemplates.map((t) => (
+        <ActionIcon key={`flow-${t.label}`} title={`Run flow ${t.name} on ${worktreeKey}`} onClick={() => setWizard(t)}>
+          <Workflow aria-hidden />
+        </ActionIcon>
+      ))}
+      {flaggedActions.map((a) => (
+        <ActionIcon key={`action-${a.label}`} title={`Run action ${a.name} on ${worktreeKey}`} onClick={() => void handleAction(a.label, a.name)}>
+          <Zap aria-hidden />
+        </ActionIcon>
+      ))}
+      {wizard ? (
+        <FlowWizard template={wizard} refs={[worktreeKey]} onClose={() => setWizard(null)} />
+      ) : null}
+    </>
+  )
+}
 export function RowActions({
   worktreeKey,
   entry,
@@ -59,6 +107,7 @@ export function RowActions({
   const lastSession = useCopyResumeSession(worktreeKey, entry.worktree)
   return (
     <div className={overlay ? "flex items-center justify-end gap-0.5" : "flex items-center justify-end gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-within:opacity-100 [@media(hover:hover)]:hover:opacity-100"}>
+      {overlay ? <DedicatedOverlay worktreeKey={worktreeKey} /> : null}
       {actions.onSync ? (
         <ActionIcon title={`Sync ${worktreeKey}`} onClick={() => actions.onSync?.(worktreeKey)}>
           <RefreshCw aria-hidden />

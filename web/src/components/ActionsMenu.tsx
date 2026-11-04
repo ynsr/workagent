@@ -17,8 +17,11 @@ import { useActions, useCreateRun } from "@/lib/queries"
 export function ActionsMenu({ selected, compact = false }: { selected: Set<string>; compact?: boolean }) {
   const navigate = useNavigate()
   const createRun = useCreateRun()
-  const { data } = useActions()
   const actions = data?.actions ?? []
+  const sorted = [...actions].sort(
+    (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id,
+  )
+  const topBar = sorted.filter((a) => a.dedicated_top_bar)
   const [open, setOpen] = useState(false)
   const [running, setRunning] = useState<string | null>(null)
 
@@ -43,6 +46,20 @@ export function ActionsMenu({ selected, compact = false }: { selected: Set<strin
   }
 
   return (
+    <>
+      {topBar.map((a) => (
+        <Button
+          key={`top-${a.label}`}
+          variant="outline"
+          size="sm"
+          disabled={selected.size === 0 || running !== null}
+          title={`Run ${a.name} on ${selected.size} selected worktrees (headless)`}
+          onClick={() => void handleRun(a.label)}
+        >
+          <ActionIcon name={a.icon} />
+          {a.name}
+        </Button>
+      ))}
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         {compact ? (
@@ -76,13 +93,13 @@ export function ActionsMenu({ selected, compact = false }: { selected: Set<strin
         )}
       </PopoverTrigger>
       <PopoverContent className="w-64 p-1" align="end">
-        {actions.length === 0 ? (
+        {sorted.length === 0 ? (
           <p className="px-2 py-3 text-sm text-muted-foreground">
             No custom actions yet.{" "}
             <a href="/actions" className="underline underline-offset-2">Add one</a>.
           </p>
         ) : (
-          actions.map((a) => (
+          sorted.map((a) => (
             <button
               key={a.label}
               type="button"
@@ -101,5 +118,6 @@ export function ActionsMenu({ selected, compact = false }: { selected: Set<strin
         )}
       </PopoverContent>
     </Popover>
+    </>
   )
 }
