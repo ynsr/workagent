@@ -42,8 +42,10 @@ export function FlowTemplates() {
   const createRun = useCreateRun()
   const { data, isPending, isFetching, isError, error, refetch } = useFlowTemplates()
   const { data: actionsData } = useActions()
-  const templates = data?.templates ?? []
-  const knownActions = (actionsData?.actions ?? []).map((a) => ({ label: a.label, name: a.name }))
+  const templates: FlowTemplateRow[] = data?.templates ?? []
+  const sortedTemplates = [...templates].sort(
+    (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id,
+  )
   const [name, setName] = useState("")
   const [label, setLabel] = useState("")
   const [labelDirty, setLabelDirty] = useState(false)
@@ -197,6 +199,47 @@ export function FlowTemplates() {
       toast.error(errorText(err))
     }
   }
+  async function handleToggle(row: FlowTemplateRow, field: "protected" | "dedicated_top_bar" | "dedicated_overlay") {
+    try {
+      const on = !(row as Record<string, unknown>)[field]
+      const flag = field.replaceAll("_", "-")
+      await createRun.mutateAsync({
+        command: "flow",
+        confirm: false,
+        args: ["template", "update", row.label, on ? `--${flag}` : `--no-${flag}`, "--yes"],
+      })
+      toast.success(`Template ${row.label} ${field} ${on ? "on" : "off"}`)
+      void refetch()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+  async function handleMove(row: FlowTemplateRow, dir: -1 | 1) {
+    const idx = sortedTemplates.findIndex((t) => t.label === row.label)
+    const other = sortedTemplates[idx + dir]
+    if (idx < 0 || !other) return
+    try {
+      const aOrder = row.sort_order ?? 0
+      const bOrder = other.sort_order ?? 0
+      const target = bOrder === aOrder ? aOrder + dir : bOrder
+      await createRun.mutateAsync({
+        command: "flow",
+        confirm: false,
+        args: ["template", "update", row.label, "--sort-order", String(target), "--yes"],
+      })
+      if (bOrder === aOrder) {
+        await createRun.mutateAsync({
+          command: "flow",
+          confirm: false,
+          args: ["template", "update", other.label, "--sort-order", String(aOrder), "--yes"],
+        })
+      }
+      toast.success(`Template ${row.label} moved ${dir < 0 ? "up" : "down"}`)
+      void refetch()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
 
   async function handleCopyJson() {
     try {
@@ -274,11 +317,15 @@ export function FlowTemplates() {
                       <TableHead>Name</TableHead>
                       <TableHead>Label</TableHead>
                       <TableHead>Steps</TableHead>
+                      <TableHead>Order</TableHead>
+                      <TableHead>Protected</TableHead>
+                      <TableHead>Top</TableHead>
+                      <TableHead>Overlay</TableHead>
                       <TableHead>Updated</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {templates.map((t) => (
+                    {sortedTemplates.map((t) => (
                       <TableRow key={t.label}>
                         <TableCell>
                           <input
@@ -307,6 +354,28 @@ export function FlowTemplates() {
                         <TableCell className="font-mono text-xs">
                           {t.steps?.length ?? 0}
                         </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {t.sort_order ?? 0}
+                          <span className="ml-1 inline-flex gap-0.5">
+                            <Button variant="ghost" size="sm" title={`Move ${t.name} up`} onClick={() => void handleMove(t, -1)}>▲</Button>
+                            <Button variant="ghost" size="sm" title={`Move ${t.name} down`} onClick={() => void handleMove(t, 1)}>▼</Button>
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" title={t.protected ? `Unprotect ${t.name}` : `Protect ${t.name}`} onClick={() => void handleToggle(t, "protected")}>
+                            {t.protected ? "🔒" : "🔓"}
+                          </Button>
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" title={t.dedicated_top_bar ? `Remove top-bar button for ${t.name}` : `Add top-bar button for ${t.name}`} onClick={() => void handleToggle(t, "dedicated_top_bar")}>
+                            {t.dedicated_top_bar ? "★" : "☆"}
+                          </Button>
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" title={t.dedicated_overlay ? `Remove overlay button for ${t.name}` : `Add overlay button for ${t.name}`} onClick={() => void handleToggle(t, "dedicated_overlay")}>
+                            {t.dedicated_overlay ? "◉" : "○"}
+                          </Button>
+                        </TableCell>
                         <TableCell title={exactDateTime(t.modified_at)}>
                           {relativeDate(t.modified_at)}
                         </TableCell>
@@ -315,12 +384,16 @@ export function FlowTemplates() {
                             <Button variant="ghost" size="sm" title={`Clone ${t.name}`} onClick={() => handleClone(t)}>
                               <Copy aria-hidden />
                             </Button>
-                            <Button variant="ghost" size="sm" title={`Edit ${t.name}`} onClick={() => handleEdit(t)}>
-                              <Pencil aria-hidden />
-                            </Button>
-                            <Button variant="ghost" size="sm" title={`Delete ${t.name}`} onClick={() => void handleRemove(t)}>
-                              <Trash2 aria-hidden />
-                            </Button>
+                            {t.protected ? null : (
+                              <>
+                                <Button variant="ghost" size="sm" title={`Edit ${t.name}`} onClick={() => handleEdit(t)}>
+                                  <Pencil aria-hidden />
+                                </Button>
+                                <Button variant="ghost" size="sm" title={`Delete ${t.name}`} onClick={() => void handleRemove(t)}>
+                                  <Trash2 aria-hidden />
+                                </Button>
+                              </>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>

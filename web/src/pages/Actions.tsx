@@ -51,7 +51,10 @@ export function Actions() {
   const confirm = useConfirm()
   const createRun = useCreateRun()
   const { data, isPending, isFetching, isError, error, refetch } = useActions()
-  const actions = data?.actions ?? []
+  const actions: ActionRow[] = data?.actions ?? []
+  const sortedActions = [...actions].sort(
+    (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id,
+  )
 
   const [name, setName] = useState("")
   const [label, setLabel] = useState("")
@@ -183,6 +186,47 @@ export function Actions() {
       toast.error(errorText(err))
     }
   }
+  async function handleToggle(row: ActionRow, field: "protected" | "dedicated_top_bar" | "dedicated_overlay") {
+    try {
+      const on = !(row as Record<string, unknown>)[field]
+      const flag = field.replaceAll("_", "-")
+      await createRun.mutateAsync({
+        command: "action",
+        confirm: false,
+        args: ["update", row.label, on ? `--${flag}` : `--no-${flag}`, "--yes"],
+      })
+      toast.success(`Action ${row.label} ${field} ${on ? "on" : "off"}`)
+      void refetch()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+  async function handleMove(row: ActionRow, dir: -1 | 1) {
+    const idx = sortedActions.findIndex((a) => a.label === row.label)
+    const other = sortedActions[idx + dir]
+    if (idx < 0 || !other) return
+    try {
+      const aOrder = row.sort_order ?? 0
+      const bOrder = other.sort_order ?? 0
+      const target = bOrder === aOrder ? aOrder + dir : bOrder
+      await createRun.mutateAsync({
+        command: "action",
+        confirm: false,
+        args: ["update", row.label, "--sort-order", String(target), "--yes"],
+      })
+      if (bOrder === aOrder) {
+        await createRun.mutateAsync({
+          command: "action",
+          confirm: false,
+          args: ["update", other.label, "--sort-order", String(aOrder), "--yes"],
+        })
+      }
+      toast.success(`Action ${row.label} moved ${dir < 0 ? "up" : "down"}`)
+      void refetch()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
 
   async function handleCopyJson() {
     try {
@@ -248,12 +292,15 @@ export function Actions() {
                       <TableHead>Name</TableHead>
                       <TableHead>Label</TableHead>
                       <TableHead>Mode</TableHead>
+                      <TableHead>Order</TableHead>
+                      <TableHead>Protected</TableHead>
+                      <TableHead>Top</TableHead>
+                      <TableHead>Overlay</TableHead>
                       <TableHead>Updated</TableHead>
-                      <TableHead className="w-28" aria-label="Actions" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {actions.map((a) => (
+                    {sortedActions.map((a) => (
                       <TableRow key={a.label}>
                         <TableCell>
                           <ActionIcon name={a.icon} className="size-4" />
@@ -271,17 +318,43 @@ export function Actions() {
                         <TableCell>
                           <Badge variant="secondary">{runModeOf(a)}</Badge>
                         </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {a.sort_order ?? 0}
+                          <span className="ml-1 inline-flex gap-0.5">
+                            <Button variant="ghost" size="sm" title={`Move ${a.name} up`} onClick={() => void handleMove(a, -1)}>▲</Button>
+                            <Button variant="ghost" size="sm" title={`Move ${a.name} down`} onClick={() => void handleMove(a, 1)}>▼</Button>
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" title={a.protected ? `Unprotect ${a.name}` : `Protect ${a.name}`} onClick={() => void handleToggle(a, "protected")}>
+                            {a.protected ? "🔒" : "🔓"}
+                          </Button>
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" title={a.dedicated_top_bar ? `Remove top-bar button for ${a.name}` : `Add top-bar button for ${a.name}`} onClick={() => void handleToggle(a, "dedicated_top_bar")}>
+                            {a.dedicated_top_bar ? "★" : "☆"}
+                          </Button>
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" title={a.dedicated_overlay ? `Remove overlay button for ${a.name}` : `Add overlay button for ${a.name}`} onClick={() => void handleToggle(a, "dedicated_overlay")}>
+                            {a.dedicated_overlay ? "◉" : "○"}
+                          </Button>
+                        </TableCell>
                         <TableCell title={exactDateTime(a.modified_at)}>
                           {relativeDate(a.modified_at)}
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-1">
-                            <Button variant="ghost" size="sm" title={`Edit ${a.name}`} onClick={() => handleEdit(a)}>
-                              <Pencil aria-hidden />
-                            </Button>
-                            <Button variant="ghost" size="sm" title={`Delete ${a.name}`} onClick={() => void handleRemove(a)}>
-                              <Trash2 aria-hidden />
-                            </Button>
+                            {a.protected ? null : (
+                              <>
+                                <Button variant="ghost" size="sm" title={`Edit ${a.name}`} onClick={() => handleEdit(a)}>
+                                  <Pencil aria-hidden />
+                                </Button>
+                                <Button variant="ghost" size="sm" title={`Delete ${a.name}`} onClick={() => void handleRemove(a)}>
+                                  <Trash2 aria-hidden />
+                                </Button>
+                              </>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
