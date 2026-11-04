@@ -110,7 +110,7 @@ def test_run_timeout_kills_harness_and_marks_blocked(isolated_config, tmp_path, 
             raise _HarnessTimeout("command timed out: sleep 30")
         return None
 
-    monkeypatch.setattr(cli_prodtest, "_run_harness", _sleepy)
+    monkeypatch.setattr("workagent.cli_prodtest_checks._run_harness", _sleepy)
     # Checkout/validate/render/comment: keep hermetic, avoid FS/network.
     monkeypatch.setattr("workagent.release_worktree.prepare",
                         lambda repo, dest, sha: tmp_path)
@@ -123,8 +123,8 @@ def test_run_timeout_kills_harness_and_marks_blocked(isolated_config, tmp_path, 
     monkeypatch.setattr("workagent.issue_comments.post_issue_comment",
                         lambda url, body: None)
 
-    from workagent import cli_prodtest as _cp
-    monkeypatch.setattr(_cp, "_run_timeout_s", lambda plan_file, skip: 1)
+    monkeypatch.setattr("workagent.cli_prodtest_run._run_timeout_s",
+                        lambda plan_file, skip: 1)
     t0 = time.monotonic()
     r = runner.invoke(cli.app, ["prodtest", "run", "IPG-9",
                                 "--launch", "--no-tty", "--yes", "--json",

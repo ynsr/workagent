@@ -118,6 +118,26 @@ def test_row_gate_warn_missing_passes_merged_loop(isolated_config, tmp_path, mon
     rows = _json.loads(r.stdout)["results"]
     assert rows[0]["status"] == "cleaned"
 
+def test_row_gate_hashes_worktree_not_repo(isolated_config, tmp_path, monkeypatch):
+    """row_prodtest_gate hashes the linked worktree (matches _finish_plan)."""
+    from workagent import cli_cleanup as cc
+    from workagent import store
+    wt = tmp_path / "wt"; wt.mkdir()
+    repo = tmp_path / "repo"; repo.mkdir()
+    entry = {"issue": "IPG-9", "worktree": str(wt), "branch": "feat/9",
+             "repo": str(repo)}
+    monkeypatch.setattr(store, "get_prodtest",
+                        lambda key: {"plan_diff_hash": "wt-hash",
+                                     "plan_path": "p.yaml"})
+    seen: list[str] = []
+    monkeypatch.setattr(cc, "current_prodtest_diff",
+                        lambda d, default: seen.append(d) or "wt-hash")
+    monkeypatch.setattr(cc, "run_validate",
+                        lambda plan, manifest: {"valid": True, "errors": [],
+                                                "warnings": []})
+    assert cc.row_prodtest_gate("k", dict(entry)) is None
+    assert seen == [str(wt)], seen
+
 
 def test_review_checklist_block_appended(monkeypatch):
     import workagent.cli_review as rv

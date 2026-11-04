@@ -69,11 +69,18 @@ def row_prodtest_gate(key: str, entry: dict) -> str | None:
         mode = str((store.load_config().get("prodtest") or {}).get("mode", "block"))
     except Exception:
         mode = "block"
-    current = ""
+    # Hash the linked worktree, not the main checkout: _finish_plan stores
+    # current_prodtest_diff(worktree, …), so hashing repo here mismatches
+    # whenever the worktree diff differs from the checkout (IPG-1069).
+    wt = str((entry or {}).get("worktree", "") or "")
+    base = wt if wt and Path(wt).is_dir() else str((entry or {}).get("repo", "") or "")
+    default = ""
     try:
-        repo = str((entry or {}).get("repo", "") or "")
-        default = repos.default_branch(Path(repo)) if repo and Path(repo).is_dir() else ""
-        current = _cc.current_prodtest_diff(repo, default or "main")
+        default = repos.default_branch(Path(base)) if base and Path(base).is_dir() else ""
+    except Exception:
+        default = ""
+    try:
+        current = _cc.current_prodtest_diff(base, default or "main")
     except Exception:
         current = ""
     manifest = _cc.manifest_path_for(_cc._prodtest_issue_key(key, entry),
