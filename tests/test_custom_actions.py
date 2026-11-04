@@ -115,3 +115,24 @@ def test_rename_invalid_label_rejected(tmp_path):
             assert getattr(e, "exit_code", 2) == 2
         else:
             raise AssertionError(f"expected rejection for {bad!r}")
+
+
+def test_action_display_columns(tmp_path):
+    from workagent import store_custom_actions as ca
+    db = _db(tmp_path)
+    row = ca.create_action(db, name="Lint", prompt="lint it", protected=True,
+                           sort_order=2, dedicated_top_bar=True,
+                           dedicated_overlay=True)
+    assert row["protected"] is True
+    assert row["sort_order"] == 2
+    assert row["dedicated_top_bar"] is True
+    assert row["dedicated_overlay"] is True
+    assert ca.get_action(db, row["label"])["protected"] is True
+
+
+def test_actions_ordered_by_sort_order(tmp_path):
+    from workagent import store_custom_actions as ca
+    db = _db(tmp_path)
+    ca.create_action(db, name="Second", prompt="p", sort_order=2)
+    ca.create_action(db, name="First", prompt="p", sort_order=1)
+    assert [r["label"] for r in ca.list_actions(db)] == ["first", "second"]

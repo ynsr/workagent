@@ -225,3 +225,30 @@ def test_action_rename_rewrites_template_steps(tmp_path, monkeypatch):
     assert row["label"] == "lint_v2"
     tpl = store.get_template("pipe")
     assert tpl["steps"][1]["action_label"] == "lint_v2"
+
+
+def test_template_display_columns(tmp_path):
+    from workagent import store_flows as sf
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    row = sf.create_template(db, name="Full", steps=[{"kind": "cleanup"}],
+                             protected=True, sort_order=3,
+                             dedicated_top_bar=True, dedicated_overlay=True)
+    assert row["protected"] is True
+    assert row["sort_order"] == 3
+    assert row["dedicated_top_bar"] is True
+    assert row["dedicated_overlay"] is True
+    got = sf.get_template(db, row["label"])
+    assert got is not None and got["protected"] is True and got["sort_order"] == 3
+
+
+def test_templates_ordered_by_sort_order(tmp_path):
+    from workagent import store_flows as sf
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    sf.create_template(db, name="Second", steps=[{"kind": "cleanup"}], sort_order=2)
+    sf.create_template(db, name="First", steps=[{"kind": "cleanup"}], sort_order=1)
+    labels = [r["label"] for r in sf.list_templates(db)]
+    assert labels == ["first", "second"]

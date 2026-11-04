@@ -58,21 +58,29 @@ def _row(r: sqlite3.Row | tuple) -> dict:
     else:
         keys = ("id", "label", "name", "icon", "prompt", "pre_execution",
                 "post_execution", "default_options", "created_at",
-                "modified_at")
+                "modified_at", "protected", "sort_order",
+                "dedicated_top_bar", "dedicated_overlay")
         d = dict(zip(keys, r))
     try:
         d["default_options"] = json.loads(d.get("default_options") or "{}")
     except (json.JSONDecodeError, TypeError):
         d["default_options"] = {}
+    d["protected"] = bool(d.get("protected", 0))
+    try:
+        d["sort_order"] = int(d.get("sort_order", 0) or 0)
+    except (TypeError, ValueError):
+        d["sort_order"] = 0
+    d["dedicated_top_bar"] = bool(d.get("dedicated_top_bar", 0))
+    d["dedicated_overlay"] = bool(d.get("dedicated_overlay", 0))
     return d
 
 
 def list_actions(db: Path) -> list[dict]:
-    """All custom actions ordered by id."""
+    """All custom actions ordered by sort_order, id."""
     with _connect(db) as conn:
         conn.row_factory = sqlite3.Row
         return [_row(r) for r in conn.execute(
-            "SELECT * FROM custom_actions ORDER BY id")]
+            "SELECT * FROM custom_actions ORDER BY sort_order, id")]
 
 
 def get_action(db: Path, label: str) -> dict | None:
@@ -87,7 +95,9 @@ def get_action(db: Path, label: str) -> dict | None:
 def create_action(db: Path, *, name: str, label: str = "",
                   icon: str = "", prompt: str = "",
                   pre_execution: str = "", post_execution: str = "",
-                  default_options: str = "") -> dict:
+                  default_options: str = "", protected: bool = False,
+                  sort_order: int = 0, dedicated_top_bar: bool = False,
+                  dedicated_overlay: bool = False) -> dict:
     """Insert a custom action; label defaults to the normalized name."""
     from .errors import HarnessError
     if not (name or "").strip():
@@ -117,10 +127,13 @@ def create_action(db: Path, *, name: str, label: str = "",
             cur = conn.execute(
                 "INSERT INTO custom_actions (label, name, icon, prompt,"
                 " pre_execution, post_execution, default_options,"
-                " created_at, modified_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " protected, sort_order, dedicated_top_bar,"
+                " dedicated_overlay, created_at, modified_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (key, name.strip(), icon, prompt or "", pre_execution or "",
-                 post_execution or "", json.dumps(opts), now, now))
+                 post_execution or "", json.dumps(opts), int(bool(protected)),
+                 int(sort_order or 0), int(bool(dedicated_top_bar)),
+                 int(bool(dedicated_overlay)), now, now))
         except sqlite3.IntegrityError:
             raise HarnessError(
                 f"action label {key!r} already exists", exit_code=2) from None
@@ -139,7 +152,8 @@ def update_action(db: Path, label: str, **fields) -> dict:
     """
     from .errors import HarnessError
     allowed = {"name", "icon", "prompt", "pre_execution", "post_execution",
-               "default_options", "new_label"}
+               "default_options", "new_label", "protected", "sort_order",
+               "dedicated_top_bar", "dedicated_overlay"}
     unknown = set(fields) - allowed
     if unknown:
         raise HarnessError(f"unknown fields: {sorted(unknown)}", exit_code=2)
@@ -154,6 +168,14 @@ def update_action(db: Path, label: str, **fields) -> dict:
     if "default_options" in fields and isinstance(fields["default_options"], str):
         fields["default_options"] = json.dumps(
             parse_default_options(fields["default_options"]))
+    for _flag in ("protected", "dedicated_top_bar", "dedicated_overlay"):
+        if _flag in fields:
+            fields[_flag] = int(bool(fields[_flag]))
+    if "sort_order" in fields:
+        try:
+            fields["sort_order"] = int(fields["sort_order"] or 0)
+        except (TypeError, ValueError):
+            raise HarnessError("sort_order must be an integer", exit_code=2) from None
     new_label = fields.pop("new_label", None)
     with _connect(db) as conn:
         conn.row_factory = sqlite3.Row

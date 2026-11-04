@@ -206,7 +206,9 @@ def _row(r: sqlite3.Row | tuple) -> dict:
         d = dict(r)
     else:
         keys = ("id", "label", "name", "steps", "pre_execution",
-                "post_execution", "created_at", "modified_at")
+                "post_execution", "parent_labels", "created_at", "modified_at",
+                "protected", "sort_order", "dedicated_top_bar",
+                "dedicated_overlay")
         d = dict(zip(keys, r))
     try:
         d["steps"] = json.loads(d.get("steps") or "[]")
@@ -217,6 +219,13 @@ def _row(r: sqlite3.Row | tuple) -> dict:
         d["parent_labels"] = parents if isinstance(parents, list) else []
     except (json.JSONDecodeError, TypeError):
         d["parent_labels"] = []
+    d["protected"] = bool(d.get("protected", 0))
+    try:
+        d["sort_order"] = int(d.get("sort_order", 0) or 0)
+    except (TypeError, ValueError):
+        d["sort_order"] = 0
+    d["dedicated_top_bar"] = bool(d.get("dedicated_top_bar", 0))
+    d["dedicated_overlay"] = bool(d.get("dedicated_overlay", 0))
     return d
 
 
@@ -243,11 +252,11 @@ def _flow_row(r: sqlite3.Row | tuple) -> dict:
 
 
 def list_templates(db: Path) -> list[dict]:
-    """All flow templates ordered by id."""
+    """All flow templates ordered by sort_order, id."""
     with _connect(db) as conn:
         conn.row_factory = sqlite3.Row
         return [_row(r) for r in conn.execute(
-            "SELECT * FROM flow_templates ORDER BY id")]
+            "SELECT * FROM flow_templates ORDER BY sort_order, id")]
 
 
 def get_template(db: Path, label: str) -> dict | None:
@@ -263,7 +272,10 @@ def create_template(db: Path, *, name: str, label: str = "",
                     steps: str | list = "[]",
                     pre_execution: str = "",
                     post_execution: str = "",
-                    parent_labels: list[str] | None = None) -> dict:
+                    parent_labels: list[str] | None = None,
+                    protected: bool = False, sort_order: int = 0,
+                    dedicated_top_bar: bool = False,
+                    dedicated_overlay: bool = False) -> dict:
     """Insert a flow template; label defaults to the normalized name."""
     from .errors import HarnessError
     if not (name or "").strip():
@@ -285,10 +297,13 @@ def create_template(db: Path, *, name: str, label: str = "",
             cur = conn.execute(
                 "INSERT INTO flow_templates (label, name, steps,"
                 " pre_execution, post_execution, parent_labels,"
-                " created_at, modified_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                " protected, sort_order, dedicated_top_bar,"
+                " dedicated_overlay, created_at, modified_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (key, name.strip(), json.dumps(norm), pre_execution or "",
-                 post_execution or "", json.dumps(parents), now, now))
+                 post_execution or "", json.dumps(parents), int(bool(protected)),
+                 int(sort_order or 0), int(bool(dedicated_top_bar)),
+                 int(bool(dedicated_overlay)), now, now))
         except sqlite3.IntegrityError:
             raise HarnessError(
                 f"template label {key!r} already exists",
@@ -309,7 +324,8 @@ def update_template(db: Path, label: str, **fields) -> dict:
     """
     from .errors import HarnessError
     allowed = {"name", "steps", "pre_execution", "post_execution",
-               "parent_labels", "new_label"}
+               "parent_labels", "new_label", "protected", "sort_order",
+               "dedicated_top_bar", "dedicated_overlay"}
     unknown = set(fields) - allowed
     if unknown:
         raise HarnessError(f"unknown fields: {sorted(unknown)}",
@@ -330,6 +346,14 @@ def update_template(db: Path, label: str, **fields) -> dict:
             raise HarnessError("parent_labels must be a list of label strings",
                                exit_code=2)
         fields["parent_labels"] = json.dumps(list(parents))
+    for _flag in ("protected", "dedicated_top_bar", "dedicated_overlay"):
+        if _flag in fields:
+            fields[_flag] = int(bool(fields[_flag]))
+    if "sort_order" in fields:
+        try:
+            fields["sort_order"] = int(fields["sort_order"] or 0)
+        except (TypeError, ValueError):
+            raise HarnessError("sort_order must be an integer", exit_code=2) from None
     new_label = fields.pop("new_label", None)
     with _connect(db) as conn:
         conn.row_factory = sqlite3.Row

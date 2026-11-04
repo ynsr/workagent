@@ -68,14 +68,20 @@ CREATE TABLE IF NOT EXISTS custom_actions (
   prompt TEXT NOT NULL DEFAULT '', pre_execution TEXT NOT NULL DEFAULT '',
   post_execution TEXT NOT NULL DEFAULT '',
   default_options TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL, modified_at TEXT NOT NULL);
+  created_at TEXT NOT NULL, modified_at TEXT NOT NULL,
+  protected INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0,
+  dedicated_top_bar INTEGER NOT NULL DEFAULT 0,
+  dedicated_overlay INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS flow_templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL, steps TEXT NOT NULL DEFAULT '[]',
   pre_execution TEXT NOT NULL DEFAULT '',
   post_execution TEXT NOT NULL DEFAULT '',
   parent_labels TEXT NOT NULL DEFAULT '[]',
-  created_at TEXT NOT NULL, modified_at TEXT NOT NULL);
+  created_at TEXT NOT NULL, modified_at TEXT NOT NULL,
+  protected INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0,
+  dedicated_top_bar INTEGER NOT NULL DEFAULT 0,
+  dedicated_overlay INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS flows (
   id INTEGER PRIMARY KEY AUTOINCREMENT, template_label TEXT NOT NULL,
   worktree_ref TEXT NOT NULL DEFAULT '',
@@ -177,6 +183,28 @@ def _migrate_runs_validation(conn) -> None:
         return
     if "validation" not in cols:
         conn.execute("ALTER TABLE runs ADD COLUMN validation TEXT NOT NULL DEFAULT '{}'")
+
+
+def _migrate_display_cols(conn) -> None:
+    """Schema v18: flow_templates/custom_actions gain protected/sort_order/
+    dedicated_top_bar/dedicated_overlay (management-table display flags).
+
+    ALTER TABLE backfills DEFAULT 0; sort_order backfills to id so existing
+    rows keep creation order. Idempotent: skipped when present.
+    """
+    for table in ("flow_templates", "custom_actions"):
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if not cols:
+            continue
+        if "protected" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN protected INTEGER NOT NULL DEFAULT 0")
+        if "sort_order" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+        if "dedicated_top_bar" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN dedicated_top_bar INTEGER NOT NULL DEFAULT 0")
+        if "dedicated_overlay" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN dedicated_overlay INTEGER NOT NULL DEFAULT 0")
+        conn.execute(f"UPDATE {table} SET sort_order = id WHERE sort_order = 0")
 
 
 def _migrate_flow_template_lineage(conn) -> None:
@@ -749,6 +777,7 @@ def init_db(path: Path) -> Path:
                 _migrate_worktrees_related(conn)
                 _migrate_flow_linkage(conn)
                 _migrate_flow_template_lineage(conn)
+                _migrate_display_cols(conn)
                 _migrate_sessions_no_fk(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():
