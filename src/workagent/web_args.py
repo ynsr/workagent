@@ -42,6 +42,8 @@ SPECS: dict[str, dict[str, Any]] = {
     "prodtest": {"confirm": True, "force": False,
                  "key": lambda args: "prodtest:run-all" if args[:1] == ["run"] and "--all" in args
                  else (f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest plan'])}" if args[:1] == ["plan"] else f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest run'])}") if args[:1] in (["plan"], ["run"]) else "config"},
+    "adhoc": {"confirm": True, "force": False,
+              "key": lambda args: f"adhoc:{_first_positional(args, VAL_FLAGS['adhoc'])}"},
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
@@ -105,8 +107,10 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
                       "--yes", "--json", "--update"),
     "prodtest run": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
                      "--yes", "--json", "--skip-version-gate", "--all"),
+    "adhoc": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
+    "adhoc": ("--prompt", "--harness", "--extra-prompt", "--session-file", "--env-file"),
     "prodtest": (),
     "prodtest plan": ("--harness", "--session-file", "--env-file", "--extra-prompt"),
     "prodtest run": ("--fix-mode", "--run-dir", "--harness", "--session-file", "--env-file", "--extra-prompt"),

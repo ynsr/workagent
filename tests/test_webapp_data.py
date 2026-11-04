@@ -621,3 +621,22 @@ def test_action_add_needs_no_confirm(client, monkeypatch):
     })
     assert r.status_code == 400, r.text
     assert r.json()["error"]["code"] == "confirm_required"
+
+def test_adhoc_needs_confirm_and_validates_prompt(client, monkeypatch):
+    """adhoc spawns an agent: confirm-gated, prompt-validated, keyed by ref."""
+    from tests.webapp_helpers import _stub_spawn
+    from workagent import web_args as _w
+    _stub_spawn(monkeypatch)
+    r = client.post("/api/runs", json={
+        "command": "adhoc",
+        "args": ["k", "--prompt", "do x", "--yes"],
+    })
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["code"] == "confirm_required"
+    r = client.post("/api/runs", json={
+        "command": "adhoc",
+        "args": ["k", "--prompt", "do x", "--yes"],
+        "confirm": True,
+    })
+    assert r.status_code == 202, r.text
+    assert _w._target_for("adhoc", ["k", "--prompt", "do x"]) == "adhoc:k"

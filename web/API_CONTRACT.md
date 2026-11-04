@@ -273,10 +273,10 @@ Request:
  "confirm": true, "force": false}
 ```
 - `command`: one of `start | review | cleanup | release | sync | open | register |
-  repo | link | action | flow | prodtest` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`; prodtest: `["plan", REF, …]` / `["run", REF, …]`).
+  repo | link | action | flow | prodtest | adhoc` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`; prodtest: `["plan", REF, …]` / `["run", REF, …]`; adhoc: `[REF, --prompt P, …]`).
 - Global `-v` may be passed as `args[0]`.
 - `start`/`review`/`sync`/`release` take `--env-file <script>`: a shell script sourced before every harness command including the preview (`source <file> && …`; headless children also get it parsed into their environment) and before the release pre-release gate. Default: `env_file` in `config.json` (auto-created as `<config_dir>/env.sh` on first launch with `VISUAL`/`EDITOR`/`NO_PROXY`/`PI_EDIT_VARIANT` defaults). Delete the file to opt out; session-resume endpoints reuse the originating run's explicit `--env-file` or the configured default.
-- Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`,
+- Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`, `adhoc`,
   `action run`/`action delete`, `flow run`/`flow template delete`) need
   `confirm: true` → the server appends `--yes`. `action add`/`update` and
   `flow template add`/`update`/`clone`/`compose` are plain row writes — no confirm needed.
@@ -318,8 +318,9 @@ another run holds the same target key.
 re-include already-reviewed and unresolved-comment worktrees),
 `cleanup:<ref>` / `cleanup:all`, `action:<label>:<ref>` / `config` (template CRUD),
 `flow:<template>:<ref>` / `config` (template CRUD),
-`prodtest:<ref>` / `prodtest:run-all` — one prodtest plan/run per issue ref. The Launch
-prodtest tab selects the subcommand: Plan emits `prodtest plan <ref>`,
+`prodtest:<ref>` / `prodtest:run-all` — one prodtest plan/run per issue ref,
+`adhoc:<first-ref>` — one adhoc run per ref. The Launch prodtest tab selects
+the subcommand: Plan emits `prodtest plan <ref>`,
 Run emits `prodtest run <ref>` (preview/headless/terminal flags unchanged);
 `prodtest run --all` runs every released/stored plan sequentially in-process
 (dry-run rows / `skipped:<reason>` / continue-past-failure).
