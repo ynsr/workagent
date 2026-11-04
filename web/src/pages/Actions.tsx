@@ -188,7 +188,7 @@ export function Actions() {
   }
   async function handleToggle(row: ActionRow, field: "protected" | "dedicated_top_bar" | "dedicated_overlay") {
     try {
-      const on = !(row as Record<string, unknown>)[field]
+      const on = !(row as unknown as Record<string, unknown>)[field]
       const flag = field.replaceAll("_", "-")
       await createRun.mutateAsync({
         command: "action",

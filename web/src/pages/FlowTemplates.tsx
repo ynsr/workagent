@@ -57,6 +57,7 @@ export function FlowTemplates() {
   const [editingLabel, setEditingLabel] = useState<string | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [lineageNote, setLineageNote] = useState<string | null>(null)
+  const knownActions = (actionsData?.actions ?? []).map((a) => ({ label: a.label, name: a.name }))
   const labelValid = /^[a-z0-9_]+$/.test(label)
 
   function handleNameChange(value: string) {
@@ -201,7 +202,7 @@ export function FlowTemplates() {
   }
   async function handleToggle(row: FlowTemplateRow, field: "protected" | "dedicated_top_bar" | "dedicated_overlay") {
     try {
-      const on = !(row as Record<string, unknown>)[field]
+      const on = !(row as unknown as Record<string, unknown>)[field]
       const flag = field.replaceAll("_", "-")
       await createRun.mutateAsync({
         command: "flow",

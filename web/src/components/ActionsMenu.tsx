@@ -17,6 +17,7 @@ import { useActions, useCreateRun } from "@/lib/queries"
 export function ActionsMenu({ selected, compact = false }: { selected: Set<string>; compact?: boolean }) {
   const navigate = useNavigate()
   const createRun = useCreateRun()
+  const { data } = useActions()
   const actions = data?.actions ?? []
   const sorted = [...actions].sort(
     (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id,
