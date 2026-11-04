@@ -252,3 +252,15 @@ def test_templates_ordered_by_sort_order(tmp_path):
     sf.create_template(db, name="First", steps=[{"kind": "cleanup"}], sort_order=1)
     labels = [r["label"] for r in sf.list_templates(db)]
     assert labels == ["first", "second"]
+
+
+def test_release_step_rejects_bad_checks():
+    import pytest
+    from workagent import store_flows as sf
+    from workagent.errors import HarnessError
+    with pytest.raises(HarnessError):
+        sf.validate_template([{"kind": "cleanup"}, {"kind": "release", "config": {"checks": "all"}}])
+    with pytest.raises(HarnessError):
+        sf.validate_template([{"kind": "cleanup"}, {"kind": "release", "config": {"diff": "local2"}}])
+    ok = sf.validate_template([{"kind": "cleanup"}, {"kind": "release", "config": {"checks": "both", "diff": "local"}}])
+    assert ok[-1]["config"] == {"checks": "both", "diff": "local"}

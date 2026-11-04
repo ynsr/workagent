@@ -364,3 +364,40 @@ def test_open_mr_preset_gate_detects_existing_mr(tmp_path, monkeypatch):
     assert called == [], "harness must not run when an open MR exists"
     import json as _json
     assert "already exists" in _json.loads(res.stdout)["skipped"]
+
+
+def test_action_add_display_flags(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_action as cli_mod
+    created = {}
+    def fake_create(**fields):
+        created.update(fields)
+        return {"id": 3, "label": "lint", "name": fields["name"]}
+    monkeypatch.setattr("workagent.store.create_action", fake_create)
+    runner = CliRunner()
+    result = runner.invoke(cli_mod.app, ["action", "add", "--name", "Lint",
+        "--prompt", "lint it", "--protected", "--sort-order", "4",
+        "--dedicated-overlay"])
+    assert result.exit_code == 0, result.output
+    assert created.get("protected") is True
+    assert created.get("sort_order") == 4
+    assert created.get("dedicated_overlay") is True
+
+
+def test_action_update_display_flags(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_action as cli_mod
+    updated = {}
+    def fake_update(label, **fields):
+        updated.update(fields)
+        return {"id": 3, "label": label, "name": "Lint"}
+    monkeypatch.setattr("workagent.store.update_action", fake_update)
+    runner = CliRunner()
+    result = runner.invoke(cli_mod.app, ["action", "update", "lint",
+        "--no-protected", "--sort-order", "6", "--dedicated-top-bar"])
+    assert result.exit_code == 0, result.output
+    assert updated.get("protected") is False
+    assert updated.get("sort_order") == 6
+    assert updated.get("dedicated_top_bar") is True

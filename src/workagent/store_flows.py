@@ -154,6 +154,16 @@ def validate_template(steps: list[dict] | str,
                 raise HarnessError(
                     f"{banned!r} is rejected in cleanup steps — cleanup "
                     f"is fixed to squash + soft-delete", exit_code=2)
+        if k == "release":
+            cfg = config if isinstance(config, dict) else {}
+            if "checks" in cfg and cfg["checks"] not in ("ci", "local", "both", "none"):
+                raise HarnessError(
+                    f"invalid release checks {cfg['checks']!r} (expected ci|local|both|none)",
+                    exit_code=2)
+            if "diff" in cfg and cfg["diff"] not in ("remote", "local"):
+                raise HarnessError(
+                    f"invalid release diff {cfg['diff']!r} (expected remote|local)",
+                    exit_code=2)
     out = []
     for step, k in zip(steps, kinds):
         norm = {"kind": k, "config": step.get("config", {}) or {}}

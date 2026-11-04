@@ -106,6 +106,10 @@ def action_add(
     pre_execution: Optional[str] = typer.Option(None, "--pre-execution", help="Pre-harness shell script (cwd: worktree)."),
     post_execution: Optional[str] = typer.Option(None, "--post-execution", help="Post-harness shell script (cwd: worktree)."),
     default_options: Optional[str] = typer.Option(None, "--default-options", help='JSON execution config ({"run_mode": ...}).'),
+    protected: bool = typer.Option(False, "--protected/--no-protected", help="Management-table protected flag (UI hides edit/delete)."),
+    sort_order: int = typer.Option(0, "--sort-order", help="Management-table ordering weight."),
+    dedicated_top_bar: bool = typer.Option(False, "--dedicated-top-bar/--no-dedicated-top-bar", help="Show a dedicated top-bar button."),
+    dedicated_overlay: bool = typer.Option(False, "--dedicated-overlay/--no-dedicated-overlay", help="Show a dedicated worktree-row overlay button."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Add a custom action.
@@ -117,7 +121,9 @@ def action_add(
         name=name, label=label or "", icon=icon or "",
         prompt=prompt or "", pre_execution=pre_execution or "",
         post_execution=post_execution or "",
-        default_options=default_options or "")
+        default_options=default_options or "", protected=protected,
+        sort_order=sort_order, dedicated_top_bar=dedicated_top_bar,
+        dedicated_overlay=dedicated_overlay)
     _print_result({"added": row["label"], "id": row["id"],
                    "name": row["name"]}, json_output)
 
@@ -131,10 +137,16 @@ def action_list(
     items = [{"id": r["id"], "label": r["label"], "name": r["name"],
               "icon": r["icon"],
               "mode": (r.get("default_options") or {}).get("run_mode", "preview"),
+              "protected": r.get("protected", False),
+              "sort_order": r.get("sort_order", 0),
+              "dedicated_top_bar": r.get("dedicated_top_bar", False),
+              "dedicated_overlay": r.get("dedicated_overlay", False),
               "updated": r["modified_at"]}
              for r in store.list_actions()]
     _print_rows(items, json_output, csv_output,
-                ["id", "label", "name", "icon", "mode", "updated"],
+                ["id", "label", "name", "icon", "mode", "protected",
+                 "sort_order", "dedicated_top_bar", "dedicated_overlay",
+                 "updated"],
                 "Custom actions", "(no custom actions)")
 
 
@@ -162,6 +174,10 @@ def action_update(
     pre_execution: Optional[str] = typer.Option(None, "--pre-execution", help="New pre-harness shell script."),
     post_execution: Optional[str] = typer.Option(None, "--post-execution", help="New post-harness shell script."),
     default_options: Optional[str] = typer.Option(None, "--default-options", help='New JSON execution config ({"run_mode": ...}).'),
+    protected: Optional[bool] = typer.Option(None, "--protected/--no-protected", help="Set/unset the protected flag."),
+    sort_order: Optional[int] = typer.Option(None, "--sort-order", help="New ordering weight."),
+    dedicated_top_bar: Optional[bool] = typer.Option(None, "--dedicated-top-bar/--no-dedicated-top-bar", help="Set/unset the dedicated top-bar button."),
+    dedicated_overlay: Optional[bool] = typer.Option(None, "--dedicated-overlay/--no-dedicated-overlay", help="Set/unset the dedicated overlay button."),
     new_label: Optional[str] = typer.Option(None, "--new-label", help="Rename to a new label (^[a-z0-9_]+$; flow steps referencing it are rewritten)."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
@@ -179,6 +195,14 @@ def action_update(
         fields["post_execution"] = post_execution
     if default_options is not None:
         fields["default_options"] = default_options
+    if protected is not None:
+        fields["protected"] = protected
+    if sort_order is not None:
+        fields["sort_order"] = sort_order
+    if dedicated_top_bar is not None:
+        fields["dedicated_top_bar"] = dedicated_top_bar
+    if dedicated_overlay is not None:
+        fields["dedicated_overlay"] = dedicated_overlay
     if new_label is not None:
         fields["new_label"] = new_label
     if not fields:

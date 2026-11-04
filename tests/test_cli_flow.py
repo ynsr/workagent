@@ -688,3 +688,41 @@ def test_resume_repairs_empty_repo_snapshot(monkeypatch):
     assert res.exit_code == 0, res.output
     assert seen.get("repo") == "r"
     assert updates.get("repo_snapshot", {}).get("repo") == "r"
+
+
+def test_template_add_display_flags(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    created = {}
+    def fake_create(**fields):
+        created.update(fields)
+        return {"id": 7, "label": "full", "name": fields["name"]}
+    monkeypatch.setattr("workagent.store.create_template", fake_create)
+    runner = CliRunner()
+    result = runner.invoke(cli_mod.app, ["flow", "template", "add", "--name", "Full",
+        "--steps", '[{"kind": "cleanup"}]', "--protected",
+        "--sort-order", "5", "--dedicated-top-bar", "--dedicated-overlay"])
+    assert result.exit_code == 0, result.output
+    assert created.get("protected") is True
+    assert created.get("sort_order") == 5
+    assert created.get("dedicated_top_bar") is True
+    assert created.get("dedicated_overlay") is True
+
+
+def test_template_update_display_flags(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    updated = {}
+    def fake_update(label, **fields):
+        updated.update(fields)
+        return {"id": 7, "label": label, "name": "T"}
+    monkeypatch.setattr("workagent.store.update_template", fake_update)
+    runner = CliRunner()
+    result = runner.invoke(cli_mod.app, ["flow", "template", "update", "full",
+        "--protected", "--sort-order", "9", "--no-dedicated-top-bar"])
+    assert result.exit_code == 0, result.output
+    assert updated.get("protected") is True
+    assert updated.get("sort_order") == 9
+    assert updated.get("dedicated_top_bar") is False

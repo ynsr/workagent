@@ -43,6 +43,10 @@ def template_add(
     steps: Optional[str] = typer.Option(None, "--steps", help='JSON list of step dicts, e.g. \'[{"kind": "start"}, {"kind": "cleanup"}]\'.'),
     pre_execution: Optional[str] = typer.Option(None, "--pre-execution", help="Pre-flow shell script (cwd: worktree)."),
     post_execution: Optional[str] = typer.Option(None, "--post-execution", help="Post-flow shell script (cwd: worktree)."),
+    protected: bool = typer.Option(False, "--protected/--no-protected", help="Management-table protected flag (UI hides edit/delete)."),
+    sort_order: int = typer.Option(0, "--sort-order", help="Management-table ordering weight."),
+    dedicated_top_bar: bool = typer.Option(False, "--dedicated-top-bar/--no-dedicated-top-bar", help="Show a dedicated top-bar button."),
+    dedicated_overlay: bool = typer.Option(False, "--dedicated-overlay/--no-dedicated-overlay", help="Show a dedicated worktree-row overlay button."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Add a flow template (steps required — the wizard builds them)."""
@@ -51,7 +55,9 @@ def template_add(
     row = store.create_template(
         name=name, label=label or "", steps=steps,
         pre_execution=pre_execution or "",
-        post_execution=post_execution or "")
+        post_execution=post_execution or "", protected=protected,
+        sort_order=sort_order, dedicated_top_bar=dedicated_top_bar,
+        dedicated_overlay=dedicated_overlay)
     _print_result({"added": row["label"], "id": row["id"],
                    "name": row["name"]}, json_output)
 
@@ -64,10 +70,15 @@ def template_list(
     """List flow templates."""
     items = [{"id": r["id"], "label": r["label"], "name": r["name"],
               "steps": len(r.get("steps") or []),
+              "protected": r.get("protected", False),
+              "sort_order": r.get("sort_order", 0),
+              "dedicated_top_bar": r.get("dedicated_top_bar", False),
+              "dedicated_overlay": r.get("dedicated_overlay", False),
               "updated": r["modified_at"]}
              for r in store.list_templates()]
     _print_rows(items, json_output, csv_output,
-                ["id", "label", "name", "steps", "updated"],
+                ["id", "label", "name", "steps", "protected", "sort_order",
+                 "dedicated_top_bar", "dedicated_overlay", "updated"],
                 "Flow templates", "(no flow templates)")
 
 
@@ -93,6 +104,10 @@ def template_update(
     steps: Optional[str] = typer.Option(None, "--steps", help="New JSON step list."),
     pre_execution: Optional[str] = typer.Option(None, "--pre-execution", help="New pre-flow shell script."),
     post_execution: Optional[str] = typer.Option(None, "--post-execution", help="New post-flow shell script."),
+    protected: Optional[bool] = typer.Option(None, "--protected/--no-protected", help="Set/unset the protected flag."),
+    sort_order: Optional[int] = typer.Option(None, "--sort-order", help="New ordering weight."),
+    dedicated_top_bar: Optional[bool] = typer.Option(None, "--dedicated-top-bar/--no-dedicated-top-bar", help="Set/unset the dedicated top-bar button."),
+    dedicated_overlay: Optional[bool] = typer.Option(None, "--dedicated-overlay/--no-dedicated-overlay", help="Set/unset the dedicated overlay button."),
     new_label: Optional[str] = typer.Option(None, "--new-label", help="Rename to a new label (^[a-z0-9_]+$; flows history retargeted)."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
@@ -106,6 +121,14 @@ def template_update(
         fields["pre_execution"] = pre_execution
     if post_execution is not None:
         fields["post_execution"] = post_execution
+    if protected is not None:
+        fields["protected"] = protected
+    if sort_order is not None:
+        fields["sort_order"] = sort_order
+    if dedicated_top_bar is not None:
+        fields["dedicated_top_bar"] = dedicated_top_bar
+    if dedicated_overlay is not None:
+        fields["dedicated_overlay"] = dedicated_overlay
     if new_label is not None:
         fields["new_label"] = new_label
     if not fields:
