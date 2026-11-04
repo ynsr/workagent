@@ -40,3 +40,13 @@ describe("FlowWizard", () => {
     expect(screen.getByRole("option", { name: "Typecheck (typecheck)" })).toBeInTheDocument()
   })
 })
+
+describe("FlowWizard footer groups", () => {
+  it("renders Save, Save as, Reset buttons alongside Run flow", () => {
+    renderWizard()
+    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Save as" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Reset" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Run flow" })).toBeInTheDocument()
+  })
+})

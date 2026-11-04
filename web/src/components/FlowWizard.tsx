@@ -25,8 +25,8 @@ export function FlowWizard({
   const { data: actionsData } = useActions()
   const [working, setWorking] = useState<FlowStep[]>(() => structuredClone(template.steps ?? []))
   const [running, setRunning] = useState(false)
+  const [saving, setSaving] = useState(false)
   const knownActions = (actionsData?.actions ?? []).map((a) => ({ label: a.label, name: a.name }))
-
   const chainErrors = validateChain(working)
   const sorted = [...refs].sort()
   const repoState = startRepoState(working)
@@ -48,8 +48,47 @@ export function FlowWizard({
         toast.error(`${key}: ${errorText(err)}`)
       }
     }
-    setRunning(false)
     onClose()
+  }
+  const dirty = JSON.stringify(working) !== JSON.stringify(template.steps ?? [])
+  const saveDisabled = saving || chainErrors.length > 0
+  async function handleSave() {
+    setSaving(true)
+    try {
+      await createRun.mutateAsync({
+        command: "flow",
+        args: ["template", "update", template.label, "--steps", JSON.stringify(working), "--yes"],
+        confirm: false,
+      })
+      toast.success(`Template ${template.label} updated`)
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+  async function handleSaveAs() {
+    const name = window.prompt("New template name:", `${template.name} (copy)`)
+    if (!name || !name.trim()) return
+    const label = window.prompt("New template label (a-z, 0-9, _):")
+    if (!label || !label.trim()) return
+    setSaving(true)
+    try {
+      await createRun.mutateAsync({
+        command: "flow",
+        args: ["template", "add", "--name", name.trim(), "--label", label.trim(),
+               "--steps", JSON.stringify(working), "--yes"],
+        confirm: false,
+      })
+      toast.success(`Template ${label.trim()} created`)
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+  function handleReset() {
+    setWorking(structuredClone(template.steps ?? []))
   }
 
   return (
@@ -59,14 +98,46 @@ export function FlowWizard({
       description={sorted.length === 1 ? (sorted[0] ?? template.label) : `${sorted.length} worktrees: ${sorted.slice(0, 3).join(", ")}${sorted.length > 3 ? ` +${sorted.length - 3} more` : ""}`}
       busy={running}
       footer={
-        <Button
-          size="sm"
-          onClick={() => void handleConfirm()}
-          disabled={runDisabled}
-          title={repoMissing ? "Select a Repository on the Start step to run" : chainErrors.length > 0 ? chainErrors[0] : undefined}
-        >
-          {running ? "Starting…" : sorted.length > 1 ? `Run on ${sorted.length} worktrees` : "Run flow"}
-        </Button>
+        <div className="flex w-full items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void handleSave()}
+              disabled={saveDisabled || !dirty}
+              title={dirty ? "Save edits back to this template" : "No unsaved edits"}
+            >
+              {saving ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void handleSaveAs()}
+              disabled={saveDisabled}
+              title="Save the working chain as a new template"
+            >
+              Save as
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleReset}
+              disabled={!dirty}
+              title="Discard edits and restore the template chain"
+            >
+              Reset
+            </Button>
+          </div>
+          <span className="mx-2 text-muted-foreground" aria-hidden>|</span>
+          <Button
+            size="sm"
+            onClick={() => void handleConfirm()}
+            disabled={runDisabled}
+            title={repoMissing ? "Select a Repository on the Start step to run" : chainErrors.length > 0 ? chainErrors[0] : undefined}
+          >
+            {running ? "Starting…" : sorted.length > 1 ? `Run on ${sorted.length} worktrees` : "Run flow"}
+          </Button>
+        </div>
       }
     >
       {repoMissing ? (
