@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils"
 
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
 import { ProdtestActionSelect, ReviewActionSelect, RunModeSelect, StartFormFields, buildStartArgs } from "@/components/StartForm"
-import { COPY, INITIAL, MODES, extraPromptArgs, isPrShaped, runModeArgs } from "@/lib/launchConfig"
+import { COPY, INITIAL, MODES, adhocArgs, extraPromptArgs, isPrShaped, runModeArgs, splitAdhocRefs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
 import type { LaunchPrefs } from "@/lib/launchPrefs"
@@ -88,6 +88,9 @@ function prefsForMode(p: LaunchPrefs, mode: Mode): Partial<LaunchForm> {
       prodtestAction: p.prodtest.prodtestAction as LaunchForm["prodtestAction"],
     }
   }
+  if (mode === "adhoc") {
+    return { runMode: p.adhoc.runMode as LaunchForm["runMode"] }
+  }
   return { runMode: p.start.runMode as LaunchForm["runMode"], base: p.start.base }
 }
 
@@ -134,6 +137,41 @@ function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
         flag="--merge"
         description="Merge locally instead of the remote rebase."
       />
+    )
+  }
+  if (mode === "adhoc") {
+    return (
+      <>
+        <div className="grid gap-2">
+          <Label htmlFor="launch-ref">Worktree refs (one per line)</Label>
+          <textarea
+            id="launch-ref"
+            value={form.ref}
+            onChange={(e) => onChange("ref", e.target.value)}
+            placeholder={copy.refPlaceholder}
+            autoComplete="off"
+            spellCheck={false}
+            rows={3}
+            className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="launch-adhoc-prompt">
+            <FieldHelp label="Prompt" flag="--prompt" description="Instructions for the agent on each worktree (required)." />
+          </Label>
+          <textarea
+            id="launch-adhoc-prompt"
+            value={form.adhocPrompt}
+            onChange={(e) => onChange("adhocPrompt", e.target.value)}
+            placeholder="e.g. summarize the uncommitted changes"
+            autoComplete="off"
+            spellCheck={false}
+            rows={4}
+            className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+          />
+        </div>
+        <ExtraPromptField form={form} onChange={onChange} id="launch-extra-prompt-adhoc" />
+      </>
     )
   }
   return (
@@ -287,6 +325,9 @@ export function Launch() {
     const initialMode: Mode = modeKnown && modeParam !== null ? (modeParam as Mode) : "start"
     const stored = loadLaunchPrefs()
     const base: LaunchForm = { ...INITIAL, ...prefsForMode(stored, initialMode) }
+    // Adhoc has no meaningful preview-per-row (backend defaults to headless):
+    // a stored "preview" from other tabs never smears into the adhoc tab.
+    if (initialMode === "adhoc" && base.runMode === "preview") base.runMode = "headless"
     base.ref = modeKnown ? refParam : ""
     if (modeParam === "review") {
       const urlFix = params.get("fixComments") === "1"
@@ -367,6 +408,7 @@ export function Launch() {
     const stored = loadLaunchPrefs()
     setForm((f) => {
       const merged: LaunchForm = { ...f, ...prefsForMode(stored, next) }
+      if (next === "adhoc" && merged.runMode === "preview") merged.runMode = "headless"
       if (next === "review" && urlForcedFix.current) {
         merged.reviewAction = f.reviewAction
         merged.fixComments = f.fixComments
@@ -412,6 +454,8 @@ export function Launch() {
       })
     } else if (mode === "prodtest") {
       saveLaunchPrefs({ ...prev, prodtest: { runMode: form.runMode, prodtestAction: form.prodtestAction } })
+    } else if (mode === "adhoc") {
+      saveLaunchPrefs({ ...prev, adhoc: { runMode: form.runMode } })
     } else {
       saveLaunchPrefs({ ...prev, sync: { merge: form.merge } })
     }
@@ -444,6 +488,9 @@ export function Launch() {
       args.push(...extraPromptArgs(form))
       return args
     }
+    if (mode === "adhoc") {
+      return [...splitAdhocRefs(form.ref), ...adhocArgs(form), ...runModeArgs(form.runMode)]
+    }
     const args = [refValue]
     if (form.fixComments) args.push("--fix-comments")
     if (form.fixComments && form.useReviewSession) args.push("--use-review-session")
@@ -455,8 +502,16 @@ export function Launch() {
     return args
   }
   const extra = form.extraPrompt.trim()
+  const adhocRefs = splitAdhocRefs(form.ref)
   const flagList = mode === "sync"
     ? [form.merge ? "--merge (local merge)" : "remote rebase (default)", extra ? `--extra-prompt ${extra}` : null].filter((v): v is string => v !== null)
+    : mode === "adhoc"
+      ? [
+          form.adhocPrompt.trim() ? `--prompt ${form.adhocPrompt.trim().slice(0, 80)}` : "prompt: required",
+          form.runMode === "terminal" ? "--terminal (open the agent in the OS terminal)"
+            : "--launch (run the agent now)",
+          extra ? `--extra-prompt ${extra}` : null,
+        ].filter((v): v is string => v !== null)
     : [
         form.runMode === "headless" ? "headless (--no-tty)" : form.runMode === "terminal" ? "terminal (--terminal)" : "tty preview (no --no-tty)",
         mode === "review" && form.reviewAction === "fix" ? "--fix-comments (fix open review comments)" : null,
@@ -471,26 +526,39 @@ export function Launch() {
       ].filter((v): v is string => v !== null)
   async function handleSubmit() {
     const prodtestRunAll = mode === "prodtest" && form.prodtestAction === "run" && !refValue
-    if (!refValue && !prodtestRunAll) return
-    if (mode !== "sync" && mode !== "prodtest" && !repoValue) {
+    if (!refValue && !prodtestRunAll && adhocRefs.length === 0) return
+    if (mode === "adhoc") {
+      if (adhocRefs.length === 0) {
+        toast.error("Add at least one worktree ref — one per line.")
+        return
+      }
+      if (!form.adhocPrompt.trim()) {
+        toast.error("Adhoc prompt is required (--prompt).")
+        return
+      }
+    }
+    if (mode !== "sync" && mode !== "prodtest" && mode !== "adhoc" && !repoValue) {
       toast.error("Pick a repo — none matches this ref (the server CWD is never used).")
       return
     }
     const ok = await confirm({
-      action: mode,
+      action: mode === "adhoc" ? null : mode,
       title: `Launch ${copy.label}`,
       description: copy.confirmDesc,
       warning:
-        mode === "sync"
-          ? "The server appends --yes: sync runs without prompts (AI-assisted conflict resolution if the rebase/merge conflicts)."
-          : form.runMode === "headless"
-            ? "The agent runs headless with auto-approve (--no-tty): it can commit, push and open MRs/PRs without further prompts. The server appends --yes."
-            : form.runMode === "terminal"
-              ? "The agent runs in an OS terminal opened on your desktop (workagent --terminal). The server appends --yes."
-              : "Preview only: prints the TTY harness command (no -p flag) without running the agent. The server appends --yes.",
+        mode === "adhoc"
+          ? "The agent runs now with auto-approve: headless (--launch) or in an OS terminal (--terminal). The server appends --yes."
+          : mode === "sync"
+            ? "The server appends --yes: sync runs without prompts (AI-assisted conflict resolution if the rebase/merge conflicts)."
+            : form.runMode === "headless"
+              ? "The agent runs headless with auto-approve (--no-tty): it can commit, push and open MRs/PRs without further prompts. The server appends --yes."
+              : form.runMode === "terminal"
+                ? "The agent runs in an OS terminal opened on your desktop (workagent --terminal). The server appends --yes."
+                : "Preview only: prints the TTY harness command (no -p flag) without running the agent. The server appends --yes.",
       confirmLabel: "Launch",
       details: [
-        { label: "Ref", value: refValue, mono: true },
+        { label: mode === "adhoc" ? "Refs" : "Ref", value: mode === "adhoc" ? adhocRefs.join(", ") : refValue, mono: true },
+        ...(mode === "adhoc" && form.adhocPrompt.trim() ? [{ label: "Prompt", value: form.adhocPrompt.trim().slice(0, 200) }] : []),
         ...(repoValue ? [{ label: "Repo", value: repoValue, mono: true }] : []),
         { label: "Flags", value: flagList.join(", ") },
       ],
@@ -566,12 +634,21 @@ export function Launch() {
           {mode === "flow" ? null : (
           <>
           <div className="flex flex-wrap gap-x-6 gap-y-3">
-            {(mode === "review" || mode === "prodtest") ? (
-              <RunModeSelect
-                idPrefix="launch"
-                value={form.runMode}
-                onChange={(v) => update("runMode", v)}
-              />
+            {(mode === "review" || mode === "prodtest" || mode === "adhoc") ? (
+              mode === "adhoc" ? (
+                <RunModeSelect
+                  idPrefix="launch"
+                  value={form.runMode === "preview" ? "headless" : form.runMode}
+                  onChange={(v) => update("runMode", v)}
+                  hidePreview
+                />
+              ) : (
+                <RunModeSelect
+                  idPrefix="launch"
+                  value={form.runMode}
+                  onChange={(v) => update("runMode", v)}
+                />
+              )
             ) : null}
             {mode === "review" ? (
               <ReviewActionSelect
@@ -627,7 +704,13 @@ export function Launch() {
             <p className="flex items-start gap-2">
               <ShieldAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
               <span>
-                {mode === "sync" ? (
+                {mode === "adhoc" ? (
+                  <>
+                    The web server appends <span className="font-mono text-[13px]">--yes</span>, so the agent runs
+                    now with auto-approve — headless (<span className="font-mono text-[13px]">--launch</span>) or in an OS
+                    terminal (<span className="font-mono text-[13px]">--terminal</span>).
+                  </>
+                ) : mode === "sync" ? (
                   <>
                     The web server appends <span className="font-mono text-[13px]">--yes</span>, so sync runs
                     without prompts (AI-assisted conflict resolution if the rebase/merge conflicts).
@@ -680,15 +763,15 @@ export function Launch() {
               ) : null}
             </div>
             <Button
-                type="button"
-                onClick={() => void handleSubmit()}
-                disabled={!refValue || submitting || (mode !== "sync" && mode !== "prodtest" && !repoValue)}
-                title={
-                  mode !== "sync" && mode !== "prodtest" && refValue && !repoValue
-                    ? "Pick a repo — none matches this ref"
-                    : undefined
-                }
-              >
+              type="button"
+              onClick={() => void handleSubmit()}
+              disabled={mode === "adhoc" ? adhocRefs.length === 0 || !form.adhocPrompt.trim() || submitting : !refValue || submitting || (mode !== "sync" && mode !== "prodtest" && !repoValue)}
+              title={
+                mode !== "sync" && mode !== "prodtest" && mode !== "adhoc" && refValue && !repoValue
+                  ? "Pick a repo — none matches this ref"
+                  : undefined
+              }
+            >
                 <Rocket aria-hidden />
                 {submitting ? "Launching…" : `Launch ${copy.label}`}
               </Button>

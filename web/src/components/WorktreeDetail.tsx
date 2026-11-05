@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { Copy, FolderOpen, History, Rocket, SquareTerminal, Workflow } from "lucide-react"
+import { Copy, FolderOpen, History, Rocket, SquareTerminal, Workflow, Zap } from "lucide-react"
 import type { WorktreeEntry } from "@/lib/api"
 import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -45,6 +45,7 @@ export function WorktreeDetail({
   onOpenRun,
   onOpenSessions,
   onOpenFlows,
+  onAdhoc,
   rowActions,
   networkExposed = false,
 }: {
@@ -58,6 +59,8 @@ export function WorktreeDetail({
   onOpenSessions?: (key: string) => void
   /** Navigate to the Flows page filtered to this worktree. */
   onOpenFlows?: (key: string) => void
+  /** Navigate to Launch adhoc tab prefilled with this worktree. */
+  onAdhoc?: (key: string) => void
   /** Row actions rendered as the dialog "Actions" row (Sync/Review/Fix/…); omitted in edit mode. */
   rowActions?: React.ReactNode
   networkExposed?: boolean
@@ -303,6 +306,17 @@ export function WorktreeDetail({
           >
             <Workflow aria-hidden className="size-4" />
             Flows
+          </Button>
+        ) : null}
+        {worktreeKey && onAdhoc ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onAdhoc(worktreeKey)}
+            title={`Run adhoc prompt on ${worktreeKey}`}
+          >
+            <Zap aria-hidden className="size-4" />
+            Adhoc Prompt
           </Button>
         ) : null}
         {worktreeKey ? <ActionsMenu selected={scoped} compact /> : null}

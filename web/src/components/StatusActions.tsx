@@ -142,6 +142,14 @@ export function RowActions({
           <FileCheck aria-hidden />
         </ActionIcon>
       ) : null}
+      {actions.onAdhoc ? (
+        <ActionIcon
+          title={`Run adhoc prompt on ${worktreeKey}`}
+          onClick={() => actions.onAdhoc?.(worktreeKey)}
+        >
+          <Zap aria-hidden />
+        </ActionIcon>
+      ) : null}
       {actions.onCleanup ? (
         <ActionIcon
           title={invalid ? `Delete invalid worktree ${worktreeKey}` : `Cleanup ${worktreeKey}`}

@@ -315,8 +315,8 @@ export type RunCommand =
   | "tracker"
   | "action"
   | "flow"
+  | "adhoc"
   | "prodtest"
-
 export interface FlowStep { kind: string; action_label?: string; config?: Record<string, unknown> }
 export interface FlowTemplateRow { id: number; label: string; name: string; steps: FlowStep[]; pre_execution: string; post_execution: string; parent_labels?: string[]; protected?: boolean; sort_order?: number; dedicated_top_bar?: boolean; dedicated_overlay?: boolean; created_at: string; modified_at: string }
 export interface FlowStepResult { kind: string; status: string; detail?: string }

@@ -1,10 +1,10 @@
-export type Mode = "start" | "review" | "sync" | "flow" | "prodtest"
+export type Mode = "start" | "review" | "sync" | "adhoc" | "flow" | "prodtest"
 
 /** Issue #26: Launch never defaults to the serve CWD. The backend
  * `GET /api/default-repo?ref=` returns the linked-worktree repo for the
  * typed ref, else the single-linked repo — else no default. */
 
-export const MODES: readonly Mode[] = ["start", "review", "sync", "flow", "prodtest"]
+export const MODES: readonly Mode[] = ["start", "review", "sync", "adhoc", "flow", "prodtest"]
 
 export const COPY: Record<
   Mode,
@@ -59,6 +59,14 @@ export const COPY: Record<
     refPlaceholder: "IPG-932, OWNER/REPO#22, or jira:IPG-932@proj",
     confirmDesc: "Runs the prodtest plan or run command (harness flags per run mode).",
   },
+  adhoc: {
+    label: "Adhoc Prompt",
+    title: "Run an adhoc prompt",
+    description: "One or more worktree refs — runs the prompt on each linked worktree, sequentially.",
+    refHint: "Worktree key, branch, or path — one per line, or comma-separated.",
+    refPlaceholder: "jira:IPG-932@proj",
+    confirmDesc: "Runs the adhoc prompt on each linked worktree (non-TTY; deactivated/invalid rows are skipped).",
+  },
 }
 
 /** Prodtest-tab action selector: Plan (generate) vs Run (execute at release SHA). */
@@ -82,6 +90,7 @@ export interface LaunchForm {
   extraPrompt: string
   relatedRepos: string[]
   prodtestAction: ProdtestAction
+  adhocPrompt: string
 }
 export const INITIAL: LaunchForm = {
   ref: "",
@@ -100,6 +109,7 @@ export const INITIAL: LaunchForm = {
   extraPrompt: "",
   relatedRepos: [],
   prodtestAction: "run",
+  adhocPrompt: "",
 }
 
 
@@ -109,6 +119,23 @@ export function extraPromptArgs(form: Pick<LaunchForm, "extraPrompt">): string[]
   return extra ? [`--extra-prompt=${extra}`] : []
 }
 
+/**
+ * Split the adhoc ref box into positional refs. The Launch adhoc field
+ * takes one ref per line (or comma-separated); blank entries are dropped
+ * so `adhoc REF… --prompt` always receives ≥1 ref from the form.
+ */
+export function splitAdhocRefs(ref: string): string[] {
+  return ref
+    .split(/[\n,]+/)
+    .map((r) => r.trim())
+    .filter((r) => r.length > 0)
+}
+
+/** CLI args for `adhoc REF… --prompt TEXT` (Preview emits neither --launch nor --terminal: no -p flag). */
+export function adhocArgs(form: Pick<LaunchForm, "adhocPrompt" | "extraPrompt">): string[] {
+  const prompt = form.adhocPrompt.trim()
+  return [`--prompt=${prompt}`, ...extraPromptArgs(form)]
+}
 /** CLI args for the selected run mode (Preview emits none: no -p flag). */
 export function runModeArgs(mode: RunMode): string[] {
   return mode === "headless" ? ["--launch"] : mode === "terminal" ? ["--terminal"] : []

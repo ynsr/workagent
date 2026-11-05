@@ -16,10 +16,12 @@ export interface StartFormValue extends LaunchForm {}
 /** Three-option segmented run-mode control (replaces the "Run agent now"
  * checkbox): Preview prints the command, Headless launches it now, Terminal
  * opens it in the OS terminal (workagent --terminal). */
-export function RunModeSelect({ idPrefix, value, onChange }: {
+export function RunModeSelect({ idPrefix, value, onChange, hidePreview = false }: {
   idPrefix: string
   value: RunMode
   onChange: (v: RunMode) => void
+  /** Hide the Preview option (adhoc has no meaningful preview-per-row). */
+  hidePreview?: boolean
 }) {
   return (
     <div className="grid gap-1">
@@ -35,7 +37,7 @@ export function RunModeSelect({ idPrefix, value, onChange }: {
         aria-label="Run mode"
         className="flex w-fit divide-x overflow-hidden rounded-md border text-sm"
       >
-        {RUN_MODE_OPTIONS.map((opt) => (
+        {(hidePreview ? RUN_MODE_OPTIONS.filter((o) => o.value !== "preview") : RUN_MODE_OPTIONS).map((opt) => (
           <button
             key={opt.value}
             type="button"

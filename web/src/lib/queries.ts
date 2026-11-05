@@ -239,6 +239,32 @@ export function usePath(ref: string) {
   })
 }
 
+/** Poll one run until it leaves `running`, then refresh shared reads.
+ * Config commands (action/flow-template/repo/tracker) finish in seconds but
+ * `useRuns` polls every 10 s, so tables looked stale until the next poll.
+ * Polling the just-created run directly (~750 ms) updates its table within
+ * a second of completion. Bounded (~30 s): long harness runs time out and
+ * rely on RunWatcher. Never throws — failures stay silent. */
+function awaitRunThenInvalidate(qc: QueryClient, runId: string): void {
+  const deadline = Date.now() + 30_000
+  const tick = async (): Promise<void> => {
+    try {
+      const run = await api.run(runId)
+      if (run.state === "running" && Date.now() < deadline) {
+        setTimeout(() => void tick(), 750)
+        return
+      }
+    } catch {
+      if (Date.now() < deadline) {
+        setTimeout(() => void tick(), 750)
+        return
+      }
+    }
+    invalidateAfterRun(qc)
+  }
+  setTimeout(() => void tick(), 750)
+}
+
 /**
  * Create a run. `-v` is passed as args[0] when the Settings toggle is on
  * (before the subcommand args, which start at index 0 here).
@@ -250,8 +276,9 @@ export function useCreateRun() {
       const args = getVerbose() ? ["-v", ...input.args] : [...input.args]
       return api.createRun({ ...input, args })
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       void qc.invalidateQueries({ queryKey: queryKeys.runs })
+      if (data?.run_id) awaitRunThenInvalidate(qc, data.run_id)
     },
   })
 }
@@ -301,6 +328,7 @@ export function invalidateAfterRun(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: queryKeys.trackers })
   void qc.invalidateQueries({ queryKey: queryKeys.links })
   void qc.invalidateQueries({ queryKey: queryKeys.doctor })
+  void qc.invalidateQueries({ queryKey: queryKeys.actions })
   void qc.invalidateQueries({ queryKey: queryKeys.flowTemplates })
   void qc.invalidateQueries({ queryKey: ["flows"] })
 }

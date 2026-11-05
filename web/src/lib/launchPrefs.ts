@@ -25,13 +25,17 @@ export interface LaunchSyncPrefs {
   merge: boolean
 }
 
+export interface LaunchAdhocPrefs {
+  runMode: RunMode
+}
+
 export interface LaunchPrefs {
   start: LaunchStartPrefs
   review: LaunchReviewPrefs
   prodtest: LaunchProdtestPrefs
   sync: LaunchSyncPrefs
+  adhoc: LaunchAdhocPrefs
 }
-
 const KEY = "launch.prefs.v1"
 
 const RUN_MODES: readonly string[] = RUN_MODE_OPTIONS.map((o) => o.value)
@@ -44,6 +48,7 @@ export function loadLaunchPrefs(): LaunchPrefs {
     review: { runMode: "preview", thenFix: false, fixAction: "review", useReviewSession: false },
     prodtest: { runMode: "preview", prodtestAction: "run" },
     sync: { merge: false },
+    adhoc: { runMode: "headless" },
   }
   try {
     const raw = localStorage.getItem(KEY)
@@ -53,6 +58,7 @@ export function loadLaunchPrefs(): LaunchPrefs {
       review?: { runMode?: unknown; thenFix?: unknown; fixAction?: unknown; useReviewSession?: unknown }
       prodtest?: { runMode?: unknown; prodtestAction?: unknown }
       sync?: { merge?: unknown }
+      adhoc?: { runMode?: unknown }
     }
     return {
       start: {
@@ -80,6 +86,11 @@ export function loadLaunchPrefs(): LaunchPrefs {
           : "run",
       },
       sync: { merge: p.sync?.merge === true },
+      adhoc: {
+        runMode: typeof p.adhoc?.runMode === "string" && RUN_MODES.includes(p.adhoc.runMode)
+          ? (p.adhoc.runMode as RunMode)
+          : "headless",
+      },
     }
   } catch {
     return fallback

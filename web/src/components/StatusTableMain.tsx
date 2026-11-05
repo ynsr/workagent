@@ -536,6 +536,7 @@ export function StatusTable({
                                 onOpenRun={actions.onOpenRun}
                                 onOpenSessions={actions.onOpenSessions}
                                 onOpenFlows={actions.onOpenFlows}
+                                onAdhoc={actions.onAdhoc}
                                 rowActions={
                                   <RowActions
                                     worktreeKey={key}
@@ -668,6 +669,7 @@ export function StatusTable({
                           onOpenRun={actions.onOpenRun}
                           onOpenSessions={actions.onOpenSessions}
                           onOpenFlows={actions.onOpenFlows}
+                          onAdhoc={actions.onAdhoc}
                           rowActions={
                             <RowActions
                               worktreeKey={key}

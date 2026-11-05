@@ -568,6 +568,8 @@ export function Dashboard() {
       navigate("/launch?mode=review&fixComments=1&ref=" + encodeURIComponent(key)),
     onGenerateProdtest: (key: string) =>
       navigate("/launch?mode=prodtest&prodtestAction=plan&ref=" + encodeURIComponent(key)),
+    onAdhoc: (key: string) =>
+      navigate("/launch?mode=adhoc&ref=" + encodeURIComponent(key)),
     onCleanup: handleCleanup,
     onOpenWorktree: handleOpenWorktree,
     onOpenRun: handleOpenRun,
@@ -600,6 +602,9 @@ export function Dashboard() {
               Refresh PR
             </Button>
             <DashboardBulkMenu
+              adhocLabel={selCount > 0 ? `Adhoc (${selCount})` : "Adhoc prompt…"}
+              adhocTitle={selCount > 0 ? `Run an adhoc prompt on ${selCount} selected worktrees` : "Run an adhoc prompt (pick worktrees on the Launch tab)"}
+              onAdhoc={() => navigate("/launch?mode=adhoc" + (selCount > 0 ? `&ref=${encodeURIComponent([...selected].sort().join("\n"))}` : ""))}
               syncLabel={scopeLabel("Sync")}
               syncTitle={selCount > 0 ? `Sync ${selCount} selected worktrees` : "Sync every active linked worktree"}
               onSync={() => void handleSyncAll()}

@@ -10,6 +10,8 @@ export interface StatusTableActions {
   /** Generate a prodtest plan for this worktree (overlay button). */
   onGenerateProdtest?: (key: string) => void
   onCleanup?: (key: string) => void
+  /** Navigate to Launch with mode=adhoc&ref=key (prefill contract). */
+  onAdhoc?: (key: string) => void
   /** Reactivate a deactivated worktree (`link reactivate` confirmed run). */
   onReactivate?: (key: string) => void
   /** Restore a soft-deleted worktree (`link undelete` confirmed run). */

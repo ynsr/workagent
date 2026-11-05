@@ -8,13 +8,17 @@ import {
 } from "@/components/ui/popover"
 
 /**
- * Dashboard top-bar dropdown: the six bulk/export buttons (Sync all,
- * Review all, Fix all PR comments, Cleanup merged, JSON, CSV) in one
+ * Dashboard top-bar dropdown: the seven bulk/export buttons (Adhoc,
+ * Sync all, Review all, Fix all PR comments, Cleanup merged, JSON, CSV) in one
  * menu. Labels stay selection-aware ("Sync (2)" / "Sync all"); handlers
  * are owned by the Dashboard page. Refresh PR, Prodtest, Close released,
  * and the worktree-paths toggle stay as standalone top-bar controls.
  */
 export interface DashboardBulkMenuProps {
+  /** "Adhoc (2)" when rows selected, else "Adhoc prompt…". */
+  adhocLabel: string
+  adhocTitle: string
+  onAdhoc: () => void
   /** "Sync (2)" when rows selected, else "Sync all". */
   syncLabel: string
   syncTitle: string
@@ -51,6 +55,7 @@ export function DashboardBulkMenu(props: DashboardBulkMenuProps) {
     disabled?: boolean
     onClick: () => void
   }[] = [
+    { key: "adhoc", icon: null, label: props.adhocLabel, title: props.adhocTitle, onClick: () => run(props.onAdhoc) },
     { key: "sync", icon: null, label: props.syncLabel, title: props.syncTitle, onClick: () => run(props.onSync) },
     { key: "review", icon: null, label: props.reviewLabel, title: props.reviewTitle, onClick: () => run(props.onReview) },
     { key: "fix", icon: null, label: props.fixLabel, title: props.fixTitle, onClick: () => run(props.onFix) },

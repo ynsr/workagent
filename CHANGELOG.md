@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Launch gains Adhoc Prompt tab (multi-ref, headless/terminal) plus bulk/detail shortcuts; tables refresh right after add/edit [no-issue]
 - Flow templates gain prodtest-plan steps and merge-PR-only cleanup, plus a Judgement preset usable as flow action and custom action [no-issue]
 - Headless runs now double-check finished work and retry on their own until the job is done [no-issue]
 - Cleanup no longer crashes on start: missing link key passed to the status lookup [no-issue]

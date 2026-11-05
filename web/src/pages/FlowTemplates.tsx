@@ -352,6 +352,7 @@ export function FlowTemplates() {
                             <div className="text-xs text-muted-foreground">from {t.parent_labels.join(", ")}</div>
                           ) : null}
                         </TableCell>
+                        <TableCell className="font-mono text-xs">{t.label}</TableCell>
                         <TableCell className="font-mono text-xs">
                           {t.steps?.length ?? 0}
                         </TableCell>
