@@ -4,6 +4,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   FolderGit2,
+  History,
   Library,
   Tags,
   GitBranch,
@@ -21,20 +22,40 @@ import { RunWatcher } from "@/components/RunWatcher"
 import { useInfo } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
-const NAV_ITEMS = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-  { to: "/launch", label: "Launch", icon: Rocket },
-  { to: "/repos", label: "Repos", icon: FolderGit2 },
-  { to: "/trackers", label: "Trackers", icon: Tags },
-  { to: "/actions", label: "Actions", icon: Zap },
-  { to: "/flows", label: "Flows", icon: Workflow },
-  { to: "/flow-templates", label: "Flow Templates", icon: Library },
-  { to: "/links", label: "Links", icon: Link2 },
-  { to: "/doctor", label: "Doctor", icon: Stethoscope },
-  { to: "/runs", label: "Runs", icon: SquareTerminal },
-  { to: "/sessions", label: "Sessions", icon: SquareTerminal },
-  { to: "/settings", label: "Settings", icon: Settings2 },
+const NAV_TOP_GROUPS = [
+  [
+    { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+    { to: "/launch", label: "Launch", icon: Rocket },
+  ],
+  [
+    { to: "/flows", label: "Flows", icon: Workflow },
+    { to: "/sessions", label: "Sessions", icon: History },
+    { to: "/runs", label: "Runs", icon: SquareTerminal },
+  ],
+  [
+    { to: "/flow-templates", label: "Flow Templates", icon: Library },
+    { to: "/actions", label: "Actions", icon: Zap },
+  ],
 ] as const
+
+const NAV_BOTTOM_GROUPS = [
+  [
+    { to: "/repos", label: "Repos", icon: FolderGit2 },
+    { to: "/trackers", label: "Trackers", icon: Tags },
+    { to: "/links", label: "Links", icon: Link2 },
+  ],
+  [
+    { to: "/doctor", label: "Doctor", icon: Stethoscope },
+    { to: "/settings", label: "Settings", icon: Settings2 },
+  ],
+] as const
+
+const NAV_ITEMS = [...NAV_TOP_GROUPS.flat(), ...NAV_BOTTOM_GROUPS.flat()] as unknown as ReadonlyArray<{
+  to: string
+  label: string
+  icon: typeof Rocket
+  end?: boolean
+}>
 
 function NavLinkContent({ label, icon: Icon }: { label: string; icon: typeof Rocket }) {
   return (
@@ -42,6 +63,52 @@ function NavLinkContent({ label, icon: Icon }: { label: string; icon: typeof Roc
       <Icon aria-hidden className="size-4 shrink-0" />
       <span>{label}</span>
     </>
+  )
+}
+type SidebarNavItem = { to: string; label: string; icon: typeof Rocket; end?: boolean }
+
+function SidebarNavLink({ item, collapsed }: { item: SidebarNavItem; collapsed: boolean }) {
+  return (
+    <NavLink
+      to={item.to}
+      end={"end" in item ? item.end : false}
+      title={collapsed ? item.label : undefined}
+      className={({ isActive }) =>
+        cn(
+          "flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors",
+          collapsed && "justify-center px-0",
+          isActive
+            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+        )
+      }
+    >
+      {collapsed ? (
+        <item.icon aria-hidden className="size-4 shrink-0" />
+      ) : (
+        <NavLinkContent label={item.label} icon={item.icon} />
+      )}
+    </NavLink>
+  )
+}
+
+function SidebarGroup({
+  group,
+  collapsed,
+  separated,
+}: {
+  group: readonly SidebarNavItem[]
+  collapsed: boolean
+  separated: boolean
+}) {
+  return (
+    <div className={cn(separated && "border-t border-sidebar-border/70 pt-3")}>
+      <div className="space-y-1">
+        {group.map((item) => (
+          <SidebarNavLink key={item.to} item={item} collapsed={collapsed} />
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -67,29 +134,14 @@ function Sidebar({
           </div>
         )}
       </div>
-      <nav className="flex-1 space-y-1 px-3 py-2" aria-label="Primary">
-        {NAV_ITEMS.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={"end" in item ? item.end : false}
-            title={collapsed ? item.label : undefined}
-            className={({ isActive }) =>
-              cn(
-                "flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors",
-                collapsed && "justify-center px-0",
-                isActive
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-              )
-            }
-          >
-            {collapsed ? (
-              <item.icon aria-hidden className="size-4 shrink-0" />
-            ) : (
-              <NavLinkContent label={item.label} icon={item.icon} />
-            )}
-          </NavLink>
+      <nav className="flex-1 space-y-3 overflow-y-auto px-3 py-2" aria-label="Primary">
+        {NAV_TOP_GROUPS.map((group, index) => (
+          <SidebarGroup key={group[0].to} group={group} collapsed={collapsed} separated={index > 0} />
+        ))}
+      </nav>
+      <nav className="space-y-3 px-3 pb-2" aria-label="Secondary">
+        {NAV_BOTTOM_GROUPS.map((group, index) => (
+          <SidebarGroup key={group[0].to} group={group} collapsed={collapsed} separated={index > 0} />
         ))}
       </nav>
       {collapsed ? null : <SidebarMeta />}
@@ -132,7 +184,7 @@ function BottomNav() {
       aria-label="Primary"
       className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:hidden"
     >
-      <div className="grid grid-cols-7 pb-[env(safe-area-inset-bottom)]">
+      <div className="grid grid-cols-6 pb-[env(safe-area-inset-bottom)]">
         {NAV_ITEMS.map((item) => (
           <NavLink
             key={item.to}
