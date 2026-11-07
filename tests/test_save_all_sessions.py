@@ -1,9 +1,10 @@
 """Save-all + soft-delete exclusion tests (Task: persist every work run).
 
-Only worktree-attached sessions/runs persist (worktrees FK); unattached
-attempts (pre-link failures, repo-keyed releases) write nothing. Soft-deleted
-worktree rows hide their sessions/runs/flows from list/detail queries unless
-explicitly included; hard-delete cascades sessions/runs via the FK.
+Every session/run persists — attached rows carry their worktree FK, and
+unattached attempts (pre-link failures, repo-keyed releases) persist with a
+NULL worktree ref. Soft-deleted worktree rows hide their sessions/runs/flows
+from list/detail queries unless explicitly included; hard-delete cascades
+sessions/runs via the FK.
 """
 
 from __future__ import annotations
@@ -18,17 +19,16 @@ def _seed_worktree(db, key="k", path="/tmp/wt", branch="b"):
             " VALUES (?, ?, ?, NULL, '2026-01-01', '{}')", (key, path, branch))
 
 
-def test_unattached_preview_writes_nothing(tmp_path, monkeypatch, isolated_config):
-    """record_preview_session with no linked worktree persists nothing."""
+def test_unattached_preview_persists_null_ref(tmp_path, monkeypatch, isolated_config):
+    """record_preview_session with no linked worktree persists NULL-ref rows."""
     from workagent import cli_harness as h
     from workagent import store_sqlite as sq
     db = sq.db_path()
     sq.init_db(db)
     sid = h.record_preview_session("nope-missing", "start", "p", "omp",
                                    "harness command: x")
-    assert sid is None
-    assert sq.list_sessions(db, include_deleted_worktrees=True) == []
-    assert sq.list_runs(db, limit=100, include_deleted_worktrees=True) == []
+    assert sid is not None
+    assert sq.list_runs(db, limit=100, include_deleted_worktrees=True) != []
 
 
 def test_attached_preview_persists_session_and_run(tmp_path, monkeypatch, isolated_config):

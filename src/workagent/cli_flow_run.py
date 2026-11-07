@@ -81,7 +81,66 @@ def _run_sync_step(*a, **k):
 def _tag_flow_session(*a, **k):
     return _seam("_tag_flow_session")(*a, **k)
 
-# ── flow run ──────────────────────────────────────────────────────────────
+STEP_BAR = "#" * 72
+
+
+def _step_title(idx: int, kind: str, label: str = "") -> str:
+    """Human-scannable banner separating one step's command from its output."""
+    name = f"step {idx} ({kind}{f' {label}' if label else ''})"
+    return f"\n{STEP_BAR}\n### {name}\n{STEP_BAR}"
+
+
+def _flow_child_key(key: str, ref: str, entry: dict | None = None) -> str:
+    """Best-effort worktree ref for a flow step's child run row.
+
+    Pure function of already-loaded state: the live key only when the
+    link entry is known (else "" → NULL-ref row, never a dangling FK).
+    Callers must not add link queries here; ordering tests count them.
+    """
+    if key and entry:
+        return key
+    return ""
+
+
+def _begin_step_run(fid: int, flow_key: str, kind: str, banner: str) -> int:
+    """Create the step's child run row at step start (NULL = not begun).
+
+    The row holds the banner plus one tail line at finish (`_finish_step_run`);
+    no progressive streaming. Best effort: returns 0 when no DB exists or
+    the insert fails.
+    """
+    from . import store_sqlite as _sq
+    try:
+        db = _sq.db_path()
+        if not db.exists():
+            return 0
+        sid = _sq.insert_session(
+            db, worktree_ref=flow_key or None, harness_name="",
+            initiator_command=f"flow step {kind}",
+            prompt="", file_path="",
+            session_type="flow",
+            metadata={"origin": "flow-step", "flow_id": fid,
+                      "step": kind})
+        return _sq.insert_run(db, sid, f"flow step {kind}", [flow_key or ""],
+                              None, output=[banner], flow_id=fid)
+    except Exception:
+        return 0
+
+
+def _finish_step_run(rid: int, exit_code: int, tail: list[str] | None = None) -> None:
+    """Finalize the step's child row (best effort, never raises)."""
+    if not rid:
+        return
+    try:
+        from . import store_sqlite as _sq
+        db = _sq.db_path()
+        if not db.exists():
+            return
+        if tail:
+            _sq.update_run(db, rid, output=tail, append=True)
+        _sq.update_run(db, rid, exit_code=exit_code)
+    except Exception:
+        pass
 
 def _find_resumable(template_label: str, ref: str,
                     key: str) -> dict | None:
@@ -251,8 +310,10 @@ def flow_run(
     if pre and current == 0:
         if key and wt_path:
             try:
+                eprint(f"{STEP_BAR}\n### pre-execution\n{STEP_BAR}\n$ {pre}")
                 _run_repo_command(tpl["label"], "pre-execution", pre,
                                   wt_path)
+                eprint(f"--- pre-execution ok (exit 0)\n{STEP_BAR}")
             except HarnessError as e:
                 store.update_flow(fid, status="failed",
                                   step_results=results + [{
@@ -260,11 +321,15 @@ def flow_run(
                                       "status": "failed", "detail": str(e)}])
                 _fail(f"pre-execution failed: {e}", EXIT_GENERAL)
         # No worktree yet for issue flows: skip pre until step 0 lands
-        # (the Start step creates the worktree; see below).
     for idx in range(current, len(merged_steps)):
         step = merged_steps[idx]
         kind = step["kind"]
         config = step.get("config") or {}
+        label = str(step.get("action_label") or "")
+        child_key = _flow_child_key(key, ref, entry)
+        banner = _step_title(idx, kind, label)
+        eprint(banner)
+        child_rid = _begin_step_run(fid, child_key, kind, banner)
         try:
             if kind == "start":
                 outcome = _run_start_step(ref, key, config, json_output)
@@ -291,7 +356,9 @@ def flow_run(
                                  ).get("worktree", "") or "")
                         if wt:  # deferred pre: worktree exists after step 0
                             wt_path = wt
+                            eprint(f"{STEP_BAR}\n### pre-execution\n{STEP_BAR}\n$ {pre}")
                             _run_repo_command(tpl["label"], "pre-execution", pre, wt)
+                            eprint(f"--- pre-execution ok (exit 0)\n{STEP_BAR}")
             elif kind in ("review", "fix_comments"):
                 outcome = _run_review_step(key, config, kind == "fix_comments", json_output)
             elif kind == "sync":
@@ -309,18 +376,24 @@ def flow_run(
                 raise HarnessError(f"unknown step kind {kind!r}",
                                    exit_code=2)
         except HarnessError as e:
+            _finish_step_run(child_rid, e.exit_code,
+                             [f"{kind} step failed: {e}"])
             results.append({"kind": kind, "status": "failed",
                             "detail": str(e)})
             store.update_flow(fid, status="failed", current_step=idx,
                               step_results=results)
             raise typer.Exit(e.exit_code)
         if outcome.get("status") == "skipped":
+            _finish_step_run(child_rid, 0,
+                             [f"{kind} step skipped: {outcome.get('detail', '')}"])
             results.append({"kind": kind, "status": "skipped",
                             "detail": str(outcome.get("detail", ""))})
             store.update_flow(fid, current_step=idx + 1,
                               step_results=results)
             continue
         if outcome.get("skipped"):
+            _finish_step_run(child_rid, 0,
+                             [f"{kind} step skipped: {outcome['skipped']}"])
             results.append({"kind": kind, "status": "skipped",
                             "detail": str(outcome["skipped"])})
             store.update_flow(fid, current_step=idx + 1,
@@ -332,6 +405,7 @@ def flow_run(
                 detail = f"{detail} [terminal pid {outcome.get('terminal_pid')}]"
             elif outcome.get("terminal_error"):
                 detail = f"{detail} [terminal spawn failed: {outcome.get('terminal_error')}]"
+            _finish_step_run(child_rid, 2, [f"paused: {detail}"])
             results.append({"kind": kind, "status": "paused",
                             "detail": detail})
             store.update_flow(fid, status="paused", current_step=idx,
@@ -358,6 +432,7 @@ def flow_run(
             return
         results.append({"kind": kind, "status": "ok",
                         "detail": str(outcome.get("status", ""))})
+        _finish_step_run(child_rid, 0, [f"{kind} step ok"])
         store.update_flow(fid, current_step=idx + 1,
                           step_results=results)
         _tag_flow_session(key, fid)
@@ -367,8 +442,10 @@ def flow_run(
                                            or {}).get("worktree", "")) or "")
         if snap_wt:
             try:
+                eprint(f"{STEP_BAR}\n### post-execution\n{STEP_BAR}\n$ {post}")
                 _run_repo_command(tpl["label"], "post-execution", post,
                                   snap_wt)
+                eprint(f"--- post-execution ok (exit 0)\n{STEP_BAR}")
             except HarnessError as e:
                 store.update_flow(fid, status="failed",
                                   step_results=results + [{

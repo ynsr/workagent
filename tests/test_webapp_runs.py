@@ -655,6 +655,21 @@ def test_mirror_skips_preview_self_recorded_runs(client):
     _wr._mirror_run(run)
     assert len(sq.list_runs(db)) == before
 
+def test_precreated_row_persists_null_exit_then_finalizes(client):
+    """Spawn persists a NULL-exit row adopted at finish (no duplicate)."""
+    from workagent import store_sqlite as sq
+    from workagent import web_runs as _wr
+    db = sq.db_path()
+    sq.init_db(db)
+    run = client.app.state.registry.create("sync", ["k-missing"], "sync:k-missing")
+    _wr._precreate_run_row(run)
+    assert run.db_run_id > 0
+    rows = sq.list_runs(db, limit=100, include_deleted_worktrees=True)
+    assert len(rows) == 1 and rows[0]["exit_code"] is None
+    run.exit_code = 1
+    _wr._mirror_run(run)
+    rows = sq.list_runs(db, limit=100, include_deleted_worktrees=True)
+    assert len(rows) == 1 and rows[0]["exit_code"] == 1
 
 def test_resolve_session_file_adopts_minted(client, tmp_path, monkeypatch):
     """Pinned-but-missing path adopts the omp-minted .jsonl and persists it."""
