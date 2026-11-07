@@ -363,19 +363,17 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             sid = str(existing.get("id"))
     if run_key and db.exists() and not reuse_sid and sid is None:
         try:
-            if run_key not in store.load_links(include_inactive=True,
-                                               include_deleted=True):
-                # Unattached run (register/pre-link): FK forbids the row —
-                # launch continues, warn once like the insert failure path.
-                eprint(f"warning: session record skipped: no linked worktree for {run_key!r}")
-            else:
-                sid = _sq.insert_session(
-                    db, worktree_ref=run_key, harness_name=harness_name,
-                    initiator_command=result.get("command", harness_name),
-                    prompt=prompt, file_path=session_path,
-                    session_id=Path(session_path).stem,
-                    session_type=stype,
-                    metadata=result.get("session_metadata"))
+            from . import store as _store2
+            linked = run_key in _store2.load_links(include_inactive=True,
+                                                  include_deleted=True)
+            sid = _sq.insert_session(
+                db, worktree_ref=run_key if linked else None,
+                harness_name=harness_name,
+                initiator_command=result.get("command", harness_name),
+                prompt=prompt, file_path=session_path,
+                session_id=Path(session_path).stem,
+                session_type=stype,
+                metadata=result.get("session_metadata"))
         except Exception as e:
             # Post-cutover insert failure: launch continues, warn only.
             # No transcript file is pre-created (omp owns the filename
@@ -642,14 +640,13 @@ def record_preview_session(key: str, command: str, prompt: str,
             return None
         try:
             from . import store as _store
-            if not key or key not in _store.load_links(include_inactive=True,
-                                                       include_deleted=True):
-                # No worktree row (pre-link failure, release-by-name, bad
-                # key): sessions/runs require a worktree FK — skip, warn.
-                eprint(f"warning: session record skipped: no linked worktree for {key!r}")
-                return None
+            if key and key not in _store.load_links(include_inactive=True,
+                                                   include_deleted=True):
+                # Dangling past ref (hard-deleted worktree): the FK rejects
+                # it — persist unattached (NULL ref) instead of dropping.
+                key = ""
         except Exception:
-            return None
+            pass
         meta = {"origin": "preview"}
         if metadata:
             meta.update(metadata)
@@ -668,7 +665,7 @@ def record_preview_session(key: str, command: str, prompt: str,
                                exit_code, output=[output])
                 return str(existing.get("id", sid_arg))
         sid = _sq.insert_session(
-            db, worktree_ref=key, harness_name=harness_name,
+            db, worktree_ref=key or None, harness_name=harness_name,
             initiator_command=command, prompt=prompt,
             file_path=pinned, session_id=sid_arg,
             session_type=_sq.derive_session_type(command),

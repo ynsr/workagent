@@ -931,6 +931,7 @@ from .store_sessions import (  # noqa: F401,E402
     session_file_path,
     set_session_file_path,
     set_session_metadata,
+    update_run,
 )
 
 from .store_links import (  # noqa: F401,E402

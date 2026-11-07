@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Sidebar groups Dashboard/Launch, Flows/Sessions/Runs, templates/actions, with Repos/Trackers/Links and Doctor/Settings pinned below [no-issue]
+- Runs page persists every run with live logs; flow steps print separators and keep per-step child records [42]
 - Launch gains Adhoc Prompt tab (multi-ref, headless/terminal) plus bulk/detail shortcuts; tables refresh right after add/edit [no-issue]
 - Flow templates gain prodtest-plan steps and merge-PR-only cleanup, plus a Judgement preset usable as flow action and custom action [no-issue]
 - Headless runs now double-check finished work and retry on their own until the job is done [no-issue]

@@ -107,18 +107,23 @@ def _backfill_session_type(initiator_command: str, prompt: str) -> str | None:
         return "fix_comments"
     return None
 
-def insert_session(path: Path, *, worktree_ref: str, harness_name: str,
+def insert_session(path: Path, *, worktree_ref: str | None, harness_name: str,
                    initiator_command: str, prompt: str,
                    file_path: str, session_id: str | None = None,
                    session_type: str | None = None,
                    metadata: dict | None = None) -> str:
     """Insert a running session; same-ms id collision retries with a fresh
     suffix (PK violation → new id, never a crash). Pass session_id to pin
-    the row id (e.g. to match the transcript filename)."""
+    the row id (e.g. to match the transcript filename). *worktree_ref* may
+    be None/"" for flow-owned and web-run rows (no worktree FK enforced).
+    """
     import json
     if session_type is not None and session_type not in SESSION_TYPES:
         raise ValueError(f"session_type must be one of {', '.join(SESSION_TYPES)} (got {session_type!r})")
     created = datetime.now(timezone.utc).isoformat()
+    # NULL carries "no worktree" through the FK cleanly; "" is passed
+    # through untouched for legacy callers that still read ref as "".
+    ref_val = worktree_ref if (worktree_ref or "") != "" else None
     with _connect(path) as conn:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
         has_type = "session_type" in cols
@@ -129,7 +134,7 @@ def insert_session(path: Path, *, worktree_ref: str, harness_name: str,
                 if has_type or has_meta:
                     names = ["id", "worktree_ref", "state", "harness_name",
                              "initiator_command", "prompt", "file_path", "created_at"]
-                    vals: list = [sid, worktree_ref, "running", harness_name,
+                    vals: list = [sid, ref_val, "running", harness_name,
                                   initiator_command, prompt, file_path, created]
                     if has_type:
                         names.append("session_type")
@@ -146,7 +151,7 @@ def insert_session(path: Path, *, worktree_ref: str, harness_name: str,
                         "INSERT INTO sessions (id, worktree_ref, state, harness_name,"
                         " initiator_command, prompt, file_path, created_at)"
                         " VALUES (?, ?, 'running', ?, ?, ?, ?, ?)",
-                        (sid, worktree_ref, harness_name, initiator_command,
+                        (sid, ref_val, harness_name, initiator_command,
                          prompt, file_path, created))
                 return sid
             except sqlite3.IntegrityError as e:
@@ -276,27 +281,101 @@ def latest_review_session(path: Path, worktree_ref: str,
 def insert_run(path: Path, session_id: str, command: str,
                args: list[str], exit_code: int | None,
                output: list[str] | None = None, truncated: bool = False,
-               validation: dict | None = None) -> int:
+               validation: dict | None = None, flow_id: int | None = None) -> int:
     import json
     created = datetime.now(timezone.utc).isoformat()
     lines = list(output or [])[-MAX_RUN_OUTPUT_LINES:]
     truncated = bool(truncated) or (output is not None and len(list(output)) > len(lines))
     val = json.dumps(validation or {})
     with _connect(path) as conn:
+        scols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
         cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+        # Pre-v15 DBs lack runs.flow_id: create it so flow-owned rows persist.
+        if "flow_id" not in cols:
+            conn.execute("ALTER TABLE runs ADD COLUMN flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL")
+        # Flow-owned rows ("" worktree_ref) need a nullable sessions column
+        # (canonical DDL); rebuild only when it is still NOT NULL.
+        wr = next((r for r in conn.execute("PRAGMA table_info(sessions)") if r[1] == "worktree_ref"), None)
+        if wr is not None and wr[3] == 1 and wr[4] is None and "flow_id" in scols:
+            from . import store_sqlite as _sq
+            _ddl = _sq._canonical_ddl()["sessions"]
+            conn.execute('DROP TABLE IF EXISTS "sessions_rebuild"')
+            conn.execute(_ddl.replace("CREATE TABLE sessions", 'CREATE TABLE "sessions_rebuild"', 1))
+            new_cols = {r[1] for r in conn.execute('PRAGMA table_info("sessions_rebuild")')}
+            old_cols = [r[1] for r in conn.execute("PRAGMA table_info(sessions)") if r[1] in new_cols]
+            select = ", ".join("NULLIF(\"%s\", '')" % c if c == "worktree_ref" else '"%s"' % c for c in old_cols)
+            columns = ", ".join('"%s"' % c for c in old_cols)
+            conn.execute(f'INSERT INTO "sessions_rebuild" ({columns}) SELECT {select} FROM "sessions"')
+            conn.execute('DROP TABLE "sessions"')
+            conn.execute('ALTER TABLE "sessions_rebuild" RENAME TO "sessions"')
+        vals: list = [session_id, command, json.dumps(args), exit_code,
+                      created, "\n".join(lines), 1 if truncated else 0]
+        names = ("session_id, command, args, exit_code, created_at,"
+                 " output, truncated")
+        placeholders = "?, ?, ?, ?, ?, ?, ?"
         if "validation" in cols:
-            cur = conn.execute(
-                "INSERT INTO runs (session_id, command, args, exit_code, created_at,"
-                " output, truncated, validation) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (session_id, command, json.dumps(args), exit_code, created,
-                 "\n".join(lines), 1 if truncated else 0, val))
-        else:
-            cur = conn.execute(
-                "INSERT INTO runs (session_id, command, args, exit_code, created_at,"
-                " output, truncated) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (session_id, command, json.dumps(args), exit_code, created,
-                 "\n".join(lines), 1 if truncated else 0))
+            names += ", validation"
+            placeholders += ", ?"
+            vals.append(val)
+        if flow_id is not None:
+            names += ", flow_id"
+            placeholders += ", ?"
+            vals.append(flow_id)
+        elif "flow_id" in cols:
+            try:
+                row = conn.execute("SELECT flow_id FROM sessions WHERE id = ?",
+                                   (session_id,)).fetchone()
+                if row is not None and row[0] is not None:
+                    names += ", flow_id"
+                    placeholders += ", ?"
+                    vals.append(row[0])
+            except Exception:
+                pass
+        cur = conn.execute(
+            f"INSERT INTO runs ({names}) VALUES ({placeholders})", vals)
         return cur.lastrowid
+
+def update_run(path: Path, run_id: int, *,
+               exit_code: int | None = None,
+               output: list[str] | None = None,
+               truncated: bool | None = None,
+               append: bool = False) -> None:
+    """Progressively update a runs row (live log + final state).
+
+    *append* joins *output* onto the stored tail for that run id;
+    otherwise *output* replaces the stored blob. Unset fields stay.
+    Never raises: callers (tailers/step wrappers) must not fail on DB writes.
+    """
+    import json
+    try:
+        with _connect(path) as conn:
+            row = conn.execute("SELECT output FROM runs WHERE id = ?",
+                               (run_id,)).fetchone()
+            if row is None:
+                return
+            sets: list[str] = []
+            vals: list = []
+            if output is not None:
+                if append:
+                    lines = ((row[0] or "").split("\n") if row[0] else [])
+                    lines += list(output)
+                    lines = lines[-MAX_RUN_OUTPUT_LINES:]
+                else:
+                    lines = list(output)[-MAX_RUN_OUTPUT_LINES:]
+                sets.append("output = ?")
+                vals.append("\n".join(lines))
+            if truncated is not None:
+                sets.append("truncated = ?")
+                vals.append(1 if truncated else 0)
+            if exit_code is not None:
+                sets.append("exit_code = ?")
+                vals.append(exit_code)
+            if not sets:
+                return
+            conn.execute(f"UPDATE runs SET {', '.join(sets)} WHERE id = ?",
+                         (*vals, run_id))
+    except Exception:
+        pass
 
 #: Sessions/runs of soft-deleted worktrees stay in the DB (restorable via
 #: undelete) but are hidden from list/detail queries unless
@@ -317,8 +396,9 @@ def list_runs(path: Path, limit: int = 200,
         conn.row_factory = sqlite3.Row
         cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
         vsel = ", r.validation" if "validation" in cols else ""
+        fsel = ", r.flow_id" if "flow_id" in cols else ""
         q = ("SELECT r.id, r.session_id, r.command, r.args, r.exit_code,"
-             " r.created_at, r.output, r.truncated" + vsel + ","
+             " r.created_at, r.output, r.truncated" + vsel + fsel + ","
              " s.file_path AS session_file, s.worktree_ref"
              " FROM runs r LEFT JOIN sessions s ON s.id = r.session_id"
              " LEFT JOIN worktrees w ON w.ref_key = s.worktree_ref")

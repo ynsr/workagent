@@ -194,6 +194,65 @@ def test_run_paused_on_preview(tmp_path, monkeypatch):
     assert res.exit_code == 0, res.output
     assert states.get("status") == "paused"
 
+def test_run_prints_step_banner_separators(tmp_path, monkeypatch):
+    """Each step prints a ### banner with ##### separators (cmd vs output)."""
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    tpl = {"label": "b", "name": "B",
+           "steps": [{"kind": "sync", "config": {}}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.get_action", lambda l: {"label": l})
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [])
+    monkeypatch.setattr("workagent.store.create_flow",
+                        lambda **f: {"id": 9, "template_label": "b",
+                                     "worktree_ref": "k", "repo_snapshot": {},
+                                     "status": "pending", "current_step": 0,
+                                     "step_results": []})
+    monkeypatch.setattr("workagent.store.update_flow",
+                        lambda fid, **f: {"id": fid, **f})
+    monkeypatch.setattr("workagent.store.get_flow", lambda *a, **k: None)
+    monkeypatch.setattr("workagent.store.load_links", lambda **k: {})
+    monkeypatch.setattr(cli_mod, "_resolve_ref",
+                        lambda ref: ("k", {"repo": "", "worktree": "/tmp/wt",
+                                           "branch": "b"}, None))
+    monkeypatch.setattr(cli_mod, "_run_sync_step",
+                        lambda *a, **k: {"status": "ok"})
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["flow", "run", "b", "k", "--yes"])
+    assert res.exit_code == 0, res.output
+    assert "### step 0 (sync)" in res.output
+    assert res.output.count("#" * 72) >= 2
+
+
+def test_run_creates_child_row_per_step(tmp_path, monkeypatch, isolated_config):
+    """Each step creates a child run row at start (NULL-exit → final exit)."""
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    tpl = {"label": "c", "name": "C",
+           "steps": [{"kind": "sync", "config": {}}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.get_action", lambda l: {"label": l})
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [])
+    monkeypatch.setattr("workagent.store.load_links", lambda **k: {})
+    monkeypatch.setattr("workagent.store.load_repos", lambda: {})
+    monkeypatch.setattr(cli_mod, "_resolve_ref",
+                        lambda ref: ("", {}, {"kind": "issue"}))
+    monkeypatch.setattr(cli_mod, "_run_sync_step",
+                        lambda *a, **k: {"status": "ok"})
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["flow", "run", "c", "jira:X-9", "--yes"])
+    assert res.exit_code == 0, res.output
+    rows = sq.list_runs(db, limit=100, include_deleted_worktrees=True)
+    assert len(rows) == 1
+    assert rows[0]["exit_code"] == 0
+    assert rows[0]["flow_id"] is not None
+
+
 
 
 def test_seam_start_calls_runner_headless_skips_preview(monkeypatch):

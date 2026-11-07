@@ -131,13 +131,12 @@ export function Runs() {
     <div>
       <PageHeader
         title="Runs"
-        description="Child-process runs of workagent commands. Follow a run for its live log."
+        description="Every workagent run, persisted with its live log — running, failed, and finished."
         actions={
           <Button variant="outline" size="sm" onClick={handleCopyJson}>
             <Copy aria-hidden /> {copied ? "Copied" : "JSON"}
           </Button>
         }
-      />
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div role="tablist" aria-label="Filter by state" className="flex flex-wrap gap-1.5">

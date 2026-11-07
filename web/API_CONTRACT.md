@@ -249,10 +249,11 @@ first load):
            "exit_code": 0, "created_at": "…"}]}
 ```
 Unknown id → 404. `transcript` is `"missing"` when the per-session
-`.jsonl` file is absent. `runs` holds the serve-mirrored CLI invocations
-for session-linked runs (those launched with a session file), mirrored at
-run completion — so history survives server restarts. Non-session runs are
-never mirrored (live registry only).
+`runs` holds the serve-persisted CLI invocations persisted at spawn with
+progressive output updates (throttled ~2s) and finalized at finish — so
+history survives server restarts. Every web run persists exactly one row,
+including preview/terminal runs and failed runs (exit code set on finish;
+NULL while running).
 
 ### `GET /api/candidates` → `{prs, issues, worktrees, warnings}`
 `issues` rows carry `repo_hint`: the Launch default repo for that ref
