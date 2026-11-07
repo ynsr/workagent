@@ -137,6 +137,7 @@ export function Runs() {
             <Copy aria-hidden /> {copied ? "Copied" : "JSON"}
           </Button>
         }
+      />
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div role="tablist" aria-label="Filter by state" className="flex flex-wrap gap-1.5">
