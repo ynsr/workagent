@@ -355,6 +355,7 @@ def completions_install(
 
 
 def main() -> None:
+    _completions.ensure_completion_classes()
     try:
         from .env import apply_env_file as _apply_env
         _apply_env()

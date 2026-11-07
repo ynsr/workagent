@@ -88,9 +88,18 @@ export function tagComponentRoots(code: string): { code: string; changed: boolea
     edits.push({ pos: root.end, name: owner.name })
   }
   if (edits.length === 0) return { code, changed: false }
+  // Dedupe: a `return (` non-JSX line scans forward to the same tag as the
+  // later `return (<JSX>` (e.g. `return (repos ?? [])` + map bodies), which
+  // would otherwise insert the attribute twice. First owner wins.
+  const seen = new Set<number>()
+  const unique = edits.filter((e) => {
+    if (seen.has(e.pos)) return false
+    seen.add(e.pos)
+    return true
+  })
   // Insert back-to-front so earlier offsets stay valid.
   let out = code
-  for (const e of edits.sort((a, b) => b.pos - a.pos)) {
+  for (const e of unique.sort((a, b) => b.pos - a.pos)) {
     out = `${out.slice(0, e.pos)} data-component="${e.name}"${out.slice(e.pos)}`
   }
   return { code: out, changed: true }
@@ -168,7 +177,7 @@ function matchParen(code: string, open: number): number {
 // Index just past the bracketed block starting at `open` (`{`/`[`/`(`).
 function skipBalanced(code: string, open: number): number {
   const pairs: Record<string, string> = { "{": "}", "[": "]", "(": ")" }
-  const close = pairs[code[open]]
+  const close = pairs[code[open]!]
   let depth = 0
   let str: string | null = null
   let i = open
