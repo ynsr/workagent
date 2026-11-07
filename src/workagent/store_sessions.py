@@ -283,31 +283,17 @@ def insert_run(path: Path, session_id: str, command: str,
                output: list[str] | None = None, truncated: bool = False,
                validation: dict | None = None, flow_id: int | None = None) -> int:
     import json
+    from . import store_sqlite as _sq
+    # Schema lives at DB open/migrate time: init_db is cached (read-only
+    # probe on repeat calls) and runs the canonical v15 migration
+    # (_migrate_flow_linkage, with FK guard + lock retries) when needed.
+    _sq.init_db(path)
     created = datetime.now(timezone.utc).isoformat()
     lines = list(output or [])[-MAX_RUN_OUTPUT_LINES:]
     truncated = bool(truncated) or (output is not None and len(list(output)) > len(lines))
     val = json.dumps(validation or {})
     with _connect(path) as conn:
-        scols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
         cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
-        # Pre-v15 DBs lack runs.flow_id: create it so flow-owned rows persist.
-        if "flow_id" not in cols:
-            conn.execute("ALTER TABLE runs ADD COLUMN flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL")
-        # Flow-owned rows ("" worktree_ref) need a nullable sessions column
-        # (canonical DDL); rebuild only when it is still NOT NULL.
-        wr = next((r for r in conn.execute("PRAGMA table_info(sessions)") if r[1] == "worktree_ref"), None)
-        if wr is not None and wr[3] == 1 and wr[4] is None and "flow_id" in scols:
-            from . import store_sqlite as _sq
-            _ddl = _sq._canonical_ddl()["sessions"]
-            conn.execute('DROP TABLE IF EXISTS "sessions_rebuild"')
-            conn.execute(_ddl.replace("CREATE TABLE sessions", 'CREATE TABLE "sessions_rebuild"', 1))
-            new_cols = {r[1] for r in conn.execute('PRAGMA table_info("sessions_rebuild")')}
-            old_cols = [r[1] for r in conn.execute("PRAGMA table_info(sessions)") if r[1] in new_cols]
-            select = ", ".join("NULLIF(\"%s\", '')" % c if c == "worktree_ref" else '"%s"' % c for c in old_cols)
-            columns = ", ".join('"%s"' % c for c in old_cols)
-            conn.execute(f'INSERT INTO "sessions_rebuild" ({columns}) SELECT {select} FROM "sessions"')
-            conn.execute('DROP TABLE "sessions"')
-            conn.execute('ALTER TABLE "sessions_rebuild" RENAME TO "sessions"')
         vals: list = [session_id, command, json.dumps(args), exit_code,
                       created, "\n".join(lines), 1 if truncated else 0]
         names = ("session_id, command, args, exit_code, created_at,"

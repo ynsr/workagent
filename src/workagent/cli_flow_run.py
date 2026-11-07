@@ -105,9 +105,9 @@ def _flow_child_key(key: str, ref: str, entry: dict | None = None) -> str:
 def _begin_step_run(fid: int, flow_key: str, kind: str, banner: str) -> int:
     """Create the step's child run row at step start (NULL = not begun).
 
-    The row streams the step's log progressively (`_append_step_run`) so a
-    long step is visible in Runs while it executes — not just on success.
-    Best effort: returns 0 when no DB exists or the insert fails.
+    The row holds the banner plus one tail line at finish (`_finish_step_run`);
+    no progressive streaming. Best effort: returns 0 when no DB exists or
+    the insert fails.
     """
     from . import store_sqlite as _sq
     try:
@@ -127,19 +127,6 @@ def _begin_step_run(fid: int, flow_key: str, kind: str, banner: str) -> int:
         return 0
 
 
-def _append_step_run(rid: int, lines: list[str]) -> None:
-    """Stream step output into its child row (best effort, never raises)."""
-    if not rid or not lines:
-        return
-    try:
-        from . import store_sqlite as _sq
-        db = _sq.db_path()
-        if db.exists():
-            _sq.update_run(db, rid, output=lines, append=True)
-    except Exception:
-        pass
-
-
 def _finish_step_run(rid: int, exit_code: int, tail: list[str] | None = None) -> None:
     """Finalize the step's child row (best effort, never raises)."""
     if not rid:
@@ -154,6 +141,7 @@ def _finish_step_run(rid: int, exit_code: int, tail: list[str] | None = None) ->
         _sq.update_run(db, rid, exit_code=exit_code)
     except Exception:
         pass
+
 def _find_resumable(template_label: str, ref: str,
                     key: str) -> dict | None:
     """Latest non-done flow for the template+ref pair (None: fresh)."""

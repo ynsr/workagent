@@ -165,7 +165,6 @@ def _mirror_run(run: Run) -> None:
         return
     try:
         from . import store_sqlite as _sq
-        from pathlib import Path
         db = _sq.db_path()
         if not db.exists():
             return
