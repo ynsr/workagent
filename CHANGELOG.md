@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Shell completion works on every Tab press, and duplicate dev-tag warnings in the web build are fixed [no-issue]
+- Maven pre-release runs failed-tests report but still fails the gate when `mvn verify` fails [no-issue]
 - Sidebar groups Dashboard/Launch, Flows/Sessions/Runs, templates/actions, with Repos/Trackers/Links and Doctor/Settings pinned below [no-issue]
 - Runs page persists every run with live logs; flow steps print separators and keep per-step child records [42]
 - Launch gains Adhoc Prompt tab (multi-ref, headless/terminal) plus bulk/detail shortcuts; tables refresh right after add/edit [no-issue]

@@ -178,7 +178,7 @@ _CASES = [
     ("node-test", {"package.json": _json_mod.dumps({"scripts": {"test": "jest"}})}, "npm test"),
     ("node-build", {"package.json": _json_mod.dumps({"scripts": {"build": "tsc"}})}, "npm run build"),
     ("node-bare", {"package.json": _json_mod.dumps({"name": "x"})}, None),
-    ("maven", {"pom.xml": "<project/>"}, "mvn clean; mvn verify || ft"),
+    ("maven", {"pom.xml": "<project/>"}, "mvn clean; rc=0; mvn verify || rc=$?; command -v ft >/dev/null 2>&1 && ft || true; exit $rc"),
     ("gradle", {"build.gradle": ""}, "gradle clean test"),
     ("gradle-wrapper", {"build.gradle": "", "gradlew": "#!/bin/sh"}, "./gradlew clean test"),
     ("python-uv", {"pyproject.toml": "[project]", "uv.lock": ""}, "uv sync; uv run pytest"),
@@ -203,6 +203,27 @@ def test_detect_prerelease_matrix(tmp_path, name, files, expected):
 
 def test_detect_prerelease_unreadable_path():
     assert _repos.detect_prerelease_command("/nonexistent-path-xyz") is None
+
+
+def test_maven_prerelease_gate_preserves_verify_exit(tmp_path):
+    """Regression: pre-release must propagate `mvn verify` failure (IPG release 007235fb).
+
+    The old `mvn verify || ft` gate exited with ft's code (0 on printed
+    failures) — a failing verify could pass the release. The gate must
+    run ft for its report but exit with verify's code.
+    """
+    import subprocess
+    (tmp_path / "pom.xml").write_text("<project/>")
+    gate = _repos.detect_prerelease_command(tmp_path)
+    assert gate is not None and "ft" in gate
+    # Failing verify stand-in: /bin/sh -c "<gate with mvn->false>" must exit 1.
+    probe = gate.replace("mvn verify", "false").replace("mvn clean; ", "true; ")
+    p = subprocess.run(["/bin/sh", "-c", probe], cwd=tmp_path, capture_output=True)
+    assert p.returncode != 0
+    # Passing verify stand-in must exit 0.
+    probe_ok = gate.replace("mvn verify", "true").replace("mvn clean; ", "true; ")
+    p_ok = subprocess.run(["/bin/sh", "-c", probe_ok], cwd=tmp_path, capture_output=True)
+    assert p_ok.returncode == 0
 
 
 def test_repo_add_autodetects_prerelease(isolated_config, tmp_path):

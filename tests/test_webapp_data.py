@@ -572,7 +572,7 @@ def test_repos_detect_endpoint(client, tmp_path):
     (tmp_path / "pom.xml").write_text("<project/>")
     r = client.get("/api/repos/detect", params={"path": str(tmp_path)})
     assert r.status_code == 200
-    assert r.json() == {"pre-release": "mvn clean; mvn verify || ft"}
+    assert r.json() == {"pre-release": "mvn clean; rc=0; mvn verify || rc=$?; command -v ft >/dev/null 2>&1 && ft || true; exit $rc"}
 
 
 def test_repos_detect_unknown_path_is_null(client):
