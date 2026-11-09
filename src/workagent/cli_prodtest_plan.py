@@ -109,6 +109,11 @@ def prodtest_plan(
                  no_tty, launch, result, json_output,
                  run_key=key, session_file=session_file,
                  terminal=terminal, env_file=env_file)
+    if launch and not no_tty and not terminal:
+        eprint(f"warning: plan file updated but NOT persisted ({plan_file}): "
+               "commit/push/DB upsert only run with --no-tty. "
+               "Re-run `workagent prodtest plan " + (issue_number or key) + " --launch --no-tty` "
+               "or cleanup will keep reporting a stale plan.")
     if launch and no_tty:
         _finish_plan(key, issue_number, worktree, repo, branch, plan_file,
                      issue_url, result)
