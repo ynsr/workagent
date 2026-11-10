@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   Link2,
   MessageSquare,
+  MessageSquarePlus,
   Rocket,
   Settings2,
   ShieldAlert,
@@ -28,8 +29,11 @@ const NAV_TOP_GROUPS = [
     { to: "/launch", label: "Launch", icon: Rocket },
   ],
   [
-    { to: "/flows", label: "Flows", icon: Workflow },
     { to: "/messages", label: "Messages", icon: MessageSquare },
+    { to: "/message-launch", label: "Message Launch", icon: MessageSquarePlus },
+  ],
+  [
+    { to: "/flows", label: "Flows", icon: Workflow },
     { to: "/sessions", label: "Sessions", icon: History },
   ],
   [
@@ -50,12 +54,6 @@ const NAV_BOTTOM_GROUPS = [
   ],
 ] as const
 
-const NAV_ITEMS = [...NAV_TOP_GROUPS.flat(), ...NAV_BOTTOM_GROUPS.flat()] as unknown as ReadonlyArray<{
-  to: string
-  label: string
-  icon: typeof Rocket
-  end?: boolean
-}>
 
 function NavLinkContent({ label, icon: Icon }: { label: string; icon: typeof Rocket }) {
   return (
@@ -177,6 +175,17 @@ function SidebarMeta() {
     </div>
   )
 }
+/** Mobile bottom bar: curated 6-item subset — one full grid row (all
+ * NAV_ITEMS would spill onto a third row and cover page content). */
+const BOTTOM_NAV_ITEMS = [
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "/launch", label: "Launch", icon: Rocket },
+  { to: "/messages", label: "Messages", icon: MessageSquare },
+  { to: "/message-launch", label: "Msg Launch", icon: MessageSquarePlus },
+  { to: "/flows", label: "Flows", icon: Workflow },
+  { to: "/sessions", label: "Sessions", icon: History },
+] as const
+
 
 function BottomNav() {
   return (
@@ -185,7 +194,7 @@ function BottomNav() {
       className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:hidden"
     >
       <div className="grid grid-cols-6 pb-[env(safe-area-inset-bottom)]">
-        {NAV_ITEMS.map((item) => (
+        {BOTTOM_NAV_ITEMS.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
