@@ -227,6 +227,23 @@ def create_app(static_dir: Path, host: str, port: int,
                                 detail=f"unknown action label: {label!r}")
         return row
 
+    @app.get("/api/messages")
+    def messages_list(thread: str = "") -> dict:
+        """Registered chat messages (Messages page source). Always 200."""
+        from . import store_messages as _sm
+        return {"messages": _sm.list_messages(thread)}
+
+    @app.get("/api/messages/{ref}")
+    def message_detail(ref: str) -> dict:
+        """One registered message by id/message_id/thread; 404 when unknown."""
+        from .errors import HarnessError
+        try:
+            return store.resolve_message(ref)
+        except HarnessError:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404,
+                                detail=f"unknown message: {ref!r}")
+
     @app.get("/api/flow-templates")
     def flow_templates_list() -> dict:
         """Flow templates (Flow page source). Always 200, [] when none."""

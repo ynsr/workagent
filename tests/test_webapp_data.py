@@ -640,3 +640,36 @@ def test_adhoc_needs_confirm_and_validates_prompt(client, monkeypatch):
     })
     assert r.status_code == 202, r.text
     assert _w._target_for("adhoc", ["k", "--prompt", "do x"]) == "adhoc:k"
+
+
+def test_api_messages_roundtrip(client, monkeypatch):
+    """GET /api/messages lists registered messages; GET /api/messages/{id} shows one."""
+    from workagent import store_messages as sm
+    row = {"id": 1, "message_id": "p1", "thread_id": "t1", "app_name": "mattermost",
+           "sender_username": "u", "content": "hi", "ts": "", "repos": ["r1"],
+           "added_at": "t"}
+    monkeypatch.setattr(sm, "list_messages", lambda thread="": [row])
+    import workagent.store as _store
+    from workagent.errors import HarnessError
+
+    def _resolve(ref):
+        if ref == "p1":
+            return row
+        raise HarnessError("no such message", exit_code=2)
+    monkeypatch.setattr(_store, "resolve_message", _resolve)
+    r = client.get("/api/messages")
+    assert r.status_code == 200, r.text
+    assert r.json()["messages"][0]["message_id"] == "p1"
+    ok = client.get("/api/messages/p1")
+    assert ok.status_code == 200, ok.text
+    miss = client.get("/api/messages/nope")
+    assert miss.status_code == 404
+
+
+def test_message_run_passthrough_accepts_subcommand(client, monkeypatch):
+    """POST /api/runs message adhoc is accepted (runs keyed message:<ref>)."""
+    from tests.webapp_helpers import _stub_spawn
+    _stub_spawn(monkeypatch)
+    r = client.post("/api/runs", json={"command": "message", "confirm": True,
+                                       "args": ["adhoc", "p1", "--prompt", "hi"]})
+    assert r.status_code in (200, 201, 202), r.text
