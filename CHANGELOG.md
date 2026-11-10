@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Run resume finds rescoped review transcripts and headless review chains the fix run [no-issue]
 - Shell completion works on every Tab press, and duplicate dev-tag warnings in the web build are fixed [no-issue]
 - Maven pre-release runs failed-tests report but still fails the gate when `mvn verify` fails [no-issue]
 - Sidebar groups Dashboard/Launch, Flows/Sessions/Runs, templates/actions, with Repos/Trackers/Links and Doctor/Settings pinned below [no-issue]

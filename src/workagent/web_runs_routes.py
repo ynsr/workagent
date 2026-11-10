@@ -36,6 +36,48 @@ from .web_runs import (
 )
 
 
+def _child_session_file(db, stem: str) -> tuple[str, str]:
+    """File + row id for the CLI child's rescoped session (stem match).
+
+    The review child rescopes the web-minted branch-less path under
+    sessions/omp/<branch>/<action>/ and inserts its own row keyed by the
+    same stem — the web row keeps the stale branch-less path. Match by
+    filename stem so resume finds the real transcript.
+    """
+    if not stem:
+        return "", ""
+    try:
+        from . import store_sqlite as _sq
+        row = _sq.get_session(db, stem, include_deleted_worktrees=True)
+        if row and _transcript_ready(str(row.get("file_path") or "")):
+            return str(row.get("file_path")), str(row.get("id"))
+    except Exception:
+        pass
+    return "", ""
+
+def _newest_under(scope, created_ts: float) -> str:
+    """Newest non-empty .jsonl directly under scope, newest-first ("" when none)."""
+    from pathlib import Path as _Path
+    best = ""
+    best_mtime = -1.0
+    try:
+        entries = list(scope.iterdir())
+    except OSError:
+        return ""
+    for p in entries:
+        try:
+            if not (p.is_file() and p.suffix == ".jsonl" and p.stat().st_size > 0):
+                continue
+            mt = p.stat().st_mtime
+        except OSError:
+            continue
+        if mt < created_ts:
+            continue
+        if mt > best_mtime:
+            best_mtime = mt
+            best = str(p)
+    return best
+
 def _resolve_session_file(session_file: str, session_id: str = "") -> str:
     """Best-effort session file: DB row wins, else adopt the minted one.
 
@@ -46,10 +88,16 @@ def _resolve_session_file(session_file: str, session_id: str = "") -> str:
        CLI rescoping a branch-less pinned path under
        `sessions/omp/<branch>/<action>/` — the registry still holds the
        stale branch-less path);
-    2. pinned path itself when ready;
-    3. newest non-empty .jsonl under the scope dir (pinned parent, falling
-       back to the DB row parent), created after the session row —
-       persisted on the session so future runs reuse the full path.
+    2. child session row matched by filename stem (the child inserts its own
+       row under the same stem after rescope; the web row keeps the stale
+       path) when it holds a ready transcript;
+    3. pinned path itself when ready;
+    4. newest non-empty .jsonl under the scope dir (pinned parent, falling
+       back to the DB row parent), then one level of branch/action
+       subdirectories (the child rescopes the path but the registry/web row
+       still point at the branch-less parent — the minted transcript lands
+       one level down), created after the session row — persisted on the
+       session so future runs reuse the full path.
     Returns "" when nothing resumable is found.
     """
     from pathlib import Path as _Path
@@ -71,6 +119,17 @@ def _resolve_session_file(session_file: str, session_id: str = "") -> str:
                 created = ""
         if db_file and db_file != session_file and _transcript_ready(db_file):
             return db_file
+        # Stem fallback: the CLI child inserted its own row under the same
+        # stem after rescoping to the branch dir; point the web row at it.
+        stem = _Path(session_file).stem if session_file else ""
+        child_file, child_sid = _child_session_file(db, stem) if db.exists() else ("", "")
+        if child_file:
+            if session_id and db.exists():
+                try:
+                    _sq.set_session_file_path(db, session_id, child_file)
+                except Exception:
+                    pass
+            return child_file
         scope = _Path(session_file).parent if session_file else None
         if scope is None or not scope.is_dir():
             scope = _Path(db_file).parent if db_file else None
@@ -80,24 +139,43 @@ def _resolve_session_file(session_file: str, session_id: str = "") -> str:
             created_ts = datetime.fromisoformat(created).timestamp() if created else 0.0
         except Exception:
             created_ts = 0.0
-        best = ""
-        best_mtime = -1.0
-        try:
-            entries = list(scope.iterdir())
-        except OSError:
-            return ""
-        for p in entries:
+        best = _newest_under(scope, created_ts)
+        if not best:
+            # Rescoped layout: the child moves the path from
+            # sessions/omp/<action>/<stem>.jsonl to
+            # sessions/omp/<branch-slug>/<action>/<stem>.jsonl — the branch
+            # dir is a SIBLING of the pinned parent, not a child. Search the
+            # grandparent tree for the same stem first, then any newest .jsonl.
+            stem = _Path(session_file).stem if session_file else ""
+            roots = [scope]
             try:
-                if not (p.is_file() and p.suffix == ".jsonl" and p.stat().st_size > 0):
+                if scope.parent != scope:
+                    roots.append(scope.parent)
+            except Exception:
+                pass
+            same: list[tuple[float, str]] = []
+            any_: list[tuple[float, str]] = []
+            for root in roots:
+                try:
+                    nested = [p for p in root.rglob("*.jsonl") if p.is_file()]
+                except OSError:
                     continue
-                mt = p.stat().st_mtime
-            except OSError:
-                continue
-            if mt < created_ts:
-                continue
-            if mt > best_mtime:
-                best_mtime = mt
-                best = str(p)
+                for p in nested:
+                    try:
+                        if p.suffix != ".jsonl" or p.stat().st_size == 0:
+                            continue
+                        mt = p.stat().st_mtime
+                    except OSError:
+                        continue
+                    if mt < created_ts:
+                        continue
+                    any_.append((mt, str(p)))
+                    if stem and p.stem == stem:
+                        same.append((mt, str(p)))
+            pool = same or any_
+            if pool:
+                pool.sort()
+                best = pool[-1][1]
         if best and session_id and db.exists():
             try:
                 _sq.set_session_file_path(db, session_id, best)

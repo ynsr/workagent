@@ -676,6 +676,12 @@ def review(
                       "harness": harness_name, "command": "review",
                       "fix_comments": fix_comments}
             eprint(f"worktree: {worktree}  branch: {branch}")
+            if then_fix_comments and not fix_comments and not no_tty and not terminal:
+                # Interactive (no --no-tty, no --terminal): _run_harness execs
+                # the harness and never returns, so the post-run _run_then_fix
+                # below is unreachable. Print the manual follow-up up front
+                # (same text as the post-run hint) so the run log carries it.
+                _print_then_fix_hint(pr_url, harness_name, use_review_session)
             if launch:
                 # Same staleness rule as sync: review a pulled tip, never a
                 # stale local. Fast-forward/merge origin/<branch> first; a
@@ -734,6 +740,8 @@ def review(
               "harness": harness_name, "command": "review",
               "fix_comments": fix_comments}
     eprint(f"worktree: {worktree}  branch: {branch}")
+    if then_fix_comments and not fix_comments and not no_tty and not terminal:
+        _print_then_fix_hint(pr_url, harness_name, use_review_session)
     if launch:
         _guard_harness(review_key, worktree)
         _mark_reviewed(review_key, worktree)

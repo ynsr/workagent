@@ -312,6 +312,30 @@ export function StartFormFields({
     </>
   )
 }
+/** Build `review` args from the shared form (Launch page uses this — single
+ * source of truth for --then-fix-comments / --use-review-session / --no-tty).
+ */
+export function buildReviewArgs(form: StartFormValue): string[] {
+  const ref = form.ref.trim()
+  const repo = form.repo.trim()
+  const args = [ref]
+  if (form.fixComments) args.push("--fix-comments")
+  // Review-with-then-fix: the checkbox drives --then-fix-comments, and
+  // --use-review-session applies to both the fix action and the chain.
+  if (!form.fixComments && form.thenFixComments) args.push("--then-fix-comments")
+  if ((form.fixComments || (!form.fixComments && form.thenFixComments)) && form.useReviewSession)
+    args.push("--use-review-session")
+  // Headless review runs the harness detached (execvp, never returns),
+  // so the CLI can't gate the chain on the exit code. Send --no-tty —
+  // no_tty + launch is the only headless combo that returns and chains.
+  if (form.runMode === "headless") args.push("--no-tty")
+  if (repo) args.push("--repo", repo)
+  if (form.depth.trim()) args.push("--depth", form.depth.trim())
+  if (form.noStatus) args.push("--no-status")
+  args.push(...runModeArgs(form.runMode))
+  args.push(...extraPromptArgs(form))
+  return args
+}
 /** Build `start` args from the shared form (Launch page + dialog agree). */
 export function buildStartArgs(form: StartFormValue): string[] {
   const ref = form.ref.trim()
@@ -331,7 +355,7 @@ export function buildStartArgs(form: StartFormValue): string[] {
   args.push(...extraPromptArgs(form))
   return args
 }
-/** Confirm-dialog detail rows for a start run. */
+ /** Confirm-dialog detail rows for a start run. */
 export function startFlagList(form: StartFormValue): string {
   const repo = form.repo.trim()
   const extra = form.extraPrompt.trim()

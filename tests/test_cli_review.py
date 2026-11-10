@@ -238,6 +238,15 @@ def test_then_fix_preview_prints_hint_not_spawn(monkeypatch, capsys):
     _r._run_then_fix("k", "https://github.com/o/r/pull/1", "omp", False, None, None, True, False, False)
     assert "then-fix" in capsys.readouterr().err
 
+
+def test_then_fix_interactive_hint_prints_followup(capsys):
+    """Interactive (execvp, never returns) hint carries the manual command."""
+    from workagent import cli_review as _r
+    _r._print_then_fix_hint("https://github.com/o/r/pull/1", "omp", False)
+    err = capsys.readouterr().err
+    assert "then-fix: after the review yields, run:" in err
+    assert "--fix-comments" in err
+
 def test_run_harness_derives_fix_comments_type(isolated_config, tmp_path, monkeypatch):
     """_run_harness with command=review + fix marker inserts fix_comments type."""
     from workagent import cli_harness as _h, store_sqlite as sq

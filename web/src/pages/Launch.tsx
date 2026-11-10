@@ -18,7 +18,7 @@ import { api, type FlowTemplateRow } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
-import { ProdtestActionSelect, ReviewActionSelect, RunModeSelect, StartFormFields, buildStartArgs } from "@/components/StartForm"
+import { ProdtestActionSelect, ReviewActionSelect, RunModeSelect, StartFormFields, buildReviewArgs, buildStartArgs } from "@/components/StartForm"
 import { COPY, INITIAL, MODES, adhocArgs, extraPromptArgs, isPrShaped, runModeArgs, splitAdhocRefs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
@@ -491,15 +491,7 @@ export function Launch() {
     if (mode === "adhoc") {
       return [...splitAdhocRefs(form.ref), ...adhocArgs(form), ...runModeArgs(form.runMode)]
     }
-    const args = [refValue]
-    if (form.fixComments) args.push("--fix-comments")
-    if (form.fixComments && form.useReviewSession) args.push("--use-review-session")
-    if (repoValue) args.push("--repo", repoValue)
-    if (form.depth.trim()) args.push("--depth", form.depth.trim())
-    if (form.noStatus) args.push("--no-status")
-    args.push(...runModeArgs(form.runMode))
-    args.push(...extraPromptArgs(form))
-    return args
+    return buildReviewArgs(form)
   }
   const extra = form.extraPrompt.trim()
   const adhocRefs = splitAdhocRefs(form.ref)

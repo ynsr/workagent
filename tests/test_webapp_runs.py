@@ -715,6 +715,22 @@ def test_resolve_session_file_prefers_db_over_stale_pinned(client, tmp_path):
     assert _rr._resolve_session_file(stale, sid) == str(real)
 
 
+def test_resolve_session_file_finds_sibling_branch_dir(client, tmp_path):
+    """Rescoped layout: pinned sessions/omp/review/<stem> missing, real
+    transcript at sessions/omp/<branch>/review/<stem> — resolve by stem."""
+    from workagent import web_runs_routes as _rr
+    pinned_parent = tmp_path / "sessions" / "omp" / "review"
+    pinned_parent.mkdir(parents=True)
+    real_parent = tmp_path / "sessions" / "omp" / "feat-x" / "review"
+    real_parent.mkdir(parents=True)
+    stem = "2026-11-10T16-13-46-786Z-3703"
+    stale = pinned_parent / f"{stem}.jsonl"
+    real = real_parent / f"{stem}.jsonl"
+    real.write_text('{"type":"session"}\n')
+    assert _rr._resolve_session_file(str(stale), "") == str(real)
+
+
+
 def test_mirror_run_syncs_rescoped_path(client, tmp_path):
     """Mirror updates the live registry row when the child rescoped the path."""
     from workagent import store_sqlite as sq
