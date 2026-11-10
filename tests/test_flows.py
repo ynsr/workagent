@@ -264,3 +264,27 @@ def test_release_step_rejects_bad_checks():
         sf.validate_template([{"kind": "cleanup"}, {"kind": "release", "config": {"diff": "local2"}}])
     ok = sf.validate_template([{"kind": "cleanup"}, {"kind": "release", "config": {"checks": "both", "diff": "local"}}])
     assert ok[-1]["config"] == {"checks": "both", "diff": "local"}
+
+
+def test_template_category_round_trip(tmp_path):
+    from workagent import store_flows as sf
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    row = sf.create_template(db, name="Msg flow", steps=[{"kind": "cleanup"}], category="message")
+    assert row["category"] == "message"
+    assert sf.get_template(db, row["label"])["category"] == "message"
+
+
+def test_template_category_rejects_bad_value(tmp_path):
+    from workagent import store_flows as sf
+    from workagent import store_sqlite as sq
+    from workagent.errors import HarnessError
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    try:
+        sf.create_template(db, name="X", steps=[{"kind": "cleanup"}], category="sms")
+    except HarnessError as e:
+        assert e.exit_code == 2
+    else:
+        raise AssertionError("expected HarnessError")

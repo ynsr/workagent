@@ -136,3 +136,30 @@ def test_actions_ordered_by_sort_order(tmp_path):
     ca.create_action(db, name="Second", prompt="p", sort_order=2)
     ca.create_action(db, name="First", prompt="p", sort_order=1)
     assert [r["label"] for r in ca.list_actions(db)] == ["first", "second"]
+
+
+def test_action_category_round_trip(tmp_path):
+    from workagent import store_custom_actions as ca
+    db = _db(tmp_path)
+    row = ca.create_action(db, name="Msg triage", prompt="p", category="message")
+    assert row["category"] == "message"
+    assert ca.get_action(db, row["label"])["category"] == "message"
+
+
+def test_action_category_defaults_worktree(tmp_path):
+    from workagent import store_custom_actions as ca
+    db = _db(tmp_path)
+    row = ca.create_action(db, name="Legacy", prompt="p")
+    assert row["category"] == "worktree"
+
+
+def test_action_category_rejects_bad_value(tmp_path):
+    from workagent import store_custom_actions as ca
+    from workagent.errors import HarnessError
+    db = _db(tmp_path)
+    try:
+        ca.create_action(db, name="X", prompt="p", category="sms")
+    except HarnessError as e:
+        assert e.exit_code == 2
+    else:
+        raise AssertionError("expected HarnessError")

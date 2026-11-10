@@ -15,6 +15,9 @@ FLOW_STATUSES = ("pending", "running", "paused", "failed", "done")
 
 #: Banned substrings in any step config (then-fix-comments shortcut).
 _BANNED_STEP_FLAGS = ("then-fix-comments", "then_fix_comments")
+#: Valid scopes for category — worktree templates surface on the Dashboard,
+#: message templates on the Messages page.
+CATEGORIES = ("worktree", "message")
 
 #: Banned substrings in cleanup step config (fixed squash + soft-delete).
 _BANNED_CLEANUP_FLAGS = ("hard_delete", "hard-delete",
@@ -285,9 +288,14 @@ def create_template(db: Path, *, name: str, label: str = "",
                     parent_labels: list[str] | None = None,
                     protected: bool = False, sort_order: int = 0,
                     dedicated_top_bar: bool = False,
-                    dedicated_overlay: bool = False) -> dict:
+                    dedicated_overlay: bool = False,
+                    category: str = "worktree") -> dict:
     """Insert a flow template; label defaults to the normalized name."""
     from .errors import HarnessError
+    if (category or "worktree") not in CATEGORIES:
+        raise HarnessError(
+            f"category must be one of {', '.join(CATEGORIES)} (got {category!r})",
+            exit_code=2)
     if not (name or "").strip():
         raise HarnessError("template name is required", exit_code=2)
     key = validate_label(label) if (label or "").strip() \
@@ -308,12 +316,12 @@ def create_template(db: Path, *, name: str, label: str = "",
                 "INSERT INTO flow_templates (label, name, steps,"
                 " pre_execution, post_execution, parent_labels,"
                 " protected, sort_order, dedicated_top_bar,"
-                " dedicated_overlay, created_at, modified_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " dedicated_overlay, category, created_at, modified_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (key, name.strip(), json.dumps(norm), pre_execution or "",
                  post_execution or "", json.dumps(parents), int(bool(protected)),
                  int(sort_order or 0), int(bool(dedicated_top_bar)),
-                 int(bool(dedicated_overlay)), now, now))
+                 int(bool(dedicated_overlay)), category or "worktree", now, now))
         except sqlite3.IntegrityError:
             raise HarnessError(
                 f"template label {key!r} already exists",
@@ -335,7 +343,7 @@ def update_template(db: Path, label: str, **fields) -> dict:
     from .errors import HarnessError
     allowed = {"name", "steps", "pre_execution", "post_execution",
                "parent_labels", "new_label", "protected", "sort_order",
-               "dedicated_top_bar", "dedicated_overlay"}
+               "dedicated_top_bar", "dedicated_overlay", "category"}
     unknown = set(fields) - allowed
     if unknown:
         raise HarnessError(f"unknown fields: {sorted(unknown)}",
@@ -359,6 +367,10 @@ def update_template(db: Path, label: str, **fields) -> dict:
     for _flag in ("protected", "dedicated_top_bar", "dedicated_overlay"):
         if _flag in fields:
             fields[_flag] = int(bool(fields[_flag]))
+    if "category" in fields and (fields["category"] or "") not in CATEGORIES:
+        raise HarnessError(
+            f"category must be one of {', '.join(CATEGORIES)} (got {fields['category']!r})",
+            exit_code=2)
     if "sort_order" in fields:
         try:
             fields["sort_order"] = int(fields["sort_order"] or 0)
