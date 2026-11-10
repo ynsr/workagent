@@ -34,8 +34,10 @@ def _check_repos(conn, repos) -> list[str]:
     keys = list(repos or [])
     if not keys:
         raise HarnessError("at least one --repo is required", exit_code=2)
-    missing = [k for k in keys if conn.execute(
-        "SELECT 1 FROM repos WHERE key_ref = ?", (k,)).fetchone() is None]
+    have = {r[0] for r in conn.execute(
+        f"SELECT key_ref FROM repos WHERE key_ref IN ({', '.join('?' * len(keys))})",
+        keys).fetchall()}
+    missing = [k for k in keys if k not in have]
     if missing:
         raise HarnessError(f"unknown repos: {', '.join(missing)}", exit_code=2)
     return keys
@@ -125,6 +127,7 @@ def resolve_message(db: Path, ref: str) -> dict:
 def update_message(db: Path, ref: str, **fields) -> dict:
     """Update mutable fields (pass ``new_message_id`` to rename)."""
     from .errors import HarnessError
+    import sqlite3 as _sqlite3
     allowed = {"thread_id", "app_name", "sender_username", "content", "ts",
                "repos", "new_message_id"}
     unknown = set(fields) - allowed
@@ -136,14 +139,23 @@ def update_message(db: Path, ref: str, **fields) -> dict:
         if "repos" in fields:
             fields["repos"] = json.dumps(_check_repos(conn, fields["repos"]))
         if "new_message_id" in fields:
-            fields["message_id"] = fields.pop("new_message_id")
+            new_id = (fields.pop("new_message_id") or "").strip()
+            if not new_id:
+                raise HarnessError("--new-message-id must not be blank",
+                                   exit_code=2)
+            fields["message_id"] = new_id
         if "app_name" in fields and fields["app_name"] not in APPS:
             raise HarnessError(
                 f"app_name must be one of {', '.join(APPS)}", exit_code=2)
         if fields:
             sets = ", ".join(f"{k} = ?" for k in fields)
-            conn.execute(f"UPDATE messages SET {sets} WHERE id = ?",
-                         (*fields.values(), base["id"]))
+            try:
+                conn.execute(f"UPDATE messages SET {sets} WHERE id = ?",
+                             (*fields.values(), base["id"]))
+            except _sqlite3.IntegrityError:
+                raise HarnessError(
+                    f"message {fields.get('message_id', '')!r} already registered",
+                    exit_code=2) from None
         return _row(conn.execute("SELECT * FROM messages WHERE id = ?",
                                  (base["id"],)).fetchone())
 

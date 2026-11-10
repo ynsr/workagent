@@ -102,3 +102,75 @@ def test_thread_listing_and_ambiguity(tmp_path):
         assert e.exit_code == 2
     else:
         raise AssertionError("expected HarnessError")
+
+
+def test_create_rejects_empty_repos_and_blank_id(tmp_path):
+    from workagent import store_messages as sm
+    from workagent.errors import HarnessError
+    db = tmp_path / "s.db"
+    _seed_repo(db)
+    for bad in ([], ["nope"]):
+        try:
+            sm.create_message(db, message_id="px", repos=bad)
+        except HarnessError as e:
+            assert e.exit_code == 2
+        else:
+            raise AssertionError(f"expected HarnessError for {bad!r}")
+    for blank in ("", "   "):
+        try:
+            sm.create_message(db, message_id=blank, repos=["r1"])
+        except HarnessError as e:
+            assert e.exit_code == 2
+        else:
+            raise AssertionError("expected HarnessError for blank id")
+
+
+def test_update_rename_guards(tmp_path):
+    from workagent import store_messages as sm
+    from workagent.errors import HarnessError
+    db = tmp_path / "s.db"
+    _seed_repo(db)
+    sm.create_message(db, message_id="p1", repos=["r1"])
+    sm.create_message(db, message_id="p2", repos=["r1"])
+    for bad in ("", "   "):
+        try:
+            sm.update_message(db, "p1", new_message_id=bad)
+        except HarnessError as e:
+            assert e.exit_code == 2
+        else:
+            raise AssertionError("expected HarnessError for blank rename")
+    try:
+        sm.update_message(db, "p1", new_message_id="p2")
+    except HarnessError as e:
+        assert e.exit_code == 2
+    else:
+        raise AssertionError("expected HarnessError for duplicate rename")
+    try:
+        sm.update_message(db, "p1", app_name="slack")
+    except HarnessError as e:
+        assert e.exit_code == 2
+    else:
+        raise AssertionError("expected HarnessError for bad app")
+    try:
+        sm.update_message(db, "p1", repos=["nope"])
+    except HarnessError as e:
+        assert e.exit_code == 2
+    else:
+        raise AssertionError("expected HarnessError for bad repos")
+    assert sm.update_message(db, "p1", new_message_id="  p3  ")["message_id"] == "p3"
+
+
+def test_delete_unknown_and_round_trip(tmp_path):
+    from workagent import store_messages as sm
+    from workagent.errors import HarnessError
+    db = tmp_path / "s.db"
+    _seed_repo(db)
+    sm.create_message(db, message_id="p1", repos=["r1"])
+    try:
+        sm.delete_message(db, "nope")
+    except HarnessError as e:
+        assert e.exit_code == 2
+    else:
+        raise AssertionError("expected HarnessError")
+    sm.delete_message(db, "p1")
+    assert sm.get_message(db, "p1") is None

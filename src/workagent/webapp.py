@@ -230,8 +230,8 @@ def create_app(static_dir: Path, host: str, port: int,
     @app.get("/api/messages")
     def messages_list(thread: str = "") -> dict:
         """Registered chat messages (Messages page source). Always 200."""
-        from . import store_messages as _sm
-        return {"messages": _sm.list_messages(thread)}
+        return {"messages": store.list_messages(thread)}
+
 
     @app.get("/api/messages/{ref}")
     def message_detail(ref: str) -> dict:

@@ -41,7 +41,7 @@ export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: (
   async function handleDelete() {
     const ok = await confirm({ title: `Delete message ${row.message_id}?`, confirmLabel: "Delete" })
     if (!ok) return
-    await spawn(["remove", row.message_id, "--yes"], false, "Message delete started")
+    await spawn(["remove", row.message_id, "--yes"], true, "Message delete started")
   }
 
   return (
@@ -60,7 +60,7 @@ export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: (
       <div className="flex items-center gap-1">
         <Input className="h-8 w-44" placeholder="Draft reply…" value={text} onChange={(e) => setText(e.target.value)} />
         <Button variant="outline" size="sm" disabled={!text.trim()}
-          onClick={() => void spawn(["draft-reply", row.message_id, "--text", text.trim()], false, "Draft reply saved")}>
+          onClick={() => void spawn(["draft-reply", row.message_id, "--text", text.trim()], true, "Draft reply started")}>
           <MessageSquarePlus aria-hidden /> Draft reply
         </Button>
       </div>
@@ -73,7 +73,7 @@ export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: (
             {actions.map((a) => <option key={a.label} value={a.label}>{a.name}</option>)}
           </select>
           <Button variant="outline" size="sm" disabled={!actionLabel}
-            onClick={() => void spawn(["action", "run", actionLabel, row.message_id, "--dry-run"], false, "Message action planned")}>
+            onClick={() => void spawn(["action", "run", actionLabel, row.message_id, "--yes"], true, "Message action started")}>
             <Zap aria-hidden /> Run
           </Button>
         </div>
@@ -87,7 +87,7 @@ export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: (
             {templates.map((t) => <option key={t.label} value={t.label}>{t.name}</option>)}
           </select>
           <Button variant="outline" size="sm" disabled={!templateLabel}
-            onClick={() => void spawn(["flow", "run", templateLabel, row.message_id, "--dry-run"], false, "Message flow planned")}>
+            onClick={() => void spawn(["flow", "run", templateLabel, row.message_id, "--yes"], true, "Message flow started")}>
             <ClipboardList aria-hidden /> Run
           </Button>
         </div>

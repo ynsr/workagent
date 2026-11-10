@@ -157,9 +157,11 @@ by the Dashboard Actions dropdown.)
   "repos": ["r1"], "added_at": "…"}]}
 ```
 (Messages page source: `message add/list/show/update/remove` run as runs;
-detail 404s on unknown ref. `message adhoc/validate/draft-reply` and
-`message action run` / `message flow run` run via `POST /api/runs` with
-target key `message:<ref>` — one live run per message. `draft-reply`
+detail 404s on unknown ref (ambiguous substring → 404). `message
+adhoc/validate/draft-reply` and `message action run` / `message flow run`
+run via `POST /api/runs` with target key `message:<ref>`
+(`message:action:<ref>` / `message:flow:<ref>` for action/flow runs) — one
+live run per (subcommand, message). `draft-reply`
 saves via `mm messages draft save` (never direct-send); `--dry-run`
 prints the argv without calling `mm`.)
 

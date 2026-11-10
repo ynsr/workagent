@@ -86,12 +86,12 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `message list [--thread T] [--json/--csv]` | read-only | `store_messages.list_messages` | — | no | | none |
 | `message show REF [--json]` | read-only | `store_messages.resolve_message` | — | no | unknown/ambiguous ref (2) | none |
 | `message update REF [--thread-id] [--sender] [--content] [--ts] [--repo R...] [--json]` | mutating | — | `config` | no (messages row write) | unknown/ambiguous ref (2), unknown field (2) | none |
-| `message remove REF [--yes] [--json]` | mutating | — | `config` | yes-ish (row delete) | unknown/ambiguous ref (2) | TTY confirm; non-TTY needs `--yes` (2) |
+| `message remove REF [--yes] [--json]` | mutating | — | `message:<ref>` | yes (row delete) | unknown/ambiguous ref (2) | TTY confirm; non-TTY needs `--yes` (2) |
 | `message adhoc MSG --prompt P [--ref] [--repo] [--launch/--terminal] [--harness] [--extra-prompt] [--env-file] [--session-file] [--dry-run] [--yes] [--json]` | mutating | — | `message:<ref>` | no (spawns agent) | unknown/ambiguous msg (2), blank prompt (2), multi-repo without --repo/--ref (2) | TTY confirm; non-TTY needs `--yes` (2) |
 | `message validate MSG [...]` | mutating | — | `message:<ref>` | no (spawns agent) | same as adhoc | TTY confirm; non-TTY needs `--yes` (2) |
-| `message draft-reply MSG --text T [--dry-run] [--json]` | mutating | — | `config` | no (mm draft save, never direct-send) | blank text (2), missing channel (2), mm send_disabled surfaces verbatim | none — `--dry-run` prints argv |
-| `message action run LABEL MSG [--ref] [--repo] [...] [--dry-run] [--yes] [--json]` | mutating | — | `message:<ref>` | no (spawns agent) | worktree-category action (2) | TTY confirm; non-TTY needs `--yes` (2) |
-| `message flow run LABEL MSG [--ref] [--repo] [--dry-run] [--yes] [--json]` | mutating | — | `message:<ref>` | no (fans out to step runners) | worktree-category template (2), worktree-kind steps without --ref (2) | TTY confirm; non-TTY needs `--yes` (2) |
+| `message draft-reply MSG --text T [--dry-run] [--json]` | mutating | — | `message:<ref>` | yes (mm draft save, never direct-send) | blank text (2), missing channel (2), mm send_disabled surfaces verbatim | none — `--dry-run` prints argv |
+| `message action run LABEL MSG [--ref] [--repo] [...] [--dry-run] [--yes] [--json]` | mutating | — | `message:action:<ref>` | yes (spawns agent) | worktree-category action (2), repo path without linked worktree (2) | TTY confirm; non-TTY needs `--yes` (2) |
+| `message flow run LABEL MSG --ref WT [--repo] [--dry-run] [--yes] [--json]` | mutating | — | `message:flow:<ref>` | yes (fans out to step runners) | worktree-category template (2), missing --ref (2) | TTY confirm; non-TTY needs `--yes` (2) |
 | `register PATH [--key] [--issue] [--repo] [--yes/--force] [--json]` | mutating | — | `register` | no (links.json write) | bad path/main checkout (2), key conflict (1) | none |
 | `doctor [--json]` | read-only | `doctor.check(json_output=True)` returns dict | — | no | exit 1 when stale | none |
 | `completions show/install` | mutating (writes rc) | — | — | — | — | **excluded from UI per prompt** |

@@ -68,8 +68,8 @@ export function Messages() {
   const threadParam = params.get("thread") ?? ""
   const [q, setQ] = useState("")
   const [sender, setSender] = useState("")
-  const [app] = useState("")
-  const [repo] = useState("")
+  const [app, setApp] = useState("")
+  const [repo, setRepo] = useState("")
   const [grouped, setGrouped] = useState(false)
   const [expanded, setExpanded] = useState<number | null>(null)
   const { data, isPending, isFetching, isError, error, refetch } = useMessages(threadParam || undefined)
@@ -107,7 +107,7 @@ export function Messages() {
     const ok = await confirm({ title: `Delete message ${row.message_id}?`, confirmLabel: "Delete" })
     if (!ok) return
     try {
-      await createRun.mutateAsync({ command: "message", args: ["remove", row.message_id, "--yes"] })
+      await createRun.mutateAsync({ command: "message", args: ["remove", row.message_id, "--yes"], confirm: true })
       toast.success("Message delete started")
       void refetch()
     } catch (err) {
@@ -146,6 +146,14 @@ export function Messages() {
             <Label htmlFor="msg-sender">Sender</Label>
             <Input id="msg-sender" className="h-8 w-40" placeholder="any" list="msg-senders" value={sender} onChange={(e) => setSender(e.target.value)} />
             <datalist id="msg-senders">{senders.map((s) => <option key={s} value={s} />)}</datalist>
+          </div>
+          <div className="grid gap-1">
+            <Label htmlFor="msg-app">App</Label>
+            <Input id="msg-app" className="h-8 w-32" placeholder="any" value={app} onChange={(e) => setApp(e.target.value)} />
+          </div>
+          <div className="grid gap-1">
+            <Label htmlFor="msg-repo">Repo</Label>
+            <Input id="msg-repo" className="h-8 w-32" placeholder="any" value={repo} onChange={(e) => setRepo(e.target.value)} />
           </div>
           <div className="grid gap-1">
             <Label htmlFor="msg-thread">Thread</Label>

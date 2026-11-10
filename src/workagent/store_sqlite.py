@@ -71,7 +71,8 @@ CREATE TABLE IF NOT EXISTS custom_actions (
   created_at TEXT NOT NULL, modified_at TEXT NOT NULL,
   protected INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0,
   dedicated_top_bar INTEGER NOT NULL DEFAULT 0,
-  dedicated_overlay INTEGER NOT NULL DEFAULT 0);
+  dedicated_overlay INTEGER NOT NULL DEFAULT 0,
+  category TEXT NOT NULL DEFAULT 'worktree');
 CREATE TABLE IF NOT EXISTS flow_templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL, steps TEXT NOT NULL DEFAULT '[]',
@@ -81,7 +82,8 @@ CREATE TABLE IF NOT EXISTS flow_templates (
   created_at TEXT NOT NULL, modified_at TEXT NOT NULL,
   protected INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0,
   dedicated_top_bar INTEGER NOT NULL DEFAULT 0,
-  dedicated_overlay INTEGER NOT NULL DEFAULT 0);
+  dedicated_overlay INTEGER NOT NULL DEFAULT 0,
+  category TEXT NOT NULL DEFAULT 'worktree');
 CREATE TABLE IF NOT EXISTS flows (
   id INTEGER PRIMARY KEY AUTOINCREMENT, template_label TEXT NOT NULL,
   worktree_ref TEXT NOT NULL DEFAULT '',
@@ -98,7 +100,6 @@ CREATE TABLE IF NOT EXISTS messages (
   sender_username TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '',
   ts TEXT NOT NULL DEFAULT '', repos TEXT NOT NULL DEFAULT '[]',
   added_at TEXT NOT NULL);
- CREATE INDEX IF NOT EXISTS idx_flows_worktree ON flows(worktree_ref);
  CREATE TABLE IF NOT EXISTS prodtest_items (
    issue_key TEXT PRIMARY KEY NOT NULL, plan_path TEXT NOT NULL DEFAULT '',
    plan_revision INTEGER NOT NULL DEFAULT 0, plan_risk TEXT NOT NULL DEFAULT '',

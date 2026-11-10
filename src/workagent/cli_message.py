@@ -303,9 +303,12 @@ def message_action_run(
         if str((_e or {}).get("worktree", "")) == workdir and _wt.is_valid_worktree(workdir):
             found = _k
             break
-    target = found or workdir
+    if not found:
+        _fail(f"message {row.get('message_id', '')} resolves to repo path"
+              f" {workdir} with no linked worktree — re-run with"
+              " --ref <worktree>", EXIT_USAGE)
     header_extra = f"{_message_header(row)}\n\n{(extra_prompt or '').strip()}".strip()
-    _action_run(label, target, launch=launch, terminal=terminal, harness=harness,
+    _action_run(label, found, launch=launch, terminal=terminal, harness=harness,
                 extra_prompt=header_extra or None,
                 env_file=env_file, session_file=session_file, dry_run=dry_run,
                 yes=yes, json_output=json_output)
@@ -335,12 +338,12 @@ def message_flow_run(
               f" {(tmpl.get('category') or 'worktree')!r} — message flow run"
               " requires a message-category template", EXIT_USAGE)
     row = store.resolve_message(msg)
-    steps = validate_template(tmpl.get("steps") or [])
-    kinds = {s.get("kind", "") for s in steps}
-    needs_ref = kinds & {"start", "review", "sync", "cleanup", "release"}
-    if needs_ref and not (ref or "").strip():
-        _fail(f"flow template {label!r} contains worktree-kind step(s)"
-              f" {', '.join(sorted(needs_ref))} — re-run with --ref <worktree>", EXIT_USAGE)
+    steps = validate_template(tmpl.get("steps") or [], get_action=store.get_action)
+    if not (ref or "").strip():
+        _fail(f"flow template {label!r} needs --ref <worktree> (message"
+              f" {row.get('message_id', '')} is not a resolvable flow ref)",
+              EXIT_USAGE)
+    header = _message_header(row)
     for s in steps:
         if s.get("kind") == "action":
             cfg = s.get("config") or {}
@@ -351,6 +354,9 @@ def message_flow_run(
                     _fail(f"flow template {label!r} step {alabel!r} is a"
                           " worktree-category action — message flows require"
                           " message-category actions", EXIT_USAGE)
+            merged = dict(cfg)
+            prev = str(merged.get("extra_prompt") or "").strip()
+            merged["extra_prompt"] = f"{header}\n\n{prev}".strip() if prev else header
+            s["config"] = merged
     from . import cli_flow as _cf
-    target = (ref or "").strip() or row["message_id"]
-    _cf.flow_run(label, target, dry_run=dry_run, yes=yes, json_output=json_output)
+    _cf.flow_run(label, (ref or "").strip(), dry_run=dry_run, yes=yes, json_output=json_output)
