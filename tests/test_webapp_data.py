@@ -640,3 +640,69 @@ def test_adhoc_needs_confirm_and_validates_prompt(client, monkeypatch):
     })
     assert r.status_code == 202, r.text
     assert _w._target_for("adhoc", ["k", "--prompt", "do x"]) == "adhoc:k"
+
+
+def test_api_messages_roundtrip(client):
+    """GET /api/messages lists registered messages; GET /api/messages/{id} shows one."""
+    from workagent import store_sqlite as sq
+    from workagent import store_messages as sm
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r1', '/tmp/r1', 'r1')")
+    sm.create_message(db, message_id="p1", thread_id="t1", sender_username="u",
+                      content="hi", repos=["r1"])
+    sm.create_message(db, message_id="p2", thread_id="t2", sender_username="v",
+                      content="yo", repos=["r1"])
+    r = client.get("/api/messages")
+    assert r.status_code == 200, r.text
+    msgs = r.json()["messages"]
+    assert {m["message_id"] for m in msgs} == {"p1", "p2"}
+    full = next(m for m in msgs if m["message_id"] == "p1")
+    assert (full["thread_id"], full["app_name"], full["sender_username"],
+            full["content"], full["repos"]) == ("t1", "mattermost", "u", "hi", ["r1"])
+    assert "added_at" in full
+    scoped = client.get("/api/messages?thread=t1")
+    assert [m["message_id"] for m in scoped.json()["messages"]] == ["p1"]
+    ok = client.get("/api/messages/p1")
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["message_id"] == "p1"
+    miss = client.get("/api/messages/nope")
+    assert miss.status_code == 404
+
+
+def test_message_run_passthrough_accepts_subcommand(client, monkeypatch):
+    """POST /api/runs message adhoc is accepted (runs keyed message:<ref>)."""
+    from tests.webapp_helpers import _stub_spawn
+    from workagent import web_args as _wa
+    _stub_spawn(monkeypatch)
+    r = client.post("/api/runs", json={"command": "message", "confirm": True,
+                                       "args": ["adhoc", "p1", "--prompt", "hi"]})
+    assert r.status_code in (200, 201, 202), r.text
+    assert _wa._target_for("message", ["adhoc", "p1", "--prompt", "hi"]) == "message:p1"
+    assert _wa._target_for("message", ["action", "run", "lbl", "p1"]) == "message:action:p1"
+    assert _wa._target_for("message", ["flow", "run", "tmpl", "p1"]) == "message:flow:p1"
+    assert _wa._target_for("message", ["action", "run", "a", "p1"]) != \
+        _wa._target_for("message", ["action", "run", "a", "p2"])
+    assert _wa._needs_confirm("message", ["adhoc", "p1"]) is True
+    assert _wa._needs_confirm("message", ["action", "run", "lbl", "p1"]) is True
+    assert _wa._needs_confirm("message", ["add", "--message-id", "p1"]) is False
+    bad = client.post("/api/runs", json={"command": "message", "confirm": True,
+                                         "args": ["adhoc", "p1", "--bogus-flag"]})
+    assert bad.status_code == 400, bad.text
+    unconfirmed = client.post("/api/runs", json={"command": "message",
+                                                 "args": ["remove", "p1", "--yes"]})
+    assert unconfirmed.status_code == 400, unconfirmed.text
+
+
+def test_api_message_detail_ambiguous_is_404(client):
+    """Substring matches on two messages resolve ambiguous → 404 (exit 2)."""
+    from workagent import store_sqlite as sq
+    from workagent import store_messages as sm
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r1', '/tmp/r1', 'r1')")
+    sm.create_message(db, message_id="abc-one", repos=["r1"])
+    sm.create_message(db, message_id="abc-two", repos=["r1"])
+    assert client.get("/api/messages/abc").status_code == 404

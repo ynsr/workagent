@@ -837,6 +837,44 @@ def delete_template(label: str) -> None:
     """Delete a flow template (delegates to store_flows)."""
     from . import store_sqlite as _sq
     return _fl.delete_template(_sq.db_path(), label)
+from . import store_messages as _msg
+
+
+def create_message(**fields) -> dict:
+    """Create a registered chat message (delegates to store_messages)."""
+    from . import store_sqlite as _sq
+    return _msg.create_message(_sq.db_path(), **fields)
+
+
+def list_messages(thread_id: str = "") -> list:
+    """All messages, optionally scoped to one thread."""
+    from . import store_sqlite as _sq
+    return _msg.list_messages(_sq.db_path(), thread_id)
+
+
+def get_message(ref: str) -> dict | None:
+    """One message by id/message_id; None when unknown."""
+    from . import store_sqlite as _sq
+    return _msg.get_message(_sq.db_path(), ref)
+
+
+def resolve_message(ref: str) -> dict:
+    """Resolve a message ref (exact → substring); miss/ambiguity → exit 2."""
+    from . import store_sqlite as _sq
+    return _msg.resolve_message(_sq.db_path(), ref)
+
+
+def update_message(ref: str, **fields) -> dict:
+    """Update a message (rename via new_message_id)."""
+    from . import store_sqlite as _sq
+    return _msg.update_message(_sq.db_path(), ref, **fields)
+
+
+def delete_message(ref: str) -> None:
+    """Delete a message (delegates to store_messages)."""
+    from . import store_sqlite as _sq
+    return _msg.delete_message(_sq.db_path(), ref)
+
 
 
 def create_flow(**fields) -> dict:

@@ -139,6 +139,7 @@ export interface ActionRow {
   sort_order?: number
   dedicated_top_bar?: boolean
   dedicated_overlay?: boolean
+  category?: string
   created_at: string
   modified_at: string
 }
@@ -315,10 +316,12 @@ export type RunCommand =
   | "tracker"
   | "action"
   | "flow"
+  | "message"
   | "adhoc"
   | "prodtest"
+export interface MessageRow { id: number; message_id: string; thread_id: string; app_name: string; sender_username: string; content: string; ts: string; repos: string[]; added_at: string }
 export interface FlowStep { kind: string; action_label?: string; config?: Record<string, unknown> }
-export interface FlowTemplateRow { id: number; label: string; name: string; steps: FlowStep[]; pre_execution: string; post_execution: string; parent_labels?: string[]; protected?: boolean; sort_order?: number; dedicated_top_bar?: boolean; dedicated_overlay?: boolean; created_at: string; modified_at: string }
+export interface FlowTemplateRow { id: number; label: string; name: string; steps: FlowStep[]; pre_execution: string; post_execution: string; parent_labels?: string[]; protected?: boolean; sort_order?: number; dedicated_top_bar?: boolean; dedicated_overlay?: boolean; category?: string; created_at: string; modified_at: string }
 export interface FlowStepResult { kind: string; status: string; detail?: string }
 export interface FlowRow { id: number; template_label: string; worktree_ref: string; repo_snapshot: { repo?: string; launch_ref?: string; default_branch?: string; release_branch?: string }; status: string; current_step: number; step_results: FlowStepResult[]; effective_steps?: FlowStep[] | null; created_at: string; modified_at: string }
 
@@ -435,6 +438,12 @@ export const api = {
   /** GET /api/flows?worktree= — flow runs, optionally scoped to one worktree. */
   flows: (worktree?: string) =>
     request<{ flows: FlowRow[] }>(`/api/flows${qs({ worktree })}`),
+  /** GET /api/messages — registered chat messages (Messages page source). */
+  messages: (thread?: string) =>
+    request<{ messages: MessageRow[] }>(`/api/messages${qs({ thread })}`),
+  /** GET /api/messages/{ref} — one registered message; rejects on 404. */
+  messageDetail: (ref: string) =>
+    request<MessageRow>(`/api/messages/${encodeURIComponent(ref)}`),
   trackerDomains: () => request<{ disabled_domains: string[] }>("/api/tracker-domains"),
   setTrackerDomains: (domains: string[]) =>
     request<{ disabled_domains: string[] }>("/api/tracker-domains", {

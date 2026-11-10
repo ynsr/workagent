@@ -10,10 +10,10 @@ import {
   GitBranch,
   LayoutDashboard,
   Link2,
+  MessageSquare,
   Rocket,
   Settings2,
   ShieldAlert,
-  SquareTerminal,
   Stethoscope,
   Workflow,
   Zap,
@@ -29,8 +29,8 @@ const NAV_TOP_GROUPS = [
   ],
   [
     { to: "/flows", label: "Flows", icon: Workflow },
+    { to: "/messages", label: "Messages", icon: MessageSquare },
     { to: "/sessions", label: "Sessions", icon: History },
-    { to: "/runs", label: "Runs", icon: SquareTerminal },
   ],
   [
     { to: "/flow-templates", label: "Flow Templates", icon: Library },

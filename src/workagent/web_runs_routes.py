@@ -36,6 +36,15 @@ from .web_runs import (
 )
 
 
+def _message_needs_yes(args: list[str]) -> bool:
+    """True when a `message` child accepts --yes (agent-spawning subcommands).
+
+    remove/draft-reply own their flow (remove prompts only on TTY with
+    --yes; draft-reply has no --yes flag), so only adhoc/validate/action
+    run/flow run forward the web confirm.
+    """
+    return bool(args) and args[0] in ("adhoc", "validate", "action", "flow")
+
 def _child_session_file(db, stem: str) -> tuple[str, str]:
     """File + row id for the CLI child's rescoped session (stem match).
 
@@ -341,8 +350,9 @@ def register_runs_routes(app, registry) -> None:
         run = registry.create(body.command, body.args, target)
         argv = _build_argv(body.command, body.args)
         tail: list[str] = []
-        if body.confirm and body.command in ("start", "review", "cleanup",
-                                             "sync"):
+        if body.confirm and (body.command in ("start", "review", "cleanup",
+                                             "sync") or (body.command == "message"
+                                                         and _message_needs_yes(body.args))):
             tail.append("--yes")
         if body.force and spec["force"]:
             tail.append("--force")

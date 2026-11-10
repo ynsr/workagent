@@ -13,6 +13,9 @@ DEFAULT_ICON = "Zap"
 #: Valid run modes for default_options.run_mode.
 RUN_MODES = ("preview", "headless", "terminal")
 
+#: Valid scopes for category — worktree rows surface on the Dashboard,
+#: message rows on the Messages page.
+CATEGORIES = ("worktree", "message")
 
 def _connect(db: Path):
     from .store_sqlite import connect
@@ -97,9 +100,14 @@ def create_action(db: Path, *, name: str, label: str = "",
                   pre_execution: str = "", post_execution: str = "",
                   default_options: str = "", protected: bool = False,
                   sort_order: int = 0, dedicated_top_bar: bool = False,
-                  dedicated_overlay: bool = False) -> dict:
+                  dedicated_overlay: bool = False,
+                  category: str = "worktree") -> dict:
     """Insert a custom action; label defaults to the normalized name."""
     from .errors import HarnessError
+    if (category or "worktree") not in CATEGORIES:
+        raise HarnessError(
+            f"category must be one of {', '.join(CATEGORIES)} (got {category!r})",
+            exit_code=2)
     if not (name or "").strip():
         raise HarnessError("action name is required", exit_code=2)
     key = validate_label(label) if (label or "").strip() \
@@ -128,12 +136,12 @@ def create_action(db: Path, *, name: str, label: str = "",
                 "INSERT INTO custom_actions (label, name, icon, prompt,"
                 " pre_execution, post_execution, default_options,"
                 " protected, sort_order, dedicated_top_bar,"
-                " dedicated_overlay, created_at, modified_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " dedicated_overlay, category, created_at, modified_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (key, name.strip(), icon, prompt or "", pre_execution or "",
                  post_execution or "", json.dumps(opts), int(bool(protected)),
                  int(sort_order or 0), int(bool(dedicated_top_bar)),
-                 int(bool(dedicated_overlay)), now, now))
+                 int(bool(dedicated_overlay)), category or "worktree", now, now))
         except sqlite3.IntegrityError:
             raise HarnessError(
                 f"action label {key!r} already exists", exit_code=2) from None
@@ -153,7 +161,7 @@ def update_action(db: Path, label: str, **fields) -> dict:
     from .errors import HarnessError
     allowed = {"name", "icon", "prompt", "pre_execution", "post_execution",
                "default_options", "new_label", "protected", "sort_order",
-               "dedicated_top_bar", "dedicated_overlay"}
+               "dedicated_top_bar", "dedicated_overlay", "category"}
     unknown = set(fields) - allowed
     if unknown:
         raise HarnessError(f"unknown fields: {sorted(unknown)}", exit_code=2)
@@ -171,6 +179,10 @@ def update_action(db: Path, label: str, **fields) -> dict:
     for _flag in ("protected", "dedicated_top_bar", "dedicated_overlay"):
         if _flag in fields:
             fields[_flag] = int(bool(fields[_flag]))
+    if "category" in fields and (fields["category"] or "") not in CATEGORIES:
+        raise HarnessError(
+            f"category must be one of {', '.join(CATEGORIES)} (got {fields['category']!r})",
+            exit_code=2)
     if "sort_order" in fields:
         try:
             fields["sort_order"] = int(fields["sort_order"] or 0)

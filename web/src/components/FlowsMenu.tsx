@@ -22,7 +22,7 @@ function startsWithStart(t: FlowTemplateRow): boolean {
 export function FlowsMenu({ selected }: { selected: Set<string> }) {
   const navigate = useNavigate()
   const { data } = useFlowTemplates()
-  const templates: FlowTemplateRow[] = data?.templates ?? []
+  const templates: FlowTemplateRow[] = (data?.templates ?? []).filter((t) => (t.category ?? "worktree") === "worktree")
   const sorted = [...templates].sort(
     (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id,
   )

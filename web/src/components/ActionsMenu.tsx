@@ -19,9 +19,9 @@ export function ActionsMenu({ selected, compact = false }: { selected: Set<strin
   const createRun = useCreateRun()
   const { data } = useActions()
   const actions = data?.actions ?? []
-  const sorted = [...actions].sort(
-    (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id,
-  )
+  const sorted = [...actions]
+    .filter((a) => (a.category ?? "worktree") === "worktree")
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id)
   const topBar = sorted.filter((a) => a.dedicated_top_bar)
   const [open, setOpen] = useState(false)
   const [running, setRunning] = useState<string | null>(null)

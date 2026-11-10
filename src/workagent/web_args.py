@@ -12,6 +12,29 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # ── command inventory (mirrors web/FEATURE_INVENTORY.md) ──────────────
 # subcommand → {confirm: destructive?, force flag?, target key builder}
+def _message_key(args: list[str]) -> str:
+    """Target key for `message` runs: per-(subcommand, ref) so concurrent
+
+    message runs never collide on "config" (registry 409s on duplicate
+    target). Plain row CRUD (add/list) keeps the shared "config" key;
+    agent-spawning runs + show/update/remove key on the message ref
+    (`message:<ref>`, `message:action:<ref>`, `message:flow:<ref>` — the
+    API_CONTRACT §messages shape, one live run per message).
+    """
+    if not args:
+        return "config"
+    sub = args[0]
+    if sub in ("action", "flow"):
+        return f"message:{sub}:{_nth_positional(args[1:], 2, VAL_FLAGS['message ' + sub + ' run'])}"
+    vals = {"adhoc": VAL_FLAGS["message adhoc"],
+            "validate": VAL_FLAGS["message validate"],
+            "draft-reply": VAL_FLAGS["message draft-reply"],
+            "show": (), "update": VAL_FLAGS["message update"],
+            "remove": ()}.get(sub)
+    if vals is None:
+        return "config"
+    return f"message:{_first_positional(args[1:], vals)}"
+
 SPECS: dict[str, dict[str, Any]] = {
     "start": {"confirm": True, "force": False, "key": "start"},
     "review": {"confirm": True, "force": False,
@@ -37,6 +60,8 @@ SPECS: dict[str, dict[str, Any]] = {
                "key": lambda args: f"action:{_first_positional(args, VAL_FLAGS['action run'])}:{_first_positional(args[1:], VAL_FLAGS['action run'])}" if args[:1] == ["run"] else "config"},
     "flow": {"confirm": False, "force": False, "confirm_subs": ("run", "delete"),
              "key": lambda args: f"flow:{_nth_positional(args, 1, VAL_FLAGS['flow run'])}:{_nth_positional(args, 2, VAL_FLAGS['flow run'])}" if args[:1] == ["run"] else "config"},
+    "message": {"confirm": False, "force": False, "confirm_subs": ("remove", "adhoc", "validate", "draft-reply", "run"),
+                "key": _message_key},
     "backup": {"confirm": False, "force": False, "confirm_subs": ("import",),
                "key": "config"},
     "prodtest": {"confirm": True, "force": False,
@@ -108,6 +133,19 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "prodtest run": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
                      "--yes", "--json", "--skip-version-gate", "--all"),
     "adhoc": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
+    "message add": ("--json",),
+    "message list": ("--json", "--csv"),
+    "message show": ("--json",),
+    "message update": ("--json",),
+    "message remove": ("--yes", "--json"),
+    "message adhoc": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
+    "message validate": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
+    "message draft-reply": ("--dry-run", "--json"),
+    "message action run": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
+    "message flow run": ("--dry-run", "--yes", "--json"),
+    "message": (),
+    "message action": (),
+    "message flow": (),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "adhoc": ("--prompt", "--harness", "--extra-prompt", "--session-file", "--env-file"),
@@ -124,11 +162,11 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "link remove": ("--repo",),
     "tracker add": ("--vendor", "--remote-url"),
     "tracker update": ("--vendor", "--remote-url"),
-    "action add": ("--name", "--label", "--icon", "--prompt", "--pre-execution", "--post-execution", "--default-options", "--sort-order"),
-    "action update": ("--name", "--icon", "--prompt", "--pre-execution", "--post-execution", "--default-options", "--new-label", "--sort-order"),
+    "action add": ("--name", "--label", "--icon", "--prompt", "--pre-execution", "--post-execution", "--default-options", "--sort-order", "--category"),
+    "action update": ("--name", "--icon", "--prompt", "--pre-execution", "--post-execution", "--default-options", "--new-label", "--sort-order", "--category"),
     "action run": ("--harness", "--extra-prompt", "--env-file", "--session-file"),
-    "flow template add": ("--name", "--label", "--steps", "--pre-execution", "--post-execution", "--sort-order"),
-    "flow template update": ("--name", "--steps", "--pre-execution", "--post-execution", "--new-label", "--sort-order"),
+    "flow template add": ("--name", "--label", "--steps", "--pre-execution", "--post-execution", "--sort-order", "--category"),
+    "flow template update": ("--name", "--steps", "--pre-execution", "--post-execution", "--new-label", "--sort-order", "--category"),
     "flow template clone": ("--name", "--label"),
     "flow template compose": ("--from", "--name"),
     "flow list": ("--worktree",),
@@ -136,6 +174,15 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "backup export": ("--path",),
     "backup import": (),
     "backup run-scheduled": ("--keep",),
+    "message add": ("--message-id", "--thread-id", "--app", "--sender", "--content", "--ts", "--repo"),
+    "message list": ("--thread",),
+    "message adhoc": ("--prompt", "--ref", "--repo", "--harness", "--extra-prompt", "--env-file", "--session-file"),
+    "message validate": ("--prompt", "--ref", "--repo", "--harness"),
+    "message draft-reply": ("--text",),
+    "message update": ("--thread-id", "--sender", "--content", "--ts", "--repo"),
+    "message action run": ("--ref", "--repo", "--harness", "--extra-prompt", "--env-file", "--session-file"),
+    "message flow run": ("--ref", "--repo",),
+    "message": (),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "link": {"list", "set", "remove", "deactivate", "reactivate", "undelete", "destroy-deleted"},
@@ -143,6 +190,7 @@ SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "action": {"add", "list", "show", "run", "update", "delete"},
                                     "flow": {"template", "list", "show", "run"},
                                     "backup": {"export", "import", "run-scheduled"},
+                                    "message": {"add", "list", "show", "update", "remove", "adhoc", "validate", "draft-reply", "action", "flow"},
                                     "prodtest": {"plan", "run"}}
 TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "clone", "compose", "delete"}
 def _needs_confirm(command: str, args: list[str]) -> bool:
@@ -150,9 +198,14 @@ def _needs_confirm(command: str, args: list[str]) -> bool:
 
     Plain SPECS confirm covers whole commands (cleanup/sync/start/review);
     action/flow narrow it via confirm_subs to run/delete (add/update/list/
-    show are plain row writes/reads — the inventory marks them
+    show are plain row writes — the inventory marks them
     non-destructive). Nested flow template CRUD nests two deep
-    (["template", "add", ...]) so the second token decides there.
+    (["template", "add", ...]) so the second token decides. Message
+    action/flow runs nest two deep (["action", "run", ...]); the bare
+    "run" token in confirm_subs matches them. Message adhoc/validate/
+    draft-reply prompt an agent or write a draft, so they need confirm
+    (message add/list/show/update/remove stay non-destructive reads/
+    plain row writes).
     """
     spec = SPECS[command]
     if "--dry-run" in args:
@@ -164,6 +217,9 @@ def _needs_confirm(command: str, args: list[str]) -> bool:
     if command == "flow" and rest[:1] == ["template"]:
         sub = rest[1] if len(rest) > 1 else ""
         return sub in ("delete", "run")
+    if command == "message" and rest[:1] in (["action"], ["flow"]):
+        sub = rest[1] if len(rest) > 1 else ""
+        return sub in subs
     sub = rest[0] if rest else ""
     return sub in subs
 
@@ -226,6 +282,8 @@ def _sub_of(command: str, args: list[str]) -> str:
     if command in SUBCOMMANDS and args:
         if command == "flow" and args[:1] == ["template"] and len(args) > 1:
             return f"flow template {args[1]}"
+        if command == "message" and args[:1] in (["action"], ["flow"]) and len(args) > 1:
+            return f"message {args[0]} {args[1]}"
         return f"{command} {args[0]}"
     return command
 

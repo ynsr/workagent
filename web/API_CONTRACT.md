@@ -133,7 +133,6 @@ with target key `action:<label>:<ref>` — one run per worktree, fanned out
 by the Dashboard Actions dropdown.)
 
 ### `GET /api/flow-templates` → `{"templates": [...]}`, `GET /api/flow-templates/{label}`, `GET /api/flows?worktree=`
-```json
 {"templates": [{"id": 1, "label": "full-review-cycle",
   "name": "Full review cycle",
   "steps": [{"kind": "start"}, {"kind": "review"}, {"kind": "cleanup"}],
@@ -150,6 +149,21 @@ by the Dashboard Actions dropdown.)
 {"trackers": {"jira:IPG": {"repos": ["/home/x/projects/projectx"]}},
  "worktrees": { …same shape as GET /api/status… }}
 ```
+
+### `GET /api/messages?thread=` → `{"messages": [...]}`, `GET /api/messages/{ref}`
+```json
+{"messages": [{"id": 1, "message_id": "p1", "thread_id": "t1", "app_name": "mattermost",
+  "sender_username": "u", "content": "deploy broke", "ts": "…",
+  "repos": ["r1"], "added_at": "…"}]}
+```
+(Messages page source: `message add/list/show/update/remove` run as runs;
+detail 404s on unknown ref (ambiguous substring → 404). `message
+adhoc/validate/draft-reply` and `message action run` / `message flow run`
+run via `POST /api/runs` with target key `message:<ref>`
+(`message:action:<ref>` / `message:flow:<ref>` for action/flow runs) — one
+live run per (subcommand, message). `draft-reply`
+saves via `mm messages draft save` (never direct-send); `--dry-run`
+prints the argv without calling `mm`.)
 
 ### `GET /api/default-repo?ref=…`
 Issue #26: repo default for Launch (never the serve CWD). Returns the

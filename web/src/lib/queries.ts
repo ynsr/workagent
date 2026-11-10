@@ -19,6 +19,8 @@ export const queryKeys = {
   flows: (worktree?: string) => ["flows", worktree ?? ""] as const,
   links: ["links"] as const,
   doctor: ["doctor"] as const,
+  messages: (thread?: string) => ["messages", thread ?? ""] as const,
+  messageDetail: (ref: string) => ["messages", "detail", ref] as const,
   runs: ["runs"] as const,
   run: (id: string) => ["runs", "detail", id] as const,
   candidates: (days?: number, mine?: boolean) => ["candidates", days ?? 90, mine ?? true] as const,
@@ -106,6 +108,20 @@ export function useFlowTemplates() {
   return useQuery({ queryKey: queryKeys.flowTemplates, queryFn: api.flowTemplates })
 }
 
+export function useMessages(thread?: string) {
+  return useQuery({
+    queryKey: queryKeys.messages(thread),
+    queryFn: () => api.messages(thread || undefined),
+  })
+}
+
+export function useMessage(ref: string | null) {
+  return useQuery({
+    queryKey: queryKeys.messageDetail(ref ?? ""),
+    queryFn: () => api.messageDetail(ref ?? ""),
+    enabled: !!ref,
+  })
+}
 export function useFlowTemplate(label: string | null) {
   return useQuery({
     queryKey: queryKeys.flowTemplate(label ?? ""),
@@ -331,4 +347,5 @@ export function invalidateAfterRun(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: queryKeys.actions })
   void qc.invalidateQueries({ queryKey: queryKeys.flowTemplates })
   void qc.invalidateQueries({ queryKey: ["flows"] })
+  void qc.invalidateQueries({ queryKey: ["messages"] })
 }
