@@ -1,11 +1,12 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { Copy, Download, Pencil, Plus, Trash2, Zap } from "lucide-react"
+import { Copy, Download, Pencil, Play, Trash2, Zap } from "lucide-react"
 import { ActionIcon } from "@/components/ActionIcon"
-import { IconPicker } from "@/components/IconPicker"
+import { ActionFormCard } from "@/components/ActionForm"
+import { ImmediateRunDialog, ImmediateRunForm } from "@/components/ImmediateRunForm"
 import { PageHeader } from "@/components/PageHeader"
-import { ScriptBlock, ScriptField } from "@/components/ScriptBlock"
+import { ScriptBlock } from "@/components/ScriptBlock"
 import {
   EmptyState,
   ErrorState,
@@ -22,8 +23,6 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { ActionDialog } from "@/components/LinkDialogs"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import {
   Table,
   TableBody,
@@ -36,16 +35,8 @@ import { Badge } from "@/components/ui/badge"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, exactDateTime, relativeDate, toCsv } from "@/lib/format"
 import { useActions, useCreateRun } from "@/lib/queries"
-import { ACTION_PRESETS } from "@/lib/actionPresets"
 import type { ActionRow } from "@/lib/api"
-
-const RUN_MODES = ["preview", "headless", "terminal"] as const
-
-function runModeOf(row: ActionRow): string {
-  const m = row.default_options?.run_mode
-  return typeof m === "string" && (RUN_MODES as readonly string[]).includes(m) ? m : "preview"
-}
-
+import { actionRunModeOf, buildImmediateActionArgs, isRunImmediateAction, type RowCategory } from "@/lib/messageRunConfig"
 export function Actions() {
   const navigate = useNavigate()
   const confirm = useConfirm()
@@ -56,108 +47,45 @@ export function Actions() {
     (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id,
   )
 
-  const [name, setName] = useState("")
-  const [label, setLabel] = useState("")
-  const [labelDirty, setLabelDirty] = useState(false)
-  const [icon, setIcon] = useState("")
-  const [prompt, setPrompt] = useState("")
-  const [pre, setPre] = useState("")
-  const [post, setPost] = useState("")
-  const [mode, setMode] = useState<string>("preview")
-  const [adding, setAdding] = useState(false)
   const [detail, setDetail] = useState<ActionRow | null>(null)
-  const [editingLabel, setEditingLabel] = useState<string | null>(null)
-  const isEdit = editingLabel !== null
-  const labelValid = /^[a-z0-9_]+$/.test(label)
-
-  function handleNameChange(value: string) {
-    setName(value)
-    if (editingLabel === null && !labelDirty) {
-      setLabel(value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/_{2,}/g, "_"))
-    }
-  }
-
-  function handleLabelChange(value: string) {
-    setLabel(value)
-    setLabelDirty(true)
-  }
-
-  function applyPreset(id: string) {
-    const preset = ACTION_PRESETS.find((p) => p.id === id)
-    if (!preset) return
-    setName(preset.name)
-    if (editingLabel === null && !labelDirty) {
-      setLabel(preset.name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/_{2,}/g, "_"))
-    }
-    setIcon(preset.icon)
-    setPrompt(preset.prompt)
-    setPre(preset.pre_execution)
-    setPost(preset.post_execution)
-    setMode(preset.run_mode)
-  }
-
-  function reset() {
-    setName("")
-    setLabel("")
-    setLabelDirty(false)
-    setIcon("")
-    setPrompt("")
-    setPre("")
-    setPost("")
-    setMode("preview")
-    setEditingLabel(null)
-  }
-
-  async function handleAdd() {
-    if (!name.trim() || !labelValid || (!prompt.trim() && !pre.trim())) return
-    setAdding(true)
-    try {
-      const { run_id } = await createRun.mutateAsync({
-        command: "action",
-        args: isEdit
-          ? [
-              "update", editingLabel as string,
-              "--name", name.trim(),
-              ...(label !== editingLabel ? ["--new-label", label] : []),
-              "--icon", icon.trim() || "Zap",
-              "--prompt", prompt,
-              "--pre-execution", pre,
-              "--post-execution", post,
-              "--default-options", JSON.stringify({ run_mode: mode }),
-            ]
-          : [
-              "add",
-              "--name", name.trim(),
-              "--label", label,
-              ...(icon.trim() ? ["--icon", icon.trim()] : []),
-              ...(prompt.trim() ? ["--prompt", prompt.trim()] : []),
-              ...(pre.trim() ? ["--pre-execution", pre.trim()] : []),
-              ...(post.trim() ? ["--post-execution", post.trim()] : []),
-              "--default-options", JSON.stringify({ run_mode: mode }),
-            ],
-      })
-      toast.success(isEdit ? "Action update started" : "Action add started", {
-        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
-      })
-      reset()
-    } catch (err) {
-      toast.error(errorText(err))
-    } finally {
-      setAdding(false)
-    }
-  }
+  const [editing, setEditing] = useState<ActionRow | null>(null)
+  const [runRow, setRunRow] = useState<ActionRow | null>(null)
 
   function handleEdit(row: ActionRow) {
     setDetail(null)
-    setEditingLabel(row.label)
-    setName(row.name)
-    setLabel(row.label)
-    setLabelDirty(false)
-    setIcon(row.icon === "Zap" ? "" : row.icon)
-    setPrompt(row.prompt ?? "")
-    setPre(row.pre_execution ?? "")
-    setPost(row.post_execution ?? "")
-    setMode(runModeOf(row))
+    setEditing(row)
+  }
+
+  async function handleQuickRun(row: ActionRow) {
+    // run_immediately rows launch straight away (standard confirm); everything
+    // else opens the shared run form with the row's label and mode prefilled.
+    if (!isRunImmediateAction(row)) {
+      setRunRow(row)
+      return
+    }
+    const ok = await confirm({
+      action: null,
+      title: `Run action ${row.name} now`,
+      description: "The action runs immediately with auto-approve. The server appends --yes.",
+      confirmLabel: "Run now",
+      details: [
+        { label: "Action", value: row.label, mono: true },
+        { label: "Mode", value: actionRunModeOf(row), mono: true },
+      ],
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "action",
+        args: buildImmediateActionArgs(row.label, "HEAD", actionRunModeOf(row)),
+        confirm: true,
+      })
+      toast.success(`Action ${row.label} started`, {
+        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+    } catch (err) {
+      toast.error(errorText(err))
+    }
   }
 
   async function handleRemove(row: ActionRow) {
@@ -242,7 +170,7 @@ export function Actions() {
       "workagent-actions.csv",
       toCsv(
         ["label", "name", "icon", "mode"],
-        actions.map((a) => [a.label, a.name, a.icon, runModeOf(a)]),
+        actions.map((a) => [a.label, a.name, a.icon, actionRunModeOf(a)]),
       ),
       "text/csv",
     )
@@ -292,6 +220,8 @@ export function Actions() {
                       <TableHead>Name</TableHead>
                       <TableHead>Label</TableHead>
                       <TableHead>Mode</TableHead>
+                      <TableHead>Run</TableHead>
+                      <TableHead>Category</TableHead>
                       <TableHead>Order</TableHead>
                       <TableHead>Protected</TableHead>
                       <TableHead>Top</TableHead>
@@ -316,8 +246,17 @@ export function Actions() {
                         </TableCell>
                         <TableCell className="font-mono text-xs">{a.label}</TableCell>
                         <TableCell>
-                          <Badge variant="secondary">{runModeOf(a)}</Badge>
+                          <Badge variant="secondary">{actionRunModeOf(a)}</Badge>
+                          {isRunImmediateAction(a) ? (
+                            <Badge variant="outline" className="ml-1">immediate</Badge>
+                          ) : null}
                         </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" title={isRunImmediateAction(a) ? `Run ${a.name} now` : `Run ${a.name}…`} onClick={() => void handleQuickRun(a)}>
+                            <Play aria-hidden />
+                          </Button>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{a.category ?? "worktree"}</TableCell>
                         <TableCell className="font-mono text-xs">
                           {a.sort_order ?? 0}
                           <span className="ml-1 inline-flex gap-0.5">
@@ -366,97 +305,25 @@ export function Actions() {
           </CardContent>
         </Card>
 
-        <Card className="order-1 h-fit lg:order-2">
-          <CardHeader>
-            <CardTitle>{isEdit ? `Update ${editingLabel}` : "Add an action"}</CardTitle>
-            <CardDescription>
-              {isEdit
-                ? "action update replaces all fields; renaming the label cascades to flow steps."
-                : "action add --name --label creates the row; run it per worktree from the Dashboard."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="grid gap-2">
-              <Label htmlFor="action-preset">Start from preset</Label>
-              <select
-                id="action-preset"
-                defaultValue=""
-                onChange={(e) => applyPreset(e.target.value)}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring"
-              >
-                <option value="">Select a preset…</option>
-                {ACTION_PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="action-name">Name</Label>
-              <Input
-                id="action-name"
-                value={name}
-                onChange={(e) => handleNameChange(e.target.value)}
-                placeholder="Generate Post PRD"
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="action-label">Label</Label>
-              <Input
-                id="action-label"
-                value={label}
-                onChange={(e) => handleLabelChange(e.target.value)}
-                placeholder="generate_post_prd"
-                autoComplete="off"
-                spellCheck={false}
-                className="font-mono text-[13px]"
-              />
-              <p className="text-xs text-muted-foreground">Lowercase letters, digits, underscores only (^[a-z0-9_]+$).</p>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="action-icon">Icon</Label>
-              <IconPicker id="action-icon" value={icon} onChange={setIcon} />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="action-prompt">Prompt</Label>
-              <textarea
-                id="action-prompt"
-                value={prompt}
-                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPrompt(e.target.value)}
-                placeholder="Instructions for the agent…"
-                rows={4}
-                className="flex min-h-24 w-full rounded-md border border-input bg-transparent px-3 py-2 text-[13px] shadow-xs outline-none placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-              />
-            </div>
-            <ScriptField id="action-pre" label="Pre-execution script" value={pre} onChange={setPre} placeholder={"#!/bin/bash\nmake lint"} />
-            <ScriptField id="action-post" label="Post-execution script" value={post} onChange={setPost} placeholder={"#!/bin/bash\nmake test"} />
-            <div className="grid gap-2">
-              <Label htmlFor="action-mode">Default run mode</Label>
-              <select
-                id="action-mode"
-                value={mode}
-                onChange={(e) => setMode(e.target.value)}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring"
-              >
-                {RUN_MODES.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex gap-2">
-              <Button className="flex-1" onClick={() => void handleAdd()} disabled={!name.trim() || !labelValid || (!prompt.trim() && !pre.trim()) || adding}>
-                {isEdit ? <Pencil aria-hidden /> : <Plus aria-hidden />}
-                {adding ? "Saving…" : isEdit ? "Update action" : "Add action"}
-              </Button>
-              {isEdit ? (
-                <Button variant="outline" onClick={reset} disabled={adding}>
-                  Cancel
-                </Button>
-              ) : null}
-            </div>
-          </CardContent>
-        </Card>
+        <div className="order-1 grid gap-6 lg:order-2">
+          <Card className="h-fit">
+            <CardHeader>
+              <CardTitle>Run an action now</CardTitle>
+              <CardDescription>
+                Runs immediately with the standard confirm. Rows flagged run immediately skip this form.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ImmediateRunForm kind="action" />
+            </CardContent>
+          </Card>
+          <ActionFormCard
+            key={editing?.label ?? "new"}
+            editing={editing}
+            onDone={() => { setEditing(null); void refetch() }}
+            onCancel={() => setEditing(null)}
+          />
+        </div>
       </div>
 
       {detail ? (
@@ -472,7 +339,7 @@ export function Actions() {
         >
           <div className="flex items-center gap-2 text-sm">
             <ActionIcon name={detail.icon} className="size-4" />
-            <Badge variant="secondary">{runModeOf(detail)}</Badge>
+            <Badge variant="secondary">{actionRunModeOf(detail)}</Badge>
             <span className="text-muted-foreground" title={exactDateTime(detail.modified_at)}>
               updated {relativeDate(detail.modified_at)}
             </span>
@@ -496,6 +363,15 @@ export function Actions() {
             </div>
           ) : null}
         </ActionDialog>
+      ) : null}
+      {runRow ? (
+        <ImmediateRunDialog
+          kind="action"
+          category={(runRow.category as RowCategory | undefined) ?? "worktree"}
+          lockCategory
+          preset={runRow.label}
+          onClose={() => setRunRow(null)}
+        />
       ) : null}
     </div>
   )

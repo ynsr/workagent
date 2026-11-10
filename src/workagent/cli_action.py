@@ -111,6 +111,7 @@ def action_add(
     dedicated_top_bar: bool = typer.Option(False, "--dedicated-top-bar/--no-dedicated-top-bar", help="Show a dedicated top-bar button."),
     dedicated_overlay: bool = typer.Option(False, "--dedicated-overlay/--no-dedicated-overlay", help="Show a dedicated worktree-row overlay button."),
     category: str = typer.Option("worktree", "--category", help="Scope: worktree (Dashboard) or message (Messages page)."),
+    run_immediately: bool = typer.Option(False, "--run-immediately/--no-run-immediately", help="Run buttons launch immediately (standard confirm); otherwise the run form opens first."),
     yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; add prompts nothing so this is a no-op."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
@@ -125,7 +126,8 @@ def action_add(
         post_execution=post_execution or "",
         default_options=default_options or "", protected=protected,
         sort_order=sort_order, dedicated_top_bar=dedicated_top_bar,
-        dedicated_overlay=dedicated_overlay, category=category)
+        dedicated_overlay=dedicated_overlay, category=category,
+        run_immediately=run_immediately)
     _print_result({"added": row["label"], "id": row["id"],
                    "name": row["name"]}, json_output)
 
@@ -138,6 +140,7 @@ def action_list(
     """List custom actions."""
     items = [{"id": r["id"], "label": r["label"], "name": r["name"],
               "icon": r["icon"], "category": r.get("category", "worktree"),
+              "run_immediately": r.get("run_immediately", False),
               "mode": (r.get("default_options") or {}).get("run_mode", "preview"),
               "protected": r.get("protected", False),
               "sort_order": r.get("sort_order", 0),
@@ -146,9 +149,9 @@ def action_list(
               "updated": r["modified_at"]}
              for r in store.list_actions()]
     _print_rows(items, json_output, csv_output,
-                ["id", "label", "name", "icon", "category", "mode", "protected",
-                 "sort_order", "dedicated_top_bar", "dedicated_overlay",
-                 "updated"],
+                ["id", "label", "name", "icon", "category", "run_immediately",
+                 "mode", "protected", "sort_order", "dedicated_top_bar",
+                 "dedicated_overlay", "updated"],
                 "Custom actions", "(no custom actions)")
 
 
@@ -181,6 +184,7 @@ def action_update(
     dedicated_top_bar: Optional[bool] = typer.Option(None, "--dedicated-top-bar/--no-dedicated-top-bar", help="Set/unset the dedicated top-bar button."),
     dedicated_overlay: Optional[bool] = typer.Option(None, "--dedicated-overlay/--no-dedicated-overlay", help="Set/unset the dedicated overlay button."),
     category: Optional[str] = typer.Option(None, "--category", help="New scope: worktree or message."),
+    run_immediately: Optional[bool] = typer.Option(None, "--run-immediately/--no-run-immediately", help="Set/unset immediate runs."),
     new_label: Optional[str] = typer.Option(None, "--new-label", help="Rename to a new label (^[a-z0-9_]+$; flow steps referencing it are rewritten)."),
     yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; update prompts nothing so this is a no-op."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
@@ -209,6 +213,8 @@ def action_update(
         fields["dedicated_overlay"] = dedicated_overlay
     if category is not None:
         fields["category"] = category
+    if run_immediately is not None:
+        fields["run_immediately"] = run_immediately
     if new_label is not None:
         fields["new_label"] = new_label
     if not fields:

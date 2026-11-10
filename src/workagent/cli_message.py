@@ -213,54 +213,21 @@ def message_adhoc(
 @message_app.command("validate")
 @_catch_harness_errors
 def message_validate(
-    msg: str = typer.Argument(..., help="Message id/message_id/thread."),
+    msg: str = typer.Argument(..., help="Message id/message_id/thread/permalink."),
     prompt: str = typer.Option("", "--prompt", help="Extra validation instructions."),
-    ref: str = typer.Option("", "--ref", help="Worktree ref (wins over repos[])."),
+    ref: str = typer.Option("", "--ref", help="Worktree ref that wins over the message repos[]."),
     repo: str = typer.Option("", "--repo", help="Pin one repo for multi-repo messages."),
-    launch: bool = typer.Option(False, "--launch", help="Run headless."),
-    terminal: bool = typer.Option(False, "--terminal", help="Run in OS terminal."),
-    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run."),
+    launch: bool = typer.Option(False, "--launch", help="Run headless (default: preview)."),
+    terminal: bool = typer.Option(False, "--terminal", help="Run in OS terminal (XOR --launch)."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
-    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
-    """Validate a message's claims against its linked repos."""
+    """Validate the claimed issues in the message content and generate Jira issues if issue(s) confirmed."""
     row = store.resolve_message(msg)
-    fixed = ("Validate the claims in this message against the linked repos."
-             " For each claim report CONFIRMED/REFUTED with file:line evidence.")
-    extra = f"{fixed} {(prompt or '').strip()}".strip()
-    _run_prompt(row, extra, ref, repo, launch, terminal, harness, None,
-                None, None, dry_run, yes, json_output)
-
-@message_app.command("draft-reply")
-@_catch_harness_errors
-def message_draft_reply(
-    msg: str = typer.Argument(..., help="Message id/message_id/thread."),
-    text: str = typer.Option("", "--text", help="Draft body (required)."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print argv without acting."),
-    json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
-) -> None:
-    """Save a draft reply via `mm` (never direct-send)."""
-    if not (text or "").strip():
-        _fail("--text is required and must not be blank", EXIT_USAGE)
-    row = store.resolve_message(msg)
-    info = _mm("messages", "get-msg", row["message_id"])
-    channel = str(info.get("channel_id") or info.get("channel") or "")
-    if not channel:
-        _fail(f"mm has no channel for message {row['message_id']}", EXIT_USAGE)
-    thread_root = row.get("thread_id") or row["message_id"]
-    if dry_run:
-        _print_result({"message": row["message_id"], "channel_id": channel,
-                       "reply_to": thread_root, "dry_run": True,
-                       "argv": ["mm", "messages", "draft", "save", "--channel",
-                                channel, "--reply-to", thread_root,
-                                "--text", text.strip()]}, json_output)
-        return
-    saved = _mm("messages", "draft", "save", "--channel", channel,
-                "--reply-to", thread_root, "--text", text.strip())
-    _print_result({"message": row["message_id"], "channel_id": channel,
-                   "reply_to": thread_root, "draft": saved}, json_output)
-
+    default = ("Validate the claimed issues in the message content and generate Jira issues if issue(s) confirmed. Investigate each claimed issue: read the message content and linked repos, attempt reproduction, and report CONFIRMED or REFUTED with supporting file:line evidence. For each CONFIRMED claim, generate a Jira issue describing the defect, with reproduction steps and the supporting file:line evidence.")
+    _run_prompt(row, (prompt or "").strip() or default, ref, repo, launch, terminal, harness, None, None, None, dry_run, yes, json_output)
 action_app = typer.Typer(help="Run message-scoped custom actions.", no_args_is_help=True)
 message_app.add_typer(action_app, name="action")
 
@@ -339,9 +306,19 @@ def message_flow_run(
               " requires a message-category template", EXIT_USAGE)
     row = store.resolve_message(msg)
     steps = validate_template(tmpl.get("steps") or [], get_action=store.get_action)
-    if not (ref or "").strip():
+    ref_opt = (ref or "").strip()
+    if not ref_opt and any((s.get("kind") or "") in ("sync", "review", "fix_comments", "action") for s in steps):
+        workdir, _key = _resolve_exec(row, "", repo)
+        if workdir:
+            from . import worktrees as _wt
+            links = store.load_links()
+            ref_opt = next((k for k, e in links.items()
+                            if str((e or {}).get("worktree", "")) == workdir
+                            and _wt.is_valid_worktree(workdir)), "")
+    if not ref_opt:
         _fail(f"flow template {label!r} needs --ref <worktree> (message"
-              f" {row.get('message_id', '')} is not a resolvable flow ref)",
+              f" {row.get('message_id', '')} resolves to no linked worktree —"
+              " pass --ref or pin --repo to a linked repo)",
               EXIT_USAGE)
     header = _message_header(row)
     for s in steps:
@@ -358,5 +335,5 @@ def message_flow_run(
             prev = str(merged.get("extra_prompt") or "").strip()
             merged["extra_prompt"] = f"{header}\n\n{prev}".strip() if prev else header
             s["config"] = merged
-    from . import cli_flow as _cf
-    _cf.flow_run(label, (ref or "").strip(), dry_run=dry_run, yes=yes, json_output=json_output)
+    from . import cli_flow_run as _cfr
+    _cfr.flow_run(label, ref_opt, dry_run=dry_run, yes=yes, json_output=json_output)

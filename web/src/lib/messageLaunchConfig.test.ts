@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest"
-import { MESSAGE_LAUNCH_MODES, MESSAGE_LAUNCH_INITIAL, buildMessageArgs, messageLaunchValid } from "@/lib/messageLaunchConfig"
+import { MESSAGE_LAUNCH_INITIAL, MESSAGE_LAUNCH_MODES, VALIDATE_CLAIMED_ISSUES_PROMPT, buildMessageArgs, messageLaunchValid } from "@/lib/messageLaunchConfig"
 
 describe("messageLaunchConfig modes", () => {
-  it("exposes the five message tabs", () => {
-    expect(MESSAGE_LAUNCH_MODES).toEqual(["adhoc", "validate", "draft-reply", "action", "flow"])
+  it("exposes the four message tabs without draft-reply", () => {
+    expect(MESSAGE_LAUNCH_MODES).toEqual(["adhoc", "validate", "action", "flow"])
+  })
+
+  it("seeds the validate prompt with claimed-issues copy", () => {
+    expect(VALIDATE_CLAIMED_ISSUES_PROMPT).toMatch(/claimed issues/i)
+    expect(VALIDATE_CLAIMED_ISSUES_PROMPT).toMatch(/jira/i)
   })
 })
 
@@ -30,16 +35,6 @@ describe("buildMessageArgs", () => {
         repo: "",
       }),
     ).toEqual(["validate", "p1", "--yes"])
-  })
-
-  it("builds draft-reply argv with text", () => {
-    expect(
-      buildMessageArgs("draft-reply", {
-        ref: "p1",
-        text: "ack",
-        dryRun: true,
-      }),
-    ).toEqual(["draft-reply", "p1", "--text", "ack", "--dry-run"])
   })
 
   it("builds action run argv with terminal mode and ref override", () => {
@@ -88,12 +83,6 @@ describe("buildMessageArgs", () => {
       }),
     ).toEqual(["action", "run", "triage", "p1", "--yes"])
   })
-
-  it("builds draft-reply argv without dry-run by default", () => {
-    expect(
-      buildMessageArgs("draft-reply", { ref: "p1", text: "ack" }),
-    ).toEqual(["draft-reply", "p1", "--text", "ack"])
-  })
 })
 
 describe("messageLaunchValid", () => {
@@ -101,11 +90,11 @@ describe("messageLaunchValid", () => {
     expect(messageLaunchValid("validate", { ...MESSAGE_LAUNCH_INITIAL, ref: "  " })).toBe(false)
   })
 
-  it("requires a prompt on adhoc and text on draft-reply", () => {
+  it("requires a prompt on adhoc and validate", () => {
     expect(messageLaunchValid("adhoc", { ...MESSAGE_LAUNCH_INITIAL, ref: "p1" })).toBe(false)
-    expect(messageLaunchValid("draft-reply", { ...MESSAGE_LAUNCH_INITIAL, ref: "p1" })).toBe(false)
+    expect(messageLaunchValid("validate", { ...MESSAGE_LAUNCH_INITIAL, ref: "p1" })).toBe(false)
     expect(messageLaunchValid("adhoc", { ...MESSAGE_LAUNCH_INITIAL, ref: "p1", prompt: "hi" })).toBe(true)
-    expect(messageLaunchValid("draft-reply", { ...MESSAGE_LAUNCH_INITIAL, ref: "p1", text: "ack" })).toBe(true)
+    expect(messageLaunchValid("validate", { ...MESSAGE_LAUNCH_INITIAL, ref: "p1", prompt: "hi" })).toBe(true)
   })
 
   it("requires a label on action/flow and a worktree on flow", () => {
@@ -114,4 +103,4 @@ describe("messageLaunchValid", () => {
     expect(messageLaunchValid("action", { ...MESSAGE_LAUNCH_INITIAL, ref: "p1", label: "t" })).toBe(true)
     expect(messageLaunchValid("flow", { ...MESSAGE_LAUNCH_INITIAL, ref: "p1", label: "h", refOverride: "jira:X" })).toBe(true)
   })
-  })
+})

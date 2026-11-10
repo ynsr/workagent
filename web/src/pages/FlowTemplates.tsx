@@ -1,10 +1,16 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { Copy, Download, Pencil, Plus, Trash2, Workflow } from "lucide-react"
-import { ChainEditor, validateChain } from "@/components/ChainEditor"
+import { Copy, Download, Pencil, Play, Trash2, Workflow } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
-import { ScriptBlock, ScriptField } from "@/components/ScriptBlock"
+import { ScriptBlock } from "@/components/ScriptBlock"
+import {
+  EMPTY_FLOW_TEMPLATE_SEED,
+  FlowTemplateFormCard,
+  seedFromTemplate,
+  type FlowTemplateFormSeed,
+} from "@/components/FlowTemplateForm"
+import { ImmediateRunDialog, ImmediateRunForm } from "@/components/ImmediateRunForm"
 import {
   EmptyState,
   ErrorState,
@@ -21,8 +27,6 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { ActionDialog } from "@/components/LinkDialogs"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import {
   Table,
   TableBody,
@@ -35,112 +39,50 @@ import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, exactDateTime, relativeDate, toCsv } from "@/lib/format"
 import { useActions, useCreateRun, useFlowTemplates } from "@/lib/queries"
 import type { FlowStep, FlowTemplateRow } from "@/lib/api"
-
+import { isRunImmediateTemplate, type RowCategory } from "@/lib/messageRunConfig"
 export function FlowTemplates() {
   const navigate = useNavigate()
   const confirm = useConfirm()
   const createRun = useCreateRun()
   const { data, isPending, isFetching, isError, error, refetch } = useFlowTemplates()
-  const { data: actionsData } = useActions()
   const templates: FlowTemplateRow[] = data?.templates ?? []
+  const { data: actionsData } = useActions()
+  const knownActions = (actionsData?.actions ?? []).map((a) => ({ label: a.label, name: a.name }))
   const sortedTemplates = [...templates].sort(
     (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id,
   )
-  const [name, setName] = useState("")
-  const [label, setLabel] = useState("")
-  const [labelDirty, setLabelDirty] = useState(false)
-  const [steps, setSteps] = useState<FlowStep[]>([])
-  const [pre, setPre] = useState("")
-  const [post, setPost] = useState("")
-  const [adding, setAdding] = useState(false)
   const [detail, setDetail] = useState<FlowTemplateRow | null>(null)
-  const [editingLabel, setEditingLabel] = useState<string | null>(null)
   const [selected, setSelected] = useState<string[]>([])
-  const [lineageNote, setLineageNote] = useState<string | null>(null)
-  const knownActions = (actionsData?.actions ?? []).map((a) => ({ label: a.label, name: a.name }))
-  const labelValid = /^[a-z0-9_]+$/.test(label)
+  const [runRow, setRunRow] = useState<FlowTemplateRow | null>(null)
+  const [seed, setSeed] = useState<FlowTemplateFormSeed>(EMPTY_FLOW_TEMPLATE_SEED)
+  const [seedKey, setSeedKey] = useState(0)
 
-  function handleNameChange(value: string) {
-    setName(value)
-    if (editingLabel === null && !labelDirty) {
-      setLabel(value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/_{2,}/g, "_"))
-    }
-  }
-
-  function handleLabelChange(value: string) {
-    setLabel(value)
-    setLabelDirty(true)
-  }
-
-  function reset() {
-    setName("")
-    setLabel("")
-    setLabelDirty(false)
-    setSteps([])
-    setPre("")
-    setPost("")
-    setEditingLabel(null)
-    setLineageNote(null)
-  }
-
-  async function handleAdd() {
-    if (!name.trim() || !labelValid || validateChain(steps).length > 0) return
-    setAdding(true)
-    try {
-      const isEdit = editingLabel !== null
-      const { run_id } = await createRun.mutateAsync({
-        command: "flow",
-        confirm: true,
-        args: isEdit
-          ? [
-              "template", "update", editingLabel,
-              "--name", name.trim(),
-              ...(label !== editingLabel ? ["--new-label", label] : []),
-              "--steps", JSON.stringify(steps),
-              "--pre-execution", pre,
-              "--post-execution", post,
-            ]
-          : [
-              "template", "add",
-              "--name", name.trim(),
-              "--label", label,
-              "--steps", JSON.stringify(steps),
-              ...(pre.trim() ? ["--pre-execution", pre.trim()] : []),
-              ...(post.trim() ? ["--post-execution", post.trim()] : []),
-            ],
-      })
-      toast.success(isEdit ? "Flow template update started" : "Flow template add started", {
-        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
-      })
-      reset()
-    } catch (err) {
-      toast.error(errorText(err))
-    } finally {
-      setAdding(false)
-    }
+  function restart(seedDraft: FlowTemplateFormSeed) {
+    setSeed(seedDraft)
+    setSeedKey((k) => k + 1)
   }
 
   function handleEdit(row: FlowTemplateRow) {
     setDetail(null)
-    setEditingLabel(row.label)
-    setName(row.name)
-    setLabel(row.label)
-    setLabelDirty(false)
-    setSteps(row.steps ?? [])
-    setPre(row.pre_execution ?? "")
-    setPost(row.post_execution ?? "")
+    restart(seedFromTemplate(row))
+  }
+
+  function handleQuickRun(row: FlowTemplateRow) {
+    // run_immediately templates launch straight away (standard confirm via the
+    // shared run form prefilled with the row); everything else opens the form.
+    setRunRow(row)
   }
 
   function handleClone(row: FlowTemplateRow) {
     setDetail(null)
-    setEditingLabel(null)
-    setName(`${row.name} (copy)`)
-    setLabel("")
-    setLabelDirty(false)
-    setSteps(structuredClone(row.steps ?? []))
-    setPre(row.pre_execution ?? "")
-    setPost(row.post_execution ?? "")
-    setLineageNote(`Clone of ${row.label} — saving creates a new template with lineage.`)
+    const base = seedFromTemplate(row)
+    restart({
+      ...base,
+      editingLabel: null,
+      name: `${row.name} (copy)`,
+      label: "",
+      lineageNote: `Clone of ${row.label} — saving creates a new template with lineage.`,
+    })
   }
 
   function handleCompose() {
@@ -164,15 +106,12 @@ export function FlowTemplates() {
       }
     }
     const parents = rows.map((r) => r.label)
-    setEditingLabel(null)
-    setName("")
-    setLabel("")
-    setLabelDirty(false)
-    setSteps(merged)
     setSelected([])
-    setLineageNote(
-      `Composed from ${parents.join(", ")}${dropped ? " — extra 'start' steps collapsed" : ""}.`,
-    )
+    restart({
+      ...EMPTY_FLOW_TEMPLATE_SEED,
+      steps: merged,
+      lineageNote: `Composed from ${parents.join(", ")}${dropped ? " — extra 'start' steps collapsed" : ""}.`,
+    })
   }
 
   async function handleRemove(row: FlowTemplateRow) {
@@ -262,9 +201,6 @@ export function FlowTemplates() {
     )
   }
 
-  const chainErrors = validateChain(steps)
-  const canSave = name.trim().length > 0 && labelValid && steps.length > 0 && chainErrors.length === 0 && !adding
-
   return (
     <div>
       <PageHeader
@@ -318,6 +254,8 @@ export function FlowTemplates() {
                       <TableHead>Name</TableHead>
                       <TableHead>Label</TableHead>
                       <TableHead>Steps</TableHead>
+                      <TableHead>Run</TableHead>
+                      <TableHead>Category</TableHead>
                       <TableHead>Order</TableHead>
                       <TableHead>Protected</TableHead>
                       <TableHead>Top</TableHead>
@@ -355,7 +293,14 @@ export function FlowTemplates() {
                         <TableCell className="font-mono text-xs">{t.label}</TableCell>
                         <TableCell className="font-mono text-xs">
                           {t.steps?.length ?? 0}
+                          {isRunImmediateTemplate(t) ? " · immediate" : ""}
                         </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" title={isRunImmediateTemplate(t) ? `Run ${t.name} now` : `Run ${t.name}…`} onClick={() => handleQuickRun(t)}>
+                            <Play aria-hidden />
+                          </Button>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{t.category ?? "worktree"}</TableCell>
                         <TableCell className="font-mono text-xs">
                           {t.sort_order ?? 0}
                           <span className="ml-1 inline-flex gap-0.5">
@@ -408,62 +353,25 @@ export function FlowTemplates() {
           </CardContent>
         </Card>
 
-        <Card className="order-1 h-fit lg:order-2">
-          <CardHeader>
-            <CardTitle>{editingLabel ? `Edit ${editingLabel}` : "Add a template"}</CardTitle>
-            <CardDescription>
-              {editingLabel
-                ? "flow template update replaces all fields; renaming the label retargets flow history."
-                : "flow template add --name --label creates the row; run it per worktree from the Dashboard."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="grid gap-2">
-              <Label htmlFor="flow-name">Name</Label>
-              <Input
-                id="flow-name"
-                value={name}
-                onChange={(e) => handleNameChange(e.target.value)}
-                placeholder="Full review cycle"
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="flow-label">Label</Label>
-              <Input
-                id="flow-label"
-                value={label}
-                onChange={(e) => handleLabelChange(e.target.value)}
-                placeholder="full_review_cycle"
-                autoComplete="off"
-                spellCheck={false}
-                className="font-mono text-[13px]"
-              />
-              <p className="text-xs text-muted-foreground">Lowercase letters, digits, underscores only (^[a-z0-9_]+$).</p>
-            </div>
-            <div className="grid gap-2">
-              <Label>Steps</Label>
-              {lineageNote ? (
-                <p className="text-xs text-muted-foreground">{lineageNote}</p>
-              ) : null}
-              <ChainEditor mode="edit" steps={steps} onChange={setSteps} knownActions={knownActions} />
-            </div>
-            <ScriptField id="flow-pre" label="Pre-execution script" value={pre} onChange={setPre} placeholder={"#!/bin/bash\nmake lint"} />
-            <ScriptField id="flow-post" label="Post-execution script" value={post} onChange={setPost} placeholder={"#!/bin/bash\nmake test"} />
-            <div className="flex gap-2">
-              <Button className="flex-1" onClick={() => void handleAdd()} disabled={!canSave}>
-                <Plus aria-hidden />
-                {adding ? "Saving…" : editingLabel ? "Save changes" : "Add template"}
-              </Button>
-              {editingLabel ? (
-                <Button variant="outline" onClick={reset} disabled={adding}>
-                  Cancel
-                </Button>
-              ) : null}
-            </div>
-          </CardContent>
-        </Card>
+        <div className="order-1 grid gap-6 lg:order-2">
+          <Card className="h-fit">
+            <CardHeader>
+              <CardTitle>Run a message flow</CardTitle>
+              <CardDescription>
+                Runs immediately with the standard confirm. Rows flagged run immediately skip this form.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ImmediateRunForm kind="flow" />
+            </CardContent>
+          </Card>
+          <FlowTemplateFormCard
+            key={seedKey}
+            seed={seed}
+            knownActions={knownActions}
+            onDone={() => restart(EMPTY_FLOW_TEMPLATE_SEED)}
+          />
+        </div>
       </div>
 
       {detail ? (
@@ -501,6 +409,15 @@ export function FlowTemplates() {
             </div>
           ) : null}
         </ActionDialog>
+      ) : null}
+      {runRow ? (
+        <ImmediateRunDialog
+          kind="flow"
+          category={(runRow.category as RowCategory | undefined) ?? "worktree"}
+          lockCategory
+          preset={runRow.label}
+          onClose={() => setRunRow(null)}
+        />
       ) : null}
     </div>
   )

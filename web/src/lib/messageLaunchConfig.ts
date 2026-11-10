@@ -1,31 +1,31 @@
 import type { RunMode } from "@/lib/launchConfig"
 
-/** Tabs on the Message Launch page — mirrors the agent + draft operations
+/** Tabs on the Message Launch page — mirrors the agent operations
  * in MessageRowActions (Delete stays row-only on the Messages page). */
-export type MessageLaunchMode = "adhoc" | "validate" | "draft-reply" | "action" | "flow"
+export type MessageLaunchMode = "adhoc" | "validate" | "action" | "flow"
 
 export const MESSAGE_LAUNCH_MODES: readonly MessageLaunchMode[] = [
   "adhoc",
   "validate",
-  "draft-reply",
   "action",
   "flow",
 ]
 
 export const MESSAGE_LAUNCH_LABELS: Record<MessageLaunchMode, string> = {
   adhoc: "Adhoc",
-  validate: "Validate",
-  "draft-reply": "Draft reply",
+  validate: "Validate claimed issues",
   action: "Run action",
   flow: "Run flow",
 }
+
+/** Default prompt seeded into the validate tab's extra-instructions box. */
+export const VALIDATE_CLAIMED_ISSUES_PROMPT =
+  "Validate the claimed issues in the message content and generate Jira issues if issue(s) confirmed."
 
 export interface MessageLaunchForm {
   ref: string
   /** Prompt body (adhoc tab, required) or extra validation instructions (validate tab). */
   prompt: string
-  /** Draft body for the draft-reply tab (required). */
-  text: string
   /** Selected message-category action / flow template label. */
   label: string
   /** Optional worktree override (`--ref`, wins over repos[]). */
@@ -33,18 +33,15 @@ export interface MessageLaunchForm {
   /** Optional repo pin for multi-repo messages (`--repo`). */
   repo: string
   runMode: RunMode
-  dryRun: boolean
 }
 
 export const MESSAGE_LAUNCH_INITIAL: MessageLaunchForm = {
   ref: "",
   prompt: "",
-  text: "",
   label: "",
   refOverride: "",
   repo: "",
   runMode: "headless",
-  dryRun: false,
 }
 
 /** Run-mode flags for the agent-spawning tabs (adhoc/validate/action).
@@ -83,11 +80,6 @@ export function buildMessageArgs(
       args.push(...extra, ...messageRunModeArgs(form.runMode ?? "headless"), "--yes")
       return args
     }
-    case "draft-reply": {
-      const args = ["draft-reply", ref, "--text", (form.text ?? "").trim()]
-      if (form.dryRun) args.push("--dry-run")
-      return args
-    }
     case "action": {
       const args = ["action", "run", (form.label ?? "").trim(), ref, ...extra]
       args.push(...messageRunModeArgs(form.runMode ?? "headless"), "--yes")
@@ -105,7 +97,7 @@ export function buildMessageArgs(
 export function messageLaunchValid(tab: MessageLaunchMode, form: MessageLaunchForm): boolean {
   if (!form.ref.trim()) return false
   if (tab === "adhoc" && !form.prompt.trim()) return false
-  if (tab === "draft-reply" && !form.text.trim()) return false
+  if (tab === "validate" && !form.prompt.trim()) return false
   if ((tab === "action" || tab === "flow") && !form.label.trim()) return false
   if (tab === "flow" && !form.refOverride.trim()) return false
   return true

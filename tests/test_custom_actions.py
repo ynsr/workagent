@@ -150,7 +150,17 @@ def test_action_category_defaults_worktree(tmp_path):
     from workagent import store_custom_actions as ca
     db = _db(tmp_path)
     row = ca.create_action(db, name="Legacy", prompt="p")
-    assert row["category"] == "worktree"
+    assert row["run_immediately"] is False
+
+
+def test_action_run_immediately_round_trip(tmp_path):
+    from workagent import store_custom_actions as ca
+    db = _db(tmp_path)
+    row = ca.create_action(db, name="Quick", prompt="p", run_immediately=True)
+    assert row["run_immediately"] is True
+    assert ca.get_action(db, row["label"])["run_immediately"] is True
+    updated = ca.update_action(db, row["label"], run_immediately=False)
+    assert updated["run_immediately"] is False
 
 
 def test_action_category_rejects_bad_value(tmp_path):

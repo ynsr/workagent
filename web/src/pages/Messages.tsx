@@ -123,7 +123,7 @@ export function Messages() {
     <div>
       <PageHeader
         title="Messages"
-        description="Registered chat messages (message add / adhoc / validate / draft-reply). Runs go through POST /api/runs."
+        description="Registered chat messages (message add / adhoc / validate). Runs go through POST /api/runs."
         actions={
           <>
             <Button variant="outline" size="sm" onClick={() => void handleExportJson()}>

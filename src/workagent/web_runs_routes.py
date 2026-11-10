@@ -39,8 +39,7 @@ from .web_runs import (
 def _message_needs_yes(args: list[str]) -> bool:
     """True when a `message` child accepts --yes (agent-spawning subcommands).
 
-    remove/draft-reply own their flow (remove prompts only on TTY with
-    --yes; draft-reply has no --yes flag), so only adhoc/validate/action
+    remove prompts only on TTY with --yes, so only adhoc/validate/action
     run/flow run forward the web confirm.
     """
     return bool(args) and args[0] in ("adhoc", "validate", "action", "flow")

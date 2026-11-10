@@ -4,13 +4,15 @@ import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { FileCheck, GitPullRequest, History, Play, RefreshCw, Rocket, Square, Trash2, Undo2, Workflow, Wrench, Zap } from "lucide-react"
 import { FlowWizard } from "@/components/FlowWizard"
-import type { FlowTemplateRow, WorktreeMap } from "@/lib/api"
+import { ImmediateRunDialog, runsImmediately } from "@/components/ImmediateRunForm"
+import type { ActionRow, FlowTemplateRow, WorktreeMap } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useActions, useCreateRun, useFlowTemplates, useSessions } from "@/lib/queries"
 import { SessionResumeActions } from "@/components/RunActions"
 import type { StatusTableActions } from "@/components/StatusTable"
 import { errorText } from "@/components/StatusFeedback"
+import { isRunImmediateAction } from "@/lib/messageRunConfig"
 
 export function ActionIcon({
   title,
@@ -58,6 +60,8 @@ function DedicatedOverlay({ worktreeKey }: { worktreeKey: string }) {
   const flaggedTemplates = sortedTemplates.filter((t) => t.dedicated_overlay)
   const flaggedActions = sortedActions.filter((a) => a.dedicated_overlay)
   const [wizard, setWizard] = useState<FlowTemplateRow | null>(null)
+  const [flowForm, setFlowForm] = useState<FlowTemplateRow | null>(null)
+  const [actionForm, setActionForm] = useState<ActionRow | null>(null)
   if (flaggedTemplates.length === 0 && flaggedActions.length === 0) return null
   async function handleAction(label: string, name: string) {
     try {
@@ -73,20 +77,40 @@ function DedicatedOverlay({ worktreeKey }: { worktreeKey: string }) {
       toast.error(`${worktreeKey}: ${errorText(err)}`)
     }
   }
+
+  function handleTemplateClick(template: FlowTemplateRow) {
+    // run_immediately templates skip the wizard (the wizard is the form);
+    // everything else opens the shared run form first.
+    if (runsImmediately("flow", template)) setFlowForm(template)
+    else setWizard(template)
+  }
+
+  function handleActionClick(action: ActionRow) {
+    // run_immediately actions launch straight away (standard confirm); the
+    // shared form opens first for everything else.
+    if (isRunImmediateAction(action)) void handleAction(action.label, action.name)
+    else setActionForm(action)
+  }
   return (
     <>
       {flaggedTemplates.map((t) => (
-        <ActionIcon key={`flow-${t.label}`} title={`Run flow ${t.name} on ${worktreeKey}`} onClick={() => setWizard(t)}>
+        <ActionIcon key={`flow-${t.label}`} title={`Run flow ${t.name} on ${worktreeKey}`} onClick={() => handleTemplateClick(t)}>
           <Workflow aria-hidden />
         </ActionIcon>
       ))}
       {flaggedActions.map((a) => (
-        <ActionIcon key={`action-${a.label}`} title={`Run action ${a.name} on ${worktreeKey}`} onClick={() => void handleAction(a.label, a.name)}>
+        <ActionIcon key={`action-${a.label}`} title={isRunImmediateAction(a) ? `Run action ${a.name} on ${worktreeKey}` : `Run action ${a.name} on ${worktreeKey}…`} onClick={() => handleActionClick(a)}>
           <Zap aria-hidden />
         </ActionIcon>
       ))}
       {wizard ? (
         <FlowWizard template={wizard} refs={[worktreeKey]} onClose={() => setWizard(null)} />
+      ) : null}
+      {flowForm ? (
+        <ImmediateRunDialog kind="flow" category="worktree" lockCategory preset={flowForm.label} worktreeRefs={[worktreeKey]} onClose={() => setFlowForm(null)} />
+      ) : null}
+      {actionForm ? (
+        <ImmediateRunDialog kind="action" category="worktree" lockCategory preset={actionForm.label} worktreeRefs={[worktreeKey]} onClose={() => setActionForm(null)} />
       ) : null}
     </>
   )

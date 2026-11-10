@@ -174,3 +174,42 @@ def test_delete_unknown_and_round_trip(tmp_path):
         raise AssertionError("expected HarnessError")
     sm.delete_message(db, "p1")
     assert sm.get_message(db, "p1") is None
+
+def test_extract_message_id_passthrough():
+    from workagent import store_messages as sm
+    assert sm.extract_message_id("p1") == "p1"
+    assert sm.extract_message_id("t1") == "t1"
+    assert sm.extract_message_id("  p1  ") == "p1"
+
+
+def test_extract_message_id_permalink_ignores_team():
+    from workagent import store_messages as sm
+    mid = "abcdefghij1234567890klmnop"
+    assert sm.extract_message_id(f"https://chat.jibit.cloud/myteam/pl/{mid}") == mid
+    assert sm.extract_message_id(f"https://chat.jibit.cloud/other-team/pl/{mid}") == mid
+
+
+def test_extract_message_id_permalink_tolerates_suffixes():
+    from workagent import store_messages as sm
+    mid = "abcdefghij1234567890klmnop"
+    base = f"https://chat.jibit.cloud/myteam/pl/{mid}"
+    assert sm.extract_message_id(base + "/") == mid
+    assert sm.extract_message_id(base + "?x=1") == mid
+    assert sm.extract_message_id(base + "#frag") == mid
+    assert sm.extract_message_id(base + "/?x=1#frag") == mid
+
+
+def test_extract_message_id_garbage_passthrough():
+    from workagent import store_messages as sm
+    assert sm.extract_message_id("not a url at all") == "not a url at all"
+    assert sm.extract_message_id("zzz-nope") == "zzz-nope"
+
+
+def test_resolve_message_accepts_permalink(tmp_path):
+    from workagent import store_messages as sm
+    db = tmp_path / "s.db"
+    _seed_repo(db)
+    mid = "abcdefghij1234567890klmnop"
+    sm.create_message(db, message_id=mid, repos=["r1"])
+    row = sm.resolve_message(db, f"https://chat.jibit.cloud/myteam/pl/{mid}")
+    assert row["message_id"] == mid

@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
+import { toast } from "sonner"
 import { Workflow } from "lucide-react"
 import { FlowWizard } from "@/components/FlowWizard"
 import { Button } from "@/components/ui/button"
@@ -9,7 +10,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import type { FlowTemplateRow } from "@/lib/api"
-import { useFlowTemplates } from "@/lib/queries"
+import { useCreateRun, useFlowTemplates } from "@/lib/queries"
+import { errorText } from "@/components/StatusFeedback"
+import { isRunImmediateTemplate, messageScoped } from "@/lib/messageRunConfig"
 
 function startsWithStart(t: FlowTemplateRow): boolean {
   return (t.steps ?? [])[0]?.kind === "start"
@@ -21,8 +24,9 @@ function startsWithStart(t: FlowTemplateRow): boolean {
  * worktrees (one run per worktree). Always enabled. */
 export function FlowsMenu({ selected }: { selected: Set<string> }) {
   const navigate = useNavigate()
+  const createRun = useCreateRun()
   const { data } = useFlowTemplates()
-  const templates: FlowTemplateRow[] = (data?.templates ?? []).filter((t) => (t.category ?? "worktree") === "worktree")
+  const templates: FlowTemplateRow[] = messageScoped((data?.templates ?? []), "worktree")
   const sorted = [...templates].sort(
     (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id,
   )
@@ -34,13 +38,34 @@ export function FlowsMenu({ selected }: { selected: Set<string> }) {
   const [open, setOpen] = useState(false)
   const [wizard, setWizard] = useState<FlowTemplateRow | null>(null)
 
+  async function handleImmediateRun(template: FlowTemplateRow) {
+    setOpen(false)
+    for (const key of [...selected].sort()) {
+      try {
+        const { run_id } = await createRun.mutateAsync({
+          command: "flow",
+          args: ["run", template.label, key, "--yes"],
+          confirm: true,
+        })
+        toast.success(`Flow ${template.label} on ${key} started`, {
+          action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+        })
+      } catch (err) {
+        toast.error(`${key}: ${errorText(err)}`)
+      }
+    }
+  }
+
   function handlePick(template: FlowTemplateRow) {
     setOpen(false)
     if (!hasSelection) {
       navigate(`/launch?mode=flow&template=${encodeURIComponent(template.label)}`)
       return
     }
-    setWizard(template)
+    // run_immediately templates launch straight away (standard confirm, one
+    // run per worktree); everything else opens the wizard form first.
+    if (isRunImmediateTemplate(template)) void handleImmediateRun(template)
+    else setWizard(template)
   }
 
   return (

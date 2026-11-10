@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS custom_actions (
   protected INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0,
   dedicated_top_bar INTEGER NOT NULL DEFAULT 0,
   dedicated_overlay INTEGER NOT NULL DEFAULT 0,
+  run_immediately INTEGER NOT NULL DEFAULT 0,
   category TEXT NOT NULL DEFAULT 'worktree');
 CREATE TABLE IF NOT EXISTS flow_templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT UNIQUE NOT NULL,
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS flow_templates (
   protected INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0,
   dedicated_top_bar INTEGER NOT NULL DEFAULT 0,
   dedicated_overlay INTEGER NOT NULL DEFAULT 0,
+  run_immediately INTEGER NOT NULL DEFAULT 0,
   category TEXT NOT NULL DEFAULT 'worktree');
 CREATE TABLE IF NOT EXISTS flows (
   id INTEGER PRIMARY KEY AUTOINCREMENT, template_label TEXT NOT NULL,
@@ -239,6 +241,20 @@ def _migrate_category(conn) -> None:
             continue
         if "category" not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN category TEXT NOT NULL DEFAULT 'worktree'")
+
+
+def _migrate_run_immediately(conn) -> None:
+    """Schema v20: custom_actions/flow_templates gain run_immediately.
+
+    ALTER TABLE backfills DEFAULT 0 so existing rows keep form-first runs.
+    Idempotent: skipped when present.
+    """
+    for table in ("flow_templates", "custom_actions"):
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if not cols:
+            continue
+        if "run_immediately" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN run_immediately INTEGER NOT NULL DEFAULT 0")
 
 
 
@@ -815,6 +831,7 @@ def init_db(path: Path) -> Path:
                 _migrate_display_cols(conn)
                 _migrate_messages(conn)
                 _migrate_category(conn)
+                _migrate_run_immediately(conn)
                 _migrate_sessions_no_fk(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():

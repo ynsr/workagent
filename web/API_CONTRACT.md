@@ -158,12 +158,10 @@ by the Dashboard Actions dropdown.)
 ```
 (Messages page source: `message add/list/show/update/remove` run as runs;
 detail 404s on unknown ref (ambiguous substring → 404). `message
-adhoc/validate/draft-reply` and `message action run` / `message flow run`
+adhoc/validate` and `message action run` / `message flow run`
 run via `POST /api/runs` with target key `message:<ref>`
 (`message:action:<ref>` / `message:flow:<ref>` for action/flow runs) — one
-live run per (subcommand, message). `draft-reply`
-saves via `mm messages draft save` (never direct-send); `--dry-run`
-prints the argv without calling `mm`.)
+live run per (subcommand, message).)
 
 ### `GET /api/default-repo?ref=…`
 Issue #26: repo default for Launch (never the serve CWD). Returns the

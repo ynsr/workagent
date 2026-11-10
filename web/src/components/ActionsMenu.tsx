@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { Zap } from "lucide-react"
 import { ActionIcon } from "@/components/ActionIcon"
+import { ImmediateRunDialog } from "@/components/ImmediateRunForm"
 import { Button } from "@/components/ui/button"
 import {
   Popover,
@@ -11,20 +12,29 @@ import {
 } from "@/components/ui/popover"
 import { errorText } from "@/components/StatusFeedback"
 import { useActions, useCreateRun } from "@/lib/queries"
-
-/** Dashboard top-bar dropdown: run a custom action on each selected
- * worktree (one run per worktree). Disabled until ≥1 row is selected. */
+import { isRunImmediateAction, messageScoped } from "@/lib/messageRunConfig"
+import type { ActionRow } from "@/lib/api"
 export function ActionsMenu({ selected, compact = false }: { selected: Set<string>; compact?: boolean }) {
   const navigate = useNavigate()
   const createRun = useCreateRun()
   const { data } = useActions()
-  const actions = data?.actions ?? []
+  const actions = messageScoped(data?.actions ?? [], "worktree")
   const sorted = [...actions]
-    .filter((a) => (a.category ?? "worktree") === "worktree")
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id)
   const topBar = sorted.filter((a) => a.dedicated_top_bar)
   const [open, setOpen] = useState(false)
   const [running, setRunning] = useState<string | null>(null)
+  const [formAction, setFormAction] = useState<ActionRow | null>(null)
+
+  function handlePick(action: ActionRow) {
+    // run_immediately actions launch straight away (standard confirm, one run
+    // per worktree); everything else opens the shared run form first.
+    if (isRunImmediateAction(action)) void handleRun(action.label)
+    else {
+      setOpen(false)
+      setFormAction(action)
+    }
+  }
 
   async function handleRun(label: string) {
     setRunning(label)
@@ -55,7 +65,7 @@ export function ActionsMenu({ selected, compact = false }: { selected: Set<strin
           size="sm"
           disabled={selected.size === 0 || running !== null}
           title={`Run ${a.name} on ${selected.size} selected worktrees (headless)`}
-          onClick={() => void handleRun(a.label)}
+          onClick={() => handlePick(a)}
         >
           <ActionIcon name={a.icon} />
           {a.name}
@@ -105,9 +115,9 @@ export function ActionsMenu({ selected, compact = false }: { selected: Set<strin
               key={a.label}
               type="button"
               disabled={running !== null}
-              onClick={() => void handleRun(a.label)}
+              onClick={() => handlePick(a)}
               className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent"
-              title={`Run ${a.name} on ${selected.size} selected worktrees (headless)`}
+              title={isRunImmediateAction(a) ? `Run ${a.name} on ${selected.size} selected worktrees (headless)` : `Run ${a.name} on ${selected.size} selected worktrees…`}
             >
               <ActionIcon name={a.icon} className="size-4 shrink-0" />
               <span className="min-w-0 flex-1 truncate">{a.name}</span>
@@ -119,6 +129,16 @@ export function ActionsMenu({ selected, compact = false }: { selected: Set<strin
         )}
       </PopoverContent>
     </Popover>
+    {formAction ? (
+      <ImmediateRunDialog
+        kind="action"
+        category="worktree"
+        lockCategory
+        preset={formAction.label}
+        worktreeRefs={[...selected].sort()}
+        onClose={() => setFormAction(null)}
+      />
+    ) : null}
     </>
   )
 }

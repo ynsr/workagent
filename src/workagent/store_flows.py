@@ -239,6 +239,7 @@ def _row(r: sqlite3.Row | tuple) -> dict:
         d["sort_order"] = 0
     d["dedicated_top_bar"] = bool(d.get("dedicated_top_bar", 0))
     d["dedicated_overlay"] = bool(d.get("dedicated_overlay", 0))
+    d["run_immediately"] = bool(d.get("run_immediately", 0))
     return d
 
 
@@ -289,7 +290,8 @@ def create_template(db: Path, *, name: str, label: str = "",
                     protected: bool = False, sort_order: int = 0,
                     dedicated_top_bar: bool = False,
                     dedicated_overlay: bool = False,
-                    category: str = "worktree") -> dict:
+                    category: str = "worktree",
+                    run_immediately: bool = False) -> dict:
     """Insert a flow template; label defaults to the normalized name."""
     from .errors import HarnessError
     if (category or "worktree") not in CATEGORIES:
@@ -316,12 +318,14 @@ def create_template(db: Path, *, name: str, label: str = "",
                 "INSERT INTO flow_templates (label, name, steps,"
                 " pre_execution, post_execution, parent_labels,"
                 " protected, sort_order, dedicated_top_bar,"
-                " dedicated_overlay, category, created_at, modified_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " dedicated_overlay, category, run_immediately,"
+                " created_at, modified_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (key, name.strip(), json.dumps(norm), pre_execution or "",
                  post_execution or "", json.dumps(parents), int(bool(protected)),
                  int(sort_order or 0), int(bool(dedicated_top_bar)),
-                 int(bool(dedicated_overlay)), category or "worktree", now, now))
+                 int(bool(dedicated_overlay)), category or "worktree",
+                 int(bool(run_immediately)), now, now))
         except sqlite3.IntegrityError:
             raise HarnessError(
                 f"template label {key!r} already exists",
@@ -343,7 +347,8 @@ def update_template(db: Path, label: str, **fields) -> dict:
     from .errors import HarnessError
     allowed = {"name", "steps", "pre_execution", "post_execution",
                "parent_labels", "new_label", "protected", "sort_order",
-               "dedicated_top_bar", "dedicated_overlay", "category"}
+               "dedicated_top_bar", "dedicated_overlay", "category",
+               "run_immediately"}
     unknown = set(fields) - allowed
     if unknown:
         raise HarnessError(f"unknown fields: {sorted(unknown)}",
@@ -364,7 +369,8 @@ def update_template(db: Path, label: str, **fields) -> dict:
             raise HarnessError("parent_labels must be a list of label strings",
                                exit_code=2)
         fields["parent_labels"] = json.dumps(list(parents))
-    for _flag in ("protected", "dedicated_top_bar", "dedicated_overlay"):
+    for _flag in ("protected", "dedicated_top_bar", "dedicated_overlay",
+                  "run_immediately"):
         if _flag in fields:
             fields[_flag] = int(bool(fields[_flag]))
     if "category" in fields and (fields["category"] or "") not in CATEGORIES:

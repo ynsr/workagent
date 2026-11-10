@@ -28,7 +28,6 @@ def _message_key(args: list[str]) -> str:
         return f"message:{sub}:{_nth_positional(args[1:], 2, VAL_FLAGS['message ' + sub + ' run'])}"
     vals = {"adhoc": VAL_FLAGS["message adhoc"],
             "validate": VAL_FLAGS["message validate"],
-            "draft-reply": VAL_FLAGS["message draft-reply"],
             "show": (), "update": VAL_FLAGS["message update"],
             "remove": ()}.get(sub)
     if vals is None:
@@ -60,7 +59,7 @@ SPECS: dict[str, dict[str, Any]] = {
                "key": lambda args: f"action:{_first_positional(args, VAL_FLAGS['action run'])}:{_first_positional(args[1:], VAL_FLAGS['action run'])}" if args[:1] == ["run"] else "config"},
     "flow": {"confirm": False, "force": False, "confirm_subs": ("run", "delete"),
              "key": lambda args: f"flow:{_nth_positional(args, 1, VAL_FLAGS['flow run'])}:{_nth_positional(args, 2, VAL_FLAGS['flow run'])}" if args[:1] == ["run"] else "config"},
-    "message": {"confirm": False, "force": False, "confirm_subs": ("remove", "adhoc", "validate", "draft-reply", "run"),
+    "message": {"confirm": False, "force": False, "confirm_subs": ("remove", "adhoc", "validate", "run"),
                 "key": _message_key},
     "backup": {"confirm": False, "force": False, "confirm_subs": ("import",),
                "key": "config"},
@@ -100,24 +99,28 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "tracker list": ("--json", "--csv"),
     "action add": ("--json", "--yes", "--protected", "--no-protected",
                    "--dedicated-top-bar", "--no-dedicated-top-bar",
-                   "--dedicated-overlay", "--no-dedicated-overlay"),
+                   "--dedicated-overlay", "--no-dedicated-overlay",
+                   "--run-immediately", "--no-run-immediately"),
     "action list": ("--json", "--csv"),
     "action show": ("--json",),
     "action run": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
     "action update": ("--json", "--yes", "--protected", "--no-protected",
                       "--dedicated-top-bar", "--no-dedicated-top-bar",
-                      "--dedicated-overlay", "--no-dedicated-overlay"),
+                      "--dedicated-overlay", "--no-dedicated-overlay",
+                      "--run-immediately", "--no-run-immediately"),
     "action delete": ("--yes", "--json"),
     "flow": (),
     "flow template": (),
     "flow template add": ("--json", "--yes", "--protected", "--no-protected",
                           "--dedicated-top-bar", "--no-dedicated-top-bar",
-                          "--dedicated-overlay", "--no-dedicated-overlay"),
+                          "--dedicated-overlay", "--no-dedicated-overlay",
+                          "--run-immediately", "--no-run-immediately"),
     "flow template list": ("--json", "--csv"),
     "flow template show": ("--json",),
     "flow template update": ("--json", "--yes", "--protected", "--no-protected",
                              "--dedicated-top-bar", "--no-dedicated-top-bar",
-                             "--dedicated-overlay", "--no-dedicated-overlay"),
+                             "--dedicated-overlay", "--no-dedicated-overlay",
+                             "--run-immediately", "--no-run-immediately"),
     "flow template clone": ("--json", "--yes"),
     "flow template compose": ("--json", "--yes"),
     "flow template delete": ("--yes", "--json"),
@@ -140,7 +143,6 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "message remove": ("--yes", "--json"),
     "message adhoc": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
     "message validate": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
-    "message draft-reply": ("--dry-run", "--json"),
     "message action run": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
     "message flow run": ("--dry-run", "--yes", "--json"),
     "message": (),
@@ -178,7 +180,6 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "message list": ("--thread",),
     "message adhoc": ("--prompt", "--ref", "--repo", "--harness", "--extra-prompt", "--env-file", "--session-file"),
     "message validate": ("--prompt", "--ref", "--repo", "--harness"),
-    "message draft-reply": ("--text",),
     "message update": ("--thread-id", "--sender", "--content", "--ts", "--repo"),
     "message action run": ("--ref", "--repo", "--harness", "--extra-prompt", "--env-file", "--session-file"),
     "message flow run": ("--ref", "--repo",),
@@ -190,8 +191,7 @@ SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "action": {"add", "list", "show", "run", "update", "delete"},
                                     "flow": {"template", "list", "show", "run"},
                                     "backup": {"export", "import", "run-scheduled"},
-                                    "message": {"add", "list", "show", "update", "remove", "adhoc", "validate", "draft-reply", "action", "flow"},
-                                    "prodtest": {"plan", "run"}}
+                                    "message": {"add", "list", "show", "update", "remove", "adhoc", "validate", "action", "flow"}}
 TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "clone", "compose", "delete"}
 def _needs_confirm(command: str, args: list[str]) -> bool:
     """True when the (sub)command needs confirm:true (destructive only).
@@ -202,10 +202,9 @@ def _needs_confirm(command: str, args: list[str]) -> bool:
     non-destructive). Nested flow template CRUD nests two deep
     (["template", "add", ...]) so the second token decides. Message
     action/flow runs nest two deep (["action", "run", ...]); the bare
-    "run" token in confirm_subs matches them. Message adhoc/validate/
-    draft-reply prompt an agent or write a draft, so they need confirm
-    (message add/list/show/update/remove stay non-destructive reads/
-    plain row writes).
+    "run" token in confirm_subs matches them. Message adhoc/validate run an
+    agent, so they need confirm (message add/list/show/update/remove stay
+    non-destructive reads/plain row writes).
     """
     spec = SPECS[command]
     if "--dry-run" in args:

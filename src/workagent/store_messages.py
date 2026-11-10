@@ -9,6 +9,23 @@ from pathlib import Path
 #: Supported source apps — an enum, never free text.
 APPS = ("mattermost",)
 
+def extract_message_id(ref: str) -> str:
+    """Return the raw message id for a bare id or a Mattermost permalink.
+
+    Permalink shape: ``https://<host>/<team>/pl/<message_id>`` — the team
+    segment is ignored, the trailing segment is the id (26-char lowercase
+    alnum). Query/fragment/trailing slash tolerated. Anything else passes
+    through unchanged; downstream resolution still rejects unknown ids.
+    """
+    raw = (ref or "").strip()
+    if not raw or "/pl/" not in raw:
+        return raw
+    tail = raw.split("/pl/", 1)[1].strip().strip("/")
+    tail = tail.split("?", 1)[0].split("#", 1)[0].strip().strip("/")
+    cand = tail.split("/")[-1].strip() if tail else ""
+    if len(cand) == 26 and all(c.islower() or c.isdigit() for c in cand):
+        return cand
+    return raw
 
 def _connect(db: Path):
     from .store_sqlite import connect
@@ -88,6 +105,7 @@ def list_messages(db: Path, thread_id: str = "") -> list[dict]:
 
 def get_message(db: Path, ref: str) -> dict | None:
     """One message by row id or message_id; None when unknown."""
+    ref = extract_message_id(ref or "")
     with _connect(db) as conn:
         conn.row_factory = sqlite3.Row
         try:
@@ -105,6 +123,7 @@ def get_message(db: Path, ref: str) -> dict | None:
 def resolve_message(db: Path, ref: str) -> dict:
     """Exact (id/message_id) → substring fallback; miss/ambiguity → exit 2."""
     from .errors import HarnessError
+    ref = extract_message_id(ref or "")
     hit = get_message(db, ref)
     if hit is not None:
         return hit

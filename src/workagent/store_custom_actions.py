@@ -62,7 +62,8 @@ def _row(r: sqlite3.Row | tuple) -> dict:
         keys = ("id", "label", "name", "icon", "prompt", "pre_execution",
                 "post_execution", "default_options", "created_at",
                 "modified_at", "protected", "sort_order",
-                "dedicated_top_bar", "dedicated_overlay")
+                "dedicated_top_bar", "dedicated_overlay", "category",
+                "run_immediately")
         d = dict(zip(keys, r))
     try:
         d["default_options"] = json.loads(d.get("default_options") or "{}")
@@ -75,6 +76,7 @@ def _row(r: sqlite3.Row | tuple) -> dict:
         d["sort_order"] = 0
     d["dedicated_top_bar"] = bool(d.get("dedicated_top_bar", 0))
     d["dedicated_overlay"] = bool(d.get("dedicated_overlay", 0))
+    d["run_immediately"] = bool(d.get("run_immediately", 0))
     return d
 
 
@@ -101,7 +103,8 @@ def create_action(db: Path, *, name: str, label: str = "",
                   default_options: str = "", protected: bool = False,
                   sort_order: int = 0, dedicated_top_bar: bool = False,
                   dedicated_overlay: bool = False,
-                  category: str = "worktree") -> dict:
+                  category: str = "worktree",
+                  run_immediately: bool = False) -> dict:
     """Insert a custom action; label defaults to the normalized name."""
     from .errors import HarnessError
     if (category or "worktree") not in CATEGORIES:
@@ -136,12 +139,14 @@ def create_action(db: Path, *, name: str, label: str = "",
                 "INSERT INTO custom_actions (label, name, icon, prompt,"
                 " pre_execution, post_execution, default_options,"
                 " protected, sort_order, dedicated_top_bar,"
-                " dedicated_overlay, category, created_at, modified_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " dedicated_overlay, category, run_immediately,"
+                " created_at, modified_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (key, name.strip(), icon, prompt or "", pre_execution or "",
                  post_execution or "", json.dumps(opts), int(bool(protected)),
                  int(sort_order or 0), int(bool(dedicated_top_bar)),
-                 int(bool(dedicated_overlay)), category or "worktree", now, now))
+                 int(bool(dedicated_overlay)), category or "worktree",
+                 int(bool(run_immediately)), now, now))
         except sqlite3.IntegrityError:
             raise HarnessError(
                 f"action label {key!r} already exists", exit_code=2) from None
@@ -161,7 +166,8 @@ def update_action(db: Path, label: str, **fields) -> dict:
     from .errors import HarnessError
     allowed = {"name", "icon", "prompt", "pre_execution", "post_execution",
                "default_options", "new_label", "protected", "sort_order",
-               "dedicated_top_bar", "dedicated_overlay", "category"}
+               "dedicated_top_bar", "dedicated_overlay", "category",
+               "run_immediately"}
     unknown = set(fields) - allowed
     if unknown:
         raise HarnessError(f"unknown fields: {sorted(unknown)}", exit_code=2)
@@ -176,7 +182,8 @@ def update_action(db: Path, label: str, **fields) -> dict:
     if "default_options" in fields and isinstance(fields["default_options"], str):
         fields["default_options"] = json.dumps(
             parse_default_options(fields["default_options"]))
-    for _flag in ("protected", "dedicated_top_bar", "dedicated_overlay"):
+    for _flag in ("protected", "dedicated_top_bar", "dedicated_overlay",
+                  "run_immediately"):
         if _flag in fields:
             fields[_flag] = int(bool(fields[_flag]))
     if "category" in fields and (fields["category"] or "") not in CATEGORIES:

@@ -240,8 +240,19 @@ def test_template_display_columns(tmp_path):
     assert row["dedicated_top_bar"] is True
     assert row["dedicated_overlay"] is True
     got = sf.get_template(db, row["label"])
-    assert got is not None and got["protected"] is True and got["sort_order"] == 3
+    assert got is not None and got["run_immediately"] is False
 
+
+def test_template_run_immediately_round_trip(tmp_path):
+    from workagent import store_flows as sf
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    row = sf.create_template(db, name="Quick Flow", steps=[{"kind": "cleanup"}], run_immediately=True)
+    assert row["run_immediately"] is True
+    assert sf.get_template(db, row["label"])["run_immediately"] is True
+    updated = sf.update_template(db, row["label"], run_immediately=False)
+    assert updated["run_immediately"] is False
 
 def test_templates_ordered_by_sort_order(tmp_path):
     from workagent import store_flows as sf

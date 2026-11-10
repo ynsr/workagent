@@ -1,32 +1,52 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { ClipboardList, FlaskConical, MessageSquarePlus, Play, Trash2, Zap } from "lucide-react"
+import { ClipboardList, FlaskConical, Play, Trash2, Zap } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { ImmediateRunDialog, runsImmediately } from "@/components/ImmediateRunForm"
 import { errorText } from "@/components/StatusFeedback"
 import { useActions, useCreateRun, useFlowTemplates } from "@/lib/queries"
 import { useConfirm } from "@/lib/confirm"
+import { VALIDATE_CLAIMED_ISSUES_PROMPT } from "@/lib/messageLaunchConfig"
+import { messageScoped } from "@/lib/messageRunConfig"
 import type { ActionRow, FlowTemplateRow, MessageRow } from "@/lib/api"
 
-function messageScoped<T extends { category?: string }>(rows: T[]): T[] {
-  return rows.filter((r) => (r.category ?? "worktree") === "message")
-}
-
-/** Row overlay: Adhoc / Validate / Draft reply / Run action / Run flow / Delete. */
+/** Row overlay: Adhoc / Validate / Run action / Run flow / Delete.
+ * Run buttons open the shared immediate run form first — seeded with the
+ * row's label and message — unless the row opted into run_immediately. */
 export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: () => void }) {
   const navigate = useNavigate()
   const confirm = useConfirm()
   const createRun = useCreateRun()
   const { data: actionsData } = useActions()
   const { data: templatesData } = useFlowTemplates()
-  const actions: ActionRow[] = messageScoped(actionsData?.actions ?? [])
-  const templates: FlowTemplateRow[] = messageScoped(templatesData?.templates ?? [])
+  const actions: ActionRow[] = messageScoped(actionsData?.actions ?? [], "message")
+  const templates: FlowTemplateRow[] = messageScoped(templatesData?.templates ?? [], "message")
   const [prompt, setPrompt] = useState("")
-  const [text, setText] = useState("")
   const [actionLabel, setActionLabel] = useState("")
   const [templateLabel, setTemplateLabel] = useState("")
+  const [runForm, setRunForm] = useState<{ kind: "action" | "flow"; label: string } | null>(null)
+
+  function handleRunClick(kind: "action" | "flow", label: string) {
+    // run_immediately rows launch straight away (standard confirm); everything
+    // else opens the shared run form first, prefilled with the row.
+    if (runsImmediately(kind, kind === "action"
+      ? actions.find((a) => a.label === label)
+      : templates.find((t) => t.label === label),
+    )) {
+      void spawn(
+        kind === "action"
+          ? ["action", "run", label, row.message_id, "--yes"]
+          : ["flow", "run", label, row.message_id, "--yes"],
+        true,
+        kind === "action" ? "Message action started" : "Message flow started",
+      )
+      return
+    }
+    setRunForm({ kind, label })
+  }
 
   async function spawn(args: string[], needsConfirm: boolean, okMsg: string) {
     try {
@@ -53,15 +73,8 @@ export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: (
           <Play aria-hidden /> Adhoc
         </Button>
         <Button variant="outline" size="sm"
-          onClick={() => void spawn(["validate", row.message_id, "--yes"], true, "Message validate started")}>
+          onClick={() => void spawn(["validate", row.message_id, "--prompt", VALIDATE_CLAIMED_ISSUES_PROMPT, "--yes"], true, "Message validate started")}>
           <FlaskConical aria-hidden /> Validate
-        </Button>
-      </div>
-      <div className="flex items-center gap-1">
-        <Input className="h-8 w-44" placeholder="Draft reply…" value={text} onChange={(e) => setText(e.target.value)} />
-        <Button variant="outline" size="sm" disabled={!text.trim()}
-          onClick={() => void spawn(["draft-reply", row.message_id, "--text", text.trim()], true, "Draft reply started")}>
-          <MessageSquarePlus aria-hidden /> Draft reply
         </Button>
       </div>
       {actions.length > 0 && (
@@ -73,7 +86,7 @@ export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: (
             {actions.map((a) => <option key={a.label} value={a.label}>{a.name}</option>)}
           </select>
           <Button variant="outline" size="sm" disabled={!actionLabel}
-            onClick={() => void spawn(["action", "run", actionLabel, row.message_id, "--yes"], true, "Message action started")}>
+            onClick={() => handleRunClick("action", actionLabel)}>
             <Zap aria-hidden /> Run
           </Button>
         </div>
@@ -87,7 +100,7 @@ export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: (
             {templates.map((t) => <option key={t.label} value={t.label}>{t.name}</option>)}
           </select>
           <Button variant="outline" size="sm" disabled={!templateLabel}
-            onClick={() => void spawn(["flow", "run", templateLabel, row.message_id, "--yes"], true, "Message flow started")}>
+            onClick={() => handleRunClick("flow", templateLabel)}>
             <ClipboardList aria-hidden /> Run
           </Button>
         </div>
@@ -95,6 +108,9 @@ export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: (
       <Button variant="outline" size="sm" onClick={() => void handleDelete()}>
         <Trash2 aria-hidden /> Delete
       </Button>
+      {runForm ? (
+        <ImmediateRunDialog kind={runForm.kind} category="message" lockCategory preset={runForm.label} messageRef={row.message_id} onClose={() => setRunForm(null)} />
+      ) : null}
     </div>
   )
 }
