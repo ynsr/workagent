@@ -92,12 +92,19 @@ CREATE TABLE IF NOT EXISTS flows (
   effective_steps TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL, modified_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_flows_worktree ON flows(worktree_ref);
-CREATE TABLE IF NOT EXISTS prodtest_items (
-  issue_key TEXT PRIMARY KEY NOT NULL, plan_path TEXT NOT NULL DEFAULT '',
-  plan_revision INTEGER NOT NULL DEFAULT 0, plan_risk TEXT NOT NULL DEFAULT '',
-  plan_diff_hash TEXT NOT NULL DEFAULT '', release_sha TEXT NOT NULL DEFAULT '',
-  released_at TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending',
-  last_run_id TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT UNIQUE NOT NULL,
+  thread_id TEXT NOT NULL DEFAULT '', app_name TEXT NOT NULL DEFAULT 'mattermost',
+  sender_username TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '',
+  ts TEXT NOT NULL DEFAULT '', repos TEXT NOT NULL DEFAULT '[]',
+  added_at TEXT NOT NULL);
+ CREATE INDEX IF NOT EXISTS idx_flows_worktree ON flows(worktree_ref);
+ CREATE TABLE IF NOT EXISTS prodtest_items (
+   issue_key TEXT PRIMARY KEY NOT NULL, plan_path TEXT NOT NULL DEFAULT '',
+   plan_revision INTEGER NOT NULL DEFAULT 0, plan_risk TEXT NOT NULL DEFAULT '',
+   plan_diff_hash TEXT NOT NULL DEFAULT '', release_sha TEXT NOT NULL DEFAULT '',
+   released_at TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending',
+   last_run_id TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL);
 """
 
 
@@ -205,6 +212,33 @@ def _migrate_display_cols(conn) -> None:
         if "dedicated_overlay" not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN dedicated_overlay INTEGER NOT NULL DEFAULT 0")
         conn.execute(f"UPDATE {table} SET sort_order = id WHERE sort_order = 0")
+def _migrate_messages(conn) -> None:
+    """Schema v19: messages table (registered chat messages).
+
+    CREATE TABLE IF NOT EXISTS is enough (fresh DBs get it from SCHEMA).
+    Idempotent: no-op when present.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS messages ("
+                 "id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT UNIQUE NOT NULL, "
+                 "thread_id TEXT NOT NULL DEFAULT '', app_name TEXT NOT NULL DEFAULT 'mattermost', "
+                 "sender_username TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '', "
+                 "ts TEXT NOT NULL DEFAULT '', repos TEXT NOT NULL DEFAULT '[]', "
+                 "added_at TEXT NOT NULL)")
+
+
+def _migrate_category(conn) -> None:
+    """Schema v19: custom_actions/flow_templates gain category.
+
+    ALTER TABLE backfills DEFAULT 'worktree' so existing rows keep worktree
+    scoping. Idempotent: skipped when present.
+    """
+    for table in ("flow_templates", "custom_actions"):
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if not cols:
+            continue
+        if "category" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN category TEXT NOT NULL DEFAULT 'worktree'")
+
 
 
 def _migrate_flow_template_lineage(conn) -> None:
@@ -778,6 +812,8 @@ def init_db(path: Path) -> Path:
                 _migrate_flow_linkage(conn)
                 _migrate_flow_template_lineage(conn)
                 _migrate_display_cols(conn)
+                _migrate_messages(conn)
+                _migrate_category(conn)
                 _migrate_sessions_no_fk(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():
