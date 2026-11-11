@@ -149,14 +149,13 @@ by the Dashboard Actions dropdown.)
 {"trackers": {"jira:IPG": {"repos": ["/home/x/projects/projectx"]}},
  "worktrees": { …same shape as GET /api/status… }}
 ```
-
 ### `GET /api/messages?thread=` → `{"messages": [...]}`, `GET /api/messages/{ref}`
 ```json
 {"messages": [{"id": 1, "message_id": "p1", "thread_id": "t1", "app_name": "mattermost",
   "sender_username": "u", "content": "deploy broke", "ts": "…",
-  "repos": ["r1"], "added_at": "…"}]}
+  "repos": ["r1"], "worktrees": ["jira:X"], "added_at": "…"}]}
 ```
-(Messages page source: `message add/list/show/update/remove` run as runs;
+(`message add --worktree W...` links worktree refs alongside `--repo R...`;
 detail 404s on unknown ref (ambiguous substring → 404). `message
 adhoc/validate` and `message action run` / `message flow run`
 run via `POST /api/runs` with target key `message:<ref>`

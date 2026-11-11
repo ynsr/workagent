@@ -30,8 +30,8 @@ export interface MessageLaunchForm {
   label: string
   /** Optional worktree override (`--ref`, wins over repos[]). */
   refOverride: string
-  /** Optional repo pin for multi-repo messages (`--repo`). */
-  repo: string
+  /** Optional repo pins for multi-repo messages (`--repo`, repeatable — one run per repo). */
+  repos: string[]
   runMode: RunMode
 }
 
@@ -40,7 +40,7 @@ export const MESSAGE_LAUNCH_INITIAL: MessageLaunchForm = {
   prompt: "",
   label: "",
   refOverride: "",
-  repo: "",
+  repos: [],
   runMode: "headless",
 }
 
@@ -52,18 +52,23 @@ export function messageRunModeArgs(mode: RunMode): string[] {
   return []
 }
 
+/** Extra argv shared by every tab: worktree override + one `--repo` per pin. */
+export function messageScopeArgs(form: Partial<MessageLaunchForm>): string[] {
+  const refOverride = (form.refOverride ?? "").trim()
+  const pins = (form.repos ?? []).map((r) => r.trim()).filter(Boolean)
+  return [
+    ...(refOverride ? ["--ref", refOverride] : []),
+    ...pins.flatMap((r) => ["--repo", r]),
+  ]
+}
+
 /** CLI argv (after `command: "message"`) for one Message Launch tab. */
 export function buildMessageArgs(
   tab: MessageLaunchMode,
   form: Partial<MessageLaunchForm>,
 ): string[] {
   const ref = (form.ref ?? "").trim()
-  const refOverride = (form.refOverride ?? "").trim()
-  const repo = (form.repo ?? "").trim()
-  const extra = [
-    ...(refOverride ? ["--ref", refOverride] : []),
-    ...(repo ? ["--repo", repo] : []),
-  ]
+  const extra = messageScopeArgs(form)
 
   switch (tab) {
     case "adhoc": {

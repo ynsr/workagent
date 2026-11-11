@@ -42,6 +42,10 @@ def _row(r: sqlite3.Row | tuple) -> dict:
         d["repos"] = json.loads(d.get("repos") or "[]")
     except (TypeError, ValueError):
         d["repos"] = []
+    try:
+        d["worktrees"] = json.loads(d.get("worktrees") or "[]")
+    except (TypeError, ValueError):
+        d["worktrees"] = []
     return d
 
 
@@ -60,9 +64,29 @@ def _check_repos(conn, repos) -> list[str]:
     return keys
 
 
+def _check_worktrees(conn, worktrees) -> list[str]:
+    """Validate worktrees is a list of known worktree ref_keys (may be empty)."""
+    from .errors import HarnessError
+    keys = list(worktrees or [])
+    if not keys:
+        return []
+    have = {r[0] for r in conn.execute(
+        f"SELECT ref_key FROM worktrees WHERE ref_key IN ({', '.join('?' * len(keys))})",
+        keys).fetchall()}
+    missing = [k for k in keys if k not in have]
+    if missing:
+        raise HarnessError(f"unknown worktrees: {', '.join(missing)}", exit_code=2)
+    return keys
+    missing = [k for k in keys if k not in have]
+    if missing:
+        raise HarnessError(f"unknown repos: {', '.join(missing)}", exit_code=2)
+    return keys
+
+
 def create_message(db: Path, *, message_id: str, thread_id: str = "",
                    app_name: str = "mattermost", sender_username: str = "",
-                   content: str = "", ts: str = "", repos=None) -> dict:
+                   content: str = "", ts: str = "", repos=None,
+                   worktrees=None) -> dict:
     """Insert a registered message; repos must reference known repo keys."""
     from .errors import HarnessError
     if not (message_id or "").strip():
@@ -72,14 +96,15 @@ def create_message(db: Path, *, message_id: str, thread_id: str = "",
                            exit_code=2)
     with _connect(db) as conn:
         keys = _check_repos(conn, repos)
+        wt_keys = _check_worktrees(conn, worktrees)
         try:
             cur = conn.execute(
                 "INSERT INTO messages (message_id, thread_id, app_name,"
-                " sender_username, content, ts, repos, added_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                " sender_username, content, ts, repos, worktrees, added_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (message_id.strip(), thread_id or "", app_name or "mattermost",
                  sender_username or "", content or "", ts or "",
-                 json.dumps(keys), _now_iso()))
+                 json.dumps(keys), json.dumps(wt_keys), _now_iso()))
         except sqlite3.IntegrityError:
             raise HarnessError(
                 f"message {message_id!r} already registered",
@@ -148,7 +173,7 @@ def update_message(db: Path, ref: str, **fields) -> dict:
     from .errors import HarnessError
     import sqlite3 as _sqlite3
     allowed = {"thread_id", "app_name", "sender_username", "content", "ts",
-               "repos", "new_message_id"}
+               "repos", "worktrees", "new_message_id"}
     unknown = set(fields) - allowed
     if unknown:
         raise HarnessError(f"unknown fields: {sorted(unknown)}", exit_code=2)
@@ -157,6 +182,8 @@ def update_message(db: Path, ref: str, **fields) -> dict:
         base = resolve_message(db, ref)
         if "repos" in fields:
             fields["repos"] = json.dumps(_check_repos(conn, fields["repos"]))
+        if "worktrees" in fields:
+            fields["worktrees"] = json.dumps(_check_worktrees(conn, fields["worktrees"]))
         if "new_message_id" in fields:
             new_id = (fields.pop("new_message_id") or "").strip()
             if not new_id:

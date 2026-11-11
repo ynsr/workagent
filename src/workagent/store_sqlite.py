@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS messages (
   thread_id TEXT NOT NULL DEFAULT '', app_name TEXT NOT NULL DEFAULT 'mattermost',
   sender_username TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '',
   ts TEXT NOT NULL DEFAULT '', repos TEXT NOT NULL DEFAULT '[]',
+  worktrees TEXT NOT NULL DEFAULT '[]',
   added_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS prodtest_items (
    issue_key TEXT PRIMARY KEY NOT NULL, plan_path TEXT NOT NULL DEFAULT '',
@@ -226,7 +227,22 @@ def _migrate_messages(conn) -> None:
                  "thread_id TEXT NOT NULL DEFAULT '', app_name TEXT NOT NULL DEFAULT 'mattermost', "
                  "sender_username TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '', "
                  "ts TEXT NOT NULL DEFAULT '', repos TEXT NOT NULL DEFAULT '[]', "
+                 "worktrees TEXT NOT NULL DEFAULT '[]', "
                  "added_at TEXT NOT NULL)")
+
+
+def _migrate_messages_worktrees(conn) -> None:
+    """Schema v21: messages gains worktrees (JSON worktree ref_key list).
+
+    Mirrors the repos column for issue #46: ALTER TABLE is enough
+    (NOT NULL DEFAULT '[]', so old rows read back as unlinked).
+    Idempotent: skipped when present.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
+    if not cols:
+        return
+    if "worktrees" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN worktrees TEXT NOT NULL DEFAULT '[]'")
 
 
 def _migrate_category(conn) -> None:
@@ -792,6 +808,9 @@ def _schema_current(path: Path) -> bool:
             return False
         if "prodtest_items" not in tables:
             return False
+        mcols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")} if "messages" in tables else set()
+        if mcols and "worktrees" not in mcols:
+            return False
         return True
     except Exception:
         return False
@@ -830,6 +849,7 @@ def init_db(path: Path) -> Path:
                 _migrate_flow_template_lineage(conn)
                 _migrate_display_cols(conn)
                 _migrate_messages(conn)
+                _migrate_messages_worktrees(conn)
                 _migrate_category(conn)
                 _migrate_run_immediately(conn)
                 _migrate_sessions_no_fk(conn)
