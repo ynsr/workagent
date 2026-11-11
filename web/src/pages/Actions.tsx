@@ -36,7 +36,7 @@ import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, exactDateTime, relativeDate, toCsv } from "@/lib/format"
 import { useActions, useCreateRun } from "@/lib/queries"
 import type { ActionRow } from "@/lib/api"
-import { actionRunModeOf, buildImmediateActionArgs, isRunImmediateAction, type RowCategory } from "@/lib/messageRunConfig"
+import { actionRunModeOf, isRunImmediateAction, type RowCategory } from "@/lib/messageRunConfig"
 export function Actions() {
   const navigate = useNavigate()
   const confirm = useConfirm()
@@ -56,36 +56,11 @@ export function Actions() {
     setEditing(row)
   }
 
-  async function handleQuickRun(row: ActionRow) {
-    // run_immediately rows launch straight away (standard confirm); everything
-    // else opens the shared run form with the row's label and mode prefilled.
-    if (!isRunImmediateAction(row)) {
-      setRunRow(row)
-      return
-    }
-    const ok = await confirm({
-      action: null,
-      title: `Run action ${row.name} now`,
-      description: "The action runs immediately with auto-approve. The server appends --yes.",
-      confirmLabel: "Run now",
-      details: [
-        { label: "Action", value: row.label, mono: true },
-        { label: "Mode", value: actionRunModeOf(row), mono: true },
-      ],
-    })
-    if (!ok) return
-    try {
-      const { run_id } = await createRun.mutateAsync({
-        command: "action",
-        args: buildImmediateActionArgs(row.label, "HEAD", actionRunModeOf(row)),
-        confirm: true,
-      })
-      toast.success(`Action ${row.label} started`, {
-        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
-      })
-    } catch (err) {
-      toast.error(errorText(err))
-    }
+  function handleQuickRun(row: ActionRow) {
+    // Both immediate and form-first rows go through the shared run dialog
+    // (prefilled with the row's label); the dialog's own confirm copy covers
+    // the immediate case. A worktree ref is required — HEAD is not a link key.
+    setRunRow(row)
   }
 
   async function handleRemove(row: ActionRow) {
@@ -252,7 +227,7 @@ export function Actions() {
                           ) : null}
                         </TableCell>
                         <TableCell>
-                          <Button variant="ghost" size="sm" title={isRunImmediateAction(a) ? `Run ${a.name} now` : `Run ${a.name}…`} onClick={() => void handleQuickRun(a)}>
+                          <Button variant="ghost" size="sm" title={`Run ${a.name}…`} onClick={() => void handleQuickRun(a)}>
                             <Play aria-hidden />
                           </Button>
                         </TableCell>

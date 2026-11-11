@@ -63,8 +63,7 @@ function slug(value: string): string {
 
 /** Add/update card for the Flow Templates page. Owns the draft state; the
  * page re-mounts it (via key) to seed an edit, clone, or compose draft.
- * Category is a first-class field; run_immediately round-trips through the
- * first step's config (templates have no default_options column). */
+ * Category and run_immediately are first-class fields (backend columns). */
 export function FlowTemplateFormCard({ seed, knownActions, onDone }: {
   seed: FlowTemplateFormSeed
   knownActions: { label: string; name: string }[]

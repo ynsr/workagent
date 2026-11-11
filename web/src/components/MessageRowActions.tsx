@@ -10,7 +10,7 @@ import { errorText } from "@/components/StatusFeedback"
 import { useActions, useCreateRun, useFlowTemplates } from "@/lib/queries"
 import { useConfirm } from "@/lib/confirm"
 import { VALIDATE_CLAIMED_ISSUES_PROMPT } from "@/lib/messageLaunchConfig"
-import { messageScoped } from "@/lib/messageRunConfig"
+import { buildImmediateMessageActionArgs, messageScoped } from "@/lib/messageRunConfig"
 import type { ActionRow, FlowTemplateRow, MessageRow } from "@/lib/api"
 
 /** Row overlay: Adhoc / Validate / Run action / Run flow / Delete.
@@ -30,18 +30,14 @@ export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: (
   const [runForm, setRunForm] = useState<{ kind: "action" | "flow"; label: string } | null>(null)
 
   function handleRunClick(kind: "action" | "flow", label: string) {
-    // run_immediately rows launch straight away (standard confirm); everything
-    // else opens the shared run form first, prefilled with the row.
-    if (runsImmediately(kind, kind === "action"
-      ? actions.find((a) => a.label === label)
-      : templates.find((t) => t.label === label),
-    )) {
+    // Immediate actions launch straight away (standard confirm; the message
+    // itself is the ref). Flows always need a worktree ref, so they go
+    // through the shared run form first.
+    if (kind === "action" && runsImmediately(kind, actions.find((a) => a.label === label))) {
       void spawn(
-        kind === "action"
-          ? ["action", "run", label, row.message_id, "--yes"]
-          : ["flow", "run", label, row.message_id, "--yes"],
+        buildImmediateMessageActionArgs(label, row.message_id),
         true,
-        kind === "action" ? "Message action started" : "Message flow started",
+        "Message action started",
       )
       return
     }

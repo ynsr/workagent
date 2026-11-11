@@ -29,7 +29,7 @@ function slug(value: string): string {
 
 /** Add/update card for the Actions page: label auto-slug, presets, prompt +
  * pre/post scripts, default run mode, category, and the run_immediately flag
- * (persisted inside default_options JSON). */
+ * (first-class backend column, v20). */
 export function ActionFormCard({ editing, onDone, onCancel }: {
   editing: ActionRow | null
   onDone: () => void

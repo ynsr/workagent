@@ -12,7 +12,7 @@ import { useActions, useCreateRun, useFlowTemplates, useSessions } from "@/lib/q
 import { SessionResumeActions } from "@/components/RunActions"
 import type { StatusTableActions } from "@/components/StatusTable"
 import { errorText } from "@/components/StatusFeedback"
-import { isRunImmediateAction } from "@/lib/messageRunConfig"
+import { actionRunModeOf, buildImmediateActionArgs, isRunImmediateAction } from "@/lib/messageRunConfig"
 
 export function ActionIcon({
   title,
@@ -60,17 +60,32 @@ function DedicatedOverlay({ worktreeKey }: { worktreeKey: string }) {
   const flaggedTemplates = sortedTemplates.filter((t) => t.dedicated_overlay)
   const flaggedActions = sortedActions.filter((a) => a.dedicated_overlay)
   const [wizard, setWizard] = useState<FlowTemplateRow | null>(null)
-  const [flowForm, setFlowForm] = useState<FlowTemplateRow | null>(null)
   const [actionForm, setActionForm] = useState<ActionRow | null>(null)
   if (flaggedTemplates.length === 0 && flaggedActions.length === 0) return null
-  async function handleAction(label: string, name: string) {
+  async function handleAction(action: ActionRow) {
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "action",
-        args: ["run", label, worktreeKey, "--launch", "--yes"],
-        confirm: false,
+        args: buildImmediateActionArgs(action.label, worktreeKey, actionRunModeOf(action)),
+        confirm: true,
       })
-      toast.success(`Action ${name} started on ${worktreeKey}`, {
+      toast.success(`Action ${action.name} started on ${worktreeKey}`, {
+        action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+    } catch (err) {
+      toast.error(`${worktreeKey}: ${errorText(err)}`)
+    }
+  }
+
+
+  async function handleTemplateRun(template: FlowTemplateRow) {
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "flow",
+        args: ["run", template.label, worktreeKey, "--yes"],
+        confirm: true,
+      })
+      toast.success(`Flow ${template.name} started on ${worktreeKey}`, {
         action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
       })
     } catch (err) {
@@ -79,16 +94,16 @@ function DedicatedOverlay({ worktreeKey }: { worktreeKey: string }) {
   }
 
   function handleTemplateClick(template: FlowTemplateRow) {
-    // run_immediately templates skip the wizard (the wizard is the form);
-    // everything else opens the shared run form first.
-    if (runsImmediately("flow", template)) setFlowForm(template)
+    // run_immediately templates launch straight away (standard confirm); the
+    // wizard stays the form for everything else.
+    if (runsImmediately("flow", template)) void handleTemplateRun(template)
     else setWizard(template)
   }
 
   function handleActionClick(action: ActionRow) {
     // run_immediately actions launch straight away (standard confirm); the
     // shared form opens first for everything else.
-    if (isRunImmediateAction(action)) void handleAction(action.label, action.name)
+    if (isRunImmediateAction(action)) void handleAction(action)
     else setActionForm(action)
   }
   return (
@@ -105,9 +120,6 @@ function DedicatedOverlay({ worktreeKey }: { worktreeKey: string }) {
       ))}
       {wizard ? (
         <FlowWizard template={wizard} refs={[worktreeKey]} onClose={() => setWizard(null)} />
-      ) : null}
-      {flowForm ? (
-        <ImmediateRunDialog kind="flow" category="worktree" lockCategory preset={flowForm.label} worktreeRefs={[worktreeKey]} onClose={() => setFlowForm(null)} />
       ) : null}
       {actionForm ? (
         <ImmediateRunDialog kind="action" category="worktree" lockCategory preset={actionForm.label} worktreeRefs={[worktreeKey]} onClose={() => setActionForm(null)} />
