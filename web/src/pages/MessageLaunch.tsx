@@ -109,15 +109,7 @@ export function MessageLaunch() {
   }
 
   const valid = messageLaunchValid(tab, form)
-  /** Preview argv (first repo pin, or none) + one argv variant per repo pin (no pins = single run). */
   const args = buildMessageArgs(tab, form)
-  const runArgVariants = useMemo(() => {
-    const pins = form.repos.map((r) => r.trim()).filter(Boolean)
-    if (pins.length <= 1) return [args]
-    return pins.map((repo) =>
-      buildMessageArgs(tab, { ...form, repos: [repo] }),
-    )
-  }, [args, form, tab])
 
   async function handleSubmit() {
     if (tab === "action" && !form.label) {
@@ -139,37 +131,24 @@ export function MessageLaunch() {
         ...(tab === "validate" && form.prompt.trim() ? [{ label: "Instructions", value: form.prompt.trim().slice(0, 200) }] : []),
         ...((tab === "action" || tab === "flow") && form.label ? [{ label: tab === "action" ? "Action" : "Template", value: form.label, mono: true }] : []),
         ...(form.refOverride.trim() ? [{ label: "Worktree", value: form.refOverride.trim(), mono: true }] : []),
-        ...(form.repos.length > 0 ? [{ label: form.repos.length > 1 ? `Repos (${form.repos.length} runs)` : "Repo", value: form.repos.join(", "), mono: true }] : []),
+        ...(form.repo.trim() ? [{ label: "Repo", value: form.repo.trim(), mono: true }] : []),
         { label: "Flags", value: args.slice(2).join(" ") || "(none)" },
       ],
     })
     if (!ok) return
     setSubmitting(true)
     try {
-      let firstRunId: string | null = null
-      for (const variant of runArgVariants) {
-        try {
-          const { run_id } = await createRun.mutateAsync({
-            command: "message",
-            args: variant,
-            confirm: true,
-          })
-          firstRunId ??= run_id
-          if (runArgVariants.length > 1) {
-            toast.success(`${MESSAGE_LAUNCH_LABELS[tab]} started`, {
-              action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
-            })
-          }
-        } catch (err) {
-          toast.error(errorText(err))
-        }
-      }
-      if (runArgVariants.length <= 1 && firstRunId) {
-        toast.success(`${MESSAGE_LAUNCH_LABELS[tab]} started`, {
-          action: { label: "View", onClick: () => navigate(`/runs/${firstRunId as string}`) },
-        })
-      }
-      if (firstRunId) navigate(`/runs/${firstRunId}`)
+      const { run_id } = await createRun.mutateAsync({
+        command: "message",
+        args,
+        confirm: true,
+      })
+      toast.success(`${MESSAGE_LAUNCH_LABELS[tab]} started`, {
+        action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+      navigate(`/runs/${run_id}`)
+    } catch (err) {
+      toast.error(errorText(err))
     } finally {
       setSubmitting(false)
     }
@@ -323,33 +302,17 @@ export function MessageLaunch() {
           </div>
 
           <div className="grid gap-2">
-            <Label id="message-launch-repos">
-              <FieldHelp label="Repo pins" flag="--repo" description="Pin repos for multi-repo messages (optional) — one run launches per selected repo." />
+            <Label htmlFor="message-launch-repo">
+              <FieldHelp label="Repo pin" flag="--repo" description="Pin one repo for multi-repo messages (optional)." />
             </Label>
-            <div role="group" aria-labelledby="message-launch-repos" className="flex flex-wrap gap-2">
-              {repoOptions.length === 0 ? (
-                <span className="text-sm text-muted-foreground">No registered repos.</span>
-              ) : (
-                repoOptions.map((name) => {
-                  const checked = form.repos.includes(name)
-                  return (
-                    <button
-                      key={name}
-                      type="button"
-                      role="checkbox"
-                      aria-checked={checked}
-                      title={checked ? `remove ${name}` : `add ${name} (--repo ${name})`}
-                      onClick={() => update("repos", checked ? form.repos.filter((v) => v !== name) : [...form.repos, name])}
-                      className={checked
-                        ? "rounded-md border border-primary bg-primary/10 px-2.5 py-1 text-sm font-medium"
-                        : "rounded-md border px-2.5 py-1 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"}
-                    >
-                      {checked ? `✓ ${name}` : name}
-                    </button>
-                  )
-                })
-              )}
-            </div>
+            <SearchableSelect
+              id="message-launch-repo"
+              value={form.repo}
+              options={repoOptions}
+              onChange={(v) => update("repo", v)}
+              placeholder="Optional: registered repo name"
+              allowCustom
+            />
           </div>
 
           <div className="flex flex-wrap gap-x-6 gap-y-3">

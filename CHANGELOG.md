@@ -2,6 +2,7 @@
 ## Unreleased
 - Message runs fixed: per-message run keys, live Run buttons with confirm, repo-path fail-fast with --ref hint, plus rename guards [44]
 - Message launch pins repos with repo checkboxes (one run per repo) and messages track linked worktrees via --worktree [46]
+- Message actions pin one repo (--repo is prompt context) with Start-style related repos recorded via --related-repo and paths appended to run prompts [46]
 - Run resume finds rescoped review transcripts and headless review chains the fix run [no-issue]
 - Shell completion works on every Tab press, and duplicate dev-tag warnings in the web build are fixed [no-issue]
 - Maven pre-release runs failed-tests report but still fails the gate when `mvn verify` fails [no-issue]

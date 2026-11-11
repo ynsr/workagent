@@ -20,7 +20,7 @@ describe("buildMessageArgs", () => {
         prompt: "summarize",
         runMode: "headless",
         refOverride: "",
-        repos: [],
+        repo: "",
       }),
     ).toEqual(["adhoc", "p1", "--prompt", "summarize", "--launch", "--yes"])
   })
@@ -32,7 +32,7 @@ describe("buildMessageArgs", () => {
         prompt: "  ",
         runMode: "preview",
         refOverride: "",
-        repos: [],
+        repo: "",
       }),
     ).toEqual(["validate", "p1", "--yes"])
   })
@@ -44,9 +44,9 @@ describe("buildMessageArgs", () => {
         label: "triage",
         runMode: "terminal",
         refOverride: "jira:X",
-        repos: ["proj", "other"],
+        repo: "proj",
       }),
-    ).toEqual(["action", "run", "triage", "p1", "--ref", "jira:X", "--repo", "proj", "--repo", "other", "--terminal", "--yes"])
+    ).toEqual(["action", "run", "triage", "p1", "--ref", "jira:X", "--repo", "proj", "--terminal", "--yes"])
   })
 
   it("builds flow run argv with required worktree ref", () => {
@@ -55,7 +55,7 @@ describe("buildMessageArgs", () => {
         ref: "p1",
         label: "handle",
         refOverride: "jira:X",
-        repos: [],
+        repo: "",
       }),
     ).toEqual(["flow", "run", "handle", "p1", "--ref", "jira:X", "--yes"])
   })
@@ -67,7 +67,7 @@ describe("buildMessageArgs", () => {
         prompt: "hi",
         runMode: "terminal",
         refOverride: "",
-        repos: [],
+        repo: "",
       }),
     ).toEqual(["adhoc", "p1", "--prompt", "hi", "--terminal", "--yes"])
   })
@@ -79,7 +79,7 @@ describe("buildMessageArgs", () => {
         label: "triage",
         runMode: "preview",
         refOverride: "",
-        repos: [],
+        repo: "",
       }),
     ).toEqual(["action", "run", "triage", "p1", "--yes"])
   })

@@ -153,13 +153,15 @@ by the Dashboard Actions dropdown.)
 ```json
 {"messages": [{"id": 1, "message_id": "p1", "thread_id": "t1", "app_name": "mattermost",
   "sender_username": "u", "content": "deploy broke", "ts": "…",
-  "repos": ["r1"], "worktrees": ["jira:X"], "added_at": "…"}]}
+  "repos": ["r1"], "related_repos": ["r2"], "worktrees": ["jira:X"], "added_at": "…"}]}
 ```
 (`message add --worktree W...` links worktree refs alongside `--repo R...`;
-detail 404s on unknown ref (ambiguous substring → 404). `message
-adhoc/validate` and `message action run` / `message flow run`
-run via `POST /api/runs` with target key `message:<ref>`
-(`message:action:<ref>` / `message:flow:<ref>` for action/flow runs) — one
+`--related-repo R...` (Start-style) records extra linked repos whose paths
+are appended to the run prompt body as `Related repos:` context — record-only,
+no launch-time override. Runs keep a single `--repo` pin; the web repo pin is
+singular (no fan-out). The detail endpoint 404s on unknown ref (ambiguous
+substring → 404). `message adhoc/validate` and `message action run` /
+`message flow run` run via `POST /api/runs` with target key `message:<ref>`
 live run per (subcommand, message).)
 
 ### `GET /api/default-repo?ref=…`

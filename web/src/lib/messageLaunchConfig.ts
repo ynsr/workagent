@@ -28,10 +28,10 @@ export interface MessageLaunchForm {
   prompt: string
   /** Selected message-category action / flow template label. */
   label: string
-  /** Optional worktree override (`--ref`, wins over repos[]). */
+  /** Optional worktree override (`--ref`, wins over the linked repos). */
   refOverride: string
-  /** Optional repo pins for multi-repo messages (`--repo`, repeatable — one run per repo). */
-  repos: string[]
+  /** Optional single repo pin for multi-repo messages (`--repo`). */
+  repo: string
   runMode: RunMode
 }
 
@@ -40,7 +40,7 @@ export const MESSAGE_LAUNCH_INITIAL: MessageLaunchForm = {
   prompt: "",
   label: "",
   refOverride: "",
-  repos: [],
+  repo: "",
   runMode: "headless",
 }
 
@@ -52,13 +52,13 @@ export function messageRunModeArgs(mode: RunMode): string[] {
   return []
 }
 
-/** Extra argv shared by every tab: worktree override + one `--repo` per pin. */
+/** Extra argv shared by every tab: worktree override + single `--repo` pin. */
 export function messageScopeArgs(form: Partial<MessageLaunchForm>): string[] {
   const refOverride = (form.refOverride ?? "").trim()
-  const pins = (form.repos ?? []).map((r) => r.trim()).filter(Boolean)
+  const repo = (form.repo ?? "").trim()
   return [
     ...(refOverride ? ["--ref", refOverride] : []),
-    ...pins.flatMap((r) => ["--repo", r]),
+    ...(repo ? ["--repo", repo] : []),
   ]
 }
 

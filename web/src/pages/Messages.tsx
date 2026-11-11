@@ -96,8 +96,8 @@ export function Messages() {
     downloadText(
       "workagent-messages.csv",
       toCsv(
-        ["id", "message_id", "thread_id", "app", "sender", "repos", "worktrees", "added_at"],
-        visible.map((m) => [String(m.id), m.message_id, m.thread_id, m.app_name, m.sender_username, (m.repos ?? []).join(" "), (m.worktrees ?? []).join(" "), m.added_at]),
+        ["id", "message_id", "thread_id", "app", "sender", "repos", "related_repos", "worktrees", "added_at"],
+        visible.map((m) => [String(m.id), m.message_id, m.thread_id, m.app_name, m.sender_username, (m.repos ?? []).join(" "), (m.related_repos ?? []).join(" "), (m.worktrees ?? []).join(" "), m.added_at]),
       ),
       "text/csv",
     )
@@ -223,7 +223,7 @@ function MessageTable({ rows, expanded, setExpanded, onDelete, onRefetch }: {
           <TableHead>Sender</TableHead>
           <TableHead>Thread</TableHead>
           <TableHead>Repos</TableHead>
-          <TableHead>Worktrees</TableHead>
+          <TableHead>Related</TableHead>
           <TableHead>Updated</TableHead>
           <TableHead className="w-24" />
         </TableRow>
@@ -252,6 +252,11 @@ function MessageTable({ rows, expanded, setExpanded, onDelete, onRefetch }: {
               </TableCell>
               <TableCell>
                 <div className="flex max-w-48 flex-wrap gap-1">
+                  {(m.related_repos ?? []).map((r) => <Badge key={r} variant="outline">{r}</Badge>)}
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex max-w-48 flex-wrap gap-1">
                   {(m.worktrees ?? []).map((w) => <Badge key={w} variant="outline">{w}</Badge>)}
                 </div>
               </TableCell>
@@ -264,7 +269,7 @@ function MessageTable({ rows, expanded, setExpanded, onDelete, onRefetch }: {
             </TableRow>
             {expanded === m.id && (
               <TableRow key={`${m.id}-detail`}>
-                <TableCell colSpan={9}>
+                <TableCell colSpan={10}>
                   <div className="space-y-3">
                     <MessageDetail row={m} />
                     <MessageRowActions row={m} onDone={onRefetch} />

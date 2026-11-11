@@ -154,7 +154,7 @@ describe("immediate run args", () => {
         prompt: VALIDATE_CLAIMED_ISSUES_PROMPT,
         runMode: "preview",
         refOverride: "",
-        repos: [],
+        repo: "",
       }),
     ).toEqual(["validate", "p1", "--prompt", VALIDATE_CLAIMED_ISSUES_PROMPT, "--yes"])
   })

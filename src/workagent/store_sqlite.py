@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS messages (
   thread_id TEXT NOT NULL DEFAULT '', app_name TEXT NOT NULL DEFAULT 'mattermost',
   sender_username TEXT NOT NULL DEFAULT '', content TEXT NOT NULL DEFAULT '',
   ts TEXT NOT NULL DEFAULT '', repos TEXT NOT NULL DEFAULT '[]',
+  related_repos TEXT NOT NULL DEFAULT '[]',
   worktrees TEXT NOT NULL DEFAULT '[]',
   added_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS prodtest_items (
@@ -243,6 +244,21 @@ def _migrate_messages_worktrees(conn) -> None:
         return
     if "worktrees" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN worktrees TEXT NOT NULL DEFAULT '[]'")
+
+
+def _migrate_messages_related_repos(conn) -> None:
+    """Schema v22: messages gains related_repos (JSON repo-key list).
+
+    Start-pattern counterpart for messages (issue #46): the message's own
+    repos[] stays the launch scope; related_repos are extra checkouts whose
+    paths are appended to the agent prompt. ALTER TABLE is enough
+    (NOT NULL DEFAULT '[]'). Idempotent: skipped when present.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
+    if not cols:
+        return
+    if "related_repos" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN related_repos TEXT NOT NULL DEFAULT '[]'")
 
 
 def _migrate_category(conn) -> None:
@@ -811,6 +827,8 @@ def _schema_current(path: Path) -> bool:
         mcols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")} if "messages" in tables else set()
         if mcols and "worktrees" not in mcols:
             return False
+        if mcols and "related_repos" not in mcols:
+            return False
         return True
     except Exception:
         return False
@@ -850,6 +868,7 @@ def init_db(path: Path) -> Path:
                 _migrate_display_cols(conn)
                 _migrate_messages(conn)
                 _migrate_messages_worktrees(conn)
+                _migrate_messages_related_repos(conn)
                 _migrate_category(conn)
                 _migrate_run_immediately(conn)
                 _migrate_sessions_no_fk(conn)

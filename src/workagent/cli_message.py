@@ -22,13 +22,14 @@ def message_add(
     content: str = typer.Option("", "--content", help="Message text."),
     ts: str = typer.Option("", "--ts", help="Sent timestamp."),
     repo: list[str] = typer.Option([], "--repo", help="Associated repo (repeatable, >=1)."),
+    related_repo: list[str] = typer.Option([], "--related-repo", help="Extra linked repos, Start-style (repeatable, optional)."),
     worktree: list[str] = typer.Option([], "--worktree", help="Associated worktree ref_key (repeatable, optional)."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Register a chat message (repos must reference known repo keys)."""
     row = store.create_message(message_id=message_id, thread_id=thread_id, app_name=app_name,
                                sender_username=sender, content=content, ts=ts, repos=list(repo or []),
-                               worktrees=list(worktree or []))
+                               related_repos=list(related_repo or []), worktrees=list(worktree or []))
     _print_result({"added": row["message_id"], "id": row["id"]}, json_output)
 
 
@@ -41,10 +42,11 @@ def message_list(
     items = [{"id": r["id"], "message_id": r["message_id"], "thread_id": r["thread_id"],
               "app": r["app_name"], "sender": r["sender_username"],
               "repos": ",".join(r.get("repos") or []),
+              "related_repos": ",".join(r.get("related_repos") or []),
               "worktrees": ",".join(r.get("worktrees") or []), "ts": r["ts"]}
              for r in store.list_messages(thread)]
     _print_rows(items, json_output, csv_output,
-                ["id", "message_id", "thread_id", "app", "sender", "repos", "worktrees", "ts"],
+                ["id", "message_id", "thread_id", "app", "sender", "repos", "related_repos", "worktrees", "ts"],
                 "Messages", "(no messages)")
 
 
@@ -68,6 +70,7 @@ def message_update(
     content: Optional[str] = typer.Option(None, "--content"),
     ts: Optional[str] = typer.Option(None, "--ts"),
     repo: Optional[list[str]] = typer.Option(None, "--repo"),
+    related_repo: Optional[list[str]] = typer.Option(None, "--related-repo", help="Extra linked repos (repeatable)."),
     worktree: Optional[list[str]] = typer.Option(None, "--worktree", help="Associated worktree ref_keys (repeatable)."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
@@ -76,6 +79,8 @@ def message_update(
                                       "content": content, "ts": ts}.items() if v is not None}
     if repo is not None:
         fields["repos"] = list(repo)
+    if related_repo is not None:
+        fields["related_repos"] = list(related_repo)
     if worktree is not None:
         fields["worktrees"] = list(worktree)
     _print_result(store.update_message(ref, **fields), json_output)
@@ -111,10 +116,16 @@ def _mm(*argv: str) -> dict:
 
 def _message_header(msg: dict) -> str:
     repos = ", ".join(msg.get("repos") or [])
-    return (f"Message {msg.get('message_id','')} ({msg.get('app_name','')},"
+    related = [r for r in (msg.get("related_repos") or []) if r]
+    lines = [f"Message {msg.get('message_id','')} ({msg.get('app_name','')},"
             f" from {msg.get('sender_username','')} at {msg.get('ts','')}):\n"
             f"{msg.get('content','')}\nThread: {msg.get('thread_id','')}\n"
-            f"Repos: {repos}")
+            f"Repos: {repos}"]
+    if related:
+        reg = store.load_repos()
+        paths = [str((reg.get(r) or {}).get("path", "") or r) for r in related]
+        lines.append(f"Related repos: {', '.join(paths)}")
+    return "\n".join(lines)
 
 
 def _resolve_exec(msg: dict, ref_opt: str = "", repo_opt: str = "") -> tuple[str, str]:

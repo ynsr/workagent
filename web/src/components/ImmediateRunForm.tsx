@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { RunModeSelect } from "@/components/StartForm"
+import { SearchableSelect } from "@/components/SearchableSelect"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -65,7 +66,7 @@ export function ImmediateRunForm({
   const [message, setMessage] = useState(messageRef)
   const [worktree, setWorktree] = useState(worktreeRefs.join(", "))
   const [refOverride, setRefOverride] = useState("")
-  const [repos, setRepos] = useState<string[]>([])
+  const [repo, setRepo] = useState("")
   const [runMode, setRunMode] = useState<RunMode>("headless")
   const [running, setRunning] = useState(false)
 
@@ -88,7 +89,7 @@ export function ImmediateRunForm({
         return {
           command: "message",
           args: buildMessageArgs("action", {
-            ref: message.trim(), label: lbl, runMode, refOverride, repos,
+            ref: message.trim(), label: lbl, runMode, refOverride, repo,
           }),
         }
       }
@@ -116,8 +117,8 @@ export function ImmediateRunForm({
         ...(category === "message" && refOverride.trim()
           ? [{ label: "Worktree", value: refOverride.trim(), mono: true }]
           : []),
-        ...(category === "message" && repos.length > 0
-          ? [{ label: repos.length > 1 ? `Repos (${repos.length} runs)` : "Repo", value: repos.join(", "), mono: true }]
+        ...(category === "message" && repo.trim()
+          ? [{ label: "Repo", value: repo.trim(), mono: true }]
           : []),
       ],
     })
@@ -125,14 +126,7 @@ export function ImmediateRunForm({
     setRunning(true)
     try {
       const jobArgSets: { command: "action" | "flow" | "message"; args: string[] }[] =
-        category === "message" && kind === "action" && repos.length > 1
-          ? repos.map((repo) => ({
-              command: "message" as const,
-              args: buildMessageArgs("action", {
-                ref: message.trim(), label: label.trim(), runMode, refOverride, repos: [repo],
-              }),
-            }))
-          : targets.map((ref) => argsFor(ref))
+        targets.map((ref) => argsFor(ref))
       for (const { command, args } of jobArgSets) {
         try {
           const { run_id } = await createRun.mutateAsync({ command, args, confirm: true })
@@ -212,7 +206,7 @@ export function ImmediateRunForm({
               spellCheck={false}
             />
           </div>
-          <RepoPinsCheckboxes value={repos} onChange={setRepos} />
+          <RepoPinSelect value={repo} onChange={setRepo} />
         </>
       ) : (
         <div className="grid gap-2">
@@ -238,35 +232,21 @@ export function ImmediateRunForm({
   )
 }
 
-/** Multi-select repo pins for the message branch (`--repo` repeatable — one run per pin). */
-function RepoPinsCheckboxes({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+/** Single repo pin for the message branch (`--repo` — prompt context only). */
+function RepoPinSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const { data: repos } = useRepos()
   const options = useMemo(() => (repos ?? []).map((r) => r.name).sort(), [repos])
   return (
     <div className="grid gap-2">
-      <Label id="immediate-run-repos">Repo pins</Label>
-      <div role="group" aria-labelledby="immediate-run-repos" className="flex flex-wrap gap-2">
-        {options.length === 0 ? (
-          <span className="text-sm text-muted-foreground">No registered repos.</span>
-        ) : (
-          options.map((name) => {
-            const checked = value.includes(name)
-            return (
-              <button
-                key={name}
-                type="button"
-                role="checkbox"
-                aria-checked={checked}
-                title={checked ? `remove ${name}` : `add ${name} (--repo ${name})`}
-                onClick={() => onChange(checked ? value.filter((v) => v !== name) : [...value, name])}
-                className={checked
-                  ? "rounded-md border border-primary bg-primary/10 px-2.5 py-1 text-sm font-medium"
-                  : "rounded-md border px-2.5 py-1 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"}
-              </button>
-            )
-          })
-        )}
-      </div>
+      <Label htmlFor="immediate-run-repo">Repo pin</Label>
+      <SearchableSelect
+        id="immediate-run-repo"
+        value={value}
+        options={options}
+        onChange={onChange}
+        placeholder="Optional: registered repo name"
+        allowCustom
+      />
     </div>
   )
 }
