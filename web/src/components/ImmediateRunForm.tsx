@@ -125,16 +125,16 @@ export function ImmediateRunForm({
     if (!ok) return
     setRunning(true)
     try {
-      const jobArgSets: { command: "action" | "flow" | "message"; args: string[] }[] =
-        targets.map((ref) => argsFor(ref))
-      for (const { command, args } of jobArgSets) {
+      const jobArgSets: { command: "action" | "flow" | "message"; args: string[]; ref: string }[] =
+        targets.map((ref) => ({ ...argsFor(ref), ref }))
+      for (const { command, args, ref } of jobArgSets) {
         try {
           const { run_id } = await createRun.mutateAsync({ command, args, confirm: true })
-          toast.success(`${kind === "action" ? "Action" : "Flow"} ${label.trim()} on ${message.trim() || targets.join(", ")} started`, {
+          toast.success(`${kind === "action" ? "Action" : "Flow"} ${label.trim()} on ${ref || targets.join(", ")} started`, {
             action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
           })
         } catch (err) {
-          toast.error(`${message.trim() || targets.join(", ")}: ${errorText(err)}`)
+          toast.error(`${ref || targets.join(", ")}: ${errorText(err)}`)
         }
       }
       onDone?.()

@@ -112,6 +112,7 @@ export function MessageLaunch() {
   const args = buildMessageArgs(tab, form)
 
   async function handleSubmit() {
+    if (!valid || submitting) return
     if (tab === "action" && !form.label) {
       toast.error("Pick a message action — none available.")
       return

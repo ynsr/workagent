@@ -184,7 +184,7 @@ export function Messages() {
             <EmptyState
               icon={<MessageSquare className="size-10" aria-hidden />}
               title={rows.length === 0 ? "No registered messages" : "No messages match the filters"}
-              description="Register one with `message add --message-id … --repo …`."
+              description="Register one with `message add --message-id … --repo … [--related-repo …] [--worktree …]`."
             />
           ) : grouped ? (
             <div className="space-y-4">
@@ -221,11 +221,12 @@ function MessageTable({ rows, expanded, setExpanded, onDelete, onRefetch }: {
           <TableHead className="w-8" />
           <TableHead>App</TableHead>
           <TableHead>Sender</TableHead>
+          <TableHead>Message</TableHead>
           <TableHead>Thread</TableHead>
           <TableHead>Repos</TableHead>
           <TableHead>Related</TableHead>
+          <TableHead>Worktrees</TableHead>
           <TableHead>Updated</TableHead>
-          <TableHead className="w-24" />
         </TableRow>
       </TableHeader>
       <TableBody>

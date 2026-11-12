@@ -72,11 +72,9 @@ def _check_worktrees(conn, worktrees) -> list[str]:
     """Validate worktrees is a list of known worktree ref_keys (may be empty)."""
     from .errors import HarnessError
     keys = list(worktrees or [])
-    if not keys:
-        return []
     have = {r[0] for r in conn.execute(
         f"SELECT ref_key FROM worktrees WHERE ref_key IN ({', '.join('?' * len(keys))})",
-        keys).fetchall()}
+        keys).fetchall()} if keys else set()
     missing = [k for k in keys if k not in have]
     if missing:
         raise HarnessError(f"unknown worktrees: {', '.join(missing)}", exit_code=2)

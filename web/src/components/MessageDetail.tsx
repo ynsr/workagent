@@ -43,6 +43,13 @@ export function MessageDetail({ row }: { row: MessageRow }) {
           (row.related_repos ?? []).map((r) => <Badge key={r} variant="outline">{r}</Badge>)
         )}
       </div>
+      <div className="flex flex-wrap gap-1">
+        {(row.worktrees ?? []).length === 0 ? (
+          <span className="text-sm text-muted-foreground">No linked worktrees</span>
+        ) : (
+          (row.worktrees ?? []).map((w) => <Badge key={w} variant="outline">{w}</Badge>)
+        )}
+      </div>
     </div>
   )
 }
