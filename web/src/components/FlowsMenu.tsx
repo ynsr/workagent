@@ -2,7 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { Workflow } from "lucide-react"
-import { awaitRunSettled, chainRunsParallel } from "@/lib/flowExecution"
+import { chainRunsParallel, runChainOnWorktrees } from "@/lib/flowExecution"
 import { FlowWizard } from "@/components/FlowWizard"
 import { Button } from "@/components/ui/button"
 import {
@@ -39,53 +39,38 @@ export function FlowsMenu({ selected }: { selected: Set<string> }) {
   const [open, setOpen] = useState(false)
   const [wizard, setWizard] = useState<FlowTemplateRow | null>(null)
 
-  async function handleImmediateRun(template: FlowTemplateRow) {
+  function handleImmediateRun(template: FlowTemplateRow) {
     setOpen(false)
+    // Same close-first pattern as FlowWizard: never await the sequential
+    // settle queue from UI state, fire-and-forget and surface via toasts.
     const keys = [...selected].sort()
-    if (chainRunsParallel(template.steps ?? [])) {
-      const started: (
-        | { status: "fulfilled"; key: string; run_id: string }
-        | { status: "rejected"; reason: unknown }
-      )[] = await Promise.all(keys.map(async (key) => {
-        try {
-          const { run_id } = await createRun.mutateAsync({
-            command: "flow",
-            args: ["run", template.label, key, "--yes"],
-            confirm: true,
+    const parallel = chainRunsParallel(template.steps ?? [])
+    const label = template.label
+    void runChainOnWorktrees({
+      keys,
+      parallel,
+      createRun: (key) => createRun.mutateAsync({
+        command: "flow",
+        args: ["run", label, key, "--yes"],
+        confirm: true,
+      }),
+      hooks: {
+        onStarted: (key, runId) => {
+          if (!parallel) return
+          toast.success(`Flow ${label} on ${key} started`, {
+            action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
           })
-          return { status: "fulfilled" as const, key, run_id }
-        } catch (reason) {
-          return { status: "rejected" as const, reason }
-        }
-      }))
-      started.forEach((r) => {
-        if (r.status === "fulfilled") {
-          toast.success(`Flow ${template.label} on ${r.key} started`, {
-            action: { label: "View", onClick: () => navigate(`/runs/${r.run_id}`) },
+        },
+        onSettled: (key, runId) => {
+          toast.success(`Flow ${label} on ${key} settled — next worktree starting`, {
+            action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
           })
-        } else {
-          toast.error(errorText(r.reason))
-        }
-      })
-      return
-    }
-    for (const key of keys) {
-      let runId = ""
-      try {
-        const created = await createRun.mutateAsync({
-          command: "flow",
-          args: ["run", template.label, key, "--yes"],
-          confirm: true,
-        })
-        runId = created.run_id
-        await awaitRunSettled(runId)
-        toast.success(`Flow ${template.label} on ${key} settled — next worktree starting`, {
-          action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
-        })
-      } catch (err) {
-        toast.error(`${key}: ${errorText(err)}`)
-      }
-    }
+        },
+        onError: (key, reason) => {
+          toast.error(parallel ? errorText(reason) : `${key}: ${errorText(reason)}`)
+        },
+      },
+    })
   }
 
   function handlePick(template: FlowTemplateRow) {

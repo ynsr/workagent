@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Run Flow dialog closes on click and queues sequential worktree runs in the background with toast progress instead of stalling on Starting [69]
 - Flow template steps gain Parallel/Sequential mode for multi-worktree runs: all-parallel chains fan out at once, any sequential step runs worktrees one by one [61]
 - Serve restarts no longer kill running flows: detached runs survive shutdown and are re-adopted on boot [66]
 - StatusTable no longer blocks on issues without status labels: unknown issue states are cached like other cells [55]
