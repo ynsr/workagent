@@ -824,4 +824,40 @@ def test_resolve_url_with_cross_tracker_kin_prefers_exact(monkeypatch):
         "github:ynsr/workagent#69": {"worktree": "/wt/b", "branch": "feat/69--x",
                                      "repo": "/r2", "issue_url": url},
     }
-    assert worktrees.resolve_worktree(url, links) == "github:ynsr/workagent#69"
+
+def test_start_step_skips_soft_deleted_canonical(monkeypatch):
+    """A soft-deleted canonical row must not win the recovery."""
+    import workagent.cli_flow_steps as m
+    import workagent.cli_start as s
+    url = "https://github.com/ynsr/workagent/issues/69"
+    links = {
+        "github:ynsr/workagent#69": {"worktree": "/wt/b", "branch": "feat/69--x",
+                                     "repo": "/r2", "issue_url": url,
+                                     "deleted_at": "2026-11-14T00:00:00"},
+        "jira:IPG-1069@projectx": {"worktree": "/wt/a", "branch": "b1",
+                                    "repo": "/r1", "issue_url": url},
+    }
+    monkeypatch.setattr(s.start, "__wrapped__",
+                        lambda *a, **k: None)
+    # load_links() excludes soft-deleted rows now; deleted_at rides along
+    # on the raw row the store filters out.
+    monkeypatch.setattr("workagent.store.load_links",
+                        lambda **k: (dict(links) if k.get("include_deleted")
+                                     else {k2: v for k2, v in links.items()
+                                           if not v.get("deleted_at")}))
+    out = m.run_start_step(url, "", {"launch": True}, False,
+                           lambda *a, **k: {}, lambda *a, **k: {})
+    assert out["key"] == "jira:IPG-1069@projectx"
+
+
+def test_resolve_unique_stored_url_without_canonical():
+    """A URL stored on exactly one row resolves even absent its key."""
+    from workagent import worktrees
+    url = "https://jira.example.com/browse/IPG-1069"
+    links = {
+        "jira:IPG-1069@a": {"worktree": "/wt/a", "branch": "b1",
+                             "repo": "/r1", "issue_url": url},
+        "jira:IPG-1069@b": {"worktree": "/wt/b", "branch": "b2",
+                             "repo": "/r2"},
+    }
+    assert worktrees.resolve_worktree(url, links) == "jira:IPG-1069@a"

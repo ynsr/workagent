@@ -71,29 +71,27 @@ def run_start_step(ref: str, key: str, config: dict,
     # link key so downstream steps get a key, not the raw issue URL
     # (flow #71: {"key": <url>} re-resolved to [jira:IPG-1069@..,
     # github:o/r#69] and the review step died "ambiguous ref" under
-    # --yes). Canonical key first, then bare/suffixed kin, then the stored
-    # issue_url match; fall back to the pre-step key, then ref.
+    # --yes). Canonical key first, else whatever resolve_worktree finds;
+    # only live rows (not soft-deleted, with a worktree) count.
     from . import refs as _refs
     from . import store as _store
     from . import worktrees as _wt
+    from .errors import HarnessError as _HarnessError
     new_key = key or ""
     try:
-        links = _store.load_links(include_deleted=True)
+        links = _store.load_links()
         parsed = _refs.parse_ref(ref)
         canon = _refs.issue_key(parsed)
         hit = links.get(canon, {}) or {}
-        if hit.get("worktree"):
+        if hit.get("worktree") and not hit.get("deleted_at"):
             new_key = canon
         else:
-            kin = [k for k in _refs.matching_issue_keys(canon, links)
-                   if (links.get(k) or {}).get("worktree")]
-            if len(kin) == 1:
-                new_key = kin[0]
-            else:
-                resolved = _wt.resolve_worktree(ref, links)
-                if isinstance(resolved, str):
-                    new_key = resolved
-    except Exception:
+            resolved = _wt.resolve_worktree(ref, links)
+            if (isinstance(resolved, str)
+                    and (links.get(resolved) or {}).get("worktree")
+                    and not (links.get(resolved) or {}).get("deleted_at")):
+                new_key = resolved
+    except _HarnessError:
         pass
     return {"key": new_key or ref, "ref": ref, "status": "started"}
 
