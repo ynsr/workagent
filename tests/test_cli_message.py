@@ -198,3 +198,38 @@ def test_message_validate_default_prompt_mentions_jira(tmp_path, monkeypatch):
 
 def sm_db_path(tmp_path):
     return tmp_path / "s.db"
+
+
+def test_message_add_update_related_worktree_round_trip(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent import store_sqlite as sq
+    db = _seed(tmp_path, monkeypatch, repo="r1")
+    conn = sq.connect(db)
+    conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
+                 ("r2", "/tmp/r2", "r2"))
+    conn.execute(
+        "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at) VALUES (?, ?, ?, ?, datetime('now'))",
+        ("wt1", "/tmp/wt1", "main", "r1"))
+    conn.commit()
+    runner = CliRunner()
+    add = runner.invoke(cli_mod.app, ["message", "add", "--message-id", "p1",
+                                      "--repo", "r1", "--related-repo", "r2",
+                                      "--worktree", "wt1", "--json"])
+    assert add.exit_code == 0, add.output
+    assert "p1" in add.output
+    show = runner.invoke(cli_mod.app, ["message", "show", "p1", "--json"])
+    assert show.exit_code == 0, show.output
+    assert "r2" in show.output and "wt1" in show.output
+    upd = runner.invoke(cli_mod.app, ["message", "update", "p1",
+                                      "--related-repo", "r2",
+                                      "--worktree", "wt1", "--json"])
+    assert upd.exit_code == 0, upd.output
+    bad = runner.invoke(cli_mod.app, ["message", "add", "--message-id", "p2",
+                                      "--repo", "r1", "--related-repo", "nope",
+                                      "--json"])
+    assert bad.exit_code == 2
+    bad_wt = runner.invoke(cli_mod.app, ["message", "add", "--message-id", "p3",
+                                         "--repo", "r1", "--worktree", "nope",
+                                         "--json"])
+    assert bad_wt.exit_code == 2

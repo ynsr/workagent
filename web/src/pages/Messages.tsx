@@ -96,8 +96,8 @@ export function Messages() {
     downloadText(
       "workagent-messages.csv",
       toCsv(
-        ["id", "message_id", "thread_id", "app", "sender", "repos", "added_at"],
-        visible.map((m) => [String(m.id), m.message_id, m.thread_id, m.app_name, m.sender_username, (m.repos ?? []).join(" "), m.added_at]),
+        ["id", "message_id", "thread_id", "app", "sender", "repos", "related_repos", "worktrees", "added_at"],
+        visible.map((m) => [String(m.id), m.message_id, m.thread_id, m.app_name, m.sender_username, (m.repos ?? []).join(" "), (m.related_repos ?? []).join(" "), (m.worktrees ?? []).join(" "), m.added_at]),
       ),
       "text/csv",
     )
@@ -184,7 +184,7 @@ export function Messages() {
             <EmptyState
               icon={<MessageSquare className="size-10" aria-hidden />}
               title={rows.length === 0 ? "No registered messages" : "No messages match the filters"}
-              description="Register one with `message add --message-id … --repo …`."
+              description="Register one with `message add --message-id … --repo … [--related-repo …] [--worktree …]`."
             />
           ) : grouped ? (
             <div className="space-y-4">
@@ -224,8 +224,9 @@ function MessageTable({ rows, expanded, setExpanded, onDelete, onRefetch }: {
           <TableHead>Message</TableHead>
           <TableHead>Thread</TableHead>
           <TableHead>Repos</TableHead>
+          <TableHead>Related</TableHead>
+          <TableHead>Worktrees</TableHead>
           <TableHead>Updated</TableHead>
-          <TableHead className="w-24" />
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -250,6 +251,16 @@ function MessageTable({ rows, expanded, setExpanded, onDelete, onRefetch }: {
                   {(m.repos ?? []).map((r) => <Badge key={r} variant="secondary">{r}</Badge>)}
                 </div>
               </TableCell>
+              <TableCell>
+                <div className="flex max-w-48 flex-wrap gap-1">
+                  {(m.related_repos ?? []).map((r) => <Badge key={r} variant="outline">{r}</Badge>)}
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex max-w-48 flex-wrap gap-1">
+                  {(m.worktrees ?? []).map((w) => <Badge key={w} variant="outline">{w}</Badge>)}
+                </div>
+              </TableCell>
               <TableCell className="whitespace-nowrap text-xs text-muted-foreground" title={m.added_at}>
                 {relativeDate(m.added_at)}
               </TableCell>
@@ -259,7 +270,7 @@ function MessageTable({ rows, expanded, setExpanded, onDelete, onRefetch }: {
             </TableRow>
             {expanded === m.id && (
               <TableRow key={`${m.id}-detail`}>
-                <TableCell colSpan={8}>
+                <TableCell colSpan={10}>
                   <div className="space-y-3">
                     <MessageDetail row={m} />
                     <MessageRowActions row={m} onDone={onRefetch} />

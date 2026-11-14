@@ -4,12 +4,13 @@ import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { RunModeSelect } from "@/components/StartForm"
+import { SearchableSelect } from "@/components/SearchableSelect"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { errorText } from "@/components/StatusFeedback"
 import { useConfirm } from "@/lib/confirm"
-import { useActions, useCreateRun, useFlowTemplates } from "@/lib/queries"
+import { useActions, useCreateRun, useFlowTemplates, useRepos } from "@/lib/queries"
 import { buildMessageArgs } from "@/lib/messageLaunchConfig"
 import {
   ROW_CATEGORIES,
@@ -124,15 +125,16 @@ export function ImmediateRunForm({
     if (!ok) return
     setRunning(true)
     try {
-      for (const ref of targets) {
-        const { command, args } = argsFor(ref)
+      const jobArgSets: { command: "action" | "flow" | "message"; args: string[]; ref: string }[] =
+        targets.map((ref) => ({ ...argsFor(ref), ref }))
+      for (const { command, args, ref } of jobArgSets) {
         try {
           const { run_id } = await createRun.mutateAsync({ command, args, confirm: true })
-          toast.success(`${kind === "action" ? "Action" : "Flow"} ${label.trim()} on ${ref} started`, {
+          toast.success(`${kind === "action" ? "Action" : "Flow"} ${label.trim()} on ${ref || targets.join(", ")} started`, {
             action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
           })
         } catch (err) {
-          toast.error(`${ref}: ${errorText(err)}`)
+          toast.error(`${ref || targets.join(", ")}: ${errorText(err)}`)
         }
       }
       onDone?.()
@@ -204,17 +206,7 @@ export function ImmediateRunForm({
               spellCheck={false}
             />
           </div>
-          <div className="grid gap-2">
-            <Label htmlFor="immediate-run-repo">Repo pin</Label>
-            <Input
-              id="immediate-run-repo"
-              value={repo}
-              onChange={(e) => setRepo(e.target.value)}
-              placeholder="Optional registered repo name"
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </div>
+          <RepoPinSelect value={repo} onChange={setRepo} />
         </>
       ) : (
         <div className="grid gap-2">
@@ -236,6 +228,25 @@ export function ImmediateRunForm({
         {kind === "action" ? <Play aria-hidden /> : <Workflow aria-hidden />}
         {running ? "Launching…" : `Run ${kind} now`}
       </Button>
+    </div>
+  )
+}
+
+/** Single repo pin for the message branch (`--repo` — prompt context only). */
+function RepoPinSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const { data: repos } = useRepos()
+  const options = useMemo(() => (repos ?? []).map((r) => r.name).sort(), [repos])
+  return (
+    <div className="grid gap-2">
+      <Label htmlFor="immediate-run-repo">Repo pin</Label>
+      <SearchableSelect
+        id="immediate-run-repo"
+        value={value}
+        options={options}
+        onChange={onChange}
+        placeholder="Optional: registered repo name"
+        allowCustom
+      />
     </div>
   )
 }

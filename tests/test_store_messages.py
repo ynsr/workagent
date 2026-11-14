@@ -213,3 +213,85 @@ def test_resolve_message_accepts_permalink(tmp_path):
     sm.create_message(db, message_id=mid, repos=["r1"])
     row = sm.resolve_message(db, f"https://chat.jibit.cloud/myteam/pl/{mid}")
     assert row["message_id"] == mid
+
+
+def _seed_repo_key(conn, key):
+    conn.execute("INSERT OR IGNORE INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
+                 (key, f"/tmp/{key}", key))
+
+
+def _seed_worktree_key(conn, key):
+    conn.execute(
+        "INSERT OR IGNORE INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+        " VALUES (?, ?, ?, ?, datetime('now'))",
+        (key, f"/tmp/{key}", "main", "r1"))
+
+
+def test_create_with_related_repos_and_worktrees_round_trip(tmp_path):
+    from workagent import store_sqlite as sq
+    from workagent import store_messages as sm
+    db = tmp_path / "s.db"
+    sq.init_db(db)
+    conn = sq.connect(db)
+    _seed_repo_key(conn, "r1")
+    _seed_repo_key(conn, "r2")
+    _seed_worktree_key(conn, "wt1")
+    conn.commit()
+    row = sm.create_message(db, message_id="p1", repos=["r1"],
+                            related_repos=["r2"], worktrees=["wt1"])
+    assert row["related_repos"] == ["r2"]
+    assert row["worktrees"] == ["wt1"]
+    assert sm.get_message(db, "p1")["related_repos"] == ["r2"]
+
+
+def test_create_rejects_unknown_related_and_worktree(tmp_path):
+    from workagent import store_sqlite as sq
+    from workagent import store_messages as sm
+    from workagent.errors import HarnessError
+    db = tmp_path / "s.db"
+    _seed_repo(db)
+    try:
+        sm.create_message(db, message_id="p1", repos=["r1"],
+                          related_repos=["nope"])
+    except HarnessError as e:
+        assert e.exit_code == 2
+    else:
+        raise AssertionError("expected HarnessError for unknown related repo")
+    try:
+        sm.create_message(db, message_id="p1", repos=["r1"],
+                          worktrees=["nope"])
+    except HarnessError as e:
+        assert e.exit_code == 2
+    else:
+        raise AssertionError("expected HarnessError for unknown worktree")
+
+
+def test_update_related_repos_and_worktrees(tmp_path):
+    from workagent import store_sqlite as sq
+    from workagent import store_messages as sm
+    from workagent.errors import HarnessError
+    db = tmp_path / "s.db"
+    sq.init_db(db)
+    conn = sq.connect(db)
+    _seed_repo_key(conn, "r1")
+    _seed_repo_key(conn, "r2")
+    _seed_worktree_key(conn, "wt1")
+    conn.commit()
+    sm.create_message(db, message_id="p1", repos=["r1"])
+    row = sm.update_message(db, "p1", related_repos=["r2"], worktrees=["wt1"])
+    assert row["related_repos"] == ["r2"]
+    assert row["worktrees"] == ["wt1"]
+    try:
+        sm.update_message(db, "p1", worktrees=["nope"])
+    except HarnessError as e:
+        assert e.exit_code == 2
+    else:
+        raise AssertionError("expected HarnessError for unknown worktree")
+
+
+def test_row_back_compat_missing_new_columns(tmp_path):
+    from workagent import store_messages as sm
+    row = sm._row({"id": 1, "message_id": "p1", "repos": '["r1"]'})
+    assert row["repos"] == ["r1"]
+    assert row["related_repos"] == []
+    assert row["worktrees"] == []

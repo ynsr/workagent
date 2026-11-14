@@ -28,9 +28,9 @@ export interface MessageLaunchForm {
   prompt: string
   /** Selected message-category action / flow template label. */
   label: string
-  /** Optional worktree override (`--ref`, wins over repos[]). */
+  /** Optional worktree override (`--ref`, wins over the linked repos). */
   refOverride: string
-  /** Optional repo pin for multi-repo messages (`--repo`). */
+  /** Optional single repo pin for multi-repo messages (`--repo`). */
   repo: string
   runMode: RunMode
 }
@@ -52,18 +52,23 @@ export function messageRunModeArgs(mode: RunMode): string[] {
   return []
 }
 
+/** Extra argv shared by every tab: worktree override + single `--repo` pin. */
+export function messageScopeArgs(form: Partial<MessageLaunchForm>): string[] {
+  const refOverride = (form.refOverride ?? "").trim()
+  const repo = (form.repo ?? "").trim()
+  return [
+    ...(refOverride ? ["--ref", refOverride] : []),
+    ...(repo ? ["--repo", repo] : []),
+  ]
+}
+
 /** CLI argv (after `command: "message"`) for one Message Launch tab. */
 export function buildMessageArgs(
   tab: MessageLaunchMode,
   form: Partial<MessageLaunchForm>,
 ): string[] {
   const ref = (form.ref ?? "").trim()
-  const refOverride = (form.refOverride ?? "").trim()
-  const repo = (form.repo ?? "").trim()
-  const extra = [
-    ...(refOverride ? ["--ref", refOverride] : []),
-    ...(repo ? ["--repo", repo] : []),
-  ]
+  const extra = messageScopeArgs(form)
 
   switch (tab) {
     case "adhoc": {
