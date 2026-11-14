@@ -400,9 +400,11 @@ def _persisted_summary(row: dict) -> dict:
             kind, ref = argv[0], (argv[1] if len(argv) > 1 else "")
         else:
             ref = argv[0] if argv else ""
-        cmd, argv = {"start": "start", "review": "review",
-                     "fix_comments": "review", "sync": "sync",
-                     "cleanup": "cleanup"}.get(kind, cmd), [ref] if ref else []
+        mapped = {"start": "start", "review": "review",
+                    "fix_comments": "review", "sync": "sync",
+                    "cleanup": "cleanup"}.get(kind)
+        if mapped is not None:
+            cmd, argv = mapped, [ref] if ref else []
     target = ""
     try:
         from .web_args import _target_for
