@@ -182,6 +182,25 @@ def test_fetch_pr_merge_state_404_surfaces(monkeypatch):
     with pytest.raises(HarnessError, match="404"):
         refs.fetch_pr_merge_state("https://github.com/o/r/pull/404")
 
+def test_pr_url_for_number_not_a_pr_hint(monkeypatch):
+    """gh 'Could not resolve to a PullRequest' → 'not a pull request' + start hint."""
+    import workagent.refs as r
+    def fake(*a, **k):
+        raise HarnessError("gh pr view 22 failed: GraphQL: Could not resolve to a PullRequest")
+    monkeypatch.setattr(r, "run_cmd", fake)
+    with pytest.raises(HarnessError, match="is not a pull request"):
+        refs.pr_url_for_number("o/r", "22")
+
+
+def test_pr_url_for_number_transient_error_raw(monkeypatch):
+    """Auth/rate-limit failures surface raw, not as 'not a pull request'."""
+    import workagent.refs as r
+    def fake(*a, **k):
+        raise HarnessError("gh pr view 22 failed: HTTP 403 rate limit exceeded")
+    monkeypatch.setattr(r, "run_cmd", fake)
+    with pytest.raises(HarnessError, match="cannot resolve"):
+        refs.pr_url_for_number("o/r", "22")
+
 
 def test_fetch_pr_merge_state_gitlab_passes_json_flag(monkeypatch):
     """glab mr view needs -F json: without it the parse fails and every
