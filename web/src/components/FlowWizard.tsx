@@ -2,7 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { ChainEditor, startRepoState, validateChain } from "@/components/ChainEditor"
-import { awaitRunSettled, chainRunsParallel } from "@/lib/flowExecution"
+import { chainRunsParallel, runChainOnWorktrees } from "@/lib/flowExecution"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { Button } from "@/components/ui/button"
 import { errorText } from "@/components/StatusFeedback"
@@ -34,58 +34,40 @@ export function FlowWizard({
   const repoState = startRepoState(working)
   const repoMissing = repoState === "missing"
   const runDisabled = running || sorted.length === 0 || repoMissing || chainErrors.length > 0
-  async function handleConfirm() {
+  function handleConfirm() {
     setRunning(true)
-    // Any sequential step forces worktree-by-worktree execution: wait for
-    // each run to settle before starting the next. All-parallel chains
-    // fan out concurrently.
-    const sequential = !chainRunsParallel(working)
-    if (!sequential) {
-      const started: (
-        | { status: "fulfilled"; key: string; run_id: string }
-        | { status: "rejected"; reason: unknown }
-      )[] = await Promise.all(sorted.map(async (key) => {
-        try {
-          const { run_id } = await createRun.mutateAsync({
-            command: "flow",
-            args: ["run", template.label, key, "--steps", JSON.stringify(working), "--yes"],
-            confirm: true,
-          })
-          return { status: "fulfilled" as const, key, run_id }
-        } catch (reason) {
-          return { status: "rejected" as const, reason }
-        }
-      }))
-      started.forEach((r) => {
-        if (r.status === "fulfilled") {
-          toast.success(`Flow ${template.label} on ${r.key} started`, {
-            action: { label: "View", onClick: () => navigate(`/runs/${r.run_id}`) },
-          })
-        } else {
-          toast.error(errorText(r.reason))
-        }
-      })
-      onClose()
-      return
-    }
-    for (const key of sorted) {
-      let runId = ""
-      try {
-        const created = await createRun.mutateAsync({
-          command: "flow",
-          args: ["run", template.label, key, "--steps", JSON.stringify(working), "--yes"],
-          confirm: true,
-        })
-        runId = created.run_id
-        await awaitRunSettled(runId)
-        toast.success(`Flow ${template.label} on ${key} settled — next worktree starting`, {
-          action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
-        })
-      } catch (err) {
-        toast.error(`${key}: ${errorText(err)}`)
-      }
-    }
+    // Close-first: fan out after the modal unmounts so a sequential queue
+    // never holds the "Starting…" modal open while awaiting each run to
+    // settle (#69). Progress/errors still surface via toasts.
+    const parallel = chainRunsParallel(working)
+    const stepsJson = JSON.stringify(working)
+    const label = template.label
     onClose()
+    void runChainOnWorktrees({
+      keys: sorted,
+      parallel,
+      createRun: (key) => createRun.mutateAsync({
+        command: "flow",
+        args: ["run", label, key, "--steps", stepsJson, "--yes"],
+        confirm: true,
+      }),
+      hooks: {
+        onStarted: (key, runId) => {
+          if (!parallel) return
+          toast.success(`Flow ${label} on ${key} started`, {
+            action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
+          })
+        },
+        onSettled: (key, runId) => {
+          toast.success(`Flow ${label} on ${key} settled — next worktree starting`, {
+            action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
+          })
+        },
+        onError: (key, reason) => {
+          toast.error(parallel ? errorText(reason) : `${key}: ${errorText(reason)}`)
+        },
+      },
+    })
   }
   const dirty = JSON.stringify(working) !== JSON.stringify(template.steps ?? [])
   const saveDisabled = saving || chainErrors.length > 0

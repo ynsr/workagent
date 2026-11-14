@@ -28,3 +28,48 @@ export async function awaitRunSettled(runId: string): Promise<void> {
     await new Promise((resolve) => { globalThis.setTimeout(resolve, 2000) })
   }
 }
+
+export interface ChainRunHooks {
+  onStarted?: (key: string, runId: string) => void
+  onSettled?: (key: string, runId: string) => void
+  onError?: (key: string, reason: unknown) => void
+}
+
+/** Fan out one flow run per worktree key. Sequential chains await each run
+ * settling before starting the next; parallel chains start all at once.
+ * Never rejects (per-key failures go to `onError`) so callers can safely
+ * fire-and-forget it AFTER closing their dialog — awaiting the ~60 s
+ * per-worktree settle poll with the modal open stalls the UI (#69). */
+export async function runChainOnWorktrees(opts: {
+  keys: string[]
+  parallel: boolean
+  createRun: (key: string) => Promise<{ run_id: string }>
+  hooks?: ChainRunHooks
+}): Promise<void> {
+  const { keys, parallel, createRun, hooks } = opts
+  if (parallel) {
+    const started = await Promise.all(keys.map(async (key) => {
+      try {
+        const { run_id } = await createRun(key)
+        return { status: "fulfilled" as const, key, run_id }
+      } catch (reason) {
+        return { status: "rejected" as const, key, reason }
+      }
+    }))
+    started.forEach((r) => {
+      if (r.status === "fulfilled") hooks?.onStarted?.(r.key, r.run_id)
+      else hooks?.onError?.(r.key, r.reason)
+    })
+    return
+  }
+  for (const key of keys) {
+    try {
+      const { run_id } = await createRun(key)
+      hooks?.onStarted?.(key, run_id)
+      await awaitRunSettled(run_id)
+      hooks?.onSettled?.(key, run_id)
+    } catch (reason) {
+      hooks?.onError?.(key, reason)
+    }
+  }
+}
