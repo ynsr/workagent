@@ -91,7 +91,7 @@ function prefsForMode(p: LaunchPrefs, mode: Mode): Partial<LaunchForm> {
   if (mode === "adhoc") {
     return { runMode: p.adhoc.runMode as LaunchForm["runMode"] }
   }
-  return { runMode: p.start.runMode as LaunchForm["runMode"], base: p.start.base }
+  return { runMode: p.start.runMode as LaunchForm["runMode"], startAction: p.start.startAction as LaunchForm["startAction"], base: p.start.base }
 }
 
 /** Review/Sync fields (kept on the Launch page; Start lives in StartForm). */
@@ -441,7 +441,7 @@ export function Launch() {
   useEffect(() => {
     const prev = loadLaunchPrefs()
     if (mode === "start") {
-      saveLaunchPrefs({ ...prev, start: { runMode: form.runMode, base: form.base } })
+      saveLaunchPrefs({ ...prev, start: { runMode: form.runMode, startAction: form.startAction, base: form.base } })
     } else if (mode === "review") {
       saveLaunchPrefs({
         ...prev,
@@ -460,7 +460,7 @@ export function Launch() {
       saveLaunchPrefs({ ...prev, sync: { merge: form.merge } })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, form.runMode, form.prodtestAction, form.base, form.reviewAction, form.thenFixComments, form.useReviewSession, form.merge])
+  }, [mode, form.runMode, form.startAction, form.prodtestAction, form.base, form.reviewAction, form.thenFixComments, form.useReviewSession, form.merge])
 
   function switchMode(next: Mode) {
     setMode(next)
@@ -506,6 +506,7 @@ export function Launch() {
         ].filter((v): v is string => v !== null)
     : [
         form.runMode === "headless" ? "headless (--no-tty)" : form.runMode === "terminal" ? "terminal (--terminal)" : "tty preview (no --no-tty)",
+        mode === "start" ? (form.startAction === "plan" ? "--plan (plan only, no implementation)" : "implement") : null,
         mode === "review" && form.reviewAction === "fix" ? "--fix-comments (fix open review comments)" : null,
         mode === "review" && form.reviewAction === "review" && form.thenFixComments ? "--then-fix-comments (chain fix after review)" : null,
         repoValue ? `--repo ${repoValue}` : "repo: pick a repo",

@@ -1,11 +1,12 @@
-import { PRODTEST_ACTION_OPTIONS, REVIEW_ACTION_OPTIONS, RUN_MODE_OPTIONS } from "@/lib/launchConfig"
-import type { ProdtestAction, ReviewAction, RunMode } from "@/lib/launchConfig"
+import { PRODTEST_ACTION_OPTIONS, REVIEW_ACTION_OPTIONS, RUN_MODE_OPTIONS, START_ACTION_OPTIONS } from "@/lib/launchConfig"
+import type { ProdtestAction, ReviewAction, RunMode, StartAction } from "@/lib/launchConfig"
 
 /** Persisted Launch tab prefs (`launch.prefs.v1`). Deep-link URL params
  * override stored values at load time; the active tab's slice is saved
  * back on every change (mirrors `releasePrefs.ts`). */
 export interface LaunchStartPrefs {
   runMode: RunMode
+  startAction: StartAction
   base: string
 }
 
@@ -41,10 +42,11 @@ const KEY = "launch.prefs.v1"
 const RUN_MODES: readonly string[] = RUN_MODE_OPTIONS.map((o) => o.value)
 const FIX_ACTIONS: readonly string[] = REVIEW_ACTION_OPTIONS.map((o) => o.value)
 const PRODTEST_ACTIONS: readonly string[] = PRODTEST_ACTION_OPTIONS.map((o) => o.value)
+const START_ACTIONS: readonly string[] = START_ACTION_OPTIONS.map((o) => o.value)
 
 export function loadLaunchPrefs(): LaunchPrefs {
   const fallback: LaunchPrefs = {
-    start: { runMode: "preview", base: "" },
+    start: { runMode: "preview", startAction: "implement", base: "" },
     review: { runMode: "preview", thenFix: false, fixAction: "review", useReviewSession: false },
     prodtest: { runMode: "preview", prodtestAction: "run" },
     sync: { merge: false },
@@ -54,7 +56,7 @@ export function loadLaunchPrefs(): LaunchPrefs {
     const raw = localStorage.getItem(KEY)
     if (!raw) return fallback
     const p = JSON.parse(raw) as {
-      start?: { runMode?: unknown; base?: unknown }
+      start?: { runMode?: unknown; startAction?: unknown; base?: unknown }
       review?: { runMode?: unknown; thenFix?: unknown; fixAction?: unknown; useReviewSession?: unknown }
       prodtest?: { runMode?: unknown; prodtestAction?: unknown }
       sync?: { merge?: unknown }
@@ -65,6 +67,9 @@ export function loadLaunchPrefs(): LaunchPrefs {
         runMode: typeof p.start?.runMode === "string" && RUN_MODES.includes(p.start.runMode)
           ? (p.start.runMode as RunMode)
           : "preview",
+        startAction: typeof p.start?.startAction === "string" && START_ACTIONS.includes(p.start.startAction)
+          ? (p.start.startAction as StartAction)
+          : "implement",
         base: typeof p.start?.base === "string" ? p.start.base : "",
       },
       review: {
