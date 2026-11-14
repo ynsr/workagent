@@ -564,6 +564,9 @@
 - Fix-default checks the release branch CI too, so a red release pipeline no longer reports a false success [52]
 - Fix-default hands both failing branches to the harness and names the failing branch in dry-run plans and noops [52]
 - Retry live PR lookup in review/flow instead of failing on transient gh errors [60]
+- Repos gain per-repo StatusTable overlay buttons: fixed + dedicated toggles via the Repos page dialog or repo update --overlay-buttons [59]
+- Serve restarts no longer kill running flows: detached runs survive shutdown and are re-adopted on boot [66]
+- Repo names are now unique: reusing a name for another repo fails with a clear error instead of silently taking over [54]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

@@ -28,6 +28,46 @@ def test_run_survives_registry_drop_and_cancels(isolated_config):
         time.sleep(0.1)
     assert pid is None or not store._pid_alive(pid)
 
+def test_shutdown_does_not_cancel_tracked_runs(isolated_config):
+    """SIGTERM shutdown must not kill tracked runs (flow #47 / issue #66).
+
+    Shutdown only flags should_exit; live detached runs keep their PIDs and
+    the next boot re-adopts them via rehydrate.
+    """
+    import time
+    import types
+    from workagent import run_store, store, web_runs
+    from workagent.webapp import Registry, _shutdown_leave_detached_running
+    reg1 = Registry()
+    run = web_runs.Run(id="survshutdown", command="flow", args=["run"],
+                       target="flow:tpl:ref",
+                       argv=["/bin/sh", "-c", "echo started; sleep 30"])
+    reg1.runs[run.id] = run
+    web_runs._spawn(run, reg1)
+    try:
+        assert web_runs._wait_log(run, "started", timeout=5)
+        pid, _ticks = run_store.read_pid(run_store.runs_root() / "survshutdown")
+        assert pid is not None and store._pid_alive(pid)
+        # Simulate SIGTERM shutdown: only should_exit is set, no cancel.
+        server = types.SimpleNamespace(should_exit=False)
+        _shutdown_leave_detached_running(server)
+        assert server.should_exit is True
+        assert store._pid_alive(pid)
+        # Fresh boot re-adopts the still-live run (no exit written).
+        reg2 = Registry()
+        out = web_runs.rehydrate(reg2)
+        assert "survshutdown" in out["adopted"]
+        run2 = reg2.get("survshutdown")
+        assert run2.state == "running"
+        assert web_runs._wait_log(run2, "started", timeout=5)
+    finally:
+        web_runs._cancel(reg1.runs["survshutdown"])
+        pid, _ticks = run_store.read_pid(run_store.runs_root() / "survshutdown")
+        deadline = time.time() + 5
+        while pid is not None and store._pid_alive(pid) and time.time() < deadline:
+            time.sleep(0.1)
+        assert pid is None or not store._pid_alive(pid)
+
 
 def test_cancel_refuses_reused_pid(isolated_config):
     """Stale pid file pointing at an unrelated live process: never kill, mark failed."""

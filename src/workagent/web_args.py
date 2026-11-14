@@ -160,7 +160,7 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "register": ("--key", "--issue", "--repo"),
     "release": ("--checks", "--diff", "--pre-release-timeout", "--ci-timeout", "--env-file", "--action", "--run-mode", "--extra-prompt"),
     "repo add": ("--name", "--path", "--tracker", "--release-branch", "--pre-release"),
-    "repo update": ("--default-branch", "--release-branch", "--pre-release"),
+    "repo update": ("--default-branch", "--release-branch", "--pre-release", "--overlay-buttons"),
     "link remove": ("--repo",),
     "tracker add": ("--vendor", "--remote-url"),
     "tracker update": ("--vendor", "--remote-url"),
@@ -316,9 +316,11 @@ def _validate_args(command: str, args: list[str], body_force: bool = False) -> N
                 if i + 1 >= len(rest):
                     raise ApiError("bad_arg", f"{a} needs a value", 400)
                 value = rest[i + 1]
-                # Free-text prompt may start with '-'; require the = form so the
-                # value can't be mistaken for the next flag.
-                if value.startswith("-") and a != "--extra-prompt":
+                # Free-text prompt may start with '-'; the = form is required
+                # so the value can't be mistaken for the next flag. Same for
+                # --overlay-buttons: hide-only values (`-adhoc`) and the empty
+                # reset (`""`) are legal CLI values.
+                if value.startswith("-") and a not in ("--extra-prompt", "--overlay-buttons"):
                     raise ApiError(
                         "bad_arg",
                         f"value for {a} must not start with '-': {value!r}", 400)
@@ -414,8 +416,10 @@ def _build_argv(command: str, args: list[str]) -> list[str]:
     while i < len(rest):
         # Click parses `--extra-prompt value` fine, but a value starting
         # with '-' would be read as the next flag — always use the = form.
-        if rest[i] == "--extra-prompt" and i + 1 < len(rest):
-            out.append(f"--extra-prompt={rest[i + 1]}")
+        # Same for --overlay-buttons: hide-only values (`-adhoc`) and the
+        # empty reset (`""`) must survive as one token.
+        if rest[i] in ("--extra-prompt", "--overlay-buttons") and i + 1 < len(rest):
+            out.append(f"{rest[i]}={rest[i + 1]}")
             i += 2
         else:
             out.append(rest[i])

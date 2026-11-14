@@ -113,7 +113,8 @@ export interface Repo {
   default_branch?: string
   release_branch?: string
   commands?: { "pre-release"?: string | null }
-  [key: string]: unknown
+  /** Per-repo StatusTable overlay visibility: {button_id: bool} (missing = all visible). */
+  overlay_buttons?: Record<string, boolean>
 }
 
 export interface TrackerRow {

@@ -227,6 +227,43 @@ def test_action_rename_rewrites_template_steps(tmp_path, monkeypatch):
     assert tpl["steps"][1]["action_label"] == "lint_v2"
 
 
+def test_action_rename_retargets_overlay_keys(tmp_path, monkeypatch):
+    from workagent import store, store_sqlite as sq, store_trackers as st
+    db = tmp_path / "state.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    sq.init_db(db)
+    st.register_repo_row(db, "r", "/x", "jira:A", remote="", tool="",
+                         overlay_buttons={"action:lint": False})
+    store.create_action(name="Lint", label="lint", prompt="lint it")
+    store.update_action("lint", new_label="lint_v2")
+    assert st.load_repos(db)["r"]["overlay_buttons"] == {"action:lint_v2": False}
+
+
+def test_action_delete_prunes_overlay_keys(tmp_path, monkeypatch):
+    from workagent import store, store_sqlite as sq, store_trackers as st
+    db = tmp_path / "state.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    sq.init_db(db)
+    st.register_repo_row(db, "r", "/x", "jira:A", remote="", tool="",
+                         overlay_buttons={"action:lint": False, "sync": True})
+    store.create_action(name="Lint", label="lint", prompt="lint it")
+    store.delete_action("lint")
+    assert st.load_repos(db)["r"]["overlay_buttons"] == {"sync": True}
+
+
+def test_template_rename_retargets_and_delete_prunes_overlay_keys(tmp_path, monkeypatch):
+    from workagent import store, store_sqlite as sq, store_trackers as st
+    db = tmp_path / "state.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    sq.init_db(db)
+    st.register_repo_row(db, "r", "/x", "jira:A", remote="", tool="",
+                         overlay_buttons={"flow:pipe": False})
+    store.create_template(name="Pipe", steps=json.dumps([{"kind": "start"}]))
+    store.update_template("pipe", new_label="pipe_v2")
+    assert st.load_repos(db)["r"]["overlay_buttons"] == {"flow:pipe_v2": False}
+    store.delete_template("pipe_v2")
+    assert st.load_repos(db)["r"]["overlay_buttons"] == {}
+
 def test_template_display_columns(tmp_path):
     from workagent import store_flows as sf
     from workagent import store_sqlite as sq

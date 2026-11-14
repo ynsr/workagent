@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils"
 import type { StatusTableActions, StatusTableEmbed, StatusTableSelection } from "@/components/StatusTable"
 import { RowActions } from "@/components/StatusActions"
 import { CopyCell } from "@/components/CopyCell"
+import { hiddenOverlayIds } from "@/lib/overlayButtons"
 import { CommitsCell, ProdtestCell, ReviewsCell, matchesQuery } from "@/components/StatusCells"
 import { exactDateTime, relativeDate, shortWorktreePath } from "@/lib/format"
 
@@ -173,6 +174,22 @@ export function StatusTable({
     return [...names].sort((a, b) => a.localeCompare(b))
   }, [worktrees])
   const statusOptions = useMemo(() => issueStatusOptions(worktrees), [worktrees])
+  /** Row-key → per-repo hidden overlay ids. repos carry `overlay_buttons`
+   * ({button_id: false} hides); rows resolve via the same repo matcher as
+   * the repo tabs. Missing repo/map → empty set (all visible). */
+  const overlayHiddenByRow = useMemo(() => {
+    const repos = repoTabs?.repos ?? []
+    const byRepo = new Map<string, Set<string>>()
+    for (const r of repos) byRepo.set(r.name, hiddenOverlayIds(r.overlay_buttons))
+    const out = new Map<string, Set<string>>()
+    for (const key of Object.keys(worktrees)) {
+      const entry = worktrees[key]
+      if (!entry) continue
+      const repoKey = repoKeyForItem(entry, repos)
+      out.set(key, byRepo.get(repoKey) ?? new Set<string>())
+    }
+    return out
+  }, [worktrees, repoTabs])
   const keys = useMemo(() => {
     const needle = q.toLowerCase()
     const authorNeedle = authorFilter.toLowerCase()
@@ -516,6 +533,7 @@ export function StatusTable({
                               actions={actions}
                               overlay
                               showRuns={false}
+                              hidden={overlayHiddenByRow.get(key)}
                             />
                           </span>
                         </TableCell>
@@ -655,6 +673,7 @@ export function StatusTable({
                       entry={entry}
                       actions={actions}
                       showRuns={false}
+                      hidden={overlayHiddenByRow.get(key)}
                     />
                   </div>
                   <div className="mt-1">

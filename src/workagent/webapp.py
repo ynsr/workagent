@@ -68,7 +68,6 @@ from .web_runs import (  # noqa: F401  (test compatibility)
     MAX_RUNS,
     Registry,
     Run,
-    _cancel,
     _mirror_run,
     _spawn,
     _strip_ansi,
@@ -450,6 +449,15 @@ def _is_ip(hostname: str) -> bool:
         return False
 
 
+def _shutdown_leave_detached_running(server: Any) -> None:
+    # Detached runs survive restarts by design (run_supervised detaches
+    # into their own sessions; rehydrate() re-adopts them on startup).
+    # Killing them here defeated that: any `service restart`/reinstall
+    # SIGTERM'd live flows mid-step (flow #47: exit -15 in fix_comments).
+    # Explicit user cancel stays via POST /api/runs/{id}/cancel.
+    server.should_exit = True
+
+
 def run_server(host: str, port: int, static_dir: Path,
                allowed_hosts: list[str]) -> None:
     try:
@@ -487,13 +495,8 @@ def run_server(host: str, port: int, static_dir: Path,
     app = create_app(static_dir, host, port, allowed_hosts)
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
     server = uvicorn.Server(config)
-    registry = app.state.registry
-
     def handle_exit(sig: int, frame: Any) -> None:
-        for run in registry.running():
-            _cancel(run)
-        server.should_exit = True
-
+        _shutdown_leave_detached_running(server)
     import types
     server.handle_exit = types.MethodType(
         lambda self, sig, frame: handle_exit(sig, frame), server)

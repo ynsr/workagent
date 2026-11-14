@@ -16,6 +16,65 @@ def _parse_commands(raw: object) -> dict:
     except Exception:
         return {}
     return val if isinstance(val, dict) else {}
+def _parse_overlay_buttons(raw: object) -> dict:
+    """overlay_buttons JSON text → {button_id: bool}; invalid/empty → {} (all visible, never raise)."""
+    import json
+    if not raw or not isinstance(raw, str):
+        return {}
+    try:
+        val = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(val, dict):
+        return {}
+    return {str(k): bool(v) for k, v in val.items()}
+
+
+def rename_overlay_key(path: Path, kind: str, old_label: str, new_label: str) -> int:
+    """Move one overlay key (`<kind>:<old>` → `<kind>:<new>`) on every repo row.
+
+    *kind* is ``flow`` or ``action``. The old visibility carries over unless
+    the new key already exists on that repo (explicit wins, stale old dropped
+    either way). Returns the repo-row count touched.
+    """
+    old_id, new_id = f"{kind}:{old_label}", f"{kind}:{new_label}"
+    init_db(path)
+    import json as _json
+    touched = 0
+    with connect(path) as conn:
+        rows = conn.execute("SELECT key_ref, overlay_buttons FROM repos").fetchall()
+        for key_ref, raw in rows:
+            cur = _parse_overlay_buttons(raw)
+            if old_id not in cur:
+                continue
+            old_v = cur.pop(old_id)
+            cur.setdefault(new_id, old_v)
+            conn.execute("UPDATE repos SET overlay_buttons = ? WHERE key_ref = ?",
+                         (_json.dumps(cur), key_ref))
+            touched += 1
+    return touched
+
+
+def prune_overlay_keys(path: Path, kind: str, label: str) -> int:
+    """Drop one overlay key (`<kind>:<label>`) from every repo row.
+
+    Used on item delete; returns the repo-row count touched.
+    """
+    dead = f"{kind}:{label}"
+    init_db(path)
+    import json as _json
+    touched = 0
+    with connect(path) as conn:
+        rows = conn.execute("SELECT key_ref, overlay_buttons FROM repos").fetchall()
+        for key_ref, raw in rows:
+            cur = _parse_overlay_buttons(raw)
+            if dead not in cur:
+                continue
+            del cur[dead]
+            conn.execute("UPDATE repos SET overlay_buttons = ? WHERE key_ref = ?",
+                         (_json.dumps(cur), key_ref))
+            touched += 1
+    return touched
 
 def load_trackers(path: Path) -> dict:
     """{tracker_id: {"repos", "vendor", "remote_url, "fetch_enabled", "is_enabled"}} — SQLite source of truth."""
@@ -134,7 +193,7 @@ def load_repos(path: Path) -> dict:
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         out: dict = {}
-        for r in conn.execute("SELECT key_ref, name, path, remote, tool, fetch_enabled, default_branch, release_branch, commands FROM repos ORDER BY name"):
+        for r in conn.execute("SELECT key_ref, name, path, remote, tool, fetch_enabled, default_branch, release_branch, commands, overlay_buttons FROM repos ORDER BY name"):
             d = dict(r)
             tids = [x["tracker_key"] for x in conn.execute(
                 "SELECT tracker_key FROM tracker_repos WHERE repo_key = ? ORDER BY tracker_key",
@@ -145,7 +204,8 @@ def load_repos(path: Path) -> dict:
                 "fetch_enabled": bool(d.get("fetch_enabled", 1)),
                 "default_branch": d.get("default_branch") or "",
                 "release_branch": d.get("release_branch") or "",
-                "commands": _parse_commands(d.get("commands"))}
+                "commands": _parse_commands(d.get("commands")),
+                "overlay_buttons": _parse_overlay_buttons(d.get("overlay_buttons"))}
         return out
 
 
@@ -170,10 +230,8 @@ def add_tracker_repo(path: Path, tid: str, repo_path: str) -> bool:
         row = conn.execute("SELECT key_ref FROM repos WHERE path = ?", (norm,)).fetchone()
         if row is None:
             key = norm
-            name = key.rsplit("/", 1)[-1] if "/" in key else key
-            conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
-                         (key, norm, name))
-            repo_key = key
+            base = key.rsplit("/", 1)[-1] if "/" in key else key
+            repo_key = _insert_path_keyed_repo(conn, key, base)
         else:
             repo_key = row["key_ref"]
         cur = conn.execute(
@@ -207,19 +265,69 @@ def remove_tracker_repo(path: Path, tid: str, repo_path: str | None = None) -> b
         if left is None:
             conn.execute("DELETE FROM trackers WHERE key_ref = ?", (tid,))
         return True
+def _claim_repo_name(conn, base: str, skip_key_ref: str = "") -> str:
+    """Free repo name for *base* (issue #54): ``base``, else ``base-2…``.
+
+    Used by path-keyed auto-creates whose basename may collide (two
+    hosts, two dirs, one basename). Rows named by ``skip_key_ref`` never
+    block the claim (self-rename). Never raises — always returns a name
+    the UNIQUE index will accept.
+    """
+    want = (base or "").strip() or "repo"
+    taken = {r[0] for r in conn.execute("SELECT name FROM repos WHERE key_ref != ?", (skip_key_ref,))}
+    if want not in taken:
+        return want
+    i = 2
+    while f"{want}-{i}" in taken:
+        i += 1
+    return f"{want}-{i}"
+def _insert_path_keyed_repo(conn, norm: str, base: str) -> str:
+    """INSERT a path-keyed repo row, retrying on concurrent name claims.
+
+    _claim_repo_name is check-then-insert: two processes can claim the
+    same suffix and the loser hits the name UNIQUE index. Retry with a
+    fresh claim instead of leaking sqlite3.IntegrityError (single-user
+    CLI; concurrent runs are rare but auto-create paths must not crash).
+    Returns the repo key_ref (the path). Raises HarnessError when the
+    path is already registered under a different key (should not happen —
+    callers check first).
+    """
+    for _ in range(5):
+        name = _claim_repo_name(conn, base)
+        try:
+            conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
+                         (norm, norm, name))
+        except sqlite3.IntegrityError:
+            clash = conn.execute(
+                "SELECT key_ref, path FROM repos WHERE path = ? OR name = ?",
+                (norm, name)).fetchone()
+            if clash is not None and clash[1] == norm:
+                return clash[0]
+            continue
+        return norm
+    from .errors import HarnessError  # local: store_sqlite imports this module at load
+    raise HarnessError(
+        f"could not auto-register repo {norm!r}: concurrent registration;"
+        " retry the command", exit_code=2)
+
+
 
 def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
                       remote: str = "", tool: str | None = None,
                       fetch_enabled: bool | None = None,
                       default_branch: str | None = None,
                       release_branch: str | None = None,
-                      commands: dict | None = None) -> None:
+                      commands: dict | None = None,
+                      overlay_buttons: dict | None = None) -> None:
     """Upsert a named registry row and link it to *tracker_key* (join-only).
 
     tracker_key stays mandatory: an explicit key wins, else the caller
     derives it from the origin remote. The repo row itself carries no
     tracker column — the mapping lives in tracker_repos. Branch args None
-    preserve the stored values; explicit '' clears.
+    preserve the stored values; explicit '' clears. overlay_buttons None
+    preserves; {} (empty dict) resets to all-visible. A taken *name* bound
+    to another path raises (issue #54 — names are UNIQUE); the same path
+    under a different name re-keys (issue #30).
     """
     if not tracker_key:
         raise ValueError("tracker_key is mandatory")
@@ -234,6 +342,14 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
         # Same normalized path under a different registry name: reuse the
         # existing row (update name/remote/tool) instead of dying on the
         hit = conn.execute("SELECT key_ref FROM repos WHERE path = ?", (norm,)).fetchone()
+        clash = conn.execute(
+            "SELECT path, key_ref FROM repos WHERE name = ?", (name,)).fetchone()
+        from .errors import HarnessError  # local: store_sqlite imports this module at load
+        if clash is not None and (hit is None or clash[1] != hit[0]) \
+                and _norm(clash[0]) != norm:
+            raise HarnessError(
+                f"repo name {name!r} already registered for {clash[0]};"
+                " use another --name or remove it first", exit_code=2)
         if hit is not None and hit[0] != name:
             # Deferred-FK same-path rename (issue #30): child re-keys and
             # the parent rename land before commit-time checks.
@@ -244,7 +360,7 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
             conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
                          " WHERE key_ref = ?",
                          (name, name, remote or "", tool or "", hit[0]))
-        fe_cur = conn.execute("SELECT fetch_enabled, default_branch, release_branch, commands FROM repos WHERE key_ref = ? OR path = ?",
+        fe_cur = conn.execute("SELECT fetch_enabled, default_branch, release_branch, commands, overlay_buttons FROM repos WHERE key_ref = ? OR path = ?",
                               (name, norm)).fetchone()
         from .store_sqlite import _default_fetch_enabled
         fe = fe_cur[0] if fe_cur is not None else _default_fetch_enabled(tool=tool or "")
@@ -257,13 +373,15 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
         import json as _json
         stored_commands = _parse_commands(fe_cur[3] if fe_cur is not None else None)
         new_commands = stored_commands if commands is None else (commands or {})
-        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, fetch_enabled, default_branch, release_branch, commands)"
-                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        stored_overlay = _parse_overlay_buttons(fe_cur[4] if fe_cur is not None else None)
+        new_overlay = stored_overlay if overlay_buttons is None else (overlay_buttons or {})
+        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, fetch_enabled, default_branch, release_branch, commands, overlay_buttons)"
+                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                      " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"
                      " remote=excluded.remote, tool=excluded.tool, fetch_enabled=excluded.fetch_enabled,"
                      " default_branch=excluded.default_branch, release_branch=excluded.release_branch,"
-                     " commands=excluded.commands",
-                     (name, norm, name, remote or "", tool or "", fe, new_default or "", new_release or "", _json.dumps(new_commands)))
+                     " commands=excluded.commands, overlay_buttons=excluded.overlay_buttons",
+                     (name, norm, name, remote or "", tool or "", fe, new_default or "", new_release or "", _json.dumps(new_commands), _json.dumps(new_overlay)))
         conn.execute("INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
                      (tracker_key, name))
 
@@ -274,14 +392,27 @@ def register_repo_row_unlinked(path: Path, name: str, repo_path: str,
 
     Used by the host-tool refresh when the repo survived a `tracker remove`
     cascade unlinked: re-deriving a tracker there could hit the network,
-    and the mandatory-tracker guard must not crash a read path.
+    and the mandatory-tracker guard must not crash a read path. A *name*
+    taken by another path raises like register_repo_row (issue #54) —
+    the caller (a refresh read path) catches and warns, never renaming
+    a repo row out from under its links.
     """
     init_db(path)
     norm = _norm(repo_path)
     with connect(path) as conn:
         conn.execute("PRAGMA defer_foreign_keys = ON")
         hit = conn.execute("SELECT key_ref FROM repos WHERE path = ?", (norm,)).fetchone()
+        clash = conn.execute(
+            "SELECT path, key_ref FROM repos WHERE name = ?", (name,)).fetchone()
+        from .errors import HarnessError  # local: store_sqlite imports this module at load
+        if clash is not None and (hit is None or clash[1] != hit[0]) \
+                and _norm(clash[0]) != norm:
+            raise HarnessError(
+                f"repo name {name!r} already registered for {clash[0]};"
+                " use another --name or remove it first", exit_code=2)
         if hit is not None and hit[0] != name:
+            # Deferred-FK same-path rename (issue #30): child re-keys and
+            # the parent rename land before commit-time checks.
             conn.execute("UPDATE OR IGNORE tracker_repos SET repo_key = ? WHERE repo_key = ?",
                          (name, hit[0]))
             conn.execute("UPDATE worktrees SET repo_key = ? WHERE repo_key = ?",
@@ -289,11 +420,17 @@ def register_repo_row_unlinked(path: Path, name: str, repo_path: str,
             conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
                          " WHERE key_ref = ?",
                          (name, name, remote or "", tool or "", hit[0]))
-        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool)"
-                     " VALUES (?, ?, ?, ?, ?)"
-                     " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"
-                     " remote=excluded.remote, tool=excluded.tool",
-                     (name, norm, name, remote or "", tool or ""))
+        for _ in range(5):
+            claimed = _claim_repo_name(conn, name, skip_key_ref=name)
+            try:
+                conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool)"
+                             " VALUES (?, ?, ?, ?, ?)"
+                             " ON CONFLICT(key_ref) DO UPDATE SET remote=excluded.remote,"
+                             " tool=excluded.tool",
+                             (name, norm, claimed, remote or "", tool or ""))
+            except sqlite3.IntegrityError:
+                continue
+            break
 
 
 def remove_repo_row(path: Path, name: str) -> bool:
