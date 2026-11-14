@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Fix-default checks the release branch CI too, so a red release pipeline no longer reports a false success [52]
 - Review accepts GitHub shorthand refs (OWNER/REPO#NUM resolves via gh; issue numbers fail with a start-first hint) [49]
 - Message runs fixed: per-message run keys, live Run buttons with confirm, repo-path fail-fast with --ref hint, plus rename guards [44]
 - Message launch pins repos with repo checkboxes (one run per repo) and messages track linked worktrees via --worktree [46]
