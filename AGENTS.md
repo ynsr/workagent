@@ -186,13 +186,13 @@ become `skipped:<reason>` rows — never torn down. Requires `--yes`
   worktree, `""` (`—` in Rich tables) otherwise — `_harness_cell` in
   cli.py over `store.active_harness` (cross-key worktree fallback
 - Jira status transitions (`src/workagent/issue_status.py::_jira_state_variants`; live-verified on IPG-1066 2026-10-31, restored to In Progress):
-  IPG workflow states: `To Do` / `In Progress` / `Review` / `Product Test` / `Ready to Release` / `Blocked` / `Released` / `Done`.
+  IPG workflow states: `To Do` / `In Progress` / `Review` / `Product Test` / `Blocked` / `Done` (`Code Review`, `Ready to Release`, `Released` deleted per #48).
   | Canonical | Jira variants tried in order | Notes |
   |-----------|------------------------------|-------|
   | `in progress` | `In Progress`, `In progress` | Start action target. |
-  | `code review` | `Review`, `Ready to Release`, `Ready to release` | Bare `Code Review` does not exist in IPG; R2R is the fallback. |
-  | `ready to release` | `Ready to Release`, `Ready to release`, `Review` | Fix-comments / verdict-approved target; `Review` is the fallback. |
-  | `released` | `Released`, `Done` | Release action target; `Done` is the fallback. |
+  | `code review` | `Review` | Deleted `Code Review` maps to `Review`. |
+  | `ready to release` | `Product Test`, `Product test` | Deleted `Ready to Release` maps to `Product Test`. |
+  | `released` | `Product Test`, `Product test`, `Done` | Deleted `Released` maps to `Product Test`; `Done` is the terminal fallback. |
   | `done` | `Done` | Sole terminal (cleanup `--released`, no-PR start). |
   Terminal runs show all attempts (`jira issue move KEY <each variant>`); a failed first variant narrows retries to the `Available states` list from Jira.
 
