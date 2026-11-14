@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RelatedReposSelect } from "@/components/RelatedReposSelect"
 import { SearchableSelect } from "@/components/SearchableSelect"
-import { EXECUTION_MODES, SEQUENTIAL_ONLY_STEPS } from "@/lib/flowExecution"
+import { EXECUTION_MODES, SEQUENTIAL_ONLY_STEPS, summarizeExecution } from "@/lib/flowExecution"
 import { cn } from "@/lib/utils"
 import type { FlowStep } from "@/lib/api"
 import { useRepos } from "@/lib/queries"
@@ -360,8 +360,68 @@ function StepConfigForm({
   )
 }
 
-/** Shared step-chain editor: edit mode (full CRUD + drag-reorder) or launch
- * mode (read-only chain + per-step override editors). */
+/** Bulk execution-mode buttons: set every parallelizable step at once.
+ * start/cleanup/release are untouched (always sequential across worktrees). */
+export function ExecutionBulkBar({ steps, onChange }: {
+  steps: FlowStep[]
+  onChange?: (steps: FlowStep[]) => void
+}) {
+  const summary = summarizeExecution(steps)
+  function setAll(mode: "sequential" | "parallel") {
+    if (!onChange) return
+    onChange(steps.map((s) => {
+      if ((SEQUENTIAL_ONLY_STEPS as readonly string[]).includes(s.kind)) return s
+      if (mode === "sequential") {
+        if (!s.execution_mode) return s
+        const next = { ...s }
+        delete next.execution_mode
+        return next
+      }
+      if (s.execution_mode === "parallel") return s
+      return { ...s, execution_mode: mode }
+    }))
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2" aria-label="Set all steps execution mode">
+      <span className="text-xs text-muted-foreground">All steps:</span>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setAll("parallel")}
+        disabled={summary.parallel > 0 && summary.sequential === 0}
+        title="Mark every parallelizable step Parallel (multi-worktree runs fan out at once)"
+      >
+        All parallel
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setAll("sequential")}
+        disabled={summary.sequential > 0 && summary.parallel === 0}
+        title="Mark every step Sequential (multi-worktree runs go one worktree at a time)"
+      >
+        All sequential
+      </Button>
+    </div>
+  )
+}
+
+/** Chain-level execution summary: how a multi-worktree run fans out. */
+export function ExecutionSummary({ steps }: { steps: FlowStep[] }) {
+  const summary = summarizeExecution(steps)
+  const parts: string[] = []
+  if (summary.parallel > 0) parts.push(`${summary.parallel} parallel`)
+  if (summary.sequential > 0) parts.push(`${summary.sequential} sequential`)
+  if (summary.forced > 0) parts.push(`${summary.forced} always-sequential`)
+  return (
+    <p className="text-xs text-muted-foreground" role="status" data-component="ExecutionSummary">
+      {summary.runsParallel
+        ? `Multi-worktree runs fan out at once (${parts.join(" · ")}).`
+        : `Multi-worktree runs go one worktree at a time (${parts.join(" · ")}).`}
+    </p>
+  )
+}
+
 export function ChainEditor({
   mode,
   steps,
@@ -406,6 +466,12 @@ export function ChainEditor({
 
   return (
     <div className="grid gap-3">
+      {mode === "edit" && showExecutionMode && steps.length > 1 ? (
+        <ExecutionBulkBar steps={steps} onChange={onChange} />
+      ) : null}
+      {mode === "edit" && showExecutionMode && steps.length > 0 ? (
+        <ExecutionSummary steps={steps} />
+      ) : null}
       {steps.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           {mode === "edit" ? "No steps yet — add the first step below." : "This template has no steps."}
@@ -457,6 +523,16 @@ export function ChainEditor({
                     ) : null}
                   </span>
                 )}
+                {mode === "launch" && showExecutionMode ? (
+                  <span
+                    title={(step.execution_mode ?? "sequential") === "parallel" ? "Runs concurrently across worktrees" : `${step.kind} steps always run sequentially across worktrees`}
+                    className={(step.execution_mode ?? "sequential") === "parallel"
+                      ? "shrink-0 rounded-full bg-primary px-2 py-0.5 font-mono text-[11px] font-medium text-primary-foreground"
+                      : "shrink-0 rounded-full border px-2 py-0.5 font-mono text-[11px] text-muted-foreground"}
+                  >
+                    {(step.execution_mode ?? "sequential") === "parallel" ? "∥ parallel" : "→ sequential"}
+                  </span>
+                ) : null}
                 {mode === "edit" ? (
                   <Button
                     variant="ghost"

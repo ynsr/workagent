@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 import { ChainEditor } from "@/components/ChainEditor"
-import type { FlowStep } from "@/lib/api"
+import { summarizeExecution } from "@/lib/flowExecution"
 
 vi.mock("@/lib/queries", () => ({
   useRepos: () => ({ data: [] }),
@@ -105,6 +105,67 @@ describe("ChainEditor execution mode", () => {
     const steps: FlowStep[] = [{ kind: "review", config: {} }]
     const { container, unmount } = renderChain(steps, { showExecutionMode: false })
     expect(within(container).queryByRole("radiogroup", { name: "Step 1 execution mode" })).not.toBeInTheDocument()
+    unmount()
+  })
+})
+describe("ChainEditor execution bulk bar", () => {
+  it("sets every parallelizable step parallel, skipping forced kinds", async () => {
+    const user = userEvent.setup()
+    const steps: FlowStep[] = [
+      { kind: "start", config: {} },
+      { kind: "review", config: {} },
+      { kind: "cleanup", config: {} },
+    ]
+    const { unmount, next } = renderChain(steps)
+    await user.click(screen.getByRole("button", { name: "All parallel" }))
+    expect(next()[1]?.execution_mode).toBe("parallel")
+    expect(next()[0]?.execution_mode).toBeUndefined()
+    expect(next()[2]?.execution_mode).toBeUndefined()
+    expect(summarizeExecution(next()).runsParallel).toBe(true)
+    unmount()
+  })
+
+  it("clears parallel back to the sequential default", async () => {
+    const user = userEvent.setup()
+    const steps: FlowStep[] = [
+      { kind: "review", config: {}, execution_mode: "parallel" },
+      { kind: "sync", config: {}, execution_mode: "parallel" },
+    ]
+    const seen: FlowStep[][] = []
+    render(
+      <ChainEditor
+        mode="edit"
+        steps={steps}
+        onChange={(s) => { seen.push(s) }}
+        knownActions={[]}
+      />,
+    )
+    await user.click(screen.getByRole("button", { name: "All sequential" }))
+    expect(seen.at(-1)?.every((s) => s.execution_mode === undefined)).toBe(true)
+  })
+})
+
+describe("ChainEditor execution summary", () => {
+  it("reports one-worktree-at-a-time when any step is sequential", () => {
+    const steps: FlowStep[] = [
+      { kind: "review", config: {}, execution_mode: "parallel" },
+      { kind: "fix_comments", config: {} },
+    ]
+    const { container, unmount } = renderChain(steps)
+    expect(within(container).getByRole("status")).toHaveTextContent("one worktree at a time")
+    expect(within(container).getByRole("status")).toHaveTextContent("1 parallel · 1 sequential")
+    unmount()
+  })
+})
+
+describe("ChainEditor launch mode", () => {
+  it("shows a read-only execution badge per step", () => {
+    const steps: FlowStep[] = [{ kind: "review", config: {}, execution_mode: "parallel" }]
+    const { container, unmount } = render(
+      <ChainEditor mode="launch" steps={steps} knownActions={[]} />,
+    )
+    expect(within(container).getByText("∥ parallel")).toBeInTheDocument()
+    expect(within(container).queryByRole("radiogroup")).not.toBeInTheDocument()
     unmount()
   })
 })
