@@ -26,16 +26,59 @@ def test_review_dry_run(isolated_config, tmp_path, monkeypatch):
     assert out["dry_run"] is True and out["pr_url"].endswith("/pull/33")
 
 
-def test_review_rejects_shorthand_issue_ref(isolated_config, tmp_path, monkeypatch):
-    """`review` needs a PR/MR URL — a shorthand issue ref must fail loudly (exit 2)."""
+def test_review_resolves_shorthand_pr_ref(isolated_config, tmp_path, monkeypatch):
+    """`review` disambiguates OWNER/REPO#NUM via gh: a PR resolves to its URL."""
+    from workagent import cli_review as _r
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
     monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
                         lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(_r.refs, "pr_url_for_number",
+                        lambda repo, number: f"https://github.com/{repo}/pull/{number}")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed, cwd=None: {"head_ref": ""})
+    r = runner.invoke(cli.app, ["review", "o/r#22", "--dry-run", "--launch", "--json"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert out["dry_run"] is True and out["pr_url"].endswith("/pull/22")
+
+
+def test_review_resolves_bare_number_via_repo_remote(isolated_config, tmp_path, monkeypatch):
+    """Bare `review 22 --repo X` derives OWNER/REPO from X's origin remote."""
+    from workagent import cli_review as _r
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    monkeypatch.setattr(_r.repos, "resolve_repo",
+                        lambda explicit, cwd, depth=7: repo_dir)
+    monkeypatch.setattr(_r.repos, "remote_url",
+                        lambda path: "https://github.com/o/r.git")
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(_r.refs, "pr_url_for_number",
+                        lambda repo, number: f"https://github.com/{repo}/pull/{number}")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed, cwd=None: {"head_ref": ""})
+    r = runner.invoke(cli.app, ["review", "22", "--dry-run", "--json", "--repo", "myrepo"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert out["pr_url"].endswith("/pull/22")
+
+
+def test_review_rejects_shorthand_issue_ref(isolated_config, tmp_path, monkeypatch):
+    """`review` needs a PR/MR — a shorthand naming an issue fails loudly (exit 2)."""
+    from workagent import cli_review as _r, errors
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    def _boom(repo, number):
+        raise errors.HarnessError(f"github:{repo}#{number} is not a pull request.",
+                                  exit_code=2)
+    monkeypatch.setattr(_r.refs, "pr_url_for_number", _boom)
     r = runner.invoke(cli.app, ["review", "o/r#22", "--dry-run", "--launch", "--json"])
     assert r.exit_code == 2
-    assert "needs a PR/MR URL" in r.output
+    assert "is not a pull request" in r.output
 
 
 def test_review_preview_prints_command_and_skips_launch(isolated_config, tmp_path, monkeypatch):

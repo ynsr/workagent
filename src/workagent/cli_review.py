@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -607,9 +608,28 @@ def review(
         elif parse_err is not None:
             raise parse_err
     if parsed is not None and parsed["kind"] == "issue_or_pr":
-        repo_hint = f"github.com/{parsed['repo']}/pull/NUM" if parsed["repo"] else "github.com/OWNER/REPO/pull/NUM"
-        _fail(f"{ref} is ambiguous — `review` needs a PR/MR URL (e.g. "
-              f"https://{repo_hint}).", EXIT_USAGE)
+        gh_repo = str(parsed.get("repo", "") or "")
+        if not gh_repo and parsed.get("tool") == "gh" and repo:
+            # Bare number + explicit --repo: derive OWNER/REPO from the
+            # repo's origin remote so `review 46 --repo my-checkout` works.
+            try:
+                remote = repos.remote_url(repos.resolve_repo(repo, Path.cwd(), depth=depth))
+            except HarnessError:
+                remote = None
+            m = re.match(r"^(?:https?://github\.com/|[^@]+@github\.com:)([^/]+/[^/]+?)(?:\.git)?/?$",
+                         (remote or ""), re.IGNORECASE) if remote else None
+            gh_repo = m.group(1) if m else ""
+        if parsed.get("tool") == "gh" and gh_repo:
+            # OWNER/REPO#NUM (or github:O/R#N, or bare NUM with --repo):
+            # ask gh whether NUM is a pull request and rewrite to its
+            # canonical URL. Pure issues fail inside pr_url_for_number
+            # with an actionable message.
+            ref = refs.pr_url_for_number(gh_repo, parsed["number"])
+            parsed = refs.parse_ref(ref)
+        else:
+            hint = "github.com/OWNER/REPO/pull/NUM" if not gh_repo else f"github.com/{gh_repo}/pull/NUM"
+            _fail(f"{ref} is ambiguous — `review` needs a PR/MR URL (e.g. "
+                  f"https://{hint}).", EXIT_USAGE)
     _pre_repo = ""
     if not repo:
         _pre = worktrees.resolve_worktree(ref, store.load_links(include_deleted=True))
