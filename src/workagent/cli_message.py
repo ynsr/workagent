@@ -104,6 +104,51 @@ def message_remove(
     store.delete_message(ref)
     _print_result({"removed": row["message_id"]}, json_output)
 
+
+def _resolve_or_fetch(msg_ref: str, repo_opt: str = "") -> dict:
+    """Resolve a registered message; on miss, fetch via `mm` and auto-register.
+
+    Only an exact 26-char lowercase-alnum id (bare or permalink tail) is
+    fetchable. Auto-register needs ≥1 repo: explicit `--repo` wins, else the
+    single registered repo is used; zero/several repos → exit 2 naming them.
+    Unfetchable or unknown refs keep the original `unknown message` error.
+    """
+    from .errors import HarnessError
+    from .store_messages import extract_message_id
+    try:
+        return store.resolve_message(msg_ref)
+    except HarnessError:
+        pass
+    mid = extract_message_id(msg_ref)
+    if len(mid) != 26 or not all(c.islower() or c.isdigit() for c in mid):
+        return store.resolve_message(msg_ref)
+    try:
+        fetched = _mm("--show-sensitive", "messages", "get-msg", mid)
+    except HarnessError:
+        return store.resolve_message(msg_ref)
+    post = fetched.get("post") or {}
+    if str(post.get("id") or "") != mid:
+        return store.resolve_message(msg_ref)
+    reg = store.load_repos()
+    repos = [repo_opt] if (repo_opt or "").strip() else sorted(reg)
+    if not repos:
+        _fail(f"message {mid} is not registered and no repos exist —"
+              " re-run with --repo <name>", EXIT_USAGE)
+    if len(repos) > 1:
+        _fail(f"message {mid} is not registered — re-run with --repo <name>"
+              f" (repos: {', '.join(repos)})", EXIT_USAGE)
+    thread = str(post.get("thread_root_id") or post.get("parent_id") or "")
+    try:
+        return store.create_message(message_id=mid, thread_id=thread,
+                                    sender_username=str(post.get("user") or ""),
+                                    content=str(post.get("text") or ""),
+                                    ts=str(post.get("created_at") or ""),
+                                    repos=repos)
+    except HarnessError as e:
+        if "already registered" in str(e):
+            return store.resolve_message(msg_ref)
+        raise
+
 def _mm(*argv: str) -> dict:
     """Run `mm` and JSON-parse stdout; HarnessError surfaces verbatim."""
     from .errors import run_cmd
@@ -221,7 +266,7 @@ def message_adhoc(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Run an adhoc prompt grounded in one registered message."""
-    row = store.resolve_message(msg)
+    row = _resolve_or_fetch(msg, repo)
     _run_prompt(row, prompt, ref, repo, launch, terminal, harness, extra_prompt,
                 env_file, session_file, dry_run, yes, json_output)
 
@@ -241,7 +286,7 @@ def message_validate(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Validate the claimed issues in the message content and generate Jira issues if issue(s) confirmed."""
-    row = store.resolve_message(msg)
+    row = _resolve_or_fetch(msg, repo)
     default = ("Validate the claimed issues in the message content and generate Jira issues if issue(s) confirmed. Investigate each claimed issue: read the message content and linked repos, attempt reproduction, and report CONFIRMED or REFUTED with supporting file:line evidence. For each CONFIRMED claim, generate a Jira issue describing the defect, with reproduction steps and the supporting file:line evidence.")
     _run_prompt(row, (prompt or "").strip() or default, ref, repo, launch, terminal, harness, None, None, None, dry_run, yes, json_output)
 action_app = typer.Typer(help="Run message-scoped custom actions.", no_args_is_help=True)
@@ -273,7 +318,7 @@ def message_action_run(
         _fail(f"action {label!r} has category"
               f" {(action.get('category') or 'worktree')!r} — message action run"
               " requires a message-category action", EXIT_USAGE)
-    row = store.resolve_message(msg)
+    row = _resolve_or_fetch(msg, repo)
     workdir, _key = _resolve_exec(row, ref, repo)
     if not workdir:
         _fail(f"could not resolve a workdir for message {row.get('message_id','')}",
@@ -320,7 +365,7 @@ def message_flow_run(
         _fail(f"flow template {label!r} has category"
               f" {(tmpl.get('category') or 'worktree')!r} — message flow run"
               " requires a message-category template", EXIT_USAGE)
-    row = store.resolve_message(msg)
+    row = _resolve_or_fetch(msg, repo)
     steps = validate_template(tmpl.get("steps") or [], get_action=store.get_action)
     ref_opt = (ref or "").strip()
     if not ref_opt and any((s.get("kind") or "") in ("sync", "review", "fix_comments", "action") for s in steps):

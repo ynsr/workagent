@@ -233,3 +233,63 @@ def test_message_add_update_related_worktree_round_trip(tmp_path, monkeypatch):
                                          "--repo", "r1", "--worktree", "nope",
                                          "--json"])
     assert bad_wt.exit_code == 2
+
+def test_message_adhoc_auto_registers_unregistered_permalink(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent import store_messages as sm
+    import workagent.cli_message as cm
+    _seed(tmp_path, monkeypatch)
+    mid = "swqrz9mfitdqmq7uaxtet7gb1h"
+    monkeypatch.setattr(cm, "_mm", lambda *a: {"post": {
+        "id": mid, "user": "y.rahimi", "text": "hello world",
+        "created_at": "2026-11-14T08:45:07+00:00",
+        "thread_root_id": None, "parent_id": None}})
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["message", "adhoc",
+                                      f"https://chat.jibit.cloud/jibit/pl/{mid}",
+                                      "--prompt", "hi", "--dry-run", "--json"])
+    assert res.exit_code == 0, res.output
+    assert mid in res.output
+    row = sm.resolve_message(sm_db_path(tmp_path), mid)
+    assert row["content"] == "hello world" and row["repos"] == ["r1"]
+
+
+def test_message_adhoc_auto_register_names_repos_without_repo_flag(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent import store_sqlite as sq
+    import workagent.cli_message as cm
+    _seed(tmp_path, monkeypatch, repo="r1")
+    conn = sq.connect(sm_db_path(tmp_path))
+    conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
+                 ("r2", "/tmp/r2", "r2"))
+    conn.commit()
+    mid = "swqrz9mfitdqmq7uaxtet7gb1h"
+    monkeypatch.setattr(cm, "_mm", lambda *a: {"post": {
+        "id": mid, "user": "u", "text": "t", "created_at": "ts",
+        "thread_root_id": None, "parent_id": None}})
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["message", "adhoc",
+                                      f"https://chat.jibit.cloud/jibit/pl/{mid}",
+                                      "--prompt", "hi", "--dry-run", "--json"])
+    assert res.exit_code == 2
+    assert "--repo" in (res.output + res.stderr)
+
+
+def test_message_adhoc_keeps_unknown_error_when_fetch_fails(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent.errors import HarnessError
+    import workagent.cli_message as cm
+    _seed(tmp_path, monkeypatch)
+    mid = "swqrz9mfitdqmq7uaxtet7gb1h"
+    def _boom(*a):
+        raise HarnessError("mm down", exit_code=1)
+    monkeypatch.setattr(cm, "_mm", _boom)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["message", "adhoc",
+                                      f"https://chat.jibit.cloud/jibit/pl/{mid}",
+                                      "--prompt", "hi", "--dry-run", "--json"])
+    assert res.exit_code == 2
+    assert "unknown message" in (res.output + res.stderr)
