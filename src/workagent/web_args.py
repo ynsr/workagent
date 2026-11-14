@@ -72,7 +72,7 @@ SPECS: dict[str, dict[str, Any]] = {
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "start": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
-              "--yes", "--json", "--no-status", "--no-review"),
+              "--yes", "--json", "--no-status", "--no-review", "--plan"),
     "review": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
                "--yes", "--json", "--all", "--sequential", "--fix", "--fix-comments", "--then-fix-comments", "--use-review-session", "--force-all", "--post-comments", "--no-status"),
     "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--released", "--no-squash", "--hard-delete", "--merge-only"),

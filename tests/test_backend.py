@@ -117,6 +117,27 @@ def test_prompt_for_issue_no_related_section_when_empty():
     assert "Related repo" not in p
 
 
+def test_prompt_plan_mode_constrains_harness():
+    """Issue #88: plan mode forbids implementation, grills the user, writes
+    spec+plan MDs, and stops after push+PR."""
+    p = backend.prompt_for_issue("T", "B", "o/r#22", worktree="/wt",
+                                 branch="feat/x", plan_mode=True)
+    assert "Plan mode" in p
+    assert "No implementation" in p
+    assert "brainstorming" in p
+    assert "spec" in p and "plan" in p
+    assert "push" in p
+    assert "PR/MR" in p
+    assert "Stop" in p or "stop" in p
+
+
+def test_prompt_non_plan_mode_points_at_spec_files():
+    """Issue #88: without plan mode the prompt names existing spec/plan files."""
+    p = backend.prompt_for_issue("T", "B", "o/r#22", worktree="/wt", branch="feat/x")
+    assert "spec" in p and "plan" in p
+    assert "No implementation" not in p
+
+
 def test_omp_session_file_routes_via_resume(tmp_path):
     from workagent.backend import OmpHarness
     real = tmp_path / "x.jsonl"

@@ -165,6 +165,7 @@ function StepConfigForm({
   // prodtest_plan → update checkbox (regenerate an existing plan).
   const showRelated = kind === "start"
   const showRepo = kind === "start"
+  const showPlan = kind === "start"
   const showExtraPrompt = kind === "start" || kind === "review" || kind === "fix_comments" || kind === "action" || kind === "prodtest_plan"
   const showNewFixSession = kind === "fix_comments"
   const showMergeOnly = kind === "cleanup"
@@ -244,6 +245,18 @@ function StepConfigForm({
             className="size-4 accent-current"
           />
           Use review session{hintUseReviewSession ? " (template: on)" : " (default: fresh fix session)"}
+        </label>
+      ) : null}
+      {showPlan ? (
+        <label className="flex items-center gap-2 text-sm sm:col-span-2">
+          <input
+            id={`${idPrefix}-plan`}
+            type="checkbox"
+            checked={config.plan === true}
+            onChange={(e) => patch("plan", e.target.checked || undefined)}
+            className="size-4 accent-current"
+          />
+          Plan mode (spec + plan only, no implementation)
         </label>
       ) : null}
       {showMergeOnly ? (

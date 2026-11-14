@@ -122,14 +122,15 @@ def spawn_in_terminal(cmd: str, cwd: str = "") -> int | None:
 def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool,
                         launch: bool, session_file: str | None, json_output: bool,
                         extra_prompt: str | None = None,
-                        terminal: bool = False, env_file: str | None = None) -> None:
+                        terminal: bool = False, env_file: str | None = None,
+                        plan: bool = False) -> None:
     """Re-launch the harness in an already-linked worktree (issue #26 rule 1)."""
     worktree = str(entry.get("worktree", ""))
     repo = str(entry.get("repo", worktree))
     harness_name = harness or store.load_config().get("default_harness", "omp")
     prompt = append_extra_prompt(backend.prompt_for_issue(
         str(entry.get("issue", key)), "", key,
-        worktree=worktree, branch=str(entry.get("branch", ""))), extra_prompt)
+        worktree=worktree, branch=str(entry.get("branch", "")), plan_mode=plan), extra_prompt)
     result = {"worktree_path": worktree, "branch": str(entry.get("branch", "")),
               "key": key, "harness": harness_name, "reused": True, "command": "start"}
     eprint(f"worktree: {worktree}  branch: {entry.get('branch', '')}")

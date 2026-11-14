@@ -578,6 +578,7 @@
 - Fix-default hands both failing branches to the harness and names the failing branch in dry-run plans and noops [52]
 - Retry live PR lookup in review/flow instead of failing on transient gh errors [60]
 - Run Flow dialog closes on click and queues sequential worktree runs in the background with toast progress instead of stalling on Starting [69]
+- Start gains plan mode: --plan constrains the agent to spec+plan only (no implementation), with an Implement/Plan toggle on the Launch form and a plan checkbox on flow start steps [88]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

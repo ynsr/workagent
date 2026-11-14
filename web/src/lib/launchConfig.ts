@@ -69,6 +69,13 @@ export const COPY: Record<
   },
 }
 
+/** Start-tab action selector: Implement (normal start) vs Plan (plan mode). */
+export type StartAction = "implement" | "plan"
+export const START_ACTION_OPTIONS: readonly { value: StartAction; label: string; hint: string }[] = [
+  { value: "implement", label: "Implement", hint: "start — work the issue normally" },
+  { value: "plan", label: "Plan", hint: "start --plan — spec + plan only, no implementation" },
+]
+
 /** Prodtest-tab action selector: Plan (generate) vs Run (execute at release SHA). */
 export type ProdtestAction = "plan" | "run"
 export const PRODTEST_ACTION_OPTIONS: readonly { value: ProdtestAction; label: string; hint: string }[] = [
@@ -81,6 +88,7 @@ export interface LaunchForm {
   depth: string
   base: string
   runMode: RunMode
+  startAction: StartAction
   reviewAction: ReviewAction
   fixComments: boolean
   thenFixComments: boolean
@@ -100,6 +108,7 @@ export const INITIAL: LaunchForm = {
   // Issue #24: Start/Review launches default to printing the harness
   // command for manual execution (Preview); running is opt-in per run mode.
   runMode: "preview",
+  startAction: "implement",
   reviewAction: "review",
   fixComments: false,
   thenFixComments: false,

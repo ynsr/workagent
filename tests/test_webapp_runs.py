@@ -42,6 +42,20 @@ def test_start_accepts_and_forwards_launch(client, monkeypatch):
     _wait_state(client, rid, {"succeeded"})
 
 
+def test_start_accepts_and_forwards_plan(client, monkeypatch):
+    """Issue #88: `start --plan` passes validation and reaches the child argv."""
+    _stub_spawn(monkeypatch)
+    r = client.post("/api/runs", json={
+        "command": "start", "args": ["IPG-88", "--plan", "--dry-run"],
+        "confirm": True,
+    })
+    assert r.status_code == 202, r.text
+    rid = r.json()["run_id"]
+    run = client.app.state.registry.get(rid)
+    assert "--plan" in run.argv
+    _wait_state(client, rid, {"succeeded"})
+
+
 def test_start_accepts_repeated_related_repo(client, monkeypatch):
     """`start --related-repo a --related-repo b` passes validation, reaches argv."""
     _stub_spawn(monkeypatch)
