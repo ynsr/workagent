@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import random
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -901,8 +902,20 @@ def _schema_current(path: Path) -> bool:
             pass
 
 
-def init_db(path: Path) -> Path:
+def init_db(path: Path, defer_backfill: bool = False) -> Path:
+    """Create/migrate schema synchronously (DB migrations stay on the caller).
+
+    The release-branch backfill shells out to git per repo, so
+    run_server passes defer_backfill=True and serves while a background
+    thread runs backfill_async(). Every other caller keeps the default:
+    backfill inline, same as before.
+    """
     if _INIT_CACHE.get(str(path)) and _schema_current(path):
+        if not _INIT_CACHE.get("backfill") and not _INIT_CACHE.get("backfill:started"):
+            if defer_backfill:
+                backfill_async()
+            else:
+                _run_backfill()
         return path
     import time
     last: Exception | None = None
@@ -946,12 +959,32 @@ def init_db(path: Path) -> Path:
     else:
         raise last  # type: ignore[misc]
     _INIT_CACHE[str(path)] = True
+    if defer_backfill:
+        backfill_async()
+    else:
+        _run_backfill()
+    return path
+
+
+def _run_backfill() -> None:
+    """Synchronous release-branch backfill (never raises; once per process)."""
+    _INIT_CACHE["backfill"] = True
     try:
         from . import repos_release as _rel
         _rel.backfill_release_branches()
     except Exception:
         pass
-    return path
+
+
+def backfill_async() -> "threading.Thread | None":
+    """Fire-and-forget _run_backfill (daemon; at most once per process)."""
+    if _INIT_CACHE.get("backfill:started"):
+        return None
+    _INIT_CACHE["backfill:started"] = True
+    t = threading.Thread(target=_run_backfill,
+                         name="workagent-backfill", daemon=True)
+    t.start()
+    return t
 
 
 def _norm(p: str) -> str:
