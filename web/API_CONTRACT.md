@@ -286,8 +286,8 @@ Request:
 {"command": "cleanup", "args": ["IPG-932"],
  "confirm": true, "force": false}
 ```
-- `command`: one of `start | review | cleanup | release | sync | open | register |
-  repo | link | action | flow | prodtest | adhoc` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`; prodtest: `["plan", REF, …]` / `["run", REF, …]`; adhoc: `[REF, --prompt P, …]`).
+ - `command`: one of `start | review | cleanup | release | sync | open | register |
+   repo | link | tracker | action | flow | message | backup | prodtest | adhoc` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`; prodtest: `["plan", REF, …]` / `["run", REF, …]`; adhoc: `[REF, --prompt P, …]`).
 - Global `-v` may be passed as `args[0]`.
 - `start`/`review`/`sync`/`release` take `--env-file <script>`: a shell script sourced before every harness command including the preview (`source <file> && …`; headless children also get it parsed into their environment) and before the release pre-release gate. Default: `env_file` in `config.json` (auto-created as `<config_dir>/env.sh` on first launch with `VISUAL`/`EDITOR`/`NO_PROXY`/`PI_EDIT_VARIANT` defaults). Delete the file to opt out; session-resume endpoints reuse the originating run's explicit `--env-file` or the configured default.
 - Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`, `adhoc`,

@@ -316,8 +316,10 @@ export type RunCommand =
   | "link"
   | "tracker"
   | "action"
-  | "flow"
   | "message"
+  | "flow"
+  | "prodtest"
+  | "backup"
   | "adhoc"
 export interface MessageRow { id: number; message_id: string; thread_id: string; app_name: string; sender_username: string; content: string; ts: string; repos: string[]; related_repos?: string[]; worktrees?: string[]; added_at: string }
 export interface FlowStep { kind: string; action_label?: string; config?: Record<string, unknown> }
