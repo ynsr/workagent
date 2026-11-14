@@ -163,6 +163,7 @@ by the Dashboard Actions dropdown.)
  wizard) run one worktree at a time when any step is sequential — waiting for each run to settle before starting
  the next — and fan out concurrently only when every step is parallel; `start`/`cleanup`/`release` reject
  `parallel` (teardown/creation ordering). The toggle is hidden for single-worktree runs.
+ The Run dialog closes first and queued runs continue in the background with toast progress.
  The ChainEditor adds All-parallel/All-sequential bulk buttons plus a fan-out summary; the FlowWizard shows
  a live fan-out summary for multi-worktree refs; the templates table carries a Mode column and the detail dialog
  renders a per-step badge list; the Flows run detail badges each step from effective_steps.
