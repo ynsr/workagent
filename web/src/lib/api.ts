@@ -78,6 +78,21 @@ export interface ProdtestDetail {
   last_run_id?: string
   updated_at?: string
 }
+/** One prodtest item row (GET /api/prodtests). Worktree decoupled from dev flow. */
+export interface ProdtestRow {
+  issue_key: string
+  status: string
+  plan_path?: string
+  plan_revision?: number
+  plan_risk?: string
+  plan_diff_hash?: string
+  release_sha?: string
+  released_at?: string
+  last_run_id?: string
+  worktree_ref?: string
+  run_results?: string
+  updated_at?: string
+}
 
 /** Review-comment stats: done reviews + thread resolution. */
 export interface ReviewsDetail {
@@ -445,9 +460,15 @@ export const api = {
   /** GET /api/messages — registered chat messages (Messages page source). */
   messages: (thread?: string) =>
     request<{ messages: MessageRow[] }>(`/api/messages${qs({ thread })}`),
-  /** GET /api/messages/{ref} — one registered message; rejects on 404. */
-  messageDetail: (ref: string) =>
-    request<MessageRow>(`/api/messages/${encodeURIComponent(ref)}`),
+  /** GET /api/prodtests — all prodtest items, newest first (Prodtests page source). */
+  prodtests: () =>
+    request<{ prodtests: ProdtestRow[] }>("/api/prodtests"),
+  /** GET /api/prodtests/{ref} — one prodtest item; rejects on 404. */
+  prodtestDetail: (ref: string) =>
+    request<ProdtestRow>(`/api/prodtests/${encodeURIComponent(ref)}`),
+   /** GET /api/messages/{ref} — one registered message; rejects on 404. */
+   messageDetail: (ref: string) =>
+     request<MessageRow>(`/api/messages/${encodeURIComponent(ref)}`),
   trackerDomains: () => request<{ disabled_domains: string[] }>("/api/tracker-domains"),
   setTrackerDomains: (domains: string[]) =>
     request<{ disabled_domains: string[] }>("/api/tracker-domains", {

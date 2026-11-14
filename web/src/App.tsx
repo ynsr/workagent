@@ -9,6 +9,8 @@ import { FlowTemplates } from "@/pages/FlowTemplates"
 import { Flows } from "@/pages/Flows"
 import { Messages } from "@/pages/Messages"
 import { MessageLaunch } from "@/pages/MessageLaunch"
+import { Prodtests } from "@/pages/Prodtests"
+import { ProdtestLaunch } from "@/pages/ProdtestLaunch"
 import { Links } from "@/pages/Links"
 import { Doctor } from "@/pages/Doctor"
 import { Runs } from "@/pages/Runs"
@@ -27,9 +29,11 @@ export default function App() {
         <Route path="trackers" element={<Trackers />} />
         <Route path="actions" element={<Actions />} />
         <Route path="flows" element={<Flows />} />
+        <Route path="prodtests" element={<Prodtests />} />
+        <Route path="prodtest-launch" element={<ProdtestLaunch />} />
         <Route path="messages" element={<Messages />} />
-        <Route path="message-launch" element={<MessageLaunch />} />
         <Route path="flow-templates" element={<FlowTemplates />} />
+        <Route path="message-launch" element={<MessageLaunch />} />
         <Route path="links" element={<Links />} />
         <Route path="doctor" element={<Doctor />} />
         <Route path="runs" element={<Runs />} />

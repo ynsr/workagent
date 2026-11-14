@@ -107,3 +107,56 @@ def test_cli_destroy_refuses_prodtest_blocked(tmp_path, monkeypatch, isolated_co
         {"key": "jira:IPG-9", "branch": "feat/9",
          "status": "skipped:prodtest-pending"}]
     assert "jira:IPG-9" in store.load_links(True, True)
+
+def test_prodtest_new_cols_roundtrip(tmp_path):
+    """Issue #50 storage: worktree_ref/run_results upsert+get round-trip."""
+    import json
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.ensure_schema(db)
+    payload = json.dumps({"overall": "PASS", "run_id": "r1"})
+    sq.upsert_prodtest(db, "IPG-50", status="passed", worktree_ref="jira:IPG-50",
+                       run_results=payload, last_run_id="r1")
+    row = sq.get_prodtest(db, "IPG-50")
+    assert row["worktree_ref"] == "jira:IPG-50"
+    assert row["run_results"] == payload
+
+
+def test_prodtest_migration_backfills_defaults(tmp_path):
+    """Old DB (pre-column) migrates without data loss; defaults read back."""
+    import sqlite3
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    sq.ensure_schema(db)
+    sq.upsert_prodtest(db, "IPG-51", status="running", plan_path="p.yaml")
+    with sqlite3.connect(str(db)) as c:
+        c.execute("ALTER TABLE prodtest_items DROP COLUMN worktree_ref")
+        c.execute("ALTER TABLE prodtest_items DROP COLUMN run_results")
+        c.commit()
+    # Simulate a stale process cache as well: force migration re-run.
+    sq._INIT_CACHE.pop(str(db), None)
+    sq.init_db(db)
+    row = sq.get_prodtest(db, "IPG-51")
+    assert row["status"] == "running"  # no data loss
+    assert row["plan_path"] == "p.yaml"
+    assert row["worktree_ref"] == ""
+    assert row["run_results"] == "{}"
+    cols = {r[1] for r in sqlite3.connect(str(db)).execute(
+        "PRAGMA table_info(prodtest_items)")}
+    assert {"worktree_ref", "run_results"} <= cols
+
+
+def test_list_prodtests_ordering_and_empty(tmp_path):
+    from workagent import store_sqlite as sq
+    missing = tmp_path / "nope.db"
+    assert sq.list_prodtests(missing) == []
+    db = tmp_path / "state.db"
+    sq.ensure_schema(db)
+    assert sq.list_prodtests(db) == []
+    sq.upsert_prodtest(db, "IPG-A", status="pending")
+    sq.upsert_prodtest(db, "IPG-B", status="passed")
+    # Touch A so it sorts newest-first.
+    sq.upsert_prodtest(db, "IPG-A", status="failed")
+    rows = sq.list_prodtests(db)
+    assert [r["issue_key"] for r in rows] == ["IPG-A", "IPG-B"]
+    assert rows[0]["status"] == "failed"

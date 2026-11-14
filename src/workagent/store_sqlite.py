@@ -112,7 +112,8 @@ CREATE TABLE IF NOT EXISTS messages (
    plan_revision INTEGER NOT NULL DEFAULT 0, plan_risk TEXT NOT NULL DEFAULT '',
    plan_diff_hash TEXT NOT NULL DEFAULT '', release_sha TEXT NOT NULL DEFAULT '',
    released_at TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending',
-   last_run_id TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL);
+   last_run_id TEXT NOT NULL DEFAULT '', worktree_ref TEXT NOT NULL DEFAULT '',
+   run_results TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL);
 """
 
 
@@ -262,6 +263,20 @@ def _migrate_messages_related_repos(conn) -> None:
         return
     if "related_repos" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN related_repos TEXT NOT NULL DEFAULT '[]'")
+
+def _migrate_prodtest_cols(conn) -> None:
+    """Schema v25: prodtest_items gains worktree_ref + run_results (issue #50).
+
+    ALTER TABLE is enough (both columns carry defaults, so old rows read
+    back as unlinked/no-results). Idempotent: skipped when present.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(prodtest_items)")}
+    if not cols:
+        return
+    if "worktree_ref" not in cols:
+        conn.execute("ALTER TABLE prodtest_items ADD COLUMN worktree_ref TEXT NOT NULL DEFAULT ''")
+    if "run_results" not in cols:
+        conn.execute("ALTER TABLE prodtest_items ADD COLUMN run_results TEXT NOT NULL DEFAULT '{}'")
 
 
 def _migrate_category(conn) -> None:
@@ -887,6 +902,9 @@ def _schema_current(path: Path) -> bool:
             return False
         if "prodtest_items" not in tables:
             return False
+        pcols = {r[1] for r in conn.execute("PRAGMA table_info(prodtest_items)")}
+        if not {"worktree_ref", "run_results"} <= pcols:
+            return False
         mcols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")} if "messages" in tables else set()
         if mcols and "worktrees" not in mcols:
             return False
@@ -950,6 +968,7 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
                 _migrate_run_immediately(conn)
                 _migrate_flow_template_icon(conn)
                 _migrate_sessions_no_fk(conn)
+                _migrate_prodtest_cols(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():
                 raise
@@ -1297,7 +1316,7 @@ PRODTEST_STATUSES = ("pending", "pending_prodtest", "running",
 
 _PRODTEST_COLS = ("plan_path", "plan_revision", "plan_risk",
                   "plan_diff_hash", "release_sha", "released_at",
-                  "status", "last_run_id")
+                  "status", "last_run_id", "worktree_ref", "run_results")
 
 
 def ensure_schema(path: Path) -> Path:
@@ -1361,6 +1380,20 @@ def set_prodtest_status(path: Path, key: str, status: str) -> dict:
         if cur.rowcount == 0:
             raise ValueError(f"no prodtest item for {key}")
     return get_prodtest(path, key)
+
+def list_prodtests(path: Path) -> list[dict]:
+    """All prodtest item rows ordered by updated_at desc (empty on no DB)."""
+    import sqlite3 as _s3
+    if not Path(path).exists():
+        return []
+    with connect(path) as conn:
+        conn.row_factory = _s3.Row
+        try:
+            rows = conn.execute(
+                "SELECT * FROM prodtest_items ORDER BY updated_at DESC").fetchall()
+        except _s3.OperationalError:
+            return []
+    return [dict(r) for r in rows]
 
 
 def gc_blocked_by_prodtest(path: Path, key: str) -> bool:

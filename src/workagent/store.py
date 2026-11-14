@@ -944,6 +944,11 @@ def set_prodtest_status(key: str, status: str) -> dict:
     from . import store_sqlite as _sq
     return _sq.set_prodtest_status(_sq.db_path(), key, status)
 
+def list_prodtests() -> list[dict]:
+    """All prodtest items, newest first (delegates to store_sqlite)."""
+    from . import store_sqlite as _sq
+    return _sq.list_prodtests(_sq.db_path())
+
 
 def gc_blocked_by_prodtest(key: str) -> bool:
     """True when GC must skip *key* (prodtest pending/running)."""

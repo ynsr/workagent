@@ -48,7 +48,6 @@ from .cli_prodtest_gate import (  # noqa: F401 (re-export)
     current_prodtest_diff,
     manifest_path_for,
     prodtest_gate,
-    row_prodtest_gate,
     run_validate,
 )
 from .cli_cleanup_gc import destroy_deleted, gc_soft_deleted  # noqa: F401 (re-export)
@@ -71,6 +70,7 @@ def cleanup(
     no_squash: bool = typer.Option(False, "--no-squash", help="Merge open PRs with a merge commit instead of squash."),
     merge_only: bool = typer.Option(False, "--merge-only", help="Merge the open PR/MR (squash) without deleting anything: worktree, branch, and link all survive."),
     hard_delete: bool = typer.Option(False, "--hard-delete", help="Delete the row, worktree, and branch immediately (skip the 7-day soft-delete recovery window)."),
+    create_prodtest: bool = typer.Option(False, "--create-prodtest", help="Ensure a prodtest_items row exists for the issue key (preserving plan/release fields) before teardown; teardown proceeds normally."),
 ) -> None:
     """Close issue + remove worktree/branch/PR.
 
@@ -238,11 +238,10 @@ def cleanup(
                 rows.append({"key": key, "branch": branch,
                              "status": "skipped:invalid"})
                 continue
-            gate = None if force else row_prodtest_gate(key, dict(entry))
-            if gate and gate.startswith("blocked:"):
-                rows.append({"key": key, "branch": branch,
-                             "status": "skipped:prodtest-stale"})
-                continue
+            # Run-only gate (issue #50): --merged proceeds regardless of a
+            # stale/invalid plan — prodtest state no longer blocks teardown.
+            if create_prodtest and not dry_run:
+                _ensure_prodtest_row(key, dict(entry))
             rows.append(_cleanup_one(key, dict(entry), force, yes, dry_run,
                                json_output, squash=not no_squash,
                                merge=False, hard_delete=hard_delete))
@@ -301,6 +300,8 @@ def cleanup(
         if answer not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)
 
+    if create_prodtest:
+        _ensure_prodtest_row(key, dict(entry))
     result = _cleanup_one(key, dict(entry), force, True, False, json_output,
                           squash=not no_squash, hard_delete=hard_delete)
     if json_output:
@@ -342,15 +343,8 @@ def _merge_only_one(key: str, entry: dict, force: bool, json_output: bool,
     if picked:
         eprint(f"note: acting on {pr_url} (latest for branch {branch}).")
     fresh_state = ((fresh or {}).get("state") or "").lower()
-    if not force and pr_url and fresh_state in ("open", "opened"):
-        gate = row_prodtest_gate(key, dict(entry))
-        if gate == "blocked:stale":
-            _fail(f"prodtest plan is stale for {_prodtest_issue_key(key, entry)} — "
-                  "run `workagent prodtest plan` first (or re-run with --force).",
-                  EXIT_GENERAL)
-        if gate == "blocked:invalid-plan":
-            _fail(f"prodtest plan is invalid for {_prodtest_issue_key(key, entry)} — "
-                  "fix the plan (or re-run with --force).", EXIT_GENERAL)
+    # Run-only gate (issue #50): --merge-only proceeds regardless of a
+    # stale/invalid plan — prodtest state no longer blocks the merge.
     open_states = ("open", "opened")
     if pr_url and fresh_state in open_states:
         if not force and _pr_conflicted(fresh):
@@ -475,15 +469,8 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
         _fail(f"{pr_url} cannot merge yet ({blocked_reason}) — remote branch kept.\n"
               "  Resolve it on the host (threads/pipeline/approvals), then re-run cleanup.",
               EXIT_GENERAL)
-    if not force and pr_url and fresh_state in open_states:
-        gate = row_prodtest_gate(key, dict(entry))
-        if gate == "blocked:stale":
-            _fail(f"prodtest plan is stale for {_prodtest_issue_key(key, entry)} — "
-                  "run `workagent prodtest plan` first (or re-run with --force).",
-                  EXIT_GENERAL)
-        if gate == "blocked:invalid-plan":
-            _fail(f"prodtest plan is invalid for {_prodtest_issue_key(key, entry)} — "
-                  "fix the plan (or re-run with --force).", EXIT_GENERAL)
+    # Run-only gate (issue #50): cleanup proceeds regardless of a
+    # stale/invalid plan — prodtest state no longer blocks teardown.
     if merge:
         try:
             _cli._merge_pr(pr_url, squash=squash, cwd=host_cwd,
@@ -575,3 +562,16 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
         eprint(f"{key}: cleaned{tail}")
     return {"key": key, "branch": branch, "status": "cleaned", "cleanup": cleanup,
             "remote_deleted": remote_deleted}
+
+
+def _ensure_prodtest_row(key: str, entry: dict) -> None:
+    """Ensure a prodtest_items row exists for the issue key (best effort).
+
+    Preserves existing plan/release fields: the bare upsert only touches
+    ``worktree_ref`` (linked key, so the row is attributable post-teardown)
+    plus the touch timestamp. Teardown proceeds regardless — never raises.
+    """
+    try:
+        store.upsert_prodtest(_prodtest_issue_key(key, entry), worktree_ref=str(key or ""))
+    except Exception as e:
+        eprint(f"warning: prodtest row ensure failed: {e}")

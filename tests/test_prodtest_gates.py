@@ -56,6 +56,7 @@ def test_manifest_path_for_defaults_repo_file(tmp_path):
 
 
 def test_row_gate_skipped_prodtest_stale_in_merged_loop(isolated_config, tmp_path, monkeypatch):
+    """Stale plan no longer blocks the --merged loop (run-only gate, issue #50)."""
     from workagent import cli
     from workagent import cli_cleanup as cc
     from workagent import store
@@ -64,8 +65,6 @@ def test_row_gate_skipped_prodtest_stale_in_merged_loop(isolated_config, tmp_pat
     db = tmp_path / "state.db"
     sq.ensure_schema(db)
     wt = tmp_path / "wt"; wt.mkdir()
-    # store.get_prodtest reads state.db while record_link writes links.json;
-    # seed the isolated DB directly (same pattern as Task 5 run tests).
     sq.save_links_rows(db, {"jira:IPG-1": {"issue": "IPG-1", "worktree": str(wt),
         "branch": "feat/1", "repo": str(tmp_path), "added_at": "2026-11-01T00:00:00+00:00"}})
     sq.upsert_prodtest(db, "IPG-1", plan_path="p.yaml", plan_diff_hash="old",
@@ -80,11 +79,17 @@ def test_row_gate_skipped_prodtest_stale_in_merged_loop(isolated_config, tmp_pat
     monkeypatch.setattr(cc, "current_prodtest_diff", lambda repo, default: "new")
     monkeypatch.setattr(cc, "run_validate",
                         lambda plan, manifest: {"valid": True, "errors": [], "warnings": []})
+    cleaned = []
+    def _fake_cleanup(key, entry, *a, **k):
+        cleaned.append(entry.get("branch"))
+        return {"key": key, "branch": entry.get("branch"), "status": "cleaned"}
+    monkeypatch.setattr(cli, "_cleanup_one", _fake_cleanup)
+    monkeypatch.setattr(cc, "_cleanup_one", _fake_cleanup)
     r = _invoke("cleanup", "--merged", "--yes", "--json")
     assert r.exit_code == 0, r.output
     import json as _json
     rows = _json.loads(r.stdout)["results"]
-    assert rows[0]["status"] == "skipped:prodtest-stale"
+    assert rows[0]["status"] == "cleaned"
 
 
 def test_row_gate_warn_missing_passes_merged_loop(isolated_config, tmp_path, monkeypatch, capsys):
@@ -120,7 +125,8 @@ def test_row_gate_warn_missing_passes_merged_loop(isolated_config, tmp_path, mon
 
 def test_row_gate_hashes_worktree_not_repo(isolated_config, tmp_path, monkeypatch):
     """row_prodtest_gate hashes the linked worktree (matches _finish_plan)."""
-    from workagent import cli_cleanup as cc
+    from workagent import cli_cleanup as _cc
+    from workagent import cli_prodtest_gate as cc
     from workagent import store
     wt = tmp_path / "wt"; wt.mkdir()
     repo = tmp_path / "repo"; repo.mkdir()
@@ -130,11 +136,14 @@ def test_row_gate_hashes_worktree_not_repo(isolated_config, tmp_path, monkeypatc
                         lambda key: {"plan_diff_hash": "wt-hash",
                                      "plan_path": "p.yaml"})
     seen: list[str] = []
-    monkeypatch.setattr(cc, "current_prodtest_diff",
-                        lambda d, default: seen.append(d) or "wt-hash")
-    monkeypatch.setattr(cc, "run_validate",
-                        lambda plan, manifest: {"valid": True, "errors": [],
-                                                "warnings": []})
+    def _diff(d, default):
+        seen.append(d)
+        return "wt-hash"
+    monkeypatch.setattr(cc, "current_prodtest_diff", _diff)
+    monkeypatch.setattr(_cc, "current_prodtest_diff", _diff)
+    good = {"valid": True, "errors": [], "warnings": []}
+    monkeypatch.setattr(cc, "run_validate", lambda plan, manifest: dict(good))
+    monkeypatch.setattr(_cc, "run_validate", lambda plan, manifest: dict(good))
     assert cc.row_prodtest_gate("k", dict(entry)) is None
     assert seen == [str(wt)], seen
 

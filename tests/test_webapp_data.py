@@ -671,6 +671,26 @@ def test_api_messages_roundtrip(client):
     assert miss.status_code == 404
 
 
+def test_api_prodtests_roundtrip(client):
+    """GET /api/prodtests lists items; GET /api/prodtests/{ref} shows one (issue #50)."""
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    sq.upsert_prodtest(db, "IPG-932", status="passed", plan_path="plans/p932.md",
+                       worktree_ref="wt-932")
+    sq.upsert_prodtest(db, "IPG-933", status="pending")
+    r = client.get("/api/prodtests")
+    assert r.status_code == 200, r.text
+    rows = r.json()["prodtests"]
+    assert {p["issue_key"] for p in rows} == {"IPG-932", "IPG-933"}
+    full = next(p for p in rows if p["issue_key"] == "IPG-932")
+    assert (full["status"], full["plan_path"], full["worktree_ref"]) == ("passed", "plans/p932.md", "wt-932")
+    ok = client.get("/api/prodtests/IPG-932")
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["issue_key"] == "IPG-932"
+    miss = client.get("/api/prodtests/nope")
+    assert miss.status_code == 404
+
 def test_message_run_passthrough_accepts_subcommand(client, monkeypatch):
     """POST /api/runs message adhoc is accepted (runs keyed message:<ref>)."""
     from tests.webapp_helpers import _stub_spawn

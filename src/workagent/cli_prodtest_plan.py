@@ -10,7 +10,12 @@ import typer
 from . import refs, repos, store, worktrees
 from .cli_core import _catch_harness_errors, _fail, _print_result, eprint
 from .cli_harness import _run_harness, append_extra_prompt
-from .cli_prodtest import _resolve_plan_file, prodtest_app
+from .cli_prodtest import (
+    _plan_search_dirs,
+    _resolve_issue_context,
+    _resolve_repo_dir,
+    prodtest_app,
+)
 from .errors import HarnessError
 
 def _plan_filename(issue_number: str | None, mr_number: str | None) -> str:
@@ -36,7 +41,7 @@ def prodtest_plan(
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path for the harness session."),
 ) -> None:
-    """Generate (or update) the prod test plan for a linked worktree."""
+    """Generate (or update) the prod test plan for an issue (worktree optional)."""
     if terminal and launch:
         _fail("--terminal cannot be used with --launch (pick one run mode)", 2)
     if not isinstance(session_file, str):
@@ -44,33 +49,45 @@ def prodtest_plan(
     if not isinstance(env_file, str):
         env_file = None
 
-    key, entry, parsed = worktrees.resolve_any(ref, store.load_links(include_deleted=True))
-    if not entry or not entry.get("worktree"):
-        _fail(f"no linked worktree for {ref}", 2)
-    worktree = str(entry.get("worktree", ""))
+    try:
+        store_key, entry, parsed, link_key = _resolve_issue_context(ref)
+    except worktrees.NoLinkedState as e:
+        _fail(str(e), 2)
+    entry = dict(entry or {})
+    worktree = str(entry.get("worktree", "") or "")
     branch = str(entry.get("branch", "") or "")
-    repo = str(entry.get("repo", "") or "")
+    repo = _resolve_repo_dir(entry)
+    if repo:
+        entry["repo"] = repo
+    linked = bool(worktree and Path(worktree).expanduser().is_dir())
 
     try:
         default_branch = repos.default_branch(Path(repo)) if repo and Path(repo).is_dir() else "main"
     except HarnessError:
         default_branch = "main"
 
-    issue_number: str | None = None
+    issue_number: str | None = store_key or None
     issue_url: str = str(entry.get("issue_url", "") or "")
     mr_url: str | None = None
     if parsed is not None:
         if parsed.get("kind") == "issue":
-            issue_number = str(parsed.get("number", "") or "") or None
             if not issue_url and parsed.get("url"):
                 issue_url = str(parsed.get("url", ""))
         elif parsed.get("kind") in ("pr", "mr"):
             mr_url = str(parsed.get("url", "") or "") or None
-    if not issue_number and entry.get("issue"):
-        issue_number = str(entry.get("issue", "") or "") or None
-    if not mr_url:
+            if parsed.get("kind") in ("pr", "mr") and not linked and not issue_number:
+                # PR/MR-only refs still need a linked worktree (plan edits live there).
+                _fail(f"no linked worktree for {ref}", 2)
+    if not issue_url and issue_number:
         try:
-            mr_url = worktrees.worktree_pr_url(key, entry)
+            url = refs.issue_url(issue_number) if hasattr(refs, "issue_url") else ""
+            if url:
+                issue_url = str(url)
+        except Exception:
+            pass
+    if not mr_url and linked:
+        try:
+            mr_url = worktrees.worktree_pr_url(link_key or store_key, entry)
         except HarnessError:
             mr_url = None
     mr_number: str | None = None
@@ -82,19 +99,48 @@ def prodtest_plan(
         except HarnessError:
             mr_number = None
 
-    plan_file = Path(worktree) / ".workagent" / "prodtest" / "plans" / _plan_filename(issue_number, mr_number)
+    plan_dir: Path | None = None
+    plan_file: Path | None = None
+    try:
+        item = store.get_prodtest(store_key)
+    except Exception:
+        item = None
+    stored_path = str((item or {}).get("plan_path", "") or "")
+    if stored_path and Path(stored_path).is_file():
+        plan_file = Path(stored_path)
+        plan_dir = plan_file.parent
+    else:
+        for cand_dir in _plan_search_dirs(entry):
+            cand = cand_dir / _plan_filename(issue_number, mr_number)
+            try:
+                if cand.is_file():
+                    plan_file = cand
+                    plan_dir = cand_dir
+                    break
+            except Exception:
+                continue
+        if plan_file is None:
+            for cand_dir in _plan_search_dirs(entry):
+                if str(cand_dir):
+                    plan_dir = cand_dir
+                    plan_file = cand_dir / _plan_filename(issue_number, mr_number)
+                    break
+    if plan_file is None or plan_dir is None:
+        _fail(f"no linked worktree for {ref} and no repo checkout is resolvable "
+              f"(run from inside the repo checkout)", 2)
     auto_update = plan_file.exists()
     update_mode = bool(update or auto_update)
 
     harness_name = harness or store.load_config().get("default_harness", "omp")
 
     if dry_run:
-        _print_result({"key": key, "plan_file": str(plan_file), "update": update_mode,
+        _print_result({"key": store_key, "plan_file": str(plan_file), "update": update_mode,
                        "dry_run": True, "worktree": worktree, "branch": branch,
                        "default_branch": default_branch, "harness": harness_name}, json_output)
         return
 
-    run_request = {"worktree": worktree, "branch": branch,
+    work_dir = worktree if linked else repo
+    run_request = {"worktree": work_dir, "branch": branch,
                    "issue": {"key": issue_number, "url": issue_url or None},
                    "mr": {"url": mr_url} if mr_url else None,
                    "default_branch": default_branch, "update": update_mode,
@@ -102,25 +148,25 @@ def prodtest_plan(
     prompt = ("Use the prodtest-plan skill with run request: "
               + json.dumps(run_request, indent=2))
     prompt = append_extra_prompt(prompt, extra_prompt)
-    result: dict = {"worktree_path": worktree, "branch": branch, "command": "prodtest plan",
-                    "key": key, "plan_file": str(plan_file), "update": update_mode}
-    eprint(f"worktree: {worktree}  branch: {branch}")
-    _run_harness(harness_name, prompt, worktree, repo or worktree,
+    result: dict = {"worktree_path": work_dir, "branch": branch, "command": "prodtest plan",
+                    "key": store_key, "plan_file": str(plan_file), "update": update_mode}
+    eprint(f"worktree: {work_dir}  branch: {branch}")
+    _run_harness(harness_name, prompt, work_dir, repo or work_dir,
                  no_tty, launch, result, json_output,
-                 run_key=key, session_file=session_file,
+                 run_key=(link_key or None), session_file=session_file,
                  terminal=terminal, env_file=env_file)
     if launch and not no_tty and not terminal:
         eprint(f"warning: plan file updated but NOT persisted ({plan_file}): "
                "commit/push/DB upsert only run with --no-tty. "
-               "Re-run `workagent prodtest plan " + (issue_number or key) + " --launch --no-tty` "
-               "or cleanup will keep reporting a stale plan.")
+               "Re-run `workagent prodtest plan " + (issue_number or store_key) + " --launch --no-tty`.")
     if launch and no_tty:
-        _finish_plan(key, issue_number, worktree, repo, branch, plan_file,
-                     issue_url, result)
+        _finish_plan(link_key or store_key, issue_number, work_dir, repo, branch, plan_file,
+                     issue_url, result, store_key=store_key)
 
 
 def _finish_plan(key: str, issue_number: str | None, worktree: str, repo: str,
-                 branch: str, plan_file: Path, issue_url: str, result: dict) -> None:
+                 branch: str, plan_file: Path, issue_url: str, result: dict,
+                 store_key: str | None = None) -> None:
     """Best-effort post-harness: parse result, validate, commit+push, comment, upsert."""
     from . import harness_summary as _hs
     from . import issue_comments as _ic
@@ -163,13 +209,19 @@ def _finish_plan(key: str, issue_number: str | None, worktree: str, repo: str,
 
     try:
         rels = []
-        if plan_file.exists():
-            rels.append(str(plan_file.relative_to(worktree)))
+        if plan_file.exists() and worktree and Path(worktree).is_dir():
+            try:
+                rels.append(str(plan_file.relative_to(worktree)))
+            except ValueError:
+                pass
         else:
             eprint(f"warning: harness did not write {plan_file}")
-        if manifest.exists():
-            rels.append(str(manifest.relative_to(worktree)))
-        if rels:
+        if manifest.exists() and worktree and Path(worktree).is_dir():
+            try:
+                rels.append(str(manifest.relative_to(worktree)))
+            except ValueError:
+                pass
+        if rels and worktree and Path(worktree).is_dir():
             run_cmd("git", "-C", worktree, "add", "--", *rels)
             run_cmd("git", "-C", worktree, "commit", "-m",
                     f"prodtest: plan r{revision} for {issue_number or key}")
@@ -196,7 +248,7 @@ def _finish_plan(key: str, issue_number: str | None, worktree: str, repo: str,
         pass
 
     # P0: persist the plan diff hash from the dirty-tree tip so byte-identical
-    # plans pass the cleanup gate. Preserve the release-recorded status only
+    # plans pass the run-time binding check. Preserve the release-recorded status only
     # while it means "released, awaiting run" (pending_prodtest / running):
     # a re-plan after a completed run (passed/failed/blocked) resets to
     # pending so the new revision/hash goes through release + run again.
@@ -207,12 +259,14 @@ def _finish_plan(key: str, issue_number: str | None, worktree: str, repo: str,
             default_branch = repos.default_branch(Path(repo)) if repo else "main"
         except Exception:
             default_branch = "main"
-        diff_hash = _cc.current_prodtest_diff(worktree, default_branch or "main")
+        base = worktree if worktree and Path(worktree).is_dir() else repo
+        diff_hash = _cc.current_prodtest_diff(base, default_branch or "main")
     except Exception as e:
         eprint(f"warning: plan diff hash failed: {e}")
     status = "pending"
+    row_key = store_key or issue_number or key
     try:
-        existing = store.get_prodtest(issue_number or key)
+        existing = store.get_prodtest(row_key)
         if existing and (existing.get("release_sha") or ""):
             prev = str(existing.get("status", "") or "")
             if prev in ("pending_prodtest", "running"):
@@ -220,7 +274,7 @@ def _finish_plan(key: str, issue_number: str | None, worktree: str, repo: str,
     except Exception:
         pass
     try:
-        store.upsert_prodtest(issue_number or key, plan_path=str(plan_file),
+        store.upsert_prodtest(row_key, plan_path=str(plan_file),
                               plan_revision=revision, plan_risk=risk,
                               plan_diff_hash=diff_hash,
                               status=status)

@@ -1,4 +1,5 @@
 import { MessagesSquare } from "lucide-react"
+import { Link } from "react-router-dom"
 import type { WorktreeMap } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
@@ -61,29 +62,26 @@ const PRODTEST_TONE: Record<string, string> = {
   blocked: "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300",
 }
 
-/** Prodtest badge: done|risk|revN or status; "—" when no plan exists. */
+/** Prodtest badge: link to /prodtests?issue=<key>; "—" when no plan exists. */
 export function ProdtestCell({ entry }: { entry: WorktreeMap[string] }) {
   const d = entry.prodtest_detail
   if (!d) return <span className="font-mono text-[13px] text-muted-foreground">—</span>
   const status = entry.prodtest ?? d.status ?? "-"
-  const risk = d.plan_risk ? ` · ${d.plan_risk}` : ""
-  const rev = d.plan_revision ? ` · rev${d.plan_revision}` : ""
-  const report = d.last_run ? ` · ${d.last_run}` : ""
-  const title = `prodtest ${status}${risk}${rev}${report} (${d.issue_key})`
+  const title = `prodtest ${status} (${d.issue_key}) — open Prodtests`
   const tone = PRODTEST_TONE[status] ?? ""
   return (
-    <Badge
-      variant="outline"
+    <Link
+      to={`/prodtests?issue=${encodeURIComponent(d.issue_key)}`}
       title={title}
       aria-label={title}
-      className={cn("cursor-default rounded-full font-mono font-normal", tone)}
     >
-      <span>{status}</span>
-      {d.plan_risk ? <span aria-hidden className="text-muted-foreground/60">·</span> : null}
-      {d.plan_risk ? <span>{d.plan_risk}</span> : null}
-      {d.plan_revision ? <span aria-hidden className="text-muted-foreground/60">·</span> : null}
-      {d.plan_revision ? <span className="text-muted-foreground">rev{d.plan_revision}</span> : null}
-    </Badge>
+      <Badge
+        variant="outline"
+        className={cn("cursor-pointer rounded-full font-mono font-normal hover:underline", tone)}
+      >
+        <span>{status}</span>
+      </Badge>
+    </Link>
   )
 }
 

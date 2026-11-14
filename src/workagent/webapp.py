@@ -279,6 +279,27 @@ def create_app(static_dir: Path, host: str, port: int,
         return {"messages": store.list_messages(thread)}
 
 
+    @app.get("/api/prodtests")
+    def prodtests_list() -> dict:
+        """All prodtest items, newest first (Prodtests page source). Always 200."""
+        return {"prodtests": store.list_prodtests()}
+
+
+    @app.get("/api/prodtests/{ref}")
+    def prodtest_detail(ref: str) -> dict:
+        """One prodtest item by issue key; 404 when unknown."""
+        from .cli_prodtest import _prodtest_key_for_status
+        try:
+            key = _prodtest_key_for_status(ref)
+        except Exception:
+            key = ref
+        item = store.get_prodtest(key)
+        if item is None:
+            raise HTTPException(status_code=404,
+                                detail=f"unknown prodtest item: {ref!r}")
+        return item
+
+
     @app.get("/api/messages/{ref}")
     def message_detail(ref: str) -> dict:
         """One registered message by id/message_id/thread; 404 when unknown."""

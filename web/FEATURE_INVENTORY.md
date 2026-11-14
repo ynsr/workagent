@@ -50,8 +50,8 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `sync --yes/--force/-y` | mutating | — | `sync:<ref>` | yes-ish | | runs omp headless on conflicts (`omp -p --auto-approve`) |
 | `sync --dry-run` | read-only-ish | — | `sync:<ref>` | no | | none |
 | `sync --json` | mutating | — | `sync:<ref>` | yes-ish | | |
-| `prodtest plan REF [--update] [--harness/--launch/--terminal/--no-tty/--dry-run/--yes/--json] [--session-file/--env-file/--extra-prompt]` | mutating | — | `prodtest:<ref>` | no (spawns agent) | no linked state (2), launch+terminal (2) | TTY confirm; non-TTY needs `--yes` |
-| `prodtest run REF [--fix-mode report-only\|issue\|issue+mr] [--skip-version-gate] [--run-dir] [--launch/--terminal/--no-tty/--dry-run/--yes/--json] [--harness/--session-file/--env-file/--extra-prompt]` / `prodtest run --all` | mutating | — | `prodtest:<ref>` / `prodtest:run-all` | yes (ephemeral checkout run) | no release recorded (2), bad fix-mode (2), held lock (1), ref with --all (2), --run-dir/--session-file with --all (2) | TTY confirm; non-TTY needs `--yes`; per-issue lock + timeout kill; `--all` runs eligible keys sequentially in-process with `skipped:<reason>` rows, continuing past failures |
+| `prodtest plan REF [--update] [--harness/--launch/--terminal/--no-tty/--dry-run/--yes/--json] [--session-file/--env-file/--extra-prompt]` | mutating | — | `prodtest:<ref>` | no (spawns agent) | no linked state (2), launch+terminal (2) | TTY confirm; non-TTY needs `--yes`; issue-key first, worktree ref as accelerator; `running` status on lock acquire; `worktree_ref` persisted |
+| `prodtest run REF [--fix-mode report-only\|issue\|issue+mr] [--skip-version-gate] [--run-dir] [--launch/--terminal/--no-tty/--dry-run/--yes/--json] [--harness/--session-file/--env-file/--extra-prompt]` / `prodtest run --all` | mutating | — | `prodtest:<ref>` / `prodtest:run-all` | yes (ephemeral checkout run) | no release recorded (2), bad fix-mode (2), held lock (1), ref with --all (2), --run-dir/--session-file with --all (2) | TTY confirm; non-TTY needs `--yes`; per-issue lock + timeout kill; `--all` runs eligible keys sequentially in-process with `skipped:<reason>` rows, continuing past failures; verdict persisted to `run_results` JSON |
 | `adhoc REF… --prompt TEXT [--launch/--terminal] [--harness] [--extra-prompt] [--env-file] [--session-file] [--dry-run] [--yes] [--json]` | mutating | — | `adhoc:<first-ref>` | no (spawns agent) | no linked state (2), blank prompt (2), launch+terminal (2) | TTY confirm; non-TTY needs `--yes` |
 | `repo add --name --path [--tracker] [--fetch/--no-fetch] [--release-branch] [--pre-release] [--json]` | mutating | — | `repo:add` | no (config write) | path missing | none |
 | `repo list [--json/--csv]` | read-only | `store.load_config()["repos"]` | — | no | | none |
@@ -143,7 +143,7 @@ flags, `--force`-required conflicts (register), repo-picker aborts.
 
 ## Destructive commands requiring `confirm: true` at the API
 
-- `prodtest` (`plan`/`run`) — require `confirm: true` (the Dashboard bulk button + the Launch prodtest tab confirm before spawning runs).
+- `prodtest` (`plan`/`run`) — require `confirm: true` (the Prodtests page + Prodtest Launch page confirm before spawning runs; `list`/`status` are read-only GETs, no confirm).
 - `adhoc` — spawns an agent; requires `confirm: true`.
 - `repo remove` (registry write)
 - `link remove` (drops tracker relation or session link)
