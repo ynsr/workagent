@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RelatedReposSelect } from "@/components/RelatedReposSelect"
 import { SearchableSelect } from "@/components/SearchableSelect"
+import { EXECUTION_MODES, SEQUENTIAL_ONLY_STEPS } from "@/lib/flowExecution"
 import { cn } from "@/lib/utils"
 import type { FlowStep } from "@/lib/api"
 import { useRepos } from "@/lib/queries"
@@ -27,6 +28,9 @@ export interface ChainEditorProps {
   overrides?: Record<number, Record<string, unknown>>
   onOverridesChange?: (o: Record<number, Record<string, unknown>>) => void
   knownActions: { label: string; name: string }[]
+  /** Show the per-step Parallel/Sequential toggle (multi-worktree runs).
+   * Hidden for single-worktree runs — the mode is not applicable there. */
+  showExecutionMode?: boolean
 }
 
 /** Backend rule order (mirrors store_flows.validate_template): Start-first,
@@ -68,17 +72,17 @@ export function validateChain(steps: FlowStep[]): string[] {
     }
   }
   steps.forEach((step, i) => {
+    if (step.kind !== "prodtest_plan") return
+    if (cleanups.length > 0 && i >= Math.min(...cleanups)) {
+      errors.push(`Step ${i + 1}: 'prodtest_plan' steps must come before 'cleanup'.`)
+    }
+  })
+  steps.forEach((step, i) => {
     if (step.kind !== "action") return
     if (cleanups.length > 0 && i >= Math.min(...cleanups)) {
       errors.push(`Step ${i + 1}: 'action' steps must come before 'cleanup'.`)
     }
     if (!step.action_label?.trim()) errors.push(`Step ${i + 1}: 'action' step needs an action label.`)
-  })
-  steps.forEach((step, i) => {
-    if (step.kind !== "prodtest_plan") return
-    if (cleanups.length > 0 && i >= Math.min(...cleanups)) {
-      errors.push(`Step ${i + 1}: 'prodtest_plan' steps must come before 'cleanup'.`)
-    }
   })
   steps.forEach((step, i) => {
     const cfgObj = { ...(step.config ?? {}) }
@@ -90,6 +94,12 @@ export function validateChain(steps: FlowStep[]): string[] {
     }
     if (step.kind === "cleanup" && /hard_delete|hard-delete|no_squash|no-squash/.test(cfg)) {
       errors.push(`Step ${i + 1}: cleanup is fixed to squash + soft-delete — hard-delete/no-squash overrides are rejected.`)
+    }
+    const mode = step.execution_mode ?? "sequential"
+    if (!(EXECUTION_MODES as readonly string[]).includes(mode)) {
+      errors.push(`Step ${i + 1}: invalid execution mode ${JSON.stringify(mode)} (expected sequential | parallel).`)
+    } else if (mode === "parallel" && (SEQUENTIAL_ONLY_STEPS as readonly string[]).includes(step.kind)) {
+      errors.push(`Step ${i + 1}: ${step.kind} steps always run sequentially across worktrees.`)
     }
   })
   return errors
@@ -359,6 +369,7 @@ export function ChainEditor({
   overrides = {},
   onOverridesChange,
   knownActions,
+  showExecutionMode = true,
 }: ChainEditorProps) {
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const errors = mode === "edit" ? validateChain(steps) : []
@@ -471,6 +482,40 @@ export function ChainEditor({
                       <option key={a.label} value={a.label}>{a.name} ({a.label})</option>
                     ))}
                   </select>
+                </div>
+              ) : null}
+              {mode === "edit" && showExecutionMode ? (
+                <div className="mb-2 flex items-center gap-2" role="radiogroup" aria-label={`Step ${i + 1} execution mode`}>
+                  <span className="text-xs text-muted-foreground">Runs</span>
+                  {EXECUTION_MODES.map((m) => {
+                    const active = (step.execution_mode ?? "sequential") === m
+                    const forced = (SEQUENTIAL_ONLY_STEPS as readonly string[]).includes(step.kind)
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        aria-label={`Step ${i + 1} ${m}`}
+                        disabled={forced && m === "parallel"}
+                        title={forced && m === "parallel" ? `${step.kind} steps always run sequentially across worktrees` : m === "parallel" ? "Run concurrently across worktrees" : "Run one worktree at a time"}
+                        onClick={() => {
+                          if (m === "sequential") {
+                            const next = { ...step }
+                            delete next.execution_mode
+                            setStep(i, next)
+                          } else {
+                            setStep(i, { ...step, execution_mode: m })
+                          }
+                        }}
+                        className={active
+                          ? "rounded-full bg-primary px-2.5 py-0.5 text-xs font-medium text-primary-foreground"
+                          : "rounded-full border px-2.5 py-0.5 text-xs text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"}
+                      >
+                        {m === "parallel" ? "Parallel" : "Sequential"}
+                      </button>
+                    )
+                  })}
                 </div>
               ) : null}
               <StepConfigForm

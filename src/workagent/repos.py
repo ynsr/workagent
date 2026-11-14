@@ -366,6 +366,11 @@ def register_repo(name: str, path: Path, tracker_key: str = "",
         return
     cfg = store.load_config()
     repos = cfg.setdefault("repos", {})
+    other = (repos.get(name) or {}).get("path", "")
+    if other and str(Path(other).expanduser().resolve()) != str(Path(str(path)).expanduser().resolve()):
+        raise HarnessError(
+            f"repo name {name!r} already registered for {other};"
+            " use another --name or remove it first", exit_code=2)
     repos[name] = {"path": str(path), "remote": remote_url(path),
                    "tool": _detect_host_cli(path),
                    "default_branch": default_branch_name or "",

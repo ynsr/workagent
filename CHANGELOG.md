@@ -1,8 +1,11 @@
 # Changelog
 ## Unreleased
 - Repos gain per-repo StatusTable overlay buttons: fixed + dedicated toggles via the Repos page dialog or repo update --overlay-buttons [59]
+- Flow template steps gain Parallel/Sequential mode for multi-worktree runs: all-parallel chains fan out at once, any sequential step runs worktrees one by one [61]
+- Serve restarts no longer kill running flows: detached runs survive shutdown and are re-adopted on boot [66]
 - StatusTable no longer blocks on issues without status labels: unknown issue states are cached like other cells [55]
 - Cache TTL docs now describe what each timeout covers [no-issue]
+- Repo names are now unique: reusing a name for another repo fails with a clear error instead of silently taking over [54]
 - Review accepts GitHub shorthand refs (OWNER/REPO#NUM resolves via gh; issue numbers fail with a start-first hint) [49]
 - Message runs fixed: per-message run keys, live Run buttons with confirm, repo-path fail-fast with --ref hint, plus rename guards [44]
 - Message launch pins repos with repo checkboxes (one run per repo) and messages track linked worktrees via --worktree [46]
@@ -562,6 +565,7 @@
 - Deleted Jira statuses map to survivors: Code Review moves to Review, Ready to Release and Released move to Product Test [48]
 - Fix-default checks the release branch CI too, so a red release pipeline no longer reports a false success [52]
 - Fix-default hands both failing branches to the harness and names the failing branch in dry-run plans and noops [52]
+- Retry live PR lookup in review/flow instead of failing on transient gh errors [60]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

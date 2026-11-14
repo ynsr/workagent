@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .store_sqlite import _norm, connect, init_db
+from .store_trackers import _insert_path_keyed_repo
 
 
 def _upsert_tracker_conn(conn, tid, vendor="", remote_url=""):
@@ -83,9 +84,8 @@ def save_links_rows(path: Path, links: dict) -> None:
                     with_tid = extra.get("tracker", "")
                     if with_tid:
                         _upsert_tracker_conn(conn, with_tid)
-                    conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
-                                 (norm, norm, norm.rsplit("/", 1)[-1] or norm))
-                    repo_key = norm
+                    repo_key = _insert_path_keyed_repo(
+                        conn, norm, norm.rsplit("/", 1)[-1] or norm)
                     if with_tid:
                         conn.execute("INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key)"
                                      " VALUES (?, ?)", (with_tid, repo_key))

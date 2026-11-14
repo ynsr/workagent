@@ -30,6 +30,23 @@ def test_repo_add_list_remove(isolated_config, tmp_path):
     assert json.loads(r.stdout) == {"removed": "proj"}
 
 
+def test_repo_add_name_collision_fails(isolated_config, tmp_path):
+    """Issue #54: reusing a registered name for another path exits 2."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    r = _invoke("repo", "add", "--name", "proj", "--path", str(a),
+                "--tracker", "IPG")
+    assert r.exit_code == 0
+    r = _invoke("repo", "add", "--name", "proj", "--path", str(b),
+                "--tracker", "IPG")
+    assert r.exit_code == 2
+    assert "already registered" in r.output
+    r = _invoke("repo", "add", "--name", "proj", "--path", str(a),
+                "--tracker", "IPG")
+    assert r.exit_code == 0
+
 def test_doctor_missing_and_ok(isolated_config, tmp_path, monkeypatch):
     from workagent import doctor as _doctor
     monkeypatch.setenv("HOME", str(tmp_path))

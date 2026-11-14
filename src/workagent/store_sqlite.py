@@ -604,6 +604,38 @@ def _migrate_repos_overlay_buttons(conn) -> None:
 
 
 
+def _migrate_repos_unique_name(conn) -> None:
+    """Schema v23: repos.name UNIQUE (registry keys by name — issue #54).
+
+    Legacy DBs predate the constraint and may hold duplicate names (or
+    ''-named auto-created rows): first row (rowid order) keeps its name,
+    later rows take ``<name>-2``/``<name>-3`` ('' → ``repo-2``/``repo-3``),
+    skipping taken names. Names that are already unique are kept verbatim
+    (even with surrounding whitespace); only a collision or empty name
+    forces a rewrite. Then the UNIQUE index is created. Idempotent:
+    re-runs no-op once the index exists and names are unique.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
+    if not cols or "name" not in cols:
+        return
+    taken = set()
+    for (key_ref, name) in conn.execute("SELECT key_ref, name FROM repos ORDER BY rowid"):
+        raw = name or ""
+        base = raw.strip() or "repo"
+        if raw == base and raw and base not in taken:
+            taken.add(base)
+            continue
+        if not raw or base in taken:
+            i = 2
+            while f"{base}-{i}" in taken:
+                i += 1
+            conn.execute("UPDATE repos SET name = ? WHERE key_ref = ?", (f"{base}-{i}", key_ref))
+            taken.add(f"{base}-{i}")
+            continue
+        taken.add(base)
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_repos_name ON repos(name)")
+
+
 def _migrate_sessions_type(conn) -> None:
     """Schema v6: sessions gains session_type + metadata (session-type spec).
     Backfill reads the fix-comments prompt header (the only surviving
@@ -822,7 +854,10 @@ def _schema_current(path: Path) -> bool:
         if "is_enabled" not in tcols:
             return False
         rcols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
-        if not {"default_branch", "release_branch"} <= rcols:
+        if not {"default_branch", "release_branch", "overlay_buttons"} <= rcols:
+            return False
+        if "idx_repos_name" not in {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'repos'")}:
             return False
         if "release_diff_cache" not in tables:
             return False
@@ -876,6 +911,7 @@ def init_db(path: Path) -> Path:
                 _migrate_repos_release(conn)
                 _migrate_repos_commands(conn)
                 _migrate_repos_overlay_buttons(conn)
+                _migrate_repos_unique_name(conn)
                 _migrate_worktrees_deleted_at(conn)
                 _migrate_worktrees_related(conn)
                 _migrate_flow_linkage(conn)
@@ -910,6 +946,8 @@ def _norm(p: str) -> str:
 
 
 from .store_trackers import (  # noqa: F401,E402
+    _claim_repo_name,
+    _insert_path_keyed_repo,
     add_tracker_repo,
     delete_tracker,
     ensure_tracker,
@@ -1009,10 +1047,8 @@ def backfill_trackers_repos(path: Path, cfg: dict,
                 row = conn.execute("SELECT key_ref FROM repos WHERE path = ?", (norm,)).fetchone()
                 if row is None:
                     key = norm
-                    name = key.rsplit("/", 1)[-1] if "/" in key else key
-                    conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
-                                 (key, norm, name or key))
-                    repo_key = key
+                    base = key.rsplit("/", 1)[-1] if "/" in key else key
+                    repo_key = _insert_path_keyed_repo(conn, key, base or key)
                 else:
                     repo_key = row[0]
                 counts["links"] += conn.execute(
@@ -1088,10 +1124,8 @@ def migrate_json(config_dir: Path, db_path: Path) -> dict:
                 row = conn.execute("SELECT key_ref FROM repos WHERE path = ?",
                                    (repo,)).fetchone()
                 if row is None:
-                    conn.execute(
-                        "INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
-                        (repo, repo, repo.rsplit("/", 1)[-1]))
-                    repo_key = repo
+                    repo_key = _insert_path_keyed_repo(
+                        conn, repo, repo.rsplit("/", 1)[-1] or repo)
                 else:
                     repo_key = row[0]
             conn.execute(

@@ -574,3 +574,75 @@ def test_insert_session_rejects_bad_type(tmp_path):
     with pytest.raises(ValueError):
         sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="x",
                           prompt="p", file_path="/f", session_type="nonsense")
+
+
+def test_repos_name_unique_fresh_db(tmp_path):
+    """Issue #54: fresh DBs enforce a UNIQUE name on repos (second name dies)."""
+    import sqlite3
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('a', '/r/a', 'dup')")
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('b', '/r/b', 'dup')")
+
+
+def test_migrate_repos_name_unique_dedupes_legacy_rows(tmp_path):
+    """Issue #54: legacy DBs with duplicate repo names migrate (first wins,
+    later rows renamed name-2/name-3) and gain the UNIQUE index."""
+    import sqlite3
+    db = tmp_path / "state.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE repos (key_ref TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL,"
+                     " name TEXT NOT NULL DEFAULT '', remote TEXT NOT NULL DEFAULT '',"
+                     " tool TEXT NOT NULL DEFAULT '')")
+        conn.execute("INSERT INTO repos VALUES ('a', '/r/a', 'dup', '', '')")
+        conn.execute("INSERT INTO repos VALUES ('b', '/r/b', 'dup', '', '')")
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        names = sorted(r[0] for r in conn.execute("SELECT name FROM repos"))
+        assert names == ["dup", "dup-2"]
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('c', '/r/c', 'dup')")
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('d', '/r/d', 'dup-2')")
+
+def test_register_repo_row_rejects_name_collision(tmp_path):
+    """Issue #54: registering a taken name for another path fails fast."""
+    from workagent.errors import HarnessError
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    sq.register_repo_row(db, "proj", "/proj", "jira:IPG")
+    with pytest.raises(HarnessError, match="already registered"):
+        sq.register_repo_row(db, "proj", "/other", "jira:IPG")
+
+
+def test_register_repo_row_unlinked_rejects_taken_name(tmp_path):
+    """Issue #54/PR #56: unlinked refresh raises on a taken name (no silent re-key)."""
+    from workagent.errors import HarnessError
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    sq.register_repo_row(db, "proj", "/proj", "jira:IPG")
+    sq.register_repo_row(db, "other", "/other", "jira:IPG")
+    with pytest.raises(HarnessError, match="already registered"):
+        sq.register_repo_row_unlinked(db, "proj", "/other")
+    with sq.connect(db) as conn:
+        rows = {r[0]: r[1] for r in conn.execute("SELECT key_ref, name FROM repos")}
+        assert rows == {"proj": "proj", "other": "other"}
+
+
+def test_migrate_repos_unique_name_keeps_unique_padded_name(tmp_path):
+    """Issue #54/PR #56: migration rewrites only colliding/empty names."""
+    import sqlite3
+    db = tmp_path / "state.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE repos (key_ref TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL,"
+                     " name TEXT NOT NULL, remote TEXT, tool TEXT)")
+        conn.execute("INSERT INTO repos VALUES ('a', '/r/a', '  spaced  ', '', '')")
+        conn.execute("INSERT INTO repos VALUES ('b', '/r/b', 'dup', '', '')")
+        conn.execute("INSERT INTO repos VALUES ('c', '/r/c', 'dup', '', '')")
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        names = {r[0]: r[1] for r in conn.execute("SELECT key_ref, name FROM repos")}
+        assert names["a"] == "  spaced  "
+        assert sorted([names["b"], names["c"]]) == ["dup", "dup-2"]
