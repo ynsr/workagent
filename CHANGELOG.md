@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Fixed message adhoc/validate runs failing with a missing-argument error: prompt runs now reach the harness in every mode [83]
+- Start gains plan mode: --plan constrains the agent to spec+plan only (no implementation), with an Implement/Plan toggle on the Launch form and a plan checkbox on flow start steps [88]
 
 - Restarting serve is faster: DB migrations stay synchronous while cleanup and branch backfill run in the background [81]
 - Message runs auto-register unlinked Mattermost permalinks on first use: fetch via mm and register, still fails with a clear --repo hint otherwise [79]

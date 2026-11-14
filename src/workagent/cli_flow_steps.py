@@ -64,7 +64,7 @@ def run_start_step(ref: str, key: str, config: dict,
                 **pick(config, "repo", "related_repo", "depth",
                        "base", "harness", "no_tty", "session_file",
                        "env_file", "extra_prompt", "no_status",
-                       "no_review"))
+                       "no_review", "plan"))
     if isinstance(out, dict) and out.get("preview"):
         return out
     # start returns None (prints its own result): recover the recorded

@@ -6,8 +6,8 @@ import { Label } from "@/components/ui/label"
 import { errorText } from "@/components/StatusFeedback"
 import { useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
-import { RUN_MODE_OPTIONS, REVIEW_ACTION_OPTIONS, PRODTEST_ACTION_OPTIONS, INITIAL, extraPromptArgs, runModeArgs } from "@/lib/launchConfig"
-import type { LaunchForm, RunMode, ReviewAction, ProdtestAction } from "@/lib/launchConfig"
+import { RUN_MODE_OPTIONS, REVIEW_ACTION_OPTIONS, PRODTEST_ACTION_OPTIONS, START_ACTION_OPTIONS, INITIAL, extraPromptArgs, runModeArgs } from "@/lib/launchConfig"
+import type { LaunchForm, RunMode, ReviewAction, ProdtestAction, StartAction } from "@/lib/launchConfig"
 import { RelatedReposSelect } from "@/components/RelatedReposSelect"
 import { loadLaunchPrefs } from "@/lib/launchPrefs"
 import { FieldHelp } from "@/components/FieldHelp"
@@ -59,34 +59,29 @@ export function RunModeSelect({ idPrefix, value, onChange, hidePreview = false }
 }
 
 
-/** Two-option Review/Fix segmented control for the Review tab. Review
- * runs the normal review (optionally chaining the fix via the checkrow
- * below); Fix runs the standalone `review --fix-comments` fix action in
- * the same review session. */
-export function ReviewActionSelect({ idPrefix, value, onChange }: {
+/** Two-option Implement/Plan segmented control for the Start tab. Implement
+ * runs the normal start; Plan runs `start --plan` (spec + plan only, no
+ * implementation). */
+export function StartActionSelect({ idPrefix, value, onChange }: {
   idPrefix: string
-  value: ReviewAction
-  onChange: (v: ReviewAction) => void
+  value: StartAction
+  onChange: (v: StartAction) => void
 }) {
   return (
     <div className="grid gap-1">
       <Label>
-        <FieldHelp
-          label="Action"
-          flag="review | --fix-comments"
-          description="Review the PR/MR, or fix its open review comments in the same session."
-        />
+        Action
       </Label>
       <div
         role="radiogroup"
-        aria-label="Review action"
+        aria-label="Start action"
         className="flex w-fit divide-x overflow-hidden rounded-md border text-sm"
       >
-        {REVIEW_ACTION_OPTIONS.map((opt) => (
+        {START_ACTION_OPTIONS.map((opt) => (
           <button
             key={opt.value}
             type="button"
-            id={`${idPrefix}-action-${opt.value}`}
+            id={`${idPrefix}-start-${opt.value}`}
             role="radio"
             aria-checked={value === opt.value}
             title={opt.hint}
@@ -280,6 +275,11 @@ export function StartFormFields({
         />
       </div>
       <div className="flex flex-wrap gap-x-6 gap-y-3">
+        <StartActionSelect
+          idPrefix={idPrefix}
+          value={form.startAction}
+          onChange={(v) => onChange("startAction", v)}
+        />
         <RunModeSelect
           idPrefix={idPrefix}
           value={form.runMode}
@@ -344,6 +344,7 @@ export function buildStartArgs(form: StartFormValue): string[] {
   // Preview/terminal are TTY copy-paste: no -p flag. Headless
   // (--no-tty, omp -p --auto-approve) only when actually running now.
   if (form.runMode === "headless") args.push("--no-tty")
+  if (form.startAction === "plan") args.push("--plan")
   if (repo) args.push("--repo", repo)
   for (const n of form.relatedRepos ?? []) {
     if (n.trim()) args.push("--related-repo", n.trim())
@@ -362,6 +363,7 @@ export function startFlagList(form: StartFormValue): string {
   const related = (form.relatedRepos ?? []).filter((n) => n.trim())
   return [
     form.runMode === "headless" ? "headless (--no-tty)" : form.runMode === "terminal" ? "terminal (--terminal)" : "tty preview (no --no-tty)",
+    form.startAction === "plan" ? "plan (--plan)" : "implement",
     repo ? `--repo ${repo}` : "repo: pick a repo",
     related.length ? `--related-repo ${related.join(", ")}` : null,
     `--depth ${form.depth.trim() || "7"}`,
@@ -378,7 +380,7 @@ export function useStartForm(initial?: Partial<StartFormValue>) {
     // Candidate Start dialog mirrors the Launch Start tab's stored prefs
     // (run mode + base); the clicked row's ref still wins via `initial`.
     const stored = loadLaunchPrefs().start
-    return { ...INITIAL, runMode: stored.runMode, base: stored.base, ...initial }
+    return { ...INITIAL, runMode: stored.runMode, startAction: stored.startAction, base: stored.base, ...initial }
   })
   function update<K extends keyof StartFormValue>(key: K, value: StartFormValue[K]) {
     setForm((f) => ({ ...f, [key]: value }))

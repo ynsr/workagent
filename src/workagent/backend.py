@@ -195,7 +195,8 @@ def _push_target_lines(worktree: str, branch: str) -> str:
 
 def prompt_for_issue(title: str, body: str, issue_ref: str,
                      worktree: str = "", branch: str = "",
-                     related_paths: list[tuple[str, str]] | None = None) -> str:
+                     related_paths: list[tuple[str, str]] | None = None,
+                     plan_mode: bool = False) -> str:
     prompt = f"Work on issue {issue_ref}: {title}\n\n{body}".strip()
     prompt += ("\n\nAt the end of the session: if there are code changes, "
                "commit, push to this branch, and open a PR/MR to the default "
@@ -203,6 +204,14 @@ def prompt_for_issue(title: str, body: str, issue_ref: str,
     prompt += ("\nOnly push and open a PR/MR for production-affecting changes "
                "(prod source, docs, or config); for non-prod work (testing released "
                "features/bugs, reports, analysis, ops tasks) do not push or open a PR/MR.")
+    if plan_mode:
+        prompt += ("\n\n## Plan mode\nNo implementation. Use the brainstorming "
+                   "skill to brainstorm and grill the user against the "
+                   "request/prompt. After writing the spec and plan MD files, "
+                   "push and open a PR/MR. Stop (no implementation).")
+    else:
+        prompt += ("\nIf any spec/plan files exist in the worktree or repo, "
+                   "read and use them before implementing.")
     if worktree and branch:
         prompt += _push_target_lines(worktree, branch)
     if related_paths:

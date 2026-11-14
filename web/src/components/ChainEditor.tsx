@@ -165,6 +165,7 @@ function StepConfigForm({
   // prodtest_plan → update checkbox (regenerate an existing plan).
   const showRelated = kind === "start"
   const showRepo = kind === "start"
+  const showPlan = kind === "start"
   const showExtraPrompt = kind === "start" || kind === "review" || kind === "fix_comments" || kind === "action" || kind === "prodtest_plan"
   const showNewFixSession = kind === "fix_comments"
   const showMergeOnly = kind === "cleanup"

@@ -62,6 +62,7 @@ def start(
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
     no_status: bool = typer.Option(False, "--no-status", help="Skip automatic issue status transitions."),
     no_review: bool = typer.Option(False, "--no-review", help="Chain has no later review step: post-start status is 'done' when no PR/MR exists, else 'code review'."),
+    plan: bool = typer.Option(False, "--plan", help="Plan mode: no implementation — brainstorm/grill the user, write spec+plan MD files, push and open a PR/MR, then stop."),
 ) -> None:
     """Create worktree from issue and launch harness.
 
@@ -147,7 +148,7 @@ def start(
         _reuse_ref = str(existing.get("issue_url", "") or existing.get("issue", "") or ref)
         _launch_in_worktree(key, existing, harness, no_tty, launch,
                             session_file, json_output, extra_prompt,
-                            terminal=terminal, env_file=env_file)
+                            terminal=terminal, env_file=env_file, plan=plan)
         _start_post_status(_reuse_ref, launch, terminal, no_status, no_review)
         return
     r, detected_default, tid, outcome = trackers.resolve_repo_for_ref(
@@ -246,7 +247,7 @@ def start(
     child_paths = _fan_out_related(parsed, key, branch, base_branch, related_paths)
     prompt = backend.prompt_for_issue(issue["title"], issue["body"], ref,
                                       worktree=worktree, branch=branch,
-                                      related_paths=child_paths)
+                                      related_paths=child_paths, plan_mode=plan)
     prompt = append_extra_prompt(prompt, extra_prompt)
     result = {"worktree_path": worktree, "branch": branch,
               "base": detected_default if branch_mode else base_branch,
