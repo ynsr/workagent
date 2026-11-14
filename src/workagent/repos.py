@@ -315,7 +315,7 @@ def register_repo(name: str, path: Path, tracker_key: str = "",
     cfg = store.load_config()
     repos = cfg.setdefault("repos", {})
     other = (repos.get(name) or {}).get("path", "")
-    if other and str(Path(other).expanduser()) != str(Path(str(path)).expanduser()):
+    if other and str(Path(other).expanduser().resolve()) != str(Path(str(path)).expanduser().resolve()):
         raise HarnessError(
             f"repo name {name!r} already registered for {other};"
             " use another --name or remove it first", exit_code=2)

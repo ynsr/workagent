@@ -596,7 +596,9 @@ def _migrate_repos_unique_name(conn) -> None:
     Legacy DBs predate the constraint and may hold duplicate names (or
     ''-named auto-created rows): first row (rowid order) keeps its name,
     later rows take ``<name>-2``/``<name>-3`` ('' → ``repo-2``/``repo-3``),
-    skipping taken names. Then the UNIQUE index is created. Idempotent:
+    skipping taken names. Names that are already unique are kept verbatim
+    (even with surrounding whitespace); only a collision or empty name
+    forces a rewrite. Then the UNIQUE index is created. Idempotent:
     re-runs no-op once the index exists and names are unique.
     """
     cols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
@@ -604,17 +606,19 @@ def _migrate_repos_unique_name(conn) -> None:
         return
     taken = set()
     for (key_ref, name) in conn.execute("SELECT key_ref, name FROM repos ORDER BY rowid"):
-        base = (name or "").strip() or "repo"
-        if base not in taken:
+        raw = name or ""
+        base = raw.strip() or "repo"
+        if raw == base and raw and base not in taken:
             taken.add(base)
-            if name != base:
-                conn.execute("UPDATE repos SET name = ? WHERE key_ref = ?", (base, key_ref))
             continue
-        i = 2
-        while f"{base}-{i}" in taken:
-            i += 1
-        conn.execute("UPDATE repos SET name = ? WHERE key_ref = ?", (f"{base}-{i}", key_ref))
-        taken.add(f"{base}-{i}")
+        if not raw or base in taken:
+            i = 2
+            while f"{base}-{i}" in taken:
+                i += 1
+            conn.execute("UPDATE repos SET name = ? WHERE key_ref = ?", (f"{base}-{i}", key_ref))
+            taken.add(f"{base}-{i}")
+            continue
+        taken.add(base)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_repos_name ON repos(name)")
 
 
@@ -927,6 +931,8 @@ def _norm(p: str) -> str:
 
 
 from .store_trackers import (  # noqa: F401,E402
+    _claim_repo_name,
+    _insert_path_keyed_repo,
     add_tracker_repo,
     delete_tracker,
     ensure_tracker,
@@ -1025,12 +1031,9 @@ def backfill_trackers_repos(path: Path, cfg: dict,
                 norm = _norm(str(r))
                 row = conn.execute("SELECT key_ref FROM repos WHERE path = ?", (norm,)).fetchone()
                 if row is None:
-                    from .store_trackers import _claim_repo_name
                     key = norm
                     base = key.rsplit("/", 1)[-1] if "/" in key else key
-                    conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
-                                 (key, norm, _claim_repo_name(conn, base or key)))
-                    repo_key = key
+                    repo_key = _insert_path_keyed_repo(conn, key, base or key)
                 else:
                     repo_key = row[0]
                 counts["links"] += conn.execute(
@@ -1106,11 +1109,8 @@ def migrate_json(config_dir: Path, db_path: Path) -> dict:
                 row = conn.execute("SELECT key_ref FROM repos WHERE path = ?",
                                    (repo,)).fetchone()
                 if row is None:
-                    from .store_trackers import _claim_repo_name
-                    conn.execute(
-                        "INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
-                        (repo, repo, _claim_repo_name(conn, repo.rsplit("/", 1)[-1] or repo)))
-                    repo_key = repo
+                    repo_key = _insert_path_keyed_repo(
+                        conn, repo, repo.rsplit("/", 1)[-1] or repo)
                 else:
                     repo_key = row[0]
             conn.execute(

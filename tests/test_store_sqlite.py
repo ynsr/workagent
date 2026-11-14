@@ -615,3 +615,34 @@ def test_register_repo_row_rejects_name_collision(tmp_path):
     sq.register_repo_row(db, "proj", "/proj", "jira:IPG")
     with pytest.raises(HarnessError, match="already registered"):
         sq.register_repo_row(db, "proj", "/other", "jira:IPG")
+
+
+def test_register_repo_row_unlinked_rejects_taken_name(tmp_path):
+    """Issue #54/PR #56: unlinked refresh raises on a taken name (no silent re-key)."""
+    from workagent.errors import HarnessError
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    sq.register_repo_row(db, "proj", "/proj", "jira:IPG")
+    sq.register_repo_row(db, "other", "/other", "jira:IPG")
+    with pytest.raises(HarnessError, match="already registered"):
+        sq.register_repo_row_unlinked(db, "proj", "/other")
+    with sq.connect(db) as conn:
+        rows = {r[0]: r[1] for r in conn.execute("SELECT key_ref, name FROM repos")}
+        assert rows == {"proj": "proj", "other": "other"}
+
+
+def test_migrate_repos_unique_name_keeps_unique_padded_name(tmp_path):
+    """Issue #54/PR #56: migration rewrites only colliding/empty names."""
+    import sqlite3
+    db = tmp_path / "state.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE repos (key_ref TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL,"
+                     " name TEXT NOT NULL, remote TEXT, tool TEXT)")
+        conn.execute("INSERT INTO repos VALUES ('a', '/r/a', '  spaced  ', '', '')")
+        conn.execute("INSERT INTO repos VALUES ('b', '/r/b', 'dup', '', '')")
+        conn.execute("INSERT INTO repos VALUES ('c', '/r/c', 'dup', '', '')")
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        names = {r[0]: r[1] for r in conn.execute("SELECT key_ref, name FROM repos")}
+        assert names["a"] == "  spaced  "
+        assert sorted([names["b"], names["c"]]) == ["dup", "dup-2"]
