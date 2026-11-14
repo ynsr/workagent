@@ -29,18 +29,24 @@ import os
 #:
 #: Per-cache overrides (all optional, seconds, invalid → default):
 #: - WORKAGENT_STATUS_TTL_SECONDS / WORKAGENT_STATUS_SWR_SECONDS
-#:   (positive PR cell; defaults 259200 / 2592000)
+#:   (status-table linked-PR cells: per-repo open/merged PR lookup;
+#:   defaults 259200 / 2592000)
 #: - WORKAGENT_NEGATIVE_TTL_SECONDS / WORKAGENT_NEGATIVE_SWR_SECONDS
-#:   (cached no-PR result; defaults 1800 / 86400)
+#:   (cached "no PR for this repo" answers, avoids re-querying empty repos;
+#:   defaults 1800 / 86400)
 #: - WORKAGENT_CI_TTL_SECONDS / WORKAGENT_CI_SWR_SECONDS
 #:   (CI pipeline + review stats + issue status cells; defaults 600 / 86400)
 #: - WORKAGENT_ISSUES_TTL_SECONDS / WORKAGENT_ISSUES_SWR_SECONDS
-#:   (tracker issue rows; defaults 3600 / 86400)
+#:   (tracker issue rows: gh/glab/jira issue-list queries; defaults 3600 / 86400)
 #: - WORKAGENT_PRS_CACHE_TTL_SECONDS / WORKAGENT_PRS_CACHE_SWR_SECONDS
-#:   (unlinked PR/MR candidates; defaults 600 / 86400)
+#:   (unlinked PR/MR candidates tab: open PRs/MRs not linked to a repo;
+#:   defaults 600 / 86400)
 #: - WORKAGENT_RELEASE_DIFF_TTL_SECONDS / WORKAGENT_RELEASE_DIFF_SWR_SECONDS
-#:   (release ahead/behind diff; defaults 3600 / 86400)
-#: - WORKAGENT_RELEASE_CAPS_TTL_SECONDS (merge-capability memo; default 600)
+#:   (release ahead/behind diff count: commits default..release branch;
+#:   defaults 3600 / 86400)
+#: - WORKAGENT_RELEASE_CAPS_TTL_SECONDS
+#:   (merge-capability memo: per-repo merge strategy ff-push / mr-ff / merge-commit;
+#:   default 600)
 #: - WORKAGENT_STATUS_TIMEOUT (host-CLI per-call timeout; default 12)
 _SWR_FLOOR_SECONDS = 24 * 3600
 

@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Cache TTL docs now describe what each timeout covers [no-issue]
 - Review accepts GitHub shorthand refs (OWNER/REPO#NUM resolves via gh; issue numbers fail with a start-first hint) [49]
 - Message runs fixed: per-message run keys, live Run buttons with confirm, repo-path fail-fast with --ref hint, plus rename guards [44]
 - Message launch pins repos with repo checkboxes (one run per repo) and messages track linked worktrees via --worktree [46]
