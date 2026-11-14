@@ -723,12 +723,29 @@ def test_resume_rejects_different_steps_override(monkeypatch):
     assert res4.exit_code == 2, res4.output
     assert "--fresh" in res4.output
     assert ran == ["cleanup"]
-    # --fresh starts the new chain instead of resuming.
+    # Legacy row resumed with a --steps chain matching the launch template
+    # proceeds (equal-to-baseline is a faithful resume, not a new chain).
     res5 = runner.invoke(cli_mod.app,
+                         ["flow", "run", "rfc", "k", "--yes",
+                          "--steps", '[{"kind": "review"}, {"kind": "fix_comments"}, '
+                                     '{"kind": "sync"}, {"kind": "cleanup"}]'])
+    assert res5.exit_code == 0, res5.output
+    # --fresh starts the new chain instead of resuming.
+    res6 = runner.invoke(cli_mod.app,
                          ["flow", "run", "rfc", "k", "--yes", "--fresh",
                           "--steps", '[{"kind": "sync"}, {"kind": "cleanup"}]'])
-    assert res5.exit_code == 0, res5.output
-    assert ran == ["cleanup", "sync", "cleanup"]
+    assert res6.exit_code == 0, res6.output
+    assert ran == ["cleanup", "cleanup", "sync", "cleanup"]
+    # Template drift without --steps still resumes the stored chain: the
+    # stored effective chain is authoritative, template edits must not
+    # break (or silently reshape) a paused run.
+    monkeypatch.setattr("workagent.store.get_template",
+                        lambda l: {"label": "rfc", "name": "RFC",
+                                   "steps": [{"kind": "sync"}, {"kind": "cleanup"}]})
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [existing])
+    res7 = runner.invoke(cli_mod.app, ["flow", "run", "rfc", "k", "--yes"])
+    assert res7.exit_code == 0, res7.output
+    assert ran == ["cleanup", "cleanup", "sync", "cleanup", "cleanup"]
 
 
 

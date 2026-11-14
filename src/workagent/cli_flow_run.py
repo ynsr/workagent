@@ -306,9 +306,12 @@ def flow_run(
             snap = {"repo": repo, "launch_ref": ref, "default_branch": str(
                 info.get("default_branch", "") or ""),
                 "release_branch": str(info.get("release_branch", "") or "")}
+        # Always store the normalized chain: template launches produce
+        # legacy None rows whose resume cannot be verified against a later
+        # --steps override (issue #77 follow-up).
         flow = store.create_flow(template_label=tpl["label"], worktree_ref=key,
                                  repo_snapshot=snap,
-                                 effective_steps=merged_steps if steps_override else None)
+                                 effective_steps=merged_steps)
     fid = flow["id"]
     if not (flow.get("repo_snapshot") or {}).get("repo"):
         # Pre-fix rows (flow 26) carry {'launch_ref'} only — repair on
