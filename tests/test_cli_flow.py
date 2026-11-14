@@ -785,3 +785,43 @@ def test_template_update_display_flags(tmp_path, monkeypatch):
     assert updated.get("protected") is True
     assert updated.get("sort_order") == 9
     assert updated.get("dedicated_top_bar") is False
+
+
+def test_start_step_returns_recorded_key_not_url(monkeypatch):
+    """Flow #71: start must hand downstream steps a link key, not the URL.
+
+    Repro: GitHub issue URL with both a jira:IPG-1069@... kin row and a
+    github:o/r#69 row linked — returning {"key": <url>} made the review
+    step resolve to [jira:.., github:..] and fail "ambiguous ref" under
+    --yes. The start step must return the canonical recorded key.
+    """
+    import workagent.cli_flow_steps as m
+    import workagent.cli_start as s
+    url = "https://github.com/ynsr/workagent/issues/69"
+    links = {
+        "jira:IPG-1069@projectx": {"worktree": "/wt/a", "branch": "b1",
+                                   "repo": "/r1", "issue_url": url},
+        "github:ynsr/workagent#69": {"worktree": "/wt/b", "branch": "feat/69--x",
+                                     "repo": "/r2", "issue_url": url},
+    }
+    monkeypatch.setattr(s.start, "__wrapped__",
+                        lambda *a, **k: None)
+    monkeypatch.setattr("workagent.store.load_links",
+                        lambda **k: dict(links))
+    out = m.run_start_step(url, "", {"launch": True}, False,
+                           lambda *a, **k: {}, lambda *a, **k: {})
+    assert out["key"] == "github:ynsr/workagent#69"
+    assert out["status"] == "started"
+
+
+def test_resolve_url_with_cross_tracker_kin_prefers_exact(monkeypatch):
+    """Flow #71 resolver half: a stored issue_url match wins over kin."""
+    from workagent import worktrees
+    url = "https://github.com/ynsr/workagent/issues/69"
+    links = {
+        "jira:IPG-1069@projectx": {"worktree": "/wt/a", "branch": "b1",
+                                   "repo": "/r1", "issue_url": url},
+        "github:ynsr/workagent#69": {"worktree": "/wt/b", "branch": "feat/69--x",
+                                     "repo": "/r2", "issue_url": url},
+    }
+    assert worktrees.resolve_worktree(url, links) == "github:ynsr/workagent#69"

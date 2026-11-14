@@ -67,7 +67,35 @@ def run_start_step(ref: str, key: str, config: dict,
                        "no_review"))
     if isinstance(out, dict) and out.get("preview"):
         return out
-    return {"key": ref, "ref": ref, "status": "started"}
+    # start returns None (prints its own result): recover the recorded
+    # link key so downstream steps get a key, not the raw issue URL
+    # (flow #71: {"key": <url>} re-resolved to [jira:IPG-1069@..,
+    # github:o/r#69] and the review step died "ambiguous ref" under
+    # --yes). Canonical key first, then bare/suffixed kin, then the stored
+    # issue_url match; fall back to the pre-step key, then ref.
+    from . import refs as _refs
+    from . import store as _store
+    from . import worktrees as _wt
+    new_key = key or ""
+    try:
+        links = _store.load_links(include_deleted=True)
+        parsed = _refs.parse_ref(ref)
+        canon = _refs.issue_key(parsed)
+        hit = links.get(canon, {}) or {}
+        if hit.get("worktree"):
+            new_key = canon
+        else:
+            kin = [k for k in _refs.matching_issue_keys(canon, links)
+                   if (links.get(k) or {}).get("worktree")]
+            if len(kin) == 1:
+                new_key = kin[0]
+            else:
+                resolved = _wt.resolve_worktree(ref, links)
+                if isinstance(resolved, str):
+                    new_key = resolved
+    except Exception:
+        pass
+    return {"key": new_key or ref, "ref": ref, "status": "started"}
 
 
 def run_review_step(key: str, config: dict, fix_comments: bool,

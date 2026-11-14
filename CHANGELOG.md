@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Flow run with a cross-tracker issue URL no longer dies ambiguous: start hands downstream steps the link key and URL refs prefer the stored row [71]
 - Repos gain per-repo StatusTable overlay buttons: fixed + dedicated toggles via the Repos page dialog or repo update --overlay-buttons [59]
 - Flow template steps gain Parallel/Sequential mode for multi-worktree runs: all-parallel chains fan out at once, any sequential step runs worktrees one by one [61]
 - Serve restarts no longer kill running flows: detached runs survive shutdown and are re-adopted on boot [66]

@@ -96,6 +96,17 @@ def resolve_worktree(ref: str, links: dict) -> str | list[str] | None:
         return None
     if len(matches) == 1:
         return matches[0]
+    stored_urls = {str((v or {}).get("issue_url", "") or "") for v in links.values()}
+    if exact is not None and (ref == exact
+            or ref in stored_urls
+            or ref == (links.get(exact, {}) or {}).get("branch", "")):
+        # A canonical row hit wins outright: the substring scan (bare "69"
+        # matching "IPG-1069", "69" in branch slugs, ...) must not dilute
+        # it into an ambiguous list (flow #71: the GitHub issue URL
+        # matched both its jira:IPG-1069@... and github:o/r#69 kin rows
+        # under --yes). The stored issue_url check covers URL refs whose
+        # canonical key differs from the URL (github:o/r#69 row).
+        return exact
     return matches
 
 
