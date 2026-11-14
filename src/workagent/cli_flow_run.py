@@ -102,6 +102,12 @@ def _flow_child_key(key: str, ref: str, entry: dict | None = None) -> str:
     return ""
 
 
+def _chain_sig(chain: list[dict]) -> list:
+    """Comparable signature of a normalized step chain (kind + action + mode)."""
+    return [(s.get("kind"), str(s.get("action_label") or ""),
+             str(s.get("execution_mode") or "")) for s in chain]
+
+
 def _begin_step_run(fid: int, flow_key: str, kind: str, banner: str) -> int:
     """Create the step's child run row at step start (NULL = not begun).
 
@@ -227,6 +233,16 @@ def flow_run(
                                          get_action=store.get_action)
         except HarnessError as e:
             _fail(f"stored effective steps invalid: {e}", EXIT_GENERAL)
+        if steps_override and _chain_sig(merged_steps) != _chain_sig(steps):
+            # A launch-time --steps chain is NOT a resume: the stored
+            # current_step indexes the OLD chain, so continuing would
+            # silently skip/renumber steps (issue #77: a 2-step
+            # [sync, cleanup] override resumed a 4-step run at
+            # current_step=3 and executed only cleanup). Fail fast.
+            _fail(f"--steps differs from the resumable run {flow['id']} "
+                  f"(current step {flow.get('current_step')}) — re-run "
+                  f"with --fresh for a new run on the new chain, or "
+                  f"without --steps to resume", EXIT_USAGE)
         merged_steps = [{**s, "config": _merge_config(
             s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
             for i, s in enumerate(steps)]
