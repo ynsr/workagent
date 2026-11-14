@@ -1,4 +1,4 @@
-"""`release fix-default`: rebase the default branch onto release / fix its CI.
+"""`release fix-default`: rebase the default branch onto release / fix failing branch CI.
 
 `plan_fix_default` is the dry-run planner; `run_fix_default` executes it. The
 rebase step asks the host to rewrite origin/<default> through the
@@ -185,20 +185,24 @@ def _rebase_step(ctx: dict, result: dict,
     return None
 
 
-def _ci_step(ctx: dict, result: dict) -> str:
-    # Fix the branch whose pipeline actually failed: release CI runs the same
-    # suite post-merge, so a red release pipeline is the one to hand to the
-    # harness even when the default branch is green.
-    branch = str(ctx["default_branch"])
-    url = str(result.get("ci_url", "") or "")
-    if str(result.get("release_ci", "")) == "failure":
-        branch = str(ctx["release_branch"])
-        url = str(result.get("release_ci_url", "") or url)
-    logs = _ci_logs(ctx["tool"], ctx["path"], ctx["remote"], url)
-    if logs:
-        result["ci_log_chars"] = len(logs)
-    return _ci_prompt(branch, url or "(pipeline url unknown)",
-                      logs)
+def _ci_step(ctx: dict, result: dict) -> list[str]:
+    # Fix every branch whose pipeline actually failed: release CI runs the same
+    # suite post-merge, so a red release pipeline goes to the harness even
+    # when the default branch is green — and when both fail, both reach the
+    # harness (default first) instead of silently dropping one.
+    prompts: list[str] = []
+    for branch_key, url_key, branch in (
+        ("ci", "ci_url", str(ctx["default_branch"])),
+        ("release_ci", "release_ci_url", str(ctx["release_branch"])),
+    ):
+        if str(result.get(branch_key, "")) != "failure":
+            continue
+        url = str(result.get(url_key, "") or "")
+        logs = _ci_logs(ctx["tool"], ctx["path"], ctx["remote"], url)
+        if logs:
+            result["ci_log_chars"] = result.get("ci_log_chars", 0) + len(logs)
+        prompts.append(_ci_prompt(branch, url or "(pipeline url unknown)", logs))
+    return prompts
 
 
 def _confirm_fix(ctx: dict, yes: bool) -> None:
@@ -260,7 +264,11 @@ def plan_fix_default(name: str, action: str) -> dict:
         parts.append(f"open {default}->{release_branch} MR + remote rebase, "
                      "fallback local harness")
     if action in ("ci", "both") and ci_failed:
-        parts.append("fix failing default-branch CI via harness")
+        failing = " and ".join(b for b, failed in
+                               ((default, ci == "failure"),
+                                (release_branch, release_ci == "failure"))
+                               if failed)
+        parts.append(f"fix failing {failing}-branch CI via harness")
     if parts:
         plan = "; ".join(parts)
     else:
@@ -268,7 +276,7 @@ def plan_fix_default(name: str, action: str) -> dict:
         if action in ("rebase", "both"):
             why.append(f"default not behind {release_branch} (behind=0)")
         if action in ("ci", "both"):
-            why.append(f"CI is {ci}")
+            why.append(f"CI is {ci} (release CI is {release_ci})")
         plan = "noop: " + "; ".join(why)
     return {"repo": name, "action": action, "default_branch": default,
             "release_branch": release_branch, "ahead": ahead,
@@ -311,7 +319,7 @@ def run_fix_default(name: str, *, action: str, run_mode: str = "preview",
         if rebase_prompt:
             prompts.append(rebase_prompt)
     if ci_wanted:
-        prompts.append(_ci_step(ctx, result))
+        prompts.extend(_ci_step(ctx, result))
     if not prompts:
         # The host did every step: nothing for the harness to do.
         eprint(f"{name}: nothing left for the harness")

@@ -1026,3 +1026,33 @@ def test_fix_default_ci_targets_release_branch_prompt(
     out = json.loads(r.stdout)
     assert "Fix the failing CI on master: https://ci/jobs/9" in out["harness_prompt"]
     assert calls == []
+
+def test_fix_default_ci_prompts_both_branches_when_both_fail(
+        isolated_config, tmp_path, monkeypatch):
+    """Both branches failing: both prompts reach the harness, default first."""
+    import json
+
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    _fix = _fix_repo(monkeypatch, tmp_path, behind=0,
+                     ci=("failure", "https://ci/jobs/7"),
+                     release_ci=("failure", "https://ci/jobs/9"))
+    monkeypatch.setattr(_fix, "_find_or_open_mr",
+                        lambda *a, **k: "https://h/mr/1")
+    calls: list[dict] = []
+    _record_launches(monkeypatch, calls)
+    r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
+                                      "--action", "ci",
+                                      "--dry-run", "--json"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert "main" in out["plan"] and "master" in out["plan"]
+    r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
+                                      "--action", "ci", "--json"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    prompt = out["harness_prompt"]
+    assert "Fix the failing CI on main: https://ci/jobs/7" in prompt
+    assert "Fix the failing CI on master: https://ci/jobs/9" in prompt
+    assert prompt.index("main:") < prompt.index("master:")
+    assert calls == []
