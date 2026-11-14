@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Message adhoc on an already-registered message no longer fails asking for --repo: local lookup runs before the mm fetch [85]
+- Fixed message adhoc/validate runs failing with a missing-argument error: prompt runs now reach the harness in every mode [83]
 - Restarting serve is faster: DB migrations stay synchronous while cleanup and branch backfill run in the background [81]
 - Message runs auto-register unlinked Mattermost permalinks on first use: fetch via mm and register, still fails with a clear --repo hint otherwise [79]
 - Flow run with a cross-tracker issue URL no longer dies ambiguous: start hands downstream steps the link key and URL refs prefer the stored row [71]

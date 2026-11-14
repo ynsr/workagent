@@ -246,13 +246,16 @@ def _run_prompt(msg: dict, prompt: str, ref_opt: str, repo_opt: str, launch: boo
         eprint(f"run prompt on message {msg.get('message_id')} ({workdir})? [y/N] ", end="")
         if (_sys.stdin.readline() or "").strip().lower() not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)
-    if key:
-        _guard_harness(key, workdir)
+    if mode != "preview":
+        _guard_harness(key or None, workdir)
+    use_launch = mode == "headless"
+    use_terminal = mode == "terminal"
     _run_harness(harness or store.load_config().get("default_harness", "omp"),
-                 body, workdir, workdir, mode == "preview", mode != "terminal",
+                 body, workdir, workdir, use_launch, use_launch,
                  {"command": "message", "session_metadata": {"action": "message",
                   "mode": mode, "message_id": msg.get("message_id")}},
-                 env_file=env_file, session_file=session_file)
+                 json_output, run_key=key or None, session_file=session_file,
+                 terminal=use_terminal, env_file=env_file)
     _print_result({"message": msg.get("message_id"), "workdir": workdir,
                    "key": key, "mode": mode}, json_output)
 

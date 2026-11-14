@@ -339,3 +339,42 @@ def test_message_adhoc_registered_wins_over_fetch_with_many_repos(tmp_path, monk
                                       "--prompt", "hi", "--dry-run", "--json"])
     assert res.exit_code == 0, res.output
     assert mid in res.output
+
+
+def test_message_adhoc_terminal_reaches_harness(tmp_path, monkeypatch):
+    """Issue #83: message adhoc --terminal died on a missing json_output arg."""
+    from workagent import store_messages as sm
+    _seed(tmp_path, monkeypatch)
+    sm.create_message(sm_db_path(tmp_path), message_id="p1", repos=["r1"])
+    import workagent.cli_message as cm
+    calls = {}
+    def _fake(name, prompt, wt, fb, no_tty, launch, result, json_output,
+              run_key=None, session_file=None, terminal=False, env_file=None,
+              timeout_s=None):
+        calls.update(no_tty=no_tty, launch=launch, terminal=terminal)
+    monkeypatch.setattr("workagent.cli_harness._run_harness", _fake)
+    monkeypatch.setattr("workagent.cli_harness._guard_harness", lambda *a, **k: None)
+    monkeypatch.setattr(cm, "_resolve_exec", lambda msg, ref, repo: ("/tmp/r1", ""))
+    msg = sm.resolve_message(sm_db_path(tmp_path), "p1")
+    cm._run_prompt(msg, "what does this mean?", "", "", False, True,
+                   None, None, None, None, False, True, False)
+    assert calls == {"no_tty": False, "launch": False, "terminal": True}
+
+def test_message_adhoc_headless_reaches_harness(tmp_path, monkeypatch):
+    """Headless sibling of the #83 terminal regression test."""
+    from workagent import store_messages as sm
+    _seed(tmp_path, monkeypatch)
+    sm.create_message(sm_db_path(tmp_path), message_id="p1", repos=["r1"])
+    import workagent.cli_message as cm
+    calls = {}
+    def _fake(name, prompt, wt, fb, no_tty, launch, result, json_output,
+              run_key=None, session_file=None, terminal=False, env_file=None,
+              timeout_s=None):
+        calls.update(no_tty=no_tty, launch=launch, terminal=terminal)
+    monkeypatch.setattr("workagent.cli_harness._run_harness", _fake)
+    monkeypatch.setattr("workagent.cli_harness._guard_harness", lambda *a, **k: None)
+    monkeypatch.setattr(cm, "_resolve_exec", lambda msg, ref, repo: ("/tmp/r1", ""))
+    msg = sm.resolve_message(sm_db_path(tmp_path), "p1")
+    cm._run_prompt(msg, "what does this mean?", "", "", True, False,
+                   None, None, None, None, False, True, False)
+    assert calls == {"no_tty": True, "launch": True, "terminal": False}
