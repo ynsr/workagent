@@ -788,7 +788,8 @@ def test_fix_default_rebase_noop_when_not_behind(
     monkeypatch.setattr(_rr, "_fetch_refs", lambda *a, **k: None)
     monkeypatch.setattr(_rr, "_count_both", lambda *a, **k: (2, 0))
     from workagent import cli_release_fix as _fix
-    monkeypatch.setattr(_fix, "_ci_status", lambda *a, **k: ("success", ""))
+    monkeypatch.setattr(_fix, "_ci_status",
+                        lambda tool, path, remote, branch: ("success", ""))
     r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
                                       "--action", "rebase",
                                       "--dry-run", "--json"])
@@ -803,7 +804,8 @@ _DEFAULT_SHA = "1111111111222222222233333333334444444444"
 _RELEASE_SHA = "5555555566666666777777778888888899999999aa"
 
 
-def _fix_repo(monkeypatch, tmp_path, *, behind=2, ci=("success", "")):
+def _fix_repo(monkeypatch, tmp_path, *, behind=2, ci=("success", ""),
+              release_ci=("success", "")):
     """Registry + git/CI seams for the `release fix-default` execute tests."""
     from workagent import cli_release_fix as _fix
     from workagent import repos_release as _rr
@@ -814,7 +816,8 @@ def _fix_repo(monkeypatch, tmp_path, *, behind=2, ci=("success", "")):
         "remote": "https://h/o/r.git", "fetch_enabled": False}})
     monkeypatch.setattr(_rr, "_fetch_refs", lambda *a, **k: None)
     monkeypatch.setattr(_rr, "_count_both", lambda *a, **k: (4, behind))
-    monkeypatch.setattr(_fix, "_ci_status", lambda *a, **k: ci)
+    monkeypatch.setattr(_fix, "_ci_status",
+                        lambda tool, path, remote, branch: release_ci if branch == "master" else ci)
     monkeypatch.setattr(_fix, "_branch_sha",
                         lambda path, branch: {"main": _DEFAULT_SHA,
                                               "master": _RELEASE_SHA}.get(branch, ""))
@@ -982,4 +985,74 @@ def test_fix_default_bad_run_mode_exits_2(isolated_config, tmp_path, monkeypatch
     _fix_repo(monkeypatch, tmp_path)
     r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
                                       "--run-mode", "streaming"])
-    assert r.exit_code == 2
+
+def test_fix_default_ci_fires_on_release_branch_failure(
+        isolated_config, tmp_path, monkeypatch):
+    """#52: green default + red release CI must not report a noop."""
+    import json
+
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    _fix_repo(monkeypatch, tmp_path, behind=0,
+              ci=("success", "https://ci/jobs/7"),
+              release_ci=("failure", "https://ci/jobs/9"))
+    r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
+                                      "--action", "ci",
+                                      "--dry-run", "--json"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert out["ci"] == "success"
+    assert out["release_ci"] == "failure"
+    assert "noop" not in out["plan"].lower()
+
+
+def test_fix_default_ci_targets_release_branch_prompt(
+        isolated_config, tmp_path, monkeypatch):
+    """#52: the harness prompt names the failing release branch + its job URL."""
+    import json
+
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    _fix = _fix_repo(monkeypatch, tmp_path, behind=0,
+                     ci=("success", "https://ci/jobs/7"),
+                     release_ci=("failure", "https://ci/jobs/9"))
+    monkeypatch.setattr(_fix, "_find_or_open_mr",
+                        lambda *a, **k: "https://h/mr/1")
+    calls: list[dict] = []
+    _record_launches(monkeypatch, calls)
+    r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
+                                      "--action", "ci", "--json"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert "Fix the failing CI on master: https://ci/jobs/9" in out["harness_prompt"]
+    assert calls == []
+
+def test_fix_default_ci_prompts_both_branches_when_both_fail(
+        isolated_config, tmp_path, monkeypatch):
+    """Both branches failing: both prompts reach the harness, default first."""
+    import json
+
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    _fix = _fix_repo(monkeypatch, tmp_path, behind=0,
+                     ci=("failure", "https://ci/jobs/7"),
+                     release_ci=("failure", "https://ci/jobs/9"))
+    monkeypatch.setattr(_fix, "_find_or_open_mr",
+                        lambda *a, **k: "https://h/mr/1")
+    calls: list[dict] = []
+    _record_launches(monkeypatch, calls)
+    r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
+                                      "--action", "ci",
+                                      "--dry-run", "--json"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert "main" in out["plan"] and "master" in out["plan"]
+    r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
+                                      "--action", "ci", "--json"])
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    prompt = out["harness_prompt"]
+    assert "Fix the failing CI on main: https://ci/jobs/7" in prompt
+    assert "Fix the failing CI on master: https://ci/jobs/9" in prompt
+    assert prompt.index("main:") < prompt.index("master:")
+    assert calls == []
