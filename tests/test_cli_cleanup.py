@@ -47,8 +47,9 @@ def test_cleanup_released_closes_contained(isolated_config, monkeypatch):
     assert status["jira:IPG-3"] == "skipped:no-release-branch"
     assert closed == [("IPG-1", "done")]
 
-def test_cleanup_released_closes_jira_released_skips(isolated_config, monkeypatch):
-    """Skipped rows (deactivated/no-release-branch) close when Jira is Product Test."""
+@pytest.mark.parametrize("release_mark", ["product test", "released"])
+def test_cleanup_released_closes_jira_released_skips(isolated_config, monkeypatch, release_mark):
+    """Skipped rows (deactivated/no-release-branch) close at the release mark."""
     store.record_link("jira:IPG-10", {"issue": "IPG-10", "worktree": "/tmp/wt-10",
                                      "branch": "feat/10", "repo": "/tmp/proj",
                                      "active": 0})
@@ -59,7 +60,7 @@ def test_cleanup_released_closes_jira_released_skips(isolated_config, monkeypatc
                                  "/tmp/norel": {}})
     from workagent import issue_status as _st
     monkeypatch.setattr(_st, "_issue_state",
-                        lambda number, tool, target: "product test")
+                        lambda number, tool, target: release_mark)
     closed = []
     monkeypatch.setattr(_st, "set_issue_status",
                         lambda ref, state, dry_run=False: closed.append((ref, state)) or True)
@@ -72,7 +73,7 @@ def test_cleanup_released_closes_jira_released_skips(isolated_config, monkeypatc
 
 
 def test_cleanup_released_keeps_skip_when_not_released(isolated_config, monkeypatch):
-    """Skipped rows stay skipped when Jira is not Released."""
+    """Skipped rows stay skipped when Jira is not at the release mark."""
     store.record_link("jira:IPG-12", {"issue": "IPG-12", "worktree": "/tmp/wt-12",
                                       "branch": "feat/12", "repo": "/tmp/proj",
                                       "active": 0})

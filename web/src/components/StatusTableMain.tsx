@@ -55,8 +55,9 @@ export function issueStatusOptions(worktrees: WorktreeMap): string[] {
 
 /**
  * "Not Done" grouping: open or in-progress tracker states (To Do, In
- * Progress, Review, Product Test, ...); Done/Resolved and
- * unknown are done.
+ * Progress, Review, Product Test, ...); Done/Resolved/Closed and legacy
+ * `released`, plus unknown, are done. `released`/`closed` stay accepted
+ * for trackers that still report them.
  */
 export function isIssueNotDone(status: string): boolean {
   const s = (status ?? "").trim().toLowerCase()
