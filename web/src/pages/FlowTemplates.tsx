@@ -40,6 +40,7 @@ import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, exactDateTime, relativeDate, toCsv } from "@/lib/format"
 import { useActions, useCreateRun, useFlowTemplates } from "@/lib/queries"
 import type { FlowStep, FlowTemplateRow } from "@/lib/api"
+import { summarizeExecution } from "@/lib/flowExecution"
 import { isRunImmediateTemplate, type RowCategory } from "@/lib/messageRunConfig"
 export function FlowTemplates() {
   const navigate = useNavigate()
@@ -256,6 +257,7 @@ export function FlowTemplates() {
                       <TableHead>Name</TableHead>
                       <TableHead>Label</TableHead>
                       <TableHead>Steps</TableHead>
+                      <TableHead>Mode</TableHead>
                       <TableHead>Run</TableHead>
                       <TableHead>Category</TableHead>
                       <TableHead>Order</TableHead>
@@ -299,6 +301,13 @@ export function FlowTemplates() {
                         <TableCell className="font-mono text-xs">
                           {t.steps?.length ?? 0}
                           {isRunImmediateTemplate(t) ? " · immediate" : ""}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs" title="Execution mode across worktrees: all-parallel fans out at once, otherwise one worktree at a time">
+                          {(() => {
+                            const s = summarizeExecution(t.steps ?? [])
+                            if ((t.steps ?? []).length === 0) return "—"
+                            return s.runsParallel ? "∥ parallel" : "→ sequential"
+                          })()}
                         </TableCell>
                         <TableCell>
                           <Button variant="ghost" size="sm" title={isRunImmediateTemplate(t) ? `Run ${t.name} now` : `Run ${t.name}…`} onClick={() => handleQuickRun(t)}>
@@ -398,9 +407,34 @@ export function FlowTemplates() {
           </div>
           <div className="grid gap-1 text-sm">
             <span className="font-medium">Steps</span>
-            <pre className="max-h-64 overflow-auto rounded-md border p-2 font-mono text-xs whitespace-pre-wrap">
-              {JSON.stringify(detail.steps, null, 2)}
-            </pre>
+            <ol className="grid gap-1.5">
+              {(detail.steps ?? []).map((s, i) => (
+                <li key={i} className="flex items-center gap-2 rounded-md border px-2 py-1.5 font-mono text-xs">
+                  <span className="text-muted-foreground">{i + 1}.</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {s.kind}
+                    {s.action_label ? <span className="text-muted-foreground"> · {s.action_label}</span> : null}
+                  </span>
+                  <span
+                    title={(s.execution_mode ?? "sequential") === "parallel" ? "Runs concurrently across worktrees" : "Runs one worktree at a time"}
+                    className={(s.execution_mode ?? "sequential") === "parallel"
+                      ? "shrink-0 rounded-full bg-primary px-2 py-0.5 font-mono text-[11px] font-medium text-primary-foreground"
+                      : "shrink-0 rounded-full border px-2 py-0.5 font-mono text-[11px] text-muted-foreground"}
+                  >
+                    {(s.execution_mode ?? "sequential") === "parallel" ? "∥ parallel" : "→ sequential"}
+                  </span>
+                </li>
+              ))}
+              {(detail.steps ?? []).length === 0 ? (
+                <li className="text-sm text-muted-foreground">No steps.</li>
+              ) : null}
+            </ol>
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer underline underline-offset-2">Raw JSON</summary>
+              <pre className="mt-1 max-h-64 overflow-auto rounded-md border p-2 font-mono text-xs whitespace-pre-wrap">
+                {JSON.stringify(detail.steps, null, 2)}
+              </pre>
+            </details>
           </div>
           {detail.pre_execution ? (
             <div className="grid gap-1 text-sm">
