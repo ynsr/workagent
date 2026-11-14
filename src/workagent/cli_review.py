@@ -600,8 +600,11 @@ def review(
             entry = links.get(key, {})
             pr_url0 = worktrees.worktree_pr_url(key, entry) if entry else None
             if not pr_url0:
-                _fail(f"worktree {key} has no recorded PR/MR.\n"
-                      "  Pass a PR/MR URL, or create one first.", EXIT_USAGE)
+                branch0 = str((entry or {}).get("branch", "") or "")
+                hint0 = f" (branch {branch0!r})" if branch0 else ""
+                _fail(f"worktree {key}{hint0} has no recorded PR/MR.\n"
+                      "  Create the PR first, or pass its URL "
+                      "(e.g. https://github.com/OWNER/REPO/pull/NUM).", EXIT_USAGE)
             eprint(f"note: worktree {key} → {pr_url0}")
             ref = pr_url0
             parsed = refs.parse_ref(ref)

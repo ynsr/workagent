@@ -562,6 +562,7 @@
 - Deleted Jira statuses map to survivors: Code Review moves to Review, Ready to Release and Released move to Product Test [48]
 - Fix-default checks the release branch CI too, so a red release pipeline no longer reports a false success [52]
 - Fix-default hands both failing branches to the harness and names the failing branch in dry-run plans and noops [52]
+- Retry live PR lookup in review/flow instead of failing on transient gh errors [60]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config
