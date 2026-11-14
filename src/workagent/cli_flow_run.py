@@ -102,6 +102,20 @@ def _flow_child_key(key: str, ref: str, entry: dict | None = None) -> str:
     return ""
 
 
+def _chain_sig(chain: list[dict]) -> list:
+    """Comparable signature of a normalized step chain (kind + action + mode + config)."""
+    import json as _json
+    out = []
+    for s in chain:
+        try:
+            cfg = _json.dumps(s.get("config") or {}, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            cfg = repr(s.get("config") or {})
+        out.append((s.get("kind"), str(s.get("action_label") or ""),
+                    str(s.get("execution_mode") or ""), cfg))
+    return out
+
+
 def _begin_step_run(fid: int, flow_key: str, kind: str, banner: str) -> int:
     """Create the step's child run row at step start (NULL = not begun).
 
@@ -221,15 +235,64 @@ def flow_run(
             _fail("aborted", EXIT_USAGE)
     key, entry, parsed = _resolve_ref(ref)
     flow = None if fresh else _find_resumable(tpl["label"], ref, key)
-    if flow is not None and flow.get("effective_steps"):
-        try:
-            steps = sf.validate_template(flow["effective_steps"],
-                                         get_action=store.get_action)
-        except HarnessError as e:
-            _fail(f"stored effective steps invalid: {e}", EXIT_GENERAL)
-        merged_steps = [{**s, "config": _merge_config(
-            s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
-            for i, s in enumerate(steps)]
+    if flow is not None:
+        stored = flow.get("effective_steps")
+        if stored:
+            try:
+                steps = sf.validate_template(stored,
+                                             get_action=store.get_action)
+            except HarnessError as e:
+                _fail(f"stored effective steps invalid: {e}", EXIT_GENERAL)
+            shapes = [(s.get("kind"), str(s.get("action_label") or ""),
+                       str(s.get("execution_mode") or "")) for s in steps]
+            merged_shapes = [(s.get("kind"), str(s.get("action_label") or ""),
+                              str(s.get("execution_mode") or "")) for s in merged_steps]
+            if steps_override and _chain_sig(merged_steps) != _chain_sig(steps):
+                # A launch-time --steps chain is NOT a resume: the stored
+                # current_step indexes the OLD chain, so continuing would
+                # silently skip/renumber steps (issue #77: a 2-step
+                # [sync, cleanup] override resumed a 4-step run at
+                # current_step=3 and executed only cleanup). Fail fast.
+                if shapes == merged_shapes:
+                    # Config-only diff: the override's inline configs are
+                    # NOT merged on resume — --step-config is the resume
+                    # override path.
+                    _fail(f"--steps config differs from the resumable run {flow['id']} "
+                          f"— re-run with --fresh for a new run on the new chain, "
+                          f"without --steps to resume, or pass config edits "
+                          f"via --step-config", EXIT_USAGE)
+                _fail(f"--steps differs from the resumable run {flow['id']} "
+                      f"(current step {flow.get('current_step')}) — re-run "
+                      f"with --fresh for a new run on the new chain, or "
+                      f"without --steps to resume", EXIT_USAGE)
+            merged_steps = [{**s, "config": _merge_config(
+                s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
+                for i, s in enumerate(steps)]
+        elif steps_override:
+            # Legacy/template-launched row: no stored chain, so the old
+            # cursor cannot be trusted against a new --steps chain either.
+            # Baseline is the template chain the row was launched with.
+            # (Here `steps` IS the override — comparing against it would
+            # be vacuous — so validate the template chain separately.)
+            try:
+                baseline = sf.validate_template(tpl.get("steps") or [],
+                                                get_action=store.get_action)
+            except HarnessError:
+                baseline = None
+            if baseline is not None and _chain_sig(merged_steps) != _chain_sig(baseline):
+                b_shapes = [(s.get("kind"), str(s.get("action_label") or ""),
+                             str(s.get("execution_mode") or "")) for s in baseline]
+                m_shapes = [(s.get("kind"), str(s.get("action_label") or ""),
+                             str(s.get("execution_mode") or "")) for s in merged_steps]
+                if b_shapes == m_shapes:
+                    _fail(f"--steps config differs from the resumable run {flow['id']} "
+                          f"— re-run with --fresh for a new run on the new chain, "
+                          f"without --steps to resume, or pass config edits "
+                          f"via --step-config", EXIT_USAGE)
+                _fail(f"--steps differs from the resumable run {flow['id']} "
+                      f"(current step {flow.get('current_step')}) — re-run "
+                      f"with --fresh for a new run on the new chain, or "
+                      f"without --steps to resume", EXIT_USAGE)
     if flow is None:
         snap: dict = {"launch_ref": ref}
         # Templates without a start step (e.g. cleanup_release) never hit
@@ -243,9 +306,12 @@ def flow_run(
             snap = {"repo": repo, "launch_ref": ref, "default_branch": str(
                 info.get("default_branch", "") or ""),
                 "release_branch": str(info.get("release_branch", "") or "")}
+        # Always store the normalized chain: template launches produce
+        # legacy None rows whose resume cannot be verified against a later
+        # --steps override (issue #77 follow-up).
         flow = store.create_flow(template_label=tpl["label"], worktree_ref=key,
                                  repo_snapshot=snap,
-                                 effective_steps=merged_steps if steps_override else None)
+                                 effective_steps=merged_steps)
     fid = flow["id"]
     if not (flow.get("repo_snapshot") or {}).get("repo"):
         # Pre-fix rows (flow 26) carry {'launch_ref'} only — repair on

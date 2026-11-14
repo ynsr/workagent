@@ -2,7 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { ChainEditor, startRepoState, validateChain } from "@/components/ChainEditor"
-import { chainRunsParallel, runChainOnWorktrees } from "@/lib/flowExecution"
+import { chainRunsParallel, runChainOnWorktrees, summarizeExecution } from "@/lib/flowExecution"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { Button } from "@/components/ui/button"
 import { errorText } from "@/components/StatusFeedback"
@@ -26,6 +26,7 @@ export function FlowWizard({
   const createRun = useCreateRun()
   const { data: actionsData } = useActions()
   const [working, setWorking] = useState<FlowStep[]>(() => structuredClone(template.steps ?? []))
+  const [fresh, setFresh] = useState(false)
   const [saving, setSaving] = useState(false)
   const knownActions = (actionsData?.actions ?? []).map((a) => ({ label: a.label, name: a.name }))
   const chainErrors = validateChain(working)
@@ -33,12 +34,11 @@ export function FlowWizard({
   const repoState = startRepoState(working)
   const repoMissing = repoState === "missing"
   const runDisabled = sorted.length === 0 || repoMissing || chainErrors.length > 0
+  const dirty = JSON.stringify(working) !== JSON.stringify(template.steps ?? [])
+  const stepArgs = dirty ? ["--steps", JSON.stringify(working)] : []
+  const freshArgs = fresh ? ["--fresh"] : []
   function handleConfirm() {
-    // Close-first: fan out after the modal unmounts so a sequential queue
-    // never holds the modal open while awaiting each run to settle (#69).
-    // Progress/errors still surface via toasts.
     const parallel = chainRunsParallel(working)
-    const stepsJson = JSON.stringify(working)
     const label = template.label
     onClose()
     void runChainOnWorktrees({
@@ -46,7 +46,7 @@ export function FlowWizard({
       parallel,
       createRun: (key) => createRun.mutateAsync({
         command: "flow",
-        args: ["run", label, key, "--steps", stepsJson, "--yes"],
+        args: ["run", label, key, ...stepArgs, ...freshArgs, "--yes"],
         confirm: true,
       }),
       hooks: {
@@ -71,7 +71,6 @@ export function FlowWizard({
       },
     })
   }
-  const dirty = JSON.stringify(working) !== JSON.stringify(template.steps ?? [])
   const saveDisabled = saving || chainErrors.length > 0
   async function handleSave() {
     setSaving(true)
@@ -150,6 +149,10 @@ export function FlowWizard({
             >
               Reset
             </Button>
+            <label className="flex items-center gap-1 text-[12px] text-muted-foreground" title="Start a new run on the edited chain instead of resuming a paused run">
+              <input type="checkbox" checked={fresh} onChange={(e) => setFresh(e.target.checked)} />
+              Fresh
+            </label>
           </div>
           <span className="mx-2 text-muted-foreground" aria-hidden>|</span>
           <Button
@@ -166,6 +169,20 @@ export function FlowWizard({
       {repoMissing ? (
         <p className="mb-2 text-[13px] text-destructive" role="alert">
           Repository is required on the Start step — select one below to enable Run flow.
+        </p>
+      ) : null}
+      {sorted.length > 1 ? (
+        <p className="mb-2 text-[13px] text-muted-foreground" role="status" data-component="WizardFanOutSummary">
+          {(() => {
+            const s = summarizeExecution(working)
+            const parts: string[] = []
+            if (s.parallel > 0) parts.push(`${s.parallel} parallel`)
+            if (s.sequential > 0) parts.push(`${s.sequential} sequential`)
+            if (s.forced > 0) parts.push(`${s.forced} always-sequential`)
+            return s.runsParallel
+              ? `Runs on ${sorted.length} worktrees fan out at once (${parts.join(" · ")}).`
+              : `Runs on ${sorted.length} worktrees go one worktree at a time (${parts.join(" · ")}).`
+          })()}
         </p>
       ) : null}
       <p className="mb-2 text-[13px] text-muted-foreground">

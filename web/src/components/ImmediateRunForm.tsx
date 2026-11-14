@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { RunModeSelect } from "@/components/StartForm"
 import { SearchableSelect } from "@/components/SearchableSelect"
+import { SegmentedControl } from "@/components/FormControls"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -146,22 +147,13 @@ export function ImmediateRunForm({
   return (
     <div className="grid gap-3">
       {!lockCategory ? (
-        <div className="grid gap-2">
-          <Label htmlFor="immediate-run-category">Category</Label>
-          <select
-            id="immediate-run-category"
-            className="h-9 rounded-md border bg-background px-2 text-sm"
-            value={category}
-            onChange={(e) => {
-              setCategory(e.target.value as RowCategory)
-              setLabel("")
-            }}
-          >
-            {ROW_CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-        </div>
+        <SegmentedControl
+          idPrefix="immediate-run-category"
+          label="Category"
+          options={ROW_CATEGORIES.map((c) => ({ value: c, label: c }))}
+          value={category}
+          onChange={(v) => { setCategory(v); setLabel("") }}
+        />
       ) : null}
       <div className="grid gap-2">
         <Label htmlFor="immediate-run-label">{kind === "action" ? "Action" : "Flow template"}</Label>

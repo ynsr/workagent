@@ -3,6 +3,8 @@ import { Plus } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import { ChainEditor, validateChain } from "@/components/ChainEditor"
+import { SegmentedControl, SuggestIconButton } from "@/components/FormControls"
+import { IconPicker } from "@/components/IconPicker"
 import { ScriptField } from "@/components/ScriptBlock"
 import { errorText } from "@/components/StatusFeedback"
 import { Button } from "@/components/ui/button"
@@ -22,6 +24,7 @@ export interface FlowTemplateFormSeed {
   editingLabel: string | null
   name: string
   label: string
+  icon: string
   steps: FlowStep[]
   pre: string
   post: string
@@ -34,6 +37,7 @@ export const EMPTY_FLOW_TEMPLATE_SEED: FlowTemplateFormSeed = {
   editingLabel: null,
   name: "",
   label: "",
+  icon: "Zap",
   steps: [],
   pre: "",
   post: "",
@@ -48,6 +52,7 @@ export function seedFromTemplate(row: FlowTemplateRow): FlowTemplateFormSeed {
     editingLabel: row.label,
     name: row.name,
     label: row.label,
+    icon: row.icon?.trim() ? row.icon : "Zap",
     steps: row.steps ?? [],
     pre: row.pre_execution ?? "",
     post: row.post_execution ?? "",
@@ -77,6 +82,7 @@ export function FlowTemplateFormCard({ seed, knownActions, onDone }: {
   const [steps, setSteps] = useState<FlowStep[]>(seed.steps)
   const [pre, setPre] = useState(seed.pre)
   const [post, setPost] = useState(seed.post)
+  const [icon, setIcon] = useState(seed.icon?.trim() ? seed.icon : "Zap")
   const [category, setCategory] = useState<RowCategory>(seed.category)
   const [runImmediately, setRunImmediately] = useState(seed.runImmediately)
   const [saving, setSaving] = useState(false)
@@ -101,7 +107,7 @@ export function FlowTemplateFormCard({ seed, knownActions, onDone }: {
         command: "flow",
         confirm: true,
         args: buildFlowTemplateUpsertArgs(seed.editingLabel, {
-          name, label, steps, pre, post, runImmediately, category,
+          name, label, icon, steps, pre, post, runImmediately, category,
         }),
       })
       toast.success(isEdit ? "Flow template update started" : "Flow template add started", {
@@ -154,21 +160,33 @@ export function FlowTemplateFormCard({ seed, knownActions, onDone }: {
           <p className="text-xs text-muted-foreground">Lowercase letters, digits, underscores only (^[a-z0-9_]+$).</p>
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="flow-category">Category</Label>
-          <select
-            id="flow-category"
-            value={category}
-            onChange={(e) => setCategory(e.target.value as RowCategory)}
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring"
-          >
-            {ROW_CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-          <p className="text-xs text-muted-foreground">
-            worktree templates surface on the Dashboard; message templates on the Messages page.
-          </p>
+          <Label htmlFor="flow-icon">Icon</Label>
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <IconPicker id="flow-icon" value={icon} onChange={setIcon} />
+            </div>
+            <SuggestIconButton
+              command="flow"
+              args={["template", "suggest-icon",
+                ...(name.trim() ? ["--name", name.trim()] : []),
+                ...(label.trim() ? ["--label", label.trim()] : []),
+                ...(steps.length > 0 ? ["--steps", JSON.stringify(steps)] : []),
+                ...(pre.trim() ? ["--pre-execution", pre.trim()] : []),
+                ...(post.trim() ? ["--post-execution", post.trim()] : []),
+                "--json"]}
+              onSuggest={setIcon}
+              disabled={saving || (!name.trim() && steps.length === 0)}
+            />
+          </div>
         </div>
+        <SegmentedControl
+          idPrefix="flow-category"
+          label="Category"
+          hint="— worktree templates surface on the Dashboard; message templates on the Messages page"
+          options={ROW_CATEGORIES.map((c) => ({ value: c, label: c }))}
+          value={category}
+          onChange={setCategory}
+        />
         <div className="grid gap-2">
           <Label>Steps</Label>
           {seed.lineageNote ? (

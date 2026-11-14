@@ -68,6 +68,7 @@ export function actionRunModeOf(row: { default_options?: unknown }): string {
 export interface FlowTemplateUpsertForm {
   name: string
   label: string
+  icon: string
   steps: FlowStep[]
   pre: string
   post: string
@@ -80,12 +81,14 @@ export function buildFlowTemplateUpsertArgs(editingLabel: string | null, f: Flow
   const steps = JSON.stringify(f.steps)
   const pre = f.pre.trim()
   const post = f.post.trim()
+  const icon = f.icon.trim() || "Zap"
   const flag = f.runImmediately ? "--run-immediately" : "--no-run-immediately"
   if (editingLabel !== null) {
     return [
       "template", "update", editingLabel,
       "--name", f.name.trim(),
       ...(f.label !== editingLabel ? ["--new-label", f.label] : []),
+      "--icon", icon,
       "--steps", steps,
       "--pre-execution", f.pre,
       "--post-execution", f.post,
@@ -97,6 +100,7 @@ export function buildFlowTemplateUpsertArgs(editingLabel: string | null, f: Flow
     "template", "add",
     "--name", f.name.trim(),
     "--label", f.label,
+    "--icon", icon,
     "--steps", steps,
     ...(pre ? ["--pre-execution", pre] : []),
     ...(post ? ["--post-execution", post] : []),

@@ -24,12 +24,12 @@ const TEMPLATE = {
   ],
 } as unknown as FlowTemplateRow
 
-function renderWizard(onClose: () => void = vi.fn()) {
+function renderWizard(template: FlowTemplateRow = TEMPLATE, refs: string[] = ["jira:IPG-1"], onClose: () => void = vi.fn()) {
   const client = new QueryClient()
   return render(
     <MemoryRouter>
       <QueryClientProvider client={client}>
-        <FlowWizard template={TEMPLATE} refs={["jira:IPG-1"]} onClose={onClose} />
+        <FlowWizard template={template} refs={refs} onClose={onClose} />
       </QueryClientProvider>
     </MemoryRouter>,
   )
@@ -65,11 +65,41 @@ describe("FlowWizard run", () => {
     })
     try {
       const onClose = vi.fn()
-      renderWizard(onClose)
+      renderWizard(TEMPLATE, ["jira:IPG-1"], onClose)
       fireEvent.click(screen.getByRole("button", { name: "Run flow" }))
       await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
     } finally {
       spy.mockRestore()
     }
+  })
+})
+describe("FlowWizard resume controls", () => {
+  it("renders a Fresh toggle for restart-instead-of-resume", () => {
+    const { unmount } = renderWizard()
+    const labels = screen.getAllByText("Fresh", { selector: "label" })
+    expect(labels.length).toBeGreaterThanOrEqual(1)
+    const last = labels[labels.length - 1]
+    expect(last?.querySelector("input[type='checkbox']")).not.toBeNull()
+    unmount()
+  })
+})
+describe("FlowWizard fan-out summary", () => {
+  it("announces concurrent fan-out for all-parallel multi-worktree chains", () => {
+    const template = {
+      ...TEMPLATE,
+      steps: [
+        { kind: "start", config: { repo: "proj" } },
+        { kind: "review", config: {}, execution_mode: "parallel" },
+      ],
+    } as unknown as FlowTemplateRow
+    const { unmount } = renderWizard(template, ["a", "b"])
+    expect(screen.getByText(/Runs on 2 worktrees fan out at once/)).toBeInTheDocument()
+    unmount()
+  })
+
+  it("hides the fan-out summary for a single worktree", () => {
+    const { unmount } = renderWizard()
+    expect(screen.queryByText(/Runs on \d+ worktrees/)).not.toBeInTheDocument()
+    unmount()
   })
 })

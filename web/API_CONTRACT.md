@@ -155,7 +155,23 @@ by the Dashboard Actions dropdown.)
   "created_at": "…", "modified_at": "…"}]}
 ```
  (Flow page source: `flow template add/list/show/update/clone/compose/delete` run as runs; detail 404s
- on unknown label. Step kinds: `start | review | fix_comments | sync | action | prodtest_plan | cleanup | release` — `action` steps carry `action_label` (a custom action; the Judgement preset ships with the Actions page), `prodtest_plan` generates the worktree's prod-test plan (config `update`), and `cleanup` accepts `merge_only` to merge the PR/MR squash-style without tearing down the worktree/branch/link. Each step carries `execution_mode` (`sequential` default | `parallel`): multi-worktree runs (Dashboard selection, wizard) run one worktree at a time when any step is sequential — waiting for each run to settle before starting the next — and fan out concurrently only when every step is parallel; the Run dialog closes first and the queued runs continue in the background with toast progress; `start`/`cleanup`/`release` reject `parallel` (teardown/creation ordering). The toggle is hidden for single-worktree runs. `flow template update OLD [--new-label NEW] ...` renames the label (flow history retargeted). `flow template clone SRC [--name] [--label]` duplicates one template (lineage in `parent_labels`); `flow template compose LABEL --from A,B [--name]` concatenates chains (keep-first-start, lineage recorded). Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection. `flow run TEMPLATE REF [--steps JSON] [--step-config JSON] [--skip-steps 0[,N]] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`
+ on unknown label. Step kinds: `start | review | fix_comments | sync | action | prodtest_plan | cleanup | release` —
+ `action` steps carry `action_label` (a custom action; the Judgement preset ships with the Actions page),
+ `prodtest_plan` generates the worktree's prod-test plan (config `update`), and `cleanup` accepts `merge_only`
+ to merge the PR/MR squash-style without tearing down the worktree/branch/link.
+ Each step carries `execution_mode` (`sequential` default | `parallel`): multi-worktree runs (Dashboard selection,
+ wizard) run one worktree at a time when any step is sequential — waiting for each run to settle before starting
+ the next — and fan out concurrently only when every step is parallel; `start`/`cleanup`/`release` reject
+ `parallel` (teardown/creation ordering). The toggle is hidden for single-worktree runs.
+ The Run dialog closes first and queued runs continue in the background with toast progress.
+ The ChainEditor adds All-parallel/All-sequential bulk buttons plus a fan-out summary; the FlowWizard shows
+ a live fan-out summary for multi-worktree refs; the templates table carries a Mode column and the detail dialog
+ renders a per-step badge list; the Flows run detail badges each step from effective_steps.
+ `flow template update OLD [--new-label NEW] ...` renames the label (flow history retargeted).
+ `flow template clone SRC [--name] [--label]` duplicates one template (lineage in `parent_labels`);
+ `flow template compose LABEL --from A,B [--name]` concatenates chains (keep-first-start, lineage recorded).
+ Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection.
+ `flow run TEMPLATE REF [--steps JSON] [--step-config JSON] [--skip-steps 0[,N]] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`. Resume keeps the stored chain: passing a different `--steps` chain for a resumable run fails (exit 2) — use `--fresh` for the new chain or drop `--steps` to resume.
 ### `GET /api/links`
 ```json
 {"trackers": {"jira:IPG": {"repos": ["/home/x/projects/projectx"]}},
@@ -298,6 +314,7 @@ Request:
 {"command": "cleanup", "args": ["IPG-932"],
  "confirm": true, "force": false}
 ```
+ - `action suggest-icon [--name --label --prompt --pre-execution --post-execution --harness --json]` / `flow template suggest-icon [--name --label --steps --pre-execution --post-execution --harness --json]`: Ask-AI Lucide icon (issue #62) — ONE bare judge-style harness session (`--smol --no-skills --no-tools`, temp dir, no checkout), stdout `{"icon": "Rocket"}`; target keys `suggest-icon:action` / `suggest-icon:flow` so long AI runs never 409-block saves; parsed against `IconPicker ACTION_ICONS`, never confirmed.
  - `command`: one of `start | review | cleanup | release | sync | open | register |
    repo | link | tracker | action | flow | message | backup | prodtest | adhoc` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`; prodtest: `["plan", REF, …]` / `["run", REF, …]`; adhoc: `[REF, --prompt P, …]`).
 - Global `-v` may be passed as `args[0]`.

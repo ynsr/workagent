@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { api, type FlowStep } from "@/lib/api"
-import { awaitRunSettled, chainRunsParallel, runChainOnWorktrees } from "@/lib/flowExecution"
+import { awaitRunSettled, chainRunsParallel, runChainOnWorktrees, summarizeExecution } from "@/lib/flowExecution"
 import { validateChain } from "@/components/ChainEditor"
 
 describe("chainRunsParallel", () => {
@@ -135,5 +135,24 @@ describe("runChainOnWorktrees", () => {
     } finally {
       runSpy2.mockRestore()
     }
+  })
+})
+
+describe("summarizeExecution", () => {
+  it("counts modes and flags all-parallel chains", () => {
+    const steps: FlowStep[] = [
+      { kind: "start", config: {} },
+      { kind: "review", config: {}, execution_mode: "parallel" },
+      { kind: "fix_comments", config: {} },
+    ]
+    expect(summarizeExecution(steps)).toEqual({ parallel: 1, sequential: 1, forced: 1, runsParallel: false })
+  })
+
+  it("flags fan-out when every parallelizable step is parallel", () => {
+    const steps: FlowStep[] = [
+      { kind: "review", config: {}, execution_mode: "parallel" },
+      { kind: "fix_comments", config: {}, execution_mode: "parallel" },
+    ]
+    expect(summarizeExecution(steps).runsParallel).toBe(true)
   })
 })

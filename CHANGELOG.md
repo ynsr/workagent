@@ -1,7 +1,16 @@
 # Changelog
 ## Unreleased
 - Run Flow dialog closes on click and queues sequential worktree runs in the background with toast progress instead of stalling on Starting [69]
+- Message runs auto-register unlinked Mattermost permalinks on first use: fetch via mm and register, still fails with a clear --repo hint otherwise [79]
+- Flow run with a cross-tracker issue URL no longer dies ambiguous: start hands downstream steps the link key and URL refs prefer the stored row [71]
+- Flow run with a different --steps chain no longer silently skips steps: resume keeps the stored chain and the override fails fast, use --fresh for a new run [77]
+- Repos gain per-repo StatusTable overlay buttons: fixed + dedicated toggles via the Repos page dialog or repo update --overlay-buttons [59]
+- Flow templates and actions gain an AI-suggested Lucide icon: IconPicker on both forms, Suggest-icon button via a cheap judge-style harness run, split-button run-mode/category controls [62]
+- Fix-default from the web no longer fails with needs --yes: confirmed release runs now append --yes like other destructive runs [68]
 - Flow template steps gain Parallel/Sequential mode for multi-worktree runs: all-parallel chains fan out at once, any sequential step runs worktrees one by one [61]
+- Flow editor gains All-parallel/All-sequential buttons, a fan-out summary, and per-step badges on templates, wizard, and run detail [72]
+- Flow editor buttons and execution hints now reflect which steps can run in parallel [72]
+- Serve restarts no longer kill running flows: detached runs survive shutdown and are re-adopted on boot [66]
 - StatusTable no longer blocks on issues without status labels: unknown issue states are cached like other cells [55]
 - Cache TTL docs now describe what each timeout covers [no-issue]
 - Review accepts GitHub shorthand refs (OWNER/REPO#NUM resolves via gh; issue numbers fail with a start-first hint) [49]

@@ -50,6 +50,17 @@ def resolve_worktree(ref: str, links: dict) -> str | list[str] | None:
     """
     if ref in links:
         return ref
+    if ref:
+        url_hits = [k for k, v in links.items()
+                    if isinstance(v, dict) and v.get("issue_url") == ref
+                    and v.get("worktree")]
+        if len(url_hits) == 1:
+            # A stored issue_url match wins outright: the substring scan
+            # (bare "69" matching "IPG-1069", "69" in branch slugs, ...)
+            # must not dilute it into an ambiguous list (flow #71: the
+            # GitHub issue URL matched both its jira:IPG-1069@... and
+            # github:o/r#69 kin rows under --yes).
+            return url_hits[0]
     try:
         parsed = refs.parse_ref(ref)
     except HarnessError:
@@ -96,6 +107,11 @@ def resolve_worktree(ref: str, links: dict) -> str | list[str] | None:
         return None
     if len(matches) == 1:
         return matches[0]
+    stored_url = str((links.get(exact, {}) or {}).get("issue_url", "") or "")
+    if exact is not None and ref and ref == stored_url:
+        # The canonical row's own stored issue_url confirms this URL ref:
+        # hand it back instead of the ambiguous substring list (flow #71).
+        return exact
     return matches
 
 

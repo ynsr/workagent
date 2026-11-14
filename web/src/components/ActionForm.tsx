@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Pencil, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
+import { SegmentedControl, SuggestIconButton } from "@/components/FormControls"
 import { IconPicker } from "@/components/IconPicker"
 import { ScriptField } from "@/components/ScriptBlock"
 import { errorText } from "@/components/StatusFeedback"
@@ -40,7 +41,7 @@ export function ActionFormCard({ editing, onDone, onCancel }: {
   const [name, setName] = useState(editing?.name ?? "")
   const [label, setLabel] = useState(editing?.label ?? "")
   const [labelDirty, setLabelDirty] = useState(false)
-  const [icon, setIcon] = useState(editing && editing.icon !== "Zap" ? editing.icon : "")
+  const [icon, setIcon] = useState(editing?.icon?.trim() ? editing.icon : "Zap")
   const [prompt, setPrompt] = useState(editing?.prompt ?? "")
   const [pre, setPre] = useState(editing?.pre_execution ?? "")
   const [post, setPost] = useState(editing?.post_execution ?? "")
@@ -154,7 +155,23 @@ export function ActionFormCard({ editing, onDone, onCancel }: {
         </div>
         <div className="grid gap-2">
           <Label htmlFor="action-icon">Icon</Label>
-          <IconPicker id="action-icon" value={icon} onChange={setIcon} />
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <IconPicker id="action-icon" value={icon} onChange={setIcon} />
+            </div>
+            <SuggestIconButton
+              command="action"
+              args={["suggest-icon",
+                ...(name.trim() ? ["--name", name.trim()] : []),
+                ...(label.trim() ? ["--label", label.trim()] : []),
+                ...(prompt.trim() ? ["--prompt", prompt.trim()] : []),
+                ...(pre.trim() ? ["--pre-execution", pre.trim()] : []),
+                ...(post.trim() ? ["--post-execution", post.trim()] : []),
+                "--json"]}
+              onSuggest={setIcon}
+              disabled={saving || (!name.trim() && !prompt.trim() && !pre.trim())}
+            />
+          </div>
         </div>
         <div className="grid gap-2">
           <Label htmlFor="action-prompt">Prompt</Label>
@@ -169,35 +186,25 @@ export function ActionFormCard({ editing, onDone, onCancel }: {
         </div>
         <ScriptField id="action-pre" label="Pre-execution script" value={pre} onChange={setPre} placeholder={"#!/bin/bash\nmake lint"} />
         <ScriptField id="action-post" label="Post-execution script" value={post} onChange={setPost} placeholder={"#!/bin/bash\nmake test"} />
-        <div className="grid gap-2">
-          <Label htmlFor="action-mode">Default run mode</Label>
-          <select
-            id="action-mode"
-            value={mode}
-            onChange={(e) => setMode(e.target.value)}
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring"
-          >
-            {RUN_MODES.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor="action-category">Category</Label>
-          <select
-            id="action-category"
-            value={category}
-            onChange={(e) => setCategory(e.target.value as RowCategory)}
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring"
-          >
-            {ROW_CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-          <p className="text-xs text-muted-foreground">
-            worktree rows surface on the Dashboard; message rows on the Messages page.
-          </p>
-        </div>
+        <SegmentedControl
+          idPrefix="action-mode"
+          label="Default run mode"
+          options={[
+            { value: "preview", label: "Preview", hint: "Print the harness command without running" },
+            { value: "headless", label: "Headless", hint: "Run the agent now with auto-approve" },
+            { value: "terminal", label: "Terminal", hint: "Open the agent in the OS terminal" },
+          ]}
+          value={RUN_MODES.includes(mode as (typeof RUN_MODES)[number]) ? mode as (typeof RUN_MODES)[number] : "preview"}
+          onChange={setMode}
+        />
+        <SegmentedControl
+          idPrefix="action-category"
+          label="Category"
+          hint="— worktree rows surface on the Dashboard; message rows on the Messages page"
+          options={ROW_CATEGORIES.map((c) => ({ value: c, label: c }))}
+          value={category}
+          onChange={setCategory}
+        />
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
