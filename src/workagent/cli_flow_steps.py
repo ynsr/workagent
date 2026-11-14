@@ -100,12 +100,13 @@ def run_start_step(ref: str, key: str, config: dict,
 def _flow_repo(key: str, config: dict) -> str:
     """Repo the flow already resolved for *key* ("" when unknown).
 
-    The start step records it on the link row; later steps inherit it so
-    a template that sets ``--repo`` once (or resolves it via the start
-    step) does not re-resolve from a fuzzy worktree lookup per step
-    (issue #91: the review step pinned an unrelated repo whose number
-    collided as a substring, tripping the host-scoped tracker guard).
-    An explicit per-step ``repo`` always wins.
+    The start step records it on the link row; the review step inherits
+    it so a template that sets ``--repo`` once does not re-resolve from
+    a fuzzy worktree lookup per step (issue #91: the review step pinned
+    an unrelated repo whose number collided as a substring, tripping the
+    host-scoped tracker guard). Sync resolves from its own link row via
+    ``_sync_one`` and inherits nothing. An explicit per-step ``repo``
+    always wins.
     """
     if str(config.get("repo", "") or ""):
         return ""
@@ -153,10 +154,6 @@ def run_sync_step(key: str, config: dict, json_output: bool,
     from . import cli_sync as _mod
     from . import store as _store
     extra = flag_argv(config, *SYNC_FLAGS)
-    if not config.get("repo"):
-        fb = _flow_repo(key, config)
-        if fb:
-            config = {**config, "repo": fb}
     if bool(config.get("terminal", False)):
         wt = str((_store.load_links().get(key, {}) or {}).get("worktree", "") or "")
         return spawn("sync", [key, *extra], wt)

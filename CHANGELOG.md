@@ -1,6 +1,6 @@
 # Changelog
 ## Unreleased
-- Fixed flow review steps failing on unrelated repos when the PR number matches another branch number: review only pins a repo the step owns and later steps reuse the start step's repo [91]
+- Fixed flow review steps pinning an unrelated repo on PR-number/branch collisions: only rows owning the PR pin the repo [91]
 - Message adhoc on an already-registered message no longer fails asking for --repo: local lookup runs before the mm fetch [85]
 - Fixed message adhoc/validate runs failing with a missing-argument error: prompt runs now reach the harness in every mode [83]
 - Restarting serve is faster: DB migrations stay synchronous while cleanup and branch backfill run in the background [81]

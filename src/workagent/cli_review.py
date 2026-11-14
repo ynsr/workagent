@@ -207,9 +207,11 @@ def _pinned_repo_for_pr(ref: str, parsed: dict | None) -> str:
         except Exception:
             head = ""
         if head:
-            reuse = worktrees.resolve_worktree(head, links)
-            if isinstance(reuse, str):
-                return str((links.get(reuse) or {}).get("repo", "") or "")
+            exact = [k for k, v in links.items()
+                     if isinstance(v, dict) and v.get("branch") == head
+                     and v.get("repo") and not v.get("deleted_at")]
+            if len(exact) == 1:
+                return str(links[exact[0]].get("repo", "") or "")
         return ""
     _pre = worktrees.resolve_worktree(ref, links)
     if isinstance(_pre, str):

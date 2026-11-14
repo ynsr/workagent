@@ -813,3 +813,25 @@ def test_pinned_repo_ignores_substring_collision(isolated_config, tmp_path, monk
                         lambda parsed, cwd=None: {"head_ref": ""})
     assert _r._pinned_repo_for_pr(
         "https://github.com/ynsr/workagent/pull/89", parsed) == ""
+
+def test_pinned_repo_head_reuse_needs_exact_branch(isolated_config, tmp_path, monkeypatch):
+    """Head-reuse pins only on exact branch equality, never substring."""
+    from workagent import cli_review as _r
+    links = {
+        "jira:IPG-1089@projectx": {
+            "worktree": "/wt/1089", "branch": "feat/IPG-1089--enamad-check",
+            "repo": "/repos/projectx",
+        },
+    }
+    monkeypatch.setattr(_r.store, "load_links", lambda **k: dict(links))
+    parsed = _r.refs.parse_ref("https://github.com/ynsr/workagent/pull/89")
+    # Substring-only collision ("89" in "IPG-1089") must not pin.
+    monkeypatch.setattr(_r.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "89"})
+    assert _r._pinned_repo_for_pr(
+        "https://github.com/ynsr/workagent/pull/89", parsed) == ""
+    # Exact head-branch match pins the owning repo.
+    monkeypatch.setattr(_r.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/IPG-1089--enamad-check"})
+    assert _r._pinned_repo_for_pr(
+        "https://github.com/ynsr/workagent/pull/89", parsed) == "/repos/projectx"

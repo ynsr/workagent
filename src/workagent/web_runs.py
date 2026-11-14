@@ -396,8 +396,8 @@ def _persisted_summary(row: dict) -> dict:
     if cmd.startswith("flow step "):
         from .store_flows import STEP_KINDS as _STEP_KINDS
         kind = cmd[len("flow step "):]
-        if argv and argv[0] in _STEP_KINDS:
-            kind, ref = argv[0], (argv[1] if len(argv) > 1 else "")
+        if len(argv) >= 2 and argv[0] in _STEP_KINDS:
+            kind, ref = argv[0], argv[1]
         else:
             ref = argv[0] if argv else ""
         mapped = {"start": "start", "review": "review",
