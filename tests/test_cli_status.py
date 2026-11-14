@@ -476,3 +476,25 @@ def test_status_cells_unknown_issue_status_cached(isolated_config, tmp_path, mon
     c2 = cli_status._status_cells("github:o/r#22", entry)
     assert c2["issue_status"] is None
     assert len(fetches) == 1
+
+def test_status_cells_failed_issue_lookup_preserves_cache(isolated_config, tmp_path, monkeypatch):
+    """A failed lookup (None) preserves a seeded good cached status and
+    retries on the next run instead of caching a negative."""
+    from workagent import cli_status, issue_status, store
+    wt_dir = tmp_path / "wt"; wt_dir.mkdir()
+    entry = {"worktree": str(wt_dir), "branch": "feat/55--y",
+             "repo": "/repo",
+             "issue": "https://github.com/o/r/issues/23"}
+    monkeypatch.setattr(cli, "_git_tip",
+                        lambda wt, ref: "a1" if ref == "HEAD" else None)
+    store.cache_issue_status("feat/55--y", "in progress", repo="/repo")
+    fetches = []
+    def _fail(number, tool, target):
+        fetches.append(target)
+        return None
+    monkeypatch.setattr(issue_status, "_issue_state", _fail)
+    c1 = cli_status._status_cells("github:o/r#23", entry, refresh_pr=True)
+    assert c1["issue_status"] == "in progress"
+    c2 = cli_status._status_cells("github:o/r#23", entry, refresh_pr=True)
+    assert c2["issue_status"] == "in progress"
+    assert len(fetches) == 2
