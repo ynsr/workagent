@@ -652,6 +652,102 @@ def test_skip_steps_rejects_out_of_range(monkeypatch):
     assert res.exit_code == 2
     assert "out of range" in res.output
 
+def test_resume_rejects_different_steps_override(monkeypatch):
+    """Issue #77: resuming a 4-step run with a 2-step --steps override
+    silently skipped sync (old cursor 3 indexed the new chain). Must fail
+    fast; --fresh starts the new chain instead."""
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    tpl = {"label": "rfc", "name": "RFC",
+           "steps": [{"kind": "review"}, {"kind": "fix_comments"},
+                     {"kind": "sync"}, {"kind": "cleanup"}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.get_action", lambda l: None)
+    existing = {"id": 53, "template_label": "rfc", "worktree_ref": "k",
+                "repo_snapshot": {"repo": "r"}, "status": "running",
+                "current_step": 3,
+                "step_results": [{"kind": "review", "status": "ok", "detail": ""}],
+                "effective_steps": [{"kind": "review", "execution_mode": "sequential",
+                                     "config": {}},
+                                    {"kind": "fix_comments", "execution_mode": "sequential",
+                                     "config": {}},
+                                    {"kind": "sync", "execution_mode": "sequential",
+                                     "config": {}},
+                                    {"kind": "cleanup", "execution_mode": "sequential",
+                                     "config": {}}]}
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [existing])
+    created = []
+    monkeypatch.setattr("workagent.store.create_flow",
+                        lambda **f: created.append(f) or {"id": 99, **f})
+    monkeypatch.setattr("workagent.store.update_flow",
+                        lambda fid, **f: {**existing, **f})
+    monkeypatch.setattr(cli_mod, "_resolve_ref",
+                        lambda ref: ("k", {"repo": "r"}, None))
+    ran = []
+    monkeypatch.setattr(cli_mod, "_run_sync_step",
+                        lambda *a, **k: ran.append("sync") or {"status": "synced"})
+    monkeypatch.setattr(cli_mod, "_run_cleanup_step",
+                        lambda *a, **k: ran.append("cleanup") or {"status": "cleaned"})
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app,
+                        ["flow", "run", "rfc", "k", "--yes",
+                         "--steps", '[{"kind": "sync"}, {"kind": "cleanup"}]'])
+    assert res.exit_code == 2, res.output
+    assert "--fresh" in res.output
+    assert ran == []
+    assert created == []
+    # Same-shape override resumes cleanly (config-only edits merge).
+    res2 = runner.invoke(cli_mod.app,
+                         ["flow", "run", "rfc", "k", "--yes",
+                          "--steps", '[{"kind": "review"}, {"kind": "fix_comments"}, '
+                                     '{"kind": "sync"}, {"kind": "cleanup"}]'])
+    assert res2.exit_code == 0, res2.output
+    assert ran == ["cleanup"]
+    # Config-only --steps diff fails fast: --step-config is the resume
+    # override path; inline --steps configs are not merged on resume.
+    res3 = runner.invoke(cli_mod.app,
+                         ["flow", "run", "rfc", "k", "--yes",
+                          "--steps", '[{"kind": "review", "config": {"terminal": false}}, '
+                                     '{"kind": "fix_comments"}, '
+                                     '{"kind": "sync"}, {"kind": "cleanup"}]'])
+    assert res3.exit_code == 2, res3.output
+    assert "--step-config" in res3.output
+    # Legacy row (effective_steps=None from a template launch) resumed
+    # with a different --steps chain also fails fast.
+    monkeypatch.setattr("workagent.store.list_flows",
+                        lambda **k: [{**existing, "effective_steps": None}])
+    res4 = runner.invoke(cli_mod.app,
+                         ["flow", "run", "rfc", "k", "--yes",
+                          "--steps", '[{"kind": "sync"}, {"kind": "cleanup"}]'])
+    assert res4.exit_code == 2, res4.output
+    assert "--fresh" in res4.output
+    assert ran == ["cleanup"]
+    # Legacy row resumed with a --steps chain matching the launch template
+    # proceeds (equal-to-baseline is a faithful resume, not a new chain).
+    res5 = runner.invoke(cli_mod.app,
+                         ["flow", "run", "rfc", "k", "--yes",
+                          "--steps", '[{"kind": "review"}, {"kind": "fix_comments"}, '
+                                     '{"kind": "sync"}, {"kind": "cleanup"}]'])
+    assert res5.exit_code == 0, res5.output
+    # --fresh starts the new chain instead of resuming.
+    res6 = runner.invoke(cli_mod.app,
+                         ["flow", "run", "rfc", "k", "--yes", "--fresh",
+                          "--steps", '[{"kind": "sync"}, {"kind": "cleanup"}]'])
+    assert res6.exit_code == 0, res6.output
+    assert ran == ["cleanup", "cleanup", "sync", "cleanup"]
+    # Template drift without --steps still resumes the stored chain: the
+    # stored effective chain is authoritative, template edits must not
+    # break (or silently reshape) a paused run.
+    monkeypatch.setattr("workagent.store.get_template",
+                        lambda l: {"label": "rfc", "name": "RFC",
+                                   "steps": [{"kind": "sync"}, {"kind": "cleanup"}]})
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [existing])
+    res7 = runner.invoke(cli_mod.app, ["flow", "run", "rfc", "k", "--yes"])
+    assert res7.exit_code == 0, res7.output
+    assert ran == ["cleanup", "cleanup", "sync", "cleanup", "cleanup"]
+
+
 
 def test_no_start_template_seeds_repo_snapshot(monkeypatch):
     """cleanup_release (no start step) must still seed repo_snapshot so the

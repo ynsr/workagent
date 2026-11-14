@@ -170,7 +170,7 @@ by the Dashboard Actions dropdown.)
  `flow template clone SRC [--name] [--label]` duplicates one template (lineage in `parent_labels`);
  `flow template compose LABEL --from A,B [--name]` concatenates chains (keep-first-start, lineage recorded).
  Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection.
- `flow run TEMPLATE REF [--steps JSON] [--step-config JSON] [--skip-steps 0[,N]] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`
+ `flow run TEMPLATE REF [--steps JSON] [--step-config JSON] [--skip-steps 0[,N]] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`. Resume keeps the stored chain: passing a different `--steps` chain for a resumable run fails (exit 2) — use `--fresh` for the new chain or drop `--steps` to resume.
 ### `GET /api/links`
 ```json
 {"trackers": {"jira:IPG": {"repos": ["/home/x/projects/projectx"]}},
