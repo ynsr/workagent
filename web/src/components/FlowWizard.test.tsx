@@ -55,7 +55,8 @@ describe("FlowWizard resume controls", () => {
     const { unmount } = renderWizard()
     const labels = screen.getAllByText("Fresh", { selector: "label" })
     expect(labels.length).toBeGreaterThanOrEqual(1)
-    expect(labels[labels.length - 1].querySelector("input[type='checkbox']")).not.toBeNull()
+    const last = labels[labels.length - 1]
+    expect(last?.querySelector("input[type='checkbox']")).not.toBeNull()
     unmount()
   })
 })
