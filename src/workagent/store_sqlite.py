@@ -278,7 +278,7 @@ def _migrate_category(conn) -> None:
 
 
 def _migrate_flow_template_icon(conn) -> None:
-    """Schema v23: flow_templates gains icon (Lucide name, default Zap).
+    """Schema v24: flow_templates gains icon (Lucide name, default Zap).
 
     Mirrors custom_actions.icon for issue #62: ALTER TABLE backfills
     DEFAULT 'Zap' so existing templates keep the fallback icon.

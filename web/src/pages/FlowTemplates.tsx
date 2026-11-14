@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
+import { Copy, Download, Pencil, Play, Trash2, Workflow } from "lucide-react"
 import { ActionIcon } from "@/components/ActionIcon"
 import { PageHeader } from "@/components/PageHeader"
 import { ScriptBlock } from "@/components/ScriptBlock"
@@ -292,6 +293,7 @@ export function FlowTemplates() {
                           </button>
                           {t.parent_labels?.length ? (
                             <div className="text-xs text-muted-foreground">from {t.parent_labels.join(", ")}</div>
+                          ) : null}
                         </TableCell>
                         <TableCell className="font-mono text-xs">{t.label}</TableCell>
                         <TableCell className="font-mono text-xs">

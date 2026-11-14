@@ -11,6 +11,7 @@ from . import cli_flow_util as _futil
 from . import store, worktrees
 from . import store_flows as sf
 from .cli_core import (
+    EXIT_USAGE,
     _catch_harness_errors,
     _fail,
     _init_completions,
@@ -54,6 +55,8 @@ def template_add(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
  ) -> None:
     """Add a flow template (steps required — the wizard builds them)."""
+    if steps is None:
+        _fail("flow template must have at least one step — pass --steps JSON", EXIT_USAGE)
     row = store.create_template(
         name=name, label=label or "", icon=icon or "",
         steps=steps,

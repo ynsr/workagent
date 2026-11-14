@@ -66,7 +66,7 @@ export function SuggestIconButton({ command, args, onSuggest, disabled }: {
 }) {
   const createRun = useCreateRun()
   const [busy, setBusy] = useState(false)
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => {
     clearTimeout(timer.current)
   }, [])
@@ -136,7 +136,7 @@ export function extractIcon(log: string): string | null {
   for (const line of log.split("\n")) {
     const m = line.match(/\{\s*"icon"\s*:\s*"([A-Za-z0-9_-]+)"\s*\}/)
     if (m) {
-      found = m[1]
+      found = m[1] ?? null
       continue
     }
     const t = line.trim().replace(/^["'`]+|["'`]+$/g, "")

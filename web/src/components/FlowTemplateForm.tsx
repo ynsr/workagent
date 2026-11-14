@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Plus } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
+import { ChainEditor, validateChain } from "@/components/ChainEditor"
 import { SegmentedControl, SuggestIconButton } from "@/components/FormControls"
 import { IconPicker } from "@/components/IconPicker"
 import { ScriptField } from "@/components/ScriptBlock"
@@ -82,6 +83,7 @@ export function FlowTemplateFormCard({ seed, knownActions, onDone }: {
   const [pre, setPre] = useState(seed.pre)
   const [post, setPost] = useState(seed.post)
   const [icon, setIcon] = useState(seed.icon?.trim() ? seed.icon : "Zap")
+  const [category, setCategory] = useState<RowCategory>(seed.category)
   const [runImmediately, setRunImmediately] = useState(seed.runImmediately)
   const [saving, setSaving] = useState(false)
   const isEdit = seed.editingLabel !== null
