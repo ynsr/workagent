@@ -704,6 +704,31 @@ def test_resume_rejects_different_steps_override(monkeypatch):
                                      '{"kind": "sync"}, {"kind": "cleanup"}]'])
     assert res2.exit_code == 0, res2.output
     assert ran == ["cleanup"]
+    # Config-only --steps diff fails fast: --step-config is the resume
+    # override path; inline --steps configs are not merged on resume.
+    res3 = runner.invoke(cli_mod.app,
+                         ["flow", "run", "rfc", "k", "--yes",
+                          "--steps", '[{"kind": "review", "config": {"terminal": false}}, '
+                                     '{"kind": "fix_comments"}, '
+                                     '{"kind": "sync"}, {"kind": "cleanup"}]'])
+    assert res3.exit_code == 2, res3.output
+    assert "--step-config" in res3.output
+    # Legacy row (effective_steps=None from a template launch) resumed
+    # with a different --steps chain also fails fast.
+    monkeypatch.setattr("workagent.store.list_flows",
+                        lambda **k: [{**existing, "effective_steps": None}])
+    res4 = runner.invoke(cli_mod.app,
+                         ["flow", "run", "rfc", "k", "--yes",
+                          "--steps", '[{"kind": "sync"}, {"kind": "cleanup"}]'])
+    assert res4.exit_code == 2, res4.output
+    assert "--fresh" in res4.output
+    assert ran == ["cleanup"]
+    # --fresh starts the new chain instead of resuming.
+    res5 = runner.invoke(cli_mod.app,
+                         ["flow", "run", "rfc", "k", "--yes", "--fresh",
+                          "--steps", '[{"kind": "sync"}, {"kind": "cleanup"}]'])
+    assert res5.exit_code == 0, res5.output
+    assert ran == ["cleanup", "sync", "cleanup"]
 
 
 

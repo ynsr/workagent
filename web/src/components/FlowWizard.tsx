@@ -27,6 +27,7 @@ export function FlowWizard({
   const { data: actionsData } = useActions()
   const [working, setWorking] = useState<FlowStep[]>(() => structuredClone(template.steps ?? []))
   const [running, setRunning] = useState(false)
+  const [fresh, setFresh] = useState(false)
   const [saving, setSaving] = useState(false)
   const knownActions = (actionsData?.actions ?? []).map((a) => ({ label: a.label, name: a.name }))
   const chainErrors = validateChain(working)
@@ -34,6 +35,9 @@ export function FlowWizard({
   const repoState = startRepoState(working)
   const repoMissing = repoState === "missing"
   const runDisabled = running || sorted.length === 0 || repoMissing || chainErrors.length > 0
+  const dirty = JSON.stringify(working) !== JSON.stringify(template.steps ?? [])
+  const stepArgs = dirty ? ["--steps", JSON.stringify(working)] : []
+  const freshArgs = fresh ? ["--fresh"] : []
   async function handleConfirm() {
     setRunning(true)
     // Any sequential step forces worktree-by-worktree execution: wait for
@@ -48,7 +52,7 @@ export function FlowWizard({
         try {
           const { run_id } = await createRun.mutateAsync({
             command: "flow",
-            args: ["run", template.label, key, "--steps", JSON.stringify(working), "--yes"],
+            args: ["run", template.label, key, ...stepArgs, ...freshArgs, "--yes"],
             confirm: true,
           })
           return { status: "fulfilled" as const, key, run_id }
@@ -73,7 +77,7 @@ export function FlowWizard({
       try {
         const created = await createRun.mutateAsync({
           command: "flow",
-          args: ["run", template.label, key, "--steps", JSON.stringify(working), "--yes"],
+          args: ["run", template.label, key, ...stepArgs, ...freshArgs, "--yes"],
           confirm: true,
         })
         runId = created.run_id
@@ -87,7 +91,6 @@ export function FlowWizard({
     }
     onClose()
   }
-  const dirty = JSON.stringify(working) !== JSON.stringify(template.steps ?? [])
   const saveDisabled = saving || chainErrors.length > 0
   async function handleSave() {
     setSaving(true)
@@ -167,6 +170,10 @@ export function FlowWizard({
             >
               Reset
             </Button>
+            <label className="flex items-center gap-1 text-[12px] text-muted-foreground" title="Start a new run on the edited chain instead of resuming a paused run">
+              <input type="checkbox" checked={fresh} onChange={(e) => setFresh(e.target.checked)} disabled={running} />
+              Fresh
+            </label>
           </div>
           <span className="mx-2 text-muted-foreground" aria-hidden>|</span>
           <Button

@@ -50,6 +50,15 @@ describe("FlowWizard footer groups", () => {
     expect(screen.getByRole("button", { name: "Run flow" })).toBeInTheDocument()
   })
 })
+describe("FlowWizard resume controls", () => {
+  it("renders a Fresh toggle for restart-instead-of-resume", () => {
+    const { unmount } = renderWizard()
+    const labels = screen.getAllByText("Fresh", { selector: "label" })
+    expect(labels.length).toBeGreaterThanOrEqual(1)
+    expect(labels[labels.length - 1].querySelector("input[type='checkbox']")).not.toBeNull()
+    unmount()
+  })
+})
 describe("FlowWizard fan-out summary", () => {
   it("announces concurrent fan-out for all-parallel multi-worktree chains", () => {
     const template = {
