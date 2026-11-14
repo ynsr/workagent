@@ -190,7 +190,7 @@ export function useCandidatesIssues(
 }
 
 export function useCandidatesWorktrees() {
-  return useQuery({ queryKey: queryKeys.candidatesWorktrees, queryFn: () => api.candidatesWorktrees(), staleTime: SWR_DAY_MS })
+  return useQuery({ queryKey: queryKeys.candidatesWorktrees, queryFn: () => api.candidatesWorktrees(), staleTime: SWR_DAY_MS, gcTime: SWR_DAY_MS })
 }
 
 /** Release releasability for one repo (1h SWR; retention matches).

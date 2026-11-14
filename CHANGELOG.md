@@ -561,6 +561,7 @@
   TTY, `--harness` launches the coding agent to resolve, non-TTY exits 2;
   dirty worktrees abort; `--all`/`--dry-run`/`--json` supported.
 - Cache TTL docs now describe what each timeout covers [no-issue]
+- StatusTable no longer blocks on issues without status labels: unknown issue states are cached like other cells [55]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

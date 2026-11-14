@@ -351,10 +351,14 @@ def _issue_cell(key: str, entry: dict, refresh_pr: bool = False) -> str | None:
 
     Optional: only worktrees with a linked issue (``issue``/``issue_url``
     or the link key itself) get a status; branch-only rows stay None.
-    Cached 10 min (same window as CI/reviews) keyed by (repo, branch);
-    --refresh-pr forces a live re-query. Never raises — unknown/failed
-    lookups return None (nothing cached, next run retries). Jira + GitHub
-    only (no glab status reader exists).
+    Cached within the same SWR window as CI/reviews, keyed by
+    (repo, branch); --refresh-pr forces a live re-query. Never raises.
+    Unknown/empty lookups (e.g. a gh issue with no ``status:`` label)
+    are cached as a negative for the same window, so a status poll does
+    not re-query the host CLI for every worktree on every run. Lookup
+    failures (``_issue_state`` returns None) cache nothing and preserve
+    the prior cached value, so the next run retries. Jira + GitHub only
+    (no glab status reader exists).
     """
     stored = str(entry.get("issue", "") or "").strip()
     stored_url = str(entry.get("issue_url", "") or "").strip()
@@ -362,8 +366,10 @@ def _issue_cell(key: str, entry: dict, refresh_pr: bool = False) -> str | None:
     repo = entry.get("repo", "")
     cached = store.lookup_pr_cache(branch, repo) if branch else None
     if not refresh_pr and cached and _issue_usable(cached) \
-            and cached.get("issue_status"):
-        return cached.get("issue_status")
+            and "issue_status" in cached:
+        # store normalizes a cached None to "": a present-but-empty value
+        # is a usable negative (lookup succeeded, no status label).
+        return cached.get("issue_status") or None
     from . import issue_status as _st
     parsed = None
     for cand in (stored, key, stored_url or None):
@@ -382,11 +388,11 @@ def _issue_cell(key: str, entry: dict, refresh_pr: bool = False) -> str | None:
         return (cached or {}).get("issue_status") or None
     cur = _st._issue_state(parsed.get("number", ""), tool,
                            parsed.get("url", "") or parsed.get("number", ""))
-    if not cur:
+    if cur is None:
         return (cached or {}).get("issue_status") or None
     if branch:
         store.cache_issue_status(branch, cur, repo=repo)
-    return cur
+    return cur or None
 
 
 

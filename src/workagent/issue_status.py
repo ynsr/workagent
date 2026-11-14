@@ -120,8 +120,14 @@ def _label_siblings(state: str) -> list[str]:
             if f"{_STATUS_PREFIX}{s}" != want]
 
 
-def _issue_state(number: str, tool: str, target: str) -> str:
-    """Best-effort current issue state (`""` when unknown). Never raises."""
+def _issue_state(number: str, tool: str, target: str) -> str | None:
+    """Best-effort current issue state. Never raises.
+
+    Returns "" when the lookup succeeded but no status is known (e.g. a
+    gh issue with no ``status:`` label); None when the lookup itself
+    failed (host CLI error) so callers must not cache the failure as a
+    negative or overwrite a previously cached good value.
+    """
     try:
         if tool == "jira":
             out = run_cmd("jira", "issue", "view", number, "--raw")
@@ -139,9 +145,10 @@ def _issue_state(number: str, tool: str, target: str) -> str:
                 n = (lb.get("name", "") if isinstance(lb, dict) else str(lb))
                 if n.startswith(_STATUS_PREFIX):
                     return n[len(_STATUS_PREFIX):].strip().lower()
+            return ""
     except Exception:
         pass
-    return ""
+    return None
 
 
 def pr_review_state(pr_url: str, cwd: str | None = None) -> str:
