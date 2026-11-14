@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Repos gain per-repo StatusTable overlay buttons: fixed + dedicated toggles via the Repos page dialog or repo update --overlay-buttons [59]
 - StatusTable no longer blocks on issues without status labels: unknown issue states are cached like other cells [55]
 - Cache TTL docs now describe what each timeout covers [no-issue]
 - Review accepts GitHub shorthand refs (OWNER/REPO#NUM resolves via gh; issue numbers fail with a start-first hint) [49]

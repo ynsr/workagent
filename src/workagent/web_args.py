@@ -160,7 +160,7 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "register": ("--key", "--issue", "--repo"),
     "release": ("--checks", "--diff", "--pre-release-timeout", "--ci-timeout", "--env-file", "--action", "--run-mode", "--extra-prompt"),
     "repo add": ("--name", "--path", "--tracker", "--release-branch", "--pre-release"),
-    "repo update": ("--default-branch", "--release-branch", "--pre-release"),
+    "repo update": ("--default-branch", "--release-branch", "--pre-release", "--overlay-buttons"),
     "link remove": ("--repo",),
     "tracker add": ("--vendor", "--remote-url"),
     "tracker update": ("--vendor", "--remote-url"),

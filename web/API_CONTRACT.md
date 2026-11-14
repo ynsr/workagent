@@ -96,6 +96,15 @@ command map — currently only the `pre-release` gate, which runs in the
 repo path before the release MR opens (failing gate aborts; empty = no
 gate). `repo add`/`repo update` accept `--pre-release <cmd>`
 (auto-detected from the project type on add unless given; empty clears).
+`overlay_buttons` (object, e.g. `{"adhoc": false, "flow:deploy": false}`) is
+the per-repo StatusTable overlay visibility map: `{button_id: bool}`,
+missing key or `{}` = every button visible. Fixed ids: `sync`, `review`,
+`fix-comments`, `prodtest`, `adhoc`, `cleanup`, `stop-terminal`,
+`open-runs`, `open-sessions`, `open-flows`, `resume-session`, `dedicated`
+(master toggle hiding all dedicated buttons); per-item dedicated ids are
+`flow:<label>` / `action:<label>`. `repo update NAME --overlay-buttons
+"sync,review,-adhoc,flow:deploy"` merges (`-id` hides, later entries win;
+empty string resets); the Repos page edits it per row.
 
 ### `GET /api/repos/detect?path=<localpath>`
 Read-only auto-detection of the pre-release gate for a local path

@@ -46,7 +46,7 @@ export function ActionIcon({
 }
 
 /** Dedicated overlay buttons for flagged templates/actions on one worktree row. */
-function DedicatedOverlay({ worktreeKey }: { worktreeKey: string }) {
+function DedicatedOverlay({ worktreeKey, hidden }: { worktreeKey: string; hidden?: Set<string> }) {
   const navigate = useNavigate()
   const createRun = useCreateRun()
   const { data: flowData } = useFlowTemplates()
@@ -59,9 +59,12 @@ function DedicatedOverlay({ worktreeKey }: { worktreeKey: string }) {
   )
   const flaggedTemplates = sortedTemplates.filter((t) => t.dedicated_overlay)
   const flaggedActions = sortedActions.filter((a) => a.dedicated_overlay)
+  const groupHidden = hidden?.has("dedicated") ?? false
+  const visTemplates = groupHidden ? [] : flaggedTemplates.filter((t) => !hidden?.has(`flow:${t.label}`))
+  const visActions = groupHidden ? [] : flaggedActions.filter((a) => !hidden?.has(`action:${a.label}`))
   const [wizard, setWizard] = useState<FlowTemplateRow | null>(null)
   const [actionForm, setActionForm] = useState<ActionRow | null>(null)
-  if (flaggedTemplates.length === 0 && flaggedActions.length === 0) return null
+  if (visTemplates.length === 0 && visActions.length === 0) return null
   async function handleAction(action: ActionRow) {
     try {
       const { run_id } = await createRun.mutateAsync({
@@ -108,12 +111,12 @@ function DedicatedOverlay({ worktreeKey }: { worktreeKey: string }) {
   }
   return (
     <>
-      {flaggedTemplates.map((t) => (
+      {visTemplates.map((t) => (
         <ActionIcon key={`flow-${t.label}`} title={`Run flow ${t.name} on ${worktreeKey}`} onClick={() => handleTemplateClick(t)}>
           <Workflow aria-hidden />
         </ActionIcon>
       ))}
-      {flaggedActions.map((a) => (
+      {visActions.map((a) => (
         <ActionIcon key={`action-${a.label}`} title={isRunImmediateAction(a) ? `Run action ${a.name} on ${worktreeKey}` : `Run action ${a.name} on ${worktreeKey}…`} onClick={() => handleActionClick(a)}>
           <Zap aria-hidden />
         </ActionIcon>
@@ -133,6 +136,7 @@ export function RowActions({
   actions,
   overlay = false,
   showRuns = true,
+  hidden,
 }: {
   worktreeKey: string
   entry: WorktreeMap[string]
@@ -143,18 +147,23 @@ export function RowActions({
   overlay?: boolean
   /** False hides the Runs/Sessions buttons (StatusTable rows — they live in the details dialog). */
   showRuns?: boolean
+  /** Overlay ids hidden for this row's repo (`{button_id: false}` map). Detail panels pass nothing. */
+  hidden?: Set<string>
 }) {
   const invalid = entry.wt_valid === false
   const lastSession = useCopyResumeSession(worktreeKey, entry.worktree)
+  // Overlays and StatusTable rows filter by the row repo's hidden set;
+  // detail panels (WorktreeDetail) pass nothing → everything visible.
+  const hide = hidden ?? new Set<string>()
   return (
     <div className={overlay ? "flex items-center justify-end gap-0.5" : "flex items-center justify-end gap-0.5 opacity-100 transition-opacity focus-within:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-within:opacity-100 [@media(hover:hover)]:hover:opacity-100"}>
-      {overlay ? <DedicatedOverlay worktreeKey={worktreeKey} /> : null}
-      {actions.onSync ? (
+      {overlay ? <DedicatedOverlay worktreeKey={worktreeKey} hidden={hide} /> : null}
+      {actions.onSync && !hide.has("sync") ? (
         <ActionIcon title={`Sync ${worktreeKey}`} onClick={() => actions.onSync?.(worktreeKey)}>
           <RefreshCw aria-hidden />
         </ActionIcon>
       ) : null}
-      {actions.onReview ? (
+      {actions.onReview && !hide.has("review") ? (
         <ActionIcon
           title={`Review ${worktreeKey}`}
           onClick={() => actions.onReview?.(worktreeKey)}
@@ -162,7 +171,7 @@ export function RowActions({
           <GitPullRequest aria-hidden />
         </ActionIcon>
       ) : null}
-      {actions.onFixComments ? (
+      {actions.onFixComments && !hide.has("fix-comments") ? (
         <ActionIcon
           title={`Fix PR comments of ${worktreeKey}`}
           onClick={() => actions.onFixComments?.(worktreeKey)}
@@ -170,7 +179,7 @@ export function RowActions({
           <Wrench aria-hidden />
         </ActionIcon>
       ) : null}
-      {actions.onGenerateProdtest ? (
+      {actions.onGenerateProdtest && !hide.has("prodtest") ? (
         <ActionIcon
           title={`Generate prodtest plan for ${worktreeKey}`}
           onClick={() => actions.onGenerateProdtest?.(worktreeKey)}
@@ -178,7 +187,7 @@ export function RowActions({
           <FileCheck aria-hidden />
         </ActionIcon>
       ) : null}
-      {actions.onAdhoc ? (
+      {actions.onAdhoc && !hide.has("adhoc") ? (
         <ActionIcon
           title={`Run adhoc prompt on ${worktreeKey}`}
           onClick={() => actions.onAdhoc?.(worktreeKey)}
@@ -186,7 +195,7 @@ export function RowActions({
           <Zap aria-hidden />
         </ActionIcon>
       ) : null}
-      {actions.onCleanup ? (
+      {actions.onCleanup && !hide.has("cleanup") ? (
         <ActionIcon
           title={invalid ? `Delete invalid worktree ${worktreeKey}` : `Cleanup ${worktreeKey}`}
           onClick={() => actions.onCleanup?.(worktreeKey)}
@@ -195,7 +204,7 @@ export function RowActions({
           <Trash2 aria-hidden />
         </ActionIcon>
       ) : null}
-      {actions.onStopTerminal && entry.harness?.startsWith("terminal ") ? (
+      {actions.onStopTerminal && entry.harness?.startsWith("terminal ") && !hide.has("stop-terminal") ? (
         <ActionIcon
           title={`Stop terminal agent ${entry.harness} on ${worktreeKey}`}
           onClick={() => actions.onStopTerminal?.(worktreeKey)}
@@ -229,7 +238,7 @@ export function RowActions({
           <Trash2 aria-hidden />
         </ActionIcon>
       ) : null}
-      {showRuns ? (
+      {showRuns && !hide.has("open-runs") ? (
         <ActionIcon
           title={`Open runs for ${worktreeKey}`}
           onClick={() => actions.onOpenRun(worktreeKey)}
@@ -237,7 +246,7 @@ export function RowActions({
           <Rocket aria-hidden />
         </ActionIcon>
       ) : null}
-      {showRuns && actions.onOpenSessions ? (
+      {showRuns && actions.onOpenSessions && !hide.has("open-sessions") ? (
         <ActionIcon
           title={`Worktree sessions for ${worktreeKey}`}
           onClick={() => actions.onOpenSessions?.(worktreeKey)}
@@ -245,22 +254,32 @@ export function RowActions({
           <History aria-hidden />
         </ActionIcon>
       ) : null}
-      {lastSession && entry.worktree ? (
-        <SessionResumeActions
-          sessionId={lastSession.id}
-          worktree={entry.worktree}
-          sessionFile={lastSession.file_path}
-          variant="icon"
-        />
-      ) : (
+      {showRuns && actions.onOpenFlows && !hide.has("open-flows") ? (
         <ActionIcon
-          title={`Resume session: no resumable session for ${worktreeKey} yet`}
-          disabled
-          onClick={() => undefined}
+          title={`Open flows for ${worktreeKey}`}
+          onClick={() => actions.onOpenFlows?.(worktreeKey)}
         >
-          <History aria-hidden />
+          <Workflow aria-hidden />
         </ActionIcon>
-      )}
+      ) : null}
+      {!hide.has("resume-session") ? (
+        lastSession && entry.worktree ? (
+          <SessionResumeActions
+            sessionId={lastSession.id}
+            worktree={entry.worktree}
+            sessionFile={lastSession.file_path}
+            variant="icon"
+          />
+        ) : (
+          <ActionIcon
+            title={`Resume session: no resumable session for ${worktreeKey} yet`}
+            disabled
+            onClick={() => undefined}
+          >
+            <History aria-hidden />
+          </ActionIcon>
+        )
+      ) : null}
     </div>
   )
 }

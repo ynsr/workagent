@@ -292,12 +292,14 @@ def load_repos() -> dict:
             key = str(Path(raw).expanduser().resolve()) if raw else ""
         except Exception:
             key = ""
+        ov = (v or {}).get("overlay_buttons", {})
         out[name] = {"path": raw, "tracker": tmap.get(key, ""),
                      "remote": str((v or {}).get("remote", "") or ""),
                      "tool": (v or {}).get("tool"),
                      "default_branch": str((v or {}).get("default_branch", "") or ""),
                      "release_branch": str((v or {}).get("release_branch", "") or ""),
-                     "commands": dict((v or {}).get("commands") or {})}
+                     "commands": dict((v or {}).get("commands") or {}),
+                     "overlay_buttons": dict(ov) if isinstance(ov, dict) else {}}
     return out
 
 

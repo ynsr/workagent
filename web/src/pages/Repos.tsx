@@ -1,8 +1,9 @@
 import { useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { Copy, Download, FolderGit2, Plus, Trash2 } from "lucide-react"
+import { Copy, Download, FolderGit2, Plus, Settings2, Trash2 } from "lucide-react"
 import { CopyCell } from "@/components/CopyCell"
+import { OverlayButtonsDialog } from "@/components/OverlayButtonsDialog"
 import { PageHeader } from "@/components/PageHeader"
 import { ReleaseButton } from "@/components/ReleaseButton"
 import { ReleasingDot } from "@/components/ReleaseCard"
@@ -35,8 +36,9 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
-import { useCreateRun, useRepos } from "@/lib/queries"
+import { useActions, useCreateRun, useFlowTemplates, useRepos } from "@/lib/queries"
 import type { Repo } from "@/lib/api"
+import { isOverlayVisible } from "@/lib/overlayButtons"
 
 export function Repos() {
   const navigate = useNavigate()
@@ -55,6 +57,9 @@ export function Repos() {
   const [removeForce, setRemoveForce] = useState(false)
   const [adding, setAdding] = useState(false)
   const [trackerError, setTrackerError] = useState("")
+  const [overlayRepo, setOverlayRepo] = useState<Repo | null>(null)
+  const { data: flowData } = useFlowTemplates()
+  const { data: actionData } = useActions()
   const editDefaultRef = useRef("")
   const editReleaseRef = useRef("")
   const editPreReleaseRef = useRef("")
@@ -181,6 +186,32 @@ export function Repos() {
     }
   }
 
+  function overlaySummary(repo: Repo): string {
+    const map = repo.overlay_buttons ?? {}
+    const hidden = Object.entries(map).filter(([, v]) => v === false).map(([k]) => k)
+    if (hidden.length === 0) return "all visible"
+    if (hidden.length <= 3) return `hidden: ${hidden.join(", ")}`
+    return `${hidden.length} hidden`
+  }
+
+  async function handleOverlaySubmit(overlayArg: string) {
+    const repo = overlayRepo
+    if (!repo) return
+    setOverlayRepo(null)
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "repo",
+        args: ["update", repo.name, "--overlay-buttons", overlayArg],
+        confirm: true,
+      })
+      toast.success("Repo overlay update started", {
+        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
   async function handleRemove(repo: Repo) {
     const ok = await confirm({
       action: "repo remove",
@@ -299,6 +330,7 @@ export function Repos() {
                         <TableHead>Tracker</TableHead>
                         <TableHead>Branches</TableHead>
                         <TableHead>Pre-release</TableHead>
+                        <TableHead>Overlay</TableHead>
                         <TableHead className="w-12" aria-label="Release" />
                         <TableHead className="w-12" aria-label="Remove" />
                       </TableRow>
@@ -350,6 +382,16 @@ export function Repos() {
                               ) : (
                                 <span className="text-muted-foreground">set gate</span>
                               )}
+                            </button>
+                          </TableCell>
+                          <TableCell className="max-w-48 font-mono text-[13px]">
+                            <button
+                              type="button"
+                              onClick={() => setOverlayRepo(r)}
+                              title={`Edit overlay buttons for ${r.name}`}
+                              className="rounded underline decoration-dotted underline-offset-4 hover:text-foreground"
+                            >
+                              {overlaySummary(r)}
                             </button>
                           </TableCell>
                           <TableCell>
@@ -404,6 +446,15 @@ export function Repos() {
                             : "no release branch"}
                         </span>
                         <span className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setOverlayRepo(r)}
+                            title={`Edit overlay buttons for ${r.name}`}
+                            className="min-h-11"
+                          >
+                            <Settings2 aria-hidden /> {overlaySummary(r)}
+                          </Button>
                           <ReleaseButton repo={r.name} compact />
                           <Button
                             variant="ghost"
@@ -504,6 +555,16 @@ export function Repos() {
           </CardContent>
         </Card>
       </div>
+      {overlayRepo ? (
+        <OverlayButtonsDialog
+          repoName={overlayRepo.name}
+          initial={overlayRepo.overlay_buttons ?? {}}
+          flowTemplates={flowData?.templates ?? []}
+          actionRows={actionData?.actions ?? []}
+          onClose={() => setOverlayRepo(null)}
+          onSubmit={(arg) => void handleOverlaySubmit(arg)}
+        />
+      ) : null}
     </div>
   )
 }

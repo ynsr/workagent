@@ -16,6 +16,19 @@ def _parse_commands(raw: object) -> dict:
     except Exception:
         return {}
     return val if isinstance(val, dict) else {}
+def _parse_overlay_buttons(raw: object) -> dict:
+    """overlay_buttons JSON text → {button_id: bool}; invalid/empty → {} (all visible, never raise)."""
+    import json
+    if not raw or not isinstance(raw, str):
+        return {}
+    try:
+        val = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(val, dict):
+        return {}
+    return {str(k): bool(v) for k, v in val.items()}
+
 
 def load_trackers(path: Path) -> dict:
     """{tracker_id: {"repos", "vendor", "remote_url, "fetch_enabled", "is_enabled"}} — SQLite source of truth."""
@@ -134,7 +147,7 @@ def load_repos(path: Path) -> dict:
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         out: dict = {}
-        for r in conn.execute("SELECT key_ref, name, path, remote, tool, fetch_enabled, default_branch, release_branch, commands FROM repos ORDER BY name"):
+        for r in conn.execute("SELECT key_ref, name, path, remote, tool, fetch_enabled, default_branch, release_branch, commands, overlay_buttons FROM repos ORDER BY name"):
             d = dict(r)
             tids = [x["tracker_key"] for x in conn.execute(
                 "SELECT tracker_key FROM tracker_repos WHERE repo_key = ? ORDER BY tracker_key",
@@ -145,7 +158,8 @@ def load_repos(path: Path) -> dict:
                 "fetch_enabled": bool(d.get("fetch_enabled", 1)),
                 "default_branch": d.get("default_branch") or "",
                 "release_branch": d.get("release_branch") or "",
-                "commands": _parse_commands(d.get("commands"))}
+                "commands": _parse_commands(d.get("commands")),
+                "overlay_buttons": _parse_overlay_buttons(d.get("overlay_buttons"))}
         return out
 
 
@@ -213,13 +227,15 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
                       fetch_enabled: bool | None = None,
                       default_branch: str | None = None,
                       release_branch: str | None = None,
-                      commands: dict | None = None) -> None:
+                      commands: dict | None = None,
+                      overlay_buttons: dict | None = None) -> None:
     """Upsert a named registry row and link it to *tracker_key* (join-only).
 
     tracker_key stays mandatory: an explicit key wins, else the caller
     derives it from the origin remote. The repo row itself carries no
     tracker column — the mapping lives in tracker_repos. Branch args None
-    preserve the stored values; explicit '' clears.
+    preserve the stored values; explicit '' clears. overlay_buttons None
+    preserves; {} (empty dict) resets to all-visible.
     """
     if not tracker_key:
         raise ValueError("tracker_key is mandatory")
@@ -244,7 +260,7 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
             conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
                          " WHERE key_ref = ?",
                          (name, name, remote or "", tool or "", hit[0]))
-        fe_cur = conn.execute("SELECT fetch_enabled, default_branch, release_branch, commands FROM repos WHERE key_ref = ? OR path = ?",
+        fe_cur = conn.execute("SELECT fetch_enabled, default_branch, release_branch, commands, overlay_buttons FROM repos WHERE key_ref = ? OR path = ?",
                               (name, norm)).fetchone()
         from .store_sqlite import _default_fetch_enabled
         fe = fe_cur[0] if fe_cur is not None else _default_fetch_enabled(tool=tool or "")
@@ -257,13 +273,15 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
         import json as _json
         stored_commands = _parse_commands(fe_cur[3] if fe_cur is not None else None)
         new_commands = stored_commands if commands is None else (commands or {})
-        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, fetch_enabled, default_branch, release_branch, commands)"
-                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        stored_overlay = _parse_overlay_buttons(fe_cur[4] if fe_cur is not None else None)
+        new_overlay = stored_overlay if overlay_buttons is None else (overlay_buttons or {})
+        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, fetch_enabled, default_branch, release_branch, commands, overlay_buttons)"
+                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                      " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"
                      " remote=excluded.remote, tool=excluded.tool, fetch_enabled=excluded.fetch_enabled,"
                      " default_branch=excluded.default_branch, release_branch=excluded.release_branch,"
-                     " commands=excluded.commands",
-                     (name, norm, name, remote or "", tool or "", fe, new_default or "", new_release or "", _json.dumps(new_commands)))
+                     " commands=excluded.commands, overlay_buttons=excluded.overlay_buttons",
+                     (name, norm, name, remote or "", tool or "", fe, new_default or "", new_release or "", _json.dumps(new_commands), _json.dumps(new_overlay)))
         conn.execute("INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
                      (tracker_key, name))
 
