@@ -1,9 +1,8 @@
 # Changelog
 ## Unreleased
-- Retry live PR lookup in review/flow instead of failing on transient gh errors [60]
-- Deleted Jira statuses map to survivors: Code Review moves to Review, Ready to Release and Released move to Product Test [48]
-- Fix-default checks the release branch CI too, so a red release pipeline no longer reports a false success [52]
-- Fix-default hands both failing branches to the harness and names the failing branch in dry-run plans and noops [52]
+- Flow template steps gain Parallel/Sequential mode for multi-worktree runs: all-parallel chains fan out at once, any sequential step runs worktrees one by one [61]
+- StatusTable no longer blocks on issues without status labels: unknown issue states are cached like other cells [55]
+- Cache TTL docs now describe what each timeout covers [no-issue]
 - Review accepts GitHub shorthand refs (OWNER/REPO#NUM resolves via gh; issue numbers fail with a start-first hint) [49]
 - Message runs fixed: per-message run keys, live Run buttons with confirm, repo-path fail-fast with --ref hint, plus rename guards [44]
 - Message launch pins repos with repo checkboxes (one run per repo) and messages track linked worktrees via --worktree [46]
@@ -560,8 +559,10 @@
   stays inside `## Unreleased` (bullet union); other conflicts prompt on a
   TTY, `--harness` launches the coding agent to resolve, non-TTY exits 2;
   dirty worktrees abort; `--all`/`--dry-run`/`--json` supported.
-- Cache TTL docs now describe what each timeout covers [no-issue]
-- StatusTable no longer blocks on issues without status labels: unknown issue states are cached like other cells [55]
+- Deleted Jira statuses map to survivors: Code Review moves to Review, Ready to Release and Released move to Product Test [48]
+- Fix-default checks the release branch CI too, so a red release pipeline no longer reports a false success [52]
+- Fix-default hands both failing branches to the harness and names the failing branch in dry-run plans and noops [52]
+- Retry live PR lookup in review/flow instead of failing on transient gh errors [60]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

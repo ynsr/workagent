@@ -2,11 +2,13 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { ChainEditor, startRepoState, validateChain } from "@/components/ChainEditor"
+import { awaitRunSettled, chainRunsParallel } from "@/lib/flowExecution"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { Button } from "@/components/ui/button"
 import { errorText } from "@/components/StatusFeedback"
 import { useActions, useCreateRun } from "@/lib/queries"
 import type { FlowStep, FlowTemplateRow } from "@/lib/api"
+
 
 /** Launch wizard modal: read-only chain + per-step override editors, confirm
  * fans out one `flow run` per ref (worktree key or issue ref). Shared by the
@@ -34,15 +36,50 @@ export function FlowWizard({
   const runDisabled = running || sorted.length === 0 || repoMissing || chainErrors.length > 0
   async function handleConfirm() {
     setRunning(true)
+    // Any sequential step forces worktree-by-worktree execution: wait for
+    // each run to settle before starting the next. All-parallel chains
+    // fan out concurrently.
+    const sequential = !chainRunsParallel(working)
+    if (!sequential) {
+      const started: (
+        | { status: "fulfilled"; key: string; run_id: string }
+        | { status: "rejected"; reason: unknown }
+      )[] = await Promise.all(sorted.map(async (key) => {
+        try {
+          const { run_id } = await createRun.mutateAsync({
+            command: "flow",
+            args: ["run", template.label, key, "--steps", JSON.stringify(working), "--yes"],
+            confirm: true,
+          })
+          return { status: "fulfilled" as const, key, run_id }
+        } catch (reason) {
+          return { status: "rejected" as const, reason }
+        }
+      }))
+      started.forEach((r) => {
+        if (r.status === "fulfilled") {
+          toast.success(`Flow ${template.label} on ${r.key} started`, {
+            action: { label: "View", onClick: () => navigate(`/runs/${r.run_id}`) },
+          })
+        } else {
+          toast.error(errorText(r.reason))
+        }
+      })
+      onClose()
+      return
+    }
     for (const key of sorted) {
+      let runId = ""
       try {
-        const { run_id } = await createRun.mutateAsync({
+        const created = await createRun.mutateAsync({
           command: "flow",
           args: ["run", template.label, key, "--steps", JSON.stringify(working), "--yes"],
           confirm: true,
         })
-        toast.success(`Flow ${template.label} on ${key} started`, {
-          action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+        runId = created.run_id
+        await awaitRunSettled(runId)
+        toast.success(`Flow ${template.label} on ${key} settled — next worktree starting`, {
+          action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
         })
       } catch (err) {
         toast.error(`${key}: ${errorText(err)}`)
@@ -156,6 +193,7 @@ export function FlowWizard({
         steps={working}
         onChange={setWorking}
         knownActions={knownActions}
+        showExecutionMode={sorted.length > 1}
       />
     </ActionDialog>
   )

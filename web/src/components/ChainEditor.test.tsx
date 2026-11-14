@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 import { ChainEditor } from "@/components/ChainEditor"
@@ -67,5 +67,44 @@ describe("ChainEditor release selects", () => {
     )
     expect(screen.queryByLabelText("Checks")).not.toBeInTheDocument()
     expect(screen.queryByLabelText("Diff")).not.toBeInTheDocument()
+  })
+})
+
+function renderChain(steps: FlowStep[], extra?: { onChange?: (s: FlowStep[]) => void; showExecutionMode?: boolean }) {
+  let next: FlowStep[] = []
+  const { container, unmount } = render(
+    <ChainEditor
+      mode="edit"
+      steps={steps}
+      onChange={(s) => { next = s; extra?.onChange?.(s) }}
+      knownActions={[]}
+      {...(extra?.showExecutionMode !== undefined ? { showExecutionMode: extra.showExecutionMode } : {})}
+    />,
+  )
+  return { container, unmount, next: () => next }
+}
+
+describe("ChainEditor execution mode", () => {
+  it("toggles parallel on a review step", async () => {
+    const user = userEvent.setup()
+    const steps: FlowStep[] = [{ kind: "review", config: {} }]
+    const { container, unmount, next } = renderChain(steps)
+    await user.click(within(container).getByRole("radio", { name: "Step 1 parallel" }))
+    expect(next()[0]?.execution_mode).toBe("parallel")
+    unmount()
+  })
+
+  it("disables parallel on cleanup steps", () => {
+    const steps: FlowStep[] = [{ kind: "cleanup", config: {} }]
+    const { container, unmount } = renderChain(steps)
+    expect(within(container).getByRole("radio", { name: "Step 1 parallel" })).toBeDisabled()
+    unmount()
+  })
+
+  it("hides the toggle in single-worktree mode", () => {
+    const steps: FlowStep[] = [{ kind: "review", config: {} }]
+    const { container, unmount } = renderChain(steps, { showExecutionMode: false })
+    expect(within(container).queryByRole("radiogroup", { name: "Step 1 execution mode" })).not.toBeInTheDocument()
+    unmount()
   })
 })

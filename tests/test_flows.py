@@ -299,3 +299,52 @@ def test_template_category_rejects_bad_value(tmp_path):
         assert e.exit_code == 2
     else:
         raise AssertionError("expected HarnessError")
+
+def test_execution_mode_defaults_sequential(tmp_path):
+    from workagent import store_flows as sf
+    ok = sf.validate_template([{"kind": "start"}, {"kind": "cleanup"}])
+    assert [s["execution_mode"] for s in ok] == ["sequential", "sequential"]
+
+
+def test_execution_mode_parallel_allowed(tmp_path):
+    from workagent import store_flows as sf
+    ok = sf.validate_template(
+        [{"kind": "start"}, {"kind": "review", "execution_mode": "parallel"},
+         {"kind": "fix_comments"}, {"kind": "cleanup"}])
+    assert ok[1]["execution_mode"] == "parallel"
+    assert ok[3]["execution_mode"] == "sequential"
+
+
+def test_execution_mode_rejects_unknown_and_forced_sequential():
+    _rejects([{"kind": "review", "execution_mode": "sometimes"},
+              {"kind": "fix_comments"}, {"kind": "cleanup"}], "execution_mode")
+    _rejects([{"kind": "start", "execution_mode": "parallel"},
+              {"kind": "cleanup"}], "sequentially")
+    _rejects([{"kind": "review", "execution_mode": "parallel"},
+              {"kind": "fix_comments"},
+              {"kind": "cleanup", "execution_mode": "parallel"}],
+             "sequentially")
+    _rejects([{"kind": "review"}, {"kind": "fix_comments"},
+              {"kind": "cleanup"},
+              {"kind": "release", "execution_mode": "parallel"}],
+             "sequentially")
+
+def test_execution_mode_case_insensitive(tmp_path):
+    from workagent import store_flows as sf
+    ok = sf.validate_template(
+        [{"kind": "start"}, {"kind": "review", "execution_mode": "Parallel"},
+         {"kind": "fix_comments"}, {"kind": "cleanup"}])
+    assert ok[1]["execution_mode"] == "parallel"
+
+
+def test_execution_mode_survives_template_round_trip(tmp_path, monkeypatch):
+    from workagent import store_flows as sf
+    db = tmp_path / "state.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    sf.create_template(db, name="Modes",
+                       steps=[{"kind": "start"},
+                              {"kind": "review", "execution_mode": "Parallel"},
+                              {"kind": "fix_comments"}, {"kind": "cleanup"}])
+    row = sf.get_template(db, "modes")
+    assert [s["execution_mode"] for s in row["steps"]] == [
+        "sequential", "parallel", "sequential", "sequential"]

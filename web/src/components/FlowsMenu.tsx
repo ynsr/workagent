@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { Workflow } from "lucide-react"
+import { awaitRunSettled, chainRunsParallel } from "@/lib/flowExecution"
 import { FlowWizard } from "@/components/FlowWizard"
 import { Button } from "@/components/ui/button"
 import {
@@ -9,7 +10,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import type { FlowTemplateRow } from "@/lib/api"
+import { type FlowTemplateRow } from "@/lib/api"
 import { useCreateRun, useFlowTemplates } from "@/lib/queries"
 import { errorText } from "@/components/StatusFeedback"
 import { isRunImmediateTemplate, messageScoped } from "@/lib/messageRunConfig"
@@ -40,15 +41,46 @@ export function FlowsMenu({ selected }: { selected: Set<string> }) {
 
   async function handleImmediateRun(template: FlowTemplateRow) {
     setOpen(false)
-    for (const key of [...selected].sort()) {
+    const keys = [...selected].sort()
+    if (chainRunsParallel(template.steps ?? [])) {
+      const started: (
+        | { status: "fulfilled"; key: string; run_id: string }
+        | { status: "rejected"; reason: unknown }
+      )[] = await Promise.all(keys.map(async (key) => {
+        try {
+          const { run_id } = await createRun.mutateAsync({
+            command: "flow",
+            args: ["run", template.label, key, "--yes"],
+            confirm: true,
+          })
+          return { status: "fulfilled" as const, key, run_id }
+        } catch (reason) {
+          return { status: "rejected" as const, reason }
+        }
+      }))
+      started.forEach((r) => {
+        if (r.status === "fulfilled") {
+          toast.success(`Flow ${template.label} on ${r.key} started`, {
+            action: { label: "View", onClick: () => navigate(`/runs/${r.run_id}`) },
+          })
+        } else {
+          toast.error(errorText(r.reason))
+        }
+      })
+      return
+    }
+    for (const key of keys) {
+      let runId = ""
       try {
-        const { run_id } = await createRun.mutateAsync({
+        const created = await createRun.mutateAsync({
           command: "flow",
           args: ["run", template.label, key, "--yes"],
           confirm: true,
         })
-        toast.success(`Flow ${template.label} on ${key} started`, {
-          action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+        runId = created.run_id
+        await awaitRunSettled(runId)
+        toast.success(`Flow ${template.label} on ${key} settled — next worktree starting`, {
+          action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
         })
       } catch (err) {
         toast.error(`${key}: ${errorText(err)}`)

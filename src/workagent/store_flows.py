@@ -8,9 +8,14 @@ from pathlib import Path
 
 from .store_custom_actions import normalize_label, validate_label
 
+EXECUTION_MODES = ("sequential", "parallel")
+
+#: Steps whose side effects cannot be parallelized across worktrees
+#: (teardown/creation ordering, branch races). Forced to sequential.
+SEQUENTIAL_ONLY_STEPS = ("start", "cleanup", "release")
+
 STEP_KINDS = ("start", "review", "fix_comments", "sync", "action",
               "prodtest_plan", "cleanup", "release")
-
 FLOW_STATUSES = ("pending", "running", "paused", "failed", "done")
 
 #: Banned substrings in any step config (then-fix-comments shortcut).
@@ -167,9 +172,22 @@ def validate_template(steps: list[dict] | str,
                 raise HarnessError(
                     f"invalid release diff {cfg['diff']!r} (expected remote|local)",
                     exit_code=2)
+    modes = [str(s.get("execution_mode", "") or "sequential").lower()
+             for s in steps]
+    for i, m in enumerate(modes):
+        if m not in EXECUTION_MODES:
+            raise HarnessError(
+                f"step {i + 1}: invalid execution_mode {m!r} (expected "
+                f"{' | '.join(EXECUTION_MODES)})", exit_code=2)
+        if m == "parallel" and kinds[i] in SEQUENTIAL_ONLY_STEPS:
+            raise HarnessError(
+                f"step {i + 1} ({kinds[i]}): parallel execution is not "
+                f"allowed — {', '.join(SEQUENTIAL_ONLY_STEPS)} steps run "
+                f"sequentially across worktrees", exit_code=2)
     out = []
-    for step, k in zip(steps, kinds):
-        norm = {"kind": k, "config": step.get("config", {}) or {}}
+    for step, k, m in zip(steps, kinds, modes):
+        norm = {"kind": k, "execution_mode": m,
+                "config": step.get("config", {}) or {}}
         if k == "action":
             norm["action_label"] = step["action_label"]
         out.append(norm)
