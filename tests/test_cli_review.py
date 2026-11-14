@@ -63,6 +63,25 @@ def test_review_resolves_bare_number_via_repo_remote(isolated_config, tmp_path, 
     out = json.loads(r.stdout)
     assert out["pr_url"].endswith("/pull/22")
 
+def test_review_resolves_bare_number_via_ssh_remote(isolated_config, tmp_path, monkeypatch):
+    """`ssh://git@github.com/O/R.git` origin also resolves bare numbers."""
+    from workagent import cli_review as _r
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    monkeypatch.setattr(_r.repos, "resolve_repo",
+                        lambda explicit, cwd, depth=7: repo_dir)
+    monkeypatch.setattr(_r.repos, "remote_url",
+                        lambda path: "ssh://git@github.com/o/r.git")
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(_r.refs, "pr_url_for_number",
+                        lambda repo, number: f"https://github.com/{repo}/pull/{number}")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", lambda parsed, cwd=None: {"head_ref": ""})
+    r = runner.invoke(cli.app, ["review", "22", "--dry-run", "--json", "--repo", "myrepo"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["pr_url"].endswith("/pull/22")
+
 
 def test_review_rejects_shorthand_issue_ref(isolated_config, tmp_path, monkeypatch):
     """`review` needs a PR/MR — a shorthand naming an issue fails loudly (exit 2)."""

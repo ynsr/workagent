@@ -258,37 +258,36 @@ def fetch_issue(parsed: dict) -> dict:
     return {"title": data.get("title", ""), "body": data.get("description", "") or ""}
 
 
+_NOT_A_PULL_REQUEST = ("could not resolve to a pullrequest",
+                       "no pull request", "not found", "404")
+
+
 def pr_url_for_number(repo: str, number: str) -> str:
     """Canonical PR URL for a GitHub ``OWNER/REPO#NUM`` shorthand.
 
     Raises HarnessError (exit 2) when NUM is not a pull request — e.g. it
     names an issue instead (review needs a PR/MR URL; `start` from the
-    issue is the fix), or when gh cannot resolve it.
+    issue is the fix), or when gh cannot resolve it. Transient gh
+    failures (auth/network/rate-limit) surface raw instead of claiming
+    the number is not a pull request.
     """
     try:
         out = run_cmd("gh", "pr", "view", number, "--repo", repo,
                       "--json", "url")
     except HarnessError as e:
+        squashed = str(e).lower().replace(" ", "").replace("-", "")
+        if not any(s.replace(" ", "").replace("-", "") in squashed
+                   for s in _NOT_A_PULL_REQUEST):
+            raise HarnessError(
+                f"cannot resolve github:{repo}#{number} via gh ({e}).",
+                exit_code=2,
+            )
         raise HarnessError(
             f"github:{repo}#{number} is not a pull request ({e}).\n"
             f"  Pass the PR URL (https://github.com/{repo}/pull/NUM)"
             " or `start` from the issue first.",
             exit_code=2,
         )
-    try:
-        data = json.loads(out or "{}")
-    except json.JSONDecodeError:
-        raise HarnessError(f"cannot parse gh output for github:{repo}#{number}",
-                           exit_code=2)
-    url = str(data.get("url", "") or "")
-    if not url:
-        raise HarnessError(
-            f"github:{repo}#{number} is not a pull request.\n"
-            f"  Pass the PR URL (https://github.com/{repo}/pull/NUM)"
-            " or `start` from the issue first.",
-            exit_code=2,
-        )
-    return url
 
 def fetch_pr_info(parsed: dict, cwd: str | None = None) -> dict:
     """Return {title, head_ref, issue_key} for a PR/MR ref (best effort).

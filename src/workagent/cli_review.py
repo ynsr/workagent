@@ -616,7 +616,7 @@ def review(
                 remote = repos.remote_url(repos.resolve_repo(repo, Path.cwd(), depth=depth))
             except HarnessError:
                 remote = None
-            m = re.match(r"^(?:https?://github\.com/|[^@]+@github\.com:)([^/]+/[^/]+?)(?:\.git)?/?$",
+            m = re.match(r"^(?:https?://(?:[^@/]+@)?github\.com/|ssh://(?:[^@/]+@)?github\.com/|[^@]+@github\.com:)([^/]+/[^/]+?)(?:\.git)?/?$",
                          (remote or ""), re.IGNORECASE) if remote else None
             gh_repo = m.group(1) if m else ""
         if parsed.get("tool") == "gh" and gh_repo:
