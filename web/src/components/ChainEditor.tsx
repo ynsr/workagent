@@ -247,6 +247,18 @@ function StepConfigForm({
           Use review session{hintUseReviewSession ? " (template: on)" : " (default: fresh fix session)"}
         </label>
       ) : null}
+      {showPlan ? (
+        <label className="flex items-center gap-2 text-sm sm:col-span-2">
+          <input
+            id={`${idPrefix}-plan`}
+            type="checkbox"
+            checked={config.plan === true}
+            onChange={(e) => patch("plan", e.target.checked || undefined)}
+            className="size-4 accent-current"
+          />
+          Plan mode (spec + plan only, no implementation)
+        </label>
+      ) : null}
       {showMergeOnly ? (
         <label className="flex items-center gap-2 text-sm sm:col-span-2">
           <input

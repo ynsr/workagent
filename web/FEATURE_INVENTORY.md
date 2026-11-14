@@ -24,6 +24,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `start --related-repo NAME` (repeatable) | mutating | Related repos multi-select | `start` | no (child worktrees) | same-repo-as-main (2); PR/MR mode (2) | one child worktree per repo on the same branch, grouped under the parent in StatusTable; cleanup cascades |
 | `start --dry-run` | read-only-ish | — | `start` | no | | none |
 | `start --yes` | mutating | — | `start` | no | | skips confirmations |
+| `start --json` | mutating | — | `start` | no | | |
 | `start --plan` | mutating | Implement/Plan segmented toggle (Launch Start form + candidate Start dialog; persisted in `launch.prefs.v1`) | `start` | no | | plan-mode prompt (no implementation, brainstorm via the `brainstorming` skill, write spec+plan MDs, push + open PR/MR, stop); without `--plan` the prompt names existing spec/plan files; flow `start` steps take `plan: true` (ChainEditor checkbox, headless `_pick` + terminal/manual `START_FLAGS`) |
 | `review REF` | mutating | — | `review` | no | parse failure; not a PR/MR ref and no discoverable PR; tracker linked to 2+ repos without `--repo` (#29, exit 2 naming candidates) | repo picker (TTY) |
 | `review --repo/--depth/--harness/--no-tty/--launch/--terminal/--dry-run/--yes/--json` | mutating | — | `review` | no | as above | as above (`--terminal` XOR `--launch`, same spawn/lock semantics as `start --terminal`) |

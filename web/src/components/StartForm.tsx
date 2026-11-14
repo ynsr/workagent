@@ -59,6 +59,50 @@ export function RunModeSelect({ idPrefix, value, onChange, hidePreview = false }
 }
 
 
+/** Two-option Review/Fix segmented control for the Review tab. Review
+ * runs the normal review (optionally chaining the fix via the checkrow
+ * below); Fix runs the standalone `review --fix-comments` fix action in
+ * the same review session. */
+export function ReviewActionSelect({ idPrefix, value, onChange }: {
+  idPrefix: string
+  value: ReviewAction
+  onChange: (v: ReviewAction) => void
+}) {
+  return (
+    <div className="grid gap-1">
+      <Label>
+        <FieldHelp
+          label="Action"
+          flag="review | --fix-comments"
+          description="Review the PR/MR, or fix its open review comments in the same session."
+        />
+      </Label>
+      <div
+        role="radiogroup"
+        aria-label="Review action"
+        className="flex w-fit divide-x overflow-hidden rounded-md border text-sm"
+      >
+        {REVIEW_ACTION_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            id={`${idPrefix}-action-${opt.value}`}
+            role="radio"
+            aria-checked={value === opt.value}
+            title={opt.hint}
+            onClick={() => onChange(opt.value)}
+            className={value === opt.value
+              ? "bg-primary px-3 py-1.5 font-medium text-primary-foreground"
+              : "bg-transparent px-3 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 /** Two-option Implement/Plan segmented control for the Start tab. Implement
  * runs the normal start; Plan runs `start --plan` (spec + plan only, no
  * implementation). */

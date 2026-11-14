@@ -111,6 +111,7 @@ export const INITIAL: LaunchForm = {
   startAction: "implement",
   reviewAction: "review",
   fixComments: false,
+  thenFixComments: false,
   useReviewSession: false,
   merge: false,
   noStatus: false,

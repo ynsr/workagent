@@ -269,6 +269,9 @@ def test_seam_start_calls_runner_headless_skips_preview(monkeypatch):
     before = len(calls)
     out = m._run_start_step("jira:X-1", "wt-1", {"launch": False}, False)
     assert out["preview"] is True and out["command"]
+    assert len(calls) == before
+
+
 def test_seam_start_forwards_plan_flag(monkeypatch):
     """Issue #88: flow start step config `plan: true` reaches start --plan."""
     import workagent.cli_flow as m
