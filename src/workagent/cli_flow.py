@@ -40,6 +40,7 @@ flow_app.add_typer(template_app, name="template")
 def template_add(
     name: str = typer.Option(..., "--name", help="Display name."),
     label: Optional[str] = typer.Option(None, "--label", help="Unique key (default: normalized name)."),
+    icon: Optional[str] = typer.Option(None, "--icon", help="Lucide icon name (default: Zap)."),
     steps: Optional[str] = typer.Option(None, "--steps", help='JSON list of step dicts, e.g. \'[{"kind": "start"}, {"kind": "cleanup"}]\'.'),
     pre_execution: Optional[str] = typer.Option(None, "--pre-execution", help="Pre-flow shell script (cwd: worktree)."),
     post_execution: Optional[str] = typer.Option(None, "--post-execution", help="Post-flow shell script (cwd: worktree)."),
@@ -53,10 +54,9 @@ def template_add(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
  ) -> None:
     """Add a flow template (steps required — the wizard builds them)."""
-    if steps is None:
-        _fail("flow template must have at least one step — pass --steps JSON", EXIT_USAGE)
     row = store.create_template(
-        name=name, label=label or "", steps=steps,
+        name=name, label=label or "", icon=icon or "",
+        steps=steps,
         pre_execution=pre_execution or "",
         post_execution=post_execution or "", protected=protected,
         sort_order=sort_order, dedicated_top_bar=dedicated_top_bar,
@@ -73,6 +73,7 @@ def template_list(
 ) -> None:
     """List flow templates."""
     items = [{"id": r["id"], "label": r["label"], "name": r["name"],
+              "icon": r.get("icon", "Zap"),
               "steps": len(r.get("steps") or []),
               "category": r.get("category", "worktree"),
               "run_immediately": r.get("run_immediately", False),
@@ -83,7 +84,7 @@ def template_list(
               "updated": r["modified_at"]}
              for r in store.list_templates()]
     _print_rows(items, json_output, csv_output,
-                ["id", "label", "name", "steps", "category", "run_immediately",
+                ["id", "label", "name", "icon", "steps", "category", "run_immediately",
                  "protected", "sort_order", "dedicated_top_bar",
                  "dedicated_overlay", "updated"],
                 "Flow templates", "(no flow templates)")
@@ -108,6 +109,7 @@ def template_show(
 def template_update(
     label: str = typer.Argument(..., help="Template label."),
     name: Optional[str] = typer.Option(None, "--name", help="New display name."),
+    icon: Optional[str] = typer.Option(None, "--icon", help="New Lucide icon name."),
     steps: Optional[str] = typer.Option(None, "--steps", help="New JSON step list."),
     pre_execution: Optional[str] = typer.Option(None, "--pre-execution", help="New pre-flow shell script."),
     post_execution: Optional[str] = typer.Option(None, "--post-execution", help="New post-flow shell script."),
@@ -125,6 +127,8 @@ def template_update(
     fields: dict = {}
     if name is not None:
         fields["name"] = name
+    if icon is not None:
+        fields["icon"] = icon
     if steps is not None:
         fields["steps"] = steps
     if pre_execution is not None:
@@ -166,6 +170,7 @@ def template_clone(
         _fail(f"unknown flow template: {src!r}", EXIT_USAGE)
     new = store.create_template(
         name=name or f"{row['name']} (copy)", label=label or "",
+        icon=row.get("icon", "Zap") or "Zap",
         steps=row.get("steps") or [],
         pre_execution=row.get("pre_execution") or "",
         post_execution=row.get("post_execution") or "",
@@ -198,6 +203,33 @@ def template_compose(
     if dropped:
         out["note"] = "extra 'start' steps collapsed (kept first)"
     _print_result(out, json_output)
+@template_app.command("suggest-icon")
+@_catch_harness_errors
+def template_suggest_icon(
+    name: Optional[str] = typer.Option(None, "--name", help="Template display name (context for the model)."),
+    label: Optional[str] = typer.Option(None, "--label", help="Template label (context for the model)."),
+    steps: Optional[str] = typer.Option(None, "--steps", help="JSON step list (context for the model)."),
+    pre_execution: Optional[str] = typer.Option(None, "--pre-execution", help="Pre-flow script (context for the model)."),
+    post_execution: Optional[str] = typer.Option(None, "--post-execution", help="Post-flow script (context for the model)."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to ask (default: omp)."),
+    yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; suggest prompts nothing so this is a no-op."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Ask the AI harness for one Lucide icon name (issue #62).
+
+    Runs ONE bare judge-style session (cheap model, no tools/skills/context)
+    in a temp dir — nothing is mutated. Prints {"icon": ...} on stdout.
+    """
+    from . import suggest_icon as _si
+    text = _si.run_suggest_icon(
+        _si.suggest_prompt(kind="flow template", name=name or "",
+                           label=label or "", prompt="",
+                           steps=steps or "", pre=pre_execution or "",
+                           post=post_execution or ""),
+        harness=harness or "omp")
+    icon = _si.parse_suggested_icon(text)
+    _print_result({"icon": _si.validate_suggested_icon(icon)}, json_output)
+
 
 
 @template_app.command("delete")

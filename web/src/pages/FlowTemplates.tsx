@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { Copy, Download, Pencil, Play, Trash2, Workflow } from "lucide-react"
+import { ActionIcon } from "@/components/ActionIcon"
 import { PageHeader } from "@/components/PageHeader"
 import { ScriptBlock } from "@/components/ScriptBlock"
 import {
@@ -251,6 +251,7 @@ export function FlowTemplates() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-8" aria-label="Select" />
+                      <TableHead aria-label="Icon" />
                       <TableHead>Name</TableHead>
                       <TableHead>Label</TableHead>
                       <TableHead>Steps</TableHead>
@@ -279,6 +280,9 @@ export function FlowTemplates() {
                           />
                         </TableCell>
                         <TableCell>
+                          <ActionIcon name={t.icon} className="size-4" />
+                        </TableCell>
+                        <TableCell>
                           <button
                             type="button"
                             className="font-medium underline-offset-2 hover:underline"
@@ -288,7 +292,6 @@ export function FlowTemplates() {
                           </button>
                           {t.parent_labels?.length ? (
                             <div className="text-xs text-muted-foreground">from {t.parent_labels.join(", ")}</div>
-                          ) : null}
                         </TableCell>
                         <TableCell className="font-mono text-xs">{t.label}</TableCell>
                         <TableCell className="font-mono text-xs">
@@ -386,6 +389,7 @@ export function FlowTemplates() {
           }
         >
           <div className="flex items-center gap-2 text-sm">
+            <ActionIcon name={detail.icon} className="size-4" />
             <span className="text-muted-foreground" title={exactDateTime(detail.modified_at)}>
               updated {relativeDate(detail.modified_at)}
             </span>

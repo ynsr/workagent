@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Repos gain per-repo StatusTable overlay buttons: fixed + dedicated toggles via the Repos page dialog or repo update --overlay-buttons [59]
+- Flow templates and actions gain an AI-suggested Lucide icon: IconPicker on both forms, Suggest-icon button via a cheap judge-style harness run, split-button run-mode/category controls [62]
 - Flow template steps gain Parallel/Sequential mode for multi-worktree runs: all-parallel chains fan out at once, any sequential step runs worktrees one by one [61]
 - Serve restarts no longer kill running flows: detached runs survive shutdown and are re-adopted on boot [66]
 - StatusTable no longer blocks on issues without status labels: unknown issue states are cached like other cells [55]

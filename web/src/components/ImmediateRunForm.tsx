@@ -1,52 +1,28 @@
 import { useMemo, useState } from "react"
-import { Play, Workflow } from "lucide-react"
-import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
-import { ActionDialog } from "@/components/LinkDialogs"
-import { RunModeSelect } from "@/components/StartForm"
-import { SearchableSelect } from "@/components/SearchableSelect"
-import { Button } from "@/components/ui/button"
+import { Workflow } from "lucide-react"
+import { Play } from "lucide-react"
+import { toast } from "sonner"
+import { SegmentedControl } from "@/components/FormControls"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { errorText } from "@/components/StatusFeedback"
+import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/lib/confirm"
-import { useActions, useCreateRun, useFlowTemplates, useRepos } from "@/lib/queries"
-import { buildMessageArgs } from "@/lib/messageLaunchConfig"
+import { splitRefs } from "@/lib/format"
+import { RepoPinSelect } from "@/components/RepoPinSelect"
+import { useActions, useCreateRun, useFlowTemplates } from "@/lib/queries"
 import {
   ROW_CATEGORIES,
   buildImmediateActionArgs,
-  buildImmediateFlowArgs,
+  buildImmediateMessageActionArgs,
   buildImmediateWorktreeFlowArgs,
-  isRunImmediateAction,
-  isRunImmediateTemplate,
+  buildMessageArgs,
   messageScoped,
-  splitRefs,
   type RowCategory,
 } from "@/lib/messageRunConfig"
+import { RunModeSelect } from "@/components/StartForm"
+import { ImmediateRunDialog } from "@/components/ImmediateRunDialog"
 import type { RunMode } from "@/lib/launchConfig"
-
-export type ImmediateRunKind = "action" | "flow"
-
-export interface ImmediateRunFormProps {
-  kind: ImmediateRunKind
-  /** Row category the run is scoped to (actions/templates are per category). */
-  category?: RowCategory
-  /** Preselected label (row Run buttons). */
-  preset?: string
-  /** Prefilled message id (message rows / message scope). */
-  messageRef?: string
-  /** Prefilled worktree refs (dashboard selection / worktree scope). */
-  worktreeRefs?: string[]
-  /** Fix the category (row buttons know their row's scope; page cards do not). */
-  lockCategory?: boolean
-  /** Called after at least one run launched. */
-  onDone?: () => void
-}
-
-/** Shared immediate Run Action / Run Flow form: pick the row (filtered by
- * category), pick its scope ref(s), then launch with the standard confirm.
- * Used by the Actions / Flow Templates page cards, their row Run buttons,
- * the Messages row Run buttons, and the Dashboard menus. */
 export function ImmediateRunForm({
   kind,
   category: initialCategory = "worktree",
@@ -146,22 +122,13 @@ export function ImmediateRunForm({
   return (
     <div className="grid gap-3">
       {!lockCategory ? (
-        <div className="grid gap-2">
-          <Label htmlFor="immediate-run-category">Category</Label>
-          <select
-            id="immediate-run-category"
-            className="h-9 rounded-md border bg-background px-2 text-sm"
-            value={category}
-            onChange={(e) => {
-              setCategory(e.target.value as RowCategory)
-              setLabel("")
-            }}
-          >
-            {ROW_CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-        </div>
+        <SegmentedControl
+          idPrefix="immediate-run-category"
+          label="Category"
+          options={ROW_CATEGORIES.map((c) => ({ value: c, label: c }))}
+          value={category}
+          onChange={(v) => { setCategory(v); setLabel("") }}
+        />
       ) : null}
       <div className="grid gap-2">
         <Label htmlFor="immediate-run-label">{kind === "action" ? "Action" : "Flow template"}</Label>

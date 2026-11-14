@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS custom_actions (
   category TEXT NOT NULL DEFAULT 'worktree');
 CREATE TABLE IF NOT EXISTS flow_templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT UNIQUE NOT NULL,
-  name TEXT NOT NULL, steps TEXT NOT NULL DEFAULT '[]',
+  name TEXT NOT NULL, icon TEXT NOT NULL DEFAULT 'Zap',
+  steps TEXT NOT NULL DEFAULT '[]',
   pre_execution TEXT NOT NULL DEFAULT '',
   post_execution TEXT NOT NULL DEFAULT '',
   parent_labels TEXT NOT NULL DEFAULT '[]',
@@ -274,6 +275,18 @@ def _migrate_category(conn) -> None:
             continue
         if "category" not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN category TEXT NOT NULL DEFAULT 'worktree'")
+
+
+def _migrate_flow_template_icon(conn) -> None:
+    """Schema v23: flow_templates gains icon (Lucide name, default Zap).
+
+    Mirrors custom_actions.icon for issue #62: ALTER TABLE backfills
+    DEFAULT 'Zap' so existing templates keep the fallback icon.
+    Idempotent: skipped when present.
+    """
+    tcols = {r[1] for r in conn.execute("PRAGMA table_info(flow_templates)")}
+    if tcols and "icon" not in tcols:
+        conn.execute("ALTER TABLE flow_templates ADD COLUMN icon TEXT NOT NULL DEFAULT 'Zap'")
 
 
 def _migrate_run_immediately(conn) -> None:
@@ -866,7 +879,7 @@ def _schema_current(path: Path) -> bool:
         if "flow_templates" not in tables or "flows" not in tables:
             return False
         tcols2 = {r[1] for r in conn.execute("PRAGMA table_info(flow_templates)")}
-        if "parent_labels" not in tcols2:
+        if "parent_labels" not in tcols2 or "icon" not in tcols2:
             return False
         fcols2 = {r[1] for r in conn.execute("PRAGMA table_info(flows)")}
         if "effective_steps" not in fcols2:
@@ -922,6 +935,7 @@ def init_db(path: Path) -> Path:
                 _migrate_messages_related_repos(conn)
                 _migrate_category(conn)
                 _migrate_run_immediately(conn)
+                _migrate_flow_template_icon(conn)
                 _migrate_sessions_no_fk(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():

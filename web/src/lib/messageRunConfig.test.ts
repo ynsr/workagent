@@ -88,6 +88,7 @@ describe("flow template upsert args", () => {
     const args = buildFlowTemplateUpsertArgs(null, {
       name: "Handle",
       label: "handle",
+      icon: "Zap",
       steps,
       pre: "",
       post: "",
@@ -108,6 +109,7 @@ describe("flow template upsert args", () => {
     const args = buildFlowTemplateUpsertArgs("h", {
       name: "Handle",
       label: "h",
+      icon: "Rocket",
       steps,
       pre: "#!/bin/bash\necho hi",
       post: "",
