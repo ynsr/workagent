@@ -96,11 +96,37 @@ def run_start_step(ref: str, key: str, config: dict,
     return {"key": new_key or ref, "ref": ref, "status": "started"}
 
 
+
+def _flow_repo(key: str, config: dict) -> str:
+    """Repo the flow already resolved for *key* ("" when unknown).
+
+    The start step records it on the link row; later steps inherit it so
+    a template that sets ``--repo`` once (or resolves it via the start
+    step) does not re-resolve from a fuzzy worktree lookup per step
+    (issue #91: the review step pinned an unrelated repo whose number
+    collided as a substring, tripping the host-scoped tracker guard).
+    An explicit per-step ``repo`` always wins.
+    """
+    if str(config.get("repo", "") or ""):
+        return ""
+    try:
+        from . import store as _store
+        got = (_store.load_links(include_deleted=True).get(key, {})
+               or {}).get("repo", "")
+    except Exception:
+        return ""
+    return str(got or "")
+
+
 def run_review_step(key: str, config: dict, fix_comments: bool,
                     json_output: bool, spawn, manual) -> dict:
     """Review (or Fix-comments) step with merged flags."""
     from . import cli_review as _mod
     from . import store as _store
+    if not config.get("repo"):
+        fb = _flow_repo(key, config)
+        if fb:
+            config = {**config, "repo": fb}
     fix = bool(fix_comments or config.get("fix_comments", False))
     fix_argv = ["--fix-comments"] if fix else []
     extra = flag_argv(config, *REVIEW_FLAGS)
@@ -127,6 +153,10 @@ def run_sync_step(key: str, config: dict, json_output: bool,
     from . import cli_sync as _mod
     from . import store as _store
     extra = flag_argv(config, *SYNC_FLAGS)
+    if not config.get("repo"):
+        fb = _flow_repo(key, config)
+        if fb:
+            config = {**config, "repo": fb}
     if bool(config.get("terminal", False)):
         wt = str((_store.load_links().get(key, {}) or {}).get("worktree", "") or "")
         return spawn("sync", [key, *extra], wt)
