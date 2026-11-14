@@ -47,19 +47,20 @@ def test_cleanup_released_closes_contained(isolated_config, monkeypatch):
     assert status["jira:IPG-3"] == "skipped:no-release-branch"
     assert closed == [("IPG-1", "done")]
 
-def test_cleanup_released_closes_jira_released_skips(isolated_config, monkeypatch):
-    """Skipped rows (deactivated/no-release-branch) close when Jira is Released."""
+@pytest.mark.parametrize("release_mark", ["product test", "released"])
+def test_cleanup_released_closes_jira_released_skips(isolated_config, monkeypatch, release_mark):
+    """Skipped rows (deactivated/no-release-branch) close at the release mark."""
     store.record_link("jira:IPG-10", {"issue": "IPG-10", "worktree": "/tmp/wt-10",
-                                      "branch": "feat/10", "repo": "/tmp/proj",
-                                      "active": 0})
+                                     "branch": "feat/10", "repo": "/tmp/proj",
+                                     "active": 0})
     store.record_link("jira:IPG-11", {"issue": "IPG-11", "worktree": "/tmp/wt-11",
-                                      "branch": "feat/11", "repo": "/tmp/norel"})
+                                     "branch": "feat/11", "repo": "/tmp/norel"})
     monkeypatch.setattr(store, "load_repos",
                         lambda: {"/tmp/proj": {"release_branch": "release"},
                                  "/tmp/norel": {}})
     from workagent import issue_status as _st
     monkeypatch.setattr(_st, "_issue_state",
-                        lambda number, tool, target: "released")
+                        lambda number, tool, target: release_mark)
     closed = []
     monkeypatch.setattr(_st, "set_issue_status",
                         lambda ref, state, dry_run=False: closed.append((ref, state)) or True)
@@ -72,7 +73,7 @@ def test_cleanup_released_closes_jira_released_skips(isolated_config, monkeypatc
 
 
 def test_cleanup_released_keeps_skip_when_not_released(isolated_config, monkeypatch):
-    """Skipped rows stay skipped when Jira is not Released."""
+    """Skipped rows stay skipped when Jira is not at the release mark."""
     store.record_link("jira:IPG-12", {"issue": "IPG-12", "worktree": "/tmp/wt-12",
                                       "branch": "feat/12", "repo": "/tmp/proj",
                                       "active": 0})
@@ -92,12 +93,12 @@ def test_cleanup_released_keeps_skip_when_not_released(isolated_config, monkeypa
 
 
 def test_cleanup_released_closes_jira_released_deleted(isolated_config, monkeypatch):
-    """Soft-deleted rows close when Jira is Released; else skipped:deleted."""
+    """Soft-deleted rows close when Jira is Product Test; else skipped:deleted."""
     from datetime import datetime, timezone
     store.record_link("jira:IPG-20", {"issue": "IPG-20", "worktree": "/tmp/wt-20",
-                                      "branch": "feat/20", "repo": "/tmp/proj"})
+                                     "branch": "feat/20", "repo": "/tmp/proj"})
     store.record_link("jira:IPG-21", {"issue": "IPG-21", "worktree": "/tmp/wt-21",
-                                      "branch": "feat/21", "repo": "/tmp/proj"})
+                                     "branch": "feat/21", "repo": "/tmp/proj"})
     ts = datetime.now(timezone.utc).isoformat()
     store.soft_delete_worktree("jira:IPG-20")
     store.soft_delete_worktree("jira:IPG-21")
@@ -105,7 +106,7 @@ def test_cleanup_released_closes_jira_released_deleted(isolated_config, monkeypa
     monkeypatch.setattr(store, "load_repos",
                         lambda: {"/tmp/proj": {"release_branch": "release"}})
     from workagent import issue_status as _st
-    states = {"IPG-20": "released", "IPG-21": "in progress"}
+    states = {"IPG-20": "product test", "IPG-21": "in progress"}
     monkeypatch.setattr(_st, "_issue_state",
                         lambda number, tool, target: states[number])
     closed = []

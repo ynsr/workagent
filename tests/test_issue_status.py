@@ -148,13 +148,13 @@ def test_settle_post_review_gated(monkeypatch):
 
 
 def test_jira_variants_match_ipg_workflow():
-    assert st._jira_state_variants("code review") == ["Review", "Ready to Release", "Ready to release"]
-    assert st._jira_state_variants("ready to release") == ["Ready to Release", "Ready to release", "Review"]
-    assert st._jira_state_variants("released") == ["Released", "Done"]
+    assert st._jira_state_variants("code review") == ["Review"]
+    assert st._jira_state_variants("ready to release") == ["Product Test", "Product test"]
+    assert st._jira_state_variants("released") == ["Product Test", "Product test", "Done"]
     assert st._jira_state_variants("done") == ["Done"]
 
 
-def test_ready_to_release_falls_back_to_review(monkeypatch):
+def test_ready_to_release_maps_to_product_test(monkeypatch):
     calls = []
     def _run(*a, **k):
         calls.append(a)
@@ -162,21 +162,17 @@ def test_ready_to_release_falls_back_to_review(monkeypatch):
     monkeypatch.setattr(st, "run_cmd", _run)
     assert st.set_issue_status("IPG-7", "ready to release") is False
     tried = [c[4] for c in calls]
-    assert tried == ["Ready to Release", "Review"]  # R2R fails; Review fallback tried (valid)
+    assert tried == ["Product Test"]  # deleted R2R maps to Product Test; narrowing skips the lowercase spelling
 
 
-def test_code_review_falls_back_to_ready_to_release(monkeypatch):
-    calls = []
-    def _run(*a, **k):
-        calls.append(a)
-        raise HarnessError('invalid transition\nAvailable states for issue IPG-7: \'Ready to Release\'')
-    monkeypatch.setattr(st, "run_cmd", _run)
-    assert st.set_issue_status("IPG-7", "code review") is False
-    tried = [c[4] for c in calls]
-    assert tried == ["Review", "Ready to Release", "Ready to release"]  # Review fails; R2R fallbacks tried (valid)
+def test_code_review_moves_straight_to_review(monkeypatch):
+    seen = []
+    monkeypatch.setattr(st, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    assert st.set_issue_status("IPG-7", "code review") is True
+    assert [c[4] for c in seen] == ["Review"]  # deleted Code Review moves straight to Review
 
 
-def test_released_prefers_released_then_done(monkeypatch):
+def test_released_prefers_product_test_then_done(monkeypatch):
     calls = []
     def _run(*a, **k):
         calls.append(a)
@@ -184,7 +180,7 @@ def test_released_prefers_released_then_done(monkeypatch):
     monkeypatch.setattr(st, "run_cmd", _run)
     assert st.set_issue_status("IPG-7", "released") is False
     tried = [c[4] for c in calls]
-    assert tried == ["Released", "Done"]  # Released not valid; Done fallback tried
+    assert tried == ["Product Test", "Done"]  # deleted Released maps to Product Test; Done fallback tried
 
 
 def test_settle_post_review_accepts_bare_review(monkeypatch):

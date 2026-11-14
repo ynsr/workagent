@@ -2,9 +2,10 @@
 
 Canonical states: in progress / code review / ready to release / released / done.
 
-Tracker mapping:
-  jira     → direct move: `jira issue move KEY "State"` (state names are the
-             canonical lifecycle states; error output lists valid states).
+  jira     → direct move: `jira issue move KEY "State"` (deleted Jira states
+             map to survivors per issue #48: code review -> Review,
+             ready to release / released -> Product Test; error output
+             lists valid states).
   gh       → label swap: `gh issue edit <target> --add-label "status: <state>"`
              `--remove-label` every other `status: *` sibling; `gh issue close
              --reason completed` when state == done.
@@ -61,17 +62,17 @@ def _jira_state_variants(state: str) -> list[str]:
     """Candidate remote state spellings for a canonical lifecycle state.
 
     IPG workflow states: To Do / In Progress / Review / Product Test /
-    Ready to Release / Blocked / Released / Done. Bare "Code Review" does
-    not exist and is absent. Cross-state fallbacks pair Review with Ready
-    to Release in both directions; the release mark prefers Released over
-    Done.
+    Blocked / Done. Deleted states and their replacements (issue #48):
+    Code Review -> Review, Ready to Release -> Product Test,
+    Released -> Product Test. The release mark prefers Product Test over
+    Done; Done stays as the terminal fallback.
     """
     s = (state or "").strip().lower()
     variants = {
         "in progress": ["In Progress", "In progress"],
-        "code review": ["Review", "Ready to Release", "Ready to release"],
-        "ready to release": ["Ready to Release", "Ready to release", "Review"],
-        "released": ["Released", "Done"],
+        "code review": ["Review"],
+        "ready to release": ["Product Test", "Product test"],
+        "released": ["Product Test", "Product test", "Done"],
         "done": ["Done"],
     }
     return variants.get(s, [state])
