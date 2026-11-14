@@ -31,16 +31,13 @@ def test_run_survives_registry_drop_and_cancels(isolated_config):
 def test_shutdown_does_not_cancel_tracked_runs(isolated_config):
     """SIGTERM shutdown must not kill tracked runs (flow #47 / issue #66).
 
-    run_server.handle_exit used to _cancel() every running run, so any
-    `service restart` SIGTERM'd live flows mid-step (exit -15). Detached
-    runs must survive shutdown; the next boot re-adopts them via rehydrate.
+    Shutdown only flags should_exit; live detached runs keep their PIDs and
+    the next boot re-adopts them via rehydrate.
     """
-    import inspect
     import time
+    import types
     from workagent import run_store, store, web_runs
-    from workagent.webapp import Registry, run_server
-    src = inspect.getsource(run_server)
-    assert "_cancel" not in src
+    from workagent.webapp import Registry, _shutdown_leave_detached_running
     reg1 = Registry()
     run = web_runs.Run(id="survshutdown", command="flow", args=["run"],
                        target="flow:tpl:ref",
@@ -51,6 +48,11 @@ def test_shutdown_does_not_cancel_tracked_runs(isolated_config):
         assert web_runs._wait_log(run, "started", timeout=5)
         pid, _ticks = run_store.read_pid(run_store.runs_root() / "survshutdown")
         assert pid is not None and store._pid_alive(pid)
+        # Simulate SIGTERM shutdown: only should_exit is set, no cancel.
+        server = types.SimpleNamespace(should_exit=False)
+        _shutdown_leave_detached_running(server)
+        assert server.should_exit is True
+        assert store._pid_alive(pid)
         # Fresh boot re-adopts the still-live run (no exit written).
         reg2 = Registry()
         out = web_runs.rehydrate(reg2)
