@@ -72,6 +72,12 @@ export function validateChain(steps: FlowStep[]): string[] {
     }
   }
   steps.forEach((step, i) => {
+    if (step.kind !== "prodtest_plan") return
+    if (cleanups.length > 0 && i >= Math.min(...cleanups)) {
+      errors.push(`Step ${i + 1}: 'prodtest_plan' steps must come before 'cleanup'.`)
+    }
+  })
+  steps.forEach((step, i) => {
     if (step.kind !== "action") return
     if (cleanups.length > 0 && i >= Math.min(...cleanups)) {
       errors.push(`Step ${i + 1}: 'action' steps must come before 'cleanup'.`)

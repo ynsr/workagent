@@ -70,44 +70,40 @@ describe("ChainEditor release selects", () => {
   })
 })
 
+function renderChain(steps: FlowStep[], extra?: { onChange?: (s: FlowStep[]) => void; showExecutionMode?: boolean }) {
+  let next: FlowStep[] = []
+  const { container, unmount } = render(
+    <ChainEditor
+      mode="edit"
+      steps={steps}
+      onChange={(s) => { next = s; extra?.onChange?.(s) }}
+      knownActions={[]}
+      {...(extra?.showExecutionMode !== undefined ? { showExecutionMode: extra.showExecutionMode } : {})}
+    />,
+  )
+  return { container, unmount, next: () => next }
+}
+
 describe("ChainEditor execution mode", () => {
   it("toggles parallel on a review step", async () => {
     const user = userEvent.setup()
-    let next: FlowStep[] = []
     const steps: FlowStep[] = [{ kind: "review", config: {} }]
-    const { container, unmount } = render(
-      <ChainEditor
-        mode="edit"
-        steps={steps}
-        onChange={(s) => { next = s }}
-        knownActions={[]}
-      />,
-    )
+    const { container, unmount, next } = renderChain(steps)
     await user.click(within(container).getByRole("radio", { name: "Step 1 parallel" }))
-    expect(next[0]?.execution_mode).toBe("parallel")
+    expect(next()[0]?.execution_mode).toBe("parallel")
     unmount()
   })
 
   it("disables parallel on cleanup steps", () => {
     const steps: FlowStep[] = [{ kind: "cleanup", config: {} }]
-    const { container, unmount } = render(
-      <ChainEditor mode="edit" steps={steps} onChange={() => undefined} knownActions={[]} />,
-    )
+    const { container, unmount } = renderChain(steps)
     expect(within(container).getByRole("radio", { name: "Step 1 parallel" })).toBeDisabled()
     unmount()
   })
 
   it("hides the toggle in single-worktree mode", () => {
     const steps: FlowStep[] = [{ kind: "review", config: {} }]
-    const { container, unmount } = render(
-      <ChainEditor
-        mode="edit"
-        steps={steps}
-        onChange={() => undefined}
-        knownActions={[]}
-        showExecutionMode={false}
-      />,
-    )
+    const { container, unmount } = renderChain(steps, { showExecutionMode: false })
     expect(within(container).queryByRole("radiogroup", { name: "Step 1 execution mode" })).not.toBeInTheDocument()
     unmount()
   })

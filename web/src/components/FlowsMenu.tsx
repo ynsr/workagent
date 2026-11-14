@@ -70,16 +70,18 @@ export function FlowsMenu({ selected }: { selected: Set<string> }) {
       return
     }
     for (const key of keys) {
+      let runId = ""
       try {
-        const { run_id } = await createRun.mutateAsync({
+        const created = await createRun.mutateAsync({
           command: "flow",
           args: ["run", template.label, key, "--yes"],
           confirm: true,
         })
+        runId = created.run_id
+        await awaitRunSettled(runId)
         toast.success(`Flow ${template.label} on ${key} settled — next worktree starting`, {
-          action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+          action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
         })
-        await awaitRunSettled(run_id)
       } catch (err) {
         toast.error(`${key}: ${errorText(err)}`)
       }
