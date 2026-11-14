@@ -1,6 +1,7 @@
 """Worktree identity: unique by ref key, branch name, and path."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from . import pick as _pick
@@ -186,21 +187,43 @@ def is_valid_worktree(path: str) -> bool:
     return any(str(Path(x).resolve()) == want for x in listed)
 
 
-def worktree_pr_url(key: str, entry: dict) -> str | None:
-    """Recorded PR/MR URL; falls back to a live branch query."""
+def _repo_tool_for_pr_lookup(repo: str) -> str | None:
+    """Host CLI for the live PR lookup (seam: tests stub this, not cli)."""
+    from .cli import _repo_tool
+    return _repo_tool(repo)
+
+
+def worktree_pr_url(key: str, entry: dict, attempts: int = 3) -> str | None:
+    """Recorded PR/MR URL; falls back to a live branch query.
+
+    The live query retries transient host-CLI failures (cold gh under the
+    egress proxy, TLS/DNS blips — issue #60): the first success stamps
+    pr_url and wins. A persistent failure still returns None, but the
+    last error is echoed so the caller's "no recorded PR/MR" is not
+    mystery. Genuinely PR-less branches return None fast (empty list,
+    first try).
+    """
     if entry.get("pr_url"):
         return entry["pr_url"]
     repo = entry.get("repo", "")
     branch = entry.get("branch", "")
     if not (repo and branch and Path(repo).exists()):
         return None
-    from .cli import _repo_tool
-    tool = _repo_tool(repo)
+    tool = _repo_tool_for_pr_lookup(repo)
     if not tool:
         return None
-    try:
-        pr = refs.latest_pr(refs.fetch_pr_list_for_branch(tool, branch, cwd=repo))
-    except HarnessError:
+    last_err: HarnessError | None = None
+    for _ in range(max(1, attempts)):
+        try:
+            pr = refs.latest_pr(refs.fetch_pr_list_for_branch(tool, branch, cwd=repo))
+        except HarnessError as e:
+            last_err = e
+            continue
+        last_err = None
+        break
+    if last_err is not None:
+        print(f"note: live PR lookup for branch {branch!r} failed: {last_err}",
+              file=sys.stderr)
         return None
     if pr:
         store.record_link(key, {"pr_url": pr["url"]})
