@@ -65,7 +65,7 @@ export function OverlayButtonFields({
             description={
               id === "dedicated"
                 ? "master toggle: hides every dedicated action/flow button below"
-                : undefined
+                : `StatusTable overlay button (${id})`
             }
           />
         ))}
@@ -83,6 +83,7 @@ export function OverlayButtonFields({
                 onChange={(v) => set(id, v)}
                 label={`Flow: ${t.name}`}
                 flag={id}
+                description={`dedicated overlay button for flow ${t.label}`}
               />
             )
           })}
@@ -96,6 +97,7 @@ export function OverlayButtonFields({
                 onChange={(v) => set(id, v)}
                 label={`Action: ${a.name}`}
                 flag={id}
+                description={`dedicated overlay button for action ${a.label}`}
               />
             )
           })}

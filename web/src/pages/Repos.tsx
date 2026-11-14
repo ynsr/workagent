@@ -38,7 +38,6 @@ import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
 import { useActions, useCreateRun, useFlowTemplates, useRepos } from "@/lib/queries"
 import type { Repo } from "@/lib/api"
-import { isOverlayVisible } from "@/lib/overlayButtons"
 
 export function Repos() {
   const navigate = useNavigate()
