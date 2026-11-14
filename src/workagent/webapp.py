@@ -93,6 +93,40 @@ from .web_runs import (  # noqa: F401,E402
     _worktree_for_session,
 )
 
+def run_startup_maintenance() -> dict:
+    """Blocking maintenance previously done inline in run_server/startup.
+
+    Keeps DB migrations/sync (init_db runs the schema synchronously; the
+    release backfill stays on its background thread started by run_server),
+    then runs the other slow non-essential jobs: soft-delete GC (git
+    teardown) and run-dir prune. Never raises; {"purged": [...], "pruned": n}.
+    """
+    from .store_sessions import db_path
+    from .store_sqlite import init_db
+    init_db(db_path())
+    purged: list = []
+    try:
+        from .cli_cleanup import gc_soft_deleted
+        purged = gc_soft_deleted()
+        if purged:
+            print(f"gc: purged {len(purged)} soft-deleted worktree(s) "
+                  f"older than 7 days", file=sys.stderr)
+    except Exception as e:
+        print(f"warning: soft-delete GC failed: {e}", file=sys.stderr)
+    try:
+        from . import run_store as _rs
+        pruned = _rs.prune_finished()
+    except Exception:
+        pruned = 0
+    return {"purged": purged, "pruned": pruned}
+
+def start_background_maintenance() -> "threading.Thread":
+    """Fire-and-forget run_startup_maintenance (daemon; serve never waits)."""
+    t = threading.Thread(target=run_startup_maintenance, name="workagent-startup",
+                         daemon=True)
+    t.start()
+    return t
+
 def create_app(static_dir: Path, host: str, port: int,
                allowed_hosts: list[str]) -> FastAPI:
     app = FastAPI(title="workagent", docs_url=None, redoc_url=None)
@@ -465,14 +499,9 @@ def run_server(host: str, port: int, static_dir: Path,
         _apply_env()
     except Exception:
         pass
-    try:
-        from .cli_cleanup import gc_soft_deleted
-        purged = gc_soft_deleted()
-        if purged:
-            print(f"gc: purged {len(purged)} soft-deleted worktree(s) "
-                  f"older than 7 days", file=sys.stderr)
-    except Exception as e:
-        print(f"warning: soft-delete GC failed: {e}", file=sys.stderr)
+    from .store_sessions import db_path
+    from .store_sqlite import init_db
+    init_db(db_path(), defer_backfill=True)
     try:
         import uvicorn
     except ImportError:
@@ -493,6 +522,7 @@ def run_server(host: str, port: int, static_dir: Path,
               "authentication; anyone who can reach this port can run "
               "agents with your user privileges.", file=sys.stderr)
     app = create_app(static_dir, host, port, allowed_hosts)
+    start_background_maintenance()
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
     server = uvicorn.Server(config)
     def handle_exit(sig: int, frame: Any) -> None:
