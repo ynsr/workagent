@@ -1,11 +1,12 @@
 """Worktree identity: unique by ref key, branch name, and path."""
 from __future__ import annotations
 
-import sys
+import time
 from pathlib import Path
 
 from . import pick as _pick
 from . import refs, store
+from .cli_core import eprint
 from .errors import HarnessError
 
 
@@ -132,6 +133,7 @@ def resolve_any(ref: str, links: dict) -> tuple[str, dict, dict | None]:
 def pick_worktree(ref: str, resolved: str | list[str], links: dict | None = None) -> str:
     """Disambiguate multiple fuzzy matches interactively."""
     import sys
+
     from .cli import _fail, EXIT_USAGE
     if isinstance(resolved, str):
         return resolved
@@ -193,15 +195,37 @@ def _repo_tool_for_pr_lookup(repo: str) -> str | None:
     return _repo_tool(repo)
 
 
+def _sleep_for_pr_retry(secs: float) -> None:
+    """Sleep seam: tests stub this, keeps the retry offline."""
+    time.sleep(secs)
+
+
+# Substrings marking a host-CLI failure as transient (timeout/proxy/TLS/
+# DNS/connection blips — issue #60). Anything else (bad auth, unparsable
+# output, unsupported tool) is permanent: fail fast, no retry.
+_TRANSIENT_PR_ERRORS = ("timed out", "timeout", "timedout", "connection",
+                        "connect", "tls", "ssl", "dns", "proxy", "reset",
+                        "refused", "unreachable", "temporar", "econn",
+                        "socket", "network", "502", "503", "504")
+
+
+def _transient_pr_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    return any(mark in msg for mark in _TRANSIENT_PR_ERRORS)
+
+
 def worktree_pr_url(key: str, entry: dict, attempts: int = 3) -> str | None:
     """Recorded PR/MR URL; falls back to a live branch query.
 
     The live query retries transient host-CLI failures (cold gh under the
     egress proxy, TLS/DNS blips — issue #60): the first success stamps
-    pr_url and wins. A persistent failure still returns None, but the
-    last error is echoed so the caller's "no recorded PR/MR" is not
-    mystery. Genuinely PR-less branches return None fast (empty list,
-    first try).
+    pr_url and wins. Permanent failures (bad auth, unparsable output)
+    return None on the first attempt — no 3x timeout penalty. A persistent
+    transient failure still returns None, with the last error echoed so
+    the caller's "no recorded PR/MR" is not mystery. Genuinely PR-less
+    branches return None fast (empty list, first try). Non-HarnessError
+    crashes (malformed payload, OSError) also resolve to None so
+    review --all skips the worktree instead of crashing.
     """
     if entry.get("pr_url"):
         return entry["pr_url"]
@@ -212,18 +236,26 @@ def worktree_pr_url(key: str, entry: dict, attempts: int = 3) -> str | None:
     tool = _repo_tool_for_pr_lookup(repo)
     if not tool:
         return None
-    last_err: HarnessError | None = None
-    for _ in range(max(1, attempts)):
+    last_err: Exception | None = None
+    pr = None
+    total = max(1, attempts)
+    for attempt in range(total):
         try:
             pr = refs.latest_pr(refs.fetch_pr_list_for_branch(tool, branch, cwd=repo))
         except HarnessError as e:
             last_err = e
+            if not _transient_pr_error(e):
+                break
+            if attempt + 1 < total:
+                _sleep_for_pr_retry(0.5 * (2 ** attempt))
             continue
+        except Exception as e:  # noqa: BLE001 — best-effort lookup; skip, don't crash
+            last_err = e
+            break
         last_err = None
         break
     if last_err is not None:
-        print(f"note: live PR lookup for branch {branch!r} failed: {last_err}",
-              file=sys.stderr)
+        eprint(f"note: live PR lookup for branch {branch!r} failed: {last_err}")
         return None
     if pr:
         store.record_link(key, {"pr_url": pr["url"]})
