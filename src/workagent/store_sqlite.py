@@ -590,6 +590,34 @@ def _migrate_repos_commands(conn) -> None:
         conn.execute("ALTER TABLE repos ADD COLUMN commands TEXT NOT NULL DEFAULT '{}'")
 
 
+def _migrate_repos_unique_name(conn) -> None:
+    """Schema v23: repos.name UNIQUE (registry keys by name — issue #54).
+
+    Legacy DBs predate the constraint and may hold duplicate names (or
+    ''-named auto-created rows): first row (rowid order) keeps its name,
+    later rows take ``<name>-2``/``<name>-3`` ('' → ``repo-2``/``repo-3``),
+    skipping taken names. Then the UNIQUE index is created. Idempotent:
+    re-runs no-op once the index exists and names are unique.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
+    if not cols or "name" not in cols:
+        return
+    taken = set()
+    for (key_ref, name) in conn.execute("SELECT key_ref, name FROM repos ORDER BY rowid"):
+        base = (name or "").strip() or "repo"
+        if base not in taken:
+            taken.add(base)
+            if name != base:
+                conn.execute("UPDATE repos SET name = ? WHERE key_ref = ?", (base, key_ref))
+            continue
+        i = 2
+        while f"{base}-{i}" in taken:
+            i += 1
+        conn.execute("UPDATE repos SET name = ? WHERE key_ref = ?", (f"{base}-{i}", key_ref))
+        taken.add(f"{base}-{i}")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_repos_name ON repos(name)")
+
+
 def _migrate_sessions_type(conn) -> None:
     """Schema v6: sessions gains session_type + metadata (session-type spec).
     Backfill reads the fix-comments prompt header (the only surviving
@@ -810,6 +838,9 @@ def _schema_current(path: Path) -> bool:
         rcols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
         if not {"default_branch", "release_branch"} <= rcols:
             return False
+        if "idx_repos_name" not in {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'repos'")}:
+            return False
         if "release_diff_cache" not in tables:
             return False
         if "custom_actions" not in tables:
@@ -861,6 +892,7 @@ def init_db(path: Path) -> Path:
                 _migrate_tracker_enabled(conn)
                 _migrate_repos_release(conn)
                 _migrate_repos_commands(conn)
+                _migrate_repos_unique_name(conn)
                 _migrate_worktrees_deleted_at(conn)
                 _migrate_worktrees_related(conn)
                 _migrate_flow_linkage(conn)
@@ -993,10 +1025,11 @@ def backfill_trackers_repos(path: Path, cfg: dict,
                 norm = _norm(str(r))
                 row = conn.execute("SELECT key_ref FROM repos WHERE path = ?", (norm,)).fetchone()
                 if row is None:
+                    from .store_trackers import _claim_repo_name
                     key = norm
-                    name = key.rsplit("/", 1)[-1] if "/" in key else key
+                    base = key.rsplit("/", 1)[-1] if "/" in key else key
                     conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
-                                 (key, norm, name or key))
+                                 (key, norm, _claim_repo_name(conn, base or key)))
                     repo_key = key
                 else:
                     repo_key = row[0]
@@ -1073,9 +1106,10 @@ def migrate_json(config_dir: Path, db_path: Path) -> dict:
                 row = conn.execute("SELECT key_ref FROM repos WHERE path = ?",
                                    (repo,)).fetchone()
                 if row is None:
+                    from .store_trackers import _claim_repo_name
                     conn.execute(
                         "INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
-                        (repo, repo, repo.rsplit("/", 1)[-1]))
+                        (repo, repo, _claim_repo_name(conn, repo.rsplit("/", 1)[-1] or repo)))
                     repo_key = repo
                 else:
                     repo_key = row[0]

@@ -83,8 +83,9 @@ def save_links_rows(path: Path, links: dict) -> None:
                     with_tid = extra.get("tracker", "")
                     if with_tid:
                         _upsert_tracker_conn(conn, with_tid)
+                    from .store_trackers import _claim_repo_name
                     conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
-                                 (norm, norm, norm.rsplit("/", 1)[-1] or norm))
+                                 (norm, norm, _claim_repo_name(conn, norm.rsplit("/", 1)[-1] or norm)))
                     repo_key = norm
                     if with_tid:
                         conn.execute("INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key)"
