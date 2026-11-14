@@ -310,3 +310,32 @@ def test_message_adhoc_unknown_repo_fails_before_fetch(tmp_path, monkeypatch):
                                       "--dry-run", "--json"])
     assert res.exit_code == 2
     assert "unknown repo" in (res.output + res.stderr)
+
+def test_message_adhoc_registered_wins_over_fetch_with_many_repos(tmp_path, monkeypatch):
+    """Registered message must resolve locally even when `mm` fetch succeeds.
+
+    Repro for issue #85: the adhoc button sent a bare 26-char id; the fetch
+    succeeded, then the auto-register branch counted every registered repo
+    and failed with "not registered — re-run with --repo <name>".
+    """
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent import store_sqlite as sq
+    import workagent.cli_message as cm
+    _seed(tmp_path, monkeypatch, repo="r1")
+    db = sm_db_path(tmp_path)
+    conn = sq.connect(db)
+    conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
+                 ("r2", "/tmp/r2", "r2"))
+    conn.commit()
+    from workagent import store_messages as sm
+    mid = "swqrz9mfitdqmq7uaxtet7gb1h"
+    sm.create_message(db, message_id=mid, repos=["r1"])
+    def _must_not_fetch(*a):
+        raise AssertionError("mm must not be called for a registered message")
+    monkeypatch.setattr(cm, "_mm", _must_not_fetch)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["message", "adhoc", mid,
+                                      "--prompt", "hi", "--dry-run", "--json"])
+    assert res.exit_code == 0, res.output
+    assert mid in res.output
