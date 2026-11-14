@@ -786,7 +786,7 @@ def create_action(**fields) -> dict:
 
 
 def update_action(label: str, **fields) -> dict:
-    """Update a custom action (rename via new_label; flow steps cascade)."""
+    """Update a custom action (rename via new_label; flow steps + overlay keys cascade)."""
     from . import store_sqlite as _sq
     db = _sq.db_path()
     row = _ca.update_action(db, label, **fields)
@@ -806,13 +806,18 @@ def update_action(label: str, **fields) -> dict:
                          if isinstance(s, dict) and s.get("action_label") == label
                          else s for s in steps]
             _fl.update_template(db, t["label"], steps=json.dumps(new_steps))
+        from . import store_trackers as _st
+        _st.rename_overlay_key(db, "action", label, new_label)
     return row
 
 
 def delete_action(label: str) -> None:
-    """Delete a custom action (delegates to store_custom_actions)."""
+    """Delete a custom action (prunes overlay keys)."""
     from . import store_sqlite as _sq
-    return _ca.delete_action(_sq.db_path(), label)
+    db = _sq.db_path()
+    _ca.delete_action(db, label)
+    from . import store_trackers as _st
+    _st.prune_overlay_keys(db, "action", label)
 
 from . import store_flows as _fl
 
@@ -836,15 +841,24 @@ def create_template(**fields) -> dict:
 
 
 def update_template(label: str, **fields) -> dict:
-    """Update a flow template (delegates to store_flows)."""
+    """Update a flow template (rename retargets overlay keys)."""
     from . import store_sqlite as _sq
-    return _fl.update_template(_sq.db_path(), label, **fields)
+    db = _sq.db_path()
+    row = _fl.update_template(db, label, **fields)
+    new_label = fields.get("new_label")
+    if new_label is not None and new_label != label:
+        from . import store_trackers as _st
+        _st.rename_overlay_key(db, "flow", label, new_label)
+    return row
 
 
 def delete_template(label: str) -> None:
-    """Delete a flow template (delegates to store_flows)."""
+    """Delete a flow template (prunes overlay keys)."""
     from . import store_sqlite as _sq
-    return _fl.delete_template(_sq.db_path(), label)
+    db = _sq.db_path()
+    _fl.delete_template(db, label)
+    from . import store_trackers as _st
+    _st.prune_overlay_keys(db, "flow", label)
 from . import store_messages as _msg
 
 

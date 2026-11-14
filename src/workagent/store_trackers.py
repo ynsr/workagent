@@ -30,6 +30,52 @@ def _parse_overlay_buttons(raw: object) -> dict:
     return {str(k): bool(v) for k, v in val.items()}
 
 
+def rename_overlay_key(path: Path, kind: str, old_label: str, new_label: str) -> int:
+    """Move one overlay key (`<kind>:<old>` → `<kind>:<new>`) on every repo row.
+
+    *kind* is ``flow`` or ``action``. The old visibility carries over unless
+    the new key already exists on that repo (explicit wins, stale old dropped
+    either way). Returns the repo-row count touched.
+    """
+    old_id, new_id = f"{kind}:{old_label}", f"{kind}:{new_label}"
+    init_db(path)
+    import json as _json
+    touched = 0
+    with connect(path) as conn:
+        rows = conn.execute("SELECT key_ref, overlay_buttons FROM repos").fetchall()
+        for key_ref, raw in rows:
+            cur = _parse_overlay_buttons(raw)
+            if old_id not in cur:
+                continue
+            old_v = cur.pop(old_id)
+            cur.setdefault(new_id, old_v)
+            conn.execute("UPDATE repos SET overlay_buttons = ? WHERE key_ref = ?",
+                         (_json.dumps(cur), key_ref))
+            touched += 1
+    return touched
+
+
+def prune_overlay_keys(path: Path, kind: str, label: str) -> int:
+    """Drop one overlay key (`<kind>:<label>`) from every repo row.
+
+    Used on item delete; returns the repo-row count touched.
+    """
+    dead = f"{kind}:{label}"
+    init_db(path)
+    import json as _json
+    touched = 0
+    with connect(path) as conn:
+        rows = conn.execute("SELECT key_ref, overlay_buttons FROM repos").fetchall()
+        for key_ref, raw in rows:
+            cur = _parse_overlay_buttons(raw)
+            if dead not in cur:
+                continue
+            del cur[dead]
+            conn.execute("UPDATE repos SET overlay_buttons = ? WHERE key_ref = ?",
+                         (_json.dumps(cur), key_ref))
+            touched += 1
+    return touched
+
 def load_trackers(path: Path) -> dict:
     """{tracker_id: {"repos", "vendor", "remote_url, "fetch_enabled", "is_enabled"}} — SQLite source of truth."""
     if not path.exists():

@@ -104,7 +104,10 @@ missing key or `{}` = every button visible. Fixed ids: `sync`, `review`,
 (master toggle hiding all dedicated buttons); per-item dedicated ids are
 `flow:<label>` / `action:<label>`. `repo update NAME --overlay-buttons
 "sync,review,-adhoc,flow:deploy"` merges (`-id` hides, later entries win;
-empty string resets); the Repos page edits it per row.
+empty string resets); the Repos page edits it per row. Item
+renames/destroys cascade: `flow:<label>`/`action:<label>` keys follow
+`--new-label` (explicit target wins on conflict) and are pruned on delete —
+no orphan keys accumulate.
 
 ### `GET /api/repos/detect?path=<localpath>`
 Read-only auto-detection of the pre-release gate for a local path
