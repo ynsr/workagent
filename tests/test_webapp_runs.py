@@ -850,6 +850,34 @@ def test_release_run_accepts_new_flags(client, monkeypatch):
         "confirm": True})
     assert r.status_code in (202, 409), r.text  # accepted, not 400 bad_arg
 
+def test_confirmed_release_run_appends_yes(client, monkeypatch):
+    """Confirmed release runs get --yes: non-TTY children hard-fail without it.
+
+    Regression for issue #68: `release fix-default ... --run-mode terminal`
+    from the Fix-default dialog exited 2 with
+    "needs --yes in non-interactive mode".
+    """
+    _stub_spawn(monkeypatch)
+    r = client.post("/api/runs", json={"command": "release",
+        "args": ["fix-default", "proj", "--action", "both",
+                 "--run-mode", "terminal"],
+        "confirm": True})
+    assert r.status_code in (202, 409), r.text  # accepted, not 400 bad_arg
+    run = client.app.state.registry.get(r.json()["run_id"])
+    assert "--yes" in run.argv
+    _wait_state(client, r.json()["run_id"], {"succeeded"})
+
+
+def test_release_dry_run_skips_yes_append(client, monkeypatch):
+    """--dry-run previews need no confirm: no --yes appended."""
+    _stub_spawn(monkeypatch)
+    r = client.post("/api/runs", json={"command": "release",
+        "args": ["proj", "--checks", "both", "--dry-run"],
+        "confirm": True})
+    assert r.status_code in (202, 409), r.text
+    run = client.app.state.registry.get(r.json()["run_id"])
+    assert "--yes" not in run.argv
+
 
 def test_resume_session_uses_run_env_file(client, monkeypatch, tmp_path):
     """Session resume must forward the run's --env-file (WS1)."""
