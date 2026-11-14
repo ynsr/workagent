@@ -293,3 +293,20 @@ def test_message_adhoc_keeps_unknown_error_when_fetch_fails(tmp_path, monkeypatc
                                       "--prompt", "hi", "--dry-run", "--json"])
     assert res.exit_code == 2
     assert "unknown message" in (res.output + res.stderr)
+
+def test_message_adhoc_unknown_repo_fails_before_fetch(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    import workagent.cli_message as cm
+    _seed(tmp_path, monkeypatch)
+    mid = "swqrz9mfitdqmq7uaxtet7gb1h"
+    def _boom(*a):
+        raise AssertionError("mm must not be called for unknown --repo")
+    monkeypatch.setattr(cm, "_mm", _boom)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["message", "adhoc",
+                                      f"https://chat.jibit.cloud/jibit/pl/{mid}",
+                                      "--repo", "nope", "--prompt", "hi",
+                                      "--dry-run", "--json"])
+    assert res.exit_code == 2
+    assert "unknown repo" in (res.output + res.stderr)

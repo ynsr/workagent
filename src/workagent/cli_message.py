@@ -115,11 +115,13 @@ def _resolve_or_fetch(msg_ref: str, repo_opt: str = "") -> dict:
     """
     from .errors import HarnessError
     from .store_messages import extract_message_id
-    try:
-        return store.resolve_message(msg_ref)
-    except HarnessError:
-        pass
+    repo_pin = (repo_opt or "").strip()
+    if repo_pin and repo_pin not in store.load_repos():
+        known = ", ".join(sorted(store.load_repos())) or "(no repos registered)"
+        _fail(f"unknown repo: {repo_pin} (repos: {known})", EXIT_USAGE)
     mid = extract_message_id(msg_ref)
+    # Gate repeats extract_message_id's shape check on purpose: bare refs
+    # bypass the permalink branch above, so re-check here before the fetch.
     if len(mid) != 26 or not all(c.islower() or c.isdigit() for c in mid):
         return store.resolve_message(msg_ref)
     try:
@@ -130,7 +132,7 @@ def _resolve_or_fetch(msg_ref: str, repo_opt: str = "") -> dict:
     if str(post.get("id") or "") != mid:
         return store.resolve_message(msg_ref)
     reg = store.load_repos()
-    repos = [repo_opt] if (repo_opt or "").strip() else sorted(reg)
+    repos = [repo_pin] if repo_pin else sorted(reg)
     if not repos:
         _fail(f"message {mid} is not registered and no repos exist —"
               " re-run with --repo <name>", EXIT_USAGE)
