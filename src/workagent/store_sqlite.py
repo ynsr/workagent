@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS repos (
   remote TEXT NOT NULL DEFAULT '', tool TEXT NOT NULL DEFAULT '',
   fetch_enabled INTEGER NOT NULL DEFAULT 1,
   default_branch TEXT NOT NULL DEFAULT '', release_branch TEXT NOT NULL DEFAULT '',
-  commands TEXT NOT NULL DEFAULT '{}');
+  commands TEXT NOT NULL DEFAULT '{}',
+  overlay_buttons TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS tracker_repos (
   tracker_key TEXT NOT NULL REFERENCES trackers(key_ref) ON DELETE CASCADE,
   repo_key TEXT NOT NULL REFERENCES repos(key_ref) ON DELETE CASCADE,
@@ -588,6 +589,19 @@ def _migrate_repos_commands(conn) -> None:
         return
     if "commands" not in cols:
         conn.execute("ALTER TABLE repos ADD COLUMN commands TEXT NOT NULL DEFAULT '{}'")
+def _migrate_repos_overlay_buttons(conn) -> None:
+    """Schema v23: repos gain overlay_buttons JSON object ('{}' = all visible).
+
+    Per-repo StatusTable overlay visibility: {button_id: bool}. Missing key
+    or '{}' = every button visible (backward compatible). Idempotent:
+    skipped when present.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
+    if not cols:
+        return
+    if "overlay_buttons" not in cols:
+        conn.execute("ALTER TABLE repos ADD COLUMN overlay_buttons TEXT NOT NULL DEFAULT '{}'")
+
 
 
 def _migrate_repos_unique_name(conn) -> None:
@@ -840,7 +854,7 @@ def _schema_current(path: Path) -> bool:
         if "is_enabled" not in tcols:
             return False
         rcols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
-        if not {"default_branch", "release_branch"} <= rcols:
+        if not {"default_branch", "release_branch", "overlay_buttons"} <= rcols:
             return False
         if "idx_repos_name" not in {r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'repos'")}:
@@ -896,6 +910,7 @@ def init_db(path: Path) -> Path:
                 _migrate_tracker_enabled(conn)
                 _migrate_repos_release(conn)
                 _migrate_repos_commands(conn)
+                _migrate_repos_overlay_buttons(conn)
                 _migrate_repos_unique_name(conn)
                 _migrate_worktrees_deleted_at(conn)
                 _migrate_worktrees_related(conn)

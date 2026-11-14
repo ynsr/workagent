@@ -79,8 +79,13 @@ def test_start_rejects_stale_no_harness_alias(client):
     assert body["code"] == "bad_arg" and "--launch" in body["message"]
 
 
-def test_validate_args_allows_verbose_global():
-    _validate_args("sync", ["-v", "IPG-1"])
+def test_validate_args_overlay_buttons_allows_leading_dash_and_reset():
+    _validate_args("repo", ["update", "proj", "--overlay-buttons", "-adhoc"])
+    _validate_args("repo", ["update", "proj", "--overlay-buttons", ""])
+    argv = _build_argv("repo", ["update", "proj", "--overlay-buttons", "-adhoc"])
+    assert "--overlay-buttons=-adhoc" in argv
+    argv = _build_argv("repo", ["update", "proj", "--overlay-buttons", ""])
+    assert "--overlay-buttons=" in argv
 
 
 def test_webapp_review_all_flags_and_target():

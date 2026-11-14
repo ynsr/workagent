@@ -107,7 +107,34 @@ def test_repo_update_roundtrip(isolated_config, tmp_path):
     r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
                                       "--release-branch", "", "--json"])
     assert r.exit_code == 0, r.output
-    assert json.loads(r.stdout)["release_branch"] == ""
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--overlay-buttons", "sync,-adhoc,flow:deploy", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["overlay_buttons"] == {"sync": True, "adhoc": False, "flow:deploy": True}
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--overlay-buttons", "bogus"])
+    assert r.exit_code == 2
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--overlay-buttons", "-dedicated", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["overlay_buttons"]["dedicated"] is False
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--overlay-buttons", "sync", "--json"])
+    assert r.exit_code == 0, r.output
+    merged = json.loads(r.stdout)["overlay_buttons"]
+    assert merged["sync"] is True and merged.get("adhoc") is False
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--overlay-buttons", "", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["overlay_buttons"] == {}
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--overlay-buttons", "-adhoc", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["overlay_buttons"] == {"adhoc": False}
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--overlay-buttons", " ", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["overlay_buttons"] == {}
 
 
 def test_release_status_same_branch_guard(monkeypatch):
@@ -134,6 +161,19 @@ def test_repos_commands_migration_backfills_empty_object(tmp_path, monkeypatch):
         assert val == "{}"
 
 
+def test_repos_overlay_buttons_migration_backfills_empty_object(tmp_path, monkeypatch):
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    monkeypatch.setattr(sq, "db_path", lambda: db)
+    with sq.connect(db) as conn:
+        conn.executescript("CREATE TABLE repos (key_ref TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, name TEXT NOT NULL, commands TEXT NOT NULL DEFAULT '{}');")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/x', 'r')")
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
+        assert "overlay_buttons" in cols
+        val = conn.execute("SELECT overlay_buttons FROM repos WHERE key_ref = 'r'").fetchone()[0]
+        assert val == "{}"
 def test_load_repos_carries_commands_dict(tmp_path, monkeypatch):
     from workagent import store_sqlite as sq
     from workagent import store_trackers as st
@@ -147,6 +187,22 @@ def test_load_repos_carries_commands_dict(tmp_path, monkeypatch):
     assert repos["r"]["commands"] == {"pre-release": "npm test"}
 
 
+def test_load_repos_carries_overlay_buttons_dict(tmp_path, monkeypatch):
+    from workagent import store_sqlite as sq
+    from workagent import store_trackers as st
+    db = tmp_path / "state.db"
+    monkeypatch.setattr(sq, "db_path", lambda: db)
+    monkeypatch.setattr(st, "connect", lambda p: sq.connect(db))
+    sq.init_db(db)
+    st.register_repo_row(db, "r", "/x", "jira:A", remote="", tool="",
+                         overlay_buttons={"adhoc": False, "flow:deploy": True})
+    repos = st.load_repos(db)
+    assert repos["r"]["overlay_buttons"] == {"adhoc": False, "flow:deploy": True}
+    # None preserves; {} resets to all-visible.
+    st.register_repo_row(db, "r", "/x", "jira:A", remote="", tool="")
+    assert st.load_repos(db)["r"]["overlay_buttons"] == {"adhoc": False, "flow:deploy": True}
+    st.register_repo_row(db, "r", "/x", "jira:A", remote="", tool="", overlay_buttons={})
+    assert st.load_repos(db)["r"]["overlay_buttons"] == {}
 def test_register_repo_row_none_preserves_commands(tmp_path, monkeypatch):
     from workagent import store_sqlite as sq
     from workagent import store_trackers as st

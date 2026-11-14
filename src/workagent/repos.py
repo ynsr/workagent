@@ -10,6 +10,58 @@ from pathlib import Path
 from . import store
 from .errors import HarnessError, run_cmd
 
+FIXED_OVERLAY_BUTTONS: tuple[tuple[str, str], ...] = (
+    ("sync", "Sync"),
+    ("review", "Review"),
+    ("fix-comments", "Fix PR comments"),
+    ("prodtest", "Generate prodtest plan"),
+    ("adhoc", "Run adhoc prompt"),
+    ("cleanup", "Cleanup"),
+    ("stop-terminal", "Stop terminal agent"),
+    ("open-runs", "Open runs"),
+    ("open-sessions", "Worktree sessions"),
+    ("open-flows", "Open flows"),
+    ("resume-session", "Resume session"),
+    ("dedicated", "Dedicated action/flow buttons"),
+)
+"""Fixed StatusTable overlay buttons: (id, label); `dedicated` is the master toggle for flagged flow/action buttons."""
+
+OVERLAY_BUTTON_IDS: frozenset[str] = frozenset(b for b, _ in FIXED_OVERLAY_BUTTONS)
+"""Fixed overlay ids; per-item ids are `flow:<label>` / `action:<label>` (validated live)."""
+
+
+def parse_overlay_buttons(raw: str) -> dict:
+    """Parse `"a,-b,flow:x"` → {button_id: bool}; raises HarnessError on bad ids.
+
+    Bare `a` = show; `-a` = hide. Fixed ids validate against
+    OVERLAY_BUTTON_IDS; per-item ids must be `flow:<label>` or
+    `action:<label>` with a non-empty label and no whitespace.
+    Empty/whitespace-only input → {} (all visible). Later entries win.
+    """
+    ids: dict = {}
+    for tok in (raw or "").split(","):
+        t = tok.strip()
+        if not t:
+            continue
+        show = True
+        if t.startswith("-"):
+            show = False
+            t = t[1:].strip()
+        if not t:
+            raise HarnessError(f"invalid overlay button id: {tok!r}", exit_code=2)
+        if t in OVERLAY_BUTTON_IDS:
+            pass
+        elif t.startswith(("flow:", "action:")):
+            _, _, label = t.partition(":")
+            if not label or any(c.isspace() for c in label):
+                raise HarnessError(f"invalid overlay button id: {t!r}", exit_code=2)
+        else:
+            raise HarnessError(
+                f"unknown overlay button {t!r} (fixed: {', '.join(b for b, _ in FIXED_OVERLAY_BUTTONS)}; or flow:<label>/action:<label>)",
+                exit_code=2)
+        ids[t] = show
+    return ids
+
 
 def repo_root(cwd: Path | None = None) -> Path | None:
     try:
