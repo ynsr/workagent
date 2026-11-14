@@ -222,6 +222,33 @@ def action_update(
     row = store.update_action(label, **fields)
     _print_result({"updated": row["label"], "id": row["id"],
                    "name": row["name"]}, json_output)
+@action_app.command("suggest-icon")
+@_catch_harness_errors
+def action_suggest_icon(
+    name: Optional[str] = typer.Option(None, "--name", help="Action display name (context for the model)."),
+    label: Optional[str] = typer.Option(None, "--label", help="Action label (context for the model)."),
+    prompt: Optional[str] = typer.Option(None, "--prompt", help="Action prompt (context for the model)."),
+    pre_execution: Optional[str] = typer.Option(None, "--pre-execution", help="Pre-harness script (context for the model)."),
+    post_execution: Optional[str] = typer.Option(None, "--post-execution", help="Post-harness script (context for the model)."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to ask (default: omp)."),
+    yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; suggest prompts nothing so this is a no-op."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Ask the AI harness for one Lucide icon name (issue #62).
+
+    Runs ONE bare judge-style session (cheap model, no tools/skills/context)
+    in a temp dir — nothing is mutated. Prints {"icon": ...} on stdout.
+    """
+    from . import suggest_icon as _si
+    text = _si.run_suggest_icon(
+        _si.suggest_prompt(kind="custom action", name=name or "",
+                           label=label or "", prompt=prompt or "",
+                           steps="", pre=pre_execution or "",
+                           post=post_execution or ""),
+        harness=harness or "omp")
+    icon = _si.parse_suggested_icon(text)
+    _print_result({"icon": _si.validate_suggested_icon(icon)}, json_output)
+
 
 
 @action_app.command("delete")

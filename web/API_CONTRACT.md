@@ -313,6 +313,7 @@ Request:
 {"command": "cleanup", "args": ["IPG-932"],
  "confirm": true, "force": false}
 ```
+ - `action suggest-icon [--name --label --prompt --pre-execution --post-execution --harness --json]` / `flow template suggest-icon [--name --label --steps --pre-execution --post-execution --harness --json]`: Ask-AI Lucide icon (issue #62) — ONE bare judge-style harness session (`--smol --no-skills --no-tools`, temp dir, no checkout), stdout `{"icon": "Rocket"}`; target keys `suggest-icon:action` / `suggest-icon:flow` so long AI runs never 409-block saves; parsed against `IconPicker ACTION_ICONS`, never confirmed.
  - `command`: one of `start | review | cleanup | release | sync | open | register |
    repo | link | tracker | action | flow | message | backup | prodtest | adhoc` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`; prodtest: `["plan", REF, …]` / `["run", REF, …]`; adhoc: `[REF, --prompt P, …]`).
 - Global `-v` may be passed as `args[0]`.

@@ -56,9 +56,9 @@ SPECS: dict[str, dict[str, Any]] = {
              "key": lambda args: "config" if args[:1] not in (["destroy-deleted"],) else "link:destroy-deleted"},
     "tracker": {"confirm": False, "force": False, "key": "config"},
     "action": {"confirm": False, "force": False, "confirm_subs": ("run", "delete"),
-               "key": lambda args: f"action:{_first_positional(args, VAL_FLAGS['action run'])}:{_first_positional(args[1:], VAL_FLAGS['action run'])}" if args[:1] == ["run"] else "config"},
+               "key": lambda args: "suggest-icon:action" if args[:1] == ["suggest-icon"] else (f"action:{_first_positional(args, VAL_FLAGS['action run'])}:{_first_positional(args[1:], VAL_FLAGS['action run'])}" if args[:1] == ["run"] else "config")},
     "flow": {"confirm": False, "force": False, "confirm_subs": ("run", "delete"),
-             "key": lambda args: f"flow:{_nth_positional(args, 1, VAL_FLAGS['flow run'])}:{_nth_positional(args, 2, VAL_FLAGS['flow run'])}" if args[:1] == ["run"] else "config"},
+             "key": lambda args: "suggest-icon:flow" if args[:2] == ["template", "suggest-icon"] else (f"flow:{_nth_positional(args, 1, VAL_FLAGS['flow run'])}:{_nth_positional(args, 2, VAL_FLAGS['flow run'])}" if args[:1] == ["run"] else "config")},
     "message": {"confirm": False, "force": False, "confirm_subs": ("remove", "adhoc", "validate", "run"),
                 "key": _message_key},
     "backup": {"confirm": False, "force": False, "confirm_subs": ("import",),
@@ -104,6 +104,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "action list": ("--json", "--csv"),
     "action show": ("--json",),
     "action run": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
+    "action suggest-icon": ("--yes", "--json"),
     "action update": ("--json", "--yes", "--protected", "--no-protected",
                       "--dedicated-top-bar", "--no-dedicated-top-bar",
                       "--dedicated-overlay", "--no-dedicated-overlay",
@@ -124,6 +125,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "flow template clone": ("--json", "--yes"),
     "flow template compose": ("--json", "--yes"),
     "flow template delete": ("--yes", "--json"),
+    "flow template suggest-icon": ("--yes", "--json"),
     "flow list": ("--json", "--csv"),
     "flow show": ("--json",),
     "flow run": ("--dry-run", "--yes", "--json", "--fresh"),
@@ -167,10 +169,12 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "action add": ("--name", "--label", "--icon", "--prompt", "--pre-execution", "--post-execution", "--default-options", "--sort-order", "--category"),
     "action update": ("--name", "--icon", "--prompt", "--pre-execution", "--post-execution", "--default-options", "--new-label", "--sort-order", "--category"),
     "action run": ("--harness", "--extra-prompt", "--env-file", "--session-file"),
-    "flow template add": ("--name", "--label", "--steps", "--pre-execution", "--post-execution", "--sort-order", "--category"),
-    "flow template update": ("--name", "--steps", "--pre-execution", "--post-execution", "--new-label", "--sort-order", "--category"),
+    "action suggest-icon": ("--name", "--label", "--prompt", "--pre-execution", "--post-execution", "--harness"),
+    "flow template add": ("--name", "--label", "--icon", "--steps", "--pre-execution", "--post-execution", "--sort-order", "--category"),
+    "flow template update": ("--name", "--icon", "--steps", "--pre-execution", "--post-execution", "--new-label", "--sort-order", "--category"),
     "flow template clone": ("--name", "--label"),
     "flow template compose": ("--from", "--name"),
+    "flow template suggest-icon": ("--name", "--label", "--steps", "--pre-execution", "--post-execution", "--harness"),
     "flow list": ("--worktree",),
     "flow run": ("--step-config", "--skip-steps", "--steps"),
     "backup export": ("--path",),
@@ -188,11 +192,11 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "link": {"list", "set", "remove", "deactivate", "reactivate", "undelete", "destroy-deleted"},
                                     "tracker": {"add", "list", "remove", "update"},
-                                    "action": {"add", "list", "show", "run", "update", "delete"},
+                                    "action": {"add", "list", "show", "run", "update", "delete", "suggest-icon"},
                                     "flow": {"template", "list", "show", "run"},
                                     "backup": {"export", "import", "run-scheduled"},
                                     "message": {"add", "list", "show", "update", "remove", "adhoc", "validate", "action", "flow"}}
-TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "clone", "compose", "delete"}
+TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "clone", "compose", "delete", "suggest-icon"}
 def _needs_confirm(command: str, args: list[str]) -> bool:
     """True when the (sub)command needs confirm:true (destructive only).
 

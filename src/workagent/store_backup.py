@@ -79,7 +79,8 @@ def _import_templates(db, rows: list) -> dict:
         label = raw.get("label", "") or ""
         try:
             _fl.create_template(
-                db, name=name, label=label, steps=raw.get("steps", []),
+                db, name=name, label=label, icon=raw.get("icon", ""),
+                steps=raw.get("steps", []),
                 pre_execution=raw.get("pre_execution", ""),
                 post_execution=raw.get("post_execution", ""),
                 parent_labels=raw.get("parent_labels", []))
@@ -89,6 +90,7 @@ def _import_templates(db, rows: list) -> dict:
                 raise
             _fl.update_template(
                 db, label or _fl.normalize_label(name), name=name,
+                icon=raw.get("icon", ""),
                 steps=raw.get("steps", []),
                 pre_execution=raw.get("pre_execution", ""),
                 post_execution=raw.get("post_execution", ""),

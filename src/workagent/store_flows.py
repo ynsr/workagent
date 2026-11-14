@@ -232,15 +232,25 @@ def compose_chains(sources: list[tuple[str, list[dict]]]) -> tuple[list[dict], l
     return norm, [label for label, _ in sources], dropped
 
 
+def _validate_icon(icon: str) -> str:
+    """Lucide icon identifier (mirrors custom_actions: [A-Za-z0-9_-]+, default Zap)."""
+    import re as _re
+    from .errors import HarnessError
+    icon = (icon or "").strip() or "Zap"
+    if not _re.fullmatch(r"[A-Za-z0-9_-]+", icon):
+        raise HarnessError(f"icon must be an identifier (got {icon!r})",
+                           exit_code=2)
+    return icon
+
+
 def _row(r: sqlite3.Row | tuple) -> dict:
     if isinstance(r, sqlite3.Row):
         d = dict(r)
     else:
-        keys = ("id", "label", "name", "steps", "pre_execution",
+        keys = ("id", "label", "name", "icon", "steps", "pre_execution",
                 "post_execution", "parent_labels", "created_at", "modified_at",
                 "protected", "sort_order", "dedicated_top_bar",
                 "dedicated_overlay")
-        d = dict(zip(keys, r))
     try:
         d["steps"] = json.loads(d.get("steps") or "[]")
     except (json.JSONDecodeError, TypeError):
@@ -250,6 +260,7 @@ def _row(r: sqlite3.Row | tuple) -> dict:
         d["parent_labels"] = parents if isinstance(parents, list) else []
     except (json.JSONDecodeError, TypeError):
         d["parent_labels"] = []
+    d.setdefault("icon", "Zap")
     d["protected"] = bool(d.get("protected", 0))
     try:
         d["sort_order"] = int(d.get("sort_order", 0) or 0)
@@ -301,6 +312,7 @@ def get_template(db: Path, label: str) -> dict | None:
 
 
 def create_template(db: Path, *, name: str, label: str = "",
+                    icon: str = "",
                     steps: str | list = "[]",
                     pre_execution: str = "",
                     post_execution: str = "",
@@ -325,6 +337,7 @@ def create_template(db: Path, *, name: str, label: str = "",
             f"name {name!r} normalizes to an empty label — pass label",
             exit_code=2)
     norm = validate_template(steps)
+    icon = _validate_icon(icon)
     parents = list(parent_labels or [])
     if not all(isinstance(p, str) and p for p in parents):
         raise HarnessError("parent_labels must be a list of label strings",
@@ -333,13 +346,13 @@ def create_template(db: Path, *, name: str, label: str = "",
     with _connect(db) as conn:
         try:
             cur = conn.execute(
-                "INSERT INTO flow_templates (label, name, steps,"
+                "INSERT INTO flow_templates (label, name, icon, steps,"
                 " pre_execution, post_execution, parent_labels,"
                 " protected, sort_order, dedicated_top_bar,"
                 " dedicated_overlay, category, run_immediately,"
                 " created_at, modified_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (key, name.strip(), json.dumps(norm), pre_execution or "",
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (key, name.strip(), icon, json.dumps(norm), pre_execution or "",
                  post_execution or "", json.dumps(parents), int(bool(protected)),
                  int(sort_order or 0), int(bool(dedicated_top_bar)),
                  int(bool(dedicated_overlay)), category or "worktree",
@@ -363,7 +376,7 @@ def update_template(db: Path, label: str, **fields) -> dict:
     rows are retargeted to the new label in the same connection.
     """
     from .errors import HarnessError
-    allowed = {"name", "steps", "pre_execution", "post_execution",
+    allowed = {"name", "icon", "steps", "pre_execution", "post_execution",
                "parent_labels", "new_label", "protected", "sort_order",
                "dedicated_top_bar", "dedicated_overlay", "category",
                "run_immediately"}
@@ -373,6 +386,8 @@ def update_template(db: Path, label: str, **fields) -> dict:
                            exit_code=2)
     if "name" in fields and not (fields["name"] or "").strip():
         raise HarnessError("template name must not be blank", exit_code=2)
+    if "icon" in fields:
+        fields["icon"] = _validate_icon(str(fields["icon"] or ""))
     if "steps" in fields:
         norm = validate_template(fields["steps"])
         fields["steps"] = json.dumps(norm)
