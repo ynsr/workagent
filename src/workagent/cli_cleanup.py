@@ -105,13 +105,15 @@ def cleanup(
     if released:
         from . import issue_status as _st
 
-        def _close_if_jira_released(key: str, entry: dict) -> dict | None:
-            """Close guard for skipped rows: Jira Released -> done, else keep skip.
+        def _close_if_jira_release_mark(key: str, entry: dict) -> dict | None:
+            """Close guard for skipped rows: Jira Product Test -> done, else keep skip.
 
-            Returns the result row when the Jira status is Released, else None
-            (caller keeps the original skip). Non-issue refs, unknown states,
-            and non-Released states all keep the skip. Worktree/branch/PR
-            untouched — issue state only.
+            `Released` no longer exists (issue #48); the release mark is now
+            `Product Test`, with `released` still accepted for trackers that
+            report it. Returns the result row when the Jira status matches,
+            else None (caller keeps the original skip). Non-issue refs,
+            unknown states, and non-matching states all keep the skip.
+            Worktree/branch/PR untouched — issue state only.
             """
             stored = entry.get("issue", "") or key
             try:
@@ -122,7 +124,7 @@ def cleanup(
                 return None
             cur = _st._issue_state(parsed.get("number", ""), parsed.get("tool", ""),
                                    parsed.get("url", ""))
-            if cur != "released":
+            if cur not in ("product test", "released"):
                 return None
             if dry_run:
                 return {"key": key, "branch": entry.get("branch", ""),
@@ -150,12 +152,12 @@ def cleanup(
         rows = []
         for key, entry in targets.items():
             if entry.get("deleted_at"):
-                decided = _close_if_jira_released(key, entry)
+                decided = _close_if_jira_release_mark(key, entry)
                 rows.append(decided or {"key": key, "branch": entry.get("branch", ""),
                                         "status": "skipped:deleted"})
                 continue
             if entry.get("active", 1) == 0:
-                decided = _close_if_jira_released(key, entry)
+                decided = _close_if_jira_release_mark(key, entry)
                 rows.append(decided or {"key": key, "branch": entry.get("branch", ""),
                                         "status": "skipped:deactivated"})
                 continue
@@ -164,7 +166,7 @@ def cleanup(
             info = (store.load_repos().get(repo, {}) or {})
             rel_branch = str(info.get("release_branch", "") or "")
             if not repo or not branch or not rel_branch:
-                decided = _close_if_jira_released(key, entry)
+                decided = _close_if_jira_release_mark(key, entry)
                 rows.append(decided or {"key": key, "branch": branch,
                                         "status": "skipped:no-release-branch"})
                 continue

@@ -196,10 +196,10 @@ type FixAction = "rebase" | "ci" | "both"
 const FIX_ACTION_OPTIONS: readonly { value: FixAction; label: string; hint: string }[] = [
   { value: "both", label: "Both", hint: "--action both — rebase onto release, then fix CI" },
   { value: "rebase", label: "Rebase", hint: "--action rebase — rebase default onto release" },
-  { value: "ci", label: "CI", hint: "--action ci — fix the failing default-branch CI" },
+  { value: "ci", label: "CI", hint: "--action ci — fix the failing branch CI (default and/or release)" },
 ]
 
-/** Fix-default dialog: rebase default onto release and/or fix its CI via the harness. */
+/** Fix-default dialog: rebase default onto release and/or fix failing branch CI via the harness. */
 export function FixDefaultDialog({ status, onClose }: { status: ReleaseStatus; onClose: () => void }) {
   const runConfirmed = useConfirmedRun()
   const [action, setAction] = useState<FixAction>("both")
@@ -217,8 +217,8 @@ export function FixDefaultDialog({ status, onClose }: { status: ReleaseStatus; o
       action: "release",
       title: `Fix default for ${status.repo}`,
       description: touchesRebase
-        ? `Rebases ${status.default_branch} onto ${status.release_branch} (force-push — rewrites origin/${status.default_branch}) and/or fixes its CI via the harness.`
-        : `Fixes the failing CI on ${status.default_branch} via the harness.`,
+        ? `Rebases ${status.default_branch} onto ${status.release_branch} (force-push — rewrites origin/${status.default_branch}) and/or fixes failing branch CI via the harness.`
+        : `Fixes the failing branch CI (default and/or release) via the harness.`,
       warning: touchesRebase
         ? `Rebasing rewrites origin/${status.default_branch} and requires a force-push.`
         : undefined,
@@ -240,8 +240,8 @@ export function FixDefaultDialog({ status, onClose }: { status: ReleaseStatus; o
       title={`Fix default for ${status.repo}`}
       description={
         touchesRebase
-          ? `Rebase ${status.default_branch} onto ${status.release_branch} (force-push — rewrites the default branch) and/or fix its CI.`
-          : `Fix the failing CI on ${status.default_branch}.`
+          ? `Rebase ${status.default_branch} onto ${status.release_branch} (force-push — rewrites the default branch) and/or fix failing branch CI.`
+          : `Fix the failing branch CI (default and/or release).`
       }
       onClose={onClose}
       footer={

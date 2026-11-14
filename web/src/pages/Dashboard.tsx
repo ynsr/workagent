@@ -333,8 +333,8 @@ export function Dashboard() {
       action: "cleanup",
       title: targeting ? `Close released issues (${selCount} selected)` : "Close released issues",
       description: targeting
-        ? "Closes the tracker issue for each selected worktree whose branch is contained in its repo release branch (merge-base --is-ancestor). Deactivated, deleted, or release-branch-less rows still close when their Jira issue is already Released. Worktrees, branches, and PRs are left untouched — issue state only."
-        : "Closes the tracker issue for every linked worktree (active, deactivated, and soft-deleted) whose branch is contained in its repo release branch (merge-base --is-ancestor). Deactivated, deleted, or release-branch-less rows still close when their Jira issue is already Released. Worktrees, branches, and PRs are left untouched — issue state only.",
+        ? "Closes the tracker issue for each selected worktree whose branch is contained in its repo release branch (merge-base --is-ancestor). Deactivated, deleted, or release-branch-less rows still close when their Jira issue is already in Product Test. Worktrees, branches, and PRs are left untouched — issue state only."
+        : "Closes the tracker issue for every linked worktree (active, deactivated, and soft-deleted) whose branch is contained in its repo release branch (merge-base --is-ancestor). Deactivated, deleted, or release-branch-less rows still close when their Jira issue is already in Product Test. Worktrees, branches, and PRs are left untouched — issue state only.",
       destructive: true,
       confirmLabel: targeting ? `Close ${selCount}` : "Close released",
       details: [{ label: "Scope", value: "Release-branch-contained links only" }],

@@ -1,4 +1,4 @@
-"""`release fix-default`: rebase the default branch onto release / fix its CI.
+"""`release fix-default`: rebase the default branch onto release / fix failing branch CI.
 
 `plan_fix_default` is the dry-run planner; `run_fix_default` executes it. The
 rebase step asks the host to rewrite origin/<default> through the
@@ -72,11 +72,10 @@ def _ci_status(tool: str, path: str, remote: str,
     """(status, job_url) of *branch*'s newest pipeline; ("unknown", "") on error.
 
     This is the release card's branch lookup: a PR/MR URL is not available for
-    a standalone default branch, so the host lookup needs the git remote.
+    a standalone branch, so the host lookup needs the git remote.
     """
     status, url = refs_ci.fetch_branch_ci(tool, remote, branch, path)
     return (status or "unknown"), (url or "")
-
 
 def _branch_sha(path: str, branch: str) -> str:
     """origin/<branch> SHA ("" when the ref cannot be resolved)."""
@@ -152,8 +151,8 @@ def _rebase_prompt(ctx: dict, default_sha: str, release_sha: str) -> str:
             "do not create merge commits")
 
 
-def _ci_prompt(default: str, url: str, logs: str) -> str:
-    head_line = f"Fix the failing CI on {default}: {url}"
+def _ci_prompt(branch: str, url: str, logs: str) -> str:
+    head_line = f"Fix the failing CI on {branch}: {url}"
     return f"{head_line}\n{logs}" if logs else head_line
 
 
@@ -186,13 +185,24 @@ def _rebase_step(ctx: dict, result: dict,
     return None
 
 
-def _ci_step(ctx: dict, result: dict) -> str:
-    url = str(result.get("ci_url", "") or "")
-    logs = _ci_logs(ctx["tool"], ctx["path"], ctx["remote"], url)
-    if logs:
-        result["ci_log_chars"] = len(logs)
-    return _ci_prompt(ctx["default_branch"], url or "(pipeline url unknown)",
-                      logs)
+def _ci_step(ctx: dict, result: dict) -> list[str]:
+    # Fix every branch whose pipeline actually failed: release CI runs the same
+    # suite post-merge, so a red release pipeline goes to the harness even
+    # when the default branch is green — and when both fail, both reach the
+    # harness (default first) instead of silently dropping one.
+    prompts: list[str] = []
+    for branch_key, url_key, branch in (
+        ("ci", "ci_url", str(ctx["default_branch"])),
+        ("release_ci", "release_ci_url", str(ctx["release_branch"])),
+    ):
+        if str(result.get(branch_key, "")) != "failure":
+            continue
+        url = str(result.get(url_key, "") or "")
+        logs = _ci_logs(ctx["tool"], ctx["path"], ctx["remote"], url)
+        if logs:
+            result["ci_log_chars"] = result.get("ci_log_chars", 0) + len(logs)
+        prompts.append(_ci_prompt(branch, url or "(pipeline url unknown)", logs))
+    return prompts
 
 
 def _confirm_fix(ctx: dict, yes: bool) -> None:
@@ -220,10 +230,15 @@ def _confirm_fix(ctx: dict, yes: bool) -> None:
 def plan_fix_default(name: str, action: str) -> dict:
     """Dry-run plan for fixing the default branch (never opens an MR).
     Returns exactly: repo, action, default_branch, release_branch, ahead,
-    behind, ci, ci_url, plan. Raises HarnessError (exit 2) when the repo is
+    behind, ci, ci_url, release_ci, release_ci_url, plan.
+    `ci`/`ci_url` describe the default branch; `release_ci`/`release_ci_url`
+    describe the release branch — a red release pipeline blocks the release
+    even when the default branch is green (the #52 false-success: only the
+    default branch was checked, so a failing release job reported a noop).
+    Raises HarnessError (exit 2) when the repo is
     unknown or its default/release branches are missing or identical —
-    mirroring validate_release. The default-branch CI lookup soft-fails to
-    "unknown" (warning to stderr), never raises.
+    mirroring validate_release. Branch CI lookups soft-fail to
+    "unknown" (warning to stderr), never raise.
     """
     if action not in ("rebase", "ci", "both"):
         raise HarnessError(f"bad --action {action!r}: use rebase, ci, or both",
@@ -237,12 +252,23 @@ def plan_fix_default(name: str, action: str) -> dict:
     except Exception as e:  # never raise: CI is advisory to the plan
         print(f"warning: CI lookup failed for {default}: {e}", file=sys.stderr)
         ci, ci_url = "unknown", ""
+    try:
+        release_ci, release_ci_url = _ci_status(ctx["tool"], ctx["path"],
+                                                ctx["remote"], release_branch)
+    except Exception as e:  # never raise: CI is advisory to the plan
+        print(f"warning: CI lookup failed for {release_branch}: {e}", file=sys.stderr)
+        release_ci, release_ci_url = "unknown", ""
+    ci_failed = ci == "failure" or release_ci == "failure"
     parts: list[str] = []
     if action in ("rebase", "both") and behind > 0:
         parts.append(f"open {default}->{release_branch} MR + remote rebase, "
                      "fallback local harness")
-    if action in ("ci", "both") and ci == "failure":
-        parts.append("fix failing default-branch CI via harness")
+    if action in ("ci", "both") and ci_failed:
+        failing = " and ".join(b for b, failed in
+                               ((default, ci == "failure"),
+                                (release_branch, release_ci == "failure"))
+                               if failed)
+        parts.append(f"fix failing {failing}-branch CI via harness")
     if parts:
         plan = "; ".join(parts)
     else:
@@ -250,11 +276,13 @@ def plan_fix_default(name: str, action: str) -> dict:
         if action in ("rebase", "both"):
             why.append(f"default not behind {release_branch} (behind=0)")
         if action in ("ci", "both"):
-            why.append(f"CI is {ci}")
+            why.append(f"CI is {ci} (release CI is {release_ci})")
         plan = "noop: " + "; ".join(why)
     return {"repo": name, "action": action, "default_branch": default,
             "release_branch": release_branch, "ahead": ahead,
-            "behind": behind, "ci": ci, "ci_url": ci_url, "plan": plan}
+            "behind": behind, "ci": ci, "ci_url": ci_url,
+            "release_ci": release_ci, "release_ci_url": release_ci_url,
+            "plan": plan}
 
 
 @_catch_harness_errors
@@ -275,11 +303,12 @@ def run_fix_default(name: str, *, action: str, run_mode: str = "preview",
     # Branch-scoped session dir: the branch this fix rewrites is the default.
     result["branch"] = ctx["default_branch"]
     rebase_wanted = action in ("rebase", "both") and result["behind"] > 0
-    ci_wanted = action in ("ci", "both") and result["ci"] == "failure"
+    ci_wanted = action in ("ci", "both") and (result["ci"] == "failure"
+                                              or result.get("release_ci") == "failure")
     if dry_run or not (rebase_wanted or ci_wanted):
         if not dry_run:
             eprint(f"{name}: nothing to fix (behind={result['behind']}, "
-                   f"ci={result['ci']})")
+                   f"ci={result['ci']}, release_ci={result.get('release_ci', 'unknown')})")
         _print_result(result, json_output)
         return
     if run_mode != "preview":
@@ -290,7 +319,7 @@ def run_fix_default(name: str, *, action: str, run_mode: str = "preview",
         if rebase_prompt:
             prompts.append(rebase_prompt)
     if ci_wanted:
-        prompts.append(_ci_step(ctx, result))
+        prompts.extend(_ci_step(ctx, result))
     if not prompts:
         # The host did every step: nothing for the harness to do.
         eprint(f"{name}: nothing left for the harness")
