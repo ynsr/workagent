@@ -349,9 +349,19 @@ def register_runs_routes(app, registry) -> None:
         run = registry.create(body.command, body.args, target)
         argv = _build_argv(body.command, body.args)
         tail: list[str] = []
-        if body.confirm and (body.command in ("start", "review", "cleanup",
-                                             "sync") or (body.command == "message"
-                                                         and _message_needs_yes(body.args))):
+        # Confirmed web runs are non-interactive children: the CLI's TTY
+        # confirms would exit 2 without --yes. release joins the list
+        # because `release`/`release fix-default` hard-fail non-TTY
+        # without --yes (issue #68); --dry-run previews need no confirm.
+        # sync spells --yes also as -y/--force (same Typer flag), so any
+        # of the three suppresses the append.
+        _sync_yes = {"--yes", "-y", "--force"}
+        _has_yes = ("--yes" in body.args or (body.command == "sync"
+                                             and not _sync_yes.isdisjoint(body.args)))
+        if body.confirm and "--dry-run" not in body.args and not _has_yes \
+                and (body.command in ("start", "review", "cleanup", "sync",
+                                      "release") or (body.command == "message"
+                                                      and _message_needs_yes(body.args))):
             tail.append("--yes")
         if body.force and spec["force"]:
             tail.append("--force")
