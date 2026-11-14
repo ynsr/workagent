@@ -4,6 +4,7 @@
 - Serve restarts no longer kill running flows: detached runs survive shutdown and are re-adopted on boot [66]
 - StatusTable no longer blocks on issues without status labels: unknown issue states are cached like other cells [55]
 - Cache TTL docs now describe what each timeout covers [no-issue]
+- Repo names are now unique: reusing a name for another repo fails with a clear error instead of silently taking over [54]
 - Review accepts GitHub shorthand refs (OWNER/REPO#NUM resolves via gh; issue numbers fail with a start-first hint) [49]
 - Message runs fixed: per-message run keys, live Run buttons with confirm, repo-path fail-fast with --ref hint, plus rename guards [44]
 - Message launch pins repos with repo checkboxes (one run per repo) and messages track linked worktrees via --worktree [46]

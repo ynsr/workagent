@@ -170,10 +170,8 @@ def add_tracker_repo(path: Path, tid: str, repo_path: str) -> bool:
         row = conn.execute("SELECT key_ref FROM repos WHERE path = ?", (norm,)).fetchone()
         if row is None:
             key = norm
-            name = key.rsplit("/", 1)[-1] if "/" in key else key
-            conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
-                         (key, norm, name))
-            repo_key = key
+            base = key.rsplit("/", 1)[-1] if "/" in key else key
+            repo_key = _insert_path_keyed_repo(conn, key, base)
         else:
             repo_key = row["key_ref"]
         cur = conn.execute(
@@ -207,6 +205,52 @@ def remove_tracker_repo(path: Path, tid: str, repo_path: str | None = None) -> b
         if left is None:
             conn.execute("DELETE FROM trackers WHERE key_ref = ?", (tid,))
         return True
+def _claim_repo_name(conn, base: str, skip_key_ref: str = "") -> str:
+    """Free repo name for *base* (issue #54): ``base``, else ``base-2…``.
+
+    Used by path-keyed auto-creates whose basename may collide (two
+    hosts, two dirs, one basename). Rows named by ``skip_key_ref`` never
+    block the claim (self-rename). Never raises — always returns a name
+    the UNIQUE index will accept.
+    """
+    want = (base or "").strip() or "repo"
+    taken = {r[0] for r in conn.execute("SELECT name FROM repos WHERE key_ref != ?", (skip_key_ref,))}
+    if want not in taken:
+        return want
+    i = 2
+    while f"{want}-{i}" in taken:
+        i += 1
+    return f"{want}-{i}"
+def _insert_path_keyed_repo(conn, norm: str, base: str) -> str:
+    """INSERT a path-keyed repo row, retrying on concurrent name claims.
+
+    _claim_repo_name is check-then-insert: two processes can claim the
+    same suffix and the loser hits the name UNIQUE index. Retry with a
+    fresh claim instead of leaking sqlite3.IntegrityError (single-user
+    CLI; concurrent runs are rare but auto-create paths must not crash).
+    Returns the repo key_ref (the path). Raises HarnessError when the
+    path is already registered under a different key (should not happen —
+    callers check first).
+    """
+    for _ in range(5):
+        name = _claim_repo_name(conn, base)
+        try:
+            conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
+                         (norm, norm, name))
+        except sqlite3.IntegrityError:
+            clash = conn.execute(
+                "SELECT key_ref, path FROM repos WHERE path = ? OR name = ?",
+                (norm, name)).fetchone()
+            if clash is not None and clash[1] == norm:
+                return clash[0]
+            continue
+        return norm
+    from .errors import HarnessError  # local: store_sqlite imports this module at load
+    raise HarnessError(
+        f"could not auto-register repo {norm!r}: concurrent registration;"
+        " retry the command", exit_code=2)
+
+
 
 def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
                       remote: str = "", tool: str | None = None,
@@ -219,7 +263,9 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
     tracker_key stays mandatory: an explicit key wins, else the caller
     derives it from the origin remote. The repo row itself carries no
     tracker column — the mapping lives in tracker_repos. Branch args None
-    preserve the stored values; explicit '' clears.
+    preserve the stored values; explicit '' clears. A taken *name* bound
+    to another path raises (issue #54 — names are UNIQUE); the same path
+    under a different name re-keys (issue #30).
     """
     if not tracker_key:
         raise ValueError("tracker_key is mandatory")
@@ -234,6 +280,14 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
         # Same normalized path under a different registry name: reuse the
         # existing row (update name/remote/tool) instead of dying on the
         hit = conn.execute("SELECT key_ref FROM repos WHERE path = ?", (norm,)).fetchone()
+        clash = conn.execute(
+            "SELECT path, key_ref FROM repos WHERE name = ?", (name,)).fetchone()
+        from .errors import HarnessError  # local: store_sqlite imports this module at load
+        if clash is not None and (hit is None or clash[1] != hit[0]) \
+                and _norm(clash[0]) != norm:
+            raise HarnessError(
+                f"repo name {name!r} already registered for {clash[0]};"
+                " use another --name or remove it first", exit_code=2)
         if hit is not None and hit[0] != name:
             # Deferred-FK same-path rename (issue #30): child re-keys and
             # the parent rename land before commit-time checks.
@@ -274,14 +328,27 @@ def register_repo_row_unlinked(path: Path, name: str, repo_path: str,
 
     Used by the host-tool refresh when the repo survived a `tracker remove`
     cascade unlinked: re-deriving a tracker there could hit the network,
-    and the mandatory-tracker guard must not crash a read path.
+    and the mandatory-tracker guard must not crash a read path. A *name*
+    taken by another path raises like register_repo_row (issue #54) —
+    the caller (a refresh read path) catches and warns, never renaming
+    a repo row out from under its links.
     """
     init_db(path)
     norm = _norm(repo_path)
     with connect(path) as conn:
         conn.execute("PRAGMA defer_foreign_keys = ON")
         hit = conn.execute("SELECT key_ref FROM repos WHERE path = ?", (norm,)).fetchone()
+        clash = conn.execute(
+            "SELECT path, key_ref FROM repos WHERE name = ?", (name,)).fetchone()
+        from .errors import HarnessError  # local: store_sqlite imports this module at load
+        if clash is not None and (hit is None or clash[1] != hit[0]) \
+                and _norm(clash[0]) != norm:
+            raise HarnessError(
+                f"repo name {name!r} already registered for {clash[0]};"
+                " use another --name or remove it first", exit_code=2)
         if hit is not None and hit[0] != name:
+            # Deferred-FK same-path rename (issue #30): child re-keys and
+            # the parent rename land before commit-time checks.
             conn.execute("UPDATE OR IGNORE tracker_repos SET repo_key = ? WHERE repo_key = ?",
                          (name, hit[0]))
             conn.execute("UPDATE worktrees SET repo_key = ? WHERE repo_key = ?",
@@ -289,11 +356,17 @@ def register_repo_row_unlinked(path: Path, name: str, repo_path: str,
             conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
                          " WHERE key_ref = ?",
                          (name, name, remote or "", tool or "", hit[0]))
-        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool)"
-                     " VALUES (?, ?, ?, ?, ?)"
-                     " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"
-                     " remote=excluded.remote, tool=excluded.tool",
-                     (name, norm, name, remote or "", tool or ""))
+        for _ in range(5):
+            claimed = _claim_repo_name(conn, name, skip_key_ref=name)
+            try:
+                conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool)"
+                             " VALUES (?, ?, ?, ?, ?)"
+                             " ON CONFLICT(key_ref) DO UPDATE SET remote=excluded.remote,"
+                             " tool=excluded.tool",
+                             (name, norm, claimed, remote or "", tool or ""))
+            except sqlite3.IntegrityError:
+                continue
+            break
 
 
 def remove_repo_row(path: Path, name: str) -> bool:
