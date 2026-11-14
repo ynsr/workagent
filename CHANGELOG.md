@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Flow template steps gain Parallel/Sequential mode for multi-worktree runs: all-parallel chains fan out at once, any sequential step runs worktrees one by one [61]
 - StatusTable no longer blocks on issues without status labels: unknown issue states are cached like other cells [55]
 - Cache TTL docs now describe what each timeout covers [no-issue]
 - Review accepts GitHub shorthand refs (OWNER/REPO#NUM resolves via gh; issue numbers fail with a start-first hint) [49]
