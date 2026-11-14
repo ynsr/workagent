@@ -383,6 +383,7 @@ export function FlowTemplates() {
             key={seedKey}
             seed={seed}
             knownActions={knownActions}
+            usedIcons={[...(actionsData?.actions ?? []).map((a) => a.icon), ...sortedTemplates.filter((t) => t.label !== seed.editingLabel).map((t) => t.icon)].filter((v): v is string => Boolean(v?.trim()))}
             onDone={() => restart(EMPTY_FLOW_TEMPLATE_SEED)}
           />
         </div>

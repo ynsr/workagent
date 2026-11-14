@@ -214,21 +214,28 @@ def template_suggest_icon(
     steps: Optional[str] = typer.Option(None, "--steps", help="JSON step list (context for the model)."),
     pre_execution: Optional[str] = typer.Option(None, "--pre-execution", help="Pre-flow script (context for the model)."),
     post_execution: Optional[str] = typer.Option(None, "--post-execution", help="Post-flow script (context for the model)."),
+    used_icons: Optional[str] = typer.Option(None, "--used-icons", help="Comma-separated icons already taken (frontend passes the other rows' icons; the server store is the fallback)."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to ask (default: omp)."),
     yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; suggest prompts nothing so this is a no-op."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
-    """Ask the AI harness for one Lucide icon name (issue #62).
+    """Ask the AI harness for one Lucide icon name (issues #62, #84).
 
     Runs ONE bare judge-style session (cheap model, no tools/skills/context)
     in a temp dir — nothing is mutated. Prints {"icon": ...} on stdout.
+    The prompt lists every Lucide icon plus the icons already used by other
+    actions/templates (auto-collected from the store unless --used-icons
+    is passed) so the model avoids duplicates.
     """
     from . import suggest_icon as _si
+    taken = [t.strip() for t in (used_icons or "").split(",") if t.strip()]
+    if not taken:
+        taken = _si.used_icons(exclude_label=label or "", exclude_kind="flow")
     text = _si.run_suggest_icon(
         _si.suggest_prompt(kind="flow template", name=name or "",
                            label=label or "", prompt="",
                            steps=steps or "", pre=pre_execution or "",
-                           post=post_execution or ""),
+                           post=post_execution or "", used=taken),
         harness=harness or "omp")
     icon = _si.parse_suggested_icon(text)
     _print_result({"icon": _si.validate_suggested_icon(icon)}, json_output)

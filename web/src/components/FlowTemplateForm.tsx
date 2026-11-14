@@ -69,9 +69,11 @@ function slug(value: string): string {
 /** Add/update card for the Flow Templates page. Owns the draft state; the
  * page re-mounts it (via key) to seed an edit, clone, or compose draft.
  * Category and run_immediately are first-class fields (backend columns). */
-export function FlowTemplateFormCard({ seed, knownActions, onDone }: {
+export function FlowTemplateFormCard({ seed, knownActions, usedIcons, onDone }: {
   seed: FlowTemplateFormSeed
   knownActions: { label: string; name: string }[]
+  /** Icons already taken by other rows (excludes the row being edited). */
+  usedIcons?: string[]
   onDone: () => void
 }) {
   const navigate = useNavigate()
@@ -173,6 +175,7 @@ export function FlowTemplateFormCard({ seed, knownActions, onDone }: {
                 ...(steps.length > 0 ? ["--steps", JSON.stringify(steps)] : []),
                 ...(pre.trim() ? ["--pre-execution", pre.trim()] : []),
                 ...(post.trim() ? ["--post-execution", post.trim()] : []),
+                ...((usedIcons ?? []).length > 0 ? ["--used-icons", (usedIcons ?? []).join(",")] : []),
                 "--json"]}
               onSuggest={setIcon}
               disabled={saving || (!name.trim() && steps.length === 0)}

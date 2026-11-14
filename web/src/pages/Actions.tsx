@@ -295,6 +295,7 @@ export function Actions() {
           <ActionFormCard
             key={editing?.label ?? "new"}
             editing={editing}
+            usedIcons={sortedActions.filter((a) => a.label !== editing?.label).map((a) => a.icon).filter((v): v is string => Boolean(v?.trim()))}
             onDone={() => { setEditing(null); void refetch() }}
             onCancel={() => setEditing(null)}
           />
