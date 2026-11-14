@@ -878,6 +878,18 @@ def test_release_dry_run_skips_yes_append(client, monkeypatch):
     run = client.app.state.registry.get(r.json()["run_id"])
     assert "--yes" not in run.argv
 
+def test_confirmed_sync_with_yes_alias_skips_append(client, monkeypatch):
+    """sync spells --yes also as -y/--force: no redundant --yes appended."""
+    _stub_spawn(monkeypatch)
+    for alias in ("-y", "--force"):
+        r = client.post("/api/runs", json={"command": "sync",
+            "args": ["IPG-1", alias],
+            "confirm": True})
+        assert r.status_code in (202, 409), r.text
+        run = client.app.state.registry.get(r.json()["run_id"])
+        assert "--yes" not in run.argv
+        _wait_state(client, r.json()["run_id"], {"succeeded"})
+
 
 def test_resume_session_uses_run_env_file(client, monkeypatch, tmp_path):
     """Session resume must forward the run's --env-file (WS1)."""

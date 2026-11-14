@@ -353,7 +353,12 @@ def register_runs_routes(app, registry) -> None:
         # confirms would exit 2 without --yes. release joins the list
         # because `release`/`release fix-default` hard-fail non-TTY
         # without --yes (issue #68); --dry-run previews need no confirm.
-        if body.confirm and "--dry-run" not in body.args and "--yes" not in body.args \
+        # sync spells --yes also as -y/--force (same Typer flag), so any
+        # of the three suppresses the append.
+        _sync_yes = {"--yes", "-y", "--force"}
+        _has_yes = ("--yes" in body.args or (body.command == "sync"
+                                             and not _sync_yes.isdisjoint(body.args)))
+        if body.confirm and "--dry-run" not in body.args and not _has_yes \
                 and (body.command in ("start", "review", "cleanup", "sync",
                                       "release") or (body.command == "message"
                                                       and _message_needs_yes(body.args))):
