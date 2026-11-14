@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import random
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -977,7 +978,6 @@ def _run_backfill() -> None:
 
 def backfill_async() -> "threading.Thread | None":
     """Fire-and-forget _run_backfill (daemon; at most once per process)."""
-    import threading
     if _INIT_CACHE.get("backfill:started"):
         return None
     _INIT_CACHE["backfill:started"] = True

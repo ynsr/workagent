@@ -103,7 +103,10 @@ def run_startup_maintenance() -> dict:
     """
     from .store_sessions import db_path
     from .store_sqlite import init_db
-    init_db(db_path())
+    try:
+        init_db(db_path())
+    except Exception as e:
+        print(f"warning: startup DB migration failed: {e}", file=sys.stderr)
     purged: list = []
     try:
         from .cli_cleanup import gc_soft_deleted
@@ -120,9 +123,19 @@ def run_startup_maintenance() -> dict:
         pruned = 0
     return {"purged": purged, "pruned": pruned}
 
+def _run_maintenance_logged() -> None:
+    """run_startup_maintenance wrapper surfacing outcome on stderr."""
+    try:
+        out = run_startup_maintenance()
+    except Exception as e:  # defensive: contract is never-raise
+        print(f"warning: startup maintenance failed: {e}", file=sys.stderr)
+        return
+    print(f"startup maintenance done: purged {len(out['purged'])} "
+          f"worktree(s), pruned {out['pruned']} run(s)", file=sys.stderr)
+
 def start_background_maintenance() -> "threading.Thread":
     """Fire-and-forget run_startup_maintenance (daemon; serve never waits)."""
-    t = threading.Thread(target=run_startup_maintenance, name="workagent-startup",
+    t = threading.Thread(target=_run_maintenance_logged, name="workagent-startup",
                          daemon=True)
     t.start()
     return t
