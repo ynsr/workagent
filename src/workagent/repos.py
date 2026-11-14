@@ -22,8 +22,9 @@ FIXED_OVERLAY_BUTTONS: tuple[tuple[str, str], ...] = (
     ("open-sessions", "Worktree sessions"),
     ("open-flows", "Open flows"),
     ("resume-session", "Resume session"),
+    ("dedicated", "Dedicated action/flow buttons"),
 )
-"""Fixed (non-dedicated) StatusTable overlay buttons: (id, label)."""
+"""Fixed StatusTable overlay buttons: (id, label); `dedicated` is the master toggle for flagged flow/action buttons."""
 
 OVERLAY_BUTTON_IDS: frozenset[str] = frozenset(b for b, _ in FIXED_OVERLAY_BUTTONS)
 """Fixed overlay ids; per-item ids are `flow:<label>` / `action:<label>` (validated live)."""

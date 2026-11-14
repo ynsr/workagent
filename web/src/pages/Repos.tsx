@@ -200,7 +200,7 @@ export function Repos() {
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "repo",
-        args: ["update", repo.name, "--overlay-buttons", overlayArg],
+        args: ["update", repo.name, `--overlay-buttons=${overlayArg}`],
         confirm: true,
       })
       toast.success("Repo overlay update started", {
@@ -556,6 +556,7 @@ export function Repos() {
       </div>
       {overlayRepo ? (
         <OverlayButtonsDialog
+          key={overlayRepo.name}
           repoName={overlayRepo.name}
           initial={overlayRepo.overlay_buttons ?? {}}
           flowTemplates={flowData?.templates ?? []}

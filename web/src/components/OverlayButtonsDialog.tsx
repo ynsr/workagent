@@ -39,11 +39,9 @@ export function OverlayButtonFields({
     [actionRows],
   )
   function set(id: string, show: boolean) {
-    setDraft((cur) => {
-      const next = { ...cur, [id]: show }
-      onChange(next)
-      return next
-    })
+    const next = { ...draft, [id]: show }
+    setDraft(next)
+    onChange(next)
   }
   return (
     <div className="grid gap-3">
@@ -126,8 +124,10 @@ export function OverlayButtonsDialog({
   const [draft, setDraft] = useState<OverlayDraft>(() => ({ ...initial }))
   const [raw, setRaw] = useState(() => formatOverlayButtons(initial))
   const [rawTouched, setRawTouched] = useState(false)
+  const [rawError, setRawError] = useState("")
   function handleChange(next: OverlayDraft) {
     setDraft(next)
+    setRawError("")
     if (!rawTouched) setRaw(formatOverlayButtons(next))
   }
   return (
@@ -138,12 +138,14 @@ export function OverlayButtonsDialog({
       footer={
         <Button
           onClick={() => onSubmit(rawTouched ? raw : formatOverlayButtons(draft))}
+          disabled={rawError !== ""}
         >
           Update overlay buttons
         </Button>
       }
     >
       <OverlayButtonFields
+        key={repoName}
         initial={initial}
         flowTemplates={flowTemplates}
         actionRows={actionRows}
@@ -159,14 +161,18 @@ export function OverlayButtonsDialog({
             setRawTouched(true)
             try {
               setDraft(parseOverlayButtons(e.target.value))
-            } catch {
-              /* keep the text; the CLI validates on submit */
+              setRawError("")
+            } catch (err) {
+              setRawError(err instanceof Error ? err.message : "invalid overlay button id")
             }
           }}
           placeholder="sync,review,-adhoc,flow:deploy"
           autoComplete="off"
           spellCheck={false}
         />
+        {rawError !== "" ? (
+          <p className="text-xs text-destructive">{rawError}</p>
+        ) : null}
       </div>
     </ActionDialog>
   )

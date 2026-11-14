@@ -25,19 +25,11 @@ export function dedicatedButtonId(kind: "flow" | "action", label: string): strin
   return `${kind}:${label}`
 }
 
-/** True when *id* is visible under the repo's stored map (missing = visible). */
-export function isOverlayVisible(
-  overlay: Record<string, boolean> | undefined | null,
-  id: string,
-): boolean {
-  if (!overlay || typeof overlay !== "object") return true
-  const v = (overlay as Record<string, unknown>)[id]
-  return v === undefined ? true : v !== false
-}
 
 /**
  * Hidden overlay ids for one repo: every `false` entry in the stored map.
- * `dedicated: false` additionally hides every flagged flow/action button.
+ * `dedicated: false` is collected like any other id; `DedicatedOverlay`
+ * treats membership as the group kill-switch for flagged flow/action buttons.
  * Unknown ids (e.g. labels since renamed) are ignored by the renderers.
  */
 export function hiddenOverlayIds(
@@ -51,54 +43,12 @@ export function hiddenOverlayIds(
   return hidden
 }
 
-/** Filter a repo-row actions object down to the visible overlay buttons. */
-export function visibleActionsForRepo<T extends {
-  onSync?: unknown
-  onReview?: unknown
-  onFixComments?: unknown
-  onGenerateProdtest?: unknown
-  onAdhoc?: unknown
-  onCleanup?: unknown
-  onStopTerminal?: unknown
-  onOpenRun?: unknown
-  onOpenSessions?: unknown
-  onOpenFlows?: unknown
-}>(
-  actions: T,
-  overlay: Record<string, boolean> | undefined | null,
-): T {
-  const next: Record<string, unknown> = { ...actions }
-  if (!isOverlayVisible(overlay, "sync")) delete next.onSync
-  if (!isOverlayVisible(overlay, "review")) delete next.onReview
-  if (!isOverlayVisible(overlay, "fix-comments")) delete next.onFixComments
-  if (!isOverlayVisible(overlay, "prodtest")) delete next.onGenerateProdtest
-  if (!isOverlayVisible(overlay, "adhoc")) delete next.onAdhoc
-  if (!isOverlayVisible(overlay, "cleanup")) delete next.onCleanup
-  if (!isOverlayVisible(overlay, "stop-terminal")) delete next.onStopTerminal
-  if (!isOverlayVisible(overlay, "open-runs")) delete next.onOpenRun
-  if (!isOverlayVisible(overlay, "open-sessions")) delete next.onOpenSessions
-  if (!isOverlayVisible(overlay, "open-flows")) delete next.onOpenFlows
-  return next as T
-}
-
-/** True when the `dedicated` group toggle hides all flagged flow/action buttons. */
-export function dedicatedHidden(overlay: Record<string, boolean> | undefined | null): boolean {
-  return !isOverlayVisible(overlay, "dedicated")
-}
-
-/** True when one dedicated item (`flow:<label>` / `action:<label>`) is visible. */
-export function isDedicatedVisible(
-  overlay: Record<string, boolean> | undefined | null,
-  kind: "flow" | "action",
-  label: string,
-): boolean {
-  if (dedicatedHidden(overlay)) return false
-  return isOverlayVisible(overlay, dedicatedButtonId(kind, label))
-}
 
 /**
  * Parse a `--overlay-buttons` CLI value (`"a,-b,flow:x"`) into
- * {button_id: bool}. Later entries win; empty → {}.
+ * {button_id: bool}. Later entries win; empty → {}. Mirrors the backend
+ * (`repos.parse_overlay_buttons`): `-` alone, empty ids, and `flow:` /
+ * `action:` with an empty or whitespace-containing label throw.
  */
 export function parseOverlayButtons(raw: string): Record<string, boolean> {
   const out: Record<string, boolean> = {}
@@ -110,7 +60,12 @@ export function parseOverlayButtons(raw: string): Record<string, boolean> {
       show = false
       t = t.slice(1).trim()
     }
-    if (t) out[t] = show
+    if (!t) throw new Error(`invalid overlay button id: ${JSON.stringify(tok)}`)
+    if (t.startsWith("flow:") || t.startsWith("action:")) {
+      const label = t.slice(t.indexOf(":") + 1)
+      if (!label || /\s/.test(label)) throw new Error(`invalid overlay button id: ${JSON.stringify(t)}`)
+    }
+    out[t] = show
   }
   return out
 }

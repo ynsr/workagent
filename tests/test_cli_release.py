@@ -114,6 +114,27 @@ def test_repo_update_roundtrip(isolated_config, tmp_path):
     r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
                                       "--overlay-buttons", "bogus"])
     assert r.exit_code == 2
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--overlay-buttons", "-dedicated", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["overlay_buttons"]["dedicated"] is False
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--overlay-buttons", "sync", "--json"])
+    assert r.exit_code == 0, r.output
+    merged = json.loads(r.stdout)["overlay_buttons"]
+    assert merged["sync"] is True and merged.get("adhoc") is False
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--overlay-buttons", "", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["overlay_buttons"] == {}
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--overlay-buttons", "-adhoc", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["overlay_buttons"] == {"adhoc": False}
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--overlay-buttons", " ", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["overlay_buttons"] == {}
 
 
 def test_release_status_same_branch_guard(monkeypatch):

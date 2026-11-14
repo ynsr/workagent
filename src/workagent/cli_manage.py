@@ -126,7 +126,8 @@ def repo_update(
         _fail(f"unknown repo: {name}", EXIT_USAGE)
     if default_branch is None and release_branch is None and pre_release is None and overlay_buttons is None:
         _fail("nothing to update: pass --default-branch and/or --release-branch and/or --pre-release and/or --overlay-buttons.", EXIT_USAGE)
-    overlay_map = repos.parse_overlay_buttons(overlay_buttons) if overlay_buttons else ({} if overlay_buttons == "" else None)
+    overlay_reset = overlay_buttons is not None and overlay_buttons.strip() == ""
+    overlay_map = repos.parse_overlay_buttons(overlay_buttons) if overlay_buttons and overlay_buttons.strip() else ({} if overlay_reset else None)
     if store._sqlite_path() is None:
         cfg = store.load_config()
         entry = cfg.get("repos", {}).get(name)
@@ -144,7 +145,12 @@ def repo_update(
                 cmds.pop("pre-release", None)
             entry["commands"] = cmds
         if overlay_map is not None:
-            entry["overlay_buttons"] = dict(overlay_map)
+            if overlay_reset:
+                entry["overlay_buttons"] = {}
+            else:
+                merged = dict(entry.get("overlay_buttons") or {})
+                merged.update(overlay_map)
+                entry["overlay_buttons"] = merged
         store.save_config(cfg)
         _print_result({"updated": name, "default_branch": entry.get("default_branch", ""),
                        "release_branch": entry.get("release_branch", ""),
@@ -174,12 +180,16 @@ def repo_update(
                          (_json.dumps(cmds), name))
         if overlay_map is not None:
             import json as _json2
-            cur = conn.execute("SELECT overlay_buttons FROM repos WHERE key_ref = ?", (name,)).fetchone()
-            from .store_trackers import _parse_overlay_buttons as _po
-            stored_ov = _po(cur[0] if cur else None)
-            stored_ov.update(overlay_map)
-            conn.execute("UPDATE repos SET overlay_buttons = ? WHERE key_ref = ?",
-                         (_json2.dumps(stored_ov), name))
+            if overlay_reset:
+                conn.execute("UPDATE repos SET overlay_buttons = ? WHERE key_ref = ?",
+                             (_json2.dumps({}), name))
+            else:
+                cur = conn.execute("SELECT overlay_buttons FROM repos WHERE key_ref = ?", (name,)).fetchone()
+                from .store_trackers import _parse_overlay_buttons as _po
+                stored_ov = _po(cur[0] if cur else None)
+                stored_ov.update(overlay_map)
+                conn.execute("UPDATE repos SET overlay_buttons = ? WHERE key_ref = ?",
+                             (_json2.dumps(stored_ov), name))
         row = conn.execute("SELECT default_branch, release_branch, commands, overlay_buttons FROM repos WHERE key_ref = ?",
                            (name,)).fetchone()
     from .store_trackers import _parse_commands as _pc2
