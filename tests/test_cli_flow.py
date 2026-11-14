@@ -969,3 +969,40 @@ def test_resolve_unique_stored_url_without_canonical():
                              "repo": "/r2"},
     }
     assert worktrees.resolve_worktree(url, links) == "jira:IPG-1069@a"
+
+
+def test_flow_review_step_inherits_link_repo(isolated_config, monkeypatch):
+    """Issue #91: a review step without --repo inherits the flow's repo.
+
+    Templates set --repo once on start; without inheritance the review
+    step re-resolved via a fuzzy worktree lookup and could pin an
+    unrelated repo (substring number collision → tracker guard exit 2).
+    """
+    import workagent.cli_flow as m
+    import workagent.cli_flow_steps as st
+    import workagent.cli_review as r
+    links = {"k1": {"worktree": "/wt/k1", "branch": "b1",
+                    "repo": "/repos/workagent"}}
+    monkeypatch.setattr("workagent.store.load_links", lambda **k: dict(links))
+    calls = []
+    monkeypatch.setattr(r.review, "__wrapped__",
+                        lambda *a, **k: calls.append((a, k)) or None)
+    out = m._run_review_step("k1", {"launch": True}, False, False)
+    assert out["status"] == "reviewed"
+    assert calls and calls[0][1].get("repo") == "/repos/workagent"
+
+
+def test_flow_review_step_explicit_repo_wins(isolated_config, monkeypatch):
+    """Issue #91: an explicit per-step --repo is never overridden."""
+    import workagent.cli_flow as m
+    import workagent.cli_flow_steps as st
+    import workagent.cli_review as r
+    links = {"k1": {"worktree": "/wt/k1", "branch": "b1",
+                    "repo": "/repos/workagent"}}
+    monkeypatch.setattr("workagent.store.load_links", lambda **k: dict(links))
+    calls = []
+    monkeypatch.setattr(r.review, "__wrapped__",
+                        lambda *a, **k: calls.append((a, k)) or None)
+    out = m._run_review_step("k1", {"launch": True, "repo": "/repos/other"}, False, False)
+    assert out["status"] == "reviewed"
+    assert calls and calls[0][1].get("repo") == "/repos/other"
