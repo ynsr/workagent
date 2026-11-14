@@ -2,7 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { ChainEditor, startRepoState, validateChain } from "@/components/ChainEditor"
-import { awaitRunSettled, chainRunsParallel } from "@/lib/flowExecution"
+import { awaitRunSettled, chainRunsParallel, summarizeExecution } from "@/lib/flowExecution"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { Button } from "@/components/ui/button"
 import { errorText } from "@/components/StatusFeedback"
@@ -183,6 +183,20 @@ export function FlowWizard({
       {repoMissing ? (
         <p className="mb-2 text-[13px] text-destructive" role="alert">
           Repository is required on the Start step — select one below to enable Run flow.
+        </p>
+      ) : null}
+      {sorted.length > 1 ? (
+        <p className="mb-2 text-[13px] text-muted-foreground" role="status" data-component="WizardFanOutSummary">
+          {(() => {
+            const s = summarizeExecution(working)
+            const parts: string[] = []
+            if (s.parallel > 0) parts.push(`${s.parallel} parallel`)
+            if (s.sequential > 0) parts.push(`${s.sequential} sequential`)
+            if (s.forced > 0) parts.push(`${s.forced} always-sequential`)
+            return s.runsParallel
+              ? `Runs on ${sorted.length} worktrees fan out at once (${parts.join(" · ")}).`
+              : `Runs on ${sorted.length} worktrees go one worktree at a time (${parts.join(" · ")}).`
+          })()}
         </p>
       ) : null}
       <p className="mb-2 text-[13px] text-muted-foreground">

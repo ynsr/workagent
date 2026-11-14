@@ -3,6 +3,28 @@ import { api, type FlowStep } from "@/lib/api"
 export const EXECUTION_MODES = ["sequential", "parallel"] as const
 export const SEQUENTIAL_ONLY_STEPS = ["start", "cleanup", "release"] as const
 
+/** Counts parallelizable steps by mode for summary lines/badges. `forced`
+ * counts start/cleanup/release steps (always sequential across worktrees). */
+export function summarizeExecution(steps: FlowStep[]): {
+  parallel: number
+  sequential: number
+  forced: number
+  runsParallel: boolean
+} {
+  let parallel = 0
+  let sequential = 0
+  let forced = 0
+  for (const s of steps) {
+    if ((SEQUENTIAL_ONLY_STEPS as readonly string[]).includes(s.kind)) {
+      forced += 1
+      continue
+    }
+    if ((s.execution_mode ?? "sequential") === "parallel") parallel += 1
+    else sequential += 1
+  }
+  return { parallel, sequential, forced, runsParallel: chainRunsParallel(steps) }
+}
+
 /** True when every parallelizable step may run concurrently across worktrees.
  * start/cleanup/release always run sequentially (backend forces it), so they
  * are excluded — otherwise any realistic chain would force sequential mode

@@ -280,6 +280,19 @@ export function Flows() {
                 <div className="min-w-0">
                   <p className="font-mono text-[13px]">
                     {i + 1}. {r.kind} — {r.status}
+                    {(() => {
+                      const mode = detail.effective_steps?.[i]?.execution_mode ?? "sequential"
+                      return (
+                        <span
+                          title={mode === "parallel" ? "Ran concurrently across worktrees" : "Ran one worktree at a time"}
+                          className={mode === "parallel"
+                            ? "ml-2 rounded-full bg-primary px-2 py-0.5 font-mono text-[11px] font-medium text-primary-foreground"
+                            : "ml-2 rounded-full border px-2 py-0.5 font-mono text-[11px] text-muted-foreground"}
+                        >
+                          {mode === "parallel" ? "∥ parallel" : "→ sequential"}
+                        </span>
+                      )
+                    })()}
                   </p>
                   {r.detail ? (
                     <p className="truncate text-muted-foreground" title={r.detail}>

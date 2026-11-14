@@ -22,12 +22,12 @@ const TEMPLATE = {
   ],
 } as unknown as FlowTemplateRow
 
-function renderWizard() {
+function renderWizard(template: FlowTemplateRow = TEMPLATE, refs: string[] = ["jira:IPG-1"]) {
   const client = new QueryClient()
   return render(
     <MemoryRouter>
       <QueryClientProvider client={client}>
-        <FlowWizard template={TEMPLATE} refs={["jira:IPG-1"]} onClose={vi.fn()} />
+        <FlowWizard template={template} refs={refs} onClose={vi.fn()} />
       </QueryClientProvider>
     </MemoryRouter>,
   )
@@ -48,5 +48,25 @@ describe("FlowWizard footer groups", () => {
     expect(screen.getByRole("button", { name: "Save as" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Reset" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Run flow" })).toBeInTheDocument()
+  })
+})
+describe("FlowWizard fan-out summary", () => {
+  it("announces concurrent fan-out for all-parallel multi-worktree chains", () => {
+    const template = {
+      ...TEMPLATE,
+      steps: [
+        { kind: "start", config: { repo: "proj" } },
+        { kind: "review", config: {}, execution_mode: "parallel" },
+      ],
+    } as unknown as FlowTemplateRow
+    const { unmount } = renderWizard(template, ["a", "b"])
+    expect(screen.getByText(/Runs on 2 worktrees fan out at once/)).toBeInTheDocument()
+    unmount()
+  })
+
+  it("hides the fan-out summary for a single worktree", () => {
+    const { unmount } = renderWizard()
+    expect(screen.queryByText(/Runs on \d+ worktrees/)).not.toBeInTheDocument()
+    unmount()
   })
 })
