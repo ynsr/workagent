@@ -68,7 +68,6 @@ from .web_runs import (  # noqa: F401  (test compatibility)
     MAX_RUNS,
     Registry,
     Run,
-    _cancel,
     _mirror_run,
     _spawn,
     _strip_ansi,
@@ -490,9 +489,13 @@ def run_server(host: str, port: int, static_dir: Path,
     registry = app.state.registry
 
     def handle_exit(sig: int, frame: Any) -> None:
-        for run in registry.running():
-            _cancel(run)
+        # Detached runs survive restarts by design (run_supervised detaches
+        # into their own sessions; rehydrate() re-adopts them on startup).
+        # Killing them here defeated that: any `service restart`/reinstall
+        # SIGTERM'd live flows mid-step (flow #47: exit -15 in fix_comments).
+        # Explicit user cancel stays available via POST /api/runs/{id}/cancel.
         server.should_exit = True
+
 
     import types
     server.handle_exit = types.MethodType(
