@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 import { ChainEditor } from "@/components/ChainEditor"
+import type { FlowStep } from "@/lib/api"
 import { summarizeExecution } from "@/lib/flowExecution"
 
 vi.mock("@/lib/queries", () => ({
@@ -109,6 +110,13 @@ describe("ChainEditor execution mode", () => {
   })
 })
 describe("ChainEditor execution bulk bar", () => {
+  it("disables both bulk actions for forced-only steps", () => {
+    const { unmount } = renderChain([{ kind: "start", config: {} }, { kind: "cleanup", config: {} }])
+    expect(screen.getByRole("button", { name: "All parallel" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "All sequential" })).toBeDisabled()
+    unmount()
+  })
+
   it("sets every parallelizable step parallel, skipping forced kinds", async () => {
     const user = userEvent.setup()
     const steps: FlowStep[] = [
@@ -159,6 +167,15 @@ describe("ChainEditor execution summary", () => {
 })
 
 describe("ChainEditor launch mode", () => {
+  it("distinguishes chosen sequential mode from forced sequential mode", () => {
+    const { container, unmount } = render(
+      <ChainEditor mode="launch" steps={[{ kind: "review", config: {} }, { kind: "cleanup", config: {} }]} knownActions={[]} />,
+    )
+    expect(within(container).getByTitle("Runs one worktree at a time")).toHaveTextContent("sequential")
+    expect(within(container).getByTitle("cleanup steps always run sequentially across worktrees")).toHaveTextContent("sequential")
+    unmount()
+  })
+
   it("shows a read-only execution badge per step", () => {
     const steps: FlowStep[] = [{ kind: "review", config: {}, execution_mode: "parallel" }]
     const { container, unmount } = render(

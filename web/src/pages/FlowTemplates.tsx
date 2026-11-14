@@ -38,6 +38,7 @@ import {
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, exactDateTime, relativeDate, toCsv } from "@/lib/format"
 import { useActions, useCreateRun, useFlowTemplates } from "@/lib/queries"
+import type { FlowStep, FlowTemplateRow } from "@/lib/api"
 import { summarizeExecution } from "@/lib/flowExecution"
 import { isRunImmediateTemplate, type RowCategory } from "@/lib/messageRunConfig"
 export function FlowTemplates() {

@@ -388,7 +388,7 @@ export function ExecutionBulkBar({ steps, onChange }: {
         variant="outline"
         size="sm"
         onClick={() => setAll("parallel")}
-        disabled={summary.parallel > 0 && summary.sequential === 0}
+        disabled={summary.sequential === 0}
         title="Mark every parallelizable step Parallel (multi-worktree runs fan out at once)"
       >
         All parallel
@@ -397,7 +397,7 @@ export function ExecutionBulkBar({ steps, onChange }: {
         variant="outline"
         size="sm"
         onClick={() => setAll("sequential")}
-        disabled={summary.sequential > 0 && summary.parallel === 0}
+        disabled={summary.parallel === 0}
         title="Mark every step Sequential (multi-worktree runs go one worktree at a time)"
       >
         All sequential
@@ -525,7 +525,7 @@ export function ChainEditor({
                 )}
                 {mode === "launch" && showExecutionMode ? (
                   <span
-                    title={(step.execution_mode ?? "sequential") === "parallel" ? "Runs concurrently across worktrees" : `${step.kind} steps always run sequentially across worktrees`}
+                    title={(step.execution_mode ?? "sequential") === "parallel" ? "Runs concurrently across worktrees" : (SEQUENTIAL_ONLY_STEPS as readonly string[]).includes(step.kind) ? `${step.kind} steps always run sequentially across worktrees` : "Runs one worktree at a time"}
                     className={(step.execution_mode ?? "sequential") === "parallel"
                       ? "shrink-0 rounded-full bg-primary px-2 py-0.5 font-mono text-[11px] font-medium text-primary-foreground"
                       : "shrink-0 rounded-full border px-2 py-0.5 font-mono text-[11px] text-muted-foreground"}

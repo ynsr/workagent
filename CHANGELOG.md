@@ -5,6 +5,7 @@
 - Fix-default from the web no longer fails with needs --yes: confirmed release runs now append --yes like other destructive runs [68]
 - Flow template steps gain Parallel/Sequential mode for multi-worktree runs: all-parallel chains fan out at once, any sequential step runs worktrees one by one [61]
 - Flow editor gains All-parallel/All-sequential buttons, a fan-out summary, and per-step badges on templates, wizard, and run detail [72]
+- Flow editor buttons and execution hints now reflect which steps can run in parallel [72]
 - Serve restarts no longer kill running flows: detached runs survive shutdown and are re-adopted on boot [66]
 - StatusTable no longer blocks on issues without status labels: unknown issue states are cached like other cells [55]
 - Cache TTL docs now describe what each timeout covers [no-issue]
