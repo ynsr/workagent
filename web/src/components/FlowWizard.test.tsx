@@ -58,9 +58,9 @@ describe("FlowWizard run", () => {
     // Block the queue in `awaitRunSettled` so the test can observe close
     // order: with the old await-then-close code this times out instead.
     const spy = vi.spyOn(flowExecution, "awaitRunSettled").mockImplementation(() => {
-      let resolve!: () => void
-      const promise = new Promise<void>((r) => { resolve = r })
-      const t = globalThis.setTimeout(resolve, 5000)
+      let resolve!: (value: boolean) => void
+      const promise = new Promise<boolean>((r) => { resolve = r })
+      const t = globalThis.setTimeout(() => resolve(true), 5000)
       return promise.finally(() => globalThis.clearTimeout(t))
     })
     try {

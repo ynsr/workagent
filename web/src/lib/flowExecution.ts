@@ -16,15 +16,15 @@ export function chainRunsParallel(steps: FlowStep[]): boolean {
   return parallelizable.every((s) => (s.execution_mode ?? "sequential") === "parallel")
 }
 
-/** Poll a just-created run until it leaves `running` (settled or timeout).
- * Sequential fan-out waits for each worktree's run before starting the
- * next; ~60 s cap, then continues so one stuck run never blocks the queue. */
-export async function awaitRunSettled(runId: string): Promise<void> {
+/** Poll a just-created run until it leaves `running`. Returns true when the
+ * run settled, false when the ~60 s cap expired and the run may still be
+ * going. Sequential fan-out never blocks forever on one stuck run. */
+export async function awaitRunSettled(runId: string): Promise<boolean> {
   const deadline = Date.now() + 60_000
   for (;;) {
     const run = await api.run(runId).catch(() => null)
-    if (run?.state !== "running") return
-    if (Date.now() >= deadline) return
+    if (run?.state !== "running") return true
+    if (Date.now() >= deadline) return false
     await new Promise((resolve) => { globalThis.setTimeout(resolve, 2000) })
   }
 }
@@ -32,6 +32,9 @@ export async function awaitRunSettled(runId: string): Promise<void> {
 export interface ChainRunHooks {
   onStarted?: (key: string, runId: string) => void
   onSettled?: (key: string, runId: string) => void
+  /** Fired instead of `onSettled` when the settle poll times out and the run
+   * may still be going. Falls back to `onSettled` when unset. */
+  onTimeout?: (key: string, runId: string) => void
   onError?: (key: string, reason: unknown) => void
 }
 
@@ -48,7 +51,7 @@ export async function runChainOnWorktrees(opts: {
 }): Promise<void> {
   const { keys, parallel, createRun, hooks } = opts
   if (parallel) {
-    const started = await Promise.all(keys.map(async (key) => {
+    const outcomes = await Promise.all(keys.map(async (key) => {
       try {
         const { run_id } = await createRun(key)
         return { status: "fulfilled" as const, key, run_id }
@@ -56,7 +59,7 @@ export async function runChainOnWorktrees(opts: {
         return { status: "rejected" as const, key, reason }
       }
     }))
-    started.forEach((r) => {
+    outcomes.forEach((r) => {
       if (r.status === "fulfilled") hooks?.onStarted?.(r.key, r.run_id)
       else hooks?.onError?.(r.key, r.reason)
     })
@@ -66,8 +69,9 @@ export async function runChainOnWorktrees(opts: {
     try {
       const { run_id } = await createRun(key)
       hooks?.onStarted?.(key, run_id)
-      await awaitRunSettled(run_id)
-      hooks?.onSettled?.(key, run_id)
+      if (await awaitRunSettled(run_id)) hooks?.onSettled?.(key, run_id)
+      else if (hooks?.onTimeout) hooks.onTimeout(key, run_id)
+      else hooks?.onSettled?.(key, run_id)
     } catch (reason) {
       hooks?.onError?.(key, reason)
     }

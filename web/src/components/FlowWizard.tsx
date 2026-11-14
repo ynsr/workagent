@@ -26,19 +26,17 @@ export function FlowWizard({
   const createRun = useCreateRun()
   const { data: actionsData } = useActions()
   const [working, setWorking] = useState<FlowStep[]>(() => structuredClone(template.steps ?? []))
-  const [running, setRunning] = useState(false)
   const [saving, setSaving] = useState(false)
   const knownActions = (actionsData?.actions ?? []).map((a) => ({ label: a.label, name: a.name }))
   const chainErrors = validateChain(working)
   const sorted = [...refs].sort()
   const repoState = startRepoState(working)
   const repoMissing = repoState === "missing"
-  const runDisabled = running || sorted.length === 0 || repoMissing || chainErrors.length > 0
+  const runDisabled = sorted.length === 0 || repoMissing || chainErrors.length > 0
   function handleConfirm() {
-    setRunning(true)
     // Close-first: fan out after the modal unmounts so a sequential queue
-    // never holds the "Starting…" modal open while awaiting each run to
-    // settle (#69). Progress/errors still surface via toasts.
+    // never holds the modal open while awaiting each run to settle (#69).
+    // Progress/errors still surface via toasts.
     const parallel = chainRunsParallel(working)
     const stepsJson = JSON.stringify(working)
     const label = template.label
@@ -53,13 +51,17 @@ export function FlowWizard({
       }),
       hooks: {
         onStarted: (key, runId) => {
-          if (!parallel) return
           toast.success(`Flow ${label} on ${key} started`, {
             action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
           })
         },
         onSettled: (key, runId) => {
           toast.success(`Flow ${label} on ${key} settled — next worktree starting`, {
+            action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
+          })
+        },
+        onTimeout: (key, runId) => {
+          toast.warning(`Flow ${label} on ${key} still running after 60s — next worktree starting`, {
             action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
           })
         },
@@ -118,7 +120,6 @@ export function FlowWizard({
       title={`Run flow ${template.name}`}
       onClose={onClose}
       description={sorted.length === 1 ? (sorted[0] ?? template.label) : `${sorted.length} worktrees: ${sorted.slice(0, 3).join(", ")}${sorted.length > 3 ? ` +${sorted.length - 3} more` : ""}`}
-      busy={running}
       footer={
         <div className="flex w-full items-center justify-between">
           <div className="flex items-center gap-2">
@@ -157,7 +158,7 @@ export function FlowWizard({
             disabled={runDisabled}
             title={repoMissing ? "Select a Repository on the Start step to run" : chainErrors.length > 0 ? chainErrors[0] : undefined}
           >
-            {running ? "Starting…" : sorted.length > 1 ? `Run on ${sorted.length} worktrees` : "Run flow"}
+            {sorted.length > 1 ? `Run on ${sorted.length} worktrees` : "Run flow"}
           </Button>
         </div>
       }

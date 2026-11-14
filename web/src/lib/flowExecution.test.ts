@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest"
-import { chainRunsParallel, runChainOnWorktrees } from "@/lib/flowExecution"
+import { describe, expect, it, vi } from "vitest"
+import { api, type FlowStep } from "@/lib/api"
+import { awaitRunSettled, chainRunsParallel, runChainOnWorktrees } from "@/lib/flowExecution"
 import { validateChain } from "@/components/ChainEditor"
-import type { FlowStep } from "@/lib/api"
 
 describe("chainRunsParallel", () => {
   it("ignores forced-sequential start/cleanup steps", () => {
@@ -96,5 +96,44 @@ describe("runChainOnWorktrees", () => {
     await pending
     expect(settled).toEqual(["a", "b"])
     expect(maxConcurrent).toBe(1)
+  })
+
+  it("routes timed-out settles to onTimeout with hook fallback", async () => {
+    const runSpy = vi.spyOn(api, "run").mockResolvedValue({ state: "running" } as never)
+    try {
+      vi.useFakeTimers()
+      try {
+        const pending = awaitRunSettled("run-a")
+        await vi.advanceTimersByTimeAsync(61_000)
+        expect(await pending).toBe(false)
+      } finally {
+        vi.useRealTimers()
+      }
+    } finally {
+      runSpy.mockRestore()
+    }
+    const events: string[] = []
+    const runSpy2 = vi.spyOn(api, "run").mockResolvedValue({ state: "running" } as never)
+    try {
+      vi.useFakeTimers()
+      try {
+        const pending = runChainOnWorktrees({
+          keys: ["a"],
+          parallel: false,
+          createRun: async () => ({ run_id: "run-a" }),
+          hooks: {
+            onSettled: (key) => { events.push(`settled:${key}`) },
+            onTimeout: (key) => { events.push(`timeout:${key}`) },
+          },
+        })
+        await vi.advanceTimersByTimeAsync(61_000)
+        await pending
+        expect(events).toEqual(["timeout:a"])
+      } finally {
+        vi.useRealTimers()
+      }
+    } finally {
+      runSpy2.mockRestore()
+    }
   })
 })

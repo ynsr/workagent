@@ -56,13 +56,17 @@ export function FlowsMenu({ selected }: { selected: Set<string> }) {
       }),
       hooks: {
         onStarted: (key, runId) => {
-          if (!parallel) return
           toast.success(`Flow ${label} on ${key} started`, {
             action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
           })
         },
         onSettled: (key, runId) => {
           toast.success(`Flow ${label} on ${key} settled — next worktree starting`, {
+            action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
+          })
+        },
+        onTimeout: (key, runId) => {
+          toast.warning(`Flow ${label} on ${key} still running after 60s — next worktree starting`, {
             action: { label: "View", onClick: () => navigate(`/runs/${runId}`) },
           })
         },
