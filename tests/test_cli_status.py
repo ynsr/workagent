@@ -454,3 +454,25 @@ def test_link_list_worktrees_enriched(isolated_config, tmp_path, monkeypatch):
     data = json.loads(r.stdout)
     assert "sessions" not in data
     assert data["worktrees"]["jira:IPG-929"]["pr"] == "-"
+
+def test_status_cells_unknown_issue_status_cached(isolated_config, tmp_path, monkeypatch):
+    """A gh issue with no status label resolves to "" once, then serves the
+    cached negative within the SWR window instead of re-querying gh live
+    on every status poll (the StatusTable block)."""
+    from workagent import cli_status, issue_status
+    wt_dir = tmp_path / "wt"; wt_dir.mkdir()
+    entry = {"worktree": str(wt_dir), "branch": "feat/55--x",
+             "repo": "/repo",
+             "issue": "https://github.com/o/r/issues/22"}
+    monkeypatch.setattr(cli, "_git_tip",
+                        lambda wt, ref: "a1" if ref == "HEAD" else None)
+    fetches = []
+    monkeypatch.setattr(issue_status, "_issue_state",
+                        lambda number, tool, target: (fetches.append(target)
+                        or ""))
+    c1 = cli_status._status_cells("github:o/r#22", entry)
+    assert c1["issue_status"] is None
+    assert fetches == ["https://github.com/o/r/issues/22"]
+    c2 = cli_status._status_cells("github:o/r#22", entry)
+    assert c2["issue_status"] is None
+    assert len(fetches) == 1

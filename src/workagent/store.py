@@ -555,11 +555,15 @@ def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None,
 def cache_issue_status(branch: str, issue_status: str | None, repo: str = "") -> None:
     """Record the linked-issue status on a branch's pr_cache entry.
 
-    Mirrors cache_ci_status: a None/empty status (lookup failed or no
-    linked issue) writes nothing so the next run retries.
+    A None/empty status (lookup failed or the issue carries no status
+    label) is stored as an explicit negative with a fresh timestamp, so
+    the SWR window suppresses repeat host-CLI queries for the same
+    unknown result. The reader treats a present-but-empty/None value as
+    a usable negative; only a missing timestamp or an expired window
+    triggers a re-query.
     """
-    if not issue_status:
-        return
+    if issue_status is None:
+        issue_status = ""
     key = pr_cache_key(repo, branch)
     if _sqlite_path() is not None:
         cache = load_pr_cache()
