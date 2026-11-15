@@ -1,4 +1,4 @@
-"""Issue #62: AI-suggested Lucide icon — parse/validate, icon column, migration, CLI guard."""
+"""Issues #62/#84: AI-suggested Lucide icon — parse/validate, icon column, migration, CLI guard, full-list prompt + used-icons avoidance."""
 
 import pytest
 
@@ -92,3 +92,76 @@ def test_template_add_requires_steps_cli():
     result = runner.invoke(cli_mod.app, ["flow", "template", "add", "--name", "NoSteps"])
     assert result.exit_code == 2, result.output
     assert "at least one step" in result.output
+
+def test_parse_suggested_icon_legacy_alias():
+    from workagent import suggest_icon as si
+    assert si.parse_suggested_icon("Wand2") == "WandSparkles"
+    assert si.parse_suggested_icon("wand2") == "WandSparkles"
+
+
+def test_suggest_prompt_lists_full_lucide_set():
+    from workagent import suggest_icon as si
+    assert len(si.SUGGEST_ICON_CHOICES) > 1000
+    prompt = si.suggest_prompt(kind="custom action", name="N", label="l",
+                               prompt="p", steps="", pre="", post="")
+    for name in ("Rocket", "AlarmClock", "Zap"):
+        assert name in prompt
+    assert "do NOT suggest" not in prompt
+
+
+def test_suggest_prompt_warns_about_used_icons():
+    from workagent import suggest_icon as si
+    prompt = si.suggest_prompt(kind="flow template", name="N", label="l",
+                               prompt="", steps="[]", pre="", post="",
+                               used=["Rocket", "Zap"])
+    assert "do NOT suggest" in prompt
+    assert "Rocket" in prompt and "Zap" in prompt
+
+
+def test_used_icons_collects_both_stores_and_excludes_current(tmp_path):
+    from workagent import suggest_icon as si
+    from workagent import store_custom_actions as ca
+    from workagent import store_flows as sf
+    from workagent import store_sqlite as sq
+    import workagent.store as store
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    monkey_db = sq.db_path
+    sq.db_path = lambda: db
+    try:
+        ca.create_action(db, name="Lint", icon="Rocket", prompt="lint it")
+        sf.create_template(db, name="Flow", steps=[{"kind": "cleanup"}], icon="Zap")
+        assert si.used_icons() == ["Rocket", "Zap"]
+        assert si.used_icons(exclude_label="lint", exclude_kind="action") == ["Zap"]
+        assert si.used_icons(exclude_label="flow", exclude_kind="flow") == ["Rocket"]
+    finally:
+        sq.db_path = monkey_db
+
+
+def test_used_icons_never_raises():
+    from workagent import suggest_icon as si
+    import workagent.store as store
+    orig = store.list_actions
+    store.list_actions = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+    try:
+        assert si.used_icons() == []
+    finally:
+        store.list_actions = orig
+
+def test_suggest_prompt_dedups_used_case_insensitively():
+    from workagent import suggest_icon as si
+    prompt = si.suggest_prompt(kind="custom action", name="N", label="l",
+                               prompt="", steps="", pre="", post="",
+                               used=["Rocket", "rocket", "  ZAP ", "Zap"])
+    taken_segment = prompt.split("do NOT suggest")[1].split("Valid choices")[0]
+    assert taken_segment.count("Rocket") == 1
+    assert taken_segment.count("ZAP") == 1
+
+
+def test_union_used_icons_merges_explicit_and_store(tmp_path, monkeypatch):
+    from workagent import suggest_icon as si
+    monkeypatch.setattr(si, "used_icons",
+                        lambda *, exclude_label="", exclude_kind="": ["Rocket", "rocket"])
+    assert si.union_used_icons(["Zap", "zap", "Rocket"],
+                               exclude_label="x",
+                               exclude_kind="action") == ["Rocket", "Zap"]

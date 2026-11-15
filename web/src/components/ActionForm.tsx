@@ -31,10 +31,12 @@ function slug(value: string): string {
 /** Add/update card for the Actions page: label auto-slug, presets, prompt +
  * pre/post scripts, default run mode, category, and the run_immediately flag
  * (first-class backend column, v20). */
-export function ActionFormCard({ editing, onDone, onCancel }: {
+export function ActionFormCard({ editing, onDone, onCancel, usedIcons }: {
   editing: ActionRow | null
   onDone: () => void
   onCancel: () => void
+  /** Icons already taken by other rows (excludes the row being edited). */
+  usedIcons?: string[]
 }) {
   const navigate = useNavigate()
   const createRun = useCreateRun()
@@ -167,6 +169,7 @@ export function ActionFormCard({ editing, onDone, onCancel }: {
                 ...(prompt.trim() ? ["--prompt", prompt.trim()] : []),
                 ...(pre.trim() ? ["--pre-execution", pre.trim()] : []),
                 ...(post.trim() ? ["--post-execution", post.trim()] : []),
+                ...((usedIcons ?? []).length > 0 ? ["--used-icons", (usedIcons ?? []).join(",")] : []),
                 "--json"]}
               onSuggest={setIcon}
               disabled={saving || (!name.trim() && !prompt.trim() && !pre.trim())}

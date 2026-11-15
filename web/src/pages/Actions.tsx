@@ -34,7 +34,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, exactDateTime, relativeDate, toCsv } from "@/lib/format"
-import { useActions, useCreateRun } from "@/lib/queries"
+import { useActions, useCreateRun, useFlowTemplates } from "@/lib/queries"
 import type { ActionRow } from "@/lib/api"
 import { actionRunModeOf, isRunImmediateAction, type RowCategory } from "@/lib/messageRunConfig"
 export function Actions() {
@@ -42,6 +42,7 @@ export function Actions() {
   const confirm = useConfirm()
   const createRun = useCreateRun()
   const { data, isPending, isFetching, isError, error, refetch } = useActions()
+  const { data: templatesData } = useFlowTemplates()
   const actions: ActionRow[] = data?.actions ?? []
   const sortedActions = [...actions].sort(
     (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id,
@@ -295,6 +296,7 @@ export function Actions() {
           <ActionFormCard
             key={editing?.label ?? "new"}
             editing={editing}
+            usedIcons={[...sortedActions.filter((a) => a.label !== editing?.label).map((a) => a.icon), ...(templatesData?.templates ?? []).map((t) => t.icon)].filter((v): v is string => Boolean(v?.trim()))}
             onDone={() => { setEditing(null); void refetch() }}
             onCancel={() => setEditing(null)}
           />

@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils"
 
 /** Curated icon list for the picker (all verified against installed lucide-react). */
 export const ACTION_ICONS = [
-  "Zap", "Sparkles", "Wand2", "Star", "Gem", "Lightbulb", "Bot", "Brain",
+  "Zap", "Sparkles", "WandSparkles", "Star", "Gem", "Lightbulb", "Bot", "Brain",
   "FileText", "Files", "FilePlus", "FileSearch", "ScrollText", "ClipboardList", "ClipboardCheck", "BookOpen",
   "GitBranch", "GitPullRequest", "GitMerge", "Split", "Diff", "History", "Repeat",
   "TestTube", "TestTubes", "FlaskConical", "CheckCheck", "ListChecks", "ShieldCheck", "CircleCheck", "BadgeCheck",
