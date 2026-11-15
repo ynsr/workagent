@@ -587,9 +587,6 @@ export function Dashboard() {
               onCopyJson={() => void handleCopyJson()}
               onDownloadCsv={handleDownloadCsv}
             />
-            <Button variant="outline" size="sm" onClick={() => navigate("/prodtest-launch")} title="Plan or run prodtests on the Prodtests page (decoupled from worktrees)">
-              {scopeLabel("Prodtest")}
-            </Button>
             <span title={selCount > 0 ? "Close issues for selected worktrees contained in the release branch" : "Close every released linked issue"}>
               <Button variant="outline" size="sm" onClick={handleCloseReleased}>
                 {selCount > 0 ? `Close released (${selCount})` : "Close released"}
