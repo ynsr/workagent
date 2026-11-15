@@ -1,10 +1,10 @@
-export type Mode = "start" | "review" | "sync" | "adhoc" | "flow" | "prodtest"
+export type Mode = "start" | "review" | "sync" | "adhoc" | "flow"
 
 /** Issue #26: Launch never defaults to the serve CWD. The backend
  * `GET /api/default-repo?ref=` returns the linked-worktree repo for the
  * typed ref, else the single-linked repo — else no default. */
 
-export const MODES: readonly Mode[] = ["start", "review", "sync", "adhoc", "flow", "prodtest"]
+export const MODES: readonly Mode[] = ["start", "review", "sync", "adhoc", "flow"]
 
 export const COPY: Record<
   Mode,
@@ -51,14 +51,6 @@ export const COPY: Record<
     refPlaceholder: "jira:IPG-1, github:OWNER/REPO#33, or feat/IPG-929--x",
     confirmDesc: "Brings the worktree's branch up to date with its base branch (remote rebase by default; --merge merges locally).",
   },
-  prodtest: {
-    label: "Prodtest",
-    title: "Plan or run the prodtest",
-    description: "Issue key, OWNER/REPO#22, or a worktree ref — generate the plan or run it at its release SHA.",
-    refHint: "Issue key, OWNER/REPO#22, or a worktree ref.",
-    refPlaceholder: "IPG-932, OWNER/REPO#22, or jira:IPG-932@proj",
-    confirmDesc: "Runs the prodtest plan or run command (harness flags per run mode).",
-  },
   adhoc: {
     label: "Adhoc Prompt",
     title: "Run an adhoc prompt",
@@ -76,11 +68,13 @@ export const START_ACTION_OPTIONS: readonly { value: StartAction; label: string;
   { value: "plan", label: "Plan", hint: "start --plan — spec + plan only, no implementation" },
 ]
 
-/** Prodtest-tab action selector: Plan (generate) vs Run (execute at release SHA). */
+/** Prodtest action selector (Prodtest Launch page): Plan (generate the plan
+ * via the harness agent) vs Run (execute the stored plan at its release SHA;
+ * empty ref runs every released plan via `prodtest run --all`). */
 export type ProdtestAction = "plan" | "run"
 export const PRODTEST_ACTION_OPTIONS: readonly { value: ProdtestAction; label: string; hint: string }[] = [
-  { value: "plan", label: "Plan", hint: "prodtest plan — generate the plan" },
-  { value: "run", label: "Run", hint: "prodtest run — execute at the release SHA" },
+  { value: "plan", label: "Plan", hint: "prodtest plan — generate the plan for this ref via the harness agent" },
+  { value: "run", label: "Run", hint: "prodtest run — run this ref at its release SHA (empty ref runs --all)" },
 ]
 export interface LaunchForm {
   ref: string

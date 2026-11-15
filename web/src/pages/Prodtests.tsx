@@ -57,6 +57,21 @@ const STATUS_TONE: Record<string, string> = {
   blocked: "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300",
 }
 
+/** Verified against src/workagent/cli_prodtest_{plan,run,checks}.py + cli_release.py:
+ * plan writes `pending` (_finish_plan; preserved pending_prodtest/running means
+ * "released, awaiting run" survive re-plan), release writes `pending_prodtest`
+ * (_record_release), a headless run briefly writes `running` on lock acquire
+ * (_run_locked) before the verdict upsert (`passed`/`failed`/`blocked` via
+ * _finish_run; pre-harness failures mark `blocked`, GC skips pending_prodtest/running). */
+export const PRODTEST_STATUS_HELP: Record<string, string> = {
+  pending: "Plan generated/validated, awaiting release. Re-plan after a completed run resets here.",
+  pending_prodtest: "Release SHA recorded, awaiting run. Survives re-plan; blocks GC.",
+  running: "Run in progress (per-issue lock held).",
+  passed: "Last run passed at the recorded release SHA.",
+  failed: "Last run failed — follow-up issue/MR loop applies.",
+  blocked: "Run couldn't complete (timeout, version gate, unverifiable plan).",
+}
+
 export function Prodtests() {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
@@ -152,6 +167,31 @@ export function Prodtests() {
       toast.error(errorText(err))
     }
   }
+  async function handleRunAll() {
+    const ok = await confirm({
+      action: "prodtest",
+      title: "Run all prodtests",
+      description:
+        "Runs every stored prodtest plan with a recorded release (non-TTY), sequentially in-process, continuing past per-key failures.",
+      destructive: true,
+      confirmLabel: "Run all prodtests",
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "prodtest",
+        args: ["run", "--all"],
+        confirm: true,
+      })
+      toast.success("Prodtest run-all started", {
+        action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+      void refetch()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
 
   return (
     <div>
@@ -165,6 +205,14 @@ export function Prodtests() {
             </Button>
             <Button variant="outline" size="sm" onClick={handleDownloadCsv}>
               <Download aria-hidden /> CSV
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleRunAll()}
+              title="Runs every stored prodtest plan with a recorded release (prodtest run --all), sequentially — use for bulk runs instead of per-row Run"
+            >
+              Run all prodtests
             </Button>
             <Button variant="outline" size="sm" onClick={() => navigate("/prodtest-launch")}>
               New prodtest
@@ -223,7 +271,11 @@ export function Prodtests() {
                   <TableRow key={r.issue_key}>
                     <TableCell className="font-mono text-[13px]">{r.issue_key}</TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={STATUS_TONE[r.status] ?? ""}>
+                      <Badge
+                        variant="outline"
+                        className={STATUS_TONE[r.status] ?? ""}
+                        title={PRODTEST_STATUS_HELP[r.status] ? `${r.status} — ${PRODTEST_STATUS_HELP[r.status]}` : r.status}
+                      >
                         {r.status}
                       </Badge>
                     </TableCell>
