@@ -449,7 +449,7 @@ def link_remove(
 
     Worktree rows are stamped deleted_at (recoverable for 7 days via
     `link undelete`) — files, branch and PR are left untouched.
-    Sessions survive soft-delete; only GC after 7 days cascades them.
+    Runs survive soft-delete; GC after 7 days purges them with their transcripts.
 
     Example:
       workagent link remove jira:IPG
@@ -540,7 +540,7 @@ def link_destroy_deleted(
     """Permanently destroy soft-deleted rows: worktree dir + local branch + row.
 
     Tears down surviving local state (git-wt cleanup + branch -D) then drops
-    the row. Sessions/runs CASCADE. Remote branches are NOT touched.
+    the row. Runs are purged with it. Remote branches are NOT touched.
     """
     from . import cli_cleanup as _cleanup
     links = store.load_links(include_inactive=True, include_deleted=True)
