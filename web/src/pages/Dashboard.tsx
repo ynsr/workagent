@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
@@ -31,7 +31,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { CheckRow } from "@/components/FieldHelp"
 import { Switch } from "@/components/ui/switch"
-import { api, type WorktreeMap } from "@/lib/api"
+import { ApiError, api, type WorktreeMap } from "@/lib/api"
 import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
 import { queryKeys, useCreateRun, useFlows, useInfo, useRepos, useStatusAll, useStatusDeleted, useStatusInactive, useStopTerminal } from "@/lib/queries"
@@ -72,6 +72,19 @@ function worktreeRows(worktrees: WorktreeMap): string[][] {
   ])
 }
 
+/** Drop keys that no longer exist; returns the same Set when nothing changed
+ * (stable reference → no extra renders from the prune effects). */
+function pruneSet(keys: Set<string>, keep: Set<string>): Set<string> {
+  if (keys.size === 0) return keys
+  const next = new Set([...keys].filter((k) => keep.has(k)))
+  return next.size === keys.size ? keys : next
+}
+
+const DESTROY_POLL_MS = 750
+/** Generous bound for one `link destroy-deleted` run (a large
+ * `git worktree remove` can take minutes). */
+const DESTROY_RUN_TIMEOUT_MS = 10 * 60_000
+
 export function Dashboard() {
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -101,6 +114,22 @@ export function Dashboard() {
   // Bulk-action selection (StatusTable `?sel=` column). Empty = all linked.
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [deletedSel, setDeletedSel] = useState<Set<string>>(new Set())
+  // Selections must not outlive their rows: destroy/undelete (here or in a
+  // second tab) and every 15 s refetch drop keys. A ghost key would inflate
+  // the selection counts and send `cleanup <ghost> --released` for a link
+  // that no longer exists, so prune both sets against the live maps. `null`
+  // = data not loaded yet: never prune on a missing map.
+  const activeKeys = useMemo(() => (worktrees ? new Set(Object.keys(worktrees)) : null), [worktrees])
+  const deletedKeys = useMemo(
+    () => (deletedAll ? new Set(Object.keys(deletedAll).filter((k) => !!deletedAll[k]?.deleted_at)) : null),
+    [deletedAll],
+  )
+  useEffect(() => {
+    if (activeKeys) setSelected((prev) => pruneSet(prev, activeKeys))
+  }, [activeKeys])
+  useEffect(() => {
+    if (deletedKeys) setDeletedSel((prev) => pruneSet(prev, deletedKeys))
+  }, [deletedKeys])
   const selCount = selected.size
   // Shared worktree filter (issue #102): one form above the tables drives
   // StatusTable + DeletedTable + DeactivatedTable. URL-backed (?q, ?q_pr,
@@ -309,16 +338,24 @@ export function Dashboard() {
     }
   }
 
+  // Active + deleted selections: per-ref `cleanup <ref> --released` falls
+  // back to the deleted-row path on NoLinkedState, so deleted-table picks
+  // close here; empty both = all-mode sweep (active + inactive + deleted).
+  // Intersect with the live maps: the prune effects run after paint, and a
+  // ghost key must never widen the scope (it fails as `no linked state`).
+  const scopeKeys = [...selected, ...deletedSel]
+    .filter((k) => !!activeKeys?.has(k) || !!deletedKeys?.has(k))
+    .sort()
   async function handleCloseReleased() {
-    const targeting = selCount > 0
+    const targeting = scopeKeys.length > 0
     const ok = await confirm({
       action: "cleanup",
-      title: targeting ? `Close released issues (${selCount} selected)` : "Close released issues",
+      title: targeting ? `Close released issues (${scopeKeys.length} selected)` : "Close released issues",
       description: targeting
-        ? "Closes the tracker issue for each selected worktree whose branch is contained in its repo release branch (merge-base --is-ancestor). Deactivated, deleted, or release-branch-less rows still close when their Jira issue is already in Product Test. Worktrees, branches, and PRs are left untouched — issue state only."
+        ? "Closes the tracker issue for each selected worktree (active + deleted selections) whose branch is contained in its repo release branch (merge-base --is-ancestor). Deactivated, deleted, or release-branch-less rows still close when their Jira issue is already in Product Test. Worktrees, branches, and PRs are left untouched — issue state only."
         : "Closes the tracker issue for every linked worktree (active, deactivated, and soft-deleted) whose branch is contained in its repo release branch (merge-base --is-ancestor). Deactivated, deleted, or release-branch-less rows still close when their Jira issue is already in Product Test. Worktrees, branches, and PRs are left untouched — issue state only.",
       destructive: true,
-      confirmLabel: targeting ? `Close ${selCount}` : "Close released",
+      confirmLabel: targeting ? `Close ${scopeKeys.length}` : "Close released",
       details: [{ label: "Scope", value: "Release-branch-contained links only" }],
     })
     if (!ok) return
@@ -335,7 +372,7 @@ export function Dashboard() {
       }
       return
     }
-    for (const key of [...selected].sort()) {
+    for (const key of scopeKeys) {
       try {
         const { run_id } = await createRun.mutateAsync({
           command: "cleanup",
@@ -493,21 +530,52 @@ export function Dashboard() {
       details: [{ label: "Scope", value: keys.slice(0, 5).join(", ") + (keys.length > 5 ? ` +${keys.length - 5} more` : "") }],
     })
     if (!ok) return
+    // Destroy runs share the constant `link:destroy-deleted` target key
+    // (web_args SPECS), so only one create can hold it: run them strictly
+    // one at a time, wait for each to become terminal (the backend marks
+    // the run finished just before it releases the target, so "terminal"
+    // and "target free" differ by microseconds), and treat a 409 on the
+    // create as "wait and retry" instead of a per-key failure.
+    async function waitForTerminal(runId: string): Promise<void> {
+      const deadline = Date.now() + DESTROY_RUN_TIMEOUT_MS
+      for (;;) {
+        try {
+          const run = await api.run(runId)
+          if (run.state !== "running") return
+        } catch {
+          // transient poll failure: keep waiting until the bound
+        }
+        if (Date.now() >= deadline) return
+        await new Promise<void>((resolve) => setTimeout(resolve, DESTROY_POLL_MS))
+      }
+    }
+    async function createDestroyRun(key: string): Promise<{ run_id: string }> {
+      const deadline = Date.now() + DESTROY_RUN_TIMEOUT_MS
+      for (;;) {
+        try {
+          return await createRun.mutateAsync({ command: "link", args: ["destroy-deleted", key], confirm: true })
+        } catch (err) {
+          if (!(err instanceof ApiError && err.status === 409) || Date.now() >= deadline) throw err
+          await new Promise<void>((resolve) => setTimeout(resolve, DESTROY_POLL_MS))
+        }
+      }
+    }
     for (const key of [...keys].sort()) {
       try {
-        const { run_id } = await createRun.mutateAsync({
-          command: "link",
-          args: ["destroy-deleted", key],
-          confirm: true,
-        })
+        const { run_id } = await createDestroyRun(key)
         toast.success(`Destroy ${key} started`, {
           action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
         })
+        await waitForTerminal(run_id)
       } catch (err) {
         toast.error(`${key}: ${errorText(err)}`)
+      } finally {
+        // Refresh per row: a destroyed row must leave the table (and the
+        // selection) before the next create — a stale list keeps the row
+        // selectable and a second Destroy click queues an overlapping loop.
+        await qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
       }
     }
-    void qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
   }
 
   async function handleCopyJson() {
@@ -603,9 +671,9 @@ export function Dashboard() {
               onCopyJson={() => void handleCopyJson()}
               onDownloadCsv={handleDownloadCsv}
             />
-            <span title={selCount > 0 ? "Close issues for selected worktrees contained in the release branch" : "Close every released linked issue"}>
+            <span title={scopeKeys.length > 0 ? `Close issues for ${scopeKeys.length} selected worktrees (active + deleted) contained in the release branch` : "Close every released linked issue"}>
               <Button variant="outline" size="sm" onClick={handleCloseReleased}>
-                {selCount > 0 ? `Close released (${selCount})` : "Close released"}
+                {scopeKeys.length > 0 ? `Close released (${scopeKeys.length})` : "Close released"}
               </Button>
             </span>
             <label className="flex min-h-9 items-center gap-2 rounded-md border px-3 text-sm">
@@ -688,7 +756,7 @@ export function Dashboard() {
             networkExposed={info?.network_exposed ?? false}
             repoTabs={repos ? { ...repoTabs, repos } : undefined}
             selection={{ selected, onSelectionChange: setSelected }}
-            embed={{ externalFilter: sharedFilter, onExternalFilterChange: setSharedFilter, filterParam: null }}
+            embed={{ externalFilter: sharedFilter, onExternalFilterChange: setSharedFilter, filterParam: null, hideFilter: true }}
           />
         </div>
       )}

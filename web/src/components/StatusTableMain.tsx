@@ -256,11 +256,32 @@ export function StatusTable({
   }
 
   const hasActiveFilters = Boolean(q || prFilter || issueFilter || authorFilter)
-
+  // hideFilter (Dashboard shared form, issue #102/105): skip the inner
+  // filter row — one shared form owns text/PR/issue/author. The selection
+  // pill above still renders so embedded tables keep clear-selection.
+  // Repo tabs are NOT part of the shared form (q/PR/issue/author only) and
+  // `?repo=` still filters rows, so they keep rendering: Dashboard passes
+  // them only to this main table, where they own the repo filter.
+  const showFilterRow = !embed?.hideFilter
+  const showRepoTabs = !!repoTabs && (repoTabs.tabs.names.length > 0 || repoTabs.tabs.other > 0)
   return (
     <div className={cn("min-w-0", className)}>
-      {embed?.hideFilter ? null : (
-      <><div className="mb-3 flex flex-wrap items-center gap-2">
+      {sel.size > 0 ? (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full border bg-muted px-3 py-1 text-sm">
+            <span>{sel.size} selected</span>
+            <button
+              aria-label={`Clear selection (${sel.size} worktrees)`}
+              onClick={() => writeSel(new Set())}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <XCircle aria-hidden className="size-4" />
+            </button>
+          </span>
+        </div>
+      ) : null}
+      {showFilterRow ? (
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="relative min-w-52 flex-1 sm:max-w-xs">
           <Search aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -311,18 +332,6 @@ export function StatusTable({
             ))}
           </SelectContent>
         </Select>
-        {sel.size > 0 ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full border bg-muted px-3 py-1 text-sm">
-            <span>{sel.size} selected</span>
-            <button
-              aria-label={`Clear selection (${sel.size} worktrees)`}
-              onClick={() => writeSel(new Set())}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <XCircle aria-hidden className="size-4" />
-            </button>
-          </span>
-        ) : null}
         {hasActiveFilters ? (
           <button
             type="button"
@@ -334,28 +343,28 @@ export function StatusTable({
           </button>
         ) : null}
       </div>
+      ) : null}
 
-      {repoTabs && (repoTabs.tabs.names.length > 0 || repoTabs.tabs.other > 0) ? (
+      {showRepoTabs ? (
         <div role="group" aria-label="Filter by repo" className="mb-3 flex flex-wrap gap-1.5">
-          <RepoTab active={!repoFilter} label={`All repos (${repoTabs.tabs.names.reduce((n, name) => n + (repoTabs.tabs.counts.get(name) ?? 0), 0) + repoTabs.tabs.other})`} onClick={() => repoTabs.setRepo("")} />
-          {repoTabs.tabs.names.map((n) => (
+          <RepoTab active={!repoFilter} label={`All repos (${repoTabs!.tabs.names.reduce((n, name) => n + (repoTabs!.tabs.counts.get(name) ?? 0), 0) + repoTabs!.tabs.other})`} onClick={() => repoTabs!.setRepo("")} />
+          {repoTabs!.tabs.names.map((n) => (
             <RepoTab
               key={n}
               active={repoFilter === n}
-              label={`${n} (${repoTabs.tabs.counts.get(n) ?? 0})`}
-              onClick={() => repoTabs.setRepo(n)}
+              label={`${n} (${repoTabs!.tabs.counts.get(n) ?? 0})`}
+              onClick={() => repoTabs!.setRepo(n)}
             />
           ))}
-          {repoTabs.tabs.other > 0 ? (
+          {repoTabs!.tabs.other > 0 ? (
             <RepoTab
               active={repoFilter === "(other)"}
-              label={`(other) (${repoTabs.tabs.other})`}
-              onClick={() => repoTabs.setRepo("(other)")}
+              label={`(other) (${repoTabs!.tabs.other})`}
+              onClick={() => repoTabs!.setRepo("(other)")}
             />
           ) : null}
         </div>
-      ) : null}</>
-      )}
+      ) : null}
 
       {keys.length === 0 && hasActiveFilters ? (
         <EmptyState
