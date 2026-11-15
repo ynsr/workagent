@@ -4,10 +4,12 @@ import type { Repo, WorktreeMap } from "@/lib/api"
 import { StatusTable, type StatusTableActions, type StatusTableSelection } from "@/components/StatusTable"
 import { Button } from "@/components/ui/button"
 import { EMPTY_WORKTREE_FILTERS, filterWorktreeKeys, type WorktreeFilterState } from "@/lib/worktreeFilter"
+import { repoDisplayForEntry } from "@/lib/useRepoTabs"
 
 /** Collapsed soft-deleted-worktrees section with undelete/destroy actions.
  * Search lives in the shared Dashboard filter above (issue #102): this
- * table applies the parent filter instead of owning a second input. */
+ * table applies the parent filter instead of owning a second input,
+ * including free-text repo-name matching via repoDisplayForEntry. */
 export function DeletedTable({
   worktrees,
   actions,
@@ -24,12 +26,18 @@ export function DeletedTable({
   filter?: WorktreeFilterState
 }) {
   const [open, setOpen] = useState(false)
-  void repos
+  const repoList = repos ?? []
   const keys = useMemo(() => Object.keys(worktrees), [worktrees])
   const filtered = useMemo(() => {
-    const hits = new Set(filterWorktreeKeys(worktrees, filter))
+    const hits = new Set(
+      filterWorktreeKeys(worktrees, filter, "", undefined, (entry) => repoDisplayForEntry(entry, repoList)),
+    )
     return Object.fromEntries(Object.entries(worktrees).filter(([k]) => hits.has(k)))
-  }, [worktrees, filter])
+  }, [worktrees, filter, repoList])
+  const visibleSelected = useMemo(() => {
+    const visible = new Set(Object.keys(filtered))
+    return [...(selection?.selected ?? new Set<string>())].filter((k) => visible.has(k)).sort()
+  }, [filtered, selection?.selected])
   if (keys.length === 0) return null
   return (
     <section className="mt-4 rounded-md border bg-muted/40">
@@ -52,12 +60,11 @@ export function DeletedTable({
                   // Destroy only the selection still visible in this table
                   // (shared-form scoping, issue #102): the parent selection
                   // may hold keys filtered out above.
-                  const visible = new Set(Object.keys(filtered))
-                  onDestroyDeleted([...(selection.selected ?? new Set<string>())].filter((k) => visible.has(k)).sort())
+                  onDestroyDeleted(visibleSelected)
                 }}
-                title={`Permanently destroy ${selection.selected.size} selected soft-deleted row(s): worktree dir + local branch + AI harness sessions. Remote branches untouched.`}
+                title={`Permanently destroy ${visibleSelected.length} selected soft-deleted row(s): worktree dir + local branch + AI harness sessions. Remote branches untouched.`}
               >
-                Destroy ({selection.selected.size})
+                Destroy ({visibleSelected.length})
               </Button>
             ) : null}
           </div>

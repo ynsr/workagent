@@ -85,13 +85,14 @@ export function ProdtestCell({ entry }: { entry: WorktreeMap[string] }) {
   )
 }
 
-export function matchesQuery(key: string, entry: WorktreeMap[string], q: string): boolean {
+export function matchesQuery(key: string, entry: WorktreeMap[string], q: string, repoDisplay = ""): boolean {
   const hay = [
     key,
     entry.branch ?? "",
     entry.pr ?? "",
     entry.pr_detail?.title ?? "",
     entry.worktree ?? "",
+    repoDisplay,
   ]
     .join("\n")
     .toLowerCase()

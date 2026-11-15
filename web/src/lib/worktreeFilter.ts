@@ -56,13 +56,17 @@ export function isIssueNotDone(status: string): boolean {
   return true
 }
 
-/** Shared predicate (issue #102): one filter form drives every Dashboard table. */
+/** Shared predicate (issue #102): one filter form drives every Dashboard table.
+ * `repoDisplayOf` restores free-text repo-name matching for tables without
+ * repo tabs (Deleted/Deactivated): the shared `q` matches the repo display
+ * name the same way the old per-table search did. */
 export function worktreeMatchesFilter(
   key: string,
   entry: WorktreeMap[string],
   f: WorktreeFilterState,
   repoFilter = "",
   repoOf?: (entry: WorktreeMap[string]) => string,
+  repoDisplayOf?: (entry: WorktreeMap[string]) => string,
 ): boolean {
   if (!entry) return false
   if (repoFilter && repoOf && repoOf(entry) !== repoFilter) return false
@@ -72,9 +76,11 @@ export function worktreeMatchesFilter(
   else if (f.issue === "not-done" && !isIssueNotDone(issueStatus)) return false
   else if (f.issue && f.issue !== "none" && f.issue !== "not-done" && issueStatus !== f.issue) return false
   const authorNeedle = f.author.trim().toLowerCase()
-  if (authorNeedle && !((entry?.pr_detail?.author ?? "").toLowerCase().includes(authorNeedle)) return false
+  if (authorNeedle && !(entry?.pr_detail?.author ?? "").toLowerCase().includes(authorNeedle)) return false
   const needle = f.q.trim().toLowerCase()
-  return !needle || matchesQuery(key, entry, needle)
+  if (!needle) return true
+  if (repoDisplayOf && repoDisplayOf(entry).toLowerCase().includes(needle)) return true
+  return matchesQuery(key, entry, needle)
 }
 
 /** Filter a WorktreeMap by the shared filter state (pure, unit-testable). */
@@ -83,11 +89,12 @@ export function filterWorktreeKeys(
   f: WorktreeFilterState,
   repoFilter = "",
   repoOf?: (entry: WorktreeMap[string]) => string,
+  repoDisplayOf?: (entry: WorktreeMap[string]) => string,
 ): string[] {
   return Object.keys(worktrees).filter((key) => {
     const entry = worktrees[key]
     if (!entry) return false
-    return worktreeMatchesFilter(key, entry, f, repoFilter, repoOf)
+    return worktreeMatchesFilter(key, entry, f, repoFilter, repoOf, repoDisplayOf)
   })
 }
 
@@ -97,7 +104,11 @@ export function useFilteredWorktreeKeys(
   f: WorktreeFilterState,
   repoFilter = "",
   repoOf?: (entry: WorktreeMap[string]) => string,
+  repoDisplayOf?: (entry: WorktreeMap[string]) => string,
 ): string[] {
-  void useMemo
-  return filterWorktreeKeys(worktrees, f, repoFilter, repoOf)
+  return useMemo(
+    () => filterWorktreeKeys(worktrees, f, repoFilter, repoOf, repoDisplayOf),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [worktrees, f, repoFilter, repoOf, repoDisplayOf],
+  )
 }

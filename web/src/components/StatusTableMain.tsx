@@ -1,12 +1,16 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import { XCircle } from "lucide-react"
+import { Search, XCircle } from "lucide-react"
 import type { Repo, WorktreeMap } from "@/lib/api"
 import { repoKeyForItem } from "@/lib/useRepoTabs"
 import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { WorktreeDetail } from "@/components/WorktreeDetail"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { CiBadge, IssueStatusBadge, PrBadge } from "@/components/StateBadge"
 import { EmptyState } from "@/components/StatusFeedback"
 import { cn } from "@/lib/utils"
@@ -27,7 +31,6 @@ import {
   type PrStatusFilter,
   type WorktreeFilterState,
 } from "@/lib/worktreeFilter"
-import { WorktreeFilterForm } from "@/components/WorktreeFilterForm"
 
 export type { PrStatusFilter, IssueFilter }
 export { prStatusOf, issueStatusOf, issueStatusOptions, isIssueNotDone }
@@ -129,6 +132,29 @@ export function StatusTable({
   const authorFilter = usesExternalFilter ? filter.author : filter.author.trim()
   const [expanded, setExpanded] = useState<string | null>(null)
   const repoFilter = repoTabs?.repoFilter ?? ""
+  // `?sel=` carries the keys across refresh/share; unknown keys dropped
+  // (null selParam = internal-only, safe for embedded second tables).
+  const [internalSel, setInternalSel] = useState<Set<string>>(new Set<string>())
+  const sel = selection?.selected ?? internalSel
+  function writeSel(next: Set<string>) {
+    if (selection?.onSelectionChange) selection.onSelectionChange(next)
+    else setInternalSel(next)
+    if (selParam === null) return
+    const p = new URLSearchParams(params)
+    if (next.size > 0) p.set(selParam, [...next].sort().join(","))
+    else p.delete(selParam)
+    setParams(p, { replace: true })
+  }
+
+  const authorOptions = useMemo(() => {
+    const names = new Set<string>()
+    for (const entry of Object.values(worktrees)) {
+      const a = (entry?.pr_detail?.author ?? "").trim()
+      if (a) names.add(a)
+    }
+    return [...names].sort((a, b) => a.localeCompare(b))
+  }, [worktrees])
+  const statusOptions = useMemo(() => issueStatusOptions(worktrees), [worktrees])
   /** Row-key → per-repo hidden overlay ids. repos carry `overlay_buttons`
    * ({button_id: false} hides); rows resolve via the same repo matcher as
    * the repo tabs. Missing repo/map → empty set (all visible). */
@@ -200,6 +226,14 @@ export function StatusTable({
   }, [visibleJoined])
 
   function setParam(param: string | null, next: string) {
+    if (usesExternalFilter && embed?.onExternalFilterChange) {
+      const trimmed = next.trim()
+      if (param === filterParam) embed.onExternalFilterChange({ ...filter, q: next })
+      else if (param === prParam) embed.onExternalFilterChange({ ...filter, pr: (trimmed.toLowerCase() || "") as PrStatusFilter })
+      else if (param === issueParam) embed.onExternalFilterChange({ ...filter, issue: trimmed })
+      else if (param === authorParam) embed.onExternalFilterChange({ ...filter, author: next })
+      return
+    }
     if (param === null) return
     const p = new URLSearchParams(params)
     if (next.trim()) p.set(param, next.trim())
@@ -208,6 +242,10 @@ export function StatusTable({
   }
 
   function clearFilters() {
+    if (usesExternalFilter && embed?.onExternalFilterChange) {
+      embed.onExternalFilterChange({ ...EMPTY_WORKTREE_FILTERS })
+      return
+    }
     if (filterParam === null) return
     const p = new URLSearchParams(params)
     p.delete(filterParam)
@@ -226,7 +264,7 @@ export function StatusTable({
         <div className="relative min-w-52 flex-1 sm:max-w-xs">
           <Search aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            value={filterParam === null ? "" : (params.get(filterParam) ?? "")}
+            value={usesExternalFilter ? q : (filterParam === null ? "" : (params.get(filterParam) ?? ""))}
             onChange={(e) => setParam(filterParam, e.target.value)}
             placeholder="Filter by key, branch, PR, path…"
             aria-label="Filter worktrees"

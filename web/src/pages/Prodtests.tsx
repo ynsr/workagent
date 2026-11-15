@@ -118,55 +118,6 @@ export function Prodtests() {
     )
   }
 
-  async function handlePlan(issue: string) {
-    const ok = await confirm({
-      action: "prodtest",
-      title: `Plan prodtest for ${issue}`,
-      description:
-        "Generates the production test plan via the harness agent (non-TTY).",
-      destructive: true,
-      confirmLabel: "Plan prodtest",
-    })
-    if (!ok) return
-    try {
-      const { run_id } = await createRun.mutateAsync({
-        command: "prodtest",
-        args: ["plan", issue],
-        confirm: true,
-      })
-      toast.success(`Prodtest plan started for ${issue}`, {
-        action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
-      })
-      void refetch()
-    } catch (err) {
-      toast.error(errorText(err))
-    }
-  }
-
-  async function handleRun(issue: string) {
-    const ok = await confirm({
-      action: "prodtest",
-      title: `Run prodtest for ${issue}`,
-      description:
-        "Runs the stored prodtest plan in an ephemeral read-only checkout at its release SHA (non-TTY).",
-      destructive: true,
-      confirmLabel: "Run prodtest",
-    })
-    if (!ok) return
-    try {
-      const { run_id } = await createRun.mutateAsync({
-        command: "prodtest",
-        args: ["run", issue],
-        confirm: true,
-      })
-      toast.success(`Prodtest run started for ${issue}`, {
-        action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
-      })
-      void refetch()
-    } catch (err) {
-      toast.error(errorText(err))
-    }
-  }
   async function handleDelete(issue: string) {
     const ok = await confirm({
       action: "prodtest",
@@ -220,7 +171,6 @@ export function Prodtests() {
     }
   }
 
-
   return (
     <div>
       <PageHeader
@@ -237,14 +187,6 @@ export function Prodtests() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void handleRunAll()}
-              title="Runs every stored prodtest plan with a recorded release (prodtest run --all), sequentially — use for bulk runs instead of per-row Run"
-            >
-              Run all prodtests
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
               onClick={() => void handleCleanupPassed()}
               title="Deletes every prodtest item whose status is passed (prodtest cleanup --yes)"
             >
@@ -254,6 +196,7 @@ export function Prodtests() {
               New prodtest
             </Button>
           </>
+        }
       />
 
       <Card className="mb-4">
@@ -327,6 +270,7 @@ export function Prodtests() {
                       {r.updated_at ? relativeDate(r.updated_at) : "—"}
                     </TableCell>
                     <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
                         <Button variant="ghost" size="sm" onClick={() => navigate(`/prodtest-launch?ref=${encodeURIComponent(r.issue_key)}`)}>
                           Open
                         </Button>

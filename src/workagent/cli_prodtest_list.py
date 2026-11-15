@@ -69,6 +69,7 @@ def prodtest_status(
         print(json.dumps(row, indent=2, ensure_ascii=False))
         return
     from .cli_core import _print_result
+    _print_result(row, False)
 
 @prodtest_app.command("delete")
 @_catch_harness_errors

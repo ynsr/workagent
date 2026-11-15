@@ -56,6 +56,8 @@ export interface MessageLaunchForm {
   ref: string
   /** Prompt body (adhoc tab, required) or extra validation instructions (validate tab). */
   prompt: string
+  /** Extra instructions forwarded as --extra-prompt (draft-reply tab). */
+  extraPrompt: string
   /** Selected message-category action / flow template label. */
   label: string
   /** Optional worktree override (`--ref`, wins over the linked repos). */
@@ -68,6 +70,7 @@ export interface MessageLaunchForm {
 export const MESSAGE_LAUNCH_INITIAL: MessageLaunchForm = {
   ref: "",
   prompt: "",
+  extraPrompt: "",
   label: "",
   refOverride: "",
   repo: "",
@@ -110,6 +113,8 @@ export function buildMessageArgs(
     }
     case "draft-reply": {
       const args = ["draft-reply", ref]
+      const extraPrompt = (form.extraPrompt ?? "").trim()
+      if (extraPrompt) args.push("--extra-prompt", extraPrompt)
       args.push(...extra, ...messageRunModeArgs(form.runMode ?? "headless"), "--yes")
       return args
     }

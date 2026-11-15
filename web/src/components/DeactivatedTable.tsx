@@ -39,3 +39,8 @@ export function DeactivatedTable({
             actions={actions}
             embed={{ hideFilter: true, selParam: null, filterParam: null }}
           />
+        </div>
+      ) : null}
+    </section>
+  )
+}
