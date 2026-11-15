@@ -103,3 +103,21 @@ describe("FlowWizard fan-out summary", () => {
     unmount()
   })
 })
+
+describe("FlowWizard start step constraints", () => {
+  it("enables Run flow for two start steps and a start step after sync", () => {
+    const template = {
+      ...TEMPLATE,
+      steps: [
+        { kind: "sync", config: {} },
+        { kind: "start", config: { repo: "proj" } },
+        { kind: "start", config: { repo: "proj", plan: true } },
+      ],
+    } as unknown as FlowTemplateRow
+    const { unmount } = renderWizard(template)
+    expect(screen.getByRole("button", { name: "Run flow" })).toBeEnabled()
+    expect(screen.queryByText(/At most one 'start'/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/'start' must be the first step/)).not.toBeInTheDocument()
+    unmount()
+  })
+})

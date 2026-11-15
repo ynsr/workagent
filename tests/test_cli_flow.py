@@ -18,7 +18,7 @@ def test_template_clone_copies_steps_with_lineage(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert created["parent_labels"] == ["base"]
 
-def test_template_compose_concatenates_with_start_collapsed(tmp_path, monkeypatch):
+def test_template_compose_preserves_both_starts(tmp_path, monkeypatch):
     from typer.testing import CliRunner
     import workagent.cli  # noqa: F401  (register commands)
     import workagent.cli_flow as cli_mod
@@ -36,7 +36,7 @@ def test_template_compose_concatenates_with_start_collapsed(tmp_path, monkeypatc
     result = runner.invoke(cli_mod.app, ["flow", "template", "compose", "composed", "--from", "a,b"])
     assert result.exit_code == 0, result.output
     assert created["parent_labels"] == ["a", "b"]
-    assert "extra 'start' steps collapsed" in result.output
+    assert [s["kind"] for s in created["steps"]] == ["start", "sync", "start", "cleanup"]
 
 def test_flow_run_steps_override_persisted(tmp_path, monkeypatch):
     """--steps replaces the template chain; the run stores effective_steps."""
@@ -144,6 +144,38 @@ def test_run_resume_cursor_skips_green_steps(tmp_path, monkeypatch):
                         ["flow", "run", "e2e", "wt-1", "--yes", "--json"])
     assert res.exit_code == 0, res.output
     assert ran == ["cleanup"]
+
+
+def test_run_executes_late_and_repeated_start_steps(tmp_path, monkeypatch):
+    """Issue #109: a start step may come later than step 1 and repeat."""
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    tpl = {"label": "dual", "name": "Dual",
+           "steps": [{"kind": "sync"}, {"kind": "start"},
+                     {"kind": "start", "config": {"plan": True}}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [])
+    monkeypatch.setattr("workagent.store.create_flow",
+                        lambda **f: {"id": 11, "template_label": "dual",
+                                     "worktree_ref": "wt-1", "repo_snapshot": {},
+                                     "status": "pending", "current_step": 0,
+                                     "step_results": []})
+    monkeypatch.setattr("workagent.store.update_flow",
+                        lambda fid, **f: {"id": fid, **f})
+    ran = []
+    monkeypatch.setattr(cli_mod, "_run_sync_step",
+                        lambda *a, **k: ran.append(("sync", {})) or {"status": "synced"})
+    monkeypatch.setattr(cli_mod, "_run_start_step",
+                        lambda ref, key, config, *a, **k:
+                        ran.append(("start", config)) or {"key": key, "preview": False})
+    monkeypatch.setattr(cli_mod, "_resolve_ref",
+                        lambda *a, **k: ("wt-1", {"worktree": "/tmp/wt", "repo": "r"}, None))
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["flow", "run", "dual", "wt-1", "--yes", "--json"])
+    assert res.exit_code == 0, res.output
+    assert [kind for kind, _ in ran] == ["sync", "start", "start"]
+    assert ran[2][1] == {"plan": True}
 
 
 def test_run_rejects_cleanup_override(tmp_path, monkeypatch):

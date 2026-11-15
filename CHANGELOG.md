@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Flow templates accept multiple Start steps anywhere in the chain, including a Plan-mode start; compose keeps every start [109]
 - Dashboard Close released also covers deleted-table picks and Destroy deletes every selected row sequentially [105]
 - Dashboard repo tabs stay visible with the shared filter; destroyed rows no longer ghost the Close-released scope; Destroy refreshes per row [105]
 - Flow Re-run from the run detail page works again: it shows the confirm dialog and passes confirm for flow runs like other destructive runs [99]

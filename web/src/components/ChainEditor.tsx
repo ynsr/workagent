@@ -33,7 +33,7 @@ export interface ChainEditorProps {
   showExecutionMode?: boolean
 }
 
-/** Backend rule order (mirrors store_flows.validate_template): Start-first,
+/** Backend rule order (mirrors store_flows.validate_template):
  * Release-last, review→cleanup needs fix_comments, action before cleanup. */
 export function validateChain(steps: FlowStep[]): string[] {
   const errors: string[] = []
@@ -47,9 +47,6 @@ export function validateChain(steps: FlowStep[]): string[] {
       errors.push(`Unknown step kind ${JSON.stringify(k)}.`)
     }
   }
-  const starts = kinds.map((k, i) => (k === "start" ? i : -1)).filter((i) => i >= 0)
-  if (starts.length > 1) errors.push("At most one 'start' step is allowed.")
-  if (starts.length === 1 && starts[0] !== 0) errors.push("'start' must be the first step.")
   const releases = kinds.map((k, i) => (k === "release" ? i : -1)).filter((i) => i >= 0)
   if (releases.length > 1) errors.push("At most one 'release' step is allowed.")
   if (releases.length === 1 && releases[0] !== kinds.length - 1) {
