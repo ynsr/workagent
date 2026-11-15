@@ -264,6 +264,56 @@ def test_review_fix_comments_use_review_session_reuses_transcript(client, monkey
     assert seen["session_file"] == "/s/review-prev.jsonl"
 
 
+
+def test_fix_continue_keeps_legacy_row_path_and_stamps(client, monkeypatch, isolated_config):
+    """A restored row still naming sessions/… is handed to the child verbatim.
+
+    Resolving it server-side to the runs/… sibling made the precreated fix
+    row the ONLY row on that path, so _review_run_row() found the fix row
+    (session_type fix_comments) as the chain head and the fixed_at stamp was
+    silently skipped. The child re-resolves legacy paths itself.
+    """
+    from pathlib import Path
+    from workagent import store_sqlite as sq
+    from workagent import store as _store
+    from workagent import web_runs as _wr
+    db = sq.db_path()
+    sq.init_db(db)
+    _store.record_link("rk-legacy", {"worktree": "/tmp/w-legacy",
+                                     "branch": "b-legacy", "repo": "/tmp/r"})
+    rel = Path("omp") / "feat" / "b" / "review" / "rev-legacy.jsonl"
+    stored = isolated_config / "sessions" / rel  # never minted at this path
+    moved = isolated_config / "runs" / rel       # the transcript actually lives here
+    moved.parent.mkdir(parents=True)
+    moved.write_text('{"type":"session"}\n')
+    review_id = sq.insert_run(db, "review", ["rk-legacy"], 0,
+                              worktree_ref="rk-legacy", harness_name="omp",
+                              initiator_command="review", prompt="p",
+                              file_path=str(stored), session_type="review",
+                              state="finished")
+    seen: dict = {}
+
+    def fake_spawn(run, registry):
+        _wr._precreate_run_row(run)
+        seen["session_file"] = run.session_file
+        with run.lock:
+            run.exit_code = 0
+            run.state = "succeeded"
+        registry.release_target(run)
+        _wr._mirror_run(run)
+
+    monkeypatch.setattr("workagent.webapp._spawn", fake_spawn)
+    r = client.post("/api/runs", json={
+        "command": "review",
+        "args": ["rk-legacy", "--no-tty", "--fix-comments", "--use-review-session"],
+        "confirm": True})
+    assert r.status_code == 202, r.text
+    assert seen["session_file"] == str(stored)  # verbatim, not runs/…
+    meta = sq.get_run(db, review_id)["metadata"]
+    assert meta["fixed_by_run_id"] == r.json()["run_id"]
+    assert meta["review_comments_fixed_at"]
+
+
 def test_register_run_key_unique_per_path(client):
     r1 = client.post("/api/runs", json={"command": "register",
                                         "args": ["/tmp/wt-a"]})
@@ -539,11 +589,43 @@ def test_terminal_worktree_launch_records_one_preview_run(client, monkeypatch, t
     assert len(rows) == 1 and rows[0]["id"] == rid
     row = sq.get_run(db, rid)
     assert row["state"] == "preview"
+    # exit_code 0, not None: the row is a terminal preview, not a running run
+    # (the API derives state from exit_code → None would advertise running).
+    assert row["exit_code"] == 0
     assert row["session_type"] == "prodtest_run"
     assert row["file_path"] == body["session_file"]
     assert row["worktree_ref"] == "rk-term"
     assert "--run-id " + str(rid) in seen["cmd"]
     assert "terminal pid: 4242" in (row["output"] or "")
+
+
+def test_terminal_worktree_spawn_failure_finalizes_row(client, monkeypatch, tmp_path):
+    """A failed terminal spawn must not leave a phantom running preview row."""
+    from workagent import store as _store
+    from workagent import store_sqlite as sq
+    from workagent import cli_harness as _h
+    from workagent.web_args import ApiError
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = tmp_path / "wt-term-fail"
+    wt.mkdir()
+    _store.record_link("rk-term-fail", {"worktree": str(wt), "branch": "b-fail",
+                                        "repo": "/tmp/r"})
+
+    def boom(cmd, cwd=""):
+        raise ApiError("no_terminal", "no terminal emulator found", 500)
+
+    monkeypatch.setattr(_h, "spawn_in_terminal", boom)
+    r = client.post("/api/worktrees/rk-term-fail/terminal", json={"mode": "harness"})
+    assert r.status_code == 500, r.text
+    assert r.json()["error"]["code"] == "no_terminal"
+    assert _store.active_harness("rk-term-fail") is None  # lock cleared
+    rows = sq.list_runs(db, include_deleted_worktrees=True)
+    assert len(rows) == 1
+    row = sq.get_run(db, rows[0]["id"])
+    assert row["state"] == "failed"
+    assert row["exit_code"] == 1
+    assert "terminal spawn failed" in (row["output"] or "")
 
 
 def test_record_harness_run_stamps_start_ticks(isolated_config):

@@ -405,8 +405,14 @@ def register_runs_routes(app, registry) -> None:
                     db = _sq.db_path()
                     latest = _sq.latest_review_run(db, resolved) if db.exists() else None
                     if latest and latest.get("file_path"):
-                        session_file = str(_sq.resolve_transcript_path(
-                            str(latest["file_path"])))
+                        # Keep the ROW's path verbatim: a restored/legacy row
+                        # may still say sessions/… while the transcript lives
+                        # under runs/…. The child CLI adopts such a path
+                        # itself (cli_review._adopt_fix_reuse re-resolves by
+                        # stem), so pre-resolving here would make the
+                        # precreated fix row shadow the review row and break
+                        # the fixed_at stamp lookup.
+                        session_file = str(latest["file_path"])
             if not session_file:
                 session_file = _session_file_for(_sq.gen_session_id(), body.command, body.args)
             tail += ["--session-file", session_file]
@@ -687,7 +693,7 @@ def register_runs_routes(app, registry) -> None:
         row_id: int | None = None
         try:
             if db.exists() and key in _store.load_links(include_inactive=True, include_deleted=True):
-                row_id = _sq.insert_run(db, command, [key], None,
+                row_id = _sq.insert_run(db, command, [key], 0,
                                         worktree_ref=key, harness_name=harness_name,
                                         initiator_command=command, prompt="",
                                         file_path=session_path, session_type=stype,
@@ -704,12 +710,19 @@ def register_runs_routes(app, registry) -> None:
             pid = _open_terminal_watch(worktree, session_path, row_id, scope_dir,
                                        str(before) if before else "",
                                        harness_name=harness_name)
-        except Exception:
+        except Exception as exc:
             from . import store as _store2
             try:
                 _store2.clear_harness_run(key)
             except Exception:
                 pass
+            if row_id:
+                # No terminal to spawn: the preview row must not survive as a
+                # permanently running row pointing at a transcript that will
+                # never be minted (frontend would offer Resume/Cancel on it).
+                _sq.update_run(db, row_id, exit_code=1,
+                               output=[f"terminal spawn failed: {exc}"])
+                _sq.finish_run(db, row_id, "failed")
             raise
         _claim_terminal_lock(worktree, key, pid, overwrite=True)
         if row_id:
