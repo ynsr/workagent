@@ -19,6 +19,7 @@ import {
   MESSAGE_LAUNCH_MODES,
   VALIDATE_CLAIMED_ISSUES_PROMPT,
   buildMessageArgs,
+  isRegisteredMessageRef,
   messageLaunchValid,
   type MessageLaunchForm,
   type MessageLaunchMode,
@@ -110,9 +111,21 @@ export function MessageLaunch() {
 
   const valid = messageLaunchValid(tab, form)
   const args = buildMessageArgs(tab, form)
+  const registeredIds = useMemo(
+    () => (messagesData?.messages ?? []).flatMap((m) => [m.message_id, m.thread_id].filter(Boolean)),
+    [messagesData],
+  )
+  const autoRegisters = form.ref.trim() ? !isRegisteredMessageRef(form.ref, registeredIds) : false
+  const needsPin = autoRegisters && (repoOptions.length > 1 || worktreeOptions.length > 1)
+  const missingPin = needsPin && !form.repo.trim() && !form.refOverride.trim()
+  const canSubmit = valid && !missingPin
 
   async function handleSubmit() {
-    if (!valid || submitting) return
+    if (!canSubmit || submitting) return
+    if (missingPin) {
+      toast.error("This message is not registered yet — pick a repo or worktree so auto-register knows where it belongs.")
+      return
+    }
     if (tab === "action" && !form.label) {
       toast.error("Pick a message action — none available.")
       return
@@ -201,9 +214,18 @@ export function MessageLaunch() {
               value={form.ref}
               options={messageOptions}
               onChange={(v) => update("ref", v)}
-              placeholder="message_id, thread, or Mattermost permalink"
+              placeholder="message_id, thread, or Mattermost permalink — unregistered permalinks auto-register"
               allowCustom
             />
+            {autoRegisters ? (
+              <p className="text-xs text-muted-foreground">
+                Not registered yet — it will auto-register on launch.
+                {needsPin ? " Pick a repo or worktree below so it lands in the right place." : ""}
+              </p>
+            ) : null}
+            {missingPin ? (
+              <p className="text-xs text-destructive">Pick a repo or worktree — required before launching an unregistered message.</p>
+            ) : null}
           </div>
 
           {tab === "adhoc" ? (
@@ -304,7 +326,7 @@ export function MessageLaunch() {
 
           <div className="grid gap-2">
             <Label htmlFor="message-launch-repo">
-              <FieldHelp label="Repo pin" flag="--repo" description="Pin one repo for multi-repo messages (optional)." />
+              <FieldHelp label="Repo pin" flag="--repo" description="Pin one repo for multi-repo messages; also selects the repo when an unregistered message auto-registers (optional)." />
             </Label>
             <SearchableSelect
               id="message-launch-repo"
@@ -330,7 +352,7 @@ export function MessageLaunch() {
             <Button
               type="button"
               onClick={() => void handleSubmit()}
-              disabled={!valid || submitting}
+              disabled={!canSubmit || submitting}
             >
               <Rocket aria-hidden />
               {submitting ? "Launching…" : `Launch ${MESSAGE_LAUNCH_LABELS[tab]}`}

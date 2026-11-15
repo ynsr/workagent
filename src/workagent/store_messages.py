@@ -16,6 +16,8 @@ def extract_message_id(ref: str) -> str:
     segment is ignored, the trailing segment is the id (26-char lowercase
     alnum). Query/fragment/trailing slash tolerated. Anything else passes
     through unchanged; downstream resolution still rejects unknown ids.
+    Mirrors ``extractMessageId`` in ``web/src/lib/messageLaunchConfig.ts`` —
+    keep the two in sync when changing permalink rules.
     """
     raw = (ref or "").strip()
     if not raw or "/pl/" not in raw:
@@ -98,9 +100,14 @@ def create_message(db: Path, *, message_id: str, thread_id: str = "",
                    app_name: str = "mattermost", sender_username: str = "",
                    content: str = "", ts: str = "", repos=None,
                    related_repos=None, worktrees=None) -> dict:
-    """Insert a registered message; repos must reference known repo keys."""
+    """Insert a registered message; repos must reference known repo keys.
+
+    Accepts a bare id or a Mattermost permalink (normalized to the 26-char
+    id, so the Register button can hand the permalink straight through).
+    """
     from .errors import HarnessError
-    if not (message_id or "").strip():
+    message_id = extract_message_id(message_id or "")
+    if not message_id.strip():
         raise HarnessError("--message-id is required", exit_code=2)
     if (app_name or "mattermost") not in APPS:
         raise HarnessError(f"app_name must be one of {', '.join(APPS)}",

@@ -1,5 +1,33 @@
 import type { RunMode } from "@/lib/launchConfig"
 
+const MESSAGE_ID_RE = /^[a-z0-9]{26}$/
+
+/** Bare id (or the trailing id of a Mattermost `/pl/` permalink, tolerating
+ * query/fragment/trailing slash); "" when the ref carries no valid id.
+ * Mirrors `extract_message_id` in `src/workagent/store_messages.py` — keep
+ * the two in sync when changing permalink rules. */
+export function extractMessageId(ref: string): string {
+  const raw = (ref ?? "").trim()
+  if (!raw) return ""
+  if (MESSAGE_ID_RE.test(raw)) return raw
+  const at = raw.indexOf("/pl/")
+  if (at < 0) return ""
+  const tail = raw.slice(at + 4).split("?", 1)[0]?.split("#", 1)[0]?.replace(/\/+$/g, "") ?? ""
+  const parts = tail.split("/")
+  const cand = tail.includes("/") ? (parts[parts.length - 1] ?? "") : tail
+  return MESSAGE_ID_RE.test(cand) ? cand : ""
+}
+
+/** True when the ref resolves to an already-registered message (exact id,
+ * permalink tail, or registered thread) — empty means auto-register via `mm`. */
+export function isRegisteredMessageRef(ref: string, registeredIds: Iterable<string>): boolean {
+  const mid = extractMessageId(ref)
+  const set = new Set(registeredIds)
+  if (mid && set.has(mid)) return true
+  return set.has((ref ?? "").trim())
+}
+
+
 /** Tabs on the Message Launch page — mirrors the agent operations
  * in MessageRowActions (Delete stays row-only on the Messages page). */
 export type MessageLaunchMode = "adhoc" | "validate" | "action" | "flow"

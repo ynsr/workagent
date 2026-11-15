@@ -15,22 +15,51 @@ app.add_typer(message_app, name="message")
 @message_app.command("add")
 @_catch_harness_errors
 def message_add(
-    message_id: str = typer.Option(..., "--message-id", help="App-side id (e.g. Mattermost post id)."),
+    message_id: str = typer.Option(..., "--message-id", help="App-side id (e.g. Mattermost post id) or permalink when --fetch is given."),
     thread_id: str = typer.Option("", "--thread-id", help="Thread root id (default: top-level)."),
     app_name: str = typer.Option("mattermost", "--app", help="Source app."),
     sender: str = typer.Option("", "--sender", help="Sender username."),
     content: str = typer.Option("", "--content", help="Message text."),
     ts: str = typer.Option("", "--ts", help="Sent timestamp."),
-    repo: list[str] = typer.Option([], "--repo", help="Associated repo (repeatable, >=1)."),
+    repo: list[str] = typer.Option([], "--repo", help="Associated repo (repeatable, >=1; one is enough when --fetch resolves the permalink)."),
     related_repo: list[str] = typer.Option([], "--related-repo", help="Extra linked repos, Start-style (repeatable, optional)."),
     worktree: list[str] = typer.Option([], "--worktree", help="Associated worktree ref_key (repeatable, optional)."),
+    fetch: bool = typer.Option(False, "--fetch", help="Fetch sender/content/ts/thread from `mm` for a permalink or bare id."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
-    """Register a chat message (repos must reference known repo keys)."""
-    row = store.create_message(message_id=message_id, thread_id=thread_id, app_name=app_name,
+    """Register a chat message (repos must reference known repo keys).
+
+    With --fetch, --message-id may be a Mattermost permalink (or bare id):
+    sender/content/ts/thread are fetched via `mm` and stored, so the
+    Messages Register button needs only a permalink + repo.
+    """
+    mid = message_id
+    if fetch:
+        mid, sender, content, ts, thread_id = _fetch_fields(message_id)
+        if not mid:
+            _fail("could not fetch that message via `mm` — check the permalink/id", EXIT_USAGE)
+    row = store.create_message(message_id=mid, thread_id=thread_id, app_name=app_name,
                                sender_username=sender, content=content, ts=ts, repos=list(repo or []),
                                related_repos=list(related_repo or []), worktrees=list(worktree or []))
     _print_result({"added": row["message_id"], "id": row["id"]}, json_output)
+
+
+def _fetch_fields(msg_ref: str) -> tuple[str, str, str, str, str]:
+    """Fetch (message_id, sender, content, ts, thread) via `mm`; "" id on failure."""
+    from .store_messages import extract_message_id
+    mid = extract_message_id(msg_ref)
+    if len(mid) != 26 or not all(c.islower() or c.isdigit() for c in mid):
+        return "", "", "", "", ""
+    try:
+        fetched = _mm("--show-sensitive", "messages", "get-msg", mid)
+    except Exception:
+        return "", "", "", "", ""
+    post = fetched.get("post") or {}
+    if str(post.get("id") or "") != mid:
+        return "", "", "", "", ""
+    return (mid, str(post.get("user") or ""), str(post.get("text") or ""),
+            str(post.get("created_at") or ""),
+            str(post.get("thread_root_id") or post.get("parent_id") or ""))
 
 
 @message_app.command("list")
@@ -105,15 +134,16 @@ def message_remove(
     _print_result({"removed": row["message_id"]}, json_output)
 
 
-def _resolve_or_fetch(msg_ref: str, repo_opt: str = "") -> dict:
+def _resolve_or_fetch(msg_ref: str, repo_opt: str = "", ref_opt: str = "") -> dict:
     """Resolve a registered message; on miss, fetch via `mm` and auto-register.
 
     Registered messages resolve locally first (a live `mm` fetch must never
     shadow an already-registered row). Only an exact 26-char lowercase-alnum
     id (bare or permalink tail) is fetchable. Auto-register needs ≥1 repo:
-    explicit `--repo` wins, else the single registered repo is used;
-    zero/several repos → exit 2 naming them. Unfetchable or unknown refs
-    keep the original `unknown message` error.
+    explicit `--repo` wins, else the `--ref` worktree's repo pin is used,
+    else the single registered repo is used; zero/several repos → exit 2
+    naming them. Unfetchable or unknown refs keep the original
+    `unknown message` error.
     """
     from .errors import HarnessError
     from .store_messages import extract_message_id
@@ -139,6 +169,20 @@ def _resolve_or_fetch(msg_ref: str, repo_opt: str = "") -> dict:
         return store.resolve_message(msg_ref)
     reg = store.load_repos()
     repos = [repo_pin] if repo_pin else sorted(reg)
+    if len(repos) > 1 and (ref_opt or "").strip():
+        # A --ref worktree override narrows the ambiguity: auto-register
+        # against that worktree's repo so the launch page can pass an
+        # unregistered permalink + a picked worktree (no --repo needed).
+        # Entry repos are stored as paths; match by registry name or path.
+        from . import worktrees as _wt
+        try:
+            entry_repo = str(_wt.resolve_any((ref_opt or "").strip(), store.load_links())[1].get("repo", ""))
+        except Exception:
+            entry_repo = ""
+        hit = next((n for n, info in (reg or {}).items()
+                    if n == entry_repo or str((info or {}).get("path", "")) == entry_repo), "")
+        if hit:
+            repos = [hit]
     if not repos:
         _fail(f"message {mid} is not registered and no repos exist —"
               " re-run with --repo <name>", EXIT_USAGE)
@@ -277,7 +321,7 @@ def message_adhoc(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """Run an adhoc prompt grounded in one registered message."""
-    row = _resolve_or_fetch(msg, repo)
+    row = _resolve_or_fetch(msg, repo, ref)
     _run_prompt(row, prompt, ref, repo, launch, terminal, harness, extra_prompt,
                 env_file, session_file, dry_run, yes, json_output)
 
@@ -297,7 +341,7 @@ def message_validate(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Validate the claimed issues in the message content and generate Jira issues if issue(s) confirmed."""
-    row = _resolve_or_fetch(msg, repo)
+    row = _resolve_or_fetch(msg, repo, ref)
     default = ("Validate the claimed issues in the message content and generate Jira issues if issue(s) confirmed. Investigate each claimed issue: read the message content and linked repos, attempt reproduction, and report CONFIRMED or REFUTED with supporting file:line evidence. For each CONFIRMED claim, generate a Jira issue describing the defect, with reproduction steps and the supporting file:line evidence.")
     _run_prompt(row, (prompt or "").strip() or default, ref, repo, launch, terminal, harness, None, None, None, dry_run, yes, json_output)
 action_app = typer.Typer(help="Run message-scoped custom actions.", no_args_is_help=True)
@@ -329,7 +373,7 @@ def message_action_run(
         _fail(f"action {label!r} has category"
               f" {(action.get('category') or 'worktree')!r} — message action run"
               " requires a message-category action", EXIT_USAGE)
-    row = _resolve_or_fetch(msg, repo)
+    row = _resolve_or_fetch(msg, repo, ref)
     workdir, _key = _resolve_exec(row, ref, repo)
     if not workdir:
         _fail(f"could not resolve a workdir for message {row.get('message_id','')}",
@@ -376,7 +420,7 @@ def message_flow_run(
         _fail(f"flow template {label!r} has category"
               f" {(tmpl.get('category') or 'worktree')!r} — message flow run"
               " requires a message-category template", EXIT_USAGE)
-    row = _resolve_or_fetch(msg, repo)
+    row = _resolve_or_fetch(msg, repo, ref)
     steps = validate_template(tmpl.get("steps") or [], get_action=store.get_action)
     ref_opt = (ref or "").strip()
     if not ref_opt and any((s.get("kind") or "") in ("sync", "review", "fix_comments", "action") for s in steps):
