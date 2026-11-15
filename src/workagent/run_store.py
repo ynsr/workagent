@@ -59,8 +59,16 @@ def read_exit(d: Path) -> int | None:
 
 
 def iter_run_dirs() -> list[Path]:
+    """Real run state dirs, oldest first.
+
+    The transcript tree shares ``runs/`` (``runs/<harness>/<branch>/<kind>/``
+    per spec §4.1), so only dirs carrying a ``meta.json`` or ``pid`` are run
+    state: a harness tree has neither and must never be rehydrated (stamped
+    ``exit_code=-1``) or pruned.
+    """
     root = runs_root()
-    ds = [p for p in root.iterdir() if p.is_dir()]
+    ds = [p for p in root.iterdir()
+          if p.is_dir() and ((p / "meta.json").exists() or (p / "pid").exists())]
     ds.sort(key=lambda p: p.stat().st_mtime)
     return ds
 

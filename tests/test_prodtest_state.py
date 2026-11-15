@@ -36,11 +36,11 @@ def test_set_status_rejects_unknown(tmp_path):
 
 
 def test_derive_session_type_prodtest():
-    from workagent import store_sessions as ss
-    assert "prodtest_plan" in ss.SESSION_TYPES
-    assert "prodtest_run" in ss.SESSION_TYPES
-    assert ss.derive_session_type("prodtest plan --issue IPG-1") == "prodtest_plan"
-    assert ss.derive_session_type("prodtest run --issue IPG-1") == "prodtest_run"
+    from workagent import store_sqlite as sq
+    assert "prodtest_plan" in sq.SESSION_TYPES
+    assert "prodtest_run" in sq.SESSION_TYPES
+    assert sq.derive_session_type("prodtest plan --issue IPG-1") == "prodtest_plan"
+    assert sq.derive_session_type("prodtest run --issue IPG-1") == "prodtest_run"
 
 
 def test_gc_preserves_prodtest_blocked_row(tmp_path, monkeypatch):

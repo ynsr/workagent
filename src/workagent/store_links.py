@@ -59,10 +59,12 @@ def save_links_rows(path: Path, links: dict) -> None:
     """Merge a legacy links dict into worktree rows (cutover writes).
 
     Upserts only the given keys and deletes rows absent from the dict —
-    never a blanket DELETE, so session rows (FK → worktrees) survive
-    ordinary link mutations. `active` is never reset by a re-save:
-    entries carrying it are honored, others keep their stored value
-    (new rows default to 1 via the column default).
+    never a blanket DELETE, so run rows survive ordinary link mutations.
+    `active` is never reset by a re-save: entries carrying it are honored,
+    others keep their stored value (new rows default to 1 via the column
+    default). Pruned keys lose their runs with them: ``runs.worktree_ref``
+    has no FK, so the purge is explicit (``worktree_ref = ''`` repo-scoped
+    rows are never touched).
     """
     import json
     init_db(path)
@@ -117,10 +119,13 @@ def save_links_rows(path: Path, links: dict) -> None:
                  json.dumps(e.get("related_repos", [])),
                  str(e.get("parent_key_ref", "") or "")))
         if links:
-            conn.execute(
-                "DELETE FROM worktrees WHERE ref_key NOT IN (%s)" %
-                ",".join("?" * len(links)), tuple(links))
+            marks = ",".join("?" * len(links))
+            conn.execute("DELETE FROM runs WHERE worktree_ref != ''"
+                         f" AND worktree_ref NOT IN ({marks})", tuple(links))
+            conn.execute(f"DELETE FROM worktrees WHERE ref_key NOT IN ({marks})",
+                         tuple(links))
         else:
+            conn.execute("DELETE FROM runs WHERE worktree_ref != ''")
             conn.execute("DELETE FROM worktrees")
 
 
@@ -136,22 +141,23 @@ def set_worktree_active(path: Path, key: str, active: bool) -> None:
 
 
 def delete_worktree_row(path: Path, key: str) -> None:
-    """Delete a worktree row only; files/branch/PR untouched.
+    """Delete a worktree row; files/branch/PR untouched.
 
-    Note: sessions/runs CASCADE off the worktree row, so this key's
-    session history is deleted too. flows rows (no hard FK: pre-Start
+    Note: ``runs.worktree_ref`` has no FK, so this key's runs are purged
+    explicitly alongside the row. flows rows (no hard FK: pre-Start
     flows have no ref yet, and worktrees are soft-deleted not dropped)
-    are deleted explicitly alongside.
+    are deleted explicitly too.
     """
     from .errors import HarnessError
     init_db(path)
     with connect(path) as conn:
+        conn.execute("DELETE FROM runs WHERE worktree_ref = ?", (key,))
         conn.execute("DELETE FROM flows WHERE worktree_ref = ?", (key,))
         cur = conn.execute("DELETE FROM worktrees WHERE ref_key = ?", (key,))
         if cur.rowcount == 0:
             raise HarnessError(f"no worktree link for {key}", exit_code=2)
 def soft_delete_worktree(path: Path, key: str) -> str:
-    """Stamp deleted_at (soft-delete); row, sessions, and files all survive.
+    """Stamp deleted_at (soft-delete); row, its runs, and files all survive.
 
     Returns the ISO timestamp written. Idempotent: re-stamping refreshes
     the clock (extends the 7-day GC window).
@@ -213,8 +219,9 @@ def gc_soft_deleted(path: Path, retention_days: int = SOFT_DELETE_RETENTION_DAYS
 
     Returns [{ref_key, path, branch, repo}] for rows the caller must tear
     down on disk (git-wt cleanup) before dropping. Row deletion happens
-    here (sessions/runs CASCADE); disk teardown is the caller's job so
-    this stays a pure DB function.
+    here — runs (no FK on ``worktree_ref``) and flows are purged
+    explicitly with their worktree row — and disk teardown is the caller's
+    job so this stays a pure DB function.
     """
     from datetime import timedelta
     init_db(path)
@@ -243,9 +250,11 @@ def gc_soft_deleted(path: Path, retention_days: int = SOFT_DELETE_RETENTION_DAYS
         for r in kept:
             del r["payload"]
         for r in rows:
-            # flows have no hard FK to worktrees (pre-Start flows carry no
-            # ref); purge them explicitly alongside the GC'd link row.
+            # flows/runs have no hard FK to worktrees (pre-Start flows carry
+            # no ref; runs.worktree_ref may dangle); purge them explicitly
+            # alongside the GC'd link row.
             conn.execute("DELETE FROM flows WHERE worktree_ref = ?", (r["ref_key"],))
+            conn.execute("DELETE FROM runs WHERE worktree_ref = ?", (r["ref_key"],))
             conn.execute("DELETE FROM worktrees WHERE ref_key = ?", (r["ref_key"],))
         for r in rows:
             r.pop("payload", None)

@@ -337,10 +337,9 @@ def _migrate_flow_template_lineage(conn) -> None:
         conn.execute("ALTER TABLE flows ADD COLUMN effective_steps TEXT NOT NULL DEFAULT ''")
 
 def _migrate_flow_linkage(conn) -> None:
-    """Schema v15: sessions/runs gain flow_id; sessions.worktree_ref nullable.
+    """Schema v15: runs gains flow_id (sessions carried it pre-fold).
 
-    flow_id is the query path (metadata.flow_id stays as history). NULL
-    worktree_ref = unattached flow row, exempt from the worktrees FK.
+    flow_id is the query path (metadata.flow_id stays as history).
     Idempotent: ADD COLUMN / backfill skip what is already present. The
     sessions table is folded into runs and dropped by
     migrate_sessions_into_runs (v16), so nothing rebuilds it here.
@@ -605,7 +604,6 @@ def _migrate_sessions_type(conn) -> None:
     subcommand), else the command's first word, else NULL (never guess).
     Idempotent: skips present columns; backfills only NULL-typed rows.
     """
-    from .store_sessions import _backfill_session_type
     cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
     if not cols:
         return
@@ -789,6 +787,381 @@ def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
                              (moved, rid))
     return True
 
+#: Cap on persisted run output lines (mirrors the live buffer policy at a
+#: larger scale: enough log to diagnose, bounded DB growth).
+MAX_RUN_OUTPUT_LINES = 10000
+
+#: Allowed values for runs.session_type — an enum, never free text (NULL = unknown).
+SESSION_TYPES = ("start", "review", "sync", "fix_comments", "custom_action",
+                 "flow", "prodtest_plan", "prodtest_run")
+
+#: Allowed values for runs.state — the lifecycle of one execution row.
+RUN_STATES = ("running", "finished", "failed", "preview")
+
+#: Fix-comments prompt header — the only surviving discriminator for history
+#: rows (initiator_command carries the harness name, never the subcommand).
+_FIX_PROMPT_PREFIX = "Fix all open (not-resolved) review comments on this PR/MR:"
+
+
+def db_path(config_dir: Path | None = None) -> Path:
+    """State DB path under *config_dir* (default: store.config_dir())."""
+    from . import store as _store
+    base = config_dir or _store.config_dir()
+    return base / "state.db"
+
+
+def _slug_segment(segment: str) -> str:
+    """Slugify one path segment (branch parts stay nested, never flattened)."""
+    import re
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", (segment or "").lower()).strip("-")
+    return re.sub(r"-{2,}", "-", slug)
+
+
+def branch_path(branch: str) -> str:
+    """Branch name → nested path: `fix/a-b` stays `fix/a-b` (slugs per part).
+
+    Empty/blank → "". Segments that slug to "" are dropped; a branch of
+    only separators yields "".
+    """
+    parts = [p for p in (branch or "").split("/") if p.strip()]
+    slugged = [_slug_segment(p) for p in parts]
+    return "/".join(p for p in slugged if p)
+
+
+def branch_slug(branch: str) -> str:
+    """Normalize a git branch name to one path-safe segment.
+
+    `feature/new-feature` → `feature-new-feature` (same rule as
+    `refs.slugify_repo`, duplicated to avoid a store→refs import cycle).
+    Empty/blank → "".
+    """
+    return _slug_segment(branch)
+
+
+def gen_session_id(now: datetime | None = None) -> str:
+    """Transcript id (UTC timestamp + random suffix) for a harness launch."""
+    ts = (now or datetime.now(timezone.utc)).strftime(
+        "%Y-%m-%dT%H-%M-%S-%f")[:-3] + "Z"
+    return f"{ts}-{random.randint(1000, 9999):04d}"
+
+
+def derive_session_type(command: str, fix_comments: bool = False) -> str | None:
+    """Subcommand + flag → session_type. Unknown → None, never guess."""
+    c = (command or "").strip().lower()
+    if c == "review" and fix_comments:
+        return "fix_comments"
+    if c in ("start", "review", "sync", "flow"):
+        return c
+    if c in ("action", "adhoc"):
+        return "custom_action"
+    first_two = " ".join(c.split()[:2])
+    if first_two == "prodtest plan":
+        return "prodtest_plan"
+    if first_two == "prodtest run":
+        return "prodtest_run"
+    return None
+
+
+def _backfill_session_type(initiator_command: str, prompt: str) -> str | None:
+    """History backfill: prompt header first, then command starts-with."""
+    if (prompt or "").startswith(_FIX_PROMPT_PREFIX):
+        return "fix_comments"
+    first = (initiator_command or "").split(" ", 1)[0].strip().lower()
+    if first in ("start", "review", "sync", "flow"):
+        return first
+    if first == "action":
+        return "custom_action"
+    if "--fix-comments" in (initiator_command or ""):
+        return "fix_comments"
+    return None
+
+
+def session_file_path(session_id: str, harness_name: str,
+                      config_dir: Path | None = None,
+                      branch: str | None = None,
+                      session_type: str | None = None) -> Path:
+    """Transcript path for a harness launch under ``<config>/runs/…``.
+
+    Layout ``runs/<harness>/<branch path>/<kind>/<id>.jsonl``; the dir is
+    created so a ``--session-dir`` argument always points at a real tree.
+    """
+    from . import store as _store
+    base = (config_dir or _store.config_dir()) / RUNS_DIRNAME / harness_name
+    bpath = branch_path(branch or "")
+    if bpath:
+        base = base / bpath
+    stype = (session_type or "").strip().lower().replace("-", "_")
+    if stype in SESSION_TYPES:
+        base = base / stype
+    base.mkdir(parents=True, exist_ok=True)
+    return base / f"{session_id}.jsonl"
+
+
+def newest_transcript(session_dir: Path) -> Path | None:
+    """Newest .jsonl directly under *session_dir* (the harness-minted file).
+
+    None when the dir holds no transcripts yet. Never raises.
+    """
+    try:
+        files = [p for p in session_dir.iterdir()
+                 if p.is_file() and p.suffix == ".jsonl"]
+    except OSError:
+        return None
+    if not files:
+        return None
+    try:
+        return max(files, key=lambda p: p.stat().st_mtime_ns)
+    except OSError:
+        return None
+
+
+def _parse_json_dict(value: object) -> dict:
+    """JSON-object column → dict ({} on NULL/garbage/non-object)."""
+    try:
+        out = json.loads(value or "{}")  # type: ignore[arg-type]
+    except Exception:
+        return {}
+    return out if isinstance(out, dict) else {}
+
+
+def _run_dict(row: sqlite3.Row) -> dict:
+    """One runs row with its JSON columns parsed."""
+    out = dict(row)
+    try:
+        out["args"] = json.loads(out.get("args") or "[]")
+    except Exception:
+        out["args"] = []
+    for col in ("validation", "metadata"):
+        if col in out:
+            out[col] = _parse_json_dict(out.get(col))
+    return out
+
+
+def insert_run(path: Path, command: str, args: list[str],
+               exit_code: int | None = None, *,
+               worktree_ref: str | None = None,
+               harness_name: str = "", initiator_command: str = "",
+               prompt: str = "", file_path: str = "",
+               session_type: str | None = None,
+               metadata: dict | None = None,
+               state: str = "finished",
+               continued_from_run_id: int | None = None,
+               output: list[str] | None = None,
+               truncated: bool = False,
+               validation: dict | None = None,
+               flow_id: int | None = None) -> int:
+    """Insert one execution row; returns its id.
+
+    A run owns its transcript identity (``worktree_ref``, harness,
+    initiator command, prompt, ``file_path``, ``session_type``, metadata) —
+    the folded sessions entity lives here. ``session_type``/``state`` are
+    enums, never free text; an unknown value is rejected. ``worktree_ref``
+    stays '' for repo-scoped rows (pre-link attempts, web runs).
+
+    ``continued_from_run_id`` links a fix-continue row to the transcript's
+    first run. A row inserted without an explicit ``flow_id`` joins its
+    transcript's flow tagging (newest run of the same ``file_path``).
+
+    The legacy ``runs.session_id`` column is written '' — no transcript key
+    survives the fold; rows are addressed by their own id.
+    """
+    if session_type is not None and session_type not in SESSION_TYPES:
+        raise ValueError(f"session_type must be one of {', '.join(SESSION_TYPES)}"
+                         f" (got {session_type!r})")
+    if state not in RUN_STATES:
+        raise ValueError(f"state must be one of {', '.join(RUN_STATES)}"
+                         f" (got {state!r})")
+    init_db(path)
+    created = datetime.now(timezone.utc).isoformat()
+    out_lines = list(output or [])
+    lines = out_lines[-MAX_RUN_OUTPUT_LINES:]
+    truncated = bool(truncated) or len(out_lines) > len(lines)
+    names = ["session_id", "command", "args", "exit_code", "created_at",
+             "output", "truncated", "validation", "worktree_ref",
+             "harness_name", "initiator_command", "prompt", "file_path",
+             "session_type", "metadata", "state", "continued_from_run_id"]
+    vals: list = ["", command, json.dumps(args), exit_code, created,
+                  "\n".join(lines), 1 if truncated else 0,
+                  json.dumps(validation or {}), worktree_ref or "",
+                  harness_name, initiator_command, prompt, file_path,
+                  session_type, json.dumps(metadata or {}), state,
+                  continued_from_run_id]
+    with connect(path) as conn:
+        if flow_id is not None:
+            names.append("flow_id")
+            vals.append(flow_id)
+        elif file_path:
+            row = conn.execute(
+                "SELECT flow_id FROM runs WHERE file_path = ?"
+                " AND flow_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+                (file_path,)).fetchone()
+            if row is not None and row[0] is not None:
+                names.append("flow_id")
+                vals.append(row[0])
+        cur = conn.execute(
+            f"INSERT INTO runs ({', '.join(names)})"
+            f" VALUES ({', '.join(['?'] * len(names))})", vals)
+        return cur.lastrowid
+
+
+def get_run(path: Path, run_id: int,
+            include_deleted_worktrees: bool = False) -> dict | None:
+    """One run row (JSON columns parsed); None when unknown."""
+    if not path.exists():
+        return None
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.* FROM runs r"
+             " LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref"
+             " WHERE r.id = ?")
+        if not include_deleted_worktrees:
+            q += " AND " + _NOT_DELETED
+        row = conn.execute(q, (run_id,)).fetchone()
+    return _run_dict(row) if row is not None else None
+
+
+def finish_run(path: Path, run_id: int, state: str) -> None:
+    """Set a run's terminal state (finished/failed/preview)."""
+    assert state in ("finished", "failed", "preview")
+    with connect(path) as conn:
+        conn.execute("UPDATE runs SET state = ? WHERE id = ?", (state, run_id))
+
+
+def set_run_file_path(path: Path, run_id: int, file_path: str) -> None:
+    """Point a run at the harness-minted transcript (best effort).
+
+    omp mints its own filename under --session-dir, so the pre-launch
+    guessed path is only a scope hint. After a blocking launch returns the
+    real .jsonl is known — this records it. Never raises.
+    """
+    try:
+        with connect(path) as conn:
+            conn.execute("UPDATE runs SET file_path = ? WHERE id = ?",
+                         (file_path, run_id))
+    except Exception:
+        pass
+
+
+def set_run_metadata(path: Path, run_id: int, patch: dict) -> dict:
+    """Merge *patch* into the run's metadata JSON; return the merged dict."""
+    with connect(path) as conn:
+        row = conn.execute("SELECT metadata FROM runs WHERE id = ?",
+                           (run_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"no run {run_id}")
+        meta = _parse_json_dict(row[0])
+        meta.update(patch or {})
+        conn.execute("UPDATE runs SET metadata = ? WHERE id = ?",
+                     (json.dumps(meta), run_id))
+        return meta
+
+
+def latest_review_run(path: Path, worktree_ref: str,
+                      include_deleted_worktrees: bool = False) -> dict | None:
+    """Newest non-running review run for the ref (the 'current' one to continue)."""
+    if not path.exists():
+        return None
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.* FROM runs r"
+             " LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref"
+             " WHERE r.worktree_ref = ? AND r.session_type = 'review'"
+             " AND r.state != 'running'")
+        if not include_deleted_worktrees:
+            q += " AND " + _NOT_DELETED
+        q += " ORDER BY r.created_at DESC, r.id DESC LIMIT 1"
+        row = conn.execute(q, (worktree_ref,)).fetchone()
+    return _run_dict(row) if row is not None else None
+
+
+def run_by_file_path(path: Path, file_path: str,
+                     include_deleted_worktrees: bool = False) -> dict | None:
+    """Run whose file_path equals *file_path* (the pinned transcript), newest
+    first. A harness-minted filename never matches by stem — the pinned path
+    itself is the reliable join key."""
+    if not file_path or not path.exists():
+        return None
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.* FROM runs r"
+             " LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref"
+             " WHERE r.file_path = ?")
+        if not include_deleted_worktrees:
+            q += " AND " + _NOT_DELETED
+        q += " ORDER BY r.created_at DESC, r.id DESC LIMIT 1"
+        row = conn.execute(q, (file_path,)).fetchone()
+    return _run_dict(row) if row is not None else None
+
+
+#: Runs of soft-deleted worktrees stay in the DB (restorable via undelete)
+#: but are hidden from list/detail queries unless *include_deleted_worktrees*;
+#: rows with an empty ref (repo-scoped: pre-link attempts, web runs) or a
+#: dangling ref (hard-deleted worktree) stay visible — same pass-through rule
+#: as list_flows. Every query using it aliases runs as ``r``.
+_NOT_DELETED = ("(r.worktree_ref = '' OR w.ref_key IS NULL"
+                " OR (w.deleted_at IS NULL OR w.deleted_at = ''))")
+
+
+def list_runs(path: Path, limit: int = 200,
+              include_deleted_worktrees: bool = False) -> list[dict]:
+    """Persisted runs, newest first (drives GET /api/runs)."""
+    if not path.exists():
+        return []
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.id, r.session_id, r.command, r.args, r.exit_code,"
+             " r.created_at, r.output, r.truncated, r.validation, r.flow_id,"
+             " r.file_path, r.file_path AS session_file, r.worktree_ref,"
+             " r.session_type, r.state, r.harness_name, r.initiator_command,"
+             " r.prompt, r.metadata, r.continued_from_run_id"
+             " FROM runs r LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref")
+        if not include_deleted_worktrees:
+            q += " WHERE " + _NOT_DELETED
+        q += " ORDER BY r.id DESC LIMIT ?"
+        return [_run_dict(r) for r in conn.execute(q, (limit,)).fetchall()]
+
+
+def update_run(path: Path, run_id: int, *,
+               exit_code: int | None = None,
+               output: list[str] | None = None,
+               truncated: bool | None = None,
+               append: bool = False) -> None:
+    """Progressively update a runs row (live log + final state).
+
+    *append* joins *output* onto the stored tail for that run id;
+    otherwise *output* replaces the stored blob. Unset fields stay.
+    Never raises: callers (tailers/step wrappers) must not fail on DB writes.
+    """
+    try:
+        with connect(path) as conn:
+            row = conn.execute("SELECT output FROM runs WHERE id = ?",
+                               (run_id,)).fetchone()
+            if row is None:
+                return
+            sets: list[str] = []
+            vals: list = []
+            if output is not None:
+                if append:
+                    lines = ((row[0] or "").split("\n") if row[0] else [])
+                    lines += list(output)
+                    lines = lines[-MAX_RUN_OUTPUT_LINES:]
+                else:
+                    lines = list(output)[-MAX_RUN_OUTPUT_LINES:]
+                sets.append("output = ?")
+                vals.append("\n".join(lines))
+            if truncated is not None:
+                sets.append("truncated = ?")
+                vals.append(1 if truncated else 0)
+            if exit_code is not None:
+                sets.append("exit_code = ?")
+                vals.append(exit_code)
+            if not sets:
+                return
+            conn.execute(f"UPDATE runs SET {', '.join(sets)} WHERE id = ?",
+                         (*vals, run_id))
+    except Exception:
+        pass
+
 def _migrate_v2(conn) -> None:
     """Schema v2: trackers gains mandatory vendor/remote_url; repos loses tracker_key.
 
@@ -854,7 +1227,6 @@ _REQUIRED_COLS = {
     "tracker_repos": ("tracker_key", "repo_key"),
     "worktrees": ("ref_key", "path", "branch", "added_at"),
     "pr_cache": ("branch", "payload", "checked_at"),
-    "sessions": ("id", "state", "created_at"),
     "runs": ("session_id", "command", "args", "created_at"),
     "issue_cache": ("source", "payload", "fetched_at"),
     "pr_candidates_cache": ("source", "payload", "fetched_at"),
@@ -1222,28 +1594,6 @@ def backfill_trackers_repos(path: Path, cfg: dict,
                     "INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
                     (tid, repo_key)).rowcount
     return counts
-from .store_sessions import (  # noqa: F401,E402
-    SESSION_TYPES,
-    _backfill_session_type,
-    branch_path,
-    branch_slug,
-    db_path,
-    derive_session_type,
-    finish_session,
-    gen_session_id,
-    get_session,
-    insert_run,
-    insert_session,
-    latest_review_session,
-    list_runs,
-    list_sessions,
-    newest_transcript,
-    session_by_file_path,
-    session_file_path,
-    set_session_file_path,
-    set_session_metadata,
-    update_run,
-)
 
 from .store_links import (  # noqa: F401,E402
     SOFT_DELETE_RETENTION_DAYS,

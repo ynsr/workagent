@@ -101,8 +101,7 @@ def run_startup_maintenance() -> dict:
     then runs the other slow non-essential jobs: soft-delete GC (git
     teardown) and run-dir prune. Never raises; {"purged": [...], "pruned": n}.
     """
-    from .store_sessions import db_path
-    from .store_sqlite import init_db
+    from .store_sqlite import db_path, init_db
     try:
         init_db(db_path())
     except Exception as e:
@@ -533,8 +532,7 @@ def run_server(host: str, port: int, static_dir: Path,
         _apply_env()
     except Exception:
         pass
-    from .store_sessions import db_path
-    from .store_sqlite import init_db
+    from .store_sqlite import db_path, init_db
     init_db(db_path(), defer_backfill=True)
     try:
         import uvicorn

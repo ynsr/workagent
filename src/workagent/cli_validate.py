@@ -382,10 +382,10 @@ def _resolve_max_retries(explicit: int | None = None) -> int:
 
 
 def _attempt_store():
-    """Session-metadata seam: (load, save) or (None, None) when unavailable."""
+    """Run-metadata seam: (load, save) or (None, None) when unavailable."""
     try:
-        from . import store_sessions as _ss
-        return _ss.get_session, _ss.set_session_metadata
+        from . import store_sqlite as _sq
+        return _sq.get_run, _sq.set_run_metadata
     except Exception:
         return None, None
 
@@ -403,8 +403,8 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
     decision taken on that run's output. The terminal verdict is stored as
     ``trace["terminal"]`` on the last record; no extra entry is appended.
 
-    ``session_db``/``session_id`` persist ``validation_attempts`` into session
-    metadata (best effort, via store_sessions.set_session_metadata) so a
+    ``session_db``/``session_id`` persist ``validation_attempts`` into run
+    metadata (best effort, via store_sqlite.set_run_metadata) so a
     WAITING resume restarts validation where it stopped. ``run_once`` may
     return ``transcript_path`` to retarget the tool-error scan per attempt.
 

@@ -599,18 +599,202 @@ def test_migrate_v16_backfills_session_type_from_prompt(tmp_path):
 
 
 def test_derive_session_type_matrix():
-    from workagent.store_sessions import derive_session_type
-    assert derive_session_type("start", False) == "start"
-    assert derive_session_type("sync", False) == "sync"
-    assert derive_session_type("review", False) == "review"
-    assert derive_session_type("review", True) == "fix_comments"
-    assert derive_session_type("cleanup", False) is None
-    assert derive_session_type("", False) is None
+    assert sq.derive_session_type("start", False) == "start"
+    assert sq.derive_session_type("sync", False) == "sync"
+    assert sq.derive_session_type("review", False) == "review"
+    assert sq.derive_session_type("review", True) == "fix_comments"
+    assert sq.derive_session_type("cleanup", False) is None
+    assert sq.derive_session_type("", False) is None
 
 
 def test_derive_session_type_adhoc_is_custom_action():
-    from workagent.store_sessions import derive_session_type
-    assert derive_session_type("adhoc", False) == "custom_action"
+    assert sq.derive_session_type("adhoc", False) == "custom_action"
+
+
+def _seed_link(db, key: str) -> None:
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+            " VALUES (?, ?, 'b', NULL, '2026-01-01', '{}')",
+            (key, f"/tmp/{key}"))
+
+
+def _run_row(db, ref: str = "") -> int:
+    return sq.insert_run(db, "start", [], 0, worktree_ref=ref,
+                         file_path=f"/f/{ref or 'repo'}.jsonl")
+
+
+def test_latest_review_run_resolves_from_runs(tmp_path):
+    """The ref's latest non-running review-kind run is the one to continue."""
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    rid = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
+                        session_type="review", file_path="/tmp/x.jsonl")
+    assert sq.latest_review_run(db, "k")["id"] == rid
+
+
+def test_latest_review_run_skips_running_and_other_kinds(tmp_path):
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    done = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
+                         session_type="review", file_path="/old.jsonl")
+    sq.insert_run(db, "review", ["k"], None, worktree_ref="k",
+                  session_type="review", file_path="/running.jsonl",
+                  state="running")
+    sq.insert_run(db, "start", ["k"], 0, worktree_ref="k",
+                  session_type="start", file_path="/start.jsonl")
+    sq.insert_run(db, "review", ["other"], 0, worktree_ref="other",
+                  session_type="review", file_path="/other.jsonl")
+    assert sq.latest_review_run(db, "k")["id"] == done
+    assert sq.latest_review_run(db, "nope") is None
+
+
+def test_run_metadata_merges(tmp_path):
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    rid = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
+                        metadata={"flow_id": 7})
+    out = sq.set_run_metadata(db, rid,
+                              {"review_comments_fixed_at": "2026-09-26T00:00:00+00:00"})
+    assert out == {"flow_id": 7,
+                   "review_comments_fixed_at": "2026-09-26T00:00:00+00:00"}
+    assert sq.get_run(db, rid)["metadata"]["review_comments_fixed_at"].startswith(
+        "2026-09-26")
+    with pytest.raises(KeyError):
+        sq.set_run_metadata(db, 999, {"x": 1})
+
+
+def test_insert_run_rejects_bad_type_and_state(tmp_path):
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with pytest.raises(ValueError):
+        sq.insert_run(db, "x", [], 0, session_type="nonsense")
+    with pytest.raises(ValueError):
+        sq.insert_run(db, "x", [], 0, state="nonsense")
+    assert sq.list_runs(db) == []
+
+
+def test_finish_run_states(tmp_path):
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    rid = sq.insert_run(db, "start", ["k"], None, state="running")
+    assert sq.get_run(db, rid)["state"] == "running"
+    sq.finish_run(db, rid, "finished")
+    assert sq.get_run(db, rid)["state"] == "finished"
+    sq.finish_run(db, rid, "failed")
+    assert sq.get_run(db, rid)["state"] == "failed"
+    with pytest.raises(AssertionError):
+        sq.finish_run(db, rid, "nonsense")
+
+
+def test_finish_run_preview_state(tmp_path):
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    rid = sq.insert_run(db, "sync", ["k"], None, state="running")
+    sq.finish_run(db, rid, "preview")
+    assert sq.get_run(db, rid)["state"] == "preview"
+
+
+def test_get_run_carries_transcript_identity(tmp_path):
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    rid = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
+                        harness_name="omp", initiator_command="review",
+                        prompt="p", file_path="/f/x.jsonl",
+                        session_type="review", metadata={"a": 1},
+                        validation={"attempt": 2})
+    row = sq.get_run(db, rid)
+    assert row["args"] == ["k"]
+    assert row["validation"] == {"attempt": 2}
+    assert row["metadata"] == {"a": 1}
+    assert (row["harness_name"], row["initiator_command"], row["prompt"],
+            row["file_path"], row["session_type"]) == (
+        "omp", "review", "p", "/f/x.jsonl", "review")
+    assert sq.get_run(db, 999) is None
+
+
+def test_run_by_file_path_resolves_newest_and_rekeys(tmp_path):
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
+                  file_path="/f/t.jsonl")
+    new = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
+                        file_path="/f/t.jsonl")
+    assert sq.run_by_file_path(db, "/f/t.jsonl")["id"] == new
+    sq.set_run_file_path(db, new, "/f/minted-9.jsonl")
+    assert sq.run_by_file_path(db, "/f/minted-9.jsonl")["id"] == new
+    assert sq.run_by_file_path(db, "") is None
+    assert sq.run_by_file_path(db, "/f/nope.jsonl") is None
+
+
+def test_list_runs_carries_transcript_columns(tmp_path):
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    rid = sq.insert_run(db, "start", ["k"], 3, worktree_ref="k",
+                        harness_name="omp", initiator_command="omp start",
+                        prompt="do it", file_path="/f/s.jsonl",
+                        session_type="start",
+                        metadata={"branch_path": "feat-x"},
+                        state="failed", output=["one", "two"])
+    row = sq.list_runs(db)[0]
+    assert row["id"] == rid
+    assert row["exit_code"] == 3
+    assert row["metadata"] == {"branch_path": "feat-x"}
+    assert row["state"] == "failed"
+    assert row["harness_name"] == "omp"
+    assert row["initiator_command"] == "omp start"
+    assert row["prompt"] == "do it"
+    assert row["file_path"] == "/f/s.jsonl"
+    assert row["session_type"] == "start"
+    assert row["output"] == "one\ntwo"
+
+
+def test_worktree_hard_delete_purges_its_runs(tmp_path):
+    """runs.worktree_ref has no FK: the hard delete purges this ref's runs."""
+    from workagent import store_links as sl
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    _seed_link(db, "k")
+    _seed_link(db, "k2")
+    _run_row(db, "k")
+    other = _run_row(db, "k2")
+    repo = _run_row(db, "")
+    sl.delete_worktree_row(db, "k")
+    ids = {r["id"] for r in sq.list_runs(db, include_deleted_worktrees=True)}
+    assert ids == {other, repo}
+
+
+def test_save_links_prune_purges_orphan_runs(tmp_path):
+    """The links sweep drops runs of pruned worktrees, never repo-scoped rows."""
+    from workagent import store_links as sl
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    _seed_link(db, "keep")
+    _seed_link(db, "gone")
+    kept = _run_row(db, "keep")
+    _run_row(db, "gone")
+    repo = _run_row(db, "")
+    sl.save_links_rows(db, {"keep": {"worktree": "/tmp/keep", "branch": "b",
+                                     "repo": "/tmp/rk"}})
+    ids = {r["id"] for r in sq.list_runs(db, include_deleted_worktrees=True)}
+    assert ids == {kept, repo}
+    sl.save_links_rows(db, {})
+    assert [r["id"] for r in sq.list_runs(db, include_deleted_worktrees=True)] == [repo]
+
+
+def test_gc_soft_deleted_purges_runs(tmp_path):
+    from workagent import store_links as sl
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    _seed_link(db, "k")
+    _run_row(db, "k")
+    repo = _run_row(db, "")
+    with sq.connect(db) as conn:
+        conn.execute("UPDATE worktrees SET deleted_at = '2020-01-01T00:00:00+00:00'"
+                     " WHERE ref_key = 'k'")
+    assert [r["ref_key"] for r in sl.gc_soft_deleted(db)] == ["k"]
+    ids = {r["id"] for r in sq.list_runs(db, include_deleted_worktrees=True)}
+    assert ids == {repo}
 
 
 def test_repos_name_unique_fresh_db(tmp_path):

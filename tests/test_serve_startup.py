@@ -11,6 +11,8 @@ def test_run_server_defers_gc_and_backfill(isolated_config, tmp_path, monkeypatc
     monkeypatch.setattr(_web, "create_app", lambda *a, **k: "app")
     monkeypatch.setattr(_web, "start_background_maintenance",
                         lambda: calls.append("bg") or None)
+    # No lingering backfill thread: it would race later tests' _INIT_CACHE.
+    monkeypatch.setattr("workagent.store_sqlite.backfill_async", lambda: None)
 
     import uvicorn
 
@@ -79,7 +81,7 @@ def test_startup_maintenance_never_raises_on_migration_failure(
 
 def test_init_db_defer_backfill_skips_inline_git(isolated_config, monkeypatch):
     from workagent import store_sqlite as _sq
-    from workagent.store_sessions import db_path as _db_path
+    _db_path = _sq.db_path
 
     _sq._INIT_CACHE.pop("backfill", None)
     _sq._INIT_CACHE.pop("backfill:started", None)

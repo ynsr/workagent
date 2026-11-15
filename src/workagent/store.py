@@ -149,7 +149,7 @@ def set_worktree_active(key: str, active: bool) -> None:
 
 
 def delete_worktree_row(key: str) -> None:
-    """Delete a worktree row only; files/branch/PR untouched."""
+    """Delete a worktree row (with its runs); files/branch/PR untouched."""
     from .errors import HarnessError
     db = _sqlite_path()
     if db is not None:
@@ -164,7 +164,7 @@ def delete_worktree_row(key: str) -> None:
 
 
 def soft_delete_worktree(key: str) -> str:
-    """Stamp deleted_at (soft-delete); row, sessions, and files all survive."""
+    """Stamp deleted_at (soft-delete); row, its runs, and files all survive."""
     from .errors import HarnessError
     db = _sqlite_path()
     if db is not None:
@@ -199,7 +199,7 @@ def gc_soft_deleted(retention_days: int = 7) -> list[dict]:
     """Hard-delete rows soft-deleted longer than *retention_days* ago.
 
     Returns [{ref_key, path, branch, repo}] for the caller to tear down
-    on disk before/after (row is already gone; sessions/runs CASCADE).
+    on disk before/after (row and its runs are already gone).
     """
     db = _sqlite_path()
     if db is not None:
