@@ -43,6 +43,24 @@ def _message_needs_yes(args: list[str]) -> bool:
     """
     return bool(args) and args[0] in ("adhoc", "validate", "action", "flow")
 
+def _stored_transcript(file_path: str) -> str:
+    """Stored transcript path → the readable file (new tree first, old as fallback).
+
+    A restored backup, or a row the transcripts fold could not rewrite,
+    still names the pre-rename ``sessions/`` tree while the file lives under
+    ``runs/``. Readers resolve that mirror (and the reverse direction for a
+    row naming a moved-away ``runs/`` path) before any readiness check, so
+    resume works instead of 404ing on a directory that no longer exists.
+    Empty stays empty; an unresolvable path is returned unchanged.
+    """
+    if not file_path:
+        return ""
+    try:
+        from . import store_sqlite as _sq
+        return str(_sq.resolve_transcript_path(file_path))
+    except Exception:
+        return file_path
+
 def _child_session_file(db, stem: str) -> str:
     """Ready transcript file of the CLI child's rescoped row (stem match).
 
@@ -56,7 +74,7 @@ def _child_session_file(db, stem: str) -> str:
     try:
         from . import store_sqlite as _sq
         row = _sq.run_by_file_stem(db, stem, include_deleted_worktrees=True)
-        file_path = str((row or {}).get("file_path") or "")
+        file_path = _stored_transcript(str((row or {}).get("file_path") or ""))
         if row and _transcript_ready(file_path):
             return file_path
     except Exception:
@@ -91,7 +109,10 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
 
     omp mints its own filename: the pinned --session-file path (web-minted
     id) is only the scope hint — after the user runs the printed command
-    manually the real .jsonl lands nearby. Resolution order:
+    manually the real .jsonl lands nearby. Stored paths are first resolved
+    through the transcript roots (a legacy `sessions/` path maps to its
+    `runs/` sibling — spec §4.1 readers try the new tree first), then the
+    order is:
     1. the run row's `file_path` when it is a ready transcript (covers the
        child CLI rescoping a branch-less pinned path under
        `runs/omp/<branch>/<action>/` — the registry still holds the stale
@@ -109,6 +130,7 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
     Returns "" when nothing resumable is found.
     """
     from pathlib import Path as _Path
+    session_file = _stored_transcript(session_file)
     if _transcript_ready(session_file):
         return session_file
     try:
@@ -125,7 +147,7 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
         if row_id and db.exists():
             try:
                 row = _sq.get_run(db, row_id, include_deleted_worktrees=True)
-                db_file = str((row or {}).get("file_path") or "")
+                db_file = _stored_transcript(str((row or {}).get("file_path") or ""))
                 created = str((row or {}).get("created_at") or "")
             except Exception:
                 db_file = ""
@@ -144,8 +166,13 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
                     pass
             return child_file
         scope = _Path(session_file).parent if session_file else None
-        if scope is None or not scope.is_dir():
-            scope = _Path(db_file).parent if db_file else None
+        if (scope is None or not scope.is_dir()) and db_file:
+            scope = _Path(db_file).parent
+        if scope is not None and not scope.is_dir():
+            # Legacy tree: the payload directory moved with the transcripts —
+            # search the mirrored one rather than giving up on a missing dir.
+            mirrored = _stored_transcript(str(scope))
+            scope = _Path(mirrored) if mirrored else scope
         if scope is None or not scope.is_dir():
             return ""
         try:

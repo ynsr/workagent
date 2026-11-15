@@ -888,6 +888,81 @@ def test_resolve_session_file_finds_sibling_branch_dir(client, tmp_path):
     assert _rr._resolve_session_file(str(stale), "") == str(real)
 
 
+def test_resolve_session_file_maps_legacy_sessions_path(isolated_config):
+    """A row still naming the pre-rename sessions/ tree resumes its runs/ copy.
+
+    Restored backups (and rows the transcripts fold could not rewrite) keep
+    the old path; readers try the new tree first (spec §4.1) instead of
+    returning "" only because the legacy parent directory is gone.
+    """
+    from pathlib import Path
+    from workagent import store_sqlite as sq
+    from workagent import web_runs_routes as _rr
+    db = sq.db_path()
+    sq.init_db(db)
+    rel = Path("omp") / "feat" / "b" / "start" / "legacy.jsonl"
+    stored = isolated_config / "sessions" / rel  # never exists
+    moved = isolated_config / "runs" / rel       # the transcript lives here
+    moved.parent.mkdir(parents=True)
+    moved.write_text('{"type":"session"}\n')
+    rid = sq.insert_run(db, "start", ["k-legacy"], 0, worktree_ref="k-legacy",
+                        harness_name="omp", initiator_command="start",
+                        prompt="p", file_path=str(stored), session_type="start",
+                        state="finished")
+    assert _rr._resolve_session_file(str(stored), rid) == str(moved)
+    # No path from the caller: the row's legacy path still resolves.
+    assert _rr._resolve_session_file("", rid) == str(moved)
+
+
+def test_resolve_session_file_scopes_legacy_tree_mirror(isolated_config):
+    """A legacy scope dir is searched at its runs/ mirror for the minted file.
+
+    Restored pinned sessions/ paths name a guessed stem while omp minted its
+    own filename under the mirrored runs/ dir — the scope search must use the
+    mirrored directory, not give up on the vanished legacy one.
+    """
+    from pathlib import Path
+    from workagent import store_sqlite as sq
+    from workagent import web_runs_routes as _rr
+    db = sq.db_path()
+    sq.init_db(db)
+    pinned = isolated_config / "sessions" / "omp" / "start" / "guessed-id.jsonl"
+    minted = isolated_config / "runs" / "omp" / "start" / "2026-11-10T16-13-46-786Z-3703.jsonl"
+    minted.parent.mkdir(parents=True)
+    minted.write_text('{"type":"session"}\n')
+    assert _rr._resolve_session_file(str(pinned), "") == str(minted)
+
+
+def test_resume_persisted_run_maps_legacy_sessions_path(client, monkeypatch,
+                                                       isolated_config, tmp_path):
+    """Resume of a db- row naming sessions/… opens the runs/… transcript."""
+    from pathlib import Path
+    from workagent import store_sqlite as sq
+    from workagent import store as _store
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = tmp_path / "wt-legacy-resume"
+    wt.mkdir()
+    _store.record_link("k-legacy-resume", {"worktree": str(wt), "branch": "b",
+                                           "repo": "/tmp/r"})
+    rel = Path("omp") / "feat" / "b" / "start" / "resume-legacy.jsonl"
+    stored = isolated_config / "sessions" / rel  # never exists
+    moved = isolated_config / "runs" / rel
+    moved.parent.mkdir(parents=True)
+    moved.write_text('{"type":"session"}\n')
+    rid = sq.insert_run(db, "start", ["k-legacy-resume"], 0,
+                        worktree_ref="k-legacy-resume", harness_name="omp",
+                        initiator_command="start", prompt="p",
+                        file_path=str(stored), session_type="start",
+                        state="finished")
+    opened: dict = {}
+    monkeypatch.setattr("workagent.webapp._open_terminal",
+                        lambda wt_, sf, env=None: opened.update(wt=wt_, sf=sf))
+    r = client.post(f"/api/runs/db-{rid}/resume")
+    assert r.status_code == 200, r.text
+    assert r.json()["session_file"] == str(moved)
+    assert opened["sf"] == str(moved)
+
 
 def test_mirror_run_syncs_rescoped_path(client, tmp_path):
     """Mirror updates the live registry row when the child rescoped the path."""
