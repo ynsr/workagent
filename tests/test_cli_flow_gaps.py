@@ -439,3 +439,40 @@ def test_adopt_terminal_transcript_resolves_minted(tmp_path, monkeypatch):
     assert u.adopt_terminal_transcript(scope_file, rid) == str(minted)
     row = sq.get_run(db, rid, include_deleted_worktrees=True)
     assert (row or {}).get("file_path") == str(minted)
+
+
+def test_backfill_terminal_transcripts_sees_pause_row_past_run_cap(tmp_path,
+                                                                   monkeypatch):
+    """The resume backfill is worktree-scoped and uncapped.
+
+    A flow's pause row must be found even once 1000+ newer runs exist,
+    otherwise the resume proceeds from the stale pre-mint path instead of
+    adopting the detached terminal's minted transcript.
+    """
+    import workagent.cli_flow_util as u
+    import workagent.store_sqlite as sq
+    db = tmp_path / "s.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    monkeypatch.setattr("workagent.store.config_dir", lambda: tmp_path / "cfg")
+    scope_file, scope_dir = u.mint_terminal_scope("start", branch="feat/cap")
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+            " VALUES ('wt-cap', '/tmp/wt', 'b', NULL, '2026-01-01', '{}')")
+    pause = sq.insert_run(db, "flow step start", ["start", "wt-cap"], 2,
+                          worktree_ref="wt-cap", file_path=scope_file,
+                          session_type="flow", state="finished",
+                          metadata={"flow_id": 7, "mode": "flow-terminal"})
+    with sq.connect(db) as conn:
+        # Older than list_runs' newest-1000 window: the pause row is id 1.
+        conn.executemany(
+            "INSERT INTO runs (command, args, exit_code, created_at, worktree_ref)"
+            " VALUES ('flow step review', '[]', 0, '2026-01-02', 'wt-cap')",
+            [() for _ in range(1001)])
+    from pathlib import Path as _P
+    minted = _P(scope_dir) / "minted.jsonl"
+    minted.write_text('{"x": 1}\n')
+    u.backfill_terminal_transcripts(7, "wt-cap", "wt-cap")
+    row = sq.get_run(db, pause, include_deleted_worktrees=True)
+    assert (row or {}).get("file_path") == str(minted)

@@ -592,6 +592,14 @@ def test_fix_comments_preview_adopts_existing_transcript(isolated_config):
     assert adopted["state"] == "preview"
     assert adopted["continued_from_run_id"] == review_id
     assert adopted["file_path"] == ""      # identity stays with the transcript row
+    # The invocation row keeps its own worktree attribution: without it the
+    # row is invisible to runs_for_worktree (transcript GC, flow tagging) and
+    # the worktree purge's `DELETE FROM runs WHERE worktree_ref = ?` never
+    # removes it — a permanent ghost row in GET /api/runs.
+    assert adopted["worktree_ref"] == "k"
+    assert adopted["harness_name"] == "omp"
+    assert adopted["prompt"] == "p"
+    assert [r["id"] for r in sq.runs_for_worktree(db, "k")] == [rid, review_id]
     assert sq.get_run(db, review_id)["state"] == "finished"
     assert len(sq.list_runs(db)) == 2
 

@@ -383,7 +383,18 @@ def _persisted_summary(row: dict) -> dict:
         except Exception:
             args = []
     exit_code = row.get("exit_code")
-    state = "succeeded" if exit_code == 0 else "running" if exit_code is None else "failed"
+    # Same derivation as the live summary (`_finish_state`): exit 2 is
+    # "needs input" (a flow step paused on a question), never "failed".
+    state = "running" if exit_code is None else _finish_state(exit_code)
+    # The stored state wins only where the exit code is silent: an explicit
+    # failure stays failed and a row whose exit code never landed stays
+    # terminal. Exit 2 still wins over state='finished' — a paused flow
+    # step is needs_input, matching the live summary.
+    stored = str(row.get("state") or "")
+    if stored == "failed":
+        state = "failed"
+    elif stored in ("finished", "preview") and state == "running":
+        state = "succeeded"
     created = 0.0
     try:
         created = datetime.fromisoformat(str(row.get("created_at", ""))).timestamp()

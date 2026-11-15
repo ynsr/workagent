@@ -262,14 +262,21 @@ def backfill_terminal_transcripts(flow_id: int, key: str, ref: str) -> None:
 
     The detached terminal mints its .jsonl after the pause row was
     written; on resume each flow-tagged pause row re-resolves its scope
-    dir's newest transcript. Never raises.
+    dir's newest transcript. Reads the worktree's runs uncapped — a pause
+    row older than the newest N runs must still be seen, or the resume
+    proceeds from the stale pre-mint path. Never raises.
     """
     from . import store_sqlite as _sq
     try:
         db = _sq.db_path()
         if not db.exists():
             return
-        rows = _sq.list_runs(db, limit=1000, include_deleted_worktrees=True)
+        rows = _sq.runs_for_worktree(db, key, include_deleted_worktrees=True)
+        if ref and ref != key:
+            # Pause rows may be attributed to the ref the terminal was
+            # spawned with before the worktree key resolved.
+            rows += _sq.runs_for_worktree(db, ref,
+                                          include_deleted_worktrees=True)
     except Exception:
         return
     for r in rows:

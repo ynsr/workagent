@@ -10,6 +10,7 @@ import json
 import random
 import shutil
 import sqlite3
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,7 +44,7 @@ CREATE TABLE IF NOT EXISTS worktrees (
 CREATE TABLE IF NOT EXISTS pr_cache (
   branch TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, checked_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   command TEXT NOT NULL, args TEXT NOT NULL,
   exit_code INTEGER, created_at TEXT NOT NULL,
   output TEXT NOT NULL DEFAULT '', truncated INTEGER NOT NULL DEFAULT 0,
@@ -635,6 +636,37 @@ _FOLD_COLS = (
 )
 
 
+def _runs_seq(conn) -> int:
+    """High-water id ever issued for runs (0 when the sequence row is absent)."""
+    try:
+        row = conn.execute(
+            "SELECT seq FROM sqlite_sequence WHERE name = 'runs'").fetchone()
+    except sqlite3.OperationalError:
+        return 0
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+def _restore_runs_seq(conn, prior: int) -> None:
+    """Keep the runs sequence at/above *prior* and the copied max(id).
+
+    Rebuilding the table drops its sqlite_sequence entry, which resets the
+    high-water mark to the copied max(id): a previously issued (and since
+    deleted) id would be handed out again. *prior* is read before the
+    rebuild (_runs_seq) so no issued id is ever reused.
+    """
+    top = int(conn.execute(
+        "SELECT COALESCE(MAX(id), 0) FROM runs").fetchone()[0])
+    want = max(prior, top)
+    row = conn.execute(
+        "SELECT seq FROM sqlite_sequence WHERE name = 'runs'").fetchone()
+    if row is None:
+        conn.execute("INSERT INTO sqlite_sequence (name, seq) VALUES ('runs', ?)",
+                     (want,))
+    else:
+        conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?)"
+                     " WHERE name = 'runs'", (want,))
+
+
 def runs_dir(config_dir: Path | None = None) -> Path:
     """Transcript root (``<config>/runs``), created on demand."""
     from . import store as _store
@@ -724,6 +756,11 @@ def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
             conn.execute(f"ALTER TABLE runs ADD COLUMN {name} {decl}")
     if not list(conn.execute("PRAGMA table_info(sessions)")):
         return False  # already folded
+    # One-way migration: the stated mitigation is a pre-migration backup
+    # export. Notice on stderr only — stdout stays data-only.
+    print("note: folding sessions into runs (v16, one-way — no down"
+          " migration); a pre-migration `workagent backup export` is the"
+          " only rollback path", file=sys.stderr)
     conn.execute(
         "UPDATE runs SET"
         " worktree_ref = COALESCE(s.worktree_ref, ''),"
@@ -753,6 +790,7 @@ def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
     if was_on:
         conn.execute("PRAGMA foreign_keys = OFF")
     try:
+        prior_seq = _runs_seq(conn)
         ddl = _canonical_ddl()["runs"]
         conn.execute('DROP TABLE IF EXISTS "runs_rebuild"')
         conn.execute(ddl.replace("CREATE TABLE runs", 'CREATE TABLE "runs_rebuild"', 1))
@@ -763,9 +801,11 @@ def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
         conn.execute(f'INSERT INTO "runs_rebuild" ({names}) SELECT {names} FROM runs')
         conn.execute("DROP TABLE runs")
         conn.execute('ALTER TABLE "runs_rebuild" RENAME TO runs')
-        # AUTOINCREMENT sequence: keep it at/above the copied max(id).
-        conn.execute("UPDATE sqlite_sequence SET seq ="
-                     " (SELECT COALESCE(MAX(id), 0) FROM runs) WHERE name = 'runs'")
+        # AUTOINCREMENT sequence: the rebuild reset it to the copied
+        # max(id); restore the pre-fold high-water mark so an id issued
+        # before the migration (and since deleted) is never handed out
+        # again to a stale reference.
+        _restore_runs_seq(conn, prior_seq)
         conn.execute("DROP TABLE sessions")
         if conn.in_transaction:
             conn.commit()
@@ -956,14 +996,12 @@ def insert_run(path: Path, command: str, args: list[str],
     initiator command, prompt, ``file_path``, ``session_type``, metadata) —
     the folded sessions entity lives here. ``session_type``/``state`` are
     enums, never free text; an unknown value is rejected. ``worktree_ref``
-    stays '' for repo-scoped rows (pre-link attempts, web runs).
+    stays '' only for rows with no worktree (pre-link attempts); web and
+    terminal runs pass the ref they were spawned for.
 
     ``continued_from_run_id`` links a fix-continue row to the transcript's
     first run. A row inserted without an explicit ``flow_id`` joins its
     transcript's flow tagging (newest run of the same ``file_path``).
-
-    The legacy ``runs.session_id`` column is written '' — no transcript key
-    survives the fold; rows are addressed by their own id.
     """
     if session_type is not None and session_type not in SESSION_TYPES:
         raise ValueError(f"session_type must be one of {', '.join(SESSION_TYPES)}"
@@ -976,11 +1014,11 @@ def insert_run(path: Path, command: str, args: list[str],
     out_lines = list(output or [])
     lines = out_lines[-MAX_RUN_OUTPUT_LINES:]
     truncated = bool(truncated) or len(out_lines) > len(lines)
-    names = ["session_id", "command", "args", "exit_code", "created_at",
+    names = ["command", "args", "exit_code", "created_at",
              "output", "truncated", "validation", "worktree_ref",
              "harness_name", "initiator_command", "prompt", "file_path",
              "session_type", "metadata", "state", "continued_from_run_id"]
-    vals: list = ["", command, json.dumps(args), exit_code, created,
+    vals: list = [command, json.dumps(args), exit_code, created,
                   "\n".join(lines), 1 if truncated else 0,
                   json.dumps(validation or {}), worktree_ref or "",
                   harness_name, initiator_command, prompt, file_path,
@@ -1181,7 +1219,7 @@ def list_runs(path: Path, limit: int = 200,
         return []
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
-        q = ("SELECT r.id, r.session_id, r.command, r.args, r.exit_code,"
+        q = ("SELECT r.id, r.command, r.args, r.exit_code,"
              " r.created_at, r.output, r.truncated, r.validation, r.flow_id,"
              " r.file_path, r.worktree_ref,"
              " r.session_type, r.state, r.harness_name, r.initiator_command,"
@@ -1299,7 +1337,9 @@ _REQUIRED_COLS = {
     "tracker_repos": ("tracker_key", "repo_key"),
     "worktrees": ("ref_key", "path", "branch", "added_at"),
     "pr_cache": ("branch", "payload", "checked_at"),
-    "runs": ("session_id", "command", "args", "created_at"),
+    # runs: no session_id — legacy DBs still carry it until the v16 fold
+    # rebuilds the table, and folded DBs must not be rebuilt for its loss.
+    "runs": ("command", "args", "created_at"),
     "issue_cache": ("source", "payload", "fetched_at"),
     "pr_candidates_cache": ("source", "payload", "fetched_at"),
     "release_diff_cache": ("repo_key", "count", "fetched_at"),
@@ -1332,6 +1372,7 @@ def _rebuild_required_columns(conn) -> list[str]:
     if was_on:
         conn.execute("PRAGMA foreign_keys = OFF")
     rebuilt: list[str] = []
+    runs_seq = _runs_seq(conn)
     try:
         for table, ddl in _canonical_ddl().items():
             info = list(conn.execute(f"PRAGMA table_info({table})"))
@@ -1360,9 +1401,10 @@ def _rebuild_required_columns(conn) -> list[str]:
         if was_on:
             conn.execute("PRAGMA foreign_keys = ON")
     if "runs" in rebuilt:
-        # AUTOINCREMENT sequence: keep it at/above the copied max(id).
-        conn.execute("UPDATE sqlite_sequence SET seq ="
-                     " (SELECT COALESCE(MAX(id), 0) FROM runs) WHERE name = 'runs'")
+        # The rebuild reset the AUTOINCREMENT sequence to the copied
+        # max(id); keep the pre-rebuild high-water mark so a previously
+        # issued id is never reused.
+        _restore_runs_seq(conn, runs_seq)
         conn.commit()
     return rebuilt
 
@@ -1388,7 +1430,9 @@ def _schema_current(path: Path) -> bool:
         if not {"trackers", "repos", "worktrees", "runs"} <= tables:
             return False
         # v16 folded the sessions entity into runs: the table must be gone
-        # and runs must carry the transcript columns.
+        # and runs must carry the transcript columns. The dead legacy
+        # session_id column is deliberately not required — a folded DB has
+        # dropped it and is current without it.
         if "sessions" in tables:
             return False
         cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}

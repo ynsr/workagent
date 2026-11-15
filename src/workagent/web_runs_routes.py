@@ -1,4 +1,4 @@
-"""runs + sessions API routes (split from webapp; mounted by create_app)."""
+"""runs API routes (split from webapp; mounted by create_app)."""
 from __future__ import annotations
 
 import asyncio

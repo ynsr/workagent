@@ -232,6 +232,29 @@ def test_run_summaries_carry_session_type(client, monkeypatch):
     assert rows[live_id]["session_type"] == "fix_comments"
 
 
+def test_persisted_pause_row_is_needs_input(client):
+    """A stored flow pause (exit 2, state='finished') serializes needs_input.
+
+    The live summary derives needs_input from exit 2; the persisted one used
+    to say failed, so a reload flipped a paused flow step to a failure. A
+    stored terminal state still wins when the exit code never landed.
+    """
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    paused = sq.insert_run(db, "flow step review", ["review", "rk-pause"], 2,
+                           worktree_ref="rk-pause", session_type="flow",
+                           state="finished", output=["paused: answer the question"])
+    finished = sq.insert_run(db, "start", ["rk-pause"], 0, worktree_ref="rk-pause",
+                             session_type="start", state="finished")
+    failed = sq.insert_run(db, "start", ["rk-pause"], None, worktree_ref="rk-pause",
+                           session_type="start", state="failed")
+    rows = {str(row["id"]): row for row in client.get("/api/runs").json()}
+    assert rows[f"db-{paused}"]["state"] == "needs_input"
+    assert rows[f"db-{finished}"]["state"] == "succeeded"
+    assert rows[f"db-{failed}"]["state"] == "failed"
+
+
 def test_review_fix_comments_defaults_to_fresh_session(client, monkeypatch):
     """Fix runs default to a fresh minted path (linked back via metadata).
 

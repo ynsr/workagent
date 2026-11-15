@@ -141,6 +141,39 @@ def test_init_db_is_idempotent_post_fold(tmp_path):
     assert {"worktree_ref", "harness_name", "initiator_command", "prompt",
             "file_path", "session_type", "metadata", "state",
             "continued_from_run_id"} <= cols
+    # The dead session_id column is never re-created after the fold.
+    assert "session_id" not in cols
+
+
+def test_migrate_v16_drops_dead_session_id_column(tmp_path):
+    """The fold rebuilds runs without the session FK column."""
+    db = tmp_path / "state.db"
+    _seed_legacy_sessions(db, [("t-1", "", "finished", "omp", "start", "p", "", "start")],
+                          [("t-1", "start", 0, "log")])
+    sq.init_db(db)
+    import sqlite3
+    cols = {r[1] for r in sqlite3.connect(db).execute("PRAGMA table_info(runs)")}
+    assert "session_id" not in cols
+
+
+def test_migrate_v16_never_reuses_a_deleted_run_id(tmp_path):
+    """The fold must not lower sqlite_sequence: a run id issued (and then
+    deleted) before the migration is never handed out again."""
+    import sqlite3
+    db = tmp_path / "state.db"
+    _seed_legacy_sessions(
+        db, [("t-1", "", "finished", "omp", "start", "p", "", "start")],
+        [("t-1", "start", 0, "a"), ("t-1", "start", 0, "b"),
+         ("t-1", "start", 0, "c")])
+    with sqlite3.connect(db) as conn:
+        conn.execute("DELETE FROM runs WHERE id = 3")  # highest id gone pre-fold
+    sq._INIT_CACHE.pop(str(db), None)
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        assert conn.execute("SELECT COALESCE(MAX(id), 0) FROM runs").fetchone()[0] == 2
+        assert conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'runs'"
+                            ).fetchone()[0] == 3
+    assert sq.insert_run(db, "start", [], 0) == 4
 
 
 def test_session_id_shape():

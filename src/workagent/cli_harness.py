@@ -157,13 +157,13 @@ def _session_action(result: dict) -> str | None:
 
 def _rescope_session_path(session_path: str, harness_name: str, branch: str,
                           session_type: str | None = None) -> str:
-    """Move a branch-less pinned path under sessions/<harness>/<branch>/<action>/.
+    """Move a branch-less pinned path under runs/<harness>/<branch>/<action>/.
 
     The web server mints --session-file before the branch is known (Review
     learns the MR head branch only after fetching it). The CLI child knows
     the branch — rescope there so transcripts land branch-scoped like Start.
-    The session id (transcript stem, DB PK) is unchanged. No-op when the
-    branch is empty or the path is already scoped.
+    The transcript id (file stem) is unchanged. No-op when the branch is
+    empty or the path is already scoped.
     """
     if not session_path or not branch:
         return session_path
@@ -676,7 +676,9 @@ def record_preview_run(key: str, command: str, prompt: str,
     transcript's first run via ``continued_from_run_id`` — and that row
     carries the derived session_type too (it has none of its own) while
     the adopted row keeps its state (a finished review row must not flip
-    back to preview).
+    back to preview). The invocation row still carries its own worktree
+    attribution (worktree_ref, harness_name, initiator command, prompt):
+    only the transcript identity (file_path) stays with the adopted row.
     """
     from . import store_sqlite as _sq
     try:
@@ -715,6 +717,8 @@ def record_preview_run(key: str, command: str, prompt: str,
                     root = existing
                 return _sq.insert_run(
                     db, command, run_args, exit_code,
+                    worktree_ref=key or None, harness_name=harness_name,
+                    initiator_command=command, prompt=prompt,
                     metadata=meta, state="preview", session_type=stype,
                     continued_from_run_id=int(root["id"]),
                     output=[output])

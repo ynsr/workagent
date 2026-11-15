@@ -126,7 +126,7 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
     + local branch via `branch -D`), plus a recorded-path fallback (direct
     `worktree remove --force` + rmtree) when the repo is stale, then drop
     the row (already gone from the store's view — gc_soft_deleted removes
-    it; sessions/runs CASCADE).
+    it and purges its runs rows).
     Remote branches are NOT touched: the merge-or-close at cleanup time
     already decided their fate. Returns per-row status dicts.
     Rows blocked by a pending/running prodtest item are never deleted
@@ -188,8 +188,8 @@ def destroy_deleted(keys: list[str], dry_run: bool = False) -> list[dict]:
     """Permanently destroy soft-deleted rows: worktree dir + branches + row.
 
     Tears down surviving local state: git-wt cleanup (worktree dir), local
-    branch delete, then row drop. Sessions/runs CASCADE with the row and
-    the harness transcript folders/sessions are deleted from disk.
+    branch delete, then row drop. The worktree's runs rows are purged with
+    the row and the harness transcripts are deleted from disk.
     Remote branches are NOT touched. Returns per-key status dicts.
     Keys blocked by a pending/running prodtest item are refused with
     `skipped:prodtest-pending`. Never raises for unknown keys.
