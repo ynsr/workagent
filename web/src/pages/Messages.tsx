@@ -315,7 +315,6 @@ function MessageRegisterDialog({ onClose, onDone }: { onClose: () => void; onDon
       await createRun.mutateAsync({
         command: "message",
         args: ["add", "--message-id", trimmed, "--repo", repo.trim(), "--fetch"],
-        confirm: true,
       })
       toast.success("Message register started")
       onDone()

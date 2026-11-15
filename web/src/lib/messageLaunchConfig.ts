@@ -3,7 +3,9 @@ import type { RunMode } from "@/lib/launchConfig"
 const MESSAGE_ID_RE = /^[a-z0-9]{26}$/
 
 /** Bare id (or the trailing id of a Mattermost `/pl/` permalink, tolerating
- * query/fragment/trailing slash); "" when the ref carries no valid id. */
+ * query/fragment/trailing slash); "" when the ref carries no valid id.
+ * Mirrors `extract_message_id` in `src/workagent/store_messages.py` — keep
+ * the two in sync when changing permalink rules. */
 export function extractMessageId(ref: string): string {
   const raw = (ref ?? "").trim()
   if (!raw) return ""

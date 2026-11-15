@@ -16,6 +16,8 @@ def extract_message_id(ref: str) -> str:
     segment is ignored, the trailing segment is the id (26-char lowercase
     alnum). Query/fragment/trailing slash tolerated. Anything else passes
     through unchanged; downstream resolution still rejects unknown ids.
+    Mirrors ``extractMessageId`` in ``web/src/lib/messageLaunchConfig.ts`` —
+    keep the two in sync when changing permalink rules.
     """
     raw = (ref or "").strip()
     if not raw or "/pl/" not in raw:
