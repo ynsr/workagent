@@ -1,29 +1,26 @@
 import { useMemo, useState } from "react"
 import { Pause } from "lucide-react"
 import type { WorktreeMap } from "@/lib/api"
-import { matchesQuery } from "@/components/StatusCells"
 import { StatusTable, type StatusTableActions } from "@/components/StatusTable"
-import { Input } from "@/components/ui/input"
+import { EMPTY_WORKTREE_FILTERS, filterWorktreeKeys, type WorktreeFilterState } from "@/lib/worktreeFilter"
 
-/** Collapsed, searchable deactivated-worktrees section with Reactivate-only actions. */
+/** Collapsed deactivated-worktrees section with Reactivate-only actions.
+ * Search lives in the shared Dashboard filter above (issue #102). */
 export function DeactivatedTable({
   worktrees,
   actions,
+  filter = EMPTY_WORKTREE_FILTERS,
 }: {
   worktrees: WorktreeMap
   actions: StatusTableActions
+  filter?: WorktreeFilterState
 }) {
   const [open, setOpen] = useState(false)
-  const [q, setQ] = useState("")
   const keys = useMemo(() => Object.keys(worktrees), [worktrees])
   const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase()
-    return Object.fromEntries(
-      Object.entries(worktrees).filter(
-        ([k, e]) => !needle || matchesQuery(k, e, needle),
-      ),
-    )
-  }, [worktrees, q])
+    const hits = new Set(filterWorktreeKeys(worktrees, filter))
+    return Object.fromEntries(Object.entries(worktrees).filter(([k]) => hits.has(k)))
+  }, [worktrees, filter])
   if (keys.length === 0) return null
   return (
     <section className="mt-4 rounded-md border bg-muted/40">
@@ -37,12 +34,6 @@ export function DeactivatedTable({
       </button>
       {open ? (
         <div className="grid gap-2 px-3 pb-3">
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Filter deactivated worktrees"
-            className="placeholder:text-muted-foreground/60 placeholder:italic"
-          />
           <StatusTable
             worktrees={filtered}
             actions={actions}

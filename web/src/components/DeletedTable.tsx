@@ -1,40 +1,43 @@
 import { useMemo, useState } from "react"
 import { Trash2 } from "lucide-react"
 import type { Repo, WorktreeMap } from "@/lib/api"
-import { matchesQuery } from "@/components/StatusCells"
 import { StatusTable, type StatusTableActions, type StatusTableSelection } from "@/components/StatusTable"
-import { repoDisplayForEntry } from "@/lib/useRepoTabs"
-import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { EMPTY_WORKTREE_FILTERS, filterWorktreeKeys, type WorktreeFilterState } from "@/lib/worktreeFilter"
+import { repoDisplayForEntry } from "@/lib/useRepoTabs"
 
-/** Collapsed, searchable soft-deleted-worktrees section with undelete/destroy actions. */
+/** Collapsed soft-deleted-worktrees section with undelete/destroy actions.
+ * Search lives in the shared Dashboard filter above (issue #102): this
+ * table applies the parent filter instead of owning a second input,
+ * including free-text repo-name matching via repoDisplayForEntry. */
 export function DeletedTable({
   worktrees,
   actions,
   repos,
   onDestroyDeleted,
   selection,
+  filter = EMPTY_WORKTREE_FILTERS,
 }: {
   worktrees: WorktreeMap
   actions: StatusTableActions
   repos?: Repo[]
   onDestroyDeleted?: (keys: string[]) => void
   selection?: StatusTableSelection
+  filter?: WorktreeFilterState
 }) {
   const [open, setOpen] = useState(false)
-  const [q, setQ] = useState("")
-  const list = repos ?? []
+  const repoList = repos ?? []
   const keys = useMemo(() => Object.keys(worktrees), [worktrees])
   const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase()
-    return Object.fromEntries(
-      Object.entries(worktrees).filter(([k, e]) => {
-        if (!needle) return true
-        if (repoDisplayForEntry(e, list).toLowerCase().includes(needle)) return true
-        return matchesQuery(k, e, needle)
-      }),
+    const hits = new Set(
+      filterWorktreeKeys(worktrees, filter, "", undefined, (entry) => repoDisplayForEntry(entry, repoList)),
     )
-  }, [worktrees, q, list])
+    return Object.fromEntries(Object.entries(worktrees).filter(([k]) => hits.has(k)))
+  }, [worktrees, filter, repoList])
+  const visibleSelected = useMemo(() => {
+    const visible = new Set(Object.keys(filtered))
+    return [...(selection?.selected ?? new Set<string>())].filter((k) => visible.has(k)).sort()
+  }, [filtered, selection?.selected])
   if (keys.length === 0) return null
   return (
     <section className="mt-4 rounded-md border bg-muted/40">
@@ -49,20 +52,19 @@ export function DeletedTable({
       {open ? (
         <div className="grid gap-2 px-3 pb-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Filter deleted worktrees (key, branch, repo…)"
-              className="min-w-52 flex-1 placeholder:text-muted-foreground/60 placeholder:italic sm:max-w-xs"
-            />
             {onDestroyDeleted && selection?.selected && selection.selected.size > 0 ? (
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => onDestroyDeleted([...(selection.selected ?? new Set<string>())].sort())}
-                title={`Permanently destroy ${selection.selected.size} selected soft-deleted row(s): worktree dir + local branch + row. Remote branches untouched.`}
+                onClick={() => {
+                  // Destroy only the selection still visible in this table
+                  // (shared-form scoping, issue #102): the parent selection
+                  // may hold keys filtered out above.
+                  onDestroyDeleted(visibleSelected)
+                }}
+                title={`Permanently destroy ${visibleSelected.length} selected soft-deleted row(s): worktree dir + local branch + AI harness sessions. Remote branches untouched.`}
               >
-                Destroy ({selection.selected.size})
+                Destroy ({visibleSelected.length})
               </Button>
             ) : null}
           </div>

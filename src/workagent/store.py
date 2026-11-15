@@ -950,6 +950,11 @@ def list_prodtests() -> list[dict]:
     return _sq.list_prodtests(_sq.db_path())
 
 
+def delete_prodtest(key: str) -> bool:
+    """Delete one prodtest item row; True when a row existed."""
+    from . import store_sqlite as _sq
+    return _sq.delete_prodtest(_sq.db_path(), key)
+
 def gc_blocked_by_prodtest(key: str) -> bool:
     """True when GC must skip *key* (prodtest pending/running)."""
     from . import store_sqlite as _sq

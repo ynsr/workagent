@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest"
 import { MESSAGE_LAUNCH_INITIAL, MESSAGE_LAUNCH_MODES, VALIDATE_CLAIMED_ISSUES_PROMPT, buildMessageArgs, extractMessageId, isRegisteredMessageRef, messageLaunchValid } from "@/lib/messageLaunchConfig"
 
 describe("messageLaunchConfig modes", () => {
-  it("exposes the four message tabs without draft-reply", () => {
-    expect(MESSAGE_LAUNCH_MODES).toEqual(["adhoc", "validate", "action", "flow"])
+  it("exposes the five message tabs including draft-reply", () => {
+    expect(MESSAGE_LAUNCH_MODES).toEqual(["adhoc", "validate", "draft-reply", "action", "flow"])
   })
 
   it("seeds the validate prompt with claimed-issues copy", () => {
@@ -100,6 +100,30 @@ describe("buildMessageArgs", () => {
         repo: "",
       }),
     ).toEqual(["action", "run", "triage", "p1", "--yes"])
+  })
+
+  it("forwards extra prompt on the draft-reply tab", () => {
+    expect(
+      buildMessageArgs("draft-reply", {
+        ref: "p1",
+        extraPrompt: "audience: backend team",
+        runMode: "headless",
+        refOverride: "",
+        repo: "",
+      }),
+    ).toEqual(["draft-reply", "p1", "--extra-prompt", "audience: backend team", "--launch", "--yes"])
+  })
+
+  it("omits extra prompt when blank on the draft-reply tab", () => {
+    expect(
+      buildMessageArgs("draft-reply", {
+        ref: "p1",
+        extraPrompt: "   ",
+        runMode: "headless",
+        refOverride: "",
+        repo: "",
+      }),
+    ).toEqual(["draft-reply", "p1", "--launch", "--yes"])
   })
 })
 

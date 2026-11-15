@@ -39,6 +39,10 @@ const CONFIRM_COPY: Record<MessageLaunchMode, { title: string; description: stri
     title: "Launch validate claimed issues",
     description: "The agent validates the claimed issues and generates Jira issues if confirmed. The server appends --yes.",
   },
+  "draft-reply": {
+    title: "Draft Persian reply",
+    description: "The agent drafts a Persian coworker-voice reply (mm-reply-drafter + persian-chat-generator: facts-only, ZWNJ-free, ≤160 chars). NEVER sends — review and send via mm. The server appends --yes.",
+  },
   action: {
     title: "Run message action",
     description: "Runs a message-category custom action grounded in this message. The server appends --yes.",
@@ -51,6 +55,7 @@ const CONFIRM_COPY: Record<MessageLaunchMode, { title: string; description: stri
 const NEEDS_RUN_MODE: Record<MessageLaunchMode, boolean> = {
   adhoc: true,
   validate: true,
+  "draft-reply": true,
   action: true,
   flow: false,
 }
@@ -143,6 +148,7 @@ export function MessageLaunch() {
         { label: "Message", value: form.ref.trim(), mono: true },
         ...(tab === "adhoc" && form.prompt.trim() ? [{ label: "Prompt", value: form.prompt.trim().slice(0, 200) }] : []),
         ...(tab === "validate" && form.prompt.trim() ? [{ label: "Instructions", value: form.prompt.trim().slice(0, 200) }] : []),
+        ...(tab === "draft-reply" && form.extraPrompt.trim() ? [{ label: "Extra prompt", value: form.extraPrompt.trim().slice(0, 200) }] : []),
         ...((tab === "action" || tab === "flow") && form.label ? [{ label: tab === "action" ? "Action" : "Template", value: form.label, mono: true }] : []),
         ...(form.refOverride.trim() ? [{ label: "Worktree", value: form.refOverride.trim(), mono: true }] : []),
         ...(form.repo.trim() ? [{ label: "Repo", value: form.repo.trim(), mono: true }] : []),
@@ -256,6 +262,36 @@ export function MessageLaunch() {
                 value={form.prompt}
                 onChange={(e) => update("prompt", e.target.value)}
                 placeholder={VALIDATE_CLAIMED_ISSUES_PROMPT}
+                autoComplete="off"
+                spellCheck={false}
+                rows={3}
+                className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+              />
+            </div>
+          ) : null}
+
+          {tab === "draft-reply" ? (
+            <div className="grid gap-2">
+              <div className="grid gap-2 rounded-md border border-dashed px-3 py-2.5 text-sm text-muted-foreground">
+                <p>
+                  Drafts a Persian coworker-voice reply grounded in this message
+                  (skills: <span className="font-mono">mm-reply-drafter</span> +{" "}
+                  <span className="font-mono">persian-chat-generator</span>).
+                </p>
+                <ul className="list-disc space-y-1 pl-5 text-xs">
+                  <li>Facts only — no invented tests, fixes, ETAs, or causes.</li>
+                  <li>ZWNJ-free colloquial Persian, ≤160 chars, output-only draft.</li>
+                  <li>NEVER sends — review and send the draft via <span className="font-mono">mm</span>.</li>
+                </ul>
+              </div>
+              <Label htmlFor="message-launch-extra-prompt">
+                <FieldHelp label="Extra prompt" flag="--extra-prompt" description="Extra instructions for the reply draft (e.g. audience, thread facts)." />
+              </Label>
+              <textarea
+                id="message-launch-extra-prompt"
+                value={form.extraPrompt}
+                onChange={(e) => update("extraPrompt", e.target.value)}
+                placeholder="e.g. audience, thread facts"
                 autoComplete="off"
                 spellCheck={false}
                 rows={3}

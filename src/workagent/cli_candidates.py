@@ -24,14 +24,18 @@ from .cli_core import (
 # ── candidates ────────────────────────────────────────────────────────
 
 
-def _linked_sets() -> tuple[set, set, set, set, dict]:
+def _linked_sets(include_inactive: bool = True, include_deleted: bool = True) -> tuple[set, set, set, set, dict]:
     """Linked URL/branch/path sets shared by the per-source candidate fetchers.
 
     URLs are normalized via `refs.normalize_pr_url` (trailing slash + `.git`
     stripped), so a clone-URL paste or hand-added slash still matches.
     `linked_paths` resolves each linked worktree's live branch via git, so
-    a path-only link (no recorded branch) still drops its PR."""
-    links = store.load_links()
+    a path-only link (no recorded branch) still drops its PR.
+    Deactivated and soft-deleted rows are included by default: the
+    candidates table must not resurface worktrees that are still in the
+    DB (issue #102)."""
+    links = store.load_links(include_inactive=include_inactive,
+                             include_deleted=include_deleted)
     linked_urls = set()
     linked_issue_urls = set()
     linked_branches = set()
@@ -254,9 +258,10 @@ def _dir_mtime(path: Path) -> str:
 def _scan_worktrees() -> list[dict]:
     """Unregistered on-disk worktrees under <scan_root>/<repo>/: two shapes —
     `<branch>` and `<issue-type>/<branch>` (recombined with a `/`). Paths
-    already linked in links.json are excluded; non-worktree dirs are
-    skipped via worktrees.is_valid_worktree. Read-only."""
-    links = store.load_links()
+    linked in any row (active, deactivated, or soft-deleted) are excluded
+    (issue #102); non-worktree dirs are skipped via
+    worktrees.is_valid_worktree. Read-only."""
+    links = store.load_links(include_inactive=True, include_deleted=True)
     known = set()
     for v in links.values():
         p = v.get("worktree", "")

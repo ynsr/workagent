@@ -18,53 +18,23 @@ import type { StatusTableActions, StatusTableEmbed, StatusTableSelection } from 
 import { RowActions } from "@/components/StatusActions"
 import { CopyCell } from "@/components/CopyCell"
 import { hiddenOverlayIds } from "@/lib/overlayButtons"
-import { CommitsCell, ProdtestCell, ReviewsCell, matchesQuery } from "@/components/StatusCells"
+import { CommitsCell, ProdtestCell, ReviewsCell } from "@/components/StatusCells"
 import { exactDateTime, relativeDate, shortWorktreePath } from "@/lib/format"
+import {
+  EMPTY_WORKTREE_FILTERS,
+  isIssueNotDone,
+  issueStatusOf,
+  issueStatusOptions,
+  prStatusOf,
+  worktreeMatchesFilter,
+  type IssueFilter,
+  type PrStatusFilter,
+  type WorktreeFilterState,
+} from "@/lib/worktreeFilter"
 
-export type PrStatusFilter = "" | "open" | "merged" | "closed" | "none"
-export type IssueFilter = "" | "none" | "not-done" | string
-
-/** PR state for filtering: lowercased pr_detail.state, "none" when no PR. */
-export function prStatusOf(entry: WorktreeMap[string]): "open" | "merged" | "closed" | "none" {
-  const s = (entry.pr_detail?.state ?? "").trim().toLowerCase()
-  if (s === "open" || s === "opened") return "open"
-  if (s === "merged") return "merged"
-  if (s === "closed" || s === "close") return "closed"
-  return "none"
-}
-
-/**
- * Issue status for filtering: lowercased `issue_status`, "" when the
- * worktree has no linked issue or the status is unknown.
- */
-export function issueStatusOf(entry: WorktreeMap[string]): string {
-  return (entry.issue_status ?? "").trim().toLowerCase()
-}
-
-/**
- * Distinct linked issue statuses across rows (sorted), for the filter
- * dropdown. Unknown/absent statuses are not listed.
- */
-export function issueStatusOptions(worktrees: WorktreeMap): string[] {
-  const names = new Set<string>()
-  for (const entry of Object.values(worktrees)) {
-    const s = issueStatusOf(entry)
-    if (s) names.add(s)
-  }
-  return [...names].sort((a, b) => a.localeCompare(b))
-}
-
-/**
- * "Not Done" grouping: open or in-progress tracker states (To Do, In
- * Progress, Review, Product Test, ...); Done/Resolved/Closed and legacy
- * `released`, plus unknown, are done. `released`/`closed` stay accepted
- * for trackers that still report them.
- */
-export function isIssueNotDone(status: string): boolean {
-  const s = (status ?? "").trim().toLowerCase()
-  if (!s || s === "done" || s === "released" || s === "resolved" || s === "closed") return false
-  return true
-}
+export type { PrStatusFilter, IssueFilter }
+export { prStatusOf, issueStatusOf, issueStatusOptions, isIssueNotDone }
+export type { WorktreeFilterState }
 function RepoTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
     <button
@@ -144,13 +114,24 @@ export function StatusTable({
   const prParam = filterParam === null ? null : `${filterParam}_pr`
   const issueParam = filterParam === null ? null : `${filterParam}_issue`
   const authorParam = filterParam === null ? null : `${filterParam}_author`
-  const q = filterParam === null ? "" : (params.get(filterParam) ?? "").trim()
-  const prFilter = (prParam === null ? "" : (params.get(prParam) ?? "").trim().toLowerCase()) as PrStatusFilter
-  const issueFilter = (issueParam === null ? "" : (params.get(issueParam) ?? "").trim()) as IssueFilter
-  const authorFilter = authorParam === null ? "" : (params.get(authorParam) ?? "").trim()
+  const externalFilter = embed?.externalFilter ?? null
+  // Shared-filter mode (Dashboard, issue #102): the parent owns one
+  // WorktreeFilterState applied to every table; the table skips its own
+  // URL filter. Otherwise the classic self-owned `?q=` toolbar applies.
+  const urlFilter: WorktreeFilterState = {
+    q: filterParam === null ? "" : (params.get(filterParam) ?? ""),
+    pr: (prParam === null ? "" : (params.get(prParam) ?? "").trim().toLowerCase()) as PrStatusFilter,
+    issue: (issueParam === null ? "" : (params.get(issueParam) ?? "").trim()) as IssueFilter,
+    author: authorParam === null ? "" : (params.get(authorParam) ?? ""),
+  }
+  const filter: WorktreeFilterState = externalFilter ?? urlFilter
+  const usesExternalFilter = externalFilter !== null && externalFilter !== undefined
+  const q = usesExternalFilter ? filter.q : filter.q.trim()
+  const prFilter = filter.pr
+  const issueFilter = filter.issue
+  const authorFilter = usesExternalFilter ? filter.author : filter.author.trim()
   const [expanded, setExpanded] = useState<string | null>(null)
   const repoFilter = repoTabs?.repoFilter ?? ""
-  // Selection: controlled when the parent passes `selected`, else internal.
   // `?sel=` carries the keys across refresh/share; unknown keys dropped
   // (null selParam = internal-only, safe for embedded second tables).
   const [internalSel, setInternalSel] = useState<Set<string>>(new Set<string>())
@@ -191,22 +172,12 @@ export function StatusTable({
     return out
   }, [worktrees, repoTabs])
   const keys = useMemo(() => {
-    const needle = q.toLowerCase()
-    const authorNeedle = authorFilter.toLowerCase()
+    const f: WorktreeFilterState = { q, pr: prFilter, issue: issueFilter, author: authorFilter }
+    const repoOf = repoTabs ? (entry: WorktreeMap[string]) => repoKeyForItem(entry, repoTabs.repos) : undefined
     const visible = Object.keys(worktrees).filter((key) => {
       const entry = worktrees[key]
       if (!entry) return false
-      if (repoFilter && repoTabs) {
-        const k = repoKeyForItem(entry, repoTabs.repos)
-        const want = repoFilter === "(other)" ? "(other)" : repoFilter
-        if (k !== want) return false
-      }
-      if (prFilter && prStatusOf(entry) !== prFilter) return false
-      if (issueFilter === "none" && issueStatusOf(entry)) return false
-      else if (issueFilter === "not-done" && !isIssueNotDone(issueStatusOf(entry))) return false
-      else if (issueFilter && issueFilter !== "none" && issueFilter !== "not-done" && issueStatusOf(entry) !== issueFilter) return false
-      if (authorNeedle && !((entry.pr_detail?.author ?? "").toLowerCase().includes(authorNeedle))) return false
-      return !needle || matchesQuery(key, entry, needle)
+      return worktreeMatchesFilter(key, entry, f, repoFilter, repoOf)
     })
     const byAdded = (a: string, b: string) =>
       (worktrees[b]?.added_at ?? "").localeCompare(worktrees[a]?.added_at ?? "")
@@ -229,7 +200,6 @@ export function StatusTable({
     }
     return [...parents.flatMap((p) => [p, ...(childrenOf.get(p) ?? [])]), ...orphans.sort(byAdded)]
   }, [worktrees, q, repoFilter, repoTabs, prFilter, issueFilter, authorFilter])
-  // Hydrate `?sel=` once per worktree-set (unknown keys dropped).
   const hydratedFor = useRef<string>("")
   useEffect(() => {
     if (selParam === null) return
@@ -256,6 +226,14 @@ export function StatusTable({
   }, [visibleJoined])
 
   function setParam(param: string | null, next: string) {
+    if (usesExternalFilter && embed?.onExternalFilterChange) {
+      const trimmed = next.trim()
+      if (param === filterParam) embed.onExternalFilterChange({ ...filter, q: next })
+      else if (param === prParam) embed.onExternalFilterChange({ ...filter, pr: (trimmed.toLowerCase() || "") as PrStatusFilter })
+      else if (param === issueParam) embed.onExternalFilterChange({ ...filter, issue: trimmed })
+      else if (param === authorParam) embed.onExternalFilterChange({ ...filter, author: next })
+      return
+    }
     if (param === null) return
     const p = new URLSearchParams(params)
     if (next.trim()) p.set(param, next.trim())
@@ -264,6 +242,10 @@ export function StatusTable({
   }
 
   function clearFilters() {
+    if (usesExternalFilter && embed?.onExternalFilterChange) {
+      embed.onExternalFilterChange({ ...EMPTY_WORKTREE_FILTERS })
+      return
+    }
     if (filterParam === null) return
     const p = new URLSearchParams(params)
     p.delete(filterParam)
@@ -282,7 +264,7 @@ export function StatusTable({
         <div className="relative min-w-52 flex-1 sm:max-w-xs">
           <Search aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            value={filterParam === null ? "" : (params.get(filterParam) ?? "")}
+            value={usesExternalFilter ? q : (filterParam === null ? "" : (params.get(filterParam) ?? ""))}
             onChange={(e) => setParam(filterParam, e.target.value)}
             placeholder="Filter by key, branch, PR, path…"
             aria-label="Filter worktrees"

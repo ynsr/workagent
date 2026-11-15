@@ -1,5 +1,4 @@
 import type { WorktreeMap } from "@/lib/api"
-
 export interface StatusTableActions {
   /** Navigate to Launch with mode=sync&ref=key (prefill contract). */
   onSync?: (key: string) => void
@@ -49,4 +48,10 @@ export interface StatusTableEmbed {
   selParam?: string | null
   /** URL param carrying the filter text (default "q"); null = ignore the URL filter. */
   filterParam?: string | null
+  /** Parent-owned shared filter (issue #102): skips the table's own URL filter.
+   * Structural copy of WorktreeFilterState (no import: StatusTable is the
+   * type root for StatusTableMain/WorktreeFilterForm). */
+  externalFilter?: { q: string; pr: "" | "open" | "merged" | "closed" | "none"; issue: "" | "none" | "not-done" | string; author: string }
+  /** Called when the shared filter changes (toolbar edits in shared mode). */
+  onExternalFilterChange?: (next: { q: string; pr: "" | "open" | "merged" | "closed" | "none"; issue: "" | "none" | "not-done" | string; author: string }) => void
 }
