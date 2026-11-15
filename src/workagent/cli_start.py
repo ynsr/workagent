@@ -35,8 +35,8 @@ def _resolve_repo_for_compare(explicit: str) -> str:
         got = (store.load_repos() or {}).get(explicit, {})
         if isinstance(got, dict) and str(got.get("path", "") or ""):
             return str(got.get("path", ""))
-    except Exception:
-        pass
+    except Exception as exc:
+        eprint(f"warning: repo registry unreadable ({exc}); comparing --repo literally")
     return explicit
 
 def _same_repo_path(a: str, b: str) -> bool:
@@ -138,7 +138,7 @@ def start(
         # Rule 1: the issue is already linked — reuse that worktree (never
         # create a second one, never touch the CWD). Its repo wins; an
         # explicit --repo that disagrees is a usage error, not a silent drop.
-        _want = _resolve_repo_for_compare(str(repo))
+        _want = _resolve_repo_for_compare(str(repo)) if repo else ""
         if repo and str(existing.get("repo", "")) and not _same_repo_path(_want, str(existing.get("repo", ""))):
             _fail(f"--repo {repo} disagrees with the linked worktree repo"
                   f" {existing.get('repo', '')} for {key}", EXIT_USAGE)
