@@ -197,6 +197,28 @@ def test_api_review_session_returns_latest(client):
     assert "session_id" not in r.json()  # renaming decision: no shim
 
 
+def test_run_summaries_carry_session_type(client, monkeypatch):
+    """Both run summaries expose session_type for the Runs transcript label.
+
+    A fix-comments launch persists command='review' with the flags dropped, so
+    the stored type is the only thing that distinguishes it from the review it
+    fixes; the UI reads it instead of re-deriving the type from the command.
+    """
+    from workagent import store_sqlite as sq
+    _stub_spawn(monkeypatch)
+    db = sq.db_path()
+    sq.init_db(db)
+    rid = sq.insert_run(db, "review", ["rk3"], 0, worktree_ref="rk3",
+                        harness_name="omp", initiator_command="review",
+                        prompt="p", file_path="/s/rev-3.jsonl",
+                        session_type="fix_comments", state="finished")
+    live = client.app.state.registry.create("review", ["rk3"], "review:rk3")
+    live.session_type = "review"
+    rows = {str(r["id"]): r for r in client.get("/api/runs").json()}
+    assert rows[f"db-{rid}"]["session_type"] == "fix_comments"
+    assert rows[live.id]["session_type"] == "review"
+
+
 def test_review_fix_comments_defaults_to_fresh_session(client, monkeypatch):
     """Fix runs default to a fresh minted path (linked back via metadata).
 
