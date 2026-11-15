@@ -387,7 +387,7 @@ stale plans.
   "state": "running", "exit_code": null, "truncated": false,
   "created": 1730000000.0, "target": "sync:jira:IPG-932",
   "session_file": "/home/x/.config/workagent/runs/omp/….jsonl",
-  "worktree": "/home/x/wt", "last_seq": 42}]
+  "session_type": "sync", "worktree": "/home/x/wt", "last_seq": 42}]
 ```
 `session_file`/`worktree` are non-empty only for runs that executed a
 harness transcript (`start`/`review`, or `sync` with an explicit
@@ -399,6 +399,13 @@ transcript reuse it) — except `--all` runs, which
 carry no `--session-file` (the CLI rejects it with `--all`; each
 per-worktree child generates its own transcript). Clients show resume
 buttons iff `session_file` is present.
+
+`session_type` is the stored transcript kind
+(`start|review|sync|fix_comments|custom_action|flow|prodtest_plan|prodtest_run`,
+null for rows recorded before the column existed) — the Runs UI label. It is
+authoritative over the command: a persisted fix-comments run carries
+`command="review"` with the flags dropped, so only the type tells it apart
+from the review it fixes.
 
 Serve-persisted runs (`db-<id>`) are the CLI invocations persisted at
 spawn with progressive output updates (throttled ~2s) and finalized at
