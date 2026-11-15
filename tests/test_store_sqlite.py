@@ -105,11 +105,28 @@ def test_migrate_v16_folds_sessions_into_runs(tmp_path):
     legacy_only.write_text("{}\n")
     assert sq.resolve_transcript_path(
         str(tmp_path / "runs" / "omp" / "old" / "u.jsonl"), tmp_path) == legacy_only
+    # An empty stored path (runs.file_path default) never resolves to the CWD.
+    assert sq.resolve_transcript_path("", tmp_path) is None
 
     # list_runs reads transcript columns straight off the run row.
     listed = sq.list_runs(db)
     assert {r["session_type"] for r in listed} == {"review"}
     assert all(r["file_path"].endswith(".jsonl") for r in listed)
+
+
+def test_migrate_v16_keeps_execution_run_state(tmp_path):
+    """Real executions also start with the ``harness command:`` banner but
+    carry a second output line — the fold must not stamp them preview."""
+    db = tmp_path / "state.db"
+    _seed_legacy_sessions(
+        db, [("t-1", "", "finished", "omp", "review", "p", "", "review")],
+        [("t-1", "review", 0, "harness command: omp review --session-dir x"),
+         ("t-1", "review", 1,
+          "harness command: omp review --session-dir x\nreview log")])
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        states = [r[0] for r in conn.execute("SELECT state FROM runs ORDER BY id")]
+    assert states == ["preview", "finished"]
 
 
 def test_init_db_is_idempotent_post_fold(tmp_path):

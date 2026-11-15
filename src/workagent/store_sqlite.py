@@ -341,8 +341,9 @@ def _migrate_flow_linkage(conn) -> None:
 
     flow_id is the query path (metadata.flow_id stays as history). NULL
     worktree_ref = unattached flow row, exempt from the worktrees FK.
-    Idempotent: ADD COLUMN skipped when present; sessions rebuilt from the
-    canonical DDL only while worktree_ref is still NOT NULL.
+    Idempotent: ADD COLUMN / backfill skip what is already present. The
+    sessions table is folded into runs and dropped by
+    migrate_sessions_into_runs (v16), so nothing rebuilds it here.
     """
     import json as _json
     info = list(conn.execute("PRAGMA table_info(sessions)"))
@@ -354,33 +355,7 @@ def _migrate_flow_linkage(conn) -> None:
     rcols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
     if rcols and "flow_id" not in rcols:
         conn.execute("ALTER TABLE runs ADD COLUMN flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL")
-    wr = next((r for r in info if r[1] == "worktree_ref"), None)
-    # sessions is folded into runs by migrate_sessions_into_runs (v16): an
-    # older DB still carries the table, but no canonical sessions DDL exists
-    # to rebuild it from — the fold reads it as-is and drops it.
-    ddl = _canonical_ddl().get("sessions")
-    if wr is not None and wr[3] == 1 and wr[4] is None and ddl:
-        if conn.in_transaction:
-            conn.commit()
-        was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
-        if was_on:
-            conn.execute("PRAGMA foreign_keys = OFF")
-        try:
-            conn.execute('DROP TABLE IF EXISTS "sessions_rebuild"')
-            new_cols = {r[1] for r in conn.execute('PRAGMA table_info("sessions_rebuild")')}
-            old_cols = [r[1] for r in info if r[1] in new_cols]
-            select = ", ".join(
-                "NULLIF(\"%s\", '')" % c if c == "worktree_ref" else '"%s"' % c
-                for c in old_cols)
-            columns = ", ".join('"%s"' % c for c in old_cols)
-            conn.execute(f'INSERT INTO "sessions_rebuild" ({columns}) SELECT {select} FROM "sessions"')
-            conn.execute('DROP TABLE "sessions"')
-            conn.execute('ALTER TABLE "sessions_rebuild" RENAME TO "sessions"')
-            if conn.in_transaction:
-                conn.commit()
-        finally:
-            if was_on:
-                conn.execute("PRAGMA foreign_keys = ON")
+
     # Backfill flow_id from metadata.flow_id (integer ids of live flows only).
     try:
         live = {r[0] for r in conn.execute("SELECT id FROM flows")}
@@ -682,16 +657,17 @@ def _transcript_alt(file_path: str, src: Path, dst: Path) -> str:
 
 
 def resolve_transcript_path(file_path: str,
-                            config_dir: Path | None = None) -> Path:
+                            config_dir: Path | None = None) -> Path | None:
     """Stored transcript path → the readable file (runs/ first, sessions/ fallback).
 
     v16 moved transcripts from ``sessions/`` to ``runs/`` and rewrote the
     stored paths; a row that still names the old root (pre-migration DB,
     restored backup, transcript that could not move) resolves through the
-    fallback instead of failing to resume.
+    fallback instead of failing to resume. An empty stored path (runs carry
+    ``file_path DEFAULT ''``) resolves to None — never to the CWD.
     """
     if not file_path:
-        return Path("")
+        return None
     stored = Path(file_path).expanduser()
     if config_dir is None:
         from . import store as _store
@@ -735,11 +711,12 @@ def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
     metadata, state) and the runs of one transcript form a chain through
     continued_from_run_id (each later run points at the transcript's first
     run) — that is how fix-continue stays resolvable without sessions.
-    Preview rows keep state='preview' (their stored output carries the
-    ``harness command:`` contract). Then the runs table is rebuilt without
-    the sessions FK, the sessions table dropped, and the on-disk tree moved
-    ``sessions/`` → ``runs/`` with stored paths rewritten. One-way: there is
-    no down migration.
+    Preview rows keep state='preview': they carry the single-line
+    ``harness command:`` banner, while a real execution adds the harness log
+    as a second line and keeps the session's finished|failed state. Then the
+    runs table is rebuilt without the sessions FK, the sessions table
+    dropped, and the on-disk tree moved ``sessions/`` → ``runs/`` with stored
+    paths rewritten. One-way: there is no down migration.
     """
     cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
     if not cols:
@@ -760,8 +737,13 @@ def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
         " metadata = COALESCE(s.metadata, '{}'),"
         " state = COALESCE(s.state, 'finished')"
         " FROM sessions s WHERE s.id = runs.session_id")
+    # Preview rows are the single-line ``harness command:`` banner (empty
+    # validation). Real executions store a second output line (the harness
+    # log / validation trace), so they keep the session's finished|failed
+    # state instead of being stamped preview.
     conn.execute("UPDATE runs SET state = 'preview'"
-                 " WHERE output LIKE 'harness command:%'")
+                 " WHERE output LIKE 'harness command:%'"
+                 " AND instr(output, char(10)) = 0")
     conn.execute(
         "UPDATE runs SET continued_from_run_id ="
         " (SELECT MIN(r2.id) FROM runs r2 WHERE r2.session_id = runs.session_id)"
