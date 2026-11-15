@@ -581,6 +581,8 @@
 - Message adhoc on an already-registered message no longer fails asking for --repo: local lookup runs before the mm fetch [85]
 - Fixed message adhoc/validate runs failing with a missing-argument error: prompt runs now reach the harness in every mode [83]
 - Start gains plan mode: --plan constrains the agent to spec+plan only (no implementation), with an Implement/Plan toggle on the Launch form and a plan checkbox on flow start steps [88]
+- Start with an already-linked worktree accepts a registered --repo name pointing at the same path instead of failing [95]
+- Prodtests table shows what each status means on hover, Prodtest Launch explains its buttons and offers worktrees in the ref field, and Run-all moved to the Prodtests page [97]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

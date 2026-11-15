@@ -145,6 +145,48 @@ def test_start_jira_explicit_repo_reuses_bare_legacy_row(isolated_config, tmp_pa
     assert r.exit_code == 0, r.output
     assert '"reused": true' in r.output
 
+def test_start_repo_name_matching_linked_path_reuses(isolated_config, tmp_path, monkeypatch):
+    """Issue #95: `--repo <registered name>` matching the linked path reuses,
+    never fails 'disagrees with the linked worktree repo' (flow start step)."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: (_ for _ in ()).throw(AssertionError("must reuse, not start")))
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    monkeypatch.setattr(store, "load_repos",
+                        lambda: {"workagent": {"path": str(repo_dir)}})
+    store.record_link("github:o/r#22", {"worktree": str(worktree), "branch": "b",
+                                        "repo": str(repo_dir)})
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--repo", "workagent",
+                                "--launch", "--json"])
+    assert r.exit_code == 0, r.output
+    assert '"reused": true' in r.output
+
+
+def test_start_repo_name_for_other_path_still_fails(isolated_config, tmp_path, monkeypatch):
+    """Issue #95 guard: `--repo <name>` pointing elsewhere still disagrees."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: (_ for _ in ()).throw(AssertionError("must not start")))
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    monkeypatch.setattr(store, "load_repos",
+                        lambda: {"other-repo": {"path": str(other)}})
+    store.record_link("github:o/r#22", {"worktree": str(worktree), "branch": "b",
+                                        "repo": str(repo_dir)})
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--repo", "other-repo",
+                                "--launch", "--json"])
+    assert r.exit_code == 2, r.output
+    assert "disagrees with the linked worktree repo" in r.output
+
 
 
 def test_start_jira_two_variants_need_repo(isolated_config, tmp_path, monkeypatch):

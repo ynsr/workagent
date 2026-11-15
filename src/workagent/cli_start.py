@@ -27,6 +27,18 @@ from .cli_harness import _guard_harness, _launch_in_worktree, _run_harness, appe
 from .cli_review import _ensure_branch_worktree
 from .errors import HarnessError
 
+def _resolve_repo_for_compare(explicit: str) -> str:
+    """Registry/local-path view of --repo for the reuse comparison.
+    A registered name maps to its path; anything else passes through
+    (never clone: a URL here must not mint side effects before the check)."""
+    try:
+        got = (store.load_repos() or {}).get(explicit, {})
+        if isinstance(got, dict) and str(got.get("path", "") or ""):
+            return str(got.get("path", ""))
+    except Exception as exc:
+        eprint(f"warning: repo registry unreadable ({exc}); comparing --repo literally")
+    return explicit
+
 def _same_repo_path(a: str, b: str) -> bool:
     """True when two repo paths name the same directory (no false disagree)."""
     if not a or not b:
@@ -126,7 +138,8 @@ def start(
         # Rule 1: the issue is already linked — reuse that worktree (never
         # create a second one, never touch the CWD). Its repo wins; an
         # explicit --repo that disagrees is a usage error, not a silent drop.
-        if repo and str(existing.get("repo", "")) and not _same_repo_path(str(repo), str(existing.get("repo", ""))):
+        _want = _resolve_repo_for_compare(str(repo)) if repo else ""
+        if repo and str(existing.get("repo", "")) and not _same_repo_path(_want, str(existing.get("repo", ""))):
             _fail(f"--repo {repo} disagrees with the linked worktree repo"
                   f" {existing.get('repo', '')} for {key}", EXIT_USAGE)
         eprint(f"note: reusing linked worktree {existing['worktree']} for {key}")

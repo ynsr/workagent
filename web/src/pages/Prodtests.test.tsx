@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { filterProdtests } from "./Prodtests"
+import { PRODTEST_STATUS_HELP, filterProdtests } from "./Prodtests"
 import type { ProdtestRow } from "@/lib/api"
 
 const ROWS: ProdtestRow[] = [
@@ -18,5 +18,13 @@ describe("filterProdtests", () => {
     expect(filterProdtests(ROWS, { q: "", status: "passed" })).toHaveLength(1)
     expect(filterProdtests(ROWS, { q: "IPG", status: "pending" })[0]?.issue_key).toBe("IPG-933")
     expect(filterProdtests(ROWS, { q: "", status: "failed" })).toHaveLength(0)
+  })
+})
+
+describe("PRODTEST_STATUS_HELP", () => {
+  it("covers exactly the backend status set (store_sqlite.PRODTEST_STATUSES)", () => {
+    expect(Object.keys(PRODTEST_STATUS_HELP).sort()).toEqual(
+      ["blocked", "failed", "passed", "pending", "pending_prodtest", "running"],
+    )
   })
 })

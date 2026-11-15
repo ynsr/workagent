@@ -70,6 +70,11 @@ export function ProdtestLaunch() {
   const refValue = form.ref.trim()
   const repoNames = useMemo(() => (repos ?? []).map((r) => r.name), [repos])
   const isRunAll = form.prodtestAction === "run" && !refValue
+  const worktreeKeys = useMemo(() => {
+    const keys = Object.keys(links?.worktrees ?? {})
+    keys.sort()
+    return keys
+  }, [links])
 
   function buildArgs(): string[] {
     const args = isRunAll ? ["run", "--all"] : [form.prodtestAction, refValue]
@@ -121,14 +126,17 @@ export function ProdtestLaunch() {
         <CardContent className="grid gap-5">
           <div className="grid gap-2">
             <Label htmlFor="ptl-ref">Issue ref (empty = run --all)</Label>
-            <Input
+            <SearchableSelect
               id="ptl-ref"
               value={form.ref}
-              onChange={(e) => update("ref", e.target.value)}
-              placeholder="IPG-932, OWNER/REPO#22, or jira:IPG-932@proj"
-              autoComplete="off"
-              spellCheck={false}
+              options={worktreeKeys}
+              onChange={(v) => update("ref", v.trim())}
+              placeholder="Pick a linked worktree, or type IPG-932 / OWNER/REPO#22… (empty = run --all)"
+              allowCustom
             />
+            <p className="text-xs text-muted-foreground">
+              Pick a current worktree or type any ref; free text is kept. Empty ref + Run runs all released plans.
+            </p>
           </div>
           <div className="grid gap-2">
             <Label htmlFor="ptl-repo">
@@ -160,11 +168,18 @@ export function ProdtestLaunch() {
             />
           </div>
           <div className="flex gap-2">
-            <Button onClick={() => void handleSubmit()} disabled={submitting || (!refValue && !isRunAll)}>
+            <Button
+              onClick={() => void handleSubmit()}
+              disabled={submitting || (!refValue && !isRunAll)}
+              title={
+                isRunAll
+                  ? "Runs every stored prodtest plan with a recorded release (prodtest run --all), sequentially — leave the ref empty only for this bulk run"
+                  : form.prodtestAction === "plan"
+                    ? "Generates the prodtest plan for this ref via the harness agent (prodtest plan REF)"
+                    : "Runs the stored prodtest plan for this ref at its release SHA (prodtest run REF)"
+              }
+            >
               {submitting ? "Launching…" : isRunAll ? "Run all prodtests" : `${form.prodtestAction === "plan" ? "Plan" : "Run"} prodtest`}
-            </Button>
-            <Button variant="outline" onClick={() => navigate("/prodtests")}>
-              All prodtests
             </Button>
           </div>
         </CardContent>

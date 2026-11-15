@@ -18,7 +18,7 @@ import { api, type FlowTemplateRow } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
-import { ProdtestActionSelect, ReviewActionSelect, RunModeSelect, StartFormFields, buildReviewArgs, buildStartArgs } from "@/components/StartForm"
+import { ReviewActionSelect, RunModeSelect, StartFormFields, buildReviewArgs, buildStartArgs } from "@/components/StartForm"
 import { COPY, INITIAL, MODES, adhocArgs, extraPromptArgs, isPrShaped, runModeArgs, splitAdhocRefs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
@@ -82,12 +82,6 @@ function prefsForMode(p: LaunchPrefs, mode: Mode): Partial<LaunchForm> {
       useReviewSession: p.review.useReviewSession,
     }
   }
-  if (mode === "prodtest") {
-    return {
-      runMode: p.prodtest.runMode as LaunchForm["runMode"],
-      prodtestAction: p.prodtest.prodtestAction as LaunchForm["prodtestAction"],
-    }
-  }
   if (mode === "adhoc") {
     return { runMode: p.adhoc.runMode as LaunchForm["runMode"] }
   }
@@ -117,7 +111,7 @@ function ExtraPromptField({ form, onChange, id = "launch-extra-prompt" }: {
   )
 }
 
-/** Review/Sync/Prodtest fields (kept on the Launch page; Start lives in StartForm). */
+/** Review/Sync fields (kept on the Launch page; Start lives in StartForm). */
 function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
   mode: Exclude<Mode, "flow">
   form: LaunchForm
@@ -177,7 +171,7 @@ function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
   return (
     <>
       <div className="grid gap-2">
-        <Label htmlFor="launch-ref">{mode === "prodtest" ? "Issue ref (empty = run --all)" : "PR/MR ref"}</Label>
+        <Label htmlFor="launch-ref">PR/MR ref</Label>
         <Input
           id="launch-ref"
           value={form.ref}
@@ -334,9 +328,6 @@ export function Launch() {
       base.fixComments = urlFix || base.fixComments
       if (urlFix) base.reviewAction = "fix"
     }
-    if (modeParam === "prodtest" && params.get("prodtestAction") === "plan") {
-      base.prodtestAction = "plan"
-    }
     return base
   })
   const [submitting, setSubmitting] = useState(false)
@@ -374,18 +365,18 @@ export function Launch() {
       toast.warning(`Unknown launch mode "${modeParam}" — form left blank`)
       return
     }
-    if ((modeParam === "sync" || modeParam === "review" || modeParam === "prodtest") && refParam && links) {
+    if ((modeParam === "sync" || modeParam === "review") && refParam && links) {
       setPrefillChecked(true)
       const entry = links.worktrees[refParam]
       if (modeParam === "sync" && !entry) {
         setForm((f) => (f.ref === refParam ? { ...f, ref: "" } : f))
         toast.warning(`No linked worktree for "${refParam}" — form left blank`)
       } else if (entry?.repo) {
-        // Review/Sync/Prodtest arrive from a worktree row: the worktree's repo wins.
+        // Review/Sync arrive from a worktree row: the worktree's repo wins.
         const repo: string = entry.repo
         setForm((f) => (f.repo ? f : { ...f, repo }))
       } else {
-        // Review/Prodtest of a ref (no linked worktree): ask the backend, which
+        // Review of a ref (no linked worktree): ask the backend, which
         // resolves linked-worktree → single-linked-tracker repo.
         api.defaultRepo(refParam).then(
           (r) => {
@@ -452,15 +443,13 @@ export function Launch() {
           useReviewSession: form.useReviewSession,
         },
       })
-    } else if (mode === "prodtest") {
-      saveLaunchPrefs({ ...prev, prodtest: { runMode: form.runMode, prodtestAction: form.prodtestAction } })
     } else if (mode === "adhoc") {
       saveLaunchPrefs({ ...prev, adhoc: { runMode: form.runMode } })
     } else {
       saveLaunchPrefs({ ...prev, sync: { merge: form.merge } })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, form.runMode, form.startAction, form.prodtestAction, form.base, form.reviewAction, form.thenFixComments, form.useReviewSession, form.merge])
+  }, [mode, form.runMode, form.startAction, form.base, form.reviewAction, form.thenFixComments, form.useReviewSession, form.merge])
 
   function switchMode(next: Mode) {
     setMode(next)
@@ -479,15 +468,6 @@ export function Launch() {
       return [refValue, ...(form.merge ? ["--merge"] : []), ...extraPromptArgs(form)]
     }
     if (mode === "start") return buildStartArgs(form)
-    if (mode === "prodtest") {
-      // Empty ref + run action = bulk: `prodtest run --all`.
-      const args = form.prodtestAction === "run" && !refValue
-        ? ["run", "--all"]
-        : [form.prodtestAction, refValue]
-      args.push(...runModeArgs(form.runMode))
-      args.push(...extraPromptArgs(form))
-      return args
-    }
     if (mode === "adhoc") {
       return [...splitAdhocRefs(form.ref), ...adhocArgs(form), ...runModeArgs(form.runMode)]
     }
@@ -518,8 +498,7 @@ export function Launch() {
         extra ? `--extra-prompt ${extra}` : null,
       ].filter((v): v is string => v !== null)
   async function handleSubmit() {
-    const prodtestRunAll = mode === "prodtest" && form.prodtestAction === "run" && !refValue
-    if (!refValue && !prodtestRunAll && adhocRefs.length === 0) return
+    if (!refValue && adhocRefs.length === 0) return
     if (mode === "adhoc") {
       if (adhocRefs.length === 0) {
         toast.error("Add at least one worktree ref — one per line.")
@@ -530,7 +509,7 @@ export function Launch() {
         return
       }
     }
-    if (mode !== "sync" && mode !== "prodtest" && mode !== "adhoc" && !repoValue) {
+    if (mode !== "sync" && mode !== "adhoc" && !repoValue) {
       toast.error("Pick a repo — none matches this ref (the server CWD is never used).")
       return
     }
@@ -627,7 +606,7 @@ export function Launch() {
           {mode === "flow" ? null : (
           <>
           <div className="flex flex-wrap gap-x-6 gap-y-3">
-            {(mode === "review" || mode === "prodtest" || mode === "adhoc") ? (
+            {(mode === "review" || mode === "adhoc") ? (
               mode === "adhoc" ? (
                 <RunModeSelect
                   idPrefix="launch"
@@ -652,13 +631,6 @@ export function Launch() {
                   update("fixComments", v === "fix")
                   if (v === "review") update("thenFixComments", false)
                 }}
-              />
-            ) : null}
-            {mode === "prodtest" ? (
-              <ProdtestActionSelect
-                idPrefix="launch"
-                value={form.prodtestAction}
-                onChange={(v) => update("prodtestAction", v)}
               />
             ) : null}
             {mode === "review" && form.reviewAction === "review" ? (
@@ -758,9 +730,9 @@ export function Launch() {
             <Button
               type="button"
               onClick={() => void handleSubmit()}
-              disabled={mode === "adhoc" ? adhocRefs.length === 0 || !form.adhocPrompt.trim() || submitting : !refValue || submitting || (mode !== "sync" && mode !== "prodtest" && !repoValue)}
+              disabled={mode === "adhoc" ? adhocRefs.length === 0 || !form.adhocPrompt.trim() || submitting : !refValue || submitting || (mode !== "sync" && !repoValue)}
               title={
-                mode !== "sync" && mode !== "prodtest" && mode !== "adhoc" && refValue && !repoValue
+                mode !== "sync" && mode !== "adhoc" && refValue && !repoValue
                   ? "Pick a repo — none matches this ref"
                   : undefined
               }
