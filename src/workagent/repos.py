@@ -19,9 +19,8 @@ FIXED_OVERLAY_BUTTONS: tuple[tuple[str, str], ...] = (
     ("cleanup", "Cleanup"),
     ("stop-terminal", "Stop terminal agent"),
     ("open-runs", "Open runs"),
-    ("open-sessions", "Worktree sessions"),
     ("open-flows", "Open flows"),
-    ("resume-session", "Resume session"),
+    ("resume-session", "Resume transcript"),
     ("dedicated", "Dedicated action/flow buttons"),
 )
 """Fixed StatusTable overlay buttons: (id, label); `dedicated` is the master toggle for flagged flow/action buttons."""

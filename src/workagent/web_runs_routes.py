@@ -229,8 +229,7 @@ def _transcript_ready(session_file: str) -> bool:
     """True when the path is a non-empty transcript resumable via --resume.
 
     omp v18+ rejects --resume on missing AND empty files, so both count
-    as missing here (callers 404 with missing_session; the user can still
-    start fresh via --session-dir from the copy button).
+    as missing here (callers 404 with missing_session).
     """
     if not session_file:
         return False

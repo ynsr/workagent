@@ -58,6 +58,14 @@ describe("runKind (runs own transcripts)", () => {
     expect(runKind("cleanup", ["jira:X"], null)).toBe("cleanup")
     expect(runKind("harness", [], null)).toBe("harness")
   })
+
+  it("ignores prototype-named stored types", () => {
+    // A plain-object index resolves 'constructor'/'toString' to
+    // Object.prototype functions; only own keys may label a run.
+    expect(runKind("cleanup", ["jira:X"], "constructor")).toBe("cleanup")
+    expect(runKind("cleanup", ["jira:X"], "toString")).toBe("cleanup")
+    expect(runKind("cleanup", ["jira:X"], "__proto__")).toBe("cleanup")
+  })
 })
 
 describe("query keys", () => {

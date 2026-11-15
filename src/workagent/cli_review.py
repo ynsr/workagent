@@ -615,7 +615,7 @@ def review(
                 _h.record_headless_attempt(
                     k, "review", _child_argv(pr),
                     f"harness command: {_child_cmd(pr)}",
-                    exit_code=0,
+                    exit_code=0, fix_comments=fix_comments,
                     metadata={"pr_url": pr, "mode": "all-preview"})
             return
         rows: list[dict] = []

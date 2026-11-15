@@ -48,7 +48,7 @@ export function RunResumeActions({
   // The button only renders for a run that names a transcript path, and the
   // backend owns transcript creation/readiness (resume 404s on a missing
   // file), so copy always mirrors the resume endpoint: omp --resume.
-  const cmd = resumeCommand(worktree, sessionFile, true)
+  const cmd = resumeCommand(worktree, sessionFile)
   const icon = variant === "icon"
   const resumePending = resumeRun.isPending
   const canResume = Boolean(!resumePending && worktree && sessionFile)

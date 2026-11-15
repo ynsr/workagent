@@ -113,6 +113,45 @@ def test_tag_flow_run_never_steals_another_flows_run(tmp_path, isolated_config):
     assert tagged["metadata"]["flow_id"] == flow2["id"]
 
 
+def test_tag_flow_run_respects_metadata_only_pause_row(tmp_path, isolated_config):
+    """A terminal pause row owns its flow through metadata alone.
+
+    `persist_terminal_pause` writes metadata.flow_id while the column stays
+    NULL, so a later flow must not re-stamp that row; a row whose metadata
+    names the current flow is owned and gains the column.
+    """
+    import workagent.cli_flow as m
+    from workagent import store, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('wt-1', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    flow1 = store.create_flow(template_label="t", worktree_ref="wt-1",
+                              repo_snapshot={}, effective_steps=[])
+    flow2 = store.create_flow(template_label="t", worktree_ref="wt-1",
+                              repo_snapshot={}, effective_steps=[])
+    transcript = str(sq.session_file_path("pause-1", "omp", branch="b",
+                                         session_type="start"))
+    pause = sq.insert_run(db, "harness", ["wt-1"], 0, worktree_ref="wt-1",
+                          harness_name="omp", initiator_command="harness",
+                          prompt="p", file_path=transcript,
+                          metadata={"flow_id": flow1["id"],
+                                    "mode": "flow-terminal"})
+    step = sq.insert_run(db, "flow step sync", ["sync", "wt-1"], 0,
+                         worktree_ref="wt-1", initiator_command="flow step sync",
+                         session_type="flow",
+                         metadata={"origin": "flow-step",
+                                   "flow_id": flow2["id"], "step": "sync"})
+    m._tag_flow_run("wt-1", flow2["id"])
+    kept = sq.get_run(db, pause)
+    assert kept["flow_id"] is None
+    assert kept["metadata"]["flow_id"] == flow1["id"]
+    tagged = sq.get_run(db, step)
+    assert tagged["flow_id"] == flow2["id"]
+    assert tagged["metadata"]["flow_id"] == flow2["id"]
+
+
 def test_run_fresh_forces_new_row(tmp_path, monkeypatch):
     """F6: --fresh skips resume and creates a new flow row."""
     import workagent.cli_flow as cli_mod

@@ -111,7 +111,10 @@ export function runKind(
   args: readonly string[] = [],
   sessionType?: string | null,
 ): string {
-  const stored = SESSION_TYPE_LABELS[(sessionType ?? "").trim().toLowerCase()]
+  const key = (sessionType ?? "").trim().toLowerCase()
+  const stored = Object.hasOwn(SESSION_TYPE_LABELS, key)
+    ? SESSION_TYPE_LABELS[key]
+    : undefined
   if (stored) return stored
   const c = command.trim().toLowerCase()
   if (c === "prodtest") {

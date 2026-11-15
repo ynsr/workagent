@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Flow Re-run from the run detail page works again: it shows the confirm dialog and passes confirm for flow runs like other destructive runs [99]
+- Run history is one list now: transcripts live on runs and the Sessions view is gone [104]
 - Suggest-icon prompt covers all Lucide icons and avoids already used icons on flows/actions [84]
 - Messages page gains a Register button and Message Launch auto-registers unknown permalinks, pinned by repo or worktree [94]
 - Restarting serve is faster: DB migrations stay synchronous while cleanup and branch backfill run in the background [81]

@@ -409,10 +409,10 @@ def link_list(
             for t, v in trackers_map.items()]
     _print_rows(rows, json_output, csv_output, ["tracker", "vendor", "remote_url", "repos"],
                 "Tracker links", "(no tracker links)")
-    srows, scolumns = _session_rows(links, worktree, refresh_pr)
+    srows, scolumns = _cli._session_rows(links, worktree, refresh_pr)
     _print_rows(srows, json_output, csv_output, scolumns,
                 "Worktree links", "(no worktree links)",
-                colorize=_colorize_session)
+                colorize=_cli._colorize_session)
 
 
 @link_app.command("set")

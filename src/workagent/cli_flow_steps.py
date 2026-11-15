@@ -302,6 +302,19 @@ def run_repo_command(repo_name: str, phase: str, command: str, cwd: str) -> None
     _gates.run_repo_command(repo_name, phase, command, cwd, 600, None)
 
 
+def _tagged_flow(row: dict) -> int | None:
+    """Flow a run row belongs to: column first, then the metadata history."""
+    fid = row.get("flow_id")
+    if fid is not None:
+        return int(fid)
+    meta = row.get("metadata")
+    mfid = meta.get("flow_id") if isinstance(meta, dict) else None
+    try:
+        return int(mfid) if mfid is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def tag_flow_run(key: str, flow_id: int) -> None:
     """Best-effort: stamp flow_id onto the step's execution run.
 
@@ -314,13 +327,15 @@ def tag_flow_run(key: str, flow_id: int) -> None:
     file_path lookup). Rows already tagged with a different flow are
     never this step's (steps that launch no harness leave only
     transcriptless rows): skipping them keeps a cleanup/release/sync tag
-    from overwriting an earlier flow's attribution.
+    from overwriting an earlier flow's attribution. A terminal/manual
+    pause row carries its flow only in ``metadata.flow_id`` (the column
+    stays NULL), so the metadata counts as ownership too.
     """
     try:
         from . import store_sqlite as _sq
         db = _sq.db_path()
         rows = _sq.runs_for_worktree(db, key, include_deleted_worktrees=True)
-        owned = [r for r in rows if r.get("flow_id") in (None, flow_id)]
+        owned = [r for r in rows if _tagged_flow(r) in (None, flow_id)]
         row = next((r for r in owned if str(r.get("file_path") or "")),
                    owned[0] if owned else None)
         if row is not None:

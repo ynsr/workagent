@@ -100,7 +100,7 @@ gate). `repo add`/`repo update` accept `--pre-release <cmd>`
 the per-repo StatusTable overlay visibility map: `{button_id: bool}`,
 missing key or `{}` = every button visible. Fixed ids: `sync`, `review`,
 `fix-comments`, `prodtest`, `adhoc`, `cleanup`, `stop-terminal`,
-`open-runs`, `open-sessions`, `open-flows`, `resume-session`, `dedicated`
+`open-runs`, `open-flows`, `resume-session`, `dedicated`
 (master toggle hiding all dedicated buttons); per-item dedicated ids are
 `flow:<label>` / `action:<label>`. `repo update NAME --overlay-buttons
 "sync,review,-adhoc,flow:deploy"` merges (`-id` hides, later entries win;

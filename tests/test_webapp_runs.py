@@ -203,20 +203,33 @@ def test_run_summaries_carry_session_type(client, monkeypatch):
     A fix-comments launch persists command='review' with the flags dropped, so
     the stored type is the only thing that distinguishes it from the review it
     fixes; the UI reads it instead of re-deriving the type from the command.
+    The live run's type must come from the spawn-time precreate row (a
+    hand-assigned field would hide a broken wiring).
     """
-    from workagent import store_sqlite as sq
-    _stub_spawn(monkeypatch)
+    from workagent import store_sqlite as sq, web_runs as _wr
+
+    def fake_spawn(run, registry):
+        _wr._precreate_run_row(run)
+        with run.lock:
+            run.exit_code = 0
+            run.state = "succeeded"
+        registry.release_target(run)
+
+    monkeypatch.setattr("workagent.webapp._spawn", fake_spawn)
     db = sq.db_path()
     sq.init_db(db)
     rid = sq.insert_run(db, "review", ["rk3"], 0, worktree_ref="rk3",
                         harness_name="omp", initiator_command="review",
                         prompt="p", file_path="/s/rev-3.jsonl",
                         session_type="fix_comments", state="finished")
-    live = client.app.state.registry.create("review", ["rk3"], "review:rk3")
-    live.session_type = "review"
-    rows = {str(r["id"]): r for r in client.get("/api/runs").json()}
+    r = client.post("/api/runs", json={"command": "review",
+                                       "args": ["rk3", "--no-tty", "--fix-comments"],
+                                       "confirm": True})
+    assert r.status_code == 202, r.text
+    live_id = r.json()["run_id"]
+    rows = {str(row["id"]): row for row in client.get("/api/runs").json()}
     assert rows[f"db-{rid}"]["session_type"] == "fix_comments"
-    assert rows[live.id]["session_type"] == "review"
+    assert rows[live_id]["session_type"] == "fix_comments"
 
 
 def test_review_fix_comments_defaults_to_fresh_session(client, monkeypatch):

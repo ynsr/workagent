@@ -596,6 +596,41 @@ def test_fix_comments_preview_adopts_existing_transcript(isolated_config):
     assert len(sq.list_runs(db)) == 2
 
 
+def test_fix_comments_preview_run_types_fix_comments(isolated_config):
+    """A fix-comments preview types as fix_comments, on both preview paths.
+
+    The command stays 'review' with the flags dropped from args, so the
+    fix_comments discriminator must reach `derive_session_type`; the row
+    that adopts a pinned transcript carries the type too (it has none).
+    """
+    from workagent import cli_harness as _h, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    # Derived path: no transcript yet, the preview row itself is the identity.
+    fresh = _h.record_preview_run("k", "review", "p", "omp",
+                                  "harness command: cd /tmp/w && omp 'x'",
+                                  fix_comments=True)
+    assert sq.get_run(db, fresh)["session_type"] == "fix_comments"
+    # Adopted path: the pinned review transcript keeps its own identity/type.
+    review_id = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
+                              harness_name="omp", initiator_command="review",
+                              prompt="p", file_path="/s/rev-1907.jsonl",
+                              session_type="review")
+    sq.finish_run(db, review_id, "finished")
+    rid = _h.record_preview_run("k", "review", "p", "omp",
+                                "harness command: cd /tmp/w && omp 'x'",
+                                session_file="/s/rev-1907.jsonl",
+                                fix_comments=True)
+    adopted = sq.get_run(db, rid)
+    assert adopted["continued_from_run_id"] == review_id
+    assert adopted["session_type"] == "fix_comments"
+    assert sq.get_run(db, review_id)["session_type"] == "review"
+    assert sq.get_run(db, review_id)["state"] == "finished"
+
+
 def test_fix_comments_launch_keeps_review_path(isolated_config, monkeypatch):
     """_run_harness with a reuse id never rescopes the review path to fix_comments/."""
     from workagent import cli_harness as _h, store_sqlite as sq

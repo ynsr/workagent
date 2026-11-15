@@ -277,7 +277,8 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             str(result.get("command", harness_name)),
             prompt, harness_name, f"harness command: {full_cmd}",
             metadata={"session_dir": session_dir, "branch_path": bpath} if session_dir else None,
-            session_file=session_file if isinstance(session_file, str) else None)
+            session_file=session_file if isinstance(session_file, str) else None,
+            fix_comments=bool(result.get("fix_comments")))
         if rid:
             result["run_id"] = rid
         tpid = spawn_in_terminal(full_cmd, worktree or fallback_dir)
@@ -301,7 +302,8 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             run_key or str(result.get("key", "")) or fallback_dir,
             str(result.get("command", harness_name)),
             prompt, harness_name, f"harness command: {full_cmd}",
-            session_file=session_file if isinstance(session_file, str) else None)
+            session_file=session_file if isinstance(session_file, str) else None,
+            fix_comments=bool(result.get("fix_comments")))
         if rid:
             result["run_id"] = rid
         _print_result(result, json_output)
@@ -626,7 +628,8 @@ def record_headless_attempt(key: str, command: str, args: list[str],
                             harness_name: str = "",
                             session_file: str | None = None,
                             prompt: str = "",
-                            metadata: dict | None = None) -> int | None:
+                            metadata: dict | None = None,
+                            fix_comments: bool = False) -> int | None:
     """Persist a failed-before-launch headless attempt as one run row.
 
     Pre-link failures (no worktree row for the key yet) persist too —
@@ -638,7 +641,7 @@ def record_headless_attempt(key: str, command: str, args: list[str],
         key, command, prompt, harness_name, output,
         exit_code=exit_code, args=args,
         metadata={**(metadata or {}), "origin": "headless-attempt"},
-        session_file=session_file)
+        session_file=session_file, fix_comments=fix_comments)
 
 
 def record_preview_run(key: str, command: str, prompt: str,
@@ -646,14 +649,16 @@ def record_preview_run(key: str, command: str, prompt: str,
                        exit_code: int = 0,
                        args: list[str] | None = None,
                        metadata: dict | None = None,
-                       session_file: str | None = None) -> int | None:
+                       session_file: str | None = None,
+                       fix_comments: bool = False) -> int | None:
     """Persist a preview (no-launch) invocation as one run row.
 
     None pre-cutover (no state.db). Preview = transcript identity + full
     prompt stored, state='preview' — one row, no separate session entity.
-    session_type is derived from the command (start/review/sync; unknown
-    → NULL, never guessed). Never raises: warns to stderr so callers keep
-    their own result flow.
+    session_type is derived from the command + the *fix_comments*
+    discriminator (`review --fix-comments` types as fix_comments, not
+    review; unknown → NULL, never guessed). Never raises: warns to stderr
+    so callers keep their own result flow.
 
     Contract: preview callers (start/review/terminal) MUST pass output
     starting with the literal ``harness command: `` prefix — the
@@ -668,9 +673,10 @@ def record_preview_run(key: str, command: str, prompt: str,
     A pinned path that already matches a run (fix-continue reusing the
     review transcript, a preview rerun) does not re-declare the transcript
     identity: only the invocation row is added, linked to that
-    transcript's first run via ``continued_from_run_id``, and the adopted
-    row keeps its state (a finished review row must not flip back to
-    preview).
+    transcript's first run via ``continued_from_run_id`` — and that row
+    carries the derived session_type too (it has none of its own) while
+    the adopted row keeps its state (a finished review row must not flip
+    back to preview).
     """
     from . import store_sqlite as _sq
     try:
@@ -691,6 +697,7 @@ def record_preview_run(key: str, command: str, prompt: str,
             meta.update(metadata)
         pinned = session_file if isinstance(session_file, str) and session_file else ""
         run_args = args if args is not None else [key]
+        stype = _sq.derive_session_type(command, fix_comments)
         if pinned:
             try:
                 existing = (_sq.run_by_file_path(db, pinned,
@@ -708,14 +715,14 @@ def record_preview_run(key: str, command: str, prompt: str,
                     root = existing
                 return _sq.insert_run(
                     db, command, run_args, exit_code,
-                    metadata=meta, state="preview",
+                    metadata=meta, state="preview", session_type=stype,
                     continued_from_run_id=int(root["id"]),
                     output=[output])
         return _sq.insert_run(
             db, command, run_args, exit_code,
             worktree_ref=key or None, harness_name=harness_name,
             initiator_command=command, prompt=prompt, file_path=pinned,
-            session_type=_sq.derive_session_type(command),
+            session_type=stype,
             metadata=meta, state="preview", output=[output])
     except Exception as e:
         eprint(f"warning: preview run record failed: {e}")
