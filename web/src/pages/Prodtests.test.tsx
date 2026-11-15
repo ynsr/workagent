@@ -10,13 +10,13 @@ const ROWS: ProdtestRow[] = [
 describe("filterProdtests", () => {
   it("matches issue/plan/worktree/run substring", () => {
     expect(filterProdtests(ROWS, { q: "932", status: "" })).toHaveLength(1)
-    expect(filterProdtests(ROWS, { q: "plans/p933", status: "" })[0].issue_key).toBe("IPG-933")
+    expect(filterProdtests(ROWS, { q: "plans/p933", status: "" })[0]?.issue_key).toBe("IPG-933")
     expect(filterProdtests(ROWS, { q: "wt-932", status: "" })).toHaveLength(1)
     expect(filterProdtests(ROWS, { q: "nothing", status: "" })).toHaveLength(0)
   })
   it("filters by exact status", () => {
     expect(filterProdtests(ROWS, { q: "", status: "passed" })).toHaveLength(1)
-    expect(filterProdtests(ROWS, { q: "IPG", status: "pending" })[0].issue_key).toBe("IPG-933")
+    expect(filterProdtests(ROWS, { q: "IPG", status: "pending" })[0]?.issue_key).toBe("IPG-933")
     expect(filterProdtests(ROWS, { q: "", status: "failed" })).toHaveLength(0)
   })
 })
