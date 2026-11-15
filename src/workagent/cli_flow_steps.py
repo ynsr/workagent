@@ -311,14 +311,18 @@ def tag_flow_run(key: str, flow_id: int) -> None:
     newer and attributed to the worktree too, but only the execution row
     owns the transcript: prefer the newest row with a ``file_path`` so
     later runs of that transcript inherit the flow (``insert_run``'s
-    file_path lookup).
+    file_path lookup). Rows already tagged with a different flow are
+    never this step's (steps that launch no harness leave only
+    transcriptless rows): skipping them keeps a cleanup/release/sync tag
+    from overwriting an earlier flow's attribution.
     """
     try:
         from . import store_sqlite as _sq
         db = _sq.db_path()
         rows = _sq.runs_for_worktree(db, key, include_deleted_worktrees=True)
-        row = next((r for r in rows if str(r.get("file_path") or "")),
-                   rows[0] if rows else None)
+        owned = [r for r in rows if r.get("flow_id") in (None, flow_id)]
+        row = next((r for r in owned if str(r.get("file_path") or "")),
+                   owned[0] if owned else None)
         if row is not None:
             _sq.set_run_flow_id(db, int(row["id"]), flow_id)
     except Exception as e:

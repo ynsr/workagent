@@ -1165,14 +1165,6 @@ def runs_for_worktree(path: Path, worktree_ref: str,
         return [_run_dict(r) for r in conn.execute(q, (worktree_ref,)).fetchall()]
 
 
-def newest_run(path: Path, worktree_ref: str,
-               include_deleted_worktrees: bool = False) -> dict | None:
-    """Newest run for *worktree_ref*; None when it has none."""
-    rows = runs_for_worktree(path, worktree_ref,
-                             include_deleted_worktrees=include_deleted_worktrees)
-    return rows[0] if rows else None
-
-
 #: Runs of soft-deleted worktrees stay in the DB (restorable via undelete)
 #: but are hidden from list/detail queries unless *include_deleted_worktrees*;
 #: rows with an empty ref (repo-scoped: pre-link attempts, web runs) or a
