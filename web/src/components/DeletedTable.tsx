@@ -52,7 +52,7 @@ export function DeletedTable({
       {open ? (
         <div className="grid gap-2 px-3 pb-3">
           <div className="flex flex-wrap items-center gap-2">
-            {onDestroyDeleted && selection?.selected && selection.selected.size > 0 ? (
+            {onDestroyDeleted && visibleSelected.length > 0 ? (
               <Button
                 variant="outline"
                 size="sm"

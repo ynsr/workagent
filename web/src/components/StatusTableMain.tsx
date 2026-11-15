@@ -257,12 +257,13 @@ export function StatusTable({
 
   const hasActiveFilters = Boolean(q || prFilter || issueFilter || authorFilter)
   // hideFilter (Dashboard shared form, issue #102/105): skip the inner
-  // filter row and repo tabs — one shared form owns filtering. The
-  // selection pill above still renders so embedded tables keep
-  // clear-selection. Repo tabs ride along: Dashboard passes them only to
-  // the main table, which also hides them.
+  // filter row — one shared form owns text/PR/issue/author. The selection
+  // pill above still renders so embedded tables keep clear-selection.
+  // Repo tabs are NOT part of the shared form (q/PR/issue/author only) and
+  // `?repo=` still filters rows, so they keep rendering: Dashboard passes
+  // them only to this main table, where they own the repo filter.
   const showFilterRow = !embed?.hideFilter
-  const showRepoTabs = !embed?.hideFilter && !!repoTabs && (repoTabs.tabs.names.length > 0 || repoTabs.tabs.other > 0)
+  const showRepoTabs = !!repoTabs && (repoTabs.tabs.names.length > 0 || repoTabs.tabs.other > 0)
   return (
     <div className={cn("min-w-0", className)}>
       {sel.size > 0 ? (
