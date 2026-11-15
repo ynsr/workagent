@@ -233,17 +233,17 @@ def _review_key_for(pr_url: str, worktree: str, branch: str, repo: str = "") -> 
 
 
 def _adopt_fix_reuse(result: dict, review_key: str) -> bool:
-    """Point *result* at the review session owning the pinned transcript.
+    """Point *result* at the review run owning the pinned transcript.
 
-    The web server passes the saved `sessions.file_path` as explicit
-    --session-file. The owning row is found by exact file_path match (the
+    The web server passes the saved run `file_path` as explicit
+    --session-file. The owning run is found by exact file_path match (the
     pinned path itself — omp-minted filenames never match their stem, so
     stem lookup silently misses). When it is the latest non-running
-    review session for the key, mark the reuse so the harness layer
-    treats the path as a resume target verbatim instead of rescoping it
-    under fix_comments/ (same stem, wrong dir → omp starts fresh).
-    Falls back to stem lookup for legacy rows whose file_path was never
-    updated to the minted name. Returns True when the reuse was adopted.
+    review run for the key, mark the reuse so the harness layer treats
+    the path as a resume target verbatim instead of rescoping it under
+    fix_comments/ (same stem, wrong dir → omp starts fresh). Falls back to
+    stem lookup for legacy rows whose file_path was never updated to the
+    minted name. Returns True when the reuse was adopted.
     """
     try:
         from pathlib import Path as _Path
@@ -254,22 +254,23 @@ def _adopt_fix_reuse(result: dict, review_key: str) -> bool:
         db = _sq.db_path()
         if not db.exists():
             return False
-        existing = _sq.session_by_file_path(db, pinned, include_deleted_worktrees=True)
-        if existing is None:
-            existing = _sq.get_session(db, _Path(pinned).stem, include_deleted_worktrees=True)
+        existing = (_sq.run_by_file_path(db, pinned, include_deleted_worktrees=True)
+                    or _sq.run_by_file_stem(db, _Path(pinned).stem,
+                                            include_deleted_worktrees=True))
         if existing is None:
             return False
         if str(existing.get("worktree_ref", "")) != review_key:
             return False
         if str(existing.get("session_type", "") or "") != "review":
             return False
-        latest = _sq.latest_review_session(db, review_key)
-        if latest is not None and str(latest.get("id", "")) != str(existing.get("id", "")):
+        latest = _sq.latest_review_run(db, review_key)
+        if latest is not None and int(latest.get("id", 0)) != int(existing.get("id", 0)):
             return False
         if str(existing.get("state", "")) == "running":
             return False
-        result["reuse_session_id"] = str(existing.get("id", ""))
-        result["session_file"] = str(existing.get("file_path", "") or pinned)
+        result["reuse_run_id"] = int(existing["id"])
+        result["session_file"] = str(_sq.resolve_transcript_path(
+            str(existing.get("file_path", "") or pinned)) or pinned)
         return True
     except Exception:
         return False
@@ -277,13 +278,14 @@ def _adopt_fix_reuse(result: dict, review_key: str) -> bool:
 
 def _apply_fix_session(result: dict, review_key: str, fix_comments: bool,
                        use_review_session: bool, explicit_file: str | None) -> None:
-    """Resolve the fix-comments session strategy into *result*.
+    """Resolve the fix-comments transcript strategy into *result*.
 
-    Fresh fix_comments row by default (linked back via fixed_from_session_id).
-    Explicit --session-file always wins. --use-review-session continues the
-    latest non-running review session instead (reuse id + transcript); when
-    the explicit file names that session the reuse is adopted so the
-    transcript is resumed verbatim. Non-fix runs leave result untouched.
+    Fresh fix_comments transcript by default (linked back via
+    metadata.fixed_from_run_id). Explicit --session-file always wins.
+    --use-review-session continues the latest non-running review run
+    instead (reuse id + transcript); when the explicit file names that
+    run the reuse is adopted so the transcript is resumed verbatim.
+    Non-fix runs leave result untouched.
     """
     if explicit_file:
         result["session_file"] = explicit_file
@@ -294,21 +296,23 @@ def _apply_fix_session(result: dict, review_key: str, fix_comments: bool,
         return
     from . import store_sqlite as _sq
     db = _sq.db_path()
-    latest = _sq.latest_review_session(db, review_key, include_deleted_worktrees=True) if db.exists() else None
+    latest = _sq.latest_review_run(db, review_key, include_deleted_worktrees=True) if db.exists() else None
     if latest and use_review_session:
-        result["reuse_session_id"] = latest["id"]
-        result["session_file"] = latest.get("file_path")
+        result["reuse_run_id"] = int(latest["id"])
+        stored = str(latest.get("file_path") or "")
+        resolved = _sq.resolve_transcript_path(stored)
+        result["session_file"] = str(resolved) if resolved else stored
     elif latest:
-        result["session_metadata"] = {"fixed_from_session_id": latest["id"]}
+        result["session_metadata"] = {"fixed_from_run_id": int(latest["id"])}
 
 
 def _chain_fix_command(review_key: str, pr_url: str, harness_name: str,
                        use_review_session: bool, env_file: str | None,
                        extra_prompt: str | None) -> list[str]:
     """Headless follow-up argv for --then-fix-comments: a second review
-    invocation in pure fix mode against the same ref. A fresh fix session
-    is the default; --use-review-session continues the just-finished review
-    (resolved inside the child via latest_review_session).
+    invocation in pure fix mode against the same ref. A fresh fix
+    transcript is the default; --use-review-session continues the
+    just-finished review (resolved inside the child via latest_review_run).
     Exit-code gating lives with the caller: only chain on review exit 0.
     """
     argv = [sys.executable, "-m", "workagent", "review", pr_url,

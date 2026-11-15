@@ -473,8 +473,8 @@ def link_remove(
     links = store.load_links(include_inactive=True, include_deleted=True)
     if resolved in links:
         if hard_delete:
-            from .cli_cleanup_gc import _remove_harness_sessions
-            _remove_harness_sessions(resolved)
+            from .cli_cleanup_gc import _remove_harness_runs
+            _remove_harness_runs(resolved)
             store.delete_worktree_row(resolved)
             _print_result({"removed": resolved}, json_output)
         else:

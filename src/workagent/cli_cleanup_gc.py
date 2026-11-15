@@ -22,50 +22,42 @@ def _resolve_repo(worktree_path: str, repo_str: str) -> Path | None:
     return None
 
 
-def _remove_harness_sessions(key: str) -> None:
+def _remove_harness_runs(key: str) -> None:
     """Delete harness transcript files + emptied branch dirs for one worktree.
 
-    Session DB rows cascade with the worktree row (FK); the .jsonl files
-    under ~/.config/workagent/sessions/<harness>/<branch-path>/ do not —
-    remove file_path + session_dir hits per session, then prune empty
-    parents up to (not incl.) the harness root. Best effort, never raises
-    (issue #102)."""
+    Runs rows cascade with the worktree row (purged explicitly by the
+    links sweep); the .jsonl files under
+    ~/.config/workagent/runs/<harness>/<branch-path>/ do not — remove every
+    run's file_path + metadata session_dir hit, then prune empty parents up
+    to (not incl.) the transcript root. A pre-rename DB may still name the
+    legacy ``sessions/`` tree, so both roots are read and both bound the
+    prune. Best effort, never raises (issue #102).
+    """
     try:
-        from . import store as _store
         from . import store_sqlite as _sq
         db = _sq.db_path()
-        rows: list[dict] = []
         try:
-            rows = _sq.list_sessions(db, include_deleted_worktrees=True)
+            rows = _sq.runs_for_worktree(db, key, include_deleted_worktrees=True)
         except Exception:
             return
         targets: set[str] = set()
         for r in rows:
-            if not isinstance(r, dict) or r.get("worktree_ref") != key:
-                continue
             fp = str(r.get("file_path", "") or "")
             if fp:
                 targets.add(fp)
-            try:
-                meta = r.get("metadata") or {}
-                if isinstance(meta, str):
-                    import json as _json
-                    try:
-                        meta = _json.loads(meta or "{}")
-                    except Exception:
-                        meta = {}
-                sd = str((meta or {}).get("session_dir", "") or "")
-                if sd:
-                    targets.add(sd)
-            except Exception:
-                continue
+            sd = str((r.get("metadata") or {}).get("session_dir", "") or "")
+            if sd:
+                targets.add(sd)
         if not targets:
             return
-        harness_root = _store.config_dir() / "sessions"
-        try:
-            root = harness_root.resolve()
-        except OSError:
-            root = harness_root
+        config = store.config_dir()
+        roots: list[Path] = []
+        for name in (_sq.RUNS_DIRNAME, _sq.LEGACY_SESSIONS_DIRNAME):
+            root = config / name
+            try:
+                roots.append(root.resolve())
+            except OSError:
+                roots.append(root)
         for raw in sorted(targets):
             try:
                 p = Path(raw).expanduser()
@@ -76,11 +68,9 @@ def _remove_harness_sessions(key: str) -> None:
                     continue
                 cur = p.resolve() if p.exists() else p
                 while True:
-                    try:
-                        inside = cur == root or root in cur.parents
-                    except Exception:
-                        break
-                    if not inside or cur == root:
+                    root = next((r for r in roots
+                                 if cur == r or r in cur.parents), None)
+                    if root is None or cur == root:
                         break
                     try:
                         cur.rmdir()
@@ -88,9 +78,9 @@ def _remove_harness_sessions(key: str) -> None:
                         break
                     cur = cur.parent
             except Exception as e:
-                eprint(f"warning: harness session cleanup failed for {key}: {e}")
+                eprint(f"warning: harness transcript cleanup failed for {key}: {e}")
     except Exception as e:
-        eprint(f"warning: harness session cleanup failed for {key}: {e}")
+        eprint(f"warning: harness transcript cleanup failed for {key}: {e}")
 
 
 def _teardown_local(key: str, branch: str, repo_str: str, worktree_path: str = "") -> None:
@@ -189,7 +179,7 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
                          "status": "skipped:prodtest-pending"})
             continue
         _teardown_local(key, branch, repo, worktree_path)
-        _remove_harness_sessions(key)
+        _remove_harness_runs(key)
         rows.append({"key": key, "branch": branch, "status": "purged"})
     return rows
 
@@ -224,7 +214,7 @@ def destroy_deleted(keys: list[str], dry_run: bool = False) -> list[dict]:
             rows.append({"key": key, "branch": branch, "status": "destroy-dry-run"})
             continue
         _teardown_local(key, branch, repo, worktree_path)
-        _remove_harness_sessions(key)
+        _remove_harness_runs(key)
         store.delete_worktree_row(key)
         rows.append({"key": key, "branch": branch, "status": "destroyed"})
     return rows

@@ -1056,6 +1056,13 @@ def set_run_metadata(path: Path, run_id: int, patch: dict) -> dict:
         return meta
 
 
+def set_run_flow_id(path: Path, run_id: int, flow_id: int) -> None:
+    """Tag a run with *flow_id* (column + metadata history field)."""
+    with connect(path) as conn:
+        conn.execute("UPDATE runs SET flow_id = ? WHERE id = ?", (flow_id, run_id))
+    set_run_metadata(path, run_id, {"flow_id": flow_id})
+
+
 def latest_review_run(path: Path, worktree_ref: str,
                       include_deleted_worktrees: bool = False) -> dict | None:
     """Newest non-running review run for the ref (the 'current' one to continue)."""
@@ -1091,6 +1098,79 @@ def run_by_file_path(path: Path, file_path: str,
         q += " ORDER BY r.created_at DESC, r.id DESC LIMIT 1"
         row = conn.execute(q, (file_path,)).fetchone()
     return _run_dict(row) if row is not None else None
+
+
+def run_by_file_stem(path: Path, stem: str,
+                     include_deleted_worktrees: bool = False) -> dict | None:
+    """Newest run whose stored ``file_path`` names ``<stem>.jsonl``.
+
+    Legacy rows were keyed by the transcript stem (session PK); after the
+    fold the pinned path itself is the join key, so this is the fallback
+    for a row whose ``file_path`` was never updated to the harness-minted
+    filename. The stem is compared, never the whole path, so a row stays
+    findable across the ``sessions/`` → ``runs/`` rename.
+    """
+    if not stem or not path.exists():
+        return None
+    like = "%" + stem.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + ".jsonl"
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.* FROM runs r"
+             " LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref"
+             " WHERE r.file_path LIKE ? ESCAPE '\\'")
+        if not include_deleted_worktrees:
+            q += " AND " + _NOT_DELETED
+        q += " ORDER BY r.created_at DESC, r.id DESC"
+        for row in conn.execute(q, (like,)):
+            if Path(str(row["file_path"] or "")).stem == stem:
+                return _run_dict(row)
+    return None
+
+
+def transcript_root_run(path: Path, file_path: str,
+                        include_deleted_worktrees: bool = False) -> dict | None:
+    """First (earliest) run carrying *file_path* — the transcript's chain head.
+
+    Fix-continue rows link back here via ``continued_from_run_id``: one
+    transcript, one chain head, however many preview/launch/attempt rows
+    name it. Empty *file_path* (no transcript) has no chain.
+    """
+    if not file_path or not path.exists():
+        return None
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.* FROM runs r"
+             " LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref"
+             " WHERE r.file_path = ?")
+        if not include_deleted_worktrees:
+            q += " AND " + _NOT_DELETED
+        q += " ORDER BY r.id ASC LIMIT 1"
+        row = conn.execute(q, (file_path,)).fetchone()
+    return _run_dict(row) if row is not None else None
+
+
+def runs_for_worktree(path: Path, worktree_ref: str,
+                      include_deleted_worktrees: bool = False) -> list[dict]:
+    """Every run recorded for *worktree_ref*, newest first (GC, flow tagging)."""
+    if not worktree_ref or not path.exists():
+        return []
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.* FROM runs r"
+             " LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref"
+             " WHERE r.worktree_ref = ?")
+        if not include_deleted_worktrees:
+            q += " AND " + _NOT_DELETED
+        q += " ORDER BY r.id DESC"
+        return [_run_dict(r) for r in conn.execute(q, (worktree_ref,)).fetchall()]
+
+
+def newest_run(path: Path, worktree_ref: str,
+               include_deleted_worktrees: bool = False) -> dict | None:
+    """Newest run for *worktree_ref*; None when it has none."""
+    rows = runs_for_worktree(path, worktree_ref,
+                             include_deleted_worktrees=include_deleted_worktrees)
+    return rows[0] if rows else None
 
 
 #: Runs of soft-deleted worktrees stay in the DB (restorable via undelete)

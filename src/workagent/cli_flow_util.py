@@ -229,12 +229,12 @@ def spawn_terminal_step(kind: str, args: list[str], cwd: str = "",
 def persist_terminal_pause(key_or_ref: str, manual_kind: str,
                            manual_args: list, output: str, flow_id: int,
                            terminal_pid=None, scope: str = "",
-                           scope_dir: str = "") -> str | None:
-    """Persist a terminal/manual pause session tagged with the flow.
+                           scope_dir: str = "") -> int | None:
+    """Persist a terminal/manual pause run tagged with the flow.
 
-    The scope (fresh session id minted pre-spawn) pins the row id; the
-    resume path re-resolves the detached terminal's minted .jsonl via
-    `adopt_terminal_transcript`. Best effort — never raises.
+    The scope (fresh transcript id minted pre-spawn) pins the run's
+    file_path; the resume path re-resolves the detached terminal's minted
+    .jsonl via `adopt_terminal_transcript`. Best effort — never raises.
     """
     from . import cli_harness as _h
     from . import store_sqlite as _sq
@@ -243,22 +243,22 @@ def persist_terminal_pause(key_or_ref: str, manual_kind: str,
     if terminal_pid is not None:
         meta["terminal_pid"] = terminal_pid
     try:
-        sid = _h.record_headless_attempt(
+        rid = _h.record_headless_attempt(
             key_or_ref, manual_kind, manual_args, output, exit_code=0,
             metadata=meta, session_file=scope or None)
-        if sid and scope:
+        if rid and scope:
             try:
-                _sq.set_session_metadata(_sq.db_path(), sid, meta)
+                _sq.set_run_metadata(_sq.db_path(), rid, meta)
             except Exception:
                 pass
-        return sid
+        return rid
     except Exception:
         return None
 
 
 
 def backfill_terminal_transcripts(flow_id: int, key: str, ref: str) -> None:
-    """Re-resolve every flow-tagged pause session's minted transcript.
+    """Re-resolve every flow-tagged pause run's minted transcript.
 
     The detached terminal mints its .jsonl after the pause row was
     written; on resume each flow-tagged pause row re-resolves its scope
@@ -269,22 +269,22 @@ def backfill_terminal_transcripts(flow_id: int, key: str, ref: str) -> None:
         db = _sq.db_path()
         if not db.exists():
             return
-        rows = _sq.list_sessions(db, include_deleted_worktrees=True)
+        rows = _sq.list_runs(db, limit=1000, include_deleted_worktrees=True)
     except Exception:
         return
-    for s in rows:
+    for r in rows:
         try:
-            if (s.get("worktree_ref") or "") not in (key, ref):
+            if (r.get("worktree_ref") or "") not in (key, ref):
                 continue
-            if (s.get("metadata") or {}).get("flow_id") != flow_id:
+            meta = r.get("metadata") or {}
+            if meta.get("flow_id") != flow_id:
                 continue
-            if (s.get("metadata") or {}).get("mode") not in (
-                    "flow-terminal", "manual-step"):
+            if meta.get("mode") not in ("flow-terminal", "manual-step"):
                 continue
-            scope = str(s.get("file_path") or "")
-            sid = str(s.get("id") or "")
-            if scope and sid:
-                adopt_terminal_transcript(scope, sid)
+            scope = str(r.get("file_path") or "")
+            rid = int(r.get("id") or 0)
+            if scope and rid:
+                adopt_terminal_transcript(scope, rid)
         except Exception:
             continue
 
@@ -315,23 +315,23 @@ def mint_terminal_scope(kind: str, branch: str = "",
         return "", ""
 
 
-def adopt_terminal_transcript(scope_file: str, sid: str) -> str:
+def adopt_terminal_transcript(scope_file: str, run_id: int) -> str:
     """Re-resolve a detached terminal step's minted .jsonl on resume.
 
     The spawned terminal mints its transcript seconds after we return;
-    by resume time it exists under the scope dir. Mirrors the web
-    `_resolve_session_file` fallback: pinned path when ready, else the
-    newest non-empty .jsonl under the scope dir (persisted on the
-    session). Returns "" when nothing resumable is found. Never raises.
+    by resume time it exists under the scope dir. Mirrors the web resume
+    fallback: pinned path when ready, else the newest non-empty .jsonl
+    under the scope dir (persisted on the run). A stored pre-rename
+    ``sessions/…`` path resolves through the runs tree. Returns "" when
+    nothing resumable is found. Never raises.
     """
-    from pathlib import Path as _p
     try:
         from . import store_sqlite as _sq
-        p = _p(scope_file) if scope_file else None
+        p = _sq.resolve_transcript_path(scope_file) if scope_file else None
         if p is not None:
             try:
                 if p.is_file() and p.stat().st_size > 0:
-                    return scope_file
+                    return str(p)
             except OSError:
                 pass
         scope = p.parent if p is not None else None
@@ -347,8 +347,8 @@ def adopt_terminal_transcript(scope_file: str, sid: str) -> str:
             return ""
         try:
             db = _sq.db_path()
-            if sid and db.exists():
-                _sq.set_session_file_path(db, sid, str(minted))
+            if run_id and db.exists():
+                _sq.set_run_file_path(db, run_id, str(minted))
         except Exception:
             pass
         return str(minted)

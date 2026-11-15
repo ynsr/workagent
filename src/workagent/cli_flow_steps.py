@@ -302,15 +302,19 @@ def run_repo_command(repo_name: str, phase: str, command: str, cwd: str) -> None
     _gates.run_repo_command(repo_name, phase, command, cwd, 600, None)
 
 
-def tag_flow_session(key: str, flow_id: int) -> None:
-    """Best-effort: stamp flow_id into the step's newest session metadata."""
+def tag_flow_run(key: str, flow_id: int) -> None:
+    """Best-effort: stamp flow_id onto the step's newest run.
+
+    The run row carries the flow column plus the metadata history field,
+    so the Runs page can group a flow's steps and history rows keep the
+    mapping after the flow is gone.
+    """
     try:
         from . import store_sqlite as _sq
         db = _sq.db_path()
-        mine = [s for s in _sq.list_sessions(db, include_deleted_worktrees=True)
-                if (s.get("worktree_ref") or "") == key]
-        if mine:
-            _sq.set_session_metadata(db, mine[0]["id"], {"flow_id": flow_id})
+        row = _sq.newest_run(db, key, include_deleted_worktrees=True)
+        if row is not None:
+            _sq.set_run_flow_id(db, int(row["id"]), flow_id)
     except Exception as e:
         import sys as _sys
-        print(f"flow session tagging skipped: {e}", file=_sys.stderr)
+        print(f"flow run tagging skipped: {e}", file=_sys.stderr)

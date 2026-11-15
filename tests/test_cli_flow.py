@@ -434,7 +434,7 @@ def test_run_action_skip_records_skipped_and_continues(monkeypatch):
     monkeypatch.setattr(cli_mod, "_run_cleanup_step",
                         lambda *a, **k: ran.append("cleanup") or {"key": "wt-1",
                                                                   "status": "cleaned"})
-    monkeypatch.setattr(cli_mod, "_tag_flow_session", lambda *a, **k: None)
+    monkeypatch.setattr(cli_mod, "_tag_flow_run", lambda *a, **k: None)
     runner = CliRunner()
     res = runner.invoke(cli_mod.app,
                         ["flow", "run", "skipflow", "wt-1", "--yes", "--json"])
@@ -541,7 +541,7 @@ def test_skip_steps_marks_resume_step_done(monkeypatch):
     monkeypatch.setattr(cli_mod, "_resolve_ref",
                         lambda ref: ("wt-1", {"worktree": "/tmp/wt", "repo": "r",
                                              "branch": "b", "active": 1}, None))
-    monkeypatch.setattr(cli_mod, "_tag_flow_session", lambda *a, **k: None)
+    monkeypatch.setattr(cli_mod, "_tag_flow_run", lambda *a, **k: None)
     runner = CliRunner()
     res = runner.invoke(cli_mod.app,
                         ["flow", "run", "pipe", "wt-1", "--yes",
@@ -608,7 +608,7 @@ def test_skip_start_adopts_terminal_worktree(monkeypatch):
         return {"key": key, "status": "reviewed", "fix_comments": fix}
 
     monkeypatch.setattr(cli_mod, "_run_review_step", _review)
-    monkeypatch.setattr(cli_mod, "_tag_flow_session", lambda *a, **k: None)
+    monkeypatch.setattr(cli_mod, "_tag_flow_run", lambda *a, **k: None)
     runner = CliRunner()
     res = runner.invoke(cli_mod.app,
                         ["flow", "run", "pipe", "jira:X-1", "--yes",

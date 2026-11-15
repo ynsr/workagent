@@ -175,25 +175,25 @@ def _fail_on_deleted_branch(key: str, entry: dict, pr: dict | None,
           f"run `workagent cleanup {key}`", EXIT_GENERAL)
 
 
-def _record_no_harness_session(key: str, result: dict, exit_code: int = 0) -> None:
-    """Persist a preview session + run for sync paths that never launch.
+def _record_no_harness_run(key: str, result: dict, exit_code: int = 0) -> None:
+    """Persist a preview run for sync paths that never launch.
 
     No-harness outcomes (merged/up-to-date/rebased/conflict) run no harness,
     so `_run_harness` never records them. Every work run must still produce a
-    record in the runs table, so stamp a preview session here (best effort;
-    sync continues on failure). Excluded from `latest_review_session`
+    record in the runs table, so stamp a preview run here (best effort;
+    sync continues on failure). Excluded from `latest_review_run`
     (type sync, state preview) so fix-continue never reuses these.
     Dry-run plans (would-*) record nothing: --dry-run must not touch state.
     """
-    from .cli_harness import record_preview_session
+    from .cli_harness import record_preview_run
     args = [key]
     if result.get("strategy"):
         args += ["-m" if result["strategy"] == "local-merge" else "--rebase"]
-    sid = record_preview_session(key, "sync", "", "",
-                                 f"{key}: {result.get('result', '')}",
-                                 exit_code, args=args)
-    if sid:
-        result["session_id"] = sid
+    rid = record_preview_run(key, "sync", "", "",
+                             f"{key}: {result.get('result', '')}",
+                             exit_code, args=args)
+    if rid:
+        result["run_id"] = rid
 
 def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
               yes: bool, dry_run: bool, json_output: bool,
@@ -209,7 +209,7 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
     if not wt or not Path(wt).exists():
         result["result"] = "missing-worktree"
         eprint(f"{key}: worktree missing — skipped")
-        _record_no_harness_session(key, result, exit_code=1)
+        _record_no_harness_run(key, result, exit_code=1)
         return result
     dirty = sync_mod.dirty_files(Path(wt))
     if dirty:
@@ -232,7 +232,7 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
                                 session_file=session_file, extra_prompt=extra_prompt,
                                 env_file=env_file)
         if out.get("result") in ("merged", "up-to-date"):
-            _record_no_harness_session(key, out)
+            _record_no_harness_run(key, out)
         return out
     # Remote rebase (default): host rebases the branch on its base.
     result["strategy"] = "remote-rebase"
@@ -255,14 +255,14 @@ def _sync_one(key: str, entry: dict, merge: bool, use_harness: bool,
                                 session_file=session_file, extra_prompt=extra_prompt,
                                 env_file=env_file)
         if out.get("result") in ("merged", "up-to-date"):
-            _record_no_harness_session(key, out)
+            _record_no_harness_run(key, out)
         return out
     result["result"] = "rebased"
     eprint(f"{key}: rebased PR #{pr['number']} via {tool}")
     result["pull"] = sync_mod.pull_rebased(Path(wt), branch)
     eprint(f"{key}: worktree updated from rebased origin/{branch} "
            f"({result['pull']})")
-    _record_no_harness_session(key, result)
+    _record_no_harness_run(key, result)
     return result
 
 
@@ -378,6 +378,6 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
         result["result"] = "conflict"
         eprint(f"{key}: conflicts need human resolution — re-run "
                "with --harness or --yes to auto-launch the harness")
-        _record_no_harness_session(key, result, exit_code=1)
+        _record_no_harness_run(key, result, exit_code=1)
     return result
 

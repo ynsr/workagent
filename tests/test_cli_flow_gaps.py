@@ -28,19 +28,19 @@ def test_run_rejects_step_config_then_fix_comments(tmp_path, monkeypatch):
     assert created == []
 
 
-def test_tag_flow_session_stamps_newest(tmp_path, monkeypatch):
-    """F3: the just-minted step session (newest first) gets the flow_id."""
+def test_tag_flow_run_stamps_newest(tmp_path, monkeypatch):
+    """F3: the just-minted step run (newest) gets the flow_id."""
     import workagent.cli_flow as m
     import workagent.store_sqlite as sq
-    # list_sessions is ORDER BY created_at DESC (newest first).
-    sessions = [{"id": "new", "worktree_ref": "wt-1"},
-                {"id": "old", "worktree_ref": "wt-1"}]
-    monkeypatch.setattr(sq, "list_sessions", lambda db, **k: sessions)
+    # newest_run is ORDER BY id DESC: the just-minted step row comes first.
+    runs = [{"id": 2, "worktree_ref": "wt-1"},
+            {"id": 1, "worktree_ref": "wt-1"}]
+    monkeypatch.setattr(sq, "newest_run", lambda db, ref, **k: runs[0])
     stamped = {}
-    monkeypatch.setattr(sq, "set_session_metadata",
-                        lambda db, sid, patch: stamped.update({sid: patch}))
-    m._tag_flow_session("wt-1", 9)
-    assert stamped == {"new": {"flow_id": 9}}
+    monkeypatch.setattr(sq, "set_run_flow_id",
+                        lambda db, rid, flow_id: stamped.update({rid: flow_id}))
+    m._tag_flow_run("wt-1", 9)
+    assert stamped == {2: 9}
 
 
 def test_run_fresh_forces_new_row(tmp_path, monkeypatch):
@@ -314,8 +314,7 @@ def test_adopt_terminal_transcript_resolves_minted(tmp_path, monkeypatch):
     monkeypatch.setattr("workagent.store.config_dir",
                         lambda: tmp_path / "cfg")
     scope_file, scope_dir = u.mint_terminal_scope("start", branch="feat/x")
-    sid = "abc123"
-    assert u.adopt_terminal_transcript(scope_file, sid) == ""  # nothing yet
+    assert u.adopt_terminal_transcript(scope_file, 1) == ""  # nothing yet
     from pathlib import Path as _P
     minted = _P(scope_dir) / "minted.jsonl"
     minted.write_text('{"x": 1}\n')
@@ -324,9 +323,10 @@ def test_adopt_terminal_transcript_resolves_minted(tmp_path, monkeypatch):
         conn.execute(
             "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
             " VALUES ('wt-1', '/tmp/wt', 'b', NULL, '2026-01-01', '{}')")
-    sq.insert_session(db, worktree_ref="wt-1", harness_name="omp",
-                      initiator_command="start", prompt="p",
-                      file_path=scope_file, session_id=sid)
-    assert u.adopt_terminal_transcript(scope_file, sid) == str(minted)
-    row = sq.get_session(db, sid, include_deleted_worktrees=True)
+    rid = sq.insert_run(db, "start", ["wt-1"], 0, worktree_ref="wt-1",
+                        harness_name="omp", initiator_command="start",
+                        prompt="p", file_path=scope_file,
+                        session_type="start", state="preview")
+    assert u.adopt_terminal_transcript(scope_file, rid) == str(minted)
+    row = sq.get_run(db, rid, include_deleted_worktrees=True)
     assert (row or {}).get("file_path") == str(minted)

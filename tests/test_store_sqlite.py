@@ -867,3 +867,23 @@ def test_migrate_repos_unique_name_keeps_unique_padded_name(tmp_path):
         names = {r[0]: r[1] for r in conn.execute("SELECT key_ref, name FROM repos")}
         assert names["a"] == "  spaced  "
         assert sorted([names["b"], names["c"]]) == ["dup", "dup-2"]
+
+
+def test_insert_run_inherits_flow_id_by_file_path(tmp_path):
+    """A row joining a transcript inherits its flow tagging; no path, no flow."""
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO flows (id, template_label, created_at, modified_at)"
+                     " VALUES (7, 'tpl', '2026-01-01', '2026-01-01')")
+    first = sq.insert_run(db, "start", ["k"], 0, worktree_ref="k",
+                          file_path="/f/t.jsonl", flow_id=7)
+    second = sq.insert_run(db, "start", ["k"], 0, worktree_ref="k",
+                           file_path="/f/t.jsonl")
+    assert sq.get_run(db, first)["flow_id"] == 7
+    assert sq.get_run(db, second)["flow_id"] == 7
+    plain = sq.insert_run(db, "start", ["k"], 0, worktree_ref="k")
+    assert sq.get_run(db, plain)["flow_id"] is None
+    other = sq.insert_run(db, "start", ["k"], 0, worktree_ref="k",
+                          file_path="/f/other.jsonl")
+    assert sq.get_run(db, other)["flow_id"] is None

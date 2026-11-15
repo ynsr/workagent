@@ -156,7 +156,7 @@ def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
     TTY mode: chdirs into the worktree and replaces this process (os.execvp)
     so the user gets a real interactive session rooted in the worktree
     (env already sourced by the caller into the shell command). With
-    *watch* ({"sid": ..., "scope_dir": ..., "before": ...}), exec goes
+    *watch* ({"run_id": ..., "scope_dir": ..., "before": ...}), exec goes
     through the `watch-and-exec` shim instead: it records the minted
     transcript ASAP, then execs the harness — same UX, signals forwarded
     by exec semantics.
@@ -169,7 +169,7 @@ def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
     if watch and not no_tty:
         from . import env as _env
         shim = [sys.executable, "-m", "workagent", "watch-and-exec",
-                "--sid", str(watch["sid"]),
+                "--run-id", str(watch["run_id"]),
                 "--scope-dir", str(watch["scope_dir"]),
                 "--before", str(watch.get("before") or ""),
                 "--", *argv]

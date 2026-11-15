@@ -78,8 +78,8 @@ def _run_sync_step(*a, **k):
     return _seam("_run_sync_step")(*a, **k)
 
 
-def _tag_flow_session(*a, **k):
-    return _seam("_tag_flow_session")(*a, **k)
+def _tag_flow_run(*a, **k):
+    return _seam("_tag_flow_run")(*a, **k)
 
 STEP_BAR = "#" * 72
 
@@ -117,7 +117,7 @@ def _chain_sig(chain: list[dict]) -> list:
 
 
 def _begin_step_run(fid: int, flow_key: str, kind: str, banner: str) -> int:
-    """Create the step's child run row at step start (NULL = not begun).
+    """Create the step's run row at step start (0 = not begun).
 
     The row holds the banner plus one tail line at finish (`_finish_step_run`);
     no progressive streaming. Best effort: returns 0 when no DB exists or
@@ -128,26 +128,25 @@ def _begin_step_run(fid: int, flow_key: str, kind: str, banner: str) -> int:
         db = _sq.db_path()
         if not db.exists():
             return 0
-        sid = _sq.insert_session(
-            db, worktree_ref=flow_key or None, harness_name="",
-            initiator_command=f"flow step {kind}",
-            prompt="", file_path="",
-            session_type="flow",
-            metadata={"origin": "flow-step", "flow_id": fid,
-                      "step": kind})
         # Store the step's real command + ref as (command, args): the
         # Runs page renders `workagent {command} {args}` verbatim, so a
         # pseudo-command here would display an unrunnable argv (issue #91
         # showed `workagent flow step review …`, which is not a subcommand).
         # `_persisted_summary` maps the step kind back for the header.
-        return _sq.insert_run(db, sid, f"flow step {kind}", [kind, flow_key or ""],
-                              None, output=[banner], flow_id=fid)
+        return _sq.insert_run(db, f"flow step {kind}", [kind, flow_key or ""],
+                              None, state="running",
+                              worktree_ref=flow_key or None,
+                              initiator_command=f"flow step {kind}",
+                              session_type="flow",
+                              metadata={"origin": "flow-step", "flow_id": fid,
+                                        "step": kind},
+                              output=[banner], flow_id=fid)
     except Exception:
         return 0
 
 
 def _finish_step_run(rid: int, exit_code: int, tail: list[str] | None = None) -> None:
-    """Finalize the step's child row (best effort, never raises)."""
+    """Finalize the step's run row (best effort, never raises)."""
     if not rid:
         return
     try:
@@ -158,6 +157,7 @@ def _finish_step_run(rid: int, exit_code: int, tail: list[str] | None = None) ->
         if tail:
             _sq.update_run(db, rid, output=tail, append=True)
         _sq.update_run(db, rid, exit_code=exit_code)
+        _sq.finish_run(db, rid, "finished" if exit_code == 0 else "failed")
     except Exception:
         pass
 
@@ -506,7 +506,7 @@ def flow_run(
         _finish_step_run(child_rid, 0, [f"{kind} step ok"])
         store.update_flow(fid, current_step=idx + 1,
                           step_results=results)
-        _tag_flow_session(key, fid)
+        _tag_flow_run(key, fid)
     post = (tpl.get("post_execution") or "").strip()
     if post:
         snap_wt = wt_path or str(((store.load_links().get(key, {})

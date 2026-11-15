@@ -192,14 +192,14 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     """Launch the harness in the worktree with --launch; without it print the exact
     command instead and hand the worktree to the user (shell exec on TTY).
 
-    Every real launch carries a session file: an explicit session_file
+    Every real launch carries a transcript file: an explicit session_file
     (CLI --session-file) wins, otherwise a path is generated under
-    sessions/<harness>/<branch>/<action>/ and passed to the harness (--resume for omp).
+    runs/<harness>/<branch>/<action>/ and passed to the harness (--resume for omp).
     Preview (no --launch, no --terminal) and --dry-run (never reaches
-    here) write no transcript file; both persist a state='preview'
-    session row + runs row via record_preview_session. --terminal spawns
-    the harness command in the OS terminal and claims a terminal lock.
-    Sessions rows are recorded post-cutover (state.db exists) only.
+    here) write no transcript file; both persist a state='preview' run
+    row via record_preview_run. --terminal spawns the harness command in
+    the OS terminal and claims a terminal lock. Runs rows are recorded
+    post-cutover (state.db exists) only.
     """
     from . import store_sqlite as _sq
     if not isinstance(terminal, bool):
@@ -222,9 +222,9 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         prompt += backend.VERDICT_SUFFIX
     action = _session_action(result)
     branch0 = str(result.get("branch", "") or "")
-    if result.get("reuse_session_id"):
+    if result.get("reuse_run_id"):
         # Fix-continue reuses the review transcript as-is: rescoping it
-        # into fix_comments/ would split one session across two dirs.
+        # into fix_comments/ would split one transcript across two dirs.
         pass
     elif isinstance(session_file, str) and session_file:
         rescoped = _rescope_session_path(session_file, harness_name,
@@ -263,8 +263,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             bpath = _sq2.branch_path(branch0)
             d = Path(session_file).parent if session_file else None
             if d is None:
-                from . import store as _store
-                d = _store.config_dir() / "sessions" / harness_name
+                d = _sq2.runs_dir() / harness_name
                 if bpath:
                     d = d / bpath
                 if action:
@@ -273,14 +272,14 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             session_dir = str(d)
         except Exception:
             session_dir = ""
-        sid = record_preview_session(
+        rid = record_preview_run(
             run_key or str(result.get("key", "")) or fallback_dir,
             str(result.get("command", harness_name)),
             prompt, harness_name, f"harness command: {full_cmd}",
             metadata={"session_dir": session_dir, "branch_path": bpath} if session_dir else None,
             session_file=session_file if isinstance(session_file, str) else None)
-        if sid:
-            result["session_id"] = sid
+        if rid:
+            result["run_id"] = rid
         tpid = spawn_in_terminal(full_cmd, worktree or fallback_dir)
         key_t = run_key or str(result.get("key", "")) or ""
         if key_t:
@@ -298,13 +297,13 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     if not launch:
         eprint(f"harness command: {full_cmd}")
         result["harness_command"] = full_cmd
-        sid = record_preview_session(
+        rid = record_preview_run(
             run_key or str(result.get("key", "")) or fallback_dir,
             str(result.get("command", harness_name)),
             prompt, harness_name, f"harness command: {full_cmd}",
             session_file=session_file if isinstance(session_file, str) else None)
-        if sid:
-            result["session_id"] = sid
+        if rid:
+            result["run_id"] = rid
         _print_result(result, json_output)
         if sys.stdin.isatty():
             # "cd" for the user: replace this process with their shell in the
@@ -313,7 +312,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             shell = os.environ.get("SHELL") or "/bin/sh"
             os.execvp(shell, [shell])
         return
-    sid: str | None = None
+    run_id: int | None = None
     db = _sq.db_path()
     session_path = session_file or ""
     if run_key and launch:
@@ -325,16 +324,17 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             _fail(f"worktree {worktree or fallback_dir} already has a live harness "
                   f"({blocker['harness']}, pid {blocker['pid']}) — wait for it to "
                   "finish or kill it", 1)
-    # Every real launch gets a session path: explicit --session-file wins,
-    # otherwise generate one under sessions/<harness>/<branch>/<action>/.
+    # Every real launch gets a transcript path: explicit --session-file wins,
+    # otherwise generate one under runs/<harness>/<branch>/<action>/.
     # Fresh (missing or empty) paths are passed as --session-dir (omp v18+
     # rejects --resume on them); only non-empty transcripts resume via
     # --resume (see backend.session_file_flag). The parent dir is created;
     # the file itself must NOT be pre-touched — omp also rejects empty
     # transcripts (`holds no entries`). Pre-cutover (no state.db) there is
-    # no sessions row — the dir alone still scopes the transcript location.
+    # no runs row — the dir alone still scopes the transcript location.
     branch = str(result.get("branch", "") or "")
-    rescoped_launch = (session_path if result.get("reuse_session_id")
+    reuse_run_id = result.get("reuse_run_id")
+    rescoped_launch = (session_path if reuse_run_id
                        else _rescope_session_path(session_path, harness_name, branch, action))
     if rescoped_launch != session_path:
         session_path = rescoped_launch
@@ -349,44 +349,66 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         # Report the rescoped path back so run summaries / resume buttons
         # carry the branch-scoped path from the very first run.
         result["session_file"] = session_path
-    # Post-cutover sessions row (best effort; launch continues on failure).
-    # A pinned --session-file may already have a preview row (web minted it
-    # on the first run): adopt it instead of colliding on the PK. Match by
-    # exact file_path — omp-minted filenames never match their stem.
-    reuse_sid = result.get("reuse_session_id")
+    # Transcript chain head: a launch continuing an already-recorded transcript
+    # (pinned --session-file adopted from a preview, or a fix-continue reuse)
+    # links back to that transcript's first run. Exact file_path first — a
+    # harness-minted filename never matches its stem — then the legacy stem.
     stype = action
-    if run_key and db.exists() and not reuse_sid and session_file:
-        try:
-            existing = _sq.session_by_file_path(db, session_file, include_deleted_worktrees=True) or _sq.get_session(db, Path(session_file).stem, include_deleted_worktrees=True)
-        except Exception:
-            existing = None
-        if existing is not None:
-            sid = str(existing.get("id"))
-    if run_key and db.exists() and not reuse_sid and sid is None:
+    chain_root: int | None = None
+    anchor = None
+    if db.exists() and session_path:
+        if reuse_run_id is not None:
+            try:
+                anchor = _sq.get_run(db, int(reuse_run_id),
+                                     include_deleted_worktrees=True)
+            except Exception:
+                anchor = None
+        if anchor is None:
+            try:
+                anchor = (_sq.run_by_file_path(db, session_path,
+                                               include_deleted_worktrees=True)
+                          or _sq.run_by_file_stem(db, Path(session_path).stem,
+                                                  include_deleted_worktrees=True))
+            except Exception:
+                anchor = None
+        if anchor is not None:
+            try:
+                root = (_sq.transcript_root_run(
+                    db, str(anchor.get("file_path") or ""),
+                    include_deleted_worktrees=True) or anchor)
+            except Exception:
+                root = anchor
+            chain_root = int(root["id"])
+    # The launch owns one runs row: state='running' until the execution
+    # reports back (a 'finished' default would hide it from
+    # latest_review_run, which skips running rows for fix-continue).
+    if run_key and db.exists():
         try:
             from . import store as _store2
             linked = run_key in _store2.load_links(include_inactive=True,
                                                   include_deleted=True)
-            sid = _sq.insert_session(
-                db, worktree_ref=run_key if linked else None,
+            run_id = _sq.insert_run(
+                db, str(result.get("command", harness_name)), [run_key],
+                None,
+                worktree_ref=run_key if linked else None,
                 harness_name=harness_name,
                 initiator_command=result.get("command", harness_name),
                 prompt=prompt, file_path=session_path,
-                session_id=Path(session_path).stem,
                 session_type=stype,
-                metadata=result.get("session_metadata"))
+                metadata=result.get("session_metadata"),
+                state="running",
+                continued_from_run_id=chain_root)
         except Exception as e:
             # Post-cutover insert failure: launch continues, warn only.
             # No transcript file is pre-created (omp owns the filename
             # under --session-dir), so there is nothing to clean up.
-            eprint(f"warning: session record failed: {e}")
-            sid = None
+            eprint(f"warning: run record failed: {e}")
+            run_id = None
             session_path = session_file or ""
-    finish_sid = sid or (reuse_sid if isinstance(reuse_sid, str) else None)
-    if finish_sid and not result.get("session_file") and session_path:
+    if run_id and not result.get("session_file") and session_path:
         # First-run command with no minted transcript yet: report the pinned
         # scope path so callers carry the full path from the very first run
-        # and reuse it for future runs of the same session.
+        # and reuse it for future runs of the same transcript.
         result["session_file"] = session_path
     # omp mints its own .jsonl under --session-dir seconds after start, so
     # the pre-launch guessed path is only a scope hint.
@@ -397,11 +419,11 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # (return instantly): no watcher; metadata carries the scope dir.
     scope_dir = Path(session_path).parent if session_path else None
     before = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
-    stop_watch = (_watch_minted_transcript(db, scope_dir, before, finish_sid, result)
-                  if no_tty and finish_sid and scope_dir is not None else None)
-    watch = ({"sid": finish_sid, "scope_dir": str(scope_dir),
+    stop_watch = (_watch_minted_transcript(db, scope_dir, before, run_id, result)
+                  if no_tty and run_id and scope_dir is not None else None)
+    watch = ({"run_id": run_id, "scope_dir": str(scope_dir),
               "before": str(before) if before else ""}
-             if not no_tty and finish_sid and scope_dir is not None else None)
+             if not no_tty and run_id and scope_dir is not None else None)
     try:
         extra = harness.session_file_flag(session_path) if session_path else None
         _launch_kw: dict = {}
@@ -427,8 +449,8 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                     current_path = str(minted)
                 if current_path and Path(current_path).is_file():
                     result["session_file"] = current_path
-                    if finish_sid:
-                        _sq.set_session_file_path(db, finish_sid, current_path)
+                    if run_id:
+                        _sq.set_run_file_path(db, run_id, current_path)
                 text = _hs.last_assistant_text(current_path, max_chars=None) if current_path else ""
                 return {"exit_code": code, "transcript": text,
                         "transcript_path": current_path}
@@ -451,19 +473,20 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             validation = _cv.validate_headless(
                 worktree=worktree or fallback_dir, branch=branch, prompt=prompt,
                 session_type=stype, run_once=run_once, run_judge=run_judge,
-                session_db=db if db.exists() else None, session_id=finish_sid)
+                run_db=db if db.exists() else None, run_id=run_id)
             verdict = validation["verdict"]
             exit_code = 2 if verdict == "WAITING_USER_RESPONSE" else (
                 0 if verdict in ("JOB_DONE", "INTENTIONALLY_UNCOMMITTED_CHANGES") else 1)
-            if finish_sid and run_key:
+            if run_id and run_key:
                 last = len(validation["runs"]) - 1
                 for index, run in enumerate(validation["runs"]):
                     try:
-                        _sq.insert_run(db, finish_sid, str(result.get("command", harness_name)),
+                        _sq.insert_run(db, str(result.get("command", harness_name)),
                                        [run_key],
                                        exit_code if index == last else run["exit_code"],
                                        output=[f"harness command: {full_cmd}", run["output"]],
-                                       validation=run["trace"])
+                                       validation=run["trace"],
+                                       continued_from_run_id=chain_root)
                     except Exception as e:
                         eprint(f"warning: run record failed: {e}")
         else:
@@ -472,16 +495,16 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                            env_file=str(env_path) if env_path else None, watch=watch,
                            **_launch_kw)
             minted = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
-            if minted is not None and minted != before and finish_sid:
-                _sq.set_session_file_path(db, finish_sid, str(minted))
-        if finish_sid:
-            _sq.finish_session(db, finish_sid, "failed" if exit_code == 1 else "finished")
+            if minted is not None and minted != before and run_id:
+                _sq.set_run_file_path(db, run_id, str(minted))
+        if run_id:
+            _sq.finish_run(db, run_id, "failed" if exit_code == 1 else "finished")
         if no_tty and run_key:
             _publish_headless_summary(result, json_output)
     except Exception:
-        if finish_sid:
+        if run_id:
             try:
-                _sq.finish_session(db, finish_sid, "failed")
+                _sq.finish_run(db, run_id, "failed")
             except Exception:
                 pass
         raise
@@ -494,7 +517,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     if exit_code:
         if exit_code == 2:
             eprint(f"waiting for user response: worktree {worktree or fallback_dir}; "
-                   f"session {result.get('session_file', session_path)}")
+                   f"transcript {result.get('session_file', session_path)}")
             raise HarnessError(
                 f"waiting for user response: worktree {worktree or fallback_dir}",
                 exit_code=2)
@@ -507,7 +530,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
 
 
 def _publish_headless_summary(result: dict, json_output: bool = False) -> None:
-    """Print the session summary and post it to the linked issue (best effort).
+    """Print the run summary and post it to the linked issue (best effort).
 
     Headless runs only (no_tty): parses the last assistant text from the
     minted transcript, prints it to stdout (human) or as result["summary"]
@@ -543,7 +566,7 @@ def _publish_headless_summary(result: dict, json_output: bool = False) -> None:
         _ic.post_issue_comment(issue_url, summary)
 
 
-def _watch_minted_transcript(db, scope_dir, before, finish_sid, result):
+def _watch_minted_transcript(db, scope_dir, before, run_id, result):
     """Poll *scope_dir* for the harness-minted .jsonl; record it ASAP.
 
     Returns a threading.Event the caller sets when the launch returns
@@ -553,7 +576,7 @@ def _watch_minted_transcript(db, scope_dir, before, finish_sid, result):
     """
     import threading
     stop = threading.Event()
-    if scope_dir is None or finish_sid is None:
+    if scope_dir is None or run_id is None:
         return stop
 
     def _poll() -> None:
@@ -567,7 +590,7 @@ def _watch_minted_transcript(db, scope_dir, before, finish_sid, result):
                 return
             if minted is not None and minted != before:
                 try:
-                    _sq.set_session_file_path(db, finish_sid, str(minted))
+                    _sq.set_run_file_path(db, run_id, str(minted))
                 except Exception:
                     pass
                 try:
@@ -588,34 +611,34 @@ def record_headless_attempt(key: str, command: str, args: list[str],
                             harness_name: str = "",
                             session_file: str | None = None,
                             prompt: str = "",
-                            metadata: dict | None = None) -> str | None:
-    """Persist a failed-before-launch headless attempt (session + run).
+                            metadata: dict | None = None) -> int | None:
+    """Persist a failed-before-launch headless attempt as one run row.
 
-    Pre-link failures (no DB row for the key yet) persist too — sessions
-    carry no worktree FK, so the row survives with a dangling ref until
-    the worktree is hard-deleted. Same ``harness command:`` output
+    Pre-link failures (no worktree row for the key yet) persist too —
+    runs carry no worktree FK, so the row survives with a dangling ref
+    until the worktree is hard-deleted. Same ``harness command:`` output
     contract as previews. Never raises.
     """
-    return record_preview_session(
+    return record_preview_run(
         key, command, prompt, harness_name, output,
         exit_code=exit_code, args=args,
         metadata={**(metadata or {}), "origin": "headless-attempt"},
         session_file=session_file)
 
 
-def record_preview_session(key: str, command: str, prompt: str,
-                           harness_name: str, output: str,
-                           exit_code: int = 0,
-                           args: list[str] | None = None,
-                           metadata: dict | None = None,
-                           session_file: str | None = None) -> str | None:
-    """Persist a preview (no-launch) session + run; None when pre-cutover.
+def record_preview_run(key: str, command: str, prompt: str,
+                       harness_name: str, output: str,
+                       exit_code: int = 0,
+                       args: list[str] | None = None,
+                       metadata: dict | None = None,
+                       session_file: str | None = None) -> int | None:
+    """Persist a preview (no-launch) invocation as one run row.
 
-    Preview = DB row + full prompt stored, state='preview', plus a runs
-    row (every work run must produce a runs record). session_type is
-    derived from the command (start/review/sync; unknown → NULL, never
-    guessed). Never raises: warns to stderr so callers keep their own
-    result flow.
+    None pre-cutover (no state.db). Preview = transcript identity + full
+    prompt stored, state='preview' — one row, no separate session entity.
+    session_type is derived from the command (start/review/sync; unknown
+    → NULL, never guessed). Never raises: warns to stderr so callers keep
+    their own result flow.
 
     Contract: preview callers (start/review/terminal) MUST pass output
     starting with the literal ``harness command: `` prefix — the
@@ -624,17 +647,17 @@ def record_preview_session(key: str, command: str, prompt: str,
     after a reload.
 
     An explicit *session_file* (the web server's minted --session-file, or
-    CLI --session-file) pins both the row id (transcript stem) and
-    file_path, so the first run command already carries the full path and
-    later runs of the same session reuse it. Without it the row id is
-    generated and file_path stays "" until the harness mints a transcript.
-    A pinned path that names an already-recorded session (fix-continue
-    reusing the review transcript) adopts that row: the runs row still
-    records this run, but the session row is left untouched (a finished
-    review row must not flip back to preview).
+    CLI --session-file) pins the transcript: the first run command already
+    carries the full path and later runs of the same transcript reuse it.
+    Without it file_path stays "" until the harness mints a transcript.
+    A pinned path that already matches a run (fix-continue reusing the
+    review transcript, a preview rerun) does not re-declare the transcript
+    identity: only the invocation row is added, linked to that
+    transcript's first run via ``continued_from_run_id``, and the adopted
+    row keeps its state (a finished review row must not flip back to
+    preview).
     """
     from . import store_sqlite as _sq
-    from pathlib import Path as _Path
     try:
         db = _sq.db_path()
         if not db.exists():
@@ -643,8 +666,8 @@ def record_preview_session(key: str, command: str, prompt: str,
             from . import store as _store
             if key and key not in _store.load_links(include_inactive=True,
                                                    include_deleted=True):
-                # Dangling past ref (hard-deleted worktree): the FK rejects
-                # it — persist unattached (NULL ref) instead of dropping.
+                # Dangling past ref (hard-deleted worktree): the ref no
+                # longer names anything — persist unattached ('' ref).
                 key = ""
         except Exception:
             pass
@@ -652,37 +675,41 @@ def record_preview_session(key: str, command: str, prompt: str,
         if metadata:
             meta.update(metadata)
         pinned = session_file if isinstance(session_file, str) and session_file else ""
-        sid_arg = _Path(pinned).stem if pinned else None
+        run_args = args if args is not None else [key]
         if pinned:
             try:
-                existing = _sq.session_by_file_path(db, pinned, include_deleted_worktrees=True)
-                if existing is None and sid_arg:
-                    existing = _sq.get_session(db, sid_arg, include_deleted_worktrees=True)
+                existing = (_sq.run_by_file_path(db, pinned,
+                                                 include_deleted_worktrees=True)
+                            or _sq.run_by_file_stem(db, Path(pinned).stem,
+                                                    include_deleted_worktrees=True))
             except Exception:
                 existing = None
             if existing is not None:
-                _sq.insert_run(db, str(existing.get("id", sid_arg)), command,
-                               args if args is not None else [key],
-                               exit_code, output=[output])
-                return str(existing.get("id", sid_arg))
-        sid = _sq.insert_session(
-            db, worktree_ref=key or None, harness_name=harness_name,
-            initiator_command=command, prompt=prompt,
-            file_path=pinned, session_id=sid_arg,
+                try:
+                    root = (_sq.transcript_root_run(
+                        db, str(existing.get("file_path") or ""),
+                        include_deleted_worktrees=True) or existing)
+                except Exception:
+                    root = existing
+                return _sq.insert_run(
+                    db, command, run_args, exit_code,
+                    metadata=meta, state="preview",
+                    continued_from_run_id=int(root["id"]),
+                    output=[output])
+        return _sq.insert_run(
+            db, command, run_args, exit_code,
+            worktree_ref=key or None, harness_name=harness_name,
+            initiator_command=command, prompt=prompt, file_path=pinned,
             session_type=_sq.derive_session_type(command),
-            metadata=meta)
-        _sq.finish_session(db, sid, "preview")
-        _sq.insert_run(db, sid, command, args if args is not None else [key],
-                       exit_code, output=[output])
-        return sid
+            metadata=meta, state="preview", output=[output])
     except Exception as e:
-        eprint(f"warning: session record failed: {e}")
+        eprint(f"warning: preview run record failed: {e}")
         return None
 
 @app.command("watch-and-exec", hidden=True)
 def watch_and_exec(
-    sid: str = typer.Option(..., "--sid", help="Session row id to update."),
-    scope_dir: str = typer.Option(..., "--scope-dir", help="Branch-scoped session dir to watch."),
+    run_id: int = typer.Option(..., "--run-id", help="Run row id to update."),
+    scope_dir: str = typer.Option(..., "--scope-dir", help="Branch-scoped transcript dir to watch."),
     before: str = typer.Option("", "--before", help="Pre-launch newest transcript (empty = none)."),
     argv: list[str] = typer.Argument(..., help="Harness argv after --."),
 ) -> None:
@@ -709,7 +736,7 @@ def watch_and_exec(
                 return
             if minted is not None and minted != before_p:
                 try:
-                    _sq.set_session_file_path(_sq.db_path(), sid, str(minted))
+                    _sq.set_run_file_path(_sq.db_path(), run_id, str(minted))
                 except Exception:
                     pass
                 return
