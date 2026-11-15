@@ -233,11 +233,12 @@ def test_run_summaries_carry_session_type(client, monkeypatch):
 
 
 def test_persisted_pause_row_is_needs_input(client):
-    """A stored flow pause (exit 2, state='finished') serializes needs_input.
+    """A stored flow pause (exit 2) serializes needs_input even when the
+    mirror already finished the row as 'failed'.
 
     The live summary derives needs_input from exit 2; the persisted one used
     to say failed, so a reload flipped a paused flow step to a failure. A
-    stored terminal state still wins when the exit code never landed.
+    stored terminal state wins only when the exit code never landed.
     """
     from workagent import store_sqlite as sq
     db = sq.db_path()
@@ -249,10 +250,15 @@ def test_persisted_pause_row_is_needs_input(client):
                              session_type="start", state="finished")
     failed = sq.insert_run(db, "start", ["rk-pause"], None, worktree_ref="rk-pause",
                            session_type="start", state="failed")
+    failed_exit2 = sq.insert_run(db, "flow step review", ["review", "rk-pause"], 2,
+                                 worktree_ref="rk-pause", session_type="flow",
+                                 state="failed", output=["review log"])
     rows = {str(row["id"]): row for row in client.get("/api/runs").json()}
     assert rows[f"db-{paused}"]["state"] == "needs_input"
     assert rows[f"db-{finished}"]["state"] == "succeeded"
     assert rows[f"db-{failed}"]["state"] == "failed"
+    # _mirror_run finishes every nonzero run as 'failed'; exit 2 still wins.
+    assert rows[f"db-{failed_exit2}"]["state"] == "needs_input"
 
 
 def test_review_fix_comments_defaults_to_fresh_session(client, monkeypatch):

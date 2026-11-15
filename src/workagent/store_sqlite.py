@@ -1103,7 +1103,12 @@ def set_run_flow_id(path: Path, run_id: int, flow_id: int) -> None:
 
 def latest_review_run(path: Path, worktree_ref: str,
                       include_deleted_worktrees: bool = False) -> dict | None:
-    """Newest non-running review run for the ref (the 'current' one to continue)."""
+    """Newest non-running review run for the ref with a real transcript.
+
+    An adoption row stamps ``worktree_ref``/``session_type='review'`` while
+    deliberately keeping ``file_path=''``; it names no transcript, so it must
+    never become the "current one to continue".
+    """
     if not path.exists():
         return None
     with connect(path) as conn:
@@ -1111,7 +1116,7 @@ def latest_review_run(path: Path, worktree_ref: str,
         q = ("SELECT r.* FROM runs r"
              " LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref"
              " WHERE r.worktree_ref = ? AND r.session_type = 'review'"
-             " AND r.state != 'running'")
+             " AND r.state != 'running' AND r.file_path != ''")
         if not include_deleted_worktrees:
             q += " AND " + _NOT_DELETED
         q += " ORDER BY r.created_at DESC, r.id DESC LIMIT 1"
@@ -1381,6 +1386,17 @@ def _rebuild_required_columns(conn) -> list[str]:
             by_name = {r[1]: r for r in info}
             bad = any(c not in by_name or by_name[c][3] != 1 or by_name[c][4] is not None
                       for c in _REQUIRED_COLS.get(table, ()))
+            if table == "runs":
+                if list(conn.execute("PRAGMA table_info(sessions)")):
+                    # pre-v16: the fold rebuilds runs from the canonical DDL
+                    # and still needs the legacy session_id column for its
+                    # linkage, so rebuilding here would drop it too early
+                    continue
+                if "session_id" in by_name:
+                    # an earlier fold build still declared session_id; the
+                    # dead NOT NULL column must go, insert_run no longer
+                    # fills it (every insert would fail otherwise)
+                    bad = True
             if not bad:
                 continue
             tmp = f"{table}_rebuild"

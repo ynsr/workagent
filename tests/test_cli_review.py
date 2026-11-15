@@ -428,6 +428,42 @@ def test_fix_continue_reuse_survives_continuation_rows(isolated_config):
     assert "reuse_run_id" not in stale
 
 
+def test_fix_continue_ignores_adoption_row_without_transcript(isolated_config):
+    """An adopted preview row (review type, empty transcript) never shadows
+    the review transcript it continues.
+
+    A preview/terminal invocation with a pinned --session-file records an
+    adoption row: it stamps worktree_ref + session_type='review' but keeps
+    file_path='' on purpose (the transcript identity stays with the adopted
+    row). Being newer, it must not become the fix-continue target — reuse
+    would resolve to '' and the child would mint a fresh transcript.
+    """
+    from workagent import cli_review as _r, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    review_path = str(sq.session_file_path("rev-1896", "omp", branch="feat/x",
+                                          session_type="review"))
+    rid = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
+                        harness_name="omp", initiator_command="review",
+                        prompt="p", file_path=review_path,
+                        session_type="review")
+    sq.finish_run(db, rid, "finished")
+    adopted = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
+                            harness_name="omp", initiator_command="review",
+                            prompt="p", session_type="review",
+                            state="preview", continued_from_run_id=rid,
+                            output=["harness command: omp review k"])
+    assert adopted > rid and sq.get_run(db, adopted)["file_path"] == ""
+    assert sq.latest_review_run(db, "k")["id"] == rid
+    result = {"session_file": review_path}
+    assert _r._adopt_fix_reuse(result, "k") is True
+    assert result["reuse_run_id"] == rid
+    assert result["session_file"] == review_path
+
+
 def test_headless_validation_resumes_chain_head_attempts(isolated_config, monkeypatch):
     """A resume reads the attempt counter off the transcript's chain head.
 

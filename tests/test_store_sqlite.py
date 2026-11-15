@@ -25,6 +25,25 @@ _LEGACY_RUNS_DDL = ("CREATE TABLE runs (id INTEGER PRIMARY KEY AUTOINCREMENT,"
                     " truncated INTEGER NOT NULL DEFAULT 0,"
                     " validation TEXT NOT NULL DEFAULT '{}', flow_id INTEGER)")
 
+#: Sessions shape for the pre-v16 seeds (transcript identity plus the
+#: columns the v5/v6/v15 migrations expect).
+_LEGACY_SESSIONS_DDL = (
+    "CREATE TABLE sessions (id TEXT PRIMARY KEY NOT NULL,"
+    " worktree_ref TEXT, state TEXT NOT NULL,"
+    " harness_name TEXT NOT NULL DEFAULT '',"
+    " initiator_command TEXT NOT NULL DEFAULT '',"
+    " prompt TEXT NOT NULL DEFAULT '',"
+    " file_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,"
+    " session_type TEXT, metadata TEXT NOT NULL DEFAULT '{}', flow_id INTEGER)")
+
+#: The first shipped runs shape (commit 9443366): command/args carry DEFAULTs,
+#: so the pre-fold required-column rebuild would want to fire on it.
+_V1_RUNS_DDL = ("CREATE TABLE runs (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,"
+                " command TEXT NOT NULL DEFAULT '',"
+                " args TEXT NOT NULL DEFAULT '[]', exit_code INTEGER,"
+                " created_at TEXT NOT NULL)")
+
 
 def _seed_legacy_sessions(db, rows: list[tuple], runs: list[tuple]) -> None:
     """Pre-v16 shape: sessions table + runs carrying the sessions FK.
@@ -35,14 +54,7 @@ def _seed_legacy_sessions(db, rows: list[tuple], runs: list[tuple]) -> None:
     """
     import sqlite3
     with sqlite3.connect(db) as conn:
-        conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY NOT NULL,"
-                     " worktree_ref TEXT, state TEXT NOT NULL,"
-                     " harness_name TEXT NOT NULL DEFAULT '',"
-                     " initiator_command TEXT NOT NULL DEFAULT '',"
-                     " prompt TEXT NOT NULL DEFAULT '',"
-                     " file_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,"
-                     " session_type TEXT, metadata TEXT NOT NULL DEFAULT '{}',"
-                     " flow_id INTEGER)")
+        conn.execute(_LEGACY_SESSIONS_DDL)
         conn.execute(_LEGACY_RUNS_DDL)
         for r in rows:
             conn.execute("INSERT INTO sessions (id, worktree_ref, state, harness_name,"
@@ -174,6 +186,91 @@ def test_migrate_v16_never_reuses_a_deleted_run_id(tmp_path):
         assert conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'runs'"
                             ).fetchone()[0] == 3
     assert sq.insert_run(db, "start", [], 0) == 4
+
+
+def test_migrate_v16_folds_first_shipped_runs_ddl(tmp_path):
+    """The oldest runs shape migrates end to end.
+
+    The required-column rebuild must not run before the fold on a DB that
+    still has sessions: it would drop session_id from runs while the fold's
+    linkage UPDATE still reads it (`no such column: runs.session_id`) and
+    the DB could not open at all.
+    """
+    import sqlite3
+    db = tmp_path / "state.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(_LEGACY_SESSIONS_DDL)
+        conn.execute(_V1_RUNS_DDL)
+        conn.execute("INSERT INTO sessions (id, worktree_ref, state, harness_name,"
+                     " initiator_command, prompt, file_path, session_type,"
+                     " created_at) VALUES ('t-1', 'k', 'finished', 'omp',"
+                     " 'review', 'review this PR', '/s/t-1.jsonl', 'review',"
+                     " '2026-01-01')")
+        conn.execute("INSERT INTO runs (session_id, command, exit_code, created_at)"
+                     " VALUES ('t-1', 'review', 0, '2026-01-01')")
+    sq._INIT_CACHE.pop(str(db), None)
+
+    sq.init_db(db)
+
+    tables = {r[0] for r in sqlite3.connect(db).execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "sessions" not in tables
+    with sq.connect(db) as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+        assert "session_id" not in cols
+        row = conn.execute("SELECT worktree_ref, harness_name, prompt"
+                           " FROM runs").fetchone()
+    assert tuple(row) == ("k", "omp", "review this PR")
+
+
+def test_folded_db_with_stale_session_id_column_is_repaired(tmp_path):
+    """A DB folded by an intermediate build still declares session_id NOT NULL.
+
+    migrate_sessions_into_runs returns early (sessions is gone) and
+    _schema_current reports current, so nothing else would drop the dead
+    column while insert_run no longer fills it — every insert would raise
+    NOT NULL and the callers swallow it, silently losing history.
+    """
+    import sqlite3
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    first = sq.insert_run(db, "start", ["k"], 0, worktree_ref="k",
+                          harness_name="omp", initiator_command="start",
+                          prompt="p", file_path="/s/old.jsonl",
+                          session_type="start")
+    # Intermediate-build canonical shape plus the stale NOT NULL column.
+    with sqlite3.connect(db) as conn:
+        conn.execute("DROP TABLE runs")
+        conn.execute("CREATE TABLE runs (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                     " session_id TEXT NOT NULL,"
+                     " command TEXT NOT NULL, args TEXT NOT NULL,"
+                     " exit_code INTEGER, created_at TEXT NOT NULL,"
+                     " output TEXT NOT NULL DEFAULT '',"
+                     " truncated INTEGER NOT NULL DEFAULT 0,"
+                     " validation TEXT NOT NULL DEFAULT '{}', flow_id INTEGER,"
+                     " worktree_ref TEXT NOT NULL DEFAULT '',"
+                     " harness_name TEXT NOT NULL DEFAULT '',"
+                     " initiator_command TEXT NOT NULL DEFAULT '',"
+                     " prompt TEXT NOT NULL DEFAULT '',"
+                     " file_path TEXT NOT NULL DEFAULT '',"
+                     " session_type TEXT,"
+                     " metadata TEXT NOT NULL DEFAULT '{}',"
+                     " state TEXT NOT NULL DEFAULT 'finished',"
+                     " continued_from_run_id INTEGER)")
+        conn.execute("INSERT INTO runs (id, session_id, command, args,"
+                     " created_at, worktree_ref, harness_name, initiator_command,"
+                     " prompt, file_path, session_type)"
+                     " VALUES (?, 'legacy-session', 'start', '[]', '2026-01-01',"
+                     " 'k', 'omp', 'start', 'p', '/s/old.jsonl', 'start')",
+                     (first,))
+    sq._INIT_CACHE.pop(str(db), None)
+
+    sq.init_db(db)
+
+    with sq.connect(db) as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+        assert "session_id" not in cols
+    assert sq.insert_run(db, "start", ["k"], 0, worktree_ref="k") == first + 1
 
 
 def test_session_id_shape():
