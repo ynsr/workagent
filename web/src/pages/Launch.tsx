@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils"
 
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
 import { ReviewActionSelect, RunModeSelect, StartFormFields, buildReviewArgs, buildStartArgs } from "@/components/StartForm"
-import { COPY, INITIAL, MODES, adhocArgs, extraPromptArgs, runModeArgs, splitAdhocRefs } from "@/lib/launchConfig"
+import { COPY, INITIAL, MODES, adhocArgs, extraPromptArgs, isPrShaped, runModeArgs, splitAdhocRefs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
 import type { LaunchPrefs } from "@/lib/launchPrefs"

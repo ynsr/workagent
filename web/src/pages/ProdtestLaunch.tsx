@@ -21,6 +21,7 @@ import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
 /** Standalone Prod Test launch (moved off the Launch page's Prodtest tab, issue #50). */
 export function ProdtestLaunch() {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
   const confirm = useConfirm()
   const createRun = useCreateRun()
   const { data: links } = useLinks()
@@ -132,7 +133,6 @@ export function ProdtestLaunch() {
               onChange={(v) => update("ref", v.trim())}
               placeholder="Pick a linked worktree, or type IPG-932 / OWNER/REPO#22… (empty = run --all)"
               allowCustom
-              mapOption={(o) => (o.split(" — ")[0] ?? o).trim()}
             />
             <p className="text-xs text-muted-foreground">
               Pick a current worktree or type any ref; free text is kept. Empty ref + Run runs all released plans.

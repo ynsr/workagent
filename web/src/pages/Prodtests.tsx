@@ -72,7 +72,6 @@ export const PRODTEST_STATUS_HELP: Record<string, string> = {
   blocked: "Run couldn't complete (timeout, version gate, unverifiable plan).",
 }
 
-
 export function Prodtests() {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
