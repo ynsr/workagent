@@ -145,8 +145,14 @@ def _begin_step_run(fid: int, flow_key: str, kind: str, banner: str) -> int:
         return 0
 
 
-def _finish_step_run(rid: int, exit_code: int, tail: list[str] | None = None) -> None:
-    """Finalize the step's run row (best effort, never raises)."""
+def _finish_step_run(rid: int, exit_code: int, tail: list[str] | None = None,
+                     state: str | None = None) -> None:
+    """Finalize the step's run row (best effort, never raises).
+
+    Non-zero exits normally mean failure, but a pause (exit 2) is a
+    resumable hand-off to a human, not a failed step: callers pass
+    ``state`` to record it as finished with that exit code.
+    """
     if not rid:
         return
     try:
@@ -157,7 +163,7 @@ def _finish_step_run(rid: int, exit_code: int, tail: list[str] | None = None) ->
         if tail:
             _sq.update_run(db, rid, output=tail, append=True)
         _sq.update_run(db, rid, exit_code=exit_code)
-        _sq.finish_run(db, rid, "finished" if exit_code == 0 else "failed")
+        _sq.finish_run(db, rid, state or ("finished" if exit_code == 0 else "failed"))
     except Exception:
         pass
 
@@ -476,7 +482,11 @@ def flow_run(
                 detail = f"{detail} [terminal pid {outcome.get('terminal_pid')}]"
             elif outcome.get("terminal_error"):
                 detail = f"{detail} [terminal spawn failed: {outcome.get('terminal_error')}]"
-            _finish_step_run(child_rid, 2, [f"paused: {detail}"])
+            # A pause is resumable, not a failure: keep the step's run row
+            # 'finished' with exit 2 (the pause signal) so the Runs page
+            # does not render a hand-off as a failed step.
+            _finish_step_run(child_rid, 2, [f"paused: {detail}"],
+                             state="finished")
             results.append({"kind": kind, "status": "paused",
                             "detail": detail})
             store.update_flow(fid, status="paused", current_step=idx,

@@ -238,12 +238,15 @@ def _adopt_fix_reuse(result: dict, review_key: str) -> bool:
     The web server passes the saved run `file_path` as explicit
     --session-file. The owning run is found by exact file_path match (the
     pinned path itself — omp-minted filenames never match their stem, so
-    stem lookup silently misses). When it is the latest non-running
-    review run for the key, mark the reuse so the harness layer treats
-    the path as a resume target verbatim instead of rescoping it under
-    fix_comments/ (same stem, wrong dir → omp starts fresh). Falls back to
-    stem lookup for legacy rows whose file_path was never updated to the
-    minted name. Returns True when the reuse was adopted.
+    stem lookup silently misses). When the newest row on the path is a
+    continuation (`fix_comments`) row rather than the review identity,
+    the key's latest review run is used instead, as long as it names the
+    same transcript (exact path, then legacy stem). When the resolved
+    owner is the latest non-running review run for the key, mark the
+    reuse so the harness layer treats the path as a resume target
+    verbatim instead of rescoping it under fix_comments/ (same stem,
+    wrong dir → omp starts fresh). Returns True when the reuse was
+    adopted.
     """
     try:
         from pathlib import Path as _Path
@@ -257,13 +260,22 @@ def _adopt_fix_reuse(result: dict, review_key: str) -> bool:
         existing = (_sq.run_by_file_path(db, pinned, include_deleted_worktrees=True)
                     or _sq.run_by_file_stem(db, _Path(pinned).stem,
                                             include_deleted_worktrees=True))
-        if existing is None:
-            return False
+        latest = _sq.latest_review_run(db, review_key,
+                                       include_deleted_worktrees=True)
+        if existing is None or str(existing.get("session_type", "") or "") != "review":
+            # Every launch row names the transcript it runs, so once a
+            # fix-continue ran on this path the newest row is `fix_comments`,
+            # not the owning review row. Resolve the identity from the key's
+            # latest review run instead, and only when it names this exact
+            # transcript (path, then legacy stem).
+            if latest is None:
+                return False
+            stored = str(latest.get("file_path", "") or "")
+            if stored != pinned and _Path(stored).stem != _Path(pinned).stem:
+                return False
+            existing = latest
         if str(existing.get("worktree_ref", "")) != review_key:
             return False
-        if str(existing.get("session_type", "") or "") != "review":
-            return False
-        latest = _sq.latest_review_run(db, review_key)
         if latest is not None and int(latest.get("id", 0)) != int(existing.get("id", 0)):
             return False
         if str(existing.get("state", "")) == "running":

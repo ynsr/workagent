@@ -389,6 +389,91 @@ def test_fix_comments_explicit_file_adopts_review_reuse(isolated_config):
     assert "/fix_comments/" not in result["session_file"]
 
 
+def test_fix_continue_reuse_survives_continuation_rows(isolated_config):
+    """Two sequential fix-continue adoptions both reuse the review transcript.
+
+    Every launch row names the transcript it runs, so the newest row on a
+    continued path is a `fix_comments` row — the review identity must still
+    resolve from the key's latest review run.
+    """
+    from workagent import cli_review as _r, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    review_path = str(sq.session_file_path("rev-1896", "omp", branch="feat/x",
+                                          session_type="review"))
+    rid = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
+                        harness_name="omp", initiator_command="review",
+                        prompt="p", file_path=review_path,
+                        session_type="review")
+    sq.finish_run(db, rid, "finished")
+    first: dict = {}
+    _r._apply_fix_session(first, "k", True, True, review_path)
+    assert first["reuse_run_id"] == rid
+    # The fix-continue launch records its own row on the same transcript.
+    sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
+                  harness_name="omp", initiator_command="review",
+                  prompt="p", file_path=review_path,
+                  session_type="fix_comments")
+    second: dict = {}
+    _r._apply_fix_session(second, "k", True, True, review_path)
+    assert second["reuse_run_id"] == rid
+    assert second["session_file"] == review_path
+    # A pinned path the latest review does not own stays unadopted.
+    stale: dict = {"session_file": str(sq.session_file_path(
+        "rev-other", "omp", branch="feat/x", session_type="review"))}
+    assert _r._adopt_fix_reuse(stale, "k") is False
+    assert "reuse_run_id" not in stale
+
+
+def test_headless_validation_resumes_chain_head_attempts(isolated_config, monkeypatch):
+    """A resume reads the attempt counter off the transcript's chain head.
+
+    The launch writes a fresh row per invocation, so keying the counter on it
+    would always read 0; the chain head carries the previous WAITING count.
+    """
+    from workagent import cli_harness as _h, cli_validate as _cv, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    review_path = sq.session_file_path("rev-1896", "omp", branch="feat/x",
+                                      session_type="review")
+    review_path.parent.mkdir(parents=True, exist_ok=True)
+    review_path.write_text(json.dumps(
+        {"message": {"role": "assistant",
+                     "content": [{"type": "text", "text": "prior review\nJOB_DONE"}]}}) + "\n")
+    review_id = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
+                              harness_name="omp", initiator_command="review",
+                              prompt="p", file_path=str(review_path),
+                              session_type="review",
+                              metadata={"validation_attempts": 2})
+    sq.finish_run(db, review_id, "finished")
+    monkeypatch.setattr(_h.store, "record_harness_run", lambda *a, **k: None)
+    monkeypatch.setattr(_h.store, "clear_harness_run", lambda *a, **k: None)
+    monkeypatch.setenv("WORKAGENT_MAX_RETRIES", "3")
+    monkeypatch.setattr(_h.backend, "launch", lambda *a, **k: 0)
+    monkeypatch.setattr(_cv, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(_cv, "run_deterministic_gates",
+                        lambda *a, **k: {"passed": False, "checks": {},
+                                         "reasons": ["gates failed"]})
+    result = {"command": "review", "fix_comments": True, "branch": "feat/x",
+              "reuse_run_id": review_id, "session_file": str(review_path)}
+    with pytest.raises(_h.HarnessError):
+        _h._run_harness("omp", "Fix all open (not-resolved) review comments on this PR/MR: u",
+                        "/tmp", "/tmp", True, True, result, False, run_key="k",
+                        session_file=str(review_path))
+    # prior=2 + attempts 3 and 4 (4 > cap): two counted attempts, not four.
+    attempts = [r for r in sq.list_runs(db) if not r.get("session_type")]
+    assert len(attempts) == 2
+    assert sq.get_run(db, review_id)["metadata"]["validation_attempts"] == 4
+    assert all(r["worktree_ref"] == "k" for r in attempts)
+
+
 def test_fix_comments_default_is_fresh_transcript(isolated_config):
     """Bare --fix-comments mints a fresh row linked back via metadata."""
     from workagent import cli_review as _r, store_sqlite as sq

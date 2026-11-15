@@ -382,15 +382,24 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # The launch owns one runs row: state='running' until the execution
     # reports back (a 'finished' default would hide it from
     # latest_review_run, which skips running rows for fix-continue).
+    # Every row this launch writes (the launch itself and its headless
+    # validation attempts) carries the worktree ref when the key is a
+    # recorded link, so transcript GC can attribute and purge them all.
+    wt_ref: str | None = None
     if run_key and db.exists():
         try:
             from . import store as _store2
             linked = run_key in _store2.load_links(include_inactive=True,
                                                   include_deleted=True)
+            wt_ref = run_key if linked else None
+        except Exception:
+            wt_ref = None
+    if run_key and db.exists():
+        try:
             run_id = _sq.insert_run(
                 db, str(result.get("command", harness_name)), [run_key],
                 None,
-                worktree_ref=run_key if linked else None,
+                worktree_ref=wt_ref,
                 harness_name=harness_name,
                 initiator_command=result.get("command", harness_name),
                 prompt=prompt, file_path=session_path,
@@ -473,7 +482,12 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             validation = _cv.validate_headless(
                 worktree=worktree or fallback_dir, branch=branch, prompt=prompt,
                 session_type=stype, run_once=run_once, run_judge=run_judge,
-                run_db=db if db.exists() else None, run_id=run_id)
+                run_db=db if db.exists() else None,
+                # The attempt counter belongs to the transcript, not to this
+                # invocation's fresh row: key it on the chain head so a
+                # WAITING resume continues where validation stopped. A new
+                # transcript has no chain yet — its fresh row is the head.
+                run_id=chain_root or run_id)
             verdict = validation["verdict"]
             exit_code = 2 if verdict == "WAITING_USER_RESPONSE" else (
                 0 if verdict in ("JOB_DONE", "INTENTIONALLY_UNCOMMITTED_CHANGES") else 1)
@@ -484,6 +498,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                         _sq.insert_run(db, str(result.get("command", harness_name)),
                                        [run_key],
                                        exit_code if index == last else run["exit_code"],
+                                       worktree_ref=wt_ref,
                                        output=[f"harness command: {full_cmd}", run["output"]],
                                        validation=run["trace"],
                                        continued_from_run_id=chain_root)
