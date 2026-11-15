@@ -34,7 +34,8 @@ export interface ChainEditorProps {
 }
 
 /** Backend rule order (mirrors store_flows.validate_template):
- * Release-last, review→cleanup needs fix_comments, action before cleanup. */
+ * Release-last, review→cleanup needs fix_comments, start/action/prodtest_plan
+ * before the first cleanup. */
 export function validateChain(steps: FlowStep[]): string[] {
   const errors: string[] = []
   if (steps.length === 0) {
@@ -75,6 +76,12 @@ export function validateChain(steps: FlowStep[]): string[] {
     }
   })
   steps.forEach((step, i) => {
+    if (step.kind !== "start") return
+    if (cleanups.length > 0 && i >= Math.min(...cleanups)) {
+      errors.push(`Step ${i + 1}: 'start' steps must come before 'cleanup'.`)
+    }
+  })
+  steps.forEach((step, i) => {
     if (step.kind !== "action") return
     if (cleanups.length > 0 && i >= Math.min(...cleanups)) {
       errors.push(`Step ${i + 1}: 'action' steps must come before 'cleanup'.`)
@@ -108,9 +115,11 @@ export function startRepoState(
   steps: FlowStep[],
   _overrides?: Record<number, Record<string, unknown>>,
 ): "ok" | "missing" {
-  const first = steps[0]
-  if (!first || first.kind !== "start") return "ok"
-  const eff = (first.config ?? {}).repo
+  // Late starts are legal: the wizard's repo requirement follows the
+  // chain's start step wherever it sits, not step 1.
+  const start = steps.find((s) => s.kind === "start")
+  if (!start) return "ok"
+  const eff = (start.config ?? {}).repo
   return typeof eff === "string" && eff.trim() ? "ok" : "missing"
 }
 

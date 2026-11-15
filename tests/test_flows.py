@@ -48,6 +48,29 @@ def test_validate_template_allows_late_and_multiple_starts(tmp_path):
     assert norm[2]["config"] == {"plan": True}
 
 
+def test_validate_template_rejects_start_after_cleanup(tmp_path):
+    """A start after teardown would revive a closed issue (issue #109)."""
+    from workagent import store_flows as sf
+    _rejects([{"kind": "start"}, {"kind": "cleanup"},
+              {"kind": "start"}], "start")
+    _rejects([{"kind": "start"}, {"kind": "cleanup"},
+              {"kind": "start"}, {"kind": "cleanup"}], "start")
+    ok = sf.validate_template([{"kind": "sync"}, {"kind": "start"},
+                               {"kind": "cleanup"}])
+    assert [s["kind"] for s in ok] == ["sync", "start", "cleanup"]
+
+
+def test_compose_chains_rejects_starts_after_cleanup(tmp_path):
+    """Composing two cleanup-ending templates keeps the teardown last."""
+    import pytest
+    from workagent import store_flows as sf
+    from workagent.errors import HarnessError
+    with pytest.raises(HarnessError) as ei:
+        sf.compose_chains([("a", [{"kind": "start"}, {"kind": "cleanup"}]),
+                           ("b", [{"kind": "start"}, {"kind": "cleanup"}])])
+    assert "start" in str(ei.value)
+
+
 def test_validate_template_action_rules(tmp_path):
     _rejects([{"kind": "start"}, {"kind": "cleanup"},
               {"kind": "action", "action_label": "x"}], "action")

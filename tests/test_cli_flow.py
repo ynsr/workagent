@@ -316,6 +316,42 @@ def test_seam_start_forwards_plan_flag(monkeypatch):
     assert calls and calls[0][1].get("plan") is True
 
 
+
+def test_seam_start_runs_worktree_key_through_recorded_issue(tmp_path, monkeypatch):
+    """Issue #109: a late start gets the link key; start must still run.
+
+    Flows launched from the FlowsMenu pass the worktree key as the ref, so
+    `run_start_step` has to hand `start` the link's recorded issue instead
+    of feeding the key to `refs.parse_ref` (which rejects it, exit 2).
+    """
+    import pytest
+    import workagent.cli_flow as m
+    import workagent.cli_start as s
+    from workagent.errors import HarnessError
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    links = {"jira:IPG-1052@proj": {"issue": "jira:IPG-1052",
+                                    "worktree": str(wt),
+                                    "branch": "feat/IPG-1052",
+                                    "repo": str(tmp_path)}}
+    monkeypatch.setattr("workagent.store.load_links", lambda **k: links)
+    launched = {}
+    monkeypatch.setattr(s, "_launch_in_worktree",
+                        lambda key, *a, **k: launched.update(key=key))
+    monkeypatch.setattr("workagent.issue_status.set_issue_status",
+                        lambda *a, **k: None)
+    out = m._run_start_step("jira:IPG-1052@proj", "jira:IPG-1052@proj",
+                            {"launch": True}, False)
+    assert launched.get("key") == "jira:IPG-1052@proj"
+    assert out["key"] == "jira:IPG-1052@proj"
+    links["branch:feat/x"] = {"worktree": str(wt), "branch": "feat/x",
+                              "repo": str(tmp_path)}
+    with pytest.raises(HarnessError) as ei:
+        m._run_start_step("branch:feat/x", "branch:feat/x",
+                          {"launch": True}, False)
+    assert ei.value.exit_code == 2
+    assert "records no issue" in str(ei.value)
+
 def test_seam_review_calls_runner_headless_skips_preview(monkeypatch):
     import workagent.cli_flow as m
     import workagent.cli_review as r

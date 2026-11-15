@@ -103,6 +103,13 @@ def validate_template(steps: list[dict] | str,
     if releases and cleanups and max(cleanups) > releases[0]:
         raise HarnessError("'release' requires a prior 'cleanup' step",
                            exit_code=2)
+    # Start steps may repeat and sit anywhere before teardown, but a start
+    # after cleanup would re-fetch the closed issue, mint a fresh worktree
+    # and launch a second harness for work the flow already finished.
+    for i, k in enumerate(kinds):
+        if k == "start" and cleanups and i >= min(cleanups):
+            raise HarnessError("'start' steps must come before 'cleanup'",
+                               exit_code=2)
     for i, k in enumerate(kinds):
         if k != "review":
             continue
