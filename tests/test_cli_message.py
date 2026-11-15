@@ -310,3 +310,71 @@ def test_message_adhoc_unknown_repo_fails_before_fetch(tmp_path, monkeypatch):
                                       "--dry-run", "--json"])
     assert res.exit_code == 2
     assert "unknown repo" in (res.output + res.stderr)
+
+def test_message_adhoc_registered_wins_over_fetch_with_many_repos(tmp_path, monkeypatch):
+    """Registered message must resolve locally even when `mm` fetch succeeds.
+
+    Repro for issue #85: the adhoc button sent a bare 26-char id; the fetch
+    succeeded, then the auto-register branch counted every registered repo
+    and failed with "not registered — re-run with --repo <name>".
+    """
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent import store_sqlite as sq
+    import workagent.cli_message as cm
+    _seed(tmp_path, monkeypatch, repo="r1")
+    db = sm_db_path(tmp_path)
+    conn = sq.connect(db)
+    conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
+                 ("r2", "/tmp/r2", "r2"))
+    conn.commit()
+    from workagent import store_messages as sm
+    mid = "swqrz9mfitdqmq7uaxtet7gb1h"
+    sm.create_message(db, message_id=mid, repos=["r1"])
+    def _must_not_fetch(*a):
+        raise AssertionError("mm must not be called for a registered message")
+    monkeypatch.setattr(cm, "_mm", _must_not_fetch)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["message", "adhoc", mid,
+                                      "--prompt", "hi", "--dry-run", "--json"])
+    assert res.exit_code == 0, res.output
+    assert mid in res.output
+
+
+def test_message_adhoc_terminal_reaches_harness(tmp_path, monkeypatch):
+    """Issue #83: message adhoc --terminal died on a missing json_output arg."""
+    from workagent import store_messages as sm
+    _seed(tmp_path, monkeypatch)
+    sm.create_message(sm_db_path(tmp_path), message_id="p1", repos=["r1"])
+    import workagent.cli_message as cm
+    calls = {}
+    def _fake(name, prompt, wt, fb, no_tty, launch, result, json_output,
+              run_key=None, session_file=None, terminal=False, env_file=None,
+              timeout_s=None):
+        calls.update(no_tty=no_tty, launch=launch, terminal=terminal)
+    monkeypatch.setattr("workagent.cli_harness._run_harness", _fake)
+    monkeypatch.setattr("workagent.cli_harness._guard_harness", lambda *a, **k: None)
+    monkeypatch.setattr(cm, "_resolve_exec", lambda msg, ref, repo: ("/tmp/r1", ""))
+    msg = sm.resolve_message(sm_db_path(tmp_path), "p1")
+    cm._run_prompt(msg, "what does this mean?", "", "", False, True,
+                   None, None, None, None, False, True, False)
+    assert calls == {"no_tty": False, "launch": False, "terminal": True}
+
+def test_message_adhoc_headless_reaches_harness(tmp_path, monkeypatch):
+    """Headless sibling of the #83 terminal regression test."""
+    from workagent import store_messages as sm
+    _seed(tmp_path, monkeypatch)
+    sm.create_message(sm_db_path(tmp_path), message_id="p1", repos=["r1"])
+    import workagent.cli_message as cm
+    calls = {}
+    def _fake(name, prompt, wt, fb, no_tty, launch, result, json_output,
+              run_key=None, session_file=None, terminal=False, env_file=None,
+              timeout_s=None):
+        calls.update(no_tty=no_tty, launch=launch, terminal=terminal)
+    monkeypatch.setattr("workagent.cli_harness._run_harness", _fake)
+    monkeypatch.setattr("workagent.cli_harness._guard_harness", lambda *a, **k: None)
+    monkeypatch.setattr(cm, "_resolve_exec", lambda msg, ref, repo: ("/tmp/r1", ""))
+    msg = sm.resolve_message(sm_db_path(tmp_path), "p1")
+    cm._run_prompt(msg, "what does this mean?", "", "", True, False,
+                   None, None, None, None, False, True, False)
+    assert calls == {"no_tty": True, "launch": True, "terminal": False}

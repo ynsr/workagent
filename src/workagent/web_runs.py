@@ -386,14 +386,33 @@ def _persisted_summary(row: dict) -> dict:
                     f"{cmd}:{_first_positional(list(args), VAL_FLAGS[cmd])}") or ""
     except Exception:
         worktree = ""
+    cmd = str(row.get("command") or "")
+    argv = list(args) if isinstance(args, list) else []
+    # Step rows store `flow step <kind>` as the command: not a real
+    # subcommand (issue #91 showed `workagent flow step review …`
+    # in the header). Map back to the step's real command + ref so the
+    # header shows (and re-runs) a valid argv and the target resolves.
+    # New rows store args=[kind, ref]; legacy rows stored args=[ref].
+    if cmd.startswith("flow step "):
+        from .store_flows import STEP_KINDS as _STEP_KINDS
+        kind = cmd[len("flow step "):]
+        if len(argv) >= 2 and argv[0] in _STEP_KINDS:
+            kind, ref = argv[0], argv[1]
+        else:
+            ref = argv[0] if argv else ""
+        mapped = {"start": "start", "review": "review",
+                    "fix_comments": "review", "sync": "sync",
+                    "cleanup": "cleanup"}.get(kind)
+        if mapped is not None:
+            cmd, argv = mapped, [ref] if ref else []
     target = ""
     try:
         from .web_args import _target_for
-        target = _target_for(str(row.get("command") or ""), list(args) if isinstance(args, list) else [])
+        target = _target_for(cmd, argv)
     except Exception:
         target = ""
-    return {"id": f"db-{row.get('id')}", "command": row.get("command"),
-            "args": args if isinstance(args, list) else [], "state": state,
+    return {"id": f"db-{row.get('id')}", "command": cmd,
+            "args": argv, "state": state,
             "exit_code": exit_code, "truncated": bool(row.get("truncated")),
             "created": created, "target": target,
             "session_file": session_file, "worktree": worktree,

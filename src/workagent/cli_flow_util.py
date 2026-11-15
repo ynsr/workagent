@@ -33,7 +33,8 @@ START_FLAGS = (("repo", "--repo", "str"),
                ("env_file", "--env-file", "str"),
                ("extra_prompt", "--extra-prompt", "str"),
                ("no_status", "--no-status", "bool"),
-               ("no_review", "--no-review", "bool"))
+               ("no_review", "--no-review", "bool"),
+               ("plan", "--plan", "bool"))
 
 #: review/fix-comments config keys for the terminal/manual handoff
 #: (then_fix_comments stays banned inside flows — never forwarded).

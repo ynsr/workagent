@@ -25,6 +25,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `start --dry-run` | read-only-ish | — | `start` | no | | none |
 | `start --yes` | mutating | — | `start` | no | | skips confirmations |
 | `start --json` | mutating | — | `start` | no | | |
+| `start --plan` | mutating | Implement/Plan segmented toggle (Launch Start form + candidate Start dialog; persisted in `launch.prefs.v1`) | `start` | no | | plan-mode prompt (no implementation, brainstorm via the `brainstorming` skill, write spec+plan MDs, push + open PR/MR, stop); without `--plan` the prompt names existing spec/plan files; flow `start` steps take `plan: true` (ChainEditor checkbox, headless `_pick` + terminal/manual `START_FLAGS`) |
 | `review REF` | mutating | — | `review` | no | parse failure; not a PR/MR ref and no discoverable PR; tracker linked to 2+ repos without `--repo` (#29, exit 2 naming candidates) | repo picker (TTY) |
 | `review --repo/--depth/--harness/--no-tty/--launch/--terminal/--dry-run/--yes/--json` | mutating | — | `review` | no | as above | as above (`--terminal` XOR `--launch`, same spawn/lock semantics as `start --terminal`) |
 | `review --then-fix-comments` | mutating | — | `review` | no | with `--fix-comments`/`--all` (2) | chains a fix run after review exit 0 (headless auto; preview/terminal print follow-up); **deprecated: use flows; ignored inside flow templates** |

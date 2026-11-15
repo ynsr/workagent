@@ -42,6 +42,20 @@ def test_start_accepts_and_forwards_launch(client, monkeypatch):
     _wait_state(client, rid, {"succeeded"})
 
 
+def test_start_accepts_and_forwards_plan(client, monkeypatch):
+    """Issue #88: `start --plan` passes validation and reaches the child argv."""
+    _stub_spawn(monkeypatch)
+    r = client.post("/api/runs", json={
+        "command": "start", "args": ["IPG-88", "--plan", "--dry-run"],
+        "confirm": True,
+    })
+    assert r.status_code == 202, r.text
+    rid = r.json()["run_id"]
+    run = client.app.state.registry.get(rid)
+    assert "--plan" in run.argv
+    _wait_state(client, rid, {"succeeded"})
+
+
 def test_start_accepts_repeated_related_repo(client, monkeypatch):
     """`start --related-repo a --related-repo b` passes validation, reaches argv."""
     _stub_spawn(monkeypatch)
@@ -1099,3 +1113,22 @@ def test_rehydrate_closes_spawn_failure(client):
     out = web_runs.rehydrate(client.app.state.registry)
     assert "ghost1" in out["closed"]
     assert run_store.read_exit(d) == -1
+
+
+def test_persisted_summary_maps_step_rows_to_real_command():
+    """Step rows render a runnable argv; legacy [ref] never reads a kind."""
+    from workagent import web_runs
+
+    def row(command, args):
+        return {"id": 1, "command": command, "args": args,
+                "state": "succeeded", "exit_code": 0, "created_at": "",
+                "session_file": "", "session_id": None, "worktree_ref": "",
+                "validation": {}, "truncated": False}
+
+    out = web_runs._persisted_summary(row("flow step review", ["review", "IPG-1"]))
+    assert out["command"] == "review" and out["args"] == ["IPG-1"]
+    # Legacy single-element row whose ref collides with a kind name keeps the ref.
+    out = web_runs._persisted_summary(row("flow step review", ["review"]))
+    assert out["command"] == "review" and out["args"] == ["review"]
+    out = web_runs._persisted_summary(row("flow step sync", ["IPG-2"]))
+    assert out["command"] == "sync" and out["args"] == ["IPG-2"]

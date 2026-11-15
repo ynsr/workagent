@@ -53,6 +53,27 @@ describe("ChainEditor fix-comments checkbox", () => {
   })
 })
 
+describe("ChainEditor plan checkbox", () => {
+  it("toggles plan through onChange for start steps", async () => {
+    const user = userEvent.setup()
+    let next: FlowStep[] = []
+    const steps: FlowStep[] = [{ kind: "start", config: {} }]
+    render(
+      <ChainEditor
+        mode="edit"
+        steps={steps}
+        onChange={(s) => { next = s }}
+        knownActions={[]}
+      />,
+    )
+    const box = screen.getByLabelText(/Plan mode/)
+    expect(box).not.toBeChecked()
+    await user.click(box)
+    expect(next[0]?.config?.plan).toBe(true)
+  })
+})
+
+
 describe("ChainEditor release selects", () => {
   it("shows Checks and Diff selects only for release steps", () => {
     const release: FlowStep[] = [{ kind: "release", config: {} }]

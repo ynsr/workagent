@@ -346,6 +346,13 @@ Request:
 - `start` takes repeatable `--related-repo <name>` (one child worktree per
   repo on the same branch; the Launch Start form multi-selects from every
   registered repo except the main one).
+- `start --plan` (issue #88): plan mode — the harness prompt forbids
+  implementation and instructs the agent to brainstorm/grill the user,
+  write spec + plan MD files, push and open a PR/MR, then stop. Without
+  `--plan` the prompt tells the agent to read existing spec/plan files
+  first. The Launch Start form exposes an Implement/Plan segmented toggle
+  (persisted in launch prefs); flow `start` steps accept `plan: true` config
+  (FlowWizard/ChainEditor checkbox).
 - `link destroy-deleted [REF] [--all] [--dry-run] [--json]`: permanently destroys
   soft-deleted rows INCLUDING surviving local state — worktree dir teardown,
   local branch delete, then row drop (sessions/runs CASCADE). Remote

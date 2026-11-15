@@ -50,7 +50,30 @@ def test_start_passes_github_issue_url_to_git_wt(isolated_config, tmp_path, monk
         assert r.exit_code == 0, r.output
         assert calls["link"] == "https://github.com/o/r/issues/22"
         assert calls["issue"] == "22"
-
+def test_start_plan_flag_threads_plan_mode(isolated_config, tmp_path, monkeypatch):
+    """Issue #88: `start --plan` builds a plan-mode prompt; default does not."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    _start_mocks(monkeypatch, repo_dir)
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda repo, **kw: {"worktree_path": str(worktree),
+                                            "branch": "feat/22--add-login"})
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    seen = {}
+    orig = cli.backend.prompt_for_issue
+    def spy(title, body, ref, **kw):
+        seen.update(kw)
+        return orig(title, body, ref, **kw)
+    monkeypatch.setattr(cli.backend, "prompt_for_issue", spy)
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--launch", "--json", "--plan"])
+    assert r.exit_code == 0, r.output
+    assert seen.get("plan_mode") is True
+    seen.clear()
+    r = runner.invoke(cli.app, ["start", "o/r#22", "--launch", "--json"])
+    assert r.exit_code == 0, r.output
+    assert seen.get("plan_mode") in (False, None)
 
 def test_start_reuses_linked_worktree(isolated_config, tmp_path, monkeypatch):
     """Issue #26 rule 1: `start` for an already-linked issue reuses its worktree."""

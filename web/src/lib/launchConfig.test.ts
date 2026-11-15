@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { buildReviewArgs } from "@/components/StartForm"
+import { buildReviewArgs, buildStartArgs } from "@/components/StartForm"
 import { INITIAL, adhocArgs, splitAdhocRefs } from "@/lib/launchConfig"
 describe("splitAdhocRefs", () => {
   it("splits one-per-line refs", () => {
@@ -22,7 +22,14 @@ describe("adhocArgs", () => {
   })
 })
 
-
+describe("buildStartArgs", () => {
+  it("emits --plan in plan mode only", () => {
+    const plan = buildStartArgs({ ...INITIAL, ref: "IPG-88", repo: "r", startAction: "plan" })
+    expect(plan).toContain("--plan")
+    const impl = buildStartArgs({ ...INITIAL, ref: "IPG-88", repo: "r", startAction: "implement" })
+    expect(impl).not.toContain("--plan")
+  })
+})
 describe("buildReviewArgs", () => {
   it("headless review sends --no-tty so the CLI returns and chains --then-fix-comments", () => {
     const args = buildReviewArgs({ ...INITIAL, ref: "https://github.com/o/r/pull/1", repo: "r", runMode: "headless", thenFixComments: true })

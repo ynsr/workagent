@@ -183,6 +183,41 @@ def _same_repo(entry: dict, repo_dir: Path) -> bool:
     except OSError:
         return recorded == str(repo_dir)
 
+def _pinned_repo_for_pr(ref: str, parsed: dict | None) -> str:
+    """Worktree-pinned repo for a PR/MR URL ("" when unknowable).
+
+    Only rows that own this PR may pin the repo: the canonical link key,
+    a stored ``pr_url`` match, or the live reuse row for the PR head
+    branch. A bare substring hit (e.g. PR number ``89`` inside branch
+    ``IPG-1089`` — issue #91) must never pin an unrelated repo: the
+    host-scoped tracker guard would then reject the real repo.
+    """
+    links = store.load_links(include_deleted=True)
+    if parsed is not None and parsed.get("kind") in ("pr", "mr"):
+        canon = refs.pr_key(str(parsed.get("url") or ""))
+        if canon and isinstance(links.get(canon), dict):
+            return str(links[canon].get("repo", "") or "")
+        hit = [k for k, v in links.items()
+               if isinstance(v, dict) and v.get("pr_url") == ref
+               and v.get("repo")]
+        if len(hit) == 1:
+            return str(links[hit[0]].get("repo", "") or "")
+        try:
+            head = (refs.fetch_pr_info(parsed) or {}).get("head_ref", "")
+        except Exception:
+            head = ""
+        if head:
+            exact = [k for k, v in links.items()
+                     if isinstance(v, dict) and v.get("branch") == head
+                     and v.get("repo") and not v.get("deleted_at")]
+            if len(exact) == 1:
+                return str(links[exact[0]].get("repo", "") or "")
+        return ""
+    _pre = worktrees.resolve_worktree(ref, links)
+    if isinstance(_pre, str):
+        return str((links.get(_pre) or {}).get("repo", "") or "")
+    return ""
+
 def _review_key_for(pr_url: str, worktree: str, branch: str, repo: str = "") -> str:
     """Link key review state lives under: the recorded row for this
     worktree/branch when one exists, else the source branch name.
@@ -633,11 +668,7 @@ def review(
             hint = "github.com/OWNER/REPO/pull/NUM" if not gh_repo else f"github.com/{gh_repo}/pull/NUM"
             _fail(f"{ref} is ambiguous — `review` needs a PR/MR URL (e.g. "
                   f"https://{hint}).", EXIT_USAGE)
-    _pre_repo = ""
-    if not repo:
-        _pre = worktrees.resolve_worktree(ref, store.load_links(include_deleted=True))
-        if isinstance(_pre, str):
-            _pre_repo = store.load_links(include_deleted=True).get(_pre, {}).get("repo", "")
+    _pre_repo = _pinned_repo_for_pr(ref, parsed) if not repo else ""
     repo_dir, base_branch, tid, outcome = trackers.resolve_repo_for_ref(
         parsed, repo, Path.cwd(), depth=depth, yes=yes,
         persist=not dry_run, pinned=_pre_repo)

@@ -576,6 +576,10 @@
 - Fix-default hands both failing branches to the harness and names the failing branch in dry-run plans and noops [52]
 - Retry live PR lookup in review/flow instead of failing on transient gh errors [60]
 - Run Flow dialog closes on click and queues sequential worktree runs in the background with toast progress instead of stalling on Starting [69]
+- Fixed flow review steps pinning an unrelated repo on PR-number/branch collisions: only rows owning the PR pin the repo [91]
+- Message adhoc on an already-registered message no longer fails asking for --repo: local lookup runs before the mm fetch [85]
+- Fixed message adhoc/validate runs failing with a missing-argument error: prompt runs now reach the harness in every mode [83]
+- Start gains plan mode: --plan constrains the agent to spec+plan only (no implementation), with an Implement/Plan toggle on the Launch form and a plan checkbox on flow start steps [88]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

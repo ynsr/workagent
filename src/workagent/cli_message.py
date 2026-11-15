@@ -108,10 +108,12 @@ def message_remove(
 def _resolve_or_fetch(msg_ref: str, repo_opt: str = "") -> dict:
     """Resolve a registered message; on miss, fetch via `mm` and auto-register.
 
-    Only an exact 26-char lowercase-alnum id (bare or permalink tail) is
-    fetchable. Auto-register needs ≥1 repo: explicit `--repo` wins, else the
-    single registered repo is used; zero/several repos → exit 2 naming them.
-    Unfetchable or unknown refs keep the original `unknown message` error.
+    Registered messages resolve locally first (a live `mm` fetch must never
+    shadow an already-registered row). Only an exact 26-char lowercase-alnum
+    id (bare or permalink tail) is fetchable. Auto-register needs ≥1 repo:
+    explicit `--repo` wins, else the single registered repo is used;
+    zero/several repos → exit 2 naming them. Unfetchable or unknown refs
+    keep the original `unknown message` error.
     """
     from .errors import HarnessError
     from .store_messages import extract_message_id
@@ -119,6 +121,10 @@ def _resolve_or_fetch(msg_ref: str, repo_opt: str = "") -> dict:
     if repo_pin and repo_pin not in store.load_repos():
         known = ", ".join(sorted(store.load_repos())) or "(no repos registered)"
         _fail(f"unknown repo: {repo_pin} (repos: {known})", EXIT_USAGE)
+    try:
+        return store.resolve_message(msg_ref)
+    except HarnessError:
+        pass
     mid = extract_message_id(msg_ref)
     # Gate repeats extract_message_id's shape check on purpose: bare refs
     # bypass the permalink branch above, so re-check here before the fetch.
@@ -240,13 +246,16 @@ def _run_prompt(msg: dict, prompt: str, ref_opt: str, repo_opt: str, launch: boo
         eprint(f"run prompt on message {msg.get('message_id')} ({workdir})? [y/N] ", end="")
         if (_sys.stdin.readline() or "").strip().lower() not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)
-    if key:
-        _guard_harness(key, workdir)
+    if mode != "preview":
+        _guard_harness(key or None, workdir)
+    use_launch = mode == "headless"
+    use_terminal = mode == "terminal"
     _run_harness(harness or store.load_config().get("default_harness", "omp"),
-                 body, workdir, workdir, mode == "preview", mode != "terminal",
+                 body, workdir, workdir, use_launch, use_launch,
                  {"command": "message", "session_metadata": {"action": "message",
                   "mode": mode, "message_id": msg.get("message_id")}},
-                 env_file=env_file, session_file=session_file)
+                 json_output, run_key=key or None, session_file=session_file,
+                 terminal=use_terminal, env_file=env_file)
     _print_result({"message": msg.get("message_id"), "workdir": workdir,
                    "key": key, "mode": mode}, json_output)
 

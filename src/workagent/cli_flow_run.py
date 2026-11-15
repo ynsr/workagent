@@ -135,7 +135,12 @@ def _begin_step_run(fid: int, flow_key: str, kind: str, banner: str) -> int:
             session_type="flow",
             metadata={"origin": "flow-step", "flow_id": fid,
                       "step": kind})
-        return _sq.insert_run(db, sid, f"flow step {kind}", [flow_key or ""],
+        # Store the step's real command + ref as (command, args): the
+        # Runs page renders `workagent {command} {args}` verbatim, so a
+        # pseudo-command here would display an unrunnable argv (issue #91
+        # showed `workagent flow step review …`, which is not a subcommand).
+        # `_persisted_summary` maps the step kind back for the header.
+        return _sq.insert_run(db, sid, f"flow step {kind}", [kind, flow_key or ""],
                               None, output=[banner], flow_id=fid)
     except Exception:
         return 0

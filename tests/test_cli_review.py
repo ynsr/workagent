@@ -770,3 +770,68 @@ def test_review_different_branch_same_ticket_other_repo_creates_own_worktree(iso
     old = links["jira:IPG-1054@ipg-commons"]
     assert old["pr_url"].endswith("/merge_requests/99")  # untouched, not stamped
     assert old["repo"] == "/repos/ipg-commons"
+
+
+def test_pinned_repo_ignores_substring_collision(isolated_config, tmp_path, monkeypatch):
+    """Issue #91: PR #89 must not pin the repo of branch IPG-1089.
+
+    The old lookup resolved the PR URL through a bare substring scan
+    (``89 in branch``), pinning projectx and tripping the host-scoped
+    tracker guard for github:ynsr/workagent. Only an owning row
+    (canonical key, stored pr_url, or head-branch reuse) may pin.
+    """
+    from workagent import cli_review as _r
+    links = {
+        "github:ynsr/workagent#84": {
+            "worktree": "/wt/84", "branch": "feat/84--x",
+            "repo": "/repos/workagent",
+            "issue_url": "https://github.com/ynsr/workagent/issues/84",
+            "pr_url": "https://github.com/ynsr/workagent/pull/89",
+        },
+        "jira:IPG-1089@projectx": {
+            "worktree": "/wt/1089",
+            "branch": "feat/IPG-1089--enamad-check",
+            "repo": "/repos/projectx",
+            "issue_url": "https://tribe.jibit.cloud/browse/IPG-1089",
+            "pr_url": "https://git.jibit.cloud/server/projectx/-/merge_requests/1814",
+        },
+    }
+    monkeypatch.setattr(_r.store, "load_links", lambda **k: dict(links))
+    monkeypatch.setattr(_r.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": ""})
+    parsed = _r.refs.parse_ref("https://github.com/ynsr/workagent/pull/89")
+    # The owning row pins workagent via its stored pr_url — even though
+    # '89' is also a substring of branch 'IPG-1089'.
+    assert _r._pinned_repo_for_pr(
+        "https://github.com/ynsr/workagent/pull/89", parsed) == "/repos/workagent"
+    # No owning row at all: no pin ("" → single-linked/tracker default),
+    # never the substring-collision repo.
+    bare = {k: v for k, v in links.items()
+            if k == "jira:IPG-1089@projectx"}
+    monkeypatch.setattr(_r.store, "load_links", lambda **k: dict(bare))
+    monkeypatch.setattr(_r.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": ""})
+    assert _r._pinned_repo_for_pr(
+        "https://github.com/ynsr/workagent/pull/89", parsed) == ""
+
+def test_pinned_repo_head_reuse_needs_exact_branch(isolated_config, tmp_path, monkeypatch):
+    """Head-reuse pins only on exact branch equality, never substring."""
+    from workagent import cli_review as _r
+    links = {
+        "jira:IPG-1089@projectx": {
+            "worktree": "/wt/1089", "branch": "feat/IPG-1089--enamad-check",
+            "repo": "/repos/projectx",
+        },
+    }
+    monkeypatch.setattr(_r.store, "load_links", lambda **k: dict(links))
+    parsed = _r.refs.parse_ref("https://github.com/ynsr/workagent/pull/89")
+    # Substring-only collision ("89" in "IPG-1089") must not pin.
+    monkeypatch.setattr(_r.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "89"})
+    assert _r._pinned_repo_for_pr(
+        "https://github.com/ynsr/workagent/pull/89", parsed) == ""
+    # Exact head-branch match pins the owning repo.
+    monkeypatch.setattr(_r.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/IPG-1089--enamad-check"})
+    assert _r._pinned_repo_for_pr(
+        "https://github.com/ynsr/workagent/pull/89", parsed) == "/repos/projectx"

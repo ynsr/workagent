@@ -64,7 +64,7 @@ def run_start_step(ref: str, key: str, config: dict,
                 **pick(config, "repo", "related_repo", "depth",
                        "base", "harness", "no_tty", "session_file",
                        "env_file", "extra_prompt", "no_status",
-                       "no_review"))
+                       "no_review", "plan"))
     if isinstance(out, dict) and out.get("preview"):
         return out
     # start returns None (prints its own result): recover the recorded
@@ -96,11 +96,38 @@ def run_start_step(ref: str, key: str, config: dict,
     return {"key": new_key or ref, "ref": ref, "status": "started"}
 
 
+
+def _flow_repo(key: str, config: dict) -> str:
+    """Repo the flow already resolved for *key* ("" when unknown).
+
+    The start step records it on the link row; the review step inherits
+    it so a template that sets ``--repo`` once does not re-resolve from
+    a fuzzy worktree lookup per step (issue #91: the review step pinned
+    an unrelated repo whose number collided as a substring, tripping the
+    host-scoped tracker guard). Sync resolves from its own link row via
+    ``_sync_one`` and inherits nothing. An explicit per-step ``repo``
+    always wins.
+    """
+    if str(config.get("repo", "") or ""):
+        return ""
+    try:
+        from . import store as _store
+        got = (_store.load_links(include_deleted=True).get(key, {})
+               or {}).get("repo", "")
+    except Exception:
+        return ""
+    return str(got or "")
+
+
 def run_review_step(key: str, config: dict, fix_comments: bool,
                     json_output: bool, spawn, manual) -> dict:
     """Review (or Fix-comments) step with merged flags."""
     from . import cli_review as _mod
     from . import store as _store
+    if not config.get("repo"):
+        fb = _flow_repo(key, config)
+        if fb:
+            config = {**config, "repo": fb}
     fix = bool(fix_comments or config.get("fix_comments", False))
     fix_argv = ["--fix-comments"] if fix else []
     extra = flag_argv(config, *REVIEW_FLAGS)
