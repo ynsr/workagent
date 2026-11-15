@@ -214,7 +214,8 @@ def test_release_lock_skip_returns_skipped(tmp_path, monkeypatch):
     assert calls == []
 
 
-def test_pre_post_ordering_with_deferred_pre(tmp_path, monkeypatch):
+def test_pre_post_ordering_with_deferred_pre(tmp_path, monkeypatch,
+                                             isolated_config):
     """F6: pre runs (deferred until Start mints the worktree), then post."""
     import workagent.cli_flow as cli_mod
     tpl = {"label": "e2e", "name": "E2E", "pre_execution": "make lint",

@@ -94,6 +94,21 @@ def _remove_harness_runs(key: str) -> None:
     _remove_transcripts(_harness_run_targets(key), key)
 
 
+def purge_orphans(dry_run: bool = False) -> dict:
+    """Delete records whose worktree row no longer exists, plus transcripts.
+
+    ``store.purge_orphans`` drops the DB rows (dangling runs, flows, message
+    worktree links, child parent labels) and returns the orphan runs'
+    transcript targets; the .jsonl files/dirs are deleted here. *dry_run*
+    reports the same counts without deleting anything.
+    """
+    out = store.purge_orphans(dry_run=dry_run)
+    if dry_run:
+        return out
+    _remove_transcripts(set(out.get("transcripts") or []), "orphans")
+    return out
+
+
 def _teardown_local(key: str, branch: str, repo_str: str, worktree_path: str = "") -> None:
     """Remove the worktree dir + git worktree entry + local branch (best effort, never raises)."""
     from . import cli as _cli

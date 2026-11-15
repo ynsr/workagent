@@ -38,7 +38,7 @@ def test_template_compose_preserves_both_starts(tmp_path, monkeypatch):
     assert created["parent_labels"] == ["a", "b"]
     assert [s["kind"] for s in created["steps"]] == ["start", "sync", "start", "cleanup"]
 
-def test_flow_run_steps_override_persisted(tmp_path, monkeypatch):
+def test_flow_run_steps_override_persisted(tmp_path, monkeypatch, isolated_config):
     """--steps replaces the template chain; the run stores effective_steps."""
     from typer.testing import CliRunner
     import workagent.cli  # noqa: F401  (register commands)
@@ -146,7 +146,8 @@ def test_run_resume_cursor_skips_green_steps(tmp_path, monkeypatch):
     assert ran == ["cleanup"]
 
 
-def test_run_executes_late_and_repeated_start_steps(tmp_path, monkeypatch):
+def test_run_executes_late_and_repeated_start_steps(tmp_path, monkeypatch,
+                                                    isolated_config):
     """Issue #109: a start step may come later than step 1 and repeat."""
     from typer.testing import CliRunner
     import workagent.cli  # noqa: F401  (register commands)

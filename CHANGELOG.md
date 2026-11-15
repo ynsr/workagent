@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Destroying a worktree deletes its runs, flows, message links, and harness transcripts; startup sweeps leftovers [108]
 - Flow templates accept multiple Start steps anywhere in the chain, including a Plan-mode start; compose keeps every start [109]
 - Flow chains reject a Start step after cleanup, so teardown never revives the closed issue in a fresh worktree [109]
 - Dashboard Close released also covers deleted-table picks and Destroy deletes every selected row sequentially [105]

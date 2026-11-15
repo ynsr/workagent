@@ -27,6 +27,17 @@ from tests.webapp_helpers import (
     client,
 )
 
+def _seed_worktree(db, *refs: str) -> None:
+    """v26 FK: every non-null runs.worktree_ref needs a worktrees row."""
+    from workagent import store_sqlite as sq
+    with sq.connect(db) as conn:
+        for ref in refs:
+            conn.execute(
+                "INSERT OR IGNORE INTO worktrees"
+                " (ref_key, path, branch, added_at, payload)"
+                " VALUES (?, ?, 'b', '2026-01-01', '{}')",
+                (ref, f"/tmp/wt/{ref}"))
+
 def test_start_accepts_and_forwards_launch(client, monkeypatch):
     """`start --launch` passes validation and reaches the child argv."""
     _stub_spawn(monkeypatch)
@@ -143,6 +154,7 @@ def test_mirror_run_stamps_fix_metadata(client):
     from workagent import web_runs as _wr
     db = sq.db_path()
     sq.init_db(db)
+    _seed_worktree(db, "k")
     review_id = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
                               harness_name="omp", initiator_command="review",
                               prompt="p", file_path="/s/rev-1.jsonl",
@@ -164,6 +176,7 @@ def test_mirror_run_failure_leaves_fix_metadata(client):
     from workagent import web_runs as _wr
     db = sq.db_path()
     sq.init_db(db)
+    _seed_worktree(db, "k2")
     review_id = sq.insert_run(db, "review", ["k2"], 0, worktree_ref="k2",
                               harness_name="omp", initiator_command="review",
                               prompt="p", file_path="/s/rev-9.jsonl",
@@ -218,6 +231,7 @@ def test_run_summaries_carry_session_type(client, monkeypatch):
     monkeypatch.setattr("workagent.webapp._spawn", fake_spawn)
     db = sq.db_path()
     sq.init_db(db)
+    _seed_worktree(db, "rk3")
     rid = sq.insert_run(db, "review", ["rk3"], 0, worktree_ref="rk3",
                         harness_name="omp", initiator_command="review",
                         prompt="p", file_path="/s/rev-3.jsonl",
@@ -243,6 +257,7 @@ def test_persisted_pause_row_is_needs_input(client):
     from workagent import store_sqlite as sq
     db = sq.db_path()
     sq.init_db(db)
+    _seed_worktree(db, "rk-pause")
     paused = sq.insert_run(db, "flow step review", ["review", "rk-pause"], 2,
                            worktree_ref="rk-pause", session_type="flow",
                            state="finished", output=["paused: answer the question"])
@@ -835,6 +850,7 @@ def test_mirror_skips_preview_self_recorded_runs(client):
     from workagent import web_runs as _wr
     db = sq.db_path()
     sq.init_db(db)
+    _seed_worktree(db, "k3")
     rid = sq.insert_run(db, "start", ["k3"], 0, worktree_ref="k3",
                         harness_name="omp", initiator_command="start",
                         prompt="p", file_path="/s/prev.jsonl",
@@ -877,6 +893,7 @@ def test_precreated_fix_run_types_and_stamps_review(client):
     from workagent import web_runs as _wr
     db = sq.db_path()
     sq.init_db(db)
+    _seed_worktree(db, "k")
     review_id = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
                               file_path="/s/rev-7.jsonl", session_type="review",
                               state="finished")
@@ -904,6 +921,7 @@ def test_resolve_session_file_adopts_minted(client, tmp_path, monkeypatch):
     from workagent import web_runs_routes as _rr
     db = sq.db_path()
     sq.init_db(db)
+    _seed_worktree(db, "k4")
     sid = "2026-10-09T09-01-45-289Z-9100"
     pinned = str(tmp_path / f"{sid}.jsonl")
     rid = sq.insert_run(db, "start", ["k4"], 0, worktree_ref="k4",
@@ -924,6 +942,7 @@ def test_resolve_session_file_prefers_db_over_stale_pinned(client, tmp_path):
     from workagent import web_runs_routes as _rr
     db = sq.db_path()
     sq.init_db(db)
+    _seed_worktree(db, "k6")
     sid = "2026-10-09T09-01-45-289Z-9100"
     stale = str(tmp_path / "omp" / f"{sid}.jsonl")  # branch-less, never existed
     scoped = tmp_path / "omp" / "feat" / "x" / "review"
@@ -964,6 +983,7 @@ def test_resolve_session_file_maps_legacy_sessions_path(isolated_config):
     from workagent import web_runs_routes as _rr
     db = sq.db_path()
     sq.init_db(db)
+    _seed_worktree(db, "k-legacy")
     rel = Path("omp") / "feat" / "b" / "start" / "legacy.jsonl"
     stored = isolated_config / "sessions" / rel  # never exists
     moved = isolated_config / "runs" / rel       # the transcript lives here
@@ -1034,6 +1054,7 @@ def test_mirror_run_syncs_rescoped_path(client, tmp_path):
     from workagent import web_runs as _wr
     db = sq.db_path()
     sq.init_db(db)
+    _seed_worktree(db, "k7")
     sid = "2026-10-09T09-01-45-289Z-9101"
     stale = str(tmp_path / "omp" / f"{sid}.jsonl")
     real = tmp_path / "omp" / "feat" / "x" / "review" / f"{sid}.jsonl"

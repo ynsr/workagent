@@ -130,6 +130,18 @@ source of truth is `_status_cells(refresh_pr=True)` per link (recorded
 become `skipped:<reason>` rows — never torn down. Requires `--yes`
 (or `--dry-run` preview); `--json` prints `{"results": [...]}`.
 
+**Hard delete + orphan sweep (issue #108)**: `runs.worktree_ref` is an
+optional FK to `worktrees(ref_key)` (`ON DELETE CASCADE`; NULL in the DB =
+repo-scoped run, `''` on read/API). Every teardown path — `cleanup
+--hard-delete`, `link remove --hard-delete`, `link destroy-deleted`, `link
+gc`, serve startup GC, repo removal — drops the worktree row together with
+its runs and purges flows, `messages.worktrees` links, and child
+`parent_key_ref` labels. `link purge-orphans [--dry-run] [--json]` (also
+run by serve startup maintenance) removes pre-v26 leftovers: dangling runs
+plus their recorded harness transcripts, flows, message links, and parent
+labels. `prodtest_items.worktree_ref` is deliberately not cascaded — it is
+issue-scoped ledger attribution that survives teardown.
+
 ## Conventions
 
 - Exit codes: `0` success, `1` general error, `2` usage/needs-human-input.

@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS runs (
   output TEXT NOT NULL DEFAULT '', truncated INTEGER NOT NULL DEFAULT 0,
   validation TEXT NOT NULL DEFAULT '{}',
   flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL,
-  worktree_ref TEXT NOT NULL DEFAULT '',
+  worktree_ref TEXT REFERENCES worktrees(ref_key) ON DELETE CASCADE,
   harness_name TEXT NOT NULL DEFAULT '',
   initiator_command TEXT NOT NULL DEFAULT '',
   prompt TEXT NOT NULL DEFAULT '',
@@ -284,6 +284,55 @@ def _migrate_prodtest_cols(conn) -> None:
         conn.execute("ALTER TABLE prodtest_items ADD COLUMN worktree_ref TEXT NOT NULL DEFAULT ''")
     if "run_results" not in cols:
         conn.execute("ALTER TABLE prodtest_items ADD COLUMN run_results TEXT NOT NULL DEFAULT '{}'")
+
+
+def _migrate_runs_worktree_fk(conn) -> None:
+    """Schema v26: runs.worktree_ref → nullable FK to worktrees(ref_key).
+
+    Repo-scoped runs (pre-link attempts, web runs) carry no worktree: their
+    '' sentinel becomes NULL, the FK's "no parent" value, and ON DELETE
+    CASCADE replaces the explicit runs purge in every worktree teardown.
+    SQLite cannot add a FK in place, so the table is rebuilt from the
+    canonical DDL with foreign_keys off. Historical dangling refs are left
+    to store_links.purge_orphans (it snapshots their transcripts before
+    dropping the rows). Idempotent: skipped once the cascade FK and the
+    nullable column are present.
+    """
+    info = {r[1]: r for r in conn.execute("PRAGMA table_info(runs)")}
+    if not info:
+        return
+    if list(conn.execute("PRAGMA table_info(sessions)")):
+        # pre-v16: the fold rebuilds runs from the same canonical DDL.
+        return
+    fk = next((r for r in conn.execute("PRAGMA foreign_key_list(runs)")
+               if r[2] == "worktrees" and (r[3] or "") == "worktree_ref"), None)
+    nullable = "worktree_ref" in info and info["worktree_ref"][3] == 0
+    if fk is not None and (fk[6] or "").upper() == "CASCADE" and nullable:
+        return
+    if conn.in_transaction:
+        conn.commit()
+    was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if was_on:
+        conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        prior_seq = _runs_seq(conn)
+        ddl = _canonical_ddl()["runs"]
+        conn.execute('DROP TABLE IF EXISTS "runs_rebuild"')
+        conn.execute(ddl.replace("CREATE TABLE runs", 'CREATE TABLE "runs_rebuild"', 1))
+        new_cols = {r[1] for r in conn.execute('PRAGMA table_info("runs_rebuild")')}
+        old_cols = [r[1] for r in conn.execute("PRAGMA table_info(runs)")
+                    if r[1] in new_cols]
+        names = ", ".join(f'"{c}"' for c in old_cols)
+        conn.execute(f'INSERT INTO "runs_rebuild" ({names}) SELECT {names} FROM runs')
+        conn.execute("DROP TABLE runs")
+        conn.execute('ALTER TABLE "runs_rebuild" RENAME TO runs')
+        _restore_runs_seq(conn, prior_seq)
+        conn.execute("UPDATE runs SET worktree_ref = NULL WHERE worktree_ref = ''")
+        if conn.in_transaction:
+            conn.commit()
+    finally:
+        if was_on:
+            conn.execute("PRAGMA foreign_keys = ON")
 
 
 def _migrate_category(conn) -> None:
@@ -1007,6 +1056,10 @@ def _run_dict(row: sqlite3.Row) -> dict:
     for col in ("validation", "metadata"):
         if col in out:
             out[col] = _parse_json_dict(out.get(col))
+    # v26 stores "no worktree" as NULL (the FK's optional parent); readers
+    # and the API keep the historical '' shape.
+    if "worktree_ref" in out and out["worktree_ref"] is None:
+        out["worktree_ref"] = ""
     return out
 
 
@@ -1053,7 +1106,7 @@ def insert_run(path: Path, command: str, args: list[str],
              "session_type", "metadata", "state", "continued_from_run_id"]
     vals: list = [command, json.dumps(args), exit_code, created,
                   "\n".join(lines), 1 if truncated else 0,
-                  json.dumps(validation or {}), worktree_ref or "",
+                  json.dumps(validation or {}), worktree_ref or None,
                   harness_name, initiator_command, prompt, file_path,
                   session_type, json.dumps(metadata or {}), state,
                   continued_from_run_id]
@@ -1244,10 +1297,10 @@ def runs_for_worktree(path: Path, worktree_ref: str,
 
 #: Runs of soft-deleted worktrees stay in the DB (restorable via undelete)
 #: but are hidden from list/detail queries unless *include_deleted_worktrees*;
-#: rows with an empty ref (repo-scoped: pre-link attempts, web runs) or a
-#: dangling ref (hard-deleted worktree) stay visible — same pass-through rule
-#: as list_flows. Every query using it aliases runs as ``r``.
-_NOT_DELETED = ("(r.worktree_ref = '' OR w.ref_key IS NULL"
+#: rows with no ref (NULL: repo-scoped attempts, web runs) or a dangling ref
+#: (pre-v26 leftovers, purged by store.purge_orphans) stay visible — same
+#: pass-through rule as list_flows. Every query using it aliases runs as ``r``.
+_NOT_DELETED = ("(r.worktree_ref IS NULL OR w.ref_key IS NULL"
                 " OR (w.deleted_at IS NULL OR w.deleted_at = ''))")
 
 
@@ -1495,7 +1548,17 @@ def _schema_current(path: Path) -> bool:
                 "session_type", "metadata", "state",
                 "continued_from_run_id"} <= cols:
             return False
-        if any(r[2] == "sessions" for r in conn.execute("PRAGMA foreign_key_list(runs)")):
+        fks = list(conn.execute("PRAGMA foreign_key_list(runs)"))
+        if any(r[2] == "sessions" for r in fks):
+            return False
+        # v26: worktree_ref is an optional parent (NULL = repo-scoped run)
+        # whose deletion cascades the run.
+        wfk = next((r for r in fks if r[2] == "worktrees"
+                    and (r[3] or "") == "worktree_ref"), None)
+        if wfk is None or (wfk[6] or "").upper() != "CASCADE":
+            return False
+        if any(r[1] == "worktree_ref" and r[3] for r in conn.execute(
+                "PRAGMA table_info(runs)")):
             return False
         wcols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
         if "active" not in wcols:
@@ -1612,6 +1675,7 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
                 _migrate_flow_template_icon(conn)
                 migrate_sessions_into_runs(conn, path.parent)
                 _migrate_prodtest_cols(conn)
+                _migrate_runs_worktree_fk(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():
                 raise
@@ -1767,8 +1831,9 @@ def backfill_trackers_repos(path: Path, cfg: dict,
 
 from .store_links import (  # noqa: F401,E402
     SOFT_DELETE_RETENTION_DAYS,
-    delete_worktree_row, gc_soft_deleted, load_links_rows, save_links_rows,
-    set_worktree_active, soft_delete_worktree, undelete_worktree)
+    delete_worktree_row, gc_soft_deleted, load_links_rows, purge_orphans,
+    save_links_rows, set_worktree_active, soft_delete_worktree,
+    undelete_worktree)
 
 def migrate_json(config_dir: Path, db_path: Path) -> dict:
     """One-shot migration: links/pr_cache/harnesses JSON → state.db.

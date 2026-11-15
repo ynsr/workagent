@@ -149,7 +149,7 @@ def set_worktree_active(key: str, active: bool) -> None:
 
 
 def delete_worktree_row(key: str) -> None:
-    """Delete a worktree row (with its runs); files/branch/PR untouched."""
+    """Delete a worktree row and its dependent records; files/branch/PR stay."""
     from .errors import HarnessError
     db = _sqlite_path()
     if db is not None:
@@ -219,6 +219,21 @@ def gc_soft_deleted(retention_days: int = 7) -> list[dict]:
     if expired:
         save_links(links)
     return rows
+
+def purge_orphans(dry_run: bool = False) -> dict:
+    """Delete records whose worktree row no longer exists (issue #108).
+
+    Returns counts per table plus the orphan runs' transcript targets; the
+    caller removes those files (they live under config_dir()/runs).
+    """
+    empty = {"runs": 0, "flows": 0, "messages": 0, "parent_links": 0,
+             "transcripts": []}
+    db = _sqlite_path()
+    if db is None:
+        return empty
+    from . import store_sqlite as sq
+    return sq.purge_orphans(db, dry_run=dry_run)
+
 
 def save_links(links: dict) -> None:
     db = _sqlite_path()

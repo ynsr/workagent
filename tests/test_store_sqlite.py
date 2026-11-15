@@ -259,6 +259,7 @@ def test_folded_db_with_stale_session_id_column_is_repaired(tmp_path):
     import sqlite3
     db = tmp_path / "state.db"
     sq.init_db(db)
+    _seed_link(db, "k")
     first = sq.insert_run(db, "start", ["k"], 0, worktree_ref="k",
                           harness_name="omp", initiator_command="start",
                           prompt="p", file_path="/s/old.jsonl",
@@ -334,6 +335,7 @@ def test_half_folded_db_still_drops_sessions(tmp_path):
         cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
         assert "session_id" not in cols
         assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 1
+    _seed_link(db, "k")
     assert sq.insert_run(db, "review", ["k"], 0, worktree_ref="k") > 0
 
 
@@ -831,6 +833,7 @@ def test_latest_review_run_resolves_from_runs(tmp_path):
     """The ref's latest non-running review-kind run is the one to continue."""
     db = tmp_path / "state.db"
     sq.init_db(db)
+    _seed_link(db, "k")
     rid = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
                         session_type="review", file_path="/tmp/x.jsonl")
     assert sq.latest_review_run(db, "k")["id"] == rid
@@ -839,6 +842,8 @@ def test_latest_review_run_resolves_from_runs(tmp_path):
 def test_latest_review_run_skips_running_and_other_kinds(tmp_path):
     db = tmp_path / "state.db"
     sq.init_db(db)
+    _seed_link(db, "k")
+    _seed_link(db, "other")
     done = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
                          session_type="review", file_path="/old.jsonl")
     sq.insert_run(db, "review", ["k"], None, worktree_ref="k",
@@ -855,6 +860,7 @@ def test_latest_review_run_skips_running_and_other_kinds(tmp_path):
 def test_run_metadata_merges(tmp_path):
     db = tmp_path / "state.db"
     sq.init_db(db)
+    _seed_link(db, "k")
     rid = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
                         metadata={"flow_id": 7})
     out = sq.set_run_metadata(db, rid,
@@ -901,6 +907,7 @@ def test_finish_run_preview_state(tmp_path):
 def test_get_run_carries_transcript_identity(tmp_path):
     db = tmp_path / "state.db"
     sq.init_db(db)
+    _seed_link(db, "k")
     rid = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
                         harness_name="omp", initiator_command="review",
                         prompt="p", file_path="/f/x.jsonl",
@@ -919,6 +926,7 @@ def test_get_run_carries_transcript_identity(tmp_path):
 def test_run_by_file_path_resolves_newest_and_rekeys(tmp_path):
     db = tmp_path / "state.db"
     sq.init_db(db)
+    _seed_link(db, "k")
     sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
                   file_path="/f/t.jsonl")
     new = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
@@ -933,6 +941,7 @@ def test_run_by_file_path_resolves_newest_and_rekeys(tmp_path):
 def test_list_runs_carries_transcript_columns(tmp_path):
     db = tmp_path / "state.db"
     sq.init_db(db)
+    _seed_link(db, "k")
     rid = sq.insert_run(db, "start", ["k"], 3, worktree_ref="k",
                         harness_name="omp", initiator_command="omp start",
                         prompt="do it", file_path="/f/s.jsonl",
@@ -953,7 +962,7 @@ def test_list_runs_carries_transcript_columns(tmp_path):
 
 
 def test_worktree_hard_delete_purges_its_runs(tmp_path):
-    """runs.worktree_ref has no FK: the hard delete purges this ref's runs."""
+    """The v26 cascade drops this ref's runs; repo-scoped rows survive."""
     from workagent import store_links as sl
     db = tmp_path / "state.db"
     sq.init_db(db)
@@ -968,7 +977,7 @@ def test_worktree_hard_delete_purges_its_runs(tmp_path):
 
 
 def test_save_links_prune_purges_orphan_runs(tmp_path):
-    """The links sweep drops runs of pruned worktrees, never repo-scoped rows."""
+    """The links sweep drops pruned worktrees' runs, never repo-scoped rows."""
     from workagent import store_links as sl
     db = tmp_path / "state.db"
     sq.init_db(db)
@@ -1079,6 +1088,7 @@ def test_insert_run_inherits_flow_id_by_file_path(tmp_path):
     with sq.connect(db) as conn:
         conn.execute("INSERT INTO flows (id, template_label, created_at, modified_at)"
                      " VALUES (7, 'tpl', '2026-01-01', '2026-01-01')")
+    _seed_link(db, "k")
     first = sq.insert_run(db, "start", ["k"], 0, worktree_ref="k",
                           file_path="/f/t.jsonl", flow_id=7)
     second = sq.insert_run(db, "start", ["k"], 0, worktree_ref="k",

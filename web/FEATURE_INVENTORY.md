@@ -66,6 +66,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `link undelete REF [--json]` | mutating | — | `link:undelete` | no (clears deleted_at) | no worktree link (2) | none |
 | `link gc [--dry-run] [--json]` | mutating | — | `link:gc` | no (purges rows soft-deleted >7d: worktree dir + local branch + row) | | none |
 | `link destroy-deleted [REF] [--all] [--dry-run] [--json] [--yes]` | mutating | `destroy_deleted` (git-wt cleanup + branch -D + row drop) | `link:destroy-deleted` | **yes** (worktree dir + local branch + row and its runs; remote branches untouched; irreversible) | no link/no ref (2) | none — Deleted table per-row trash icon + Destroy (N) selection button, irreversible custom confirm dialog |
+| `link purge-orphans [--dry-run] [--json]` | mutating | `purge_orphans` (dangling runs/flows/messages/parents + harness transcripts) | `link:purge-orphans` | no (removes records whose worktree row is gone; prodtest ledger rows keep their ref) | | none — also runs in serve startup maintenance |
 | `link list [--worktree] [--refresh-pr] [--json/--csv] [--include-deleted]` | read-only | `store.load_config()["trackers"]` + `_enrich_entry` | — | no | | none |
 | `tracker add KEY [--vendor] [--remote-url] [--fetch/--no-fetch] [--json]` | mutating | — | `config` | no (trackers table write) | `--vendor` outside the jira/github enum (2) | none — vendor/URL derive from the key when blank |
 | `tracker list [--json/--csv]` | read-only | `store_sqlite.load_tracker_rows` | — | no | | none |

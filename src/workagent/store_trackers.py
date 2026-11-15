@@ -436,21 +436,19 @@ def register_repo_row_unlinked(path: Path, name: str, repo_path: str,
 def remove_repo_row(path: Path, name: str) -> bool:
     """Delete the *name* registry row; True when it existed.
 
-    tracker_repos and worktrees cascade via FK (ON DELETE CASCADE). The
-    ``runs.worktree_ref``/``flows.worktree_ref`` columns carry no FK, so
-    this repo's runs and flows are purged explicitly first — otherwise
-    they survive as dangling rows that ``_NOT_DELETED`` still lists.
+    tracker_repos and worktrees cascade via FK, and each worktree takes its
+    runs with it (v26 FK cascade). Its flows, message worktree links, and
+    child parent labels carry no FK, so they are purged explicitly from the
+    snapshot of worktree keys taken before the repo row goes.
     Caller guards against live worktrees first.
     """
+    from .store_links import _purge_dependents_conn
     init_db(path)
     with connect(path) as conn:
-        conn.execute("DELETE FROM runs WHERE worktree_ref IN"
-                     " (SELECT ref_key FROM worktrees WHERE repo_key = ?)",
-                     (name,))
-        conn.execute("DELETE FROM flows WHERE worktree_ref IN"
-                     " (SELECT ref_key FROM worktrees WHERE repo_key = ?)",
-                     (name,))
+        keys = [r[0] for r in conn.execute(
+            "SELECT ref_key FROM worktrees WHERE repo_key = ?", (name,))]
         cur = conn.execute("DELETE FROM repos WHERE key_ref = ?", (name,))
+        _purge_dependents_conn(conn, keys)
         return cur.rowcount > 0
 
 

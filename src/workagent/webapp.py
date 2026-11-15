@@ -98,7 +98,9 @@ def run_startup_maintenance() -> dict:
     Keeps DB migrations/sync (init_db runs the schema synchronously; the
     release backfill stays on its background thread started by run_server),
     then runs the other slow non-essential jobs: soft-delete GC (git
-    teardown) and run-dir prune. Never raises; {"purged": [...], "pruned": n}.
+    teardown), the orphan sweep (records whose worktree row is gone, plus
+    their transcripts), and run-dir prune. Never raises;
+    {"purged": [...], "orphans": {...}, "pruned": n}.
     """
     from .store_sqlite import db_path, init_db
     try:
@@ -114,12 +116,26 @@ def run_startup_maintenance() -> dict:
                   f"older than 7 days", file=sys.stderr)
     except Exception as e:
         print(f"warning: soft-delete GC failed: {e}", file=sys.stderr)
+    orphans: dict = {}
+    try:
+        from .cli_cleanup import purge_orphans
+        orphans = purge_orphans()
+        if any(orphans.get(k) for k in
+               ("runs", "flows", "messages", "parent_links")):
+            print(f"gc: removed orphaned records "
+                  f"(runs={orphans.get('runs', 0)} flows={orphans.get('flows', 0)}"
+                  f" messages={orphans.get('messages', 0)}"
+                  f" parents={orphans.get('parent_links', 0)}"
+                  f" transcripts={len(orphans.get('transcripts') or [])})",
+                  file=sys.stderr)
+    except Exception as e:
+        print(f"warning: orphan sweep failed: {e}", file=sys.stderr)
     try:
         from . import run_store as _rs
         pruned = _rs.prune_finished()
     except Exception:
         pruned = 0
-    return {"purged": purged, "pruned": pruned}
+    return {"purged": purged, "orphans": orphans, "pruned": pruned}
 
 def _run_maintenance_logged() -> None:
     """run_startup_maintenance wrapper surfacing outcome on stderr."""
@@ -137,6 +153,7 @@ def start_background_maintenance() -> "threading.Thread":
                          daemon=True)
     t.start()
     return t
+
 
 def create_app(static_dir: Path, host: str, port: int,
                allowed_hosts: list[str]) -> FastAPI:

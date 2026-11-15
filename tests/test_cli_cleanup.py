@@ -467,6 +467,42 @@ def test_cleanup_unknown_pr_state_closes_without_merge(isolated_config, monkeypa
     assert out["remote_deleted"] is False  # unknown state keeps remote branch
 
 
+def test_cleanup_hard_delete_removes_harness_transcripts(isolated_config, monkeypatch):
+    """Hard delete cascades to the worktree's harness transcripts (issue #108)."""
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)  # record_link keeps its row in SQLite once state.db exists
+    store.record_link("jira:IPG-11", {"issue": "IPG-11", "worktree": "/tmp/wt",
+                                      "branch": "feat/11", "repo": "/tmp/proj"})
+    transcript = (isolated_config / "runs" / "omp" / "feat-11" / "start"
+                  / "t.jsonl")
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("{}\n")
+    sq.init_db(db)
+    sq.insert_run(db, "start", ["jira:IPG-11"], 0,
+                  worktree_ref="jira:IPG-11", file_path=str(transcript),
+                  session_type="start")
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": ""}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (url, None, False))
+    monkeypatch.setattr("workagent.cli.run_cmd", lambda *a, **k: "")
+
+    out = cli._cleanup_one("jira:IPG-11", dict(store.load_links()["jira:IPG-11"]),
+                           force=False, yes=True, dry_run=False,
+                           json_output=True, hard_delete=True)
+
+    assert out["status"] == "cleaned"
+    assert not transcript.exists()
+    assert not transcript.parent.exists()  # emptied dirs pruned up to runs/
+    assert sq.list_runs(db, include_deleted_worktrees=True) == []
+
+
+
 def test_close_pr_treats_merged_mr_as_closed(isolated_config, monkeypatch, capsys):
     """`glab mr close` on a merged MR must not abort cleanup (run eb420c1bb14d)."""
     from workagent.errors import HarnessError

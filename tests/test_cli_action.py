@@ -12,7 +12,7 @@ def test_build_action_prompt_appends_child_paths():
     assert "Do the thing." in out
     assert "/wt/parent" in out and "/wt/child" in out
     assert out.index("/wt/parent") < out.index("/wt/child")
-def test_unknown_label_exits_2(tmp_path, monkeypatch):
+def test_unknown_label_exits_2(tmp_path, monkeypatch, isolated_config):
     from typer.testing import CliRunner
     from workagent.cli_core import app
     import workagent.cli  # noqa: F401  (register commands)

@@ -345,6 +345,17 @@ Request:
   touched. `link remove --hard-delete` purges the same transcripts. Single-ref or `--all`; missing `--repo` scoping
   by design. The Dashboard Deleted table runs it per-row (trash icon) and
   per-selection (Destroy (N) button) with the same irreversible confirm.
+- `link purge-orphans [--dry-run] [--json]`: deletes records whose worktree
+  row no longer exists — dangling runs (pre-cascade leftovers) plus their
+  recorded harness transcripts, flows, message worktree links, and child
+  `parent_key_ref` labels. Runs automatically in serve startup maintenance
+  and reports `{"orphans": {runs, flows, messages, parent_links,
+  transcripts}}`. Prodtest items keep their issue-scoped `worktree_ref` on
+  purpose (post-teardown attribution).
+- Hard-delete cascade (issue #108): `runs.worktree_ref` is an optional FK to
+  `worktrees(ref_key)` (`ON DELETE CASCADE`; NULL = repo-scoped run, `""` in
+  API payloads), so every destroy path removes the worktree row with its
+  runs, flows, message links, and child parent labels.
 
 Response 202: `{"run_id": "abc123"}` — `409 {code:"conflict"}` when
 another run holds the same target key.

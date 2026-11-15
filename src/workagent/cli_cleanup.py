@@ -50,7 +50,8 @@ from .cli_prodtest_gate import (  # noqa: F401 (re-export)
     prodtest_gate,
     run_validate,
 )
-from .cli_cleanup_gc import destroy_deleted, gc_soft_deleted  # noqa: F401 (re-export)
+from .cli_cleanup_gc import (  # noqa: F401 (re-export)
+    destroy_deleted, gc_soft_deleted, purge_orphans)
 _COMP = _init_completions()
 _complete_refs = _COMP["refs"]
 
@@ -555,7 +556,12 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
             remote_deleted = True
         except HarnessError as e:
             eprint(f"warning: remote branch delete failed: {e}")
+    # Snapshot the transcript targets before the row (and via FK its runs)
+    # goes: cleanup --hard-delete cascades to the AI harness sessions too.
+    from .cli_cleanup_gc import _harness_run_targets, _remove_transcripts
+    targets = _harness_run_targets(key)
     store.delete_worktree_row(key)
+    _remove_transcripts(targets, key)
     if not json_output:
         tail = " (remote branch deleted)" if remote_deleted \
             else " (remote branch kept)"
