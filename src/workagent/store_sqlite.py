@@ -1183,7 +1183,7 @@ def list_runs(path: Path, limit: int = 200,
         conn.row_factory = sqlite3.Row
         q = ("SELECT r.id, r.session_id, r.command, r.args, r.exit_code,"
              " r.created_at, r.output, r.truncated, r.validation, r.flow_id,"
-             " r.file_path, r.file_path AS session_file, r.worktree_ref,"
+             " r.file_path, r.worktree_ref,"
              " r.session_type, r.state, r.harness_name, r.initiator_command,"
              " r.prompt, r.metadata, r.continued_from_run_id"
              " FROM runs r LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref")

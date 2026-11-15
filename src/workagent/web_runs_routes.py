@@ -31,7 +31,6 @@ from .web_runs import (
     _persisted_row,
     _persisted_summary,
     _summary,
-    _worktree_for_session,
     _worktree_for_target,
 )
 
@@ -44,24 +43,25 @@ def _message_needs_yes(args: list[str]) -> bool:
     """
     return bool(args) and args[0] in ("adhoc", "validate", "action", "flow")
 
-def _child_session_file(db, stem: str) -> tuple[str, str]:
-    """File + row id for the CLI child's rescoped session (stem match).
+def _child_session_file(db, stem: str) -> str:
+    """Ready transcript file of the CLI child's rescoped row (stem match).
 
     The review child rescopes the web-minted branch-less path under
-    sessions/omp/<branch>/<action>/ and inserts its own row keyed by the
+    runs/<harness>/<branch>/<action>/ and records its own row naming the
     same stem — the web row keeps the stale branch-less path. Match by
-    filename stem so resume finds the real transcript.
+    filename stem so resume finds the real transcript ("" when none).
     """
     if not stem:
-        return "", ""
+        return ""
     try:
         from . import store_sqlite as _sq
-        row = _sq.get_session(db, stem, include_deleted_worktrees=True)
-        if row and _transcript_ready(str(row.get("file_path") or "")):
-            return str(row.get("file_path")), str(row.get("id"))
+        row = _sq.run_by_file_stem(db, stem, include_deleted_worktrees=True)
+        file_path = str((row or {}).get("file_path") or "")
+        if row and _transcript_ready(file_path):
+            return file_path
     except Exception:
         pass
-    return "", ""
+    return ""
 
 def _newest_under(scope, created_ts: float) -> str:
     """Newest non-empty .jsonl directly under scope, newest-first ("" when none)."""
@@ -86,26 +86,26 @@ def _newest_under(scope, created_ts: float) -> str:
             best = str(p)
     return best
 
-def _resolve_session_file(session_file: str, session_id: str = "") -> str:
-    """Best-effort session file: DB row wins, else adopt the minted one.
+def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
+    """Best-effort transcript file: DB row wins, else adopt the minted one.
 
     omp mints its own filename: the pinned --session-file path (web-minted
     id) is only the scope hint — after the user runs the printed command
     manually the real .jsonl lands nearby. Resolution order:
-    1. DB row `file_path` when it is a ready transcript (covers the child
-       CLI rescoping a branch-less pinned path under
-       `sessions/omp/<branch>/<action>/` — the registry still holds the
-       stale branch-less path);
-    2. child session row matched by filename stem (the child inserts its own
-       row under the same stem after rescope; the web row keeps the stale
-       path) when it holds a ready transcript;
+    1. the run row's `file_path` when it is a ready transcript (covers the
+       child CLI rescoping a branch-less pinned path under
+       `runs/omp/<branch>/<action>/` — the registry still holds the stale
+       branch-less path);
+    2. child row matched by filename stem (the child records its own row
+       under the same stem after rescope; the web row keeps the stale path)
+       when it holds a ready transcript;
     3. pinned path itself when ready;
     4. newest non-empty .jsonl under the scope dir (pinned parent, falling
-       back to the DB row parent), then one level of branch/action
+       back to the row's parent), then one level of branch/action
        subdirectories (the child rescopes the path but the registry/web row
        still point at the branch-less parent — the minted transcript lands
-       one level down), created after the session row — persisted on the
-       session so future runs reuse the full path.
+       one level down), created after the run row — persisted on that row
+       so future runs reuse the full path.
     Returns "" when nothing resumable is found.
     """
     from pathlib import Path as _Path
@@ -115,11 +115,16 @@ def _resolve_session_file(session_file: str, session_id: str = "") -> str:
         from . import store_sqlite as _sq
         from datetime import datetime
         db = _sq.db_path()
+        row_id = 0
+        try:
+            row_id = int(run_id)
+        except (TypeError, ValueError):
+            row_id = 0
         db_file = ""
         created = ""
-        if session_id and db.exists():
+        if row_id and db.exists():
             try:
-                row = _sq.get_session(db, session_id, include_deleted_worktrees=True)
+                row = _sq.get_run(db, row_id, include_deleted_worktrees=True)
                 db_file = str((row or {}).get("file_path") or "")
                 created = str((row or {}).get("created_at") or "")
             except Exception:
@@ -127,14 +132,14 @@ def _resolve_session_file(session_file: str, session_id: str = "") -> str:
                 created = ""
         if db_file and db_file != session_file and _transcript_ready(db_file):
             return db_file
-        # Stem fallback: the CLI child inserted its own row under the same
+        # Stem fallback: the CLI child recorded its own row under the same
         # stem after rescoping to the branch dir; point the web row at it.
         stem = _Path(session_file).stem if session_file else ""
-        child_file, child_sid = _child_session_file(db, stem) if db.exists() else ("", "")
+        child_file = _child_session_file(db, stem) if db.exists() else ""
         if child_file:
-            if session_id and db.exists():
+            if row_id and db.exists():
                 try:
-                    _sq.set_session_file_path(db, session_id, child_file)
+                    _sq.set_run_file_path(db, row_id, child_file)
                 except Exception:
                     pass
             return child_file
@@ -150,8 +155,8 @@ def _resolve_session_file(session_file: str, session_id: str = "") -> str:
         best = _newest_under(scope, created_ts)
         if not best:
             # Rescoped layout: the child moves the path from
-            # sessions/omp/<action>/<stem>.jsonl to
-            # sessions/omp/<branch-slug>/<action>/<stem>.jsonl — the branch
+            # runs/omp/<action>/<stem>.jsonl to
+            # runs/omp/<branch-slug>/<action>/<stem>.jsonl — the branch
             # dir is a SIBLING of the pinned parent, not a child. Search the
             # grandparent tree for the same stem first, then any newest .jsonl.
             stem = _Path(session_file).stem if session_file else ""
@@ -184,9 +189,9 @@ def _resolve_session_file(session_file: str, session_id: str = "") -> str:
             if pool:
                 pool.sort()
                 best = pool[-1][1]
-        if best and session_id and db.exists():
+        if best and row_id and db.exists():
             try:
-                _sq.set_session_file_path(db, session_id, best)
+                _sq.set_run_file_path(db, row_id, best)
             except Exception:
                 pass
         return best
@@ -259,12 +264,18 @@ def _conflict_msg(worktree: str, blocker: dict) -> str:
 
 
 def _claim_terminal_lock(worktree: str, ref_key: str = "",
-                         pid: int | None = None) -> None:
-    """Claim the terminal harness lock; 409 when a live harness holds it."""
+                         pid: int | None = None, overwrite: bool = False) -> None:
+    """Claim the terminal harness lock; 409 when a live harness holds it.
+
+    *overwrite* replaces this key's own pre-claim with the spawned terminal
+    pid (the spawner claims a slot before spawning, then records the real
+    pid so `/api/terminal/stop` kills the terminal, not the server).
+    """
     from . import store as _store
     key = ref_key or _ref_key_for_worktree(worktree) or worktree
     blocker = _store.record_harness_run(key, "omp", worktree,
-                                        origin="terminal", pid=pid)
+                                        origin="terminal", pid=pid,
+                                        overwrite=overwrite)
     if blocker is not None:
         raise ApiError("conflict", _conflict_msg(worktree, blocker), 409)
 
@@ -275,7 +286,7 @@ def _open_terminal(worktree: str, session_file: str,
     return _w._open_terminal(worktree, session_file, env_file)
 
 
-def _open_terminal_watch(worktree: str, session_file: str, sid: str,
+def _open_terminal_watch(worktree: str, session_file: str, run_id: int | None,
                          scope_dir: str, before: str,
                          env_file: str | None = None,
                          harness_name: str = "omp") -> int | None:
@@ -287,7 +298,8 @@ def _open_terminal_watch(worktree: str, session_file: str, sid: str,
     .jsonl on first write) and spawn the terminal on it through
     `cli_harness.spawn_in_terminal` with the `watch-and-exec` watcher
     encoded in the shell command, so the minted transcript lands on the
-    session row seconds after start like headless/interactive launches.
+    preview run row seconds after start like headless/interactive launches.
+    Without a row (no DB) the plain command is spawned: nothing to record.
     Best effort on the watch encoding — the spawn must succeed even when
     the shim argv cannot be built.
     """
@@ -299,8 +311,10 @@ def _open_terminal_watch(worktree: str, session_file: str, sid: str,
     harness_cmd = f"{harness_name} --session-dir {_shlex.quote(scope)}" if scope else harness_name
     full_cmd = _env.wrap_command(f"cd {_shlex.quote(worktree)} && {harness_cmd}",
                                  _env.resolve_env_file(env_file))
+    if not run_id:
+        return _spawn_term(full_cmd, worktree)
     shim_argv = [sys.executable, "-m", "workagent", "watch-and-exec",
-                 "--sid", str(sid), "--scope-dir", scope or worktree,
+                 "--run-id", str(run_id), "--scope-dir", scope or worktree,
                  "--before", before or "", "--", "bash", "-lc", full_cmd]
     shim_cmd = " ".join(_shlex.quote(a) for a in shim_argv)
     try:
@@ -389,9 +403,10 @@ def register_runs_routes(app, registry) -> None:
                     resolved = _worktrees_mod.pick_worktree(ref, resolved, links)
                 if isinstance(resolved, str):
                     db = _sq.db_path()
-                    latest = _sq.latest_review_session(db, resolved) if db.exists() else None
+                    latest = _sq.latest_review_run(db, resolved) if db.exists() else None
                     if latest and latest.get("file_path"):
-                        session_file = str(latest["file_path"])
+                        session_file = str(_sq.resolve_transcript_path(
+                            str(latest["file_path"])))
             if not session_file:
                 session_file = _session_file_for(_sq.gen_session_id(), body.command, body.args)
             tail += ["--session-file", session_file]
@@ -497,12 +512,12 @@ def register_runs_routes(app, registry) -> None:
 
     @app.post("/api/runs/{run_id}/resume")
     async def resume_run(run_id: str) -> dict:
-        """Open the OS default terminal resumed on this run's session.
+        """Open the OS default terminal resumed on this run's transcript.
 
         Non-destructive (same class as `open`): no confirm needed. 404 when
-        the run executed no harness session or the transcript is missing.
-        Persisted runs (db-<id>) resolve from the runs table since the
-        registry is empty after a restart.
+        the run names no transcript or the transcript is missing. Persisted
+        runs (db-<id>) resolve from the runs table since the registry is
+        empty after a restart.
         """
         try:
             run = registry.get(run_id)
@@ -511,9 +526,9 @@ def register_runs_routes(app, registry) -> None:
             if row is None:
                 raise
             args = row.get("args") if isinstance(row.get("args"), list) else []
-            session_file = str(row.get("session_file") or "") or _session_file_arg(
+            session_file = str(row.get("file_path") or "") or _session_file_arg(
                 str(row.get("command") or ""), list(args))
-            session_file = _resolve_session_file(session_file, str(row.get("session_id") or ""))
+            session_file = _resolve_session_file(session_file, row.get("id") or "")
             if not _transcript_ready(session_file):
                 raise ApiError("missing_session",
                                f"session transcript missing: {session_file}", 404)
@@ -533,13 +548,13 @@ def register_runs_routes(app, registry) -> None:
             or _session_file_arg(run.command, run.args)
         if not session_file:
             raise ApiError("no_session",
-                           f"run {run_id} executed no harness session", 404)
+                           f"run {run_id} executed no harness transcript", 404)
         arg_file = _session_file_arg(run.command, list(run.args) if isinstance(run.args, list) else [])
         resolved = ""
         for cand in (session_file, arg_file or ""):
             if not cand:
                 continue
-            resolved = _resolve_session_file(cand, Path(cand).stem)
+            resolved = _resolve_session_file(cand, run.db_run_id)
             if resolved:
                 break
         session_file = resolved
@@ -624,10 +639,10 @@ def register_runs_routes(app, registry) -> None:
     async def launch_worktree_terminal(ref_key: str, body: dict) -> dict:
         """Spawn a bare harness in the OS terminal for a worktree (no prompt).
 
-        Body: {"mode": "harness" | "prodtest"}. Creates a session row with a
-        pinned transcript path (session_type from mode), spawns the terminal
-        on it, claims the terminal lock, and records a runs row — so the
-        StatusTable overlay re-run path finds it like other harness modes.
+        Body: {"mode": "harness" | "prodtest"}. Records ONE preview run row
+        with the pinned transcript path (session_type from mode), spawns the
+        terminal on it, and claims the terminal lock — so the StatusTable
+        overlay re-run path finds it like other harness modes.
         """
         from . import store as _store
         from . import store_sqlite as _sq
@@ -652,17 +667,15 @@ def register_runs_routes(app, registry) -> None:
         harness_name = str(_store.load_config().get("default_harness", "omp") or "omp")
         branch = str(entry.get("branch") or "")
         db = _sq.db_path()
-        sid = _sq.gen_session_id()
+        transcript_id = _sq.gen_session_id()
         if mode == "prodtest":
-            command = "prodtest run"
-            stype: str | None = "prodtest_run"
-            meta: dict = {}
+            command, stype = "prodtest run", "prodtest_run"
         else:
-            command = "harness"
-            stype = None
-            meta = {}
+            command, stype = "harness", None
         try:
-            session_path = str(_sq.session_file_path(sid, harness_name, branch=branch or None, session_type=stype))
+            session_path = str(_sq.session_file_path(transcript_id, harness_name,
+                                                     branch=branch or None,
+                                                     session_type=stype))
         except Exception:
             session_path = ""
         if (blocker := _live_terminal_blocker(worktree, key)) is not None:
@@ -671,19 +684,26 @@ def register_runs_routes(app, registry) -> None:
         # both pass the blocker check above. Re-claimed with the real pid
         # after a successful spawn (record_harness_run overwrites own slot).
         _claim_terminal_lock(worktree, key, None)
+        row_id: int | None = None
         try:
             if db.exists() and key in _store.load_links(include_inactive=True, include_deleted=True):
-                nsid = _sq.insert_session(db, worktree_ref=key, harness_name=harness_name, initiator_command=command, prompt="", file_path=session_path, session_id=sid, session_type=stype, metadata=meta)
-                sid = nsid
+                row_id = _sq.insert_run(db, command, [key], None,
+                                        worktree_ref=key, harness_name=harness_name,
+                                        initiator_command=command, prompt="",
+                                        file_path=session_path, session_type=stype,
+                                        metadata={"origin": "terminal-worktree"},
+                                        state="preview")
         except Exception:
-            pass
+            row_id = None
         scope_dir = str(Path(session_path).parent) if session_path else worktree
         try:
             before = _sq.newest_transcript(Path(scope_dir)) if scope_dir else None
         except Exception:
             before = None
         try:
-            pid = _open_terminal_watch(worktree, session_path or sid, sid, scope_dir, str(before) if before else "", harness_name=harness_name)
+            pid = _open_terminal_watch(worktree, session_path, row_id, scope_dir,
+                                       str(before) if before else "",
+                                       harness_name=harness_name)
         except Exception:
             from . import store as _store2
             try:
@@ -691,45 +711,8 @@ def register_runs_routes(app, registry) -> None:
             except Exception:
                 pass
             raise
-        _claim_terminal_lock(worktree, key, pid)
-        try:
-            if db.exists() and key in _store.load_links(include_inactive=True, include_deleted=True):
-                _sq.finish_session(db, sid, "preview")
-                _sq.insert_run(db, sid, command, [key], 0, output=[f"terminal pid: {pid}"])
-        except Exception:
-            pass
-        return {"id": sid, "session_file": session_path, "worktree": worktree, "mode": mode}
-
-
-    @app.post("/api/sessions/{sid}/resume")
-    async def resume_session(sid: str) -> dict:
-        """Open the OS default terminal resumed on a persisted session."""
-        from . import store_sqlite as _sq
-        db = _sq.db_path()
-        row = _sq.get_session(db, sid, include_deleted_worktrees=True) if db.exists() else None
-        if row is None:
-            raise ApiError("not_found", f"no session {sid}", 404)
-        session_file = str(row.get("file_path") or "")
-        session_file = _resolve_session_file(session_file, sid)
-        if not _transcript_ready(session_file):
-            raise ApiError("missing_session",
-                           f"session transcript missing: {session_file}", 404)
-        worktree = _worktree_for_session(row) or ""
-        if not worktree:
-            raise ApiError("no_worktree",
-                           f"no worktree for session {sid}", 404)
-        env = ""
-        try:
-            runs = row.get("runs") or []
-            if isinstance(runs, list) and runs:
-                env = _env_file_arg(list(runs[-1].get("args") or []))
-        except Exception:
-            env = ""
-        ref = str(row.get("worktree_ref") or "")
-        if (blocker := _live_terminal_blocker(worktree, ref)) is not None:
-            raise ApiError("conflict", _conflict_msg(worktree, blocker), 409)
-        pid = _open_terminal(worktree, session_file, env or None)
-        _claim_terminal_lock(worktree, ref, pid)
-        return {"id": sid, "session_file": session_file,
-                "worktree": worktree}
+        _claim_terminal_lock(worktree, key, pid, overwrite=True)
+        if row_id:
+            _sq.update_run(db, row_id, output=[f"terminal pid: {pid}"])
+        return {"id": row_id, "session_file": session_path, "worktree": worktree, "mode": mode}
 

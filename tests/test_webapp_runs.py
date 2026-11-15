@@ -138,25 +138,22 @@ def test_api_default_repo_prefers_linked_worktree(client, tmp_path, monkeypatch)
 
 
 def test_mirror_run_stamps_fix_metadata(client):
-    """Exit-0 run reusing a review session stamps fixed_at + run id."""
+    """Exit-0 continue run stamps fixed_at + run id on the review run."""
     from workagent import store_sqlite as sq
     from workagent import web_runs as _wr
     db = sq.db_path()
     sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
-                     " VALUES ('k', '/tmp/w-fix1', 'b-fix1', NULL, '2026-01-01', '{}')")
-    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="review",
-                            prompt="p", file_path="/s/rev-1.jsonl", session_id="rev-1",
-                            session_type="review")
-    sq.finish_session(db, "rev-1", "finished")
+    review_id = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
+                              harness_name="omp", initiator_command="review",
+                              prompt="p", file_path="/s/rev-1.jsonl",
+                              session_type="review", state="finished")
     run = client.app.state.registry.create("review", ["k", "--fix-comments", "--use-review-session"], "review:k")
     run.session_file = "/s/rev-1.jsonl"
     run.argv = ["python", "-m", "workagent", "review", "k", "--fix-comments",
                 "--use-review-session", "--launch", "--session-file", "/s/rev-1.jsonl"]
     run.exit_code = 0
     _wr._mirror_run(run)
-    md = sq.get_session(db, sid)["metadata"]
+    md = sq.get_run(db, review_id)["metadata"]
     assert md["review_comments_fixed_at"]
     assert md["fixed_by_run_id"] == run.id
 
@@ -167,38 +164,37 @@ def test_mirror_run_failure_leaves_fix_metadata(client):
     from workagent import web_runs as _wr
     db = sq.db_path()
     sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
-                     " VALUES ('k2', '/tmp/w-fix2', 'b-fix2', NULL, '2026-01-01', '{}')")
-    sid = sq.insert_session(db, worktree_ref="k2", harness_name="omp", initiator_command="review",
-                            prompt="p", file_path="/s/rev-9.jsonl", session_id="rev-9",
-                            session_type="review",
-                            metadata={"review_comments_fixed_at": "old", "fixed_by_run_id": "old-run"})
-    sq.finish_session(db, "rev-9", "finished")
+    review_id = sq.insert_run(db, "review", ["k2"], 0, worktree_ref="k2",
+                              harness_name="omp", initiator_command="review",
+                              prompt="p", file_path="/s/rev-9.jsonl",
+                              session_type="review", state="finished",
+                              metadata={"review_comments_fixed_at": "old",
+                                        "fixed_by_run_id": "old-run"})
     run = client.app.state.registry.create("review", ["k2", "--fix-comments", "--use-review-session"], "review:k2")
     run.session_file = "/s/rev-9.jsonl"
     run.argv = ["python", "-m", "workagent", "review", "k2", "--fix-comments",
                 "--use-review-session", "--launch", "--session-file", "/s/rev-9.jsonl"]
     run.exit_code = 1
     _wr._mirror_run(run)
-    md = sq.get_session(db, sid)["metadata"]
+    md = sq.get_run(db, review_id)["metadata"]
     assert md == {"review_comments_fixed_at": "old", "fixed_by_run_id": "old-run"}
 
 
 def test_api_review_session_returns_latest(client):
+    """GET /api/review-session serves the latest review run (run id + path)."""
     from workagent import store_sqlite as sq
     from workagent import store as _store
     db = sq.db_path()
     sq.init_db(db)
     wt = "/tmp/wrs2"
     _store.record_link("rk2", {"worktree": wt, "branch": "branch-rk2", "repo": "/tmp/r"})
-    sq.insert_session(db, worktree_ref="rk2", harness_name="omp", initiator_command="review",
-                      prompt="p", file_path="/s/rev-2.jsonl", session_id="rev-2",
-                      session_type="review")
-    sq.finish_session(db, "rev-2", "finished")
+    rid = sq.insert_run(db, "review", ["rk2"], 0, worktree_ref="rk2",
+                        file_path="/s/rev-2.jsonl", session_type="review",
+                        state="finished")
     r = client.get("/api/review-session", params={"ref": "rk2"})
     assert r.status_code == 200, r.text
-    assert r.json() == {"ref": "rk2", "session_id": "rev-2", "file_path": "/s/rev-2.jsonl"}
+    assert r.json() == {"ref": "rk2", "run_id": rid, "file_path": "/s/rev-2.jsonl"}
+    assert "session_id" not in r.json()  # renaming decision: no shim
 
 
 def test_review_fix_comments_defaults_to_fresh_session(client, monkeypatch):
@@ -212,11 +208,10 @@ def test_review_fix_comments_defaults_to_fresh_session(client, monkeypatch):
     sq.init_db(db)
     _store.record_link("rk-fix", {"worktree": "/tmp/w-fix", "branch": "b-fix",
                                   "repo": "/tmp/r"})
-    sq.insert_session(db, worktree_ref="rk-fix", harness_name="omp",
-                      initiator_command="review", prompt="p",
-                      file_path="/s/review-old.jsonl", session_id="rev-old",
-                      session_type="review")
-    sq.finish_session(db, "rev-old", "finished")
+    sq.insert_run(db, "review", ["rk-fix"], 0, worktree_ref="rk-fix",
+                  harness_name="omp", initiator_command="review", prompt="p",
+                  file_path="/s/review-old.jsonl", session_type="review",
+                  state="finished")
     seen: dict = {}
 
     def fake_spawn(run, registry):
@@ -246,11 +241,10 @@ def test_review_fix_comments_use_review_session_reuses_transcript(client, monkey
     sq.init_db(db)
     _store.record_link("rk-fresh", {"worktree": "/tmp/w-fresh", "branch": "b-fresh",
                                     "repo": "/tmp/r"})
-    sq.insert_session(db, worktree_ref="rk-fresh", harness_name="omp",
-                      initiator_command="review", prompt="p",
-                      file_path="/s/review-prev.jsonl", session_id="rev-prev",
-                      session_type="review")
-    sq.finish_session(db, "rev-prev", "finished")
+    sq.insert_run(db, "review", ["rk-fresh"], 0, worktree_ref="rk-fresh",
+                  harness_name="omp", initiator_command="review", prompt="p",
+                  file_path="/s/review-prev.jsonl", session_type="review",
+                  state="finished")
     seen: dict = {}
 
     def fake_spawn(run, registry):
@@ -268,6 +262,7 @@ def test_review_fix_comments_use_review_session_reuses_transcript(client, monkey
                                        "confirm": True})
     assert r.status_code == 202, r.text
     assert seen["session_file"] == "/s/review-prev.jsonl"
+
 
 def test_register_run_key_unique_per_path(client):
     r1 = client.post("/api/runs", json={"command": "register",
@@ -520,6 +515,37 @@ def test_terminal_stop_endpoint_headless_lock_is_404(client, isolated_config):
             pass
 
 
+def test_terminal_worktree_launch_records_one_preview_run(client, monkeypatch, tmp_path):
+    """Bare terminal launch records ONE preview run and watches that row."""
+    from workagent import store as _store
+    from workagent import store_sqlite as sq
+    from workagent import cli_harness as _h
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = tmp_path / "wt-term"
+    wt.mkdir()
+    _store.record_link("rk-term", {"worktree": str(wt), "branch": "b-term",
+                                   "repo": "/tmp/r"})
+    seen: dict = {}
+    monkeypatch.setattr(_h, "spawn_in_terminal",
+                        lambda cmd, cwd="": seen.update(cmd=cmd) or 4242)
+    r = client.post("/api/worktrees/rk-term/terminal", json={"mode": "prodtest"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    rid = body["id"]
+    assert rid and body["worktree"] == str(wt) and body["mode"] == "prodtest"
+    assert body["session_file"]
+    rows = sq.list_runs(db, include_deleted_worktrees=True)
+    assert len(rows) == 1 and rows[0]["id"] == rid
+    row = sq.get_run(db, rid)
+    assert row["state"] == "preview"
+    assert row["session_type"] == "prodtest_run"
+    assert row["file_path"] == body["session_file"]
+    assert row["worktree_ref"] == "rk-term"
+    assert "--run-id " + str(rid) in seen["cmd"]
+    assert "terminal pid: 4242" in (row["output"] or "")
+
+
 def test_record_harness_run_stamps_start_ticks(isolated_config):
     """Claims record /proc start-ticks so pid reuse can't resurrect a dead agent."""
     import os
@@ -568,12 +594,12 @@ def test_boot_reaps_dead_terminal_lock(isolated_config):
                                            "started_at": 0.0, "worktree": "/wt",
                                            "origin": "terminal"}})
     assert store.active_harness("jira:OLD") is None
-def test_preview_run_pins_session_file_and_id(client, monkeypatch):
-    """Preview child pins the web-minted --session-file: same id + full path.
+def test_preview_run_pins_session_file(client):
+    """Preview pins the web-minted --session-file on its one run row.
 
-    Regression: the first run (preview) minted a fresh session row with an
-    empty file_path, so /runs/db-<id> showed no session link and future
-    runs of the same session could not reuse the path.
+    Regression: a preview recorded no file_path, so /runs/db-<id> showed
+    no transcript and future runs of the same transcript could not reuse
+    the path.
     """
     from workagent import cli_harness as _h
     from workagent import store_sqlite as sq
@@ -584,19 +610,22 @@ def test_preview_run_pins_session_file_and_id(client, monkeypatch):
                                   "repo": "/tmp/r"})
     sid = "2026-10-09T09-01-45-289Z-9100"
     pinned = str(sq.session_file_path(sid, "omp"))
-    got = _h.record_preview_session("rk-pin", "start", "PROMPT", "omp",
-                                    "harness command: cd /tmp/w-pin && omp 'x'",
-                                    session_file=pinned)
-    assert got == sid
-    row = sq.get_session(db, sid)
+    rid = _h.record_preview_run("rk-pin", "start", "PROMPT", "omp",
+                                "harness command: cd /tmp/w-pin && omp 'x'",
+                                session_file=pinned)
+    assert rid
+    row = sq.get_run(db, rid)
     assert row["file_path"] == pinned
+    assert row["state"] == "preview"
+    assert len(sq.list_runs(db, include_deleted_worktrees=True)) == 1
 
 
 def test_preview_launch_collision_adopts_existing(isolated_config, tmp_path, monkeypatch):
     """Headless rerun with a pinned --session-file adopts the preview row.
 
-    Same PK (transcript stem) must not warn/fail — the launch continues on
-    the existing session id.
+    The same transcript must not gain a second identity row: the launch
+    links back to the preview row (continued_from_run_id) and records the
+    same transcript under its rescoped path.
     """
     from workagent import cli_harness as _h
     from workagent import store_sqlite as sq
@@ -610,11 +639,10 @@ def test_preview_launch_collision_adopts_existing(isolated_config, tmp_path, mon
                      " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
     sid = "2026-10-09T09-01-45-289Z-9100"
     pinned = str(sq.session_file_path(sid, "omp"))
-    first = _h.record_preview_session("k", "start", "P", "omp",
-                                      "harness command: cd /wt && omp 'x'",
-                                      session_file=pinned)
-    assert first == sid
-    warned = []
+    first = _h.record_preview_run("k", "start", "P", "omp",
+                                  "harness command: cd /wt && omp 'x'",
+                                  session_file=pinned)
+    assert first
     from workagent import cli_validate as _cv_col
     monkeypatch.setattr(_cv_col, "dirty_gate",
                         lambda wt, br: {"dirty": False, "porcelain": ""})
@@ -644,35 +672,37 @@ def test_preview_launch_collision_adopts_existing(isolated_config, tmp_path, mon
     result = {"key": "k", "command": "start", "branch": "b"}
     _h._run_harness("omp", "P", "/wt", "/r", True, True, result, True,
                     run_key="k", session_file=pinned)
-    # branch "b" rescopes the pinned path under sessions/omp/b/<action>/ (same sid)
+    # branch "b" rescopes the pinned path under runs/omp/b/<action>/ (same sid)
     rescoped = str(sq.session_file_path(sid, "omp", branch="b", session_type="start"))
     assert result.get("session_file") == rescoped
-    assert warned == []
-    assert sq.get_session(db, sid) is not None
+    launch = sq.run_by_file_path(db, rescoped, include_deleted_worktrees=True)
+    assert launch is not None and launch["id"] != first
+    assert launch["continued_from_run_id"] == first
+    assert sq.get_run(db, first)["state"] == "preview"  # adopted row keeps its state
+    rows = sq.list_runs(db, include_deleted_worktrees=True)
+    assert len([r for r in rows if r["file_path"] in (pinned, rescoped)]) == 2
 
 
 def test_mirror_skips_preview_self_recorded_runs(client):
-    """Preview/terminal children self-record their runs row: no mirror dup."""
+    """A preview row adopted by the launch is not duplicated by the mirror."""
     from workagent import store_sqlite as sq
     from workagent import web_runs as _wr
     db = sq.db_path()
     sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
-                     " VALUES ('k3', '/tmp/w3', 'b3', NULL, '2026-01-01', '{}')")
-    sid = sq.insert_session(db, worktree_ref="k3", harness_name="omp",
-                            initiator_command="start", prompt="p",
-                            file_path="/s/prev.jsonl", session_id="prev-3",
-                            session_type="start")
-    sq.finish_session(db, "prev-3", "preview")
-    before = len(sq.list_runs(db))
+    rid = sq.insert_run(db, "start", ["k3"], 0, worktree_ref="k3",
+                        harness_name="omp", initiator_command="start",
+                        prompt="p", file_path="/s/prev.jsonl",
+                        session_type="start", state="preview")
+    before = len(sq.list_runs(db, include_deleted_worktrees=True))
     run = client.app.state.registry.create("start", ["k3"], "start:k3")
     run.session_file = "/s/prev.jsonl"
     run.argv = ["python", "-m", "workagent", "start", "k3", "--yes",
                 "--session-file", "/s/prev.jsonl"]
     run.exit_code = 0
     _wr._mirror_run(run)
-    assert len(sq.list_runs(db)) == before
+    assert len(sq.list_runs(db, include_deleted_worktrees=True)) == before
+    assert sq.get_run(db, rid)["state"] == "preview"
+
 
 def test_precreated_row_persists_null_exit_then_finalizes(client):
     """Spawn persists a NULL-exit row adopted at finish (no duplicate)."""
@@ -690,48 +720,75 @@ def test_precreated_row_persists_null_exit_then_finalizes(client):
     rows = sq.list_runs(db, limit=100, include_deleted_worktrees=True)
     assert len(rows) == 1 and rows[0]["exit_code"] == 1
 
+
+def test_precreated_fix_run_types_and_stamps_review(client):
+    """Web fix run: precreate types it fix_comments and stamps the review row.
+
+    A 'review' type would masquerade as the fix-continue target, so the
+    precreated row must not be the one /api/review-session resolves.
+    """
+    from workagent import store_sqlite as sq
+    from workagent import web_runs as _wr
+    db = sq.db_path()
+    sq.init_db(db)
+    review_id = sq.insert_run(db, "review", ["k"], 0, worktree_ref="k",
+                              file_path="/s/rev-7.jsonl", session_type="review",
+                              state="finished")
+    run = client.app.state.registry.create(
+        "review", ["k", "--fix-comments", "--use-review-session"], "review:k")
+    run.session_file = "/s/rev-7.jsonl"
+    run.argv = ["python", "-m", "workagent", "review", "k", "--fix-comments",
+                "--use-review-session", "--launch", "--session-file", "/s/rev-7.jsonl"]
+    _wr._precreate_run_row(run)
+    assert run.db_run_id > 0
+    row = sq.get_run(db, run.db_run_id)
+    assert row["session_type"] == "fix_comments"
+    assert row["state"] == "running"
+    assert row["file_path"] == "/s/rev-7.jsonl"
+    run.exit_code = 0
+    _wr._mirror_run(run)
+    rows = sq.list_runs(db, include_deleted_worktrees=True)
+    assert len(rows) == 2  # review row + this web invocation
+    assert sq.get_run(db, review_id)["metadata"]["fixed_by_run_id"] == run.id
+    assert (sq.latest_review_run(db, "k") or {}).get("id") == review_id
+
 def test_resolve_session_file_adopts_minted(client, tmp_path, monkeypatch):
     """Pinned-but-missing path adopts the omp-minted .jsonl and persists it."""
     from workagent import store_sqlite as sq
     from workagent import web_runs_routes as _rr
     db = sq.db_path()
     sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
-                     " VALUES ('k4', '/tmp/w4', 'b4', NULL, '2026-01-01', '{}')")
     sid = "2026-10-09T09-01-45-289Z-9100"
     pinned = str(tmp_path / f"{sid}.jsonl")
-    sq.insert_session(db, worktree_ref="k4", harness_name="omp",
-                      initiator_command="start", prompt="p", file_path=pinned,
-                      session_id=sid, session_type="start")
-    sq.finish_session(db, sid, "preview")
+    rid = sq.insert_run(db, "start", ["k4"], 0, worktree_ref="k4",
+                        harness_name="omp", initiator_command="start",
+                        prompt="p", file_path=pinned, session_type="start",
+                        state="preview")
     minted = tmp_path / "2026-10-09T09-01-47-227Z_abc.jsonl"
     minted.write_text('{"type":"session"}\n')
-    got = _rr._resolve_session_file(pinned, sid)
+    got = _rr._resolve_session_file(pinned, rid)
     assert got == str(minted)
-    assert sq.get_session(db, sid)["file_path"] == str(minted)
+    assert sq.get_run(db, rid)["file_path"] == str(minted)
 
 
 def test_resolve_session_file_prefers_db_over_stale_pinned(client, tmp_path):
     """Child rescoped branch-less → branch-scoped: registry path is stale,
-    but the DB row holds the transcript — resolve the DB file, not ""."""
+    but the run row holds the transcript — resolve the DB file, not ""."""
     from workagent import store_sqlite as sq
     from workagent import web_runs_routes as _rr
     db = sq.db_path()
     sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
-                     " VALUES ('k6', '/tmp/w6', 'feat/x', NULL, '2026-01-01', '{}')")
     sid = "2026-10-09T09-01-45-289Z-9100"
     stale = str(tmp_path / "omp" / f"{sid}.jsonl")  # branch-less, never existed
     scoped = tmp_path / "omp" / "feat" / "x" / "review"
     scoped.mkdir(parents=True)
     real = scoped / "2026-10-09T09-01-47-227Z_abc.jsonl"
     real.write_text('{"type":"session"}\n')
-    sq.insert_session(db, worktree_ref="k6", harness_name="omp",
-                      initiator_command="review", prompt="p", file_path=str(real),
-                      session_id=sid, session_type="review")
-    assert _rr._resolve_session_file(stale, sid) == str(real)
+    rid = sq.insert_run(db, "review", ["k6"], 0, worktree_ref="k6",
+                        harness_name="omp", initiator_command="review",
+                        prompt="p", file_path=str(real),
+                        session_type="review", state="finished")
+    assert _rr._resolve_session_file(stale, rid) == str(real)
 
 
 def test_resolve_session_file_finds_sibling_branch_dir(client, tmp_path):
@@ -756,17 +813,14 @@ def test_mirror_run_syncs_rescoped_path(client, tmp_path):
     from workagent import web_runs as _wr
     db = sq.db_path()
     sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
-                     " VALUES ('k7', '/tmp/w7', 'feat/x', NULL, '2026-01-01', '{}')")
     sid = "2026-10-09T09-01-45-289Z-9101"
     stale = str(tmp_path / "omp" / f"{sid}.jsonl")
-    real = tmp_path / "omp" / "feat" / "x" / "review" / "minted.jsonl"
+    real = tmp_path / "omp" / "feat" / "x" / "review" / f"{sid}.jsonl"
     real.parent.mkdir(parents=True)
     real.write_text("{}\n")
-    sq.insert_session(db, worktree_ref="k7", harness_name="omp",
-                      initiator_command="review", prompt="p", file_path=str(real),
-                      session_id=sid, session_type="review")
+    sq.insert_run(db, "review", ["k7"], 0, worktree_ref="k7",
+                  harness_name="omp", initiator_command="review", prompt="p",
+                  file_path=str(real), session_type="review", state="finished")
     run = client.app.state.registry.create("review", ["k7"], "review:k7")
     run.session_file = stale
     run.argv = ["python", "-m", "workagent", "review", "k7", "--launch", "--yes",
@@ -774,6 +828,7 @@ def test_mirror_run_syncs_rescoped_path(client, tmp_path):
     run.exit_code = 0
     _wr._mirror_run(run)
     assert run.session_file == str(real)
+
 
 
 def test_launch_rescopes_branchless_pinned_path(isolated_config, tmp_path, monkeypatch):
@@ -829,7 +884,7 @@ def test_launch_rescopes_branchless_pinned_path(isolated_config, tmp_path, monke
     rescoped = str(sq.session_file_path(sid, "omp", branch="feat/my-branch", session_type="review"))
     assert result.get("session_file") == rescoped
     assert "/feat/my-branch/" in rescoped
-    row = sq.get_session(db, sid)
+    row = sq.run_by_file_path(db, rescoped, include_deleted_worktrees=True)
     assert row is not None and row["file_path"] == rescoped
 def test_preview_command_carries_branch_scoped_session_dir(isolated_config, monkeypatch):
     """Printed/copied Review command is branch-scoped from the very first run.
@@ -852,7 +907,7 @@ def test_preview_command_carries_branch_scoped_session_dir(isolated_config, monk
                     result, True, run_key="rk-prev", session_file=pinned)
     rescoped = str(sq.session_file_path(sid, "omp", branch="feat/my-branch", session_type="review"))
     assert result.get("harness_command", "").find(f"--session-dir {rescoped.rsplit('/', 1)[0]}") >= 0         or f"--session-dir '{rescoped.rsplit('/', 1)[0]}'" in result.get("harness_command", "")
-    row = sq.get_session(db, sid)
+    row = sq.run_by_file_path(db, rescoped, include_deleted_worktrees=True)
     assert row is not None and row["file_path"] == rescoped
 
 
@@ -905,56 +960,50 @@ def test_confirmed_sync_with_yes_alias_skips_append(client, monkeypatch):
         _wait_state(client, r.json()["run_id"], {"succeeded"})
 
 
-def test_resume_session_uses_run_env_file(client, monkeypatch, tmp_path):
-    """Session resume must forward the run's --env-file (WS1)."""
+def test_resume_persisted_run_uses_run_env_file(client, monkeypatch, tmp_path):
+    """Persisted-run resume forwards the run's --env-file (WS1)."""
     from workagent import store_sqlite as sq
+    from workagent import store as _store
     session = tmp_path / "s.jsonl"
     session.write_text("{}\n")
     env_file = tmp_path / "custom-env.sh"
     env_file.write_text("export A=1\n")
     db = sq.db_path()
     sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
-        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
-        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
-                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
-                            initiator_command="start", prompt="hello",
-                            file_path=str(session))
-    sq.insert_run(db, sid, "start", ["k", "--env-file", str(env_file)], 0)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _store.record_link("k", {"worktree": str(wt), "branch": "b", "repo": "/tmp/r"})
+    rid = sq.insert_run(db, "start", ["k", "--env-file", str(env_file)], 0,
+                        worktree_ref="k", file_path=str(session),
+                        session_type="start", state="finished")
     opened: dict = {}
     monkeypatch.setattr("workagent.webapp._open_terminal",
-                        lambda wt, sf, env=None: opened.update(wt=wt, sf=sf, env=env))
-    r = client.post(f"/api/sessions/{sid}/resume")
+                        lambda wt_, sf, env=None: opened.update(wt=wt_, sf=sf, env=env))
+    r = client.post(f"/api/runs/db-{rid}/resume")
     assert r.status_code == 200, r.text
-    assert opened == {"wt": "/wt", "sf": str(session), "env": str(env_file)}
+    assert opened == {"wt": str(wt), "sf": str(session), "env": str(env_file)}
 
 
-def test_resume_session_defaults_env_file(client, monkeypatch, tmp_path):
-    """Session resume with no run --env-file passes None (default resolves downstream)."""
+def test_resume_persisted_run_defaults_env_file(client, monkeypatch, tmp_path):
+    """Persisted-run resume with no --env-file passes None (default resolves downstream)."""
     from workagent import store_sqlite as sq
+    from workagent import store as _store
     session = tmp_path / "s.jsonl"
     session.write_text("{}\n")
     db = sq.db_path()
     sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
-        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
-        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
-                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
-                            initiator_command="start", prompt="hello",
-                            file_path=str(session))
-    sq.insert_run(db, sid, "start", ["k"], 0)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _store.record_link("k", {"worktree": str(wt), "branch": "b", "repo": "/tmp/r"})
+    rid = sq.insert_run(db, "start", ["k"], 0, worktree_ref="k",
+                        file_path=str(session), session_type="start",
+                        state="finished")
     opened: dict = {}
     monkeypatch.setattr("workagent.webapp._open_terminal",
-                        lambda wt, sf, env=None: opened.update(wt=wt, sf=sf, env=env))
-    r = client.post(f"/api/sessions/{sid}/resume")
+                        lambda wt_, sf, env=None: opened.update(wt=wt_, sf=sf, env=env))
+    r = client.post(f"/api/runs/db-{rid}/resume")
     assert r.status_code == 200, r.text
-    assert opened == {"wt": "/wt", "sf": str(session), "env": None}
+    assert opened == {"wt": str(wt), "sf": str(session), "env": None}
 
 def test_resume_endpoint_claims_terminal_lock(client, monkeypatch, tmp_path):
     """Run resume must record_harness_run with origin=terminal (WS5)."""
@@ -1040,8 +1089,8 @@ def test_start_terminal_claims_terminal_lock(client, monkeypatch, tmp_path):
         _store.clear_harness_run("rk-st")
 
 
-def test_session_resume_claims_terminal_lock(client, monkeypatch, tmp_path):
-    """Session resume must record_harness_run with origin=terminal (WS5)."""
+def test_resume_persisted_run_claims_terminal_lock(client, monkeypatch, tmp_path):
+    """Persisted-run resume must record_harness_run with origin=terminal (WS5)."""
     from workagent import store_sqlite as sq
     from workagent import store as _store
     import subprocess as sp
@@ -1049,20 +1098,17 @@ def test_session_resume_claims_terminal_lock(client, monkeypatch, tmp_path):
     session.write_text("{}\n")
     db = sq.db_path()
     sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t3', 'unknown', 't3')")
-        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r3', '/r3', 'r3')")
-        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t3', 'r3')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
-                     " VALUES ('k3', '/wt3', 'b3', 'r3', '2026-01-01T00:00:00+00:00')")
-    sid = sq.insert_session(db, worktree_ref="k3", harness_name="omp",
-                            initiator_command="start", prompt="hello",
-                            file_path=str(session))
+    wt = tmp_path / "wt3"
+    wt.mkdir()
+    _store.record_link("k3", {"worktree": str(wt), "branch": "b3", "repo": "/tmp/r3"})
+    rid = sq.insert_run(db, "start", ["k3"], 0, worktree_ref="k3",
+                        file_path=str(session), session_type="start",
+                        state="finished")
     holder = sp.Popen(["sleep", "30"])
     try:
         monkeypatch.setattr("workagent.web_runs_routes._open_terminal",
-                            lambda wt, sf, env=None: holder.pid)
-        r = client.post(f"/api/sessions/{sid}/resume")
+                            lambda wt_, sf, env=None: holder.pid)
+        r = client.post(f"/api/runs/db-{rid}/resume")
         assert r.status_code == 200, r.text
         rec = _store.active_harness("k3")
         assert rec is not None and rec.get("origin") == "terminal"
@@ -1122,7 +1168,7 @@ def test_persisted_summary_maps_step_rows_to_real_command():
     def row(command, args):
         return {"id": 1, "command": command, "args": args,
                 "state": "succeeded", "exit_code": 0, "created_at": "",
-                "session_file": "", "session_id": None, "worktree_ref": "",
+                "file_path": "", "worktree_ref": "",
                 "validation": {}, "truncated": False}
 
     out = web_runs._persisted_summary(row("flow step review", ["review", "IPG-1"]))
