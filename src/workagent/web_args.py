@@ -64,8 +64,10 @@ SPECS: dict[str, dict[str, Any]] = {
     "backup": {"confirm": False, "force": False, "confirm_subs": ("import",),
                "key": "config"},
     "prodtest": {"confirm": True, "force": False,
+                 "confirm_subs": ("plan", "run"),
                  "key": lambda args: "prodtest:run-all" if args[:1] == ["run"] and "--all" in args
-                 else (f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest plan'])}" if args[:1] == ["plan"] else f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest run'])}") if args[:1] in (["plan"], ["run"]) else "config"},
+                 else (f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest plan'])}" if args[:1] == ["plan"]
+                       else (f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest run'])}" if args[:1] == ["run"] else "config"))},
     "adhoc": {"confirm": True, "force": False,
               "key": lambda args: f"adhoc:{_first_positional(args, VAL_FLAGS['adhoc'])}"},
 }
@@ -75,7 +77,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
               "--yes", "--json", "--no-status", "--no-review", "--plan"),
     "review": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
                "--yes", "--json", "--all", "--sequential", "--fix", "--fix-comments", "--then-fix-comments", "--use-review-session", "--force-all", "--post-comments", "--no-status"),
-    "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--released", "--no-squash", "--hard-delete", "--merge-only"),
+    "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--released", "--no-squash", "--hard-delete", "--merge-only", "--create-prodtest"),
     "release": ("--yes", "--dry-run", "--json", "--no-status"),
     "open": (),
     "sync": ("-m", "--merge", "--harness", "--all", "--yes", "--force",
@@ -133,10 +135,10 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "backup import": ("--yes", "--json"),
     "backup run-scheduled": ("--json",),
     "prodtest": (),
-    "prodtest plan": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
-                      "--yes", "--json", "--update"),
-    "prodtest run": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
-                     "--yes", "--json", "--skip-version-gate", "--all"),
+    "prodtest plan": ("--update", "-L", "--launch", "--terminal", "--no-tty", "--dry-run", "--yes", "--json"),
+    "prodtest run": ("--all", "--skip-version-gate", "-L", "--launch", "--terminal", "--no-tty", "--dry-run", "--yes", "--json"),
+    "prodtest list": ("--json",),
+    "prodtest status": ("--json",),
     "adhoc": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
     "message add": ("--json",),
     "message list": ("--json", "--csv"),
@@ -195,7 +197,8 @@ SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "action": {"add", "list", "show", "run", "update", "delete", "suggest-icon"},
                                     "flow": {"template", "list", "show", "run"},
                                     "backup": {"export", "import", "run-scheduled"},
-                                    "message": {"add", "list", "show", "update", "remove", "adhoc", "validate", "action", "flow"}}
+                                    "message": {"add", "list", "show", "update", "remove", "adhoc", "validate", "action", "flow"},
+                                    "prodtest": {"plan", "run", "list", "status"}}
 TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "clone", "compose", "delete", "suggest-icon"}
 def _needs_confirm(command: str, args: list[str]) -> bool:
     """True when the (sub)command needs confirm:true (destructive only).

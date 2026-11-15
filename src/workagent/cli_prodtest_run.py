@@ -9,7 +9,7 @@ import typer
 
 from . import store, worktrees
 from .cli_core import _catch_harness_errors, _fail, _print_result, eprint
-from .cli_prodtest import _resolve_plan_file, prodtest_app
+from .cli_prodtest import _resolve_issue_context, _resolve_plan_file, prodtest_app
 from .cli_prodtest_checks import _run_locked
 from .errors import HarnessError
 
@@ -185,16 +185,15 @@ def _run_one(ref: str,
     if not isinstance(run_dir, str):
         run_dir = None
 
-    key, entry, parsed = worktrees.resolve_any(ref, store.load_links(include_deleted=True))
-    issue_number: str | None = None
-    if entry.get("issue"):
-        issue_number = str(entry.get("issue", "") or "") or None
-    if parsed is not None and parsed.get("kind") == "issue":
-        issue_number = str(parsed.get("number", "") or "") or issue_number
-    if not issue_number and key.startswith("jira:"):
-        issue_number = key.split(":", 1)[1] or None
-    store_key = issue_number or key
-    item = store.get_prodtest(store_key)
+    try:
+        store_key, entry, parsed, link_key = _resolve_issue_context(ref)
+    except worktrees.NoLinkedState as e:
+        _fail(str(e), 2)
+    entry = dict(entry or {})
+    try:
+        item = store.get_prodtest(store_key)
+    except Exception:
+        item = None
     release_sha = str((item or {}).get("release_sha", "") or "")
     if not item or not release_sha:
         _fail(f"no release recorded for {store_key}; release first", 2)
@@ -202,19 +201,32 @@ def _run_one(ref: str,
     plan_path = str((item or {}).get("plan_path", "") or "")
     plan_file = _resolve_plan_file(entry, store_key, plan_path)
     issue_url = str(entry.get("issue_url", "") or "")
+    if not issue_url:
+        try:
+            from . import refs as _refs
+            url = _refs.issue_url(store_key) if hasattr(_refs, "issue_url") else ""
+            if url:
+                issue_url = str(url)
+        except Exception:
+            pass
 
     if run_dir:
         out_dir = Path(run_dir)
-    elif entry.get("worktree"):
+    elif entry.get("worktree") and Path(str(entry["worktree"])).is_dir():
         from datetime import datetime, timezone
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
         safe = "".join(c if (c.isalnum() or c in ("-", "_")) else "-" for c in store_key)
         out_dir = Path(str(entry["worktree"])) / ".workagent" / "prodtest" / "runs" / f"{ts}-{safe}"
+    elif entry.get("repo") and Path(str(entry["repo"])).is_dir():
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+        safe = "".join(c if (c.isalnum() or c in ("-", "_")) else "-" for c in store_key)
+        out_dir = Path(str(entry["repo"])) / ".workagent" / "prodtest" / "runs" / f"{ts}-{safe}"
     else:
         out_dir = Path.cwd() / ".workagent" / "prodtest" / "runs" / store_key
 
     if dry_run:
-        _print_result({"key": key, "issue": store_key, "run_dir": str(out_dir),
+        _print_result({"key": store_key, "issue": store_key, "run_dir": str(out_dir),
                        "release_sha": release_sha,
                        "plan_file": str(plan_file) if plan_file else plan_path,
                        "fix_mode": fix_mode, "skip_version_gate": skip_version_gate,
@@ -239,7 +251,8 @@ def _run_one(ref: str,
                         fix_mode, skip_version_gate, out_dir, timeout_s,
                         launch, terminal, no_tty, json_output,
                         harness, env_file, extra_prompt, session_file,
-                        item=fresh_item if fresh_item is not None else item)
+                        item=fresh_item if fresh_item is not None else item,
+                        link_key=link_key)
     except KeyboardInterrupt:
         _fail("interrupted; run checkout kept for inspection.", 1)
 
@@ -260,13 +273,9 @@ def _run_timeout_s(plan_file: Path | None, skip_version_gate: bool) -> int:
             else:
                 vc = plan.get("version_check") or {}
                 if isinstance(vc, dict) and isinstance(vc.get("timeout_s"), int):
-                    gate_s = vc["timeout_s"]
+                    gate_s = vc.get("timeout_s")
         except Exception:
             pass
     if skip_version_gate:
         gate_s = 0
     return budget_min * 60 + gate_s + 60
-
-
-
-

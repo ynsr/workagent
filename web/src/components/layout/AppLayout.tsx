@@ -17,6 +17,7 @@ import {
   ShieldAlert,
   Stethoscope,
   Workflow,
+  FlaskConical,
   Zap,
 } from "lucide-react"
 import { RunWatcher } from "@/components/RunWatcher"
@@ -35,6 +36,10 @@ const NAV_TOP_GROUPS = [
   [
     { to: "/flows", label: "Flows", icon: Workflow },
     { to: "/sessions", label: "Sessions", icon: History },
+  ],
+  [
+    { to: "/prodtests", label: "Prodtests", icon: FlaskConical },
+    { to: "/prodtest-launch", label: "Prodtest Launch", icon: Rocket },
   ],
   [
     { to: "/flow-templates", label: "Flow Templates", icon: Library },

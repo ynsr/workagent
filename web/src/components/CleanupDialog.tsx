@@ -34,10 +34,11 @@ export function CleanupDialog({
   worktreeKey: string
   invalid: boolean
   sourceBranch?: string
-  onClose: (ok: false | { force: boolean; hardDelete: boolean } | { action: "mergeOnly" } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean }) => void
+  onClose: (ok: false | { force: boolean; hardDelete: boolean; createProdtest: boolean } | { action: "mergeOnly" } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean }) => void
 }): React.JSX.Element {
   const [force, setForce] = useState(invalid)
   const [hardDelete, setHardDelete] = useState(false)
+  const [createProdtest, setCreateProdtest] = useState(false)
   const effectiveForce = invalid || force
   const longLived = isLongLivedSource(sourceBranch ?? "")
   const rows: [string, string][] = invalid
@@ -130,6 +131,14 @@ export function CleanupDialog({
               flag="--hard-delete"
               description="Delete the row, worktree, and branch immediately — skip the 7-day recovery window"
             />
+            <CheckRow
+              id="cleanup-create-prodtest"
+              checked={createProdtest}
+              onChange={(v) => setCreateProdtest(v)}
+              label="Create Prod Test"
+              flag="--create-prodtest"
+              description="Keep the prodtest row (issue key + worktree ref) so the Prodtests page keeps tracking it after the worktree is gone"
+            />
           </div>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -158,7 +167,7 @@ export function CleanupDialog({
           ) : null}
           <AlertDialogAction
               autoFocus
-              onClick={() => onClose({ force: effectiveForce, hardDelete })}
+              onClick={() => onClose({ force: effectiveForce, hardDelete, createProdtest })}
             >
               {invalid ? "Delete worktree" : "Remove worktree"}
           </AlertDialogAction>

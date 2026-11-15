@@ -293,40 +293,6 @@ export function Dashboard() {
     }
   }
 
-  async function handleProdtestRunAll() {
-    const targeting = selCount > 0
-    const eligible = (targeting ? [...selected].sort() : Object.keys(worktrees ?? {}).sort())
-      .filter((key) => {
-        const e = (worktrees ?? {})[key]
-        return e && e.prodtest_detail && e.prodtest_detail.release_sha
-      })
-    if (eligible.length === 0) {
-      toast.error("No worktree with a recorded release and stored plan — release first, then generate a plan.")
-      return
-    }
-    const ok = await confirm({
-      action: "prodtest",
-      title: targeting ? `Run prodtest on ${eligible.length} selected worktrees` : `Run prodtest on ${eligible.length} worktrees`,
-      description:
-        "Runs the stored prodtest plan for each worktree in an ephemeral read-only checkout at its release SHA (non-TTY). Skips worktrees with no recorded release or no stored plan.",
-      destructive: true,
-      confirmLabel: `Run prodtest (${eligible.length})`,
-      details: [scopeDetail("Every active linked worktree with a release")],
-    })
-    if (!ok) return
-    try {
-      const { run_id } = await createRun.mutateAsync({
-        command: "prodtest",
-        args: ["run", "--all"],
-        confirm: true,
-      })
-      toast.success(`Prodtest run --all started (${eligible.length} eligible)`, {
-        action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
-      })
-    } catch (err) {
-      toast.error(`prodtest run --all: ${errorText(err)}`)
-    }
-  }
   async function handleCloseReleased() {
     const targeting = selCount > 0
     const ok = await confirm({
@@ -398,7 +364,7 @@ export function Dashboard() {
     setCleanupTarget(key)
   }
 
-  async function submitCleanup(key: string, opts: { force: boolean; hardDelete: boolean } | { action: "mergeOnly" } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean }) {
+  async function submitCleanup(key: string, opts: { force: boolean; hardDelete: boolean; createProdtest?: boolean } | { action: "mergeOnly" } | { action: "deactivate" } | { action: "deleteFromDb"; hardDelete: boolean }) {
     setCleanupTarget(null)
     if ("action" in opts) {
       if (opts.action === "mergeOnly") {
@@ -422,7 +388,7 @@ export function Dashboard() {
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "cleanup",
-        args: [key, ...(opts.force ? ["--force"] : []), ...(opts.hardDelete ? ["--hard-delete"] : [])],
+        args: [key, ...(opts.force ? ["--force"] : []), ...(opts.hardDelete ? ["--hard-delete"] : []), ...(opts.createProdtest ? ["--create-prodtest"] : [])],
         confirm: true,
         force: opts.force || undefined,
       })
@@ -567,7 +533,7 @@ export function Dashboard() {
     onFixComments: (key: string) =>
       navigate("/launch?mode=review&fixComments=1&ref=" + encodeURIComponent(key)),
     onGenerateProdtest: (key: string) =>
-      navigate("/launch?mode=prodtest&prodtestAction=plan&ref=" + encodeURIComponent(key)),
+      navigate("/prodtest-launch?ref=" + encodeURIComponent(key)),
     onAdhoc: (key: string) =>
       navigate("/launch?mode=adhoc&ref=" + encodeURIComponent(key)),
     onCleanup: handleCleanup,
@@ -621,7 +587,7 @@ export function Dashboard() {
               onCopyJson={() => void handleCopyJson()}
               onDownloadCsv={handleDownloadCsv}
             />
-            <Button variant="outline" size="sm" onClick={handleProdtestRunAll} title={selCount > 0 ? `Run prodtest on ${selCount} selected worktrees` : "Run stored prodtest plans on every active linked worktree with a release"}>
+            <Button variant="outline" size="sm" onClick={() => navigate("/prodtest-launch")} title="Plan or run prodtests on the Prodtests page (decoupled from worktrees)">
               {scopeLabel("Prodtest")}
             </Button>
             <span title={selCount > 0 ? "Close issues for selected worktrees contained in the release branch" : "Close every released linked issue"}>

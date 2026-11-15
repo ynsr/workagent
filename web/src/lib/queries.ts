@@ -21,6 +21,8 @@ export const queryKeys = {
   doctor: ["doctor"] as const,
   messages: (thread?: string) => ["messages", thread ?? ""] as const,
   messageDetail: (ref: string) => ["messages", "detail", ref] as const,
+  prodtests: ["prodtests"] as const,
+  prodtestDetail: (ref: string) => ["prodtests", "detail", ref] as const,
   runs: ["runs"] as const,
   run: (id: string) => ["runs", "detail", id] as const,
   candidates: (days?: number, mine?: boolean) => ["candidates", days ?? 90, mine ?? true] as const,
@@ -119,6 +121,18 @@ export function useMessage(ref: string | null) {
   return useQuery({
     queryKey: queryKeys.messageDetail(ref ?? ""),
     queryFn: () => api.messageDetail(ref ?? ""),
+    enabled: !!ref,
+  })
+}
+
+export function useProdtests() {
+  return useQuery({ queryKey: queryKeys.prodtests, queryFn: api.prodtests })
+}
+
+export function useProdtest(ref: string | null) {
+  return useQuery({
+    queryKey: queryKeys.prodtestDetail(ref ?? ""),
+    queryFn: () => api.prodtestDetail(ref ?? ""),
     enabled: !!ref,
   })
 }

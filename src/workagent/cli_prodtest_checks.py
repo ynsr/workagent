@@ -44,13 +44,22 @@ def _plan_stored_divergence(item: dict | None, plan_file: Path | None) -> str | 
     return None
 
 
+def _mark_blocked(store_key: str, cause: str) -> None:
+    """Best-effort blocked upsert for pre-harness failures (never raises)."""
+    try:
+        store.upsert_prodtest(store_key, status="blocked",
+                              run_results=json.dumps({"overall": "BLOCKED", "notes": cause}))
+    except Exception as e:
+        eprint(f"warning: prodtest state upsert failed: {e}")
+
+
 def _run_locked(store_key: str, entry: dict, plan_file: Path | None, release_sha: str,
                 issue_url: str, fix_mode: str, skip_version_gate: bool,
                 out_dir: Path, timeout_s: int,
                 launch: bool, terminal: bool, no_tty: bool, json_output: bool,
                 harness: Optional[str], env_file: str | None,
                 extra_prompt: Optional[str], session_file: str | None,
-                item: dict | None = None) -> None:
+                item: dict | None = None, link_key: str | None = None) -> None:
     """Run body inside the per-issue lock: checkout, validate, harness, persist."""
     from . import release_worktree as _wt
     from . import prodtest_scripts as _ps
@@ -67,17 +76,37 @@ def _run_locked(store_key: str, entry: dict, plan_file: Path | None, release_sha
     else:
         eprint(f"warning: no repo checkout for {store_key}; skipping ephemeral checkout")
 
-    _enforce_plan_release_binding(store_key, item=item, plan_file=plan_file, release_sha=release_sha, repo=repo, checkout=checkout)
-    # Stored-row divergence is advisory (the SHA byte comparison is the gate):
-    # warn loudly so a diverged store row is visible before the harness runs.
-    divergence = _plan_stored_divergence(item, plan_file)
-    if divergence:
-        eprint(f"WARNING: stored plan metadata diverged for {store_key}: {divergence}")
-    _run_validated(store_key, entry, plan_file, release_sha, issue_url,
-                    fix_mode, skip_version_gate, out_dir, timeout_s,
-                    launch, terminal, no_tty, json_output,
-                    harness, env_file, extra_prompt, session_file,
-                    repo, checkout)
+    headless = bool(launch and no_tty)
+    if headless:
+        try:
+            store.upsert_prodtest(store_key, status="running",
+                                  worktree_ref=str(link_key or ""))
+        except Exception as e:
+            eprint(f"warning: prodtest state upsert failed: {e}")
+
+    try:
+        _enforce_plan_release_binding(store_key, item=item, plan_file=plan_file, release_sha=release_sha, repo=repo, checkout=checkout)
+        divergence = _plan_stored_divergence(item, plan_file)
+        if divergence:
+            eprint(f"WARNING: stored plan metadata diverged for {store_key}: {divergence}")
+        _run_validated(store_key, entry, plan_file, release_sha, issue_url,
+                        fix_mode, skip_version_gate, out_dir, timeout_s,
+                        launch, terminal, no_tty, json_output,
+                        harness, env_file, extra_prompt, session_file,
+                        repo, checkout)
+    except BaseException:
+        if headless:
+            try:
+                row = store.get_prodtest(store_key)
+            except Exception:
+                row = None
+            # Only reset a row still at running (validation/binding failed
+            # before _finish_run). Post-harness outcomes (passed/failed/
+            # timed-out-BLOCKED) and the interactive/preview path already
+            # persisted or never marked running - leave them alone.
+            if isinstance(row, dict) and str(row.get("status", "")) == "running":
+                _mark_blocked(store_key, f"run failed before persist for {store_key}")
+        raise
 
 
 
@@ -396,8 +425,15 @@ def _finish_run(store_key: str, entry: dict, plan_file: Path | None, release_sha
         eprint(f"warning: report comment post failed: {e}")
 
     try:
+        run_results = json.dumps({"overall": overall, "run_id": run_id,
+                                  "report_file": report_file,
+                                  "release_sha": release_sha})
+    except Exception:
+        run_results = "{}"
+    try:
         store.upsert_prodtest(store_key, status=status,
-                              last_run_id=run_id or report_file)
+                              last_run_id=run_id or report_file,
+                              run_results=run_results)
     except Exception as e:
         eprint(f"warning: prodtest state upsert failed: {e}")
 

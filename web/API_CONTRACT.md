@@ -369,11 +369,28 @@ re-include already-reviewed and unresolved-comment worktrees),
 `cleanup:<ref>` / `cleanup:all`, `action:<label>:<ref>` / `config` (template CRUD),
 `flow:<template>:<ref>` / `config` (template CRUD),
 `prodtest:<ref>` / `prodtest:run-all` — one prodtest plan/run per issue ref,
-`adhoc:<first-ref>` — one adhoc run per ref. The Launch prodtest tab selects
-the subcommand: Plan emits `prodtest plan <ref>`,
-Run emits `prodtest run <ref>` (preview/headless/terminal flags unchanged);
-`prodtest run --all` runs every released/stored plan sequentially in-process
+`adhoc:<first-ref>` — one adhoc run per ref. `prodtest plan <ref>` generates
+the plan; `prodtest run <ref>` runs it at its release SHA (issue-key first,
+worktree ref as accelerator); `prodtest list` / `prodtest status <ref>` are
+read endpoints for the pages below. `prodtest run --all` runs every
+released/stored plan sequentially in-process
 (dry-run rows / `skipped:<reason>` / continue-past-failure).
+
+### Prodtests pages (issue #50: decoupled from worktree dev flow)
+`GET /api/prodtests` → `{"prodtests": [...]}` newest first (Prodtests page
+source; same storage as `prodtest list`). Each row: `issue_key`, `status`
+(`pending` = plan generated, no release yet; `pending_prodtest` = release
+SHA recorded, awaiting run; `running` = lock held by a live run; `passed` /
+`failed` = last run verdict; `blocked` = run could not complete),
+`plan_path`, `plan_revision`, `plan_risk`, `release_sha`, `last_run_id`,
+`worktree_ref` (survives cleanup via `cleanup --create-prodtest`), and
+`run_results` (JSON verdict payload). `GET /api/prodtests/{ref}` → one item
+(404 `unknown prodtest item`). `/prodtests` (badge-link target of the
+Dashboard prodtest cell; `?issue=` pre-filters) owns Plan/Run buttons; the
+separate `/prodtest-launch` page owns the plan/run form (empty ref + Run =
+`run --all`). `cleanup <ref> --create-prodtest` keeps the prodtest row while
+tearing down the worktree; the run-time binding check (not cleanup) catches
+stale plans.
 
 ### `GET /api/runs` → list
 ```json
