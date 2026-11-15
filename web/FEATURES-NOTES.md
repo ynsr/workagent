@@ -60,7 +60,7 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
    `RefreshOverlay` in a `relative` parent — zero layout shift);
    skeletons render only on first load; a refetch error over stale data shows
    an inline retry line. Applies to Dashboard StatusTable, Candidates tabs,
-   Links, Runs, Sessions, Repos, Trackers, Doctor.
+   Links, Runs, Repos, Trackers, Doctor.
 7. **Candidates Recent-issues filter** is client-side over the loaded rows
    (scope toggles My/All/My-Created with My-Created default-on; created
    range dropdown Last 7/30/90 days / Last year defaulting to Last 30 days;
