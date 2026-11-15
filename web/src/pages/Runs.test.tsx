@@ -9,15 +9,25 @@ const { mutateAsync } = vi.hoisted(() => ({ mutateAsync: vi.fn(() => Promise.res
 
 const RUNS: Run[] = [
   {
-    id: "db-1", command: "review", args: ["--fix-comments", "jira:IPG-1"],
+    // The persisted fix-comments shape: flags dropped, distinguished only by
+    // the stored session_type.
+    id: "db-1", command: "review", args: ["jira:IPG-1"],
     state: "succeeded", exit_code: 0, truncated: false, created: 1_760_000_000,
     target: "review:jira:IPG-1", session_file: "/home/x/runs/omp/IPG-1/fix_comments/a.jsonl",
-    worktree: "/home/x/wt", last_seq: 2,
+    session_type: "fix_comments", worktree: "/home/x/wt", last_seq: 2,
   },
   {
     id: "db-2", command: "sync", args: ["jira:IPG-2"],
     state: "succeeded", exit_code: 0, truncated: false, created: 1_759_000_000,
-    target: "sync:jira:IPG-2", session_file: "", worktree: "", last_seq: 1,
+    target: "sync:jira:IPG-2", session_file: "", session_type: null,
+    worktree: "", last_seq: 1,
+  },
+  {
+    // Pre-migration review row: no stored type, so the command labels it.
+    id: "db-3", command: "review", args: ["jira:IPG-3"],
+    state: "succeeded", exit_code: 0, truncated: false, created: 1_758_000_000,
+    target: "review:jira:IPG-3", session_file: "", session_type: null,
+    worktree: "", last_seq: 1,
   },
 ]
 
@@ -41,11 +51,12 @@ function renderRuns() {
 }
 
 describe("Runs transcript affordances", () => {
-  it("labels each run with its transcript kind", () => {
+  it("labels from session_type and falls back to the command", () => {
     renderRuns()
     // Table (≥sm) and card (<sm) both render the label.
     expect(screen.getAllByText("Fix comments")).not.toHaveLength(0)
     expect(screen.getAllByText("Sync")).not.toHaveLength(0)
+    expect(screen.getAllByText("Review")).not.toHaveLength(0)
   })
 
   it("offers resume/copy only for runs that own a transcript", () => {

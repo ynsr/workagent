@@ -284,6 +284,10 @@ export interface Run {
   created: number
   target: string
   session_file: string
+  /** Stored transcript kind (start/review/sync/fix_comments/custom_action/
+   * flow/prodtest_plan/prodtest_run); null for rows recorded before the type
+   * existed. The Runs label prefers it over the command. */
+  session_type: string | null
   worktree: string
   last_seq: number
 }

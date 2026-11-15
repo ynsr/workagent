@@ -279,7 +279,7 @@ export function RunDetail() {
     <div>
       <PageHeader
         title={`Run ${shortId(runId)}`}
-        description={`${runKind(run.command, run.args)} · started ${relativeTime(run.created)} · target ${run.target}`}
+        description={`${runKind(run.command, run.args, run.session_type)} · started ${relativeTime(run.created)} · target ${run.target}`}
         actions={
           <>
             <Button variant="ghost" size="sm" asChild>
@@ -317,7 +317,7 @@ export function RunDetail() {
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         {state ? <RunStateBadge state={state} /> : null}
-        <Badge>{runKind(run.command, run.args)}</Badge>
+        <Badge>{runKind(run.command, run.args, run.session_type)}</Badge>
         <span className="text-sm text-muted-foreground">
           exit code: <span className="font-mono">{exitCode ?? "—"}</span>
         </span>

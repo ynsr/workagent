@@ -105,10 +105,10 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 ## Transcripts on runs
 
 Every harness launch is a run that optionally carries its AI transcript: the
-Runs page owns the per-run kind label (start / review / fix comments / sync /
-custom action / flow / prodtest), the transcript path, and the resume/copy
-buttons. There is no separate Sessions page or surface — old `/sessions`
-links land on Runs.
+Runs page owns the per-run kind label (read from the run's stored
+`session_type`: start / review / fix comments / sync / custom action / flow /
+prodtest), the transcript path, and the resume/copy buttons. There is no
+separate Sessions page or surface — old `/sessions` links land on Runs.
 
 ## Headless agent mechanism (reused, not reimplemented)
 

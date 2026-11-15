@@ -225,7 +225,7 @@ export function Runs() {
                   label: shortId(run.id),
                   command: run.command,
                   args: run.args,
-                  kind: runKind(run.command, run.args),
+                  kind: runKind(run.command, run.args, run.session_type),
                   target: run.target,
                   state: run.state,
                   exitCode: run.exit_code,

@@ -89,13 +89,37 @@ export function commandLabel(command: string): string {
   }
 }
 
-/** Kind label for a run's transcript: mirrors the backend
- * `derive_session_type` rule (command + `--fix-comments`). GET /api/runs
- * exposes the initiator command rather than the stored `session_type`
- * column, so the label derives from that same command. Unknown → the
+/** session_type → the label shown for a run's transcript. */
+const SESSION_TYPE_LABELS: Record<string, string> = {
+  start: "Start (task)",
+  review: "Review",
+  sync: "Sync",
+  fix_comments: "Fix comments",
+  custom_action: "Custom action",
+  flow: "Flow",
+  prodtest_plan: "Prodtest plan",
+  prodtest_run: "Prodtest run",
+}
+
+/** Kind label for a run's transcript. The stored `session_type` wins: a
+ * fix-comments launch stores `command='review'` with the flags dropped, so it
+ * is only distinguishable there. Pre-migration rows (null) fall back to the
+ * initiator command + args, mirroring the backend derivation. Unknown → the
  * command itself. */
-export function runKind(command: string, args: readonly string[] = []): string {
+export function runKind(
+  command: string,
+  args: readonly string[] = [],
+  sessionType?: string | null,
+): string {
+  const stored = SESSION_TYPE_LABELS[(sessionType ?? "").trim().toLowerCase()]
+  if (stored) return stored
   const c = command.trim().toLowerCase()
+  if (c === "prodtest") {
+    // The web launches prodtest split: command="prodtest", args[0]=plan|run.
+    const sub = (args[0] ?? "").trim().toLowerCase()
+    if (sub === "plan") return "Prodtest plan"
+    if (sub === "run") return "Prodtest run"
+  }
   if (c === "review" && args.includes("--fix-comments")) return "Fix comments"
   switch (c) {
     case "start":
@@ -110,9 +134,9 @@ export function runKind(command: string, args: readonly string[] = []): string {
     case "adhoc":
       return "Custom action"
   }
-  const firstTwo = c.split(/\s+/).slice(0, 2).join(" ")
-  if (firstTwo === "prodtest plan") return "Prodtest plan"
-  if (firstTwo === "prodtest run") return "Prodtest run"
+  const joined = c.split(/\s+/).slice(0, 2).join(" ")
+  if (joined === "prodtest plan") return "Prodtest plan"
+  if (joined === "prodtest run") return "Prodtest run"
   return command || "—"
 }
 
