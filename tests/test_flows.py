@@ -31,14 +31,44 @@ def test_validate_template_rejects_review_cleanup_without_fix(tmp_path):
 
 
 def test_validate_template_ordering_matrix(tmp_path):
-    _rejects([{"kind": "review"}, {"kind": "start"}], "start")
-    _rejects([{"kind": "start"}, {"kind": "start"}], "start")
     _rejects([{"kind": "start"}, {"kind": "release"},
               {"kind": "cleanup"}], "release")
     _rejects([{"kind": "start"}, {"kind": "release"}], "cleanup")
     _rejects([{"kind": "frobnicate"}, {"kind": "cleanup"}], "unknown step kind")
     _rejects([{"kind": "start"}, {"kind": "release"},
               {"kind": "cleanup"}, {"kind": "release"}], "at most one")
+
+
+def test_validate_template_allows_late_and_multiple_starts(tmp_path):
+    from workagent import store_flows as sf
+    steps = [{"kind": "review"}, {"kind": "start"},
+             {"kind": "start", "config": {"plan": True}}]
+    norm = sf.validate_template(steps)
+    assert [s["kind"] for s in norm] == ["review", "start", "start"]
+    assert norm[2]["config"] == {"plan": True}
+
+
+def test_validate_template_rejects_start_after_cleanup(tmp_path):
+    """A start after teardown would revive a closed issue (issue #109)."""
+    from workagent import store_flows as sf
+    _rejects([{"kind": "start"}, {"kind": "cleanup"},
+              {"kind": "start"}], "start")
+    _rejects([{"kind": "start"}, {"kind": "cleanup"},
+              {"kind": "start"}, {"kind": "cleanup"}], "start")
+    ok = sf.validate_template([{"kind": "sync"}, {"kind": "start"},
+                               {"kind": "cleanup"}])
+    assert [s["kind"] for s in ok] == ["sync", "start", "cleanup"]
+
+
+def test_compose_chains_rejects_starts_after_cleanup(tmp_path):
+    """Composing two cleanup-ending templates keeps the teardown last."""
+    import pytest
+    from workagent import store_flows as sf
+    from workagent.errors import HarnessError
+    with pytest.raises(HarnessError) as ei:
+        sf.compose_chains([("a", [{"kind": "start"}, {"kind": "cleanup"}]),
+                           ("b", [{"kind": "start"}, {"kind": "cleanup"}])])
+    assert "start" in str(ei.value)
 
 
 def test_validate_template_action_rules(tmp_path):
@@ -192,13 +222,13 @@ def test_template_row_parses_parent_labels_default(tmp_path, monkeypatch):
     row = sf.create_template(db, name="T", label="t", steps='[{"kind": "sync"}]')
     assert row["parent_labels"] == []
 
-def test_compose_chains_collapses_second_start(tmp_path, monkeypatch):
+def test_compose_chains_preserves_starts(tmp_path, monkeypatch):
     from workagent import store_flows as sf
     a = [{"kind": "start"}, {"kind": "sync"}]
     b = [{"kind": "start"}, {"kind": "cleanup"}]
-    merged, parents, dropped = sf.compose_chains([("a", a), ("b", b)])
-    assert [s["kind"] for s in merged] == ["start", "sync", "cleanup"]
-    assert parents == ["a", "b"] and dropped is True
+    merged, parents = sf.compose_chains([("a", a), ("b", b)])
+    assert [s["kind"] for s in merged] == ["start", "sync", "start", "cleanup"]
+    assert parents == ["a", "b"]
 
 
 def test_compose_chains_index_mapped_error(tmp_path, monkeypatch):

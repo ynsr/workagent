@@ -169,7 +169,7 @@ by the Dashboard Actions dropdown.)
  renders a per-step badge list; the Flows run detail badges each step from effective_steps.
  `flow template update OLD [--new-label NEW] ...` renames the label (flow history retargeted).
  `flow template clone SRC [--name] [--label]` duplicates one template (lineage in `parent_labels`);
- `flow template compose LABEL --from A,B [--name]` concatenates chains (keep-first-start, lineage recorded).
+ `flow template compose LABEL --from A,B [--name]` concatenates chains (starts preserved, but a start after the first cleanup is rejected; lineage recorded).
  Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection.
  `flow run TEMPLATE REF [--steps JSON] [--step-config JSON] [--skip-steps 0[,N]] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`. Resume keeps the stored chain: passing a different `--steps` chain for a resumable run fails (exit 2) — use `--fresh` for the new chain or drop `--steps` to resume.
 ### `GET /api/links`

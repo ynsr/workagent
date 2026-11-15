@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
 import { FlowWizard } from "@/components/FlowWizard"
@@ -100,6 +101,50 @@ describe("FlowWizard fan-out summary", () => {
   it("hides the fan-out summary for a single worktree", () => {
     const { unmount } = renderWizard()
     expect(screen.queryByText(/Runs on \d+ worktrees/)).not.toBeInTheDocument()
+    unmount()
+  })
+})
+
+describe("FlowWizard start step constraints", () => {
+  it("enables Run flow for two start steps and a start step after sync", () => {
+    const template = {
+      ...TEMPLATE,
+      steps: [
+        { kind: "sync", config: {} },
+        { kind: "start", config: { repo: "proj" } },
+        { kind: "start", config: { repo: "proj", plan: true } },
+      ],
+    } as unknown as FlowTemplateRow
+    const { unmount } = renderWizard(template)
+    expect(screen.getByRole("button", { name: "Run flow" })).toBeEnabled()
+    expect(screen.queryByText(/At most one 'start'/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/'start' must be the first step/)).not.toBeInTheDocument()
+    unmount()
+  })
+
+  it("forwards both start steps and their plan config to the run", async () => {
+    mutateAsync.mockClear()
+    cleanup()
+    const template = {
+      ...TEMPLATE,
+      steps: [
+        { kind: "sync", config: {} },
+        { kind: "start", config: { repo: "proj" } },
+        { kind: "start", config: { repo: "proj", plan: true } },
+      ],
+    } as unknown as FlowTemplateRow
+    const { unmount } = renderWizard(template)
+    const planBoxes = screen.getAllByLabelText(/Plan mode/)
+    await userEvent.click(planBoxes[0]!)
+    await userEvent.click(screen.getByRole("button", { name: "Run flow" }))
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled())
+    const [payload] = mutateAsync.mock.calls.at(-1) as unknown as [{ args: string[] }]
+    const at = payload.args.indexOf("--steps")
+    expect(at).toBeGreaterThan(-1)
+    const steps = JSON.parse(payload.args[at + 1] ?? "[]") as { kind: string; config: Record<string, unknown> }[]
+    expect(steps.map((s) => s.kind)).toEqual(["sync", "start", "start"])
+    expect(steps[1]?.config).toEqual({ repo: "proj", plan: true })
+    expect(steps[2]?.config).toEqual({ repo: "proj", plan: true })
     unmount()
   })
 })

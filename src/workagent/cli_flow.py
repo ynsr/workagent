@@ -190,7 +190,7 @@ def template_compose(
     yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; compose prompts nothing so this is a no-op."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
-    """Combine templates into one flat chain (keep-first-start; lineage recorded)."""
+    """Combine templates into one flat chain (lineage recorded)."""
     srcs = [s.strip() for s in (from_ or "").split(",") if s.strip()]
     if not srcs:
         _fail("--from needs at least one template label", EXIT_USAGE)
@@ -200,12 +200,9 @@ def template_compose(
         if row is None:
             _fail(f"unknown flow template: {s!r}", EXIT_USAGE)
         chains.append((s, row.get("steps") or []))
-    merged, parents, dropped = sf.compose_chains(chains)
+    merged, parents = sf.compose_chains(chains)
     new = store.create_template(name=name or label, label=label, steps=merged, parent_labels=parents)
-    out = {"composed": new["label"], "id": new["id"], "from": parents}
-    if dropped:
-        out["note"] = "extra 'start' steps collapsed (kept first)"
-    _print_result(out, json_output)
+    _print_result({"composed": new["label"], "id": new["id"], "from": parents}, json_output)
 @template_app.command("suggest-icon")
 @_catch_harness_errors
 def template_suggest_icon(

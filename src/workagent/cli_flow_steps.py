@@ -45,21 +45,52 @@ def _call(fn, *args, **kwargs):
 # ── step runners (live here to keep cli_flow.py at its 500-line cap) ──
 # Lazy imports throughout: this module must never import runner modules
 # at top level (circular). Callers pass spawn/manual step callbacks.
+def _start_target(ref: str, key: str) -> str:
+    """Issue ref to hand ``start`` for a flow step.
+
+    Flows launched from a worktree selection pass the link key as *ref*
+    (``branch:feat/x``, ``gitlab:host/g/r#3``, ``jira:KEY@repo``); ``start``
+    parses its argument first, so a key reaches "cannot parse issue/PR
+    ref". Fall back to the link's recorded issue (issue #109: late/repeated
+    starts would otherwise be unreachable from the FlowsMenu).
+    """
+    from . import refs as _refs
+    from . import store as _store
+    from .errors import HarnessError as _HE
+    try:
+        _refs.parse_ref(ref)
+        return ref
+    except _HE:
+        pass
+    entry = (_store.load_links(include_deleted=True).get(key, {}) or {})
+    fallback = str(entry.get("issue_url") or entry.get("issue") or "")
+    if not fallback:
+        fallback = _refs.issue_url(key) or ""
+    try:
+        _refs.parse_ref(fallback)
+    except _HE:
+        raise _HE(
+            f"start step: {ref!r} is not an issue/PR ref and the link "
+            f"records no issue — cannot start a harness from it",
+            exit_code=2) from None
+    return fallback
+
 
 def run_start_step(ref: str, key: str, config: dict,
                    json_output: bool, spawn, manual) -> dict:
     """Start step: adopt the worktree when it exists, else start the ref."""
     from . import cli_start as _mod
+    target = _start_target(ref, key)
     extra = flag_argv(config, *START_FLAGS)
     if bool(config.get("terminal", False)):
         harness = str(config.get("harness", "") or "omp")
-        return spawn("start", [ref, *extra], branch="", harness=harness)
+        return spawn("start", [target, *extra], branch="", harness=harness)
     if not (bool(config.get("launch", True))
             and not any(config.get(k) for k in ("preview", "dry_run", "terminal"))):
-        return manual("start", [ref, *extra])
+        return manual("start", [target, *extra])
     # Pass the original issue ref: start resolves links itself and adopts
     # the existing worktree (pre-resolving to a key breaks parse_ref).
-    out = _call(_mod.start.__wrapped__, ref, yes=True, launch=True,
+    out = _call(_mod.start.__wrapped__, target, yes=True, launch=True,
                 no_tty=True, json_output=json_output,
                 **pick(config, "repo", "related_repo", "depth",
                        "base", "harness", "no_tty", "session_file",
@@ -80,13 +111,13 @@ def run_start_step(ref: str, key: str, config: dict,
     new_key = key or ""
     try:
         links = _store.load_links()
-        parsed = _refs.parse_ref(ref)
+        parsed = _refs.parse_ref(target)
         canon = _refs.issue_key(parsed)
         hit = links.get(canon, {}) or {}
         if hit.get("worktree") and not hit.get("deleted_at"):
             new_key = canon
         else:
-            resolved = _wt.resolve_worktree(ref, links)
+            resolved = _wt.resolve_worktree(target, links)
             if (isinstance(resolved, str)
                     and (links.get(resolved) or {}).get("worktree")
                     and not (links.get(resolved) or {}).get("deleted_at")):

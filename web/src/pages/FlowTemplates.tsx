@@ -93,26 +93,15 @@ export function FlowTemplates() {
       .filter((t): t is FlowTemplateRow => Boolean(t))
     if (rows.length === 0) return
     const merged: FlowStep[] = []
-    let startSeen = false
-    let dropped = false
     for (const row of rows) {
-      for (const step of row.steps ?? []) {
-        if (step.kind === "start") {
-          if (startSeen) {
-            dropped = true
-            continue
-          }
-          startSeen = true
-        }
-        merged.push(structuredClone(step))
-      }
+      merged.push(...structuredClone(row.steps ?? []))
     }
     const parents = rows.map((r) => r.label)
     setSelected([])
     restart({
       ...EMPTY_FLOW_TEMPLATE_SEED,
       steps: merged,
-      lineageNote: `Composed from ${parents.join(", ")}${dropped ? " — extra 'start' steps collapsed" : ""}.`,
+      lineageNote: `Composed from ${parents.join(", ")}.`,
     })
   }
 
