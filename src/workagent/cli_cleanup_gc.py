@@ -50,7 +50,10 @@ def _remove_transcripts(targets: set[str], key: str = "") -> None:
 
     Files live under ~/.config/workagent/runs/<harness>/<branch-path>/ (or
     the legacy ``sessions/`` tree) — prune empty parents up to (not incl.)
-    either transcript root. Best effort, never raises (issue #102).
+    either transcript root. Targets outside those roots are skipped with a
+    warning: ``file_path`` can name any file (``--session-file <existing
+    file>`` is stored verbatim), and the orphan sweep runs unattended at
+    serve startup. Best effort, never raises (issue #102).
     """
     if not targets:
         return
@@ -67,17 +70,23 @@ def _remove_transcripts(targets: set[str], key: str = "") -> None:
         for raw in sorted(targets):
             try:
                 p = Path(raw).expanduser()
+                try:
+                    resolved = p.resolve()
+                except OSError:
+                    resolved = p
+                under = next((r for r in roots
+                              if resolved == r or r in resolved.parents), None)
+                if under is None:
+                    eprint(f"warning: skipping transcript cleanup outside the"
+                           f" transcript tree for {key}: {raw}")
+                    continue
                 if p.is_file():
                     p.unlink()
                     p = p.parent
                 if not p.is_dir():
                     continue
                 cur = p.resolve() if p.exists() else p
-                while True:
-                    root = next((r for r in roots
-                                 if cur == r or r in cur.parents), None)
-                    if root is None or cur == root:
-                        break
+                while cur != under:
                     try:
                         cur.rmdir()
                     except OSError:
@@ -92,6 +101,21 @@ def _remove_transcripts(targets: set[str], key: str = "") -> None:
 def _remove_harness_runs(key: str) -> None:
     """Delete harness transcript files + emptied branch dirs for one worktree."""
     _remove_transcripts(_harness_run_targets(key), key)
+
+
+def purge_orphans(dry_run: bool = False) -> dict:
+    """Delete records whose worktree row no longer exists, plus transcripts.
+
+    ``store.purge_orphans`` drops the DB rows (dangling runs, flows, message
+    worktree links, child parent labels) and returns the orphan runs'
+    transcript targets; the .jsonl files/dirs are deleted here. *dry_run*
+    reports the same counts without deleting anything.
+    """
+    out = store.purge_orphans(dry_run=dry_run)
+    if dry_run:
+        return out
+    _remove_transcripts(set(out.get("transcripts") or []), "orphans")
+    return out
 
 
 def _teardown_local(key: str, branch: str, repo_str: str, worktree_path: str = "") -> None:

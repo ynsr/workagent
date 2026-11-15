@@ -528,6 +528,30 @@ def link_gc(
                 "GC (soft-deleted)", "(nothing to purge)")
 
 
+@link_app.command("purge-orphans")
+@_catch_harness_errors
+def link_purge_orphans(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report orphaned records without deleting."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Delete records whose worktree row no longer exists.
+
+    Removes dangling runs (pre-FK leftovers) and their harness transcripts,
+    plus flows, message worktree links, and child parent labels that point
+    at a missing worktree. Runs automatically at serve startup.
+
+    Example: workagent link purge-orphans --dry-run
+    """
+    from . import cli_cleanup as _cleanup
+    out = _cleanup.purge_orphans(dry_run=dry_run)
+    counts = {k: v for k, v in out.items() if k != "transcripts"}
+    counts["transcripts"] = len(out.get("transcripts") or [])
+    if json_output:
+        print(json.dumps({"orphans": counts}, indent=2, ensure_ascii=False))
+        return
+    _print_result(counts, False)
+
+
 @link_app.command("destroy-deleted")
 @_catch_harness_errors
 def link_destroy_deleted(

@@ -54,13 +54,18 @@ def test_startup_maintenance_runs_gc_and_prune(isolated_config, monkeypatch):
     monkeypatch.setattr("workagent.store_sqlite.init_db", _init_db)
     monkeypatch.setattr("workagent.cli_cleanup.gc_soft_deleted",
                         lambda *a, **k: order.append("gc") or [{"key": "k"}])
+    monkeypatch.setattr("workagent.cli_cleanup.purge_orphans",
+                        lambda *a, **k: order.append("orphans") or
+                        {"runs": 1, "transcripts": ["/t.jsonl"]})
     monkeypatch.setattr("workagent.run_store.prune_finished",
                         lambda *a, **k: order.append("prune") or 2)
 
     out = _web.run_startup_maintenance()
-    assert order == ["migrate", "gc", "prune"]
+    assert order == ["migrate", "gc", "orphans", "prune"]
     assert "defer_backfill" not in seen  # migrations stay synchronous
-    assert out == {"purged": [{"key": "k"}], "pruned": 2}
+    assert out == {"purged": [{"key": "k"}],
+                   "orphans": {"runs": 1, "transcripts": ["/t.jsonl"]},
+                   "pruned": 2}
 
 def test_startup_maintenance_never_raises_on_migration_failure(
     isolated_config, monkeypatch, capsys
@@ -76,7 +81,10 @@ def test_startup_maintenance_never_raises_on_migration_failure(
                         lambda *a, **k: 0)
 
     out = _web.run_startup_maintenance()
-    assert out == {"purged": [], "pruned": 0}
+    assert out == {"purged": [],
+                   "orphans": {"runs": 0, "flows": 0, "messages": 0,
+                               "parent_links": 0, "transcripts": []},
+                   "pruned": 0}
     assert "migration failed" in capsys.readouterr().err
 
 def test_init_db_defer_backfill_skips_inline_git(isolated_config, monkeypatch):

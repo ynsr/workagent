@@ -1,6 +1,7 @@
 """SQLite worktree link rows (split from store_sqlite; re-exported via facade)."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,131 @@ from .store_trackers import _insert_path_keyed_repo
 def _upsert_tracker_conn(conn, tid, vendor="", remote_url=""):
     from . import store_sqlite as _sq
     return _sq._upsert_tracker_conn(conn, tid, vendor, remote_url)
+
+
+def _strip_message_refs_conn(conn, gone: set[str]) -> int:
+    """Drop *gone* refs from messages.worktrees JSON lists (rows stay).
+
+    A message keeps living when its worktree dies; only the launch link to
+    that worktree is removed. Returns the number of message rows touched.
+    """
+    if not gone:
+        return 0
+    touched = 0
+    for row in conn.execute("SELECT id, worktrees FROM messages").fetchall():
+        try:
+            refs = json.loads(row[1] or "[]")
+        except Exception:
+            continue
+        if not isinstance(refs, list):
+            continue
+        kept = [r for r in refs if r not in gone]
+        if len(kept) != len(refs):
+            conn.execute("UPDATE messages SET worktrees = ? WHERE id = ?",
+                         (json.dumps(kept), row[0]))
+            touched += 1
+    return touched
+
+
+def _purge_dependents_conn(conn, keys) -> dict:
+    """Delete the records hanging off *keys* after their worktree rows went.
+
+    runs go with the worktree row itself (v26 FK ON DELETE CASCADE). flows,
+    messages' worktree links and child ``parent_key_ref`` labels carry no FK,
+    so they are deleted/cleared here. Keys already removed from worktrees are
+    the normal case — the caller passes the refs it just dropped.
+    """
+    keys = [k for k in keys if k]
+    if not keys:
+        return {"flows": 0, "messages": 0, "parent_links": 0}
+    marks = ",".join("?" * len(keys))
+    flows = conn.execute(f"DELETE FROM flows WHERE worktree_ref IN ({marks})",
+                         tuple(keys)).rowcount
+    messages = _strip_message_refs_conn(conn, set(keys))
+    parents = conn.execute(
+        f"UPDATE worktrees SET parent_key_ref = '' WHERE parent_key_ref IN ({marks})",
+        tuple(keys)).rowcount
+    return {"flows": flows, "messages": messages, "parent_links": parents}
+
+
+def purge_orphans_conn(conn, dry_run: bool = False) -> dict:
+    """Delete records whose ``worktree_ref`` names no worktrees row.
+
+    Covers the tables a hard delete can leave dangling when the worktree row
+    vanished before the cascade existed: runs (pre-v26 leftovers), flows,
+    messages' worktree links, and child ``parent_key_ref`` labels. The
+    orphan runs' transcript targets (``file_path`` + ``metadata.session_dir``)
+    are returned so the caller can delete the files after the rows go —
+    prodtest_items keep their ref on purpose (issue-scoped ledger
+    attribution survives teardown). *dry_run* reports without deleting.
+    """
+    linked = {r[0] for r in conn.execute("SELECT ref_key FROM worktrees")}
+    run_rows = conn.execute(
+        "SELECT worktree_ref, file_path, metadata FROM runs"
+        " WHERE worktree_ref IS NOT NULL AND worktree_ref <> ''").fetchall()
+    run_refs = {r[0] for r in run_rows if r[0] not in linked}
+    targets: set[str] = set()
+    run_count = 0
+    for ref, file_path, metadata in run_rows:
+        if ref not in run_refs:
+            continue
+        run_count += 1
+        if file_path:
+            targets.add(str(file_path))
+        try:
+            session_dir = str((json.loads(metadata or "{}")).get("session_dir", "") or "")
+        except Exception:
+            session_dir = ""
+        if session_dir:
+            targets.add(session_dir)
+
+    flow_count = conn.execute(
+        "SELECT COUNT(*) FROM flows WHERE worktree_ref <> ''"
+        " AND worktree_ref NOT IN (SELECT ref_key FROM worktrees)").fetchone()[0]
+
+    dangling_msg: set[str] = set()
+    msg_count = 0
+    for (raw,) in conn.execute("SELECT worktrees FROM messages").fetchall():
+        try:
+            refs = json.loads(raw or "[]")
+        except Exception:
+            continue
+        if not isinstance(refs, list):
+            continue
+        gone = {r for r in refs if r and r not in linked}
+        if gone:
+            msg_count += 1
+            dangling_msg |= gone
+
+    parent_count = conn.execute(
+        "SELECT COUNT(*) FROM worktrees WHERE parent_key_ref <> ''"
+        " AND parent_key_ref NOT IN (SELECT ref_key FROM worktrees)").fetchone()[0]
+
+    out = {"runs": run_count, "flows": flow_count, "messages": msg_count,
+           "parent_links": parent_count, "transcripts": sorted(targets)}
+    if dry_run or not any(out[k] for k in ("runs", "flows", "messages", "parent_links")):
+        return out
+    # Correlated predicates, not the precomputed ref sets: linked/runs were
+    # read in autocommit, so a worktree created in between must not have its
+    # fresh run (or flow) swept.
+    conn.execute("DELETE FROM runs WHERE worktree_ref IS NOT NULL"
+                 " AND worktree_ref <> ''"
+                 " AND worktree_ref NOT IN (SELECT ref_key FROM worktrees)")
+    conn.execute("DELETE FROM flows WHERE worktree_ref <> ''"
+                 " AND worktree_ref NOT IN (SELECT ref_key FROM worktrees)")
+    _strip_message_refs_conn(conn, dangling_msg)
+    conn.execute("UPDATE worktrees SET parent_key_ref = ''"
+                 " WHERE parent_key_ref <> ''"
+                 " AND parent_key_ref NOT IN (SELECT ref_key FROM worktrees)")
+    return out
+
+
+def purge_orphans(path: Path, dry_run: bool = False) -> dict:
+    """Scan (and unless *dry_run*, delete) records with no worktree parent."""
+    init_db(path)
+    with connect(path) as conn:
+        return purge_orphans_conn(conn, dry_run=dry_run)
+
 
 def load_links_rows(path: Path, include_inactive: bool = False,
                     include_deleted: bool = False) -> dict:
@@ -62,11 +188,9 @@ def save_links_rows(path: Path, links: dict) -> None:
     never a blanket DELETE, so run rows survive ordinary link mutations.
     `active` is never reset by a re-save: entries carrying it are honored,
     others keep their stored value (new rows default to 1 via the column
-    default). Pruned keys lose their runs with them: ``runs.worktree_ref``
-    has no FK, so the purge is explicit (``worktree_ref = ''`` repo-scoped
-    rows are never touched).
+    default). Pruned keys lose their runs with them (v26 FK cascade) plus
+    flows, message worktree links, and child parent labels.
     """
-    import json
     init_db(path)
     with connect(path) as conn:
         conn.execute("PRAGMA defer_foreign_keys = ON")
@@ -120,13 +244,15 @@ def save_links_rows(path: Path, links: dict) -> None:
                  str(e.get("parent_key_ref", "") or "")))
         if links:
             marks = ",".join("?" * len(links))
-            conn.execute("DELETE FROM runs WHERE worktree_ref != ''"
-                         f" AND worktree_ref NOT IN ({marks})", tuple(links))
+            gone = [r[0] for r in conn.execute(
+                f"SELECT ref_key FROM worktrees WHERE ref_key NOT IN ({marks})",
+                tuple(links))]
             conn.execute(f"DELETE FROM worktrees WHERE ref_key NOT IN ({marks})",
                          tuple(links))
         else:
-            conn.execute("DELETE FROM runs WHERE worktree_ref != ''")
+            gone = [r[0] for r in conn.execute("SELECT ref_key FROM worktrees")]
             conn.execute("DELETE FROM worktrees")
+        _purge_dependents_conn(conn, gone)
 
 
 def set_worktree_active(path: Path, key: str, active: bool) -> None:
@@ -141,21 +267,21 @@ def set_worktree_active(path: Path, key: str, active: bool) -> None:
 
 
 def delete_worktree_row(path: Path, key: str) -> None:
-    """Delete a worktree row; files/branch/PR untouched.
+    """Delete a worktree row and every dependent record; files/branch/PR stay.
 
-    Note: ``runs.worktree_ref`` has no FK, so this key's runs are purged
-    explicitly alongside the row. flows rows (no hard FK: pre-Start
-    flows have no ref yet, and worktrees are soft-deleted not dropped)
-    are deleted explicitly too.
+    runs go with the row (v26 FK ON DELETE CASCADE); flows, message worktree
+    links, and child parent labels are purged explicitly. Callers that also
+    tear down disk snapshot the transcript targets before calling this.
     """
     from .errors import HarnessError
     init_db(path)
     with connect(path) as conn:
-        conn.execute("DELETE FROM runs WHERE worktree_ref = ?", (key,))
-        conn.execute("DELETE FROM flows WHERE worktree_ref = ?", (key,))
         cur = conn.execute("DELETE FROM worktrees WHERE ref_key = ?", (key,))
+        _purge_dependents_conn(conn, [key])
         if cur.rowcount == 0:
             raise HarnessError(f"no worktree link for {key}", exit_code=2)
+
+
 def soft_delete_worktree(path: Path, key: str) -> str:
     """Stamp deleted_at (soft-delete); row, its runs, and files all survive.
 
@@ -219,9 +345,9 @@ def gc_soft_deleted(path: Path, retention_days: int = SOFT_DELETE_RETENTION_DAYS
 
     Returns [{ref_key, path, branch, repo}] for rows the caller must tear
     down on disk (git-wt cleanup) before dropping. Row deletion happens
-    here — runs (no FK on ``worktree_ref``) and flows are purged
-    explicitly with their worktree row — and disk teardown is the caller's
-    job so this stays a pure DB function.
+    here — the worktree row takes its runs along (v26 FK cascade) and its
+    flows/message links/parent labels with it — and disk teardown is the
+    caller's job so this stays a pure DB function.
     """
     from datetime import timedelta
     init_db(path)
@@ -237,11 +363,10 @@ def gc_soft_deleted(path: Path, retention_days: int = SOFT_DELETE_RETENTION_DAYS
             " FROM worktrees w LEFT JOIN repos r ON r.key_ref = w.repo_key"
             " WHERE w.deleted_at IS NOT NULL AND w.deleted_at != ''"
             " AND w.deleted_at < ?", (cutoff,))]
-        import json as _json
         kept = []
         for r in rows:
             try:
-                issue = str(_json.loads(r.get("payload") or "{}").get("issue", "") or "")
+                issue = str(json.loads(r.get("payload") or "{}").get("issue", "") or "")
             except Exception:
                 issue = ""
             if _prodtest_blocked_conn(conn, r["ref_key"], issue):
@@ -249,13 +374,10 @@ def gc_soft_deleted(path: Path, retention_days: int = SOFT_DELETE_RETENTION_DAYS
         rows = [r for r in rows if r not in kept]
         for r in kept:
             del r["payload"]
-        for r in rows:
-            # flows/runs have no hard FK to worktrees (pre-Start flows carry
-            # no ref; runs.worktree_ref may dangle); purge them explicitly
-            # alongside the GC'd link row.
-            conn.execute("DELETE FROM flows WHERE worktree_ref = ?", (r["ref_key"],))
-            conn.execute("DELETE FROM runs WHERE worktree_ref = ?", (r["ref_key"],))
-            conn.execute("DELETE FROM worktrees WHERE ref_key = ?", (r["ref_key"],))
+        gone = [r["ref_key"] for r in rows]
+        for key in gone:
+            conn.execute("DELETE FROM worktrees WHERE ref_key = ?", (key,))
+        _purge_dependents_conn(conn, gone)
         for r in rows:
             r.pop("payload", None)
     return rows

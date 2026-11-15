@@ -54,7 +54,9 @@ SPECS: dict[str, dict[str, Any]] = {
                  "key": lambda args: f"register:{_first_positional(args, VAL_FLAGS['register'])}"},
     "repo": {"confirm": False, "force": True, "key": "config"},
     "link": {"confirm": False, "force": False, "confirm_subs": ("destroy-deleted",),
-             "key": lambda args: "config" if args[:1] not in (["destroy-deleted"],) else "link:destroy-deleted"},
+             "key": lambda args: ("link:" + args[0]
+                                  if args[:1] in (["destroy-deleted"], ["purge-orphans"])
+                                  else "config")},
     "tracker": {"confirm": False, "force": False, "key": "config"},
     "action": {"confirm": False, "force": False, "confirm_subs": ("run", "delete"),
                "key": lambda args: "suggest-icon:action" if args[:1] == ["suggest-icon"] else (f"action:{_first_positional(args, VAL_FLAGS['action run'])}:{_first_positional(args[1:], VAL_FLAGS['action run'])}" if args[:1] == ["run"] else "config")},
@@ -95,6 +97,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "link reactivate": ("--json",),
     "link undelete": ("--json",),
     "link gc": ("--dry-run", "--json"),
+    "link purge-orphans": ("--dry-run", "--json"),
     "link destroy-deleted": ("--all", "--dry-run", "--json", "--yes"),
     "link list": ("--worktree", "--refresh-pr", "--json", "--csv", "--include-deleted"),
     "tracker add": ("--json", "--fetch", "--no-fetch"),
