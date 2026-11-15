@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Start with an already-linked worktree accepts a registered --repo name pointing at the same path instead of failing [95]
 - Suggest-icon prompt covers all Lucide icons and avoids already used icons on flows/actions [84]
 - Restarting serve is faster: DB migrations stay synchronous while cleanup and branch backfill run in the background [81]
 - Message runs auto-register unlinked Mattermost permalinks on first use: fetch via mm and register, still fails with a clear --repo hint otherwise [79]
