@@ -283,7 +283,13 @@ export interface Run {
   truncated: boolean
   created: number
   target: string
+  /** Stored transcript path (`--session-file`); may be a scope hint only —
+   * see `transcript_ready`. */
   session_file: string
+  /** Backend readiness: `session_file` names a non-empty .jsonl on disk, so
+   * `omp --resume` on it works. Copy is gated on this (preview rows store a
+   * `--session-dir` hint that never existed). */
+  transcript_ready: boolean
   /** Stored transcript kind (start/review/sync/fix_comments/custom_action/
    * flow/prodtest_plan/prodtest_run); null for rows recorded before the type
    * existed. The Runs label prefers it over the command. */

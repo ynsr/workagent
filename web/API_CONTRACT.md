@@ -398,7 +398,10 @@ command already carries the full path and future runs of the same
 transcript reuse it) — except `--all` runs, which
 carry no `--session-file` (the CLI rejects it with `--all`; each
 per-worktree child generates its own transcript). Clients show resume
-buttons iff `session_file` is present.
+buttons iff `session_file` is present. `transcript_ready` (bool) says the
+stored path is a non-empty `.jsonl` on the server — a preview row's path is
+only the `--session-dir` scope hint, so it is `false` and the copy button is
+gated on it (resume resolves the minted file itself).
 
 `session_type` is the stored transcript kind
 (`start|review|sync|fix_comments|custom_action|flow|prodtest_plan|prodtest_run`,
@@ -432,10 +435,12 @@ live process is never killed — the run is marked `failed` instead.
 Every `POST /api/runs` child runs detached: `serve` spawns
 `workagent _run-supervised --run-dir <dir> <argv>`, which double-detaches
 the real child (own pgid), streams stdout/stderr straight to
-`<config_dir>/runs/<id>/output.log` (1 MiB head-truncation cap, `truncated`
-marker file + `truncated: true` in list/detail rows; RAM ring stays 10k
-lines), and writes `pid` (pid + start-ticks) / `exit_code` / `meta.json`.
-`serve` only tails the log file. At startup `serve` rehydrates live run
+`<config_dir>/runs/_web/<id>/output.log` (1 MiB head-truncation cap,
+`truncated` marker file + `truncated: true` in list/detail rows; RAM ring
+stays 10k lines), and writes `pid` (pid + start-ticks) / `exit_code` /
+`meta.json`. The `_web/` subdir keeps run state disjoint from the transcript
+tree (`runs/<harness>/…`), so nothing is recognized by a meta.json/pid
+heuristic. `serve` only tails the log file. At startup `serve` rehydrates live run
 dirs into a fresh registry (log backfill + tail continuity); finished-run
 dirs are pruned to the newest 100, running ones never. Only the
 supervisor writes `output.log`. The systemd unit uses `KillMode=process`

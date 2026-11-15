@@ -155,7 +155,9 @@ def test_review_preview_persists_run_row(isolated_config, tmp_path, monkeypatch)
     assert row["session_type"] == "review"
     assert "/runs/omp/feat/33/review/" in row["file_path"]
     assert row["worktree_ref"] == "feat/33"
-    assert "https://github.com/o/r/pull/33" in row["prompt"]
+    # prompt is not part of the polled list projection; the detail read has it.
+    detail = store_sqlite.get_run(store_sqlite.db_path(), row["id"])
+    assert "https://github.com/o/r/pull/33" in detail["prompt"]
 
 
 def test_review_preview_tty_lands_shell_in_worktree(isolated_config, tmp_path, monkeypatch, capsys):

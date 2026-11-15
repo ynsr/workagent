@@ -1,6 +1,9 @@
 """SQLite state: trackers, repos, worktrees, pr_cache, runs.
 
-Stdlib sqlite3 repository (no ORM — see the sessions spec §7). One
+Stdlib sqlite3 repository (no ORM — storage contract in
+docs/superpowers/specs/2026-11-15-remove-session-entity-design.md; the
+sessions table it removes is described in the archived 2026-09-26
+session-type design). One
 state.db in config_dir() holds everything after the one-shot
 JSON→SQLite migration (migrate_json below).
 """
@@ -733,6 +736,32 @@ def _move_transcripts(src: Path, dst: Path) -> None:
         pass
 
 
+def _rehome_transcripts(conn, config_dir: Path | None = None) -> None:
+    """Move ``sessions/`` → ``runs/`` and repoint stored paths (idempotent).
+
+    Runs on every init pass, not just the one that drops sessions: a crash
+    between the fold's commit and the tree move leaves rows naming the old
+    root. The stored path is rewritten to the ``runs/`` target
+    unconditionally — a not-yet-moved file still reads through
+    ``resolve_transcript_path``'s old-root fallback — and the next process
+    retries the move while ``sessions/`` exists.
+    """
+    if config_dir is None:
+        row = conn.execute("PRAGMA database_list").fetchone()
+        config_dir = Path(row[2]).parent if row and row[2] else None
+    if config_dir is None:
+        return
+    old_root = config_dir / LEGACY_SESSIONS_DIRNAME
+    new_root = config_dir / RUNS_DIRNAME
+    _move_transcripts(old_root, new_root)
+    for rid, fp in conn.execute(
+            "SELECT id, file_path FROM runs WHERE file_path != ''").fetchall():
+        moved = _transcript_alt(fp, old_root, new_root)
+        if moved:
+            conn.execute("UPDATE runs SET file_path = ? WHERE id = ?",
+                         (moved, rid))
+
+
 def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
     """Schema v16: fold sessions into runs, drop the table, move transcripts.
 
@@ -746,7 +775,8 @@ def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
     as a second line and keeps the session's finished|failed state. Then the
     runs table is rebuilt without the sessions FK, the sessions table
     dropped, and the on-disk tree moved ``sessions/`` → ``runs/`` with stored
-    paths rewritten. One-way: there is no down migration. A DB left
+    paths rewritten (``_rehome_transcripts``, retried by every later init
+    pass). One-way: there is no down migration. A DB left
     half-folded (sessions present, runs already rebuilt without
     ``session_id``) still completes — its transcript linkage is
     unrecoverable, so the fold drops sessions without joining on it.
@@ -758,12 +788,16 @@ def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
         if name not in cols:
             conn.execute(f"ALTER TABLE runs ADD COLUMN {name} {decl}")
     if not list(conn.execute("PRAGMA table_info(sessions)")):
-        return False  # already folded
-    # One-way migration: the stated mitigation is a pre-migration backup
-    # export. Notice on stderr only — stdout stays data-only.
+        # Already folded: still retry a tree move a crash may have skipped.
+        _rehome_transcripts(conn, config_dir)
+        return False
+    # One-way migration: no down migration. The real mitigation is copying
+    # state.db + the transcript trees before upgrading (backup export only
+    # covers actions/flow templates). Notice on stderr only — stdout stays
+    # data-only.
     print("note: folding sessions into runs (v16, one-way — no down"
-          " migration); a pre-migration `workagent backup export` is the"
-          " only rollback path", file=sys.stderr)
+          " migration); copy state.db plus the runs/ and sessions/ trees"
+          " before upgrading to roll back", file=sys.stderr)
     # A DB left half-folded by an intermediate build of this branch still
     # has sessions but its runs table was already rebuilt without
     # session_id (the pre-fold rebuild committed, then the fold raised).
@@ -823,19 +857,7 @@ def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
     finally:
         if was_on:
             conn.execute("PRAGMA foreign_keys = ON")
-    if config_dir is None:
-        row = conn.execute("PRAGMA database_list").fetchone()
-        config_dir = Path(row[2]).parent if row and row[2] else None
-    if config_dir is not None:
-        old_root = config_dir / LEGACY_SESSIONS_DIRNAME
-        new_root = config_dir / RUNS_DIRNAME
-        _move_transcripts(old_root, new_root)
-        for rid, fp in conn.execute(
-                "SELECT id, file_path FROM runs WHERE file_path != ''").fetchall():
-            moved = _transcript_alt(fp, old_root, new_root)
-            if moved and Path(moved).exists():
-                conn.execute("UPDATE runs SET file_path = ? WHERE id = ?",
-                             (moved, rid))
+    _rehome_transcripts(conn, config_dir)
     return True
 
 #: Cap on persisted run output lines (mirrors the live buffer policy at a
@@ -1071,7 +1093,8 @@ def get_run(path: Path, run_id: int,
 
 def finish_run(path: Path, run_id: int, state: str) -> None:
     """Set a run's terminal state (finished/failed/preview)."""
-    assert state in ("finished", "failed", "preview")
+    if state not in ("finished", "failed", "preview"):
+        raise ValueError(f"unknown run state: {state!r}")
     with connect(path) as conn:
         conn.execute("UPDATE runs SET state = ? WHERE id = ?", (state, run_id))
 
@@ -1239,7 +1262,7 @@ def list_runs(path: Path, limit: int = 200,
              " r.created_at, r.output, r.truncated, r.validation, r.flow_id,"
              " r.file_path, r.worktree_ref,"
              " r.session_type, r.state, r.harness_name, r.initiator_command,"
-             " r.prompt, r.metadata, r.continued_from_run_id"
+             " r.metadata, r.continued_from_run_id"
              " FROM runs r LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref")
         if not include_deleted_worktrees:
             q += " WHERE " + _NOT_DELETED

@@ -22,34 +22,40 @@ def _resolve_repo(worktree_path: str, repo_str: str) -> Path | None:
     return None
 
 
-def _remove_harness_runs(key: str) -> None:
-    """Delete harness transcript files + emptied branch dirs for one worktree.
+def _harness_run_targets(key: str) -> set[str]:
+    """Transcript paths recorded for *key*: run file_path + metadata session_dir.
 
-    Runs rows cascade with the worktree row (purged explicitly by the
-    links sweep); the .jsonl files under
-    ~/.config/workagent/runs/<harness>/<branch-path>/ do not — remove every
-    run's file_path + metadata session_dir hit, then prune empty parents up
-    to (not incl.) the transcript root. A pre-rename DB may still name the
-    legacy ``sessions/`` tree, so both roots are read and both bound the
-    prune. Best effort, never raises (issue #102).
+    Read this BEFORE the store purge — ``runs_for_worktree`` returns nothing
+    once the runs rows go.
     """
     try:
         from . import store_sqlite as _sq
-        db = _sq.db_path()
-        try:
-            rows = _sq.runs_for_worktree(db, key, include_deleted_worktrees=True)
-        except Exception:
-            return
-        targets: set[str] = set()
-        for r in rows:
-            fp = str(r.get("file_path", "") or "")
-            if fp:
-                targets.add(fp)
-            sd = str((r.get("metadata") or {}).get("session_dir", "") or "")
-            if sd:
-                targets.add(sd)
-        if not targets:
-            return
+        rows = _sq.runs_for_worktree(_sq.db_path(), key,
+                                     include_deleted_worktrees=True)
+    except Exception:
+        return set()
+    targets: set[str] = set()
+    for r in rows:
+        fp = str(r.get("file_path", "") or "")
+        if fp:
+            targets.add(fp)
+        sd = str((r.get("metadata") or {}).get("session_dir", "") or "")
+        if sd:
+            targets.add(sd)
+    return targets
+
+
+def _remove_transcripts(targets: set[str], key: str = "") -> None:
+    """Delete the transcript files/dirs in *targets* + prune emptied parents.
+
+    Files live under ~/.config/workagent/runs/<harness>/<branch-path>/ (or
+    the legacy ``sessions/`` tree) — prune empty parents up to (not incl.)
+    either transcript root. Best effort, never raises (issue #102).
+    """
+    if not targets:
+        return
+    try:
+        from . import store_sqlite as _sq
         config = store.config_dir()
         roots: list[Path] = []
         for name in (_sq.RUNS_DIRNAME, _sq.LEGACY_SESSIONS_DIRNAME):
@@ -81,6 +87,11 @@ def _remove_harness_runs(key: str) -> None:
                 eprint(f"warning: harness transcript cleanup failed for {key}: {e}")
     except Exception as e:
         eprint(f"warning: harness transcript cleanup failed for {key}: {e}")
+
+
+def _remove_harness_runs(key: str) -> None:
+    """Delete harness transcript files + emptied branch dirs for one worktree."""
+    _remove_transcripts(_harness_run_targets(key), key)
 
 
 def _teardown_local(key: str, branch: str, repo_str: str, worktree_path: str = "") -> None:
@@ -125,8 +136,9 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
     For each expired row: git-wt cleanup (worktree dir + git worktree entry
     + local branch via `branch -D`), plus a recorded-path fallback (direct
     `worktree remove --force` + rmtree) when the repo is stale, then drop
-    the row (already gone from the store's view — gc_soft_deleted removes
-    it and purges its runs rows).
+    the row (the store-level GC removes it and purges its runs rows) and
+    delete the transcript files the runs named (targets are snapshotted
+    before that purge — the rows are gone afterwards).
     Remote branches are NOT touched: the merge-or-close at cleanup time
     already decided their fate. Returns per-row status dicts.
     Rows blocked by a pending/running prodtest item are never deleted
@@ -139,9 +151,9 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
     blocked = {k for k, e in links.items()
                if e.get("deleted_at") and _cc._prodtest_blocked(k, e)}
     rows = []
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
     if dry_run:
-        from datetime import datetime, timedelta, timezone
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
         for key in sorted(links):
             e = links[key]
             if not e.get("deleted_at") or not e["deleted_at"] < cutoff:
@@ -154,12 +166,16 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
                 rows.append({"key": key, "branch": str(e.get("branch", "")),
                              "status": "gc-dry-run"})
         return rows
+    # Snapshot the transcript targets before the store GC purges the runs
+    # rows (runs_for_worktree then returns nothing) — the .jsonl files are
+    # ours to delete.
+    targets = {key: _harness_run_targets(key) for key in links
+               if key not in blocked and links[key].get("deleted_at")
+               and links[key]["deleted_at"] < cutoff}
     expired = store.gc_soft_deleted(retention_days=retention_days)
     expired_keys = {r["ref_key"] for r in expired}
     # Blocked-but-expired rows: the store GC skips them, so they never
     # appear in `expired` — re-emit here so live output matches dry-run.
-    from datetime import datetime, timedelta, timezone
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
     for key in sorted(links):
         e = links[key] or {}
         if not e.get("deleted_at") or not e["deleted_at"] < cutoff:
@@ -179,7 +195,7 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
                          "status": "skipped:prodtest-pending"})
             continue
         _teardown_local(key, branch, repo, worktree_path)
-        _remove_harness_runs(key)
+        _remove_transcripts(targets.get(key, set()), key)
         rows.append({"key": key, "branch": branch, "status": "purged"})
     return rows
 

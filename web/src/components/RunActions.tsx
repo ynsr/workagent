@@ -36,22 +36,26 @@ export function RunResumeActions({
   runId,
   worktree,
   sessionFile,
+  transcriptReady,
   variant = "icon",
 }: {
   runId: string
   worktree: string
   sessionFile: string
+  /** Backend readiness: the stored path is a non-empty .jsonl on disk. */
+  transcriptReady: boolean
   variant?: "icon" | "outline"
 }) {
   const resumeRun = useResumeRun()
   const label = `run ${runId}`
-  // The button only renders for a run that names a transcript path, and the
-  // backend owns transcript creation/readiness (resume 404s on a missing
-  // file), so copy always mirrors the resume endpoint: omp --resume.
+  // The backend owns transcript creation/readiness: resume resolves the
+  // minted .jsonl itself (409/404 otherwise), while the copy button must
+  // never emit `omp --resume` on a `--session-dir` scope hint.
   const cmd = resumeCommand(worktree, sessionFile)
   const icon = variant === "icon"
   const resumePending = resumeRun.isPending
   const canResume = Boolean(!resumePending && worktree && sessionFile)
+  const canCopy = Boolean(canResume && transcriptReady)
   const resume = (e: React.MouseEvent) => {
     if (icon) e.preventDefault()
     const done = () => toast.success("Terminal opened on the transcript")
@@ -81,8 +85,8 @@ export function RunResumeActions({
         variant={icon ? "ghost" : "outline"}
         size={icon ? "icon" : "sm"}
         aria-label={`Copy resume command for ${label}`}
-        title={cmd || `Copy resume command for ${label} (nothing to copy yet)`}
-        disabled={!canResume}
+        title={canCopy ? cmd : `No transcript on disk for ${label} yet`}
+        disabled={!canCopy}
         onClick={copy}
         className={icon ? "size-9 rounded-l-none border-l-0 text-muted-foreground hover:text-foreground" : "rounded-l-none border-l-0"}
       >

@@ -126,6 +126,31 @@ def test_migrate_v16_folds_sessions_into_runs(tmp_path):
     assert all(r["file_path"].endswith(".jsonl") for r in listed)
 
 
+def test_fold_retries_transcript_rehome_after_a_crash(tmp_path):
+    """A crash between the fold's commit and the tree move leaves rows naming
+    the old root: the next init pass moves the files and repoints the paths
+    (and repoints a path whose file never landed)."""
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    legacy = tmp_path / "sessions" / "omp" / "feat-x" / "review" / "t-9.jsonl"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("{}\n")
+    gone = tmp_path / "sessions" / "omp" / "feat-y" / "review" / "t-10.jsonl"
+    first = sq.insert_run(db, "review", ["k"], 0, file_path=str(legacy))
+    second = sq.insert_run(db, "review", ["k"], 0, file_path=str(gone))
+    sq._INIT_CACHE.pop(str(db), None)
+
+    sq.init_db(db)  # already folded: the rehome pass still runs
+
+    moved = tmp_path / "runs" / "omp" / "feat-x" / "review" / "t-9.jsonl"
+    assert moved.is_file() and not legacy.exists()
+    assert sq.get_run(db, first)["file_path"] == str(moved)
+    # No file behind it: the stored path still points at the runs/ target the
+    # reader's old-root fallback covers.
+    assert sq.get_run(db, second)["file_path"] == str(
+        tmp_path / "runs" / "omp" / "feat-y" / "review" / "t-10.jsonl")
+
+
 def test_migrate_v16_keeps_execution_run_state(tmp_path):
     """Real executions also start with the ``harness command:`` banner but
     carry a second output line — the fold must not stamp them preview."""
@@ -522,11 +547,20 @@ def test_remove_repo_row_cascades_and_unlinked_register_keeps_row(tmp_path):
     with sq.connect(db) as conn:
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
                      " VALUES ('k', '/wt', 'b', 'proj', '2026-01-01T00:00:00+00:00')")
+    # runs/flows carry no FK to the repo (or worktrees): both are purged.
+    sq.insert_run(db, "start", ["k"], 0, worktree_ref="k",
+                  prompt="p", file_path="/f/k.jsonl")
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO flows (template_label, worktree_ref,"
+                     " created_at, modified_at)"
+                     " VALUES ('f', 'k', '2026-01-01', '2026-01-01')")
     assert sq.remove_repo_row(db, "proj") is True
     with sq.connect(db) as conn:
         assert conn.execute("SELECT COUNT(*) FROM repos").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM tracker_repos").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM worktrees").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM flows").fetchone()[0] == 0
     # re-register, then the unlinked refresh keeps the row
     sq.register_repo_row(db, "proj", "/proj", "jira:IPG")
     sq.register_repo_row_unlinked(db, "proj", "/proj", remote="https://x/y", tool="gh")
@@ -852,7 +886,7 @@ def test_finish_run_states(tmp_path):
     assert sq.get_run(db, rid)["state"] == "finished"
     sq.finish_run(db, rid, "failed")
     assert sq.get_run(db, rid)["state"] == "failed"
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError, match="unknown run state"):
         sq.finish_run(db, rid, "nonsense")
 
 
@@ -912,7 +946,7 @@ def test_list_runs_carries_transcript_columns(tmp_path):
     assert row["state"] == "failed"
     assert row["harness_name"] == "omp"
     assert row["initiator_command"] == "omp start"
-    assert row["prompt"] == "do it"
+    assert "prompt" not in row  # never projected: /api/runs polls this
     assert row["file_path"] == "/f/s.jsonl"
     assert row["session_type"] == "start"
     assert row["output"] == "one\ntwo"

@@ -502,6 +502,36 @@ def test_get_persisted_run_detail(client):
     assert client.get("/api/runs/db-999999").status_code == 404
 
 
+def test_persisted_run_reports_transcript_readiness(client, isolated_config):
+    """`transcript_ready` gates copy: a --session-dir scope hint is false, a
+    real .jsonl is true, and a legacy sessions/ path surfaces its runs/ file."""
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    hint = isolated_config / "runs" / "omp" / "IPG-7"
+    real = isolated_config / "runs" / "omp" / "IPG-7" / "review" / "a.jsonl"
+    real.parent.mkdir(parents=True)
+    real.write_text("{}\n")
+    legacy = isolated_config / "sessions" / "omp" / "IPG-8" / "review" / "b.jsonl"
+    moved = isolated_config / "runs" / "omp" / "IPG-8" / "review" / "b.jsonl"
+    moved.parent.mkdir(parents=True)
+    moved.write_text("{}\n")
+    sq.insert_run(db, "start", ["IPG-7"], 0, file_path=str(hint),
+                  session_type="start")
+    sq.insert_run(db, "review", ["IPG-9"], 0, file_path=str(real),
+                  session_type="review")
+    sq.insert_run(db, "sync", ["IPG-8"], 0, file_path=str(legacy),
+                  session_type="sync")
+
+    rows = {r["session_type"]: r for r in client.get("/api/runs").json()}
+
+    assert rows["start"]["session_file"] == str(hint)
+    assert rows["start"]["transcript_ready"] is False
+    assert rows["review"]["transcript_ready"] is True
+    assert rows["sync"]["session_file"] == str(moved)
+    assert rows["sync"]["transcript_ready"] is True
+
+
 def test_persisted_run_serves_stored_log(client):
     """GET detail + SSE replay the DB-stored log for post-restart runs."""
     from workagent import store_sqlite as sq

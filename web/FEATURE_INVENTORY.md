@@ -107,7 +107,10 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 Every harness launch is a run that optionally carries its AI transcript: the
 Runs page owns the per-run kind label (read from the run's stored
 `session_type`: start / review / fix comments / sync / custom action / flow /
-prodtest), the transcript path, and the resume/copy buttons. There is no
+prodtest), the transcript path, and the resume/copy buttons. Resume is
+offered whenever a path is stored (the endpoint resolves the minted
+`.jsonl`); copy only when `transcript_ready` is true (a preview row's path
+is the `--session-dir` scope hint). There is no
 separate Sessions page or surface — old `/sessions` links land on Runs.
 
 ## Headless agent mechanism (reused, not reimplemented)

@@ -293,7 +293,7 @@ export function RunDetail() {
               </Link>
             </Button>
             {run.session_file ? (
-              <RunResumeActions runId={run.id} worktree={run.worktree} sessionFile={run.session_file} variant="outline" />
+              <RunResumeActions runId={run.id} worktree={run.worktree} sessionFile={run.session_file} transcriptReady={run.transcript_ready} variant="outline" />
             ) : null}
             <RunHarnessCommandAction runId={run.id} lines={lines} />
             {isRunning ? (

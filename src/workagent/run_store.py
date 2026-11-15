@@ -8,10 +8,16 @@ import json
 import shutil
 from pathlib import Path
 
+#: Run-state subdir of the config ``runs/`` root. The transcript tree lives
+#: in ``runs/<harness>/…``; keeping web state in ``runs/_web/`` makes the
+#: two trees disjoint, so no meta.json/pid heuristic decides what is a run.
+STATE_DIRNAME = "_web"
+
 
 def runs_root() -> Path:
+    """Per-run state root (``<config>/runs/_web``); created on demand."""
     from . import store as _store
-    p = _store.config_dir() / "runs"
+    p = _store.config_dir() / "runs" / STATE_DIRNAME
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -59,16 +65,9 @@ def read_exit(d: Path) -> int | None:
 
 
 def iter_run_dirs() -> list[Path]:
-    """Real run state dirs, oldest first.
-
-    The transcript tree shares ``runs/`` (``runs/<harness>/<branch>/<kind>/``
-    per spec §4.1), so only dirs carrying a ``meta.json`` or ``pid`` are run
-    state: a harness tree has neither and must never be rehydrated (stamped
-    ``exit_code=-1``) or pruned.
-    """
+    """Run state dirs, oldest first (children of ``runs/_web/``)."""
     root = runs_root()
-    ds = [p for p in root.iterdir()
-          if p.is_dir() and ((p / "meta.json").exists() or (p / "pid").exists())]
+    ds = [p for p in root.iterdir() if p.is_dir()]
     ds.sort(key=lambda p: p.stat().st_mtime)
     return ds
 

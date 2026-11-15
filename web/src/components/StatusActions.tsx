@@ -260,6 +260,7 @@ export function RowActions({
             runId={lastRun.id}
             worktree={entry.worktree}
             sessionFile={lastRun.sessionFile}
+            transcriptReady={lastRun.transcriptReady}
             variant="icon"
           />
         ) : (
@@ -280,7 +281,11 @@ export function RowActions({
  * (Runs own transcripts; live and persisted rows share GET /api/runs, so sort
  * by createdAt instead of trusting the merged order). Null while loading or
  * when the worktree has no finished transcript run. */
-function useLatestTranscriptRun(worktree?: string): { id: string; sessionFile: string } | null {
+function useLatestTranscriptRun(worktree?: string): {
+  id: string
+  sessionFile: string
+  transcriptReady: boolean
+} | null {
   const { data } = useRuns()
   if (!data || !worktree?.trim()) return null
   const match = data
@@ -291,5 +296,8 @@ function useLatestTranscriptRun(worktree?: string): { id: string; sessionFile: s
         run.session_file?.trim(),
     )
     .sort((a, b) => b.created - a.created)[0]
-  return match ? { id: match.id, sessionFile: match.session_file } : null
+  return match
+    ? { id: match.id, sessionFile: match.session_file,
+        transcriptReady: match.transcript_ready }
+    : null
 }

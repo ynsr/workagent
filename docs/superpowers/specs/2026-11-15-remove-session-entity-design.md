@@ -111,10 +111,12 @@ No down-migration.
 - Behavior tests: fix-continue from runs; resume/copy post-rename; preview
   adopt by stem; `GET /api/review-session` from runs.
 - Full `pytest` + web contract tests green; `CHANGELOG.md` one-liner `[104]`.
-- Risks: one-way migration (no rollback — mitigate with pre-migration backup
-  via existing `backup export`); transcript-path rewrite (mitigate with
-  old-path fallback read); scope creep into launch-protocol changes (out of
-  scope, §2).
+- Risks: one-way migration (no down migration — the mitigation is copying
+  `state.db` plus the `runs/` and `sessions/` trees before upgrading;
+  `backup export` only serializes custom actions + flow templates, never the
+  DB); transcript-path rewrite (mitigate with old-path fallback read +
+  `_rehome_transcripts` retried by every init pass); scope creep into
+  launch-protocol changes (out of scope, §2).
 
 ## 5. Spec self-review
 

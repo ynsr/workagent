@@ -498,8 +498,8 @@ def _run_locked(name: str, registry: dict, *, yes: bool, dry_run: bool,
     eprint(f"released {pinned} via {used} checks={checks} {mr_url}")
     released = _release_mark_released(name, path, release_branch, old_tip, no_status)
     _prodtest_post_release(path, release_branch, pinned, subjects, released)
-    # No session/run row: releases are repo-scoped (keyed by repo name),
-    # not worktree-attached — sessions/runs require a worktree FK.
+    # No run row: releases are repo-scoped (keyed by repo name) and
+    # repo-scoped runs carry an empty worktree_ref by design.
     return {"repo": name, "pinned_sha": pinned, "checks": checks,
             "strategy": used, "mr_url": mr_url, "merged": True,
             "released_issues": released}

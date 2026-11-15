@@ -31,6 +31,7 @@ from .web_runs import (
     _persisted_row,
     _persisted_summary,
     _summary,
+    _transcript_ready,
     _worktree_for_target,
 )
 
@@ -225,19 +226,6 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
     except Exception:
         return ""
 
-def _transcript_ready(session_file: str) -> bool:
-    """True when the path is a non-empty transcript resumable via --resume.
-
-    omp v18+ rejects --resume on missing AND empty files, so both count
-    as missing here (callers 404 with missing_session).
-    """
-    if not session_file:
-        return False
-    try:
-        p = Path(session_file)
-        return p.is_file() and p.stat().st_size > 0
-    except OSError:
-        return False
 
 def _ref_key_for_worktree(worktree: str) -> str:
     """Link ref_key owning a worktree path ("" when unlinked)."""
@@ -413,7 +401,7 @@ def register_runs_routes(app, registry) -> None:
             # --resume (creating nothing), so resume/copy buttons work once
             # the user runs the printed command manually. Fix runs default to
             # a fresh minted path (the child links back via
-            # fixed_from_session_id); --use-review-session reuses the latest
+            # fixed_from_run_id); --use-review-session reuses the latest
             # finished review transcript instead (explicit --session-file
             # always wins in the CLI).
             from . import store as _store

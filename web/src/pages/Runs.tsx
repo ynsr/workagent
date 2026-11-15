@@ -233,7 +233,7 @@ export function Runs() {
                   actions: (
                     <>
                       {run.session_file ? (
-                        <RunResumeActions runId={run.id} worktree={run.worktree} sessionFile={run.session_file} variant="icon" />
+                        <RunResumeActions runId={run.id} worktree={run.worktree} sessionFile={run.session_file} transcriptReady={run.transcript_ready} variant="icon" />
                       ) : null}
                       {run.state === "running" ? <CancelButton run={run} /> : null}
                     </>

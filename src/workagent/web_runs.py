@@ -34,6 +34,23 @@ def _strip_ansi(text: str) -> str:
         ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
     return ANSI_RE.sub("", text)
 
+
+def _transcript_ready(session_file: str) -> bool:
+    """True when the path is a non-empty transcript resumable via --resume.
+
+    omp v18+ rejects --resume on missing AND empty files, so both count as
+    missing (the resume endpoint 404s on them; the copy button is gated on
+    this flag — a preview row's path is only a ``--session-dir`` hint).
+    """
+    if not session_file:
+        return False
+    try:
+        p = Path(session_file)
+        return p.is_file() and p.stat().st_size > 0
+    except OSError:
+        return False
+
+
 def _db_row_target(command: str, args: list[str]) -> str:
     """Link ref owning a web run's DB row ("" when no worktree known yet).
 
@@ -356,6 +373,7 @@ def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
                            "truncated": run.truncated,
                            "created": run.created, "target": run.target,
                            "session_file": run.session_file,
+                           "transcript_ready": _transcript_ready(run.session_file),
                            "session_type": run.session_type,
                            "worktree": worktree,
                            "last_seq": run.last_seq}
@@ -402,6 +420,14 @@ def _persisted_summary(row: dict) -> dict:
     except Exception:
         created = 0.0
     session_file = str(row.get("file_path") or "")
+    if session_file:
+        # Legacy rows may name the pre-rename sessions/ tree; resolve it so
+        # the surfaced path is the one a resume command can actually use.
+        try:
+            from . import store_sqlite as _sq
+            session_file = str(_sq.resolve_transcript_path(session_file))
+        except Exception:
+            session_file = str(row.get("file_path") or "")
     worktree = ""
     try:
         from . import store as _store
@@ -446,6 +472,7 @@ def _persisted_summary(row: dict) -> dict:
             "exit_code": exit_code, "truncated": bool(row.get("truncated")),
             "created": created, "target": target,
             "session_file": session_file, "worktree": worktree,
+            "transcript_ready": _transcript_ready(session_file),
             "session_type": row.get("session_type"),
             "last_seq": max((ln["seq"] for ln in _persisted_lines(row)), default=-1) + 1,
             "validation": row.get("validation") if isinstance(row.get("validation"), dict) else {}}
