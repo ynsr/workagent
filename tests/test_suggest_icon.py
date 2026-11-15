@@ -147,3 +147,21 @@ def test_used_icons_never_raises():
         assert si.used_icons() == []
     finally:
         store.list_actions = orig
+
+def test_suggest_prompt_dedups_used_case_insensitively():
+    from workagent import suggest_icon as si
+    prompt = si.suggest_prompt(kind="custom action", name="N", label="l",
+                               prompt="", steps="", pre="", post="",
+                               used=["Rocket", "rocket", "  ZAP ", "Zap"])
+    taken_segment = prompt.split("do NOT suggest")[1].split("Valid choices")[0]
+    assert taken_segment.count("Rocket") == 1
+    assert taken_segment.count("ZAP") == 1
+
+
+def test_union_used_icons_merges_explicit_and_store(tmp_path, monkeypatch):
+    from workagent import suggest_icon as si
+    monkeypatch.setattr(si, "used_icons",
+                        lambda *, exclude_label="", exclude_kind="": ["Rocket", "rocket"])
+    assert si.union_used_icons(["Zap", "zap", "Rocket"],
+                               exclude_label="x",
+                               exclude_kind="action") == ["Rocket", "Zap"]

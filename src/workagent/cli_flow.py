@@ -224,13 +224,14 @@ def template_suggest_icon(
     Runs ONE bare judge-style session (cheap model, no tools/skills/context)
     in a temp dir — nothing is mutated. Prints {"icon": ...} on stdout.
     The prompt lists every Lucide icon plus the icons already used by other
-    actions/templates (auto-collected from the store unless --used-icons
-    is passed) so the model avoids duplicates.
+    actions/templates (explicit --used-icons unioned with the
+    store-collected fallback) so the model avoids duplicates.
     """
     from . import suggest_icon as _si
-    taken = [t.strip() for t in (used_icons or "").split(",") if t.strip()]
-    if not taken:
-        taken = _si.used_icons(exclude_label=label or "", exclude_kind="flow")
+    explicit = [t.strip() for t in (used_icons or "").split(",") if t.strip()]
+    taken = _si.union_used_icons(explicit,
+                                 exclude_label=label or "",
+                                 exclude_kind="flow")
     text = _si.run_suggest_icon(
         _si.suggest_prompt(kind="flow template", name=name or "",
                            label=label or "", prompt="",

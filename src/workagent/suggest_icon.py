@@ -229,7 +229,9 @@ SUGGEST_ICON_CHOICES = (
 _FALLBACK_ICON = "Zap"
 
 #: Pre-#84 curated names missing from the pinned registry (renamed upstream
-#: in lucide-react): lowercased alias -> canonical registry name.
+#: in lucide-react): lowercased alias -> canonical registry name. Verified
+#: exhaustive against lucide-react 0.525.0: full registry diff showed zero
+#: missing and zero extras, with wand2 the only old curated name gone.
 _LEGACY_ICON_ALIASES = {
     "wand2": "WandSparkles",
 }
@@ -246,27 +248,43 @@ def used_icons(*, exclude_label: str = "", exclude_kind: str = "") -> list[str]:
     try:
         from . import store as _store
         seen: list[str] = []
-        for row in _store.list_actions() or []:
-            if not isinstance(row, dict):
-                continue
-            if (exclude_kind == "action" and
-                    str(row.get("label") or "") == (exclude_label or "")):
-                continue
-            icon = str(row.get("icon") or "").strip()
-            if icon and icon not in seen:
-                seen.append(icon)
-        for row in _store.list_templates() or []:
-            if not isinstance(row, dict):
-                continue
-            if (exclude_kind == "flow" and
-                    str(row.get("label") or "") == (exclude_label or "")):
-                continue
-            icon = str(row.get("icon") or "").strip()
-            if icon and icon not in seen:
-                seen.append(icon)
+        seen_lower: set[str] = set()
+
+        def _collect(rows: list[dict] | None, kind: str) -> None:
+            for row in rows or []:
+                if not isinstance(row, dict):
+                    continue
+                if (exclude_kind == kind and
+                        str(row.get("label") or "") == (exclude_label or "")):
+                    continue
+                icon = str(row.get("icon") or "").strip()
+                if icon and icon.lower() not in seen_lower:
+                    seen_lower.add(icon.lower())
+                    seen.append(icon)
+
+        _collect(_store.list_actions(), "action")
+        _collect(_store.list_templates(), "flow")
         return sorted(seen, key=str.lower)
     except Exception:
         return []
+
+def union_used_icons(explicit: list[str] | tuple[str, ...] | None, *,
+                     exclude_label: str = "",
+                     exclude_kind: str = "") -> list[str]:
+    """Union explicit ``--used-icons`` with the store-collected fallback.
+
+    The current-row exclusion still applies to the store half; explicit
+    entries are kept verbatim. Case-insensitive dedup, sorted output.
+    """
+    seen_lower: set[str] = set()
+    merged: list[str] = []
+    for u in list(explicit or []) + used_icons(exclude_label=exclude_label,
+                                               exclude_kind=exclude_kind):
+        name_u = str(u or "").strip()
+        if name_u and name_u.lower() not in seen_lower:
+            seen_lower.add(name_u.lower())
+            merged.append(name_u)
+    return sorted(merged, key=str.lower)
 
 
 def suggest_prompt(*, kind: str, name: str, label: str, prompt: str,
@@ -280,8 +298,14 @@ def suggest_prompt(*, kind: str, name: str, label: str, prompt: str,
     actions/templates — the model must avoid them so every button keeps a
     distinct icon.
     """
-    taken = sorted({str(u).strip() for u in (used or []) if str(u or "").strip()},
-                   key=str.lower)
+    seen_lower: set[str] = set()
+    taken: list[str] = []
+    for u in (used or []):
+        name_u = str(u or "").strip()
+        if name_u and name_u.lower() not in seen_lower:
+            seen_lower.add(name_u.lower())
+            taken.append(name_u)
+    taken.sort(key=str.lower)
     parts = [
         "Pick the single best Lucide icon name for this workagent "
         f"{kind} (custom action / flow template button).\n",
