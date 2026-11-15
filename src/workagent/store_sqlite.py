@@ -746,7 +746,10 @@ def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
     as a second line and keeps the session's finished|failed state. Then the
     runs table is rebuilt without the sessions FK, the sessions table
     dropped, and the on-disk tree moved ``sessions/`` → ``runs/`` with stored
-    paths rewritten. One-way: there is no down migration.
+    paths rewritten. One-way: there is no down migration. A DB left
+    half-folded (sessions present, runs already rebuilt without
+    ``session_id``) still completes — its transcript linkage is
+    unrecoverable, so the fold drops sessions without joining on it.
     """
     cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
     if not cols:
@@ -761,17 +764,23 @@ def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
     print("note: folding sessions into runs (v16, one-way — no down"
           " migration); a pre-migration `workagent backup export` is the"
           " only rollback path", file=sys.stderr)
-    conn.execute(
-        "UPDATE runs SET"
-        " worktree_ref = COALESCE(s.worktree_ref, ''),"
-        " harness_name = COALESCE(s.harness_name, ''),"
-        " initiator_command = COALESCE(s.initiator_command, ''),"
-        " prompt = COALESCE(s.prompt, ''),"
-        " file_path = COALESCE(s.file_path, ''),"
-        " session_type = s.session_type,"
-        " metadata = COALESCE(s.metadata, '{}'),"
-        " state = COALESCE(s.state, 'finished')"
-        " FROM sessions s WHERE s.id = runs.session_id")
+    # A DB left half-folded by an intermediate build of this branch still
+    # has sessions but its runs table was already rebuilt without
+    # session_id (the pre-fold rebuild committed, then the fold raised).
+    # That linkage is unrecoverable, so the fold must still drop sessions —
+    # it just cannot join on the missing column.
+    if "session_id" in cols:
+        conn.execute(
+            "UPDATE runs SET"
+            " worktree_ref = COALESCE(s.worktree_ref, ''),"
+            " harness_name = COALESCE(s.harness_name, ''),"
+            " initiator_command = COALESCE(s.initiator_command, ''),"
+            " prompt = COALESCE(s.prompt, ''),"
+            " file_path = COALESCE(s.file_path, ''),"
+            " session_type = s.session_type,"
+            " metadata = COALESCE(s.metadata, '{}'),"
+            " state = COALESCE(s.state, 'finished')"
+            " FROM sessions s WHERE s.id = runs.session_id")
     # Preview rows are the single-line ``harness command:`` banner (empty
     # validation). Real executions store a second output line (the harness
     # log / validation trace), so they keep the session's finished|failed
@@ -779,11 +788,13 @@ def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
     conn.execute("UPDATE runs SET state = 'preview'"
                  " WHERE output LIKE 'harness command:%'"
                  " AND instr(output, char(10)) = 0")
-    conn.execute(
-        "UPDATE runs SET continued_from_run_id ="
-        " (SELECT MIN(r2.id) FROM runs r2 WHERE r2.session_id = runs.session_id)"
-        " WHERE id <> (SELECT MIN(r2.id) FROM runs r2"
-        "              WHERE r2.session_id = runs.session_id)")
+    if "session_id" in cols:
+        conn.execute(
+            "UPDATE runs SET continued_from_run_id ="
+            " (SELECT MIN(r2.id) FROM runs r2"
+            "  WHERE r2.session_id = runs.session_id)"
+            " WHERE id <> (SELECT MIN(r2.id) FROM runs r2"
+            "              WHERE r2.session_id = runs.session_id)")
     if conn.in_transaction:
         conn.commit()
     was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
@@ -1446,12 +1457,16 @@ def _schema_current(path: Path) -> bool:
         if not {"trackers", "repos", "worktrees", "runs"} <= tables:
             return False
         # v16 folded the sessions entity into runs: the table must be gone
-        # and runs must carry the transcript columns. The dead legacy
-        # session_id column is deliberately not required — a folded DB has
-        # dropped it and is current without it.
+        # and runs must carry the transcript columns.
         if "sessions" in tables:
             return False
         cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+        # A DB folded by an intermediate build still carries the dead
+        # session_id NOT NULL column, which insert_run no longer fills; only
+        # a rebuild can drop it, so it is not current. The pre-fold case
+        # returned above, where the column is still needed.
+        if "session_id" in cols:
+            return False
         if not {"output", "truncated", "validation", "flow_id", "worktree_ref",
                 "harness_name", "initiator_command", "prompt", "file_path",
                 "session_type", "metadata", "state",

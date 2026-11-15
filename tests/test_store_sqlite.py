@@ -264,6 +264,9 @@ def test_folded_db_with_stale_session_id_column_is_repaired(tmp_path):
                      " 'k', 'omp', 'start', 'p', '/s/old.jsonl', 'start')",
                      (first,))
     sq._INIT_CACHE.pop(str(db), None)
+    # The probe must not treat the unrepaired column set as current: the
+    # _INIT_CACHE and lock-retry fast paths would skip the repair.
+    assert sq._schema_current(db) is False
 
     sq.init_db(db)
 
@@ -271,6 +274,42 @@ def test_folded_db_with_stale_session_id_column_is_repaired(tmp_path):
         cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
         assert "session_id" not in cols
     assert sq.insert_run(db, "start", ["k"], 0, worktree_ref="k") == first + 1
+
+
+def test_half_folded_db_still_drops_sessions(tmp_path):
+    """sessions present but runs already rebuilt without session_id.
+
+    An intermediate build of this branch committed the pre-fold rebuild
+    (dropping session_id) before the fold raised, so both tables survive
+    with no linkage column and every reopen dies on
+    `no such column: runs.session_id`. The transcript attribution those rows
+    would have received is unrecoverable; init_db must still fold — dropping
+    sessions — instead of raising.
+    """
+    import sqlite3
+    db = tmp_path / "state.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(_LEGACY_SESSIONS_DDL)
+        conn.execute(sq._canonical_ddl()["runs"])
+        conn.execute("INSERT INTO sessions (id, worktree_ref, state, harness_name,"
+                     " initiator_command, prompt, file_path, session_type,"
+                     " created_at) VALUES ('t-1', 'k', 'finished', 'omp',"
+                     " 'review', 'review this PR', '/s/t-1.jsonl', 'review',"
+                     " '2026-01-01')")
+        conn.execute("INSERT INTO runs (command, args, exit_code, created_at)"
+                     " VALUES ('review', '[]', 0, '2026-01-01')")
+    sq._INIT_CACHE.pop(str(db), None)
+
+    sq.init_db(db)
+
+    tables = {r[0] for r in sqlite3.connect(db).execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "sessions" not in tables
+    with sq.connect(db) as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+        assert "session_id" not in cols
+        assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 1
+    assert sq.insert_run(db, "review", ["k"], 0, worktree_ref="k") > 0
 
 
 def test_session_id_shape():
