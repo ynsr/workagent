@@ -1,4 +1,4 @@
-"""SQLite state: trackers, repos, worktrees, pr_cache, sessions, runs.
+"""SQLite state: trackers, repos, worktrees, pr_cache, runs.
 
 Stdlib sqlite3 repository (no ORM — see the sessions spec §7). One
 state.db in config_dir() holds everything after the one-shot
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import random
+import shutil
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -41,20 +42,22 @@ CREATE TABLE IF NOT EXISTS worktrees (
   UNIQUE (repo_key, branch));
 CREATE TABLE IF NOT EXISTS pr_cache (
   branch TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, checked_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS sessions (
-  id TEXT PRIMARY KEY NOT NULL, worktree_ref TEXT REFERENCES worktrees(ref_key) ON DELETE CASCADE,
-  state TEXT NOT NULL, harness_name TEXT NOT NULL DEFAULT '',
-  initiator_command TEXT NOT NULL DEFAULT '', prompt TEXT NOT NULL DEFAULT '',
-  file_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
-  session_type TEXT, metadata TEXT NOT NULL DEFAULT '{}',
-  flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL);
 CREATE TABLE IF NOT EXISTS runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
   command TEXT NOT NULL, args TEXT NOT NULL,
   exit_code INTEGER, created_at TEXT NOT NULL,
   output TEXT NOT NULL DEFAULT '', truncated INTEGER NOT NULL DEFAULT 0,
   validation TEXT NOT NULL DEFAULT '{}',
-  flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL);
+  flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL,
+  worktree_ref TEXT NOT NULL DEFAULT '',
+  harness_name TEXT NOT NULL DEFAULT '',
+  initiator_command TEXT NOT NULL DEFAULT '',
+  prompt TEXT NOT NULL DEFAULT '',
+  file_path TEXT NOT NULL DEFAULT '',
+  session_type TEXT,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  state TEXT NOT NULL DEFAULT 'finished',
+  continued_from_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL);
 CREATE TABLE IF NOT EXISTS issue_cache (
   source TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL,
   fetched_at TEXT NOT NULL);
@@ -352,16 +355,18 @@ def _migrate_flow_linkage(conn) -> None:
     if rcols and "flow_id" not in rcols:
         conn.execute("ALTER TABLE runs ADD COLUMN flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL")
     wr = next((r for r in info if r[1] == "worktree_ref"), None)
-    if wr is not None and wr[3] == 1 and wr[4] is None:
+    # sessions is folded into runs by migrate_sessions_into_runs (v16): an
+    # older DB still carries the table, but no canonical sessions DDL exists
+    # to rebuild it from — the fold reads it as-is and drops it.
+    ddl = _canonical_ddl().get("sessions")
+    if wr is not None and wr[3] == 1 and wr[4] is None and ddl:
         if conn.in_transaction:
             conn.commit()
         was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
         if was_on:
             conn.execute("PRAGMA foreign_keys = OFF")
         try:
-            ddl = _canonical_ddl()["sessions"]
             conn.execute('DROP TABLE IF EXISTS "sessions_rebuild"')
-            conn.execute(ddl.replace("CREATE TABLE sessions", 'CREATE TABLE "sessions_rebuild"', 1))
             new_cols = {r[1] for r in conn.execute('PRAGMA table_info("sessions_rebuild")')}
             old_cols = [r[1] for r in info if r[1] in new_cols]
             select = ", ".join(
@@ -395,55 +400,8 @@ def _migrate_flow_linkage(conn) -> None:
     except Exception:
         pass
 
-def _migrate_sessions_no_fk(conn) -> None:
-    """Schema v14: sessions.worktree_ref restores the worktrees FK (CASCADE).
-
-    Only worktree-attached sessions/runs persist: unattached attempts are
-    never written (callers skip when no linked worktree exists), dangling
-    refs from the FK-less window are purged, and hard-delete cascades
-    again via the FK. Rebuilds the table from the canonical DDL when the
-    FK is missing. NULL worktree_ref rows (flow-owned, v15) are exempt.
-    Idempotent: skipped once the FK exists.
-    """
-    info = list(conn.execute("PRAGMA table_info(sessions)"))
-    if not info:
-        return
-    fk = [r for r in conn.execute("PRAGMA foreign_key_list(sessions)")
-          if r[2] == "worktrees"]
-    if fk:
-        return
-    if conn.in_transaction:
-        conn.commit()
-    was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
-    if was_on:
-        conn.execute("PRAGMA foreign_keys = OFF")
-    try:
-        ddl = _canonical_ddl()["sessions"]
-        conn.execute('DROP TABLE IF EXISTS "sessions_rebuild"')
-        conn.execute(ddl.replace("CREATE TABLE sessions", 'CREATE TABLE "sessions_rebuild"', 1))
-        new_cols = {r[1] for r in conn.execute('PRAGMA table_info("sessions_rebuild")')}
-        old_cols = [r[1] for r in info if r[1] in new_cols]
-        cols = ", ".join(f'"{c}"' for c in old_cols)
-        conn.execute(f'INSERT INTO "sessions_rebuild" ({cols}) SELECT {cols} FROM "sessions"')
-        conn.execute('DROP TABLE "sessions"')
-        conn.execute('ALTER TABLE "sessions_rebuild" RENAME TO "sessions"')
-        # FK-less window may have left dangling refs: purge rows whose
-        # worktree is gone (CASCADE could not fire for them). NULL-ref
-        # flow-owned rows are exempt (v15: no worktree attachment).
-        try:
-            conn.execute("DELETE FROM sessions WHERE worktree_ref IS NOT NULL AND worktree_ref != ''"
-                         " AND worktree_ref NOT IN (SELECT ref_key FROM worktrees)")
-        except Exception:
-            pass
-        if conn.in_transaction:
-            conn.commit()
-    finally:
-        if was_on:
-            conn.execute("PRAGMA foreign_keys = ON")
-
 def _migrate_sessions_harness(conn) -> None:
     """Schema v5: sessions.runtime_name → harness_name (the runtime→harness rename).
-
     Code writes ``harness_name`` but pre-rename DBs still carry
     ``runtime_name`` — every insert_session then fails with ``no such
     column`` and the run mirror silently skips (no session row, no runs
@@ -685,6 +643,170 @@ def _migrate_sessions_type(conn) -> None:
         conn.execute("UPDATE sessions SET session_type = ? WHERE id = ?",
                      (_backfill_session_type(cmd or "", prompt or ""), sid))
 
+
+#: Allowed transcript roots under config_dir(): v16 renamed sessions/ → runs/.
+RUNS_DIRNAME = "runs"
+LEGACY_SESSIONS_DIRNAME = "sessions"
+
+#: runs columns the v16 fold absorbs from sessions (name → ALTER DDL tail).
+_FOLD_COLS = (
+    ("worktree_ref", "TEXT NOT NULL DEFAULT ''"),
+    ("harness_name", "TEXT NOT NULL DEFAULT ''"),
+    ("initiator_command", "TEXT NOT NULL DEFAULT ''"),
+    ("prompt", "TEXT NOT NULL DEFAULT ''"),
+    ("file_path", "TEXT NOT NULL DEFAULT ''"),
+    ("session_type", "TEXT"),
+    ("metadata", "TEXT NOT NULL DEFAULT '{}'"),
+    ("state", "TEXT NOT NULL DEFAULT 'finished'"),
+    ("continued_from_run_id", "INTEGER REFERENCES runs(id) ON DELETE SET NULL"),
+)
+
+
+def runs_dir(config_dir: Path | None = None) -> Path:
+    """Transcript root (``<config>/runs``), created on demand."""
+    from . import store as _store
+    base = (config_dir or _store.config_dir()) / RUNS_DIRNAME
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _transcript_alt(file_path: str, src: Path, dst: Path) -> str:
+    """*file_path* re-rooted from *src* onto *dst* ('' when not under src)."""
+    if not file_path:
+        return ""
+    try:
+        rel = Path(file_path).relative_to(src)
+    except ValueError:
+        return ""
+    return str(dst / rel)
+
+
+def resolve_transcript_path(file_path: str,
+                            config_dir: Path | None = None) -> Path:
+    """Stored transcript path → the readable file (runs/ first, sessions/ fallback).
+
+    v16 moved transcripts from ``sessions/`` to ``runs/`` and rewrote the
+    stored paths; a row that still names the old root (pre-migration DB,
+    restored backup, transcript that could not move) resolves through the
+    fallback instead of failing to resume.
+    """
+    if not file_path:
+        return Path("")
+    stored = Path(file_path).expanduser()
+    if config_dir is None:
+        from . import store as _store
+        config_dir = _store.config_dir()
+    new_root = config_dir / RUNS_DIRNAME
+    old_root = config_dir / LEGACY_SESSIONS_DIRNAME
+    candidates = [stored]
+    for src, dst in ((old_root, new_root), (new_root, old_root)):
+        alt = _transcript_alt(str(stored), src, dst)
+        if alt:
+            candidates.append(Path(alt))
+    for cand in candidates:
+        if cand.exists():
+            return cand
+    return stored
+
+
+def _move_transcripts(src: Path, dst: Path) -> None:
+    """Merge the legacy transcript tree *src* into *dst* (never overwrites)."""
+    if not src.is_dir():
+        return
+    dst.mkdir(parents=True, exist_ok=True)
+    for child in list(src.iterdir()):
+        target = dst / child.name
+        if target.exists():
+            if child.is_dir() and target.is_dir():
+                _move_transcripts(child, target)
+            continue
+        shutil.move(str(child), str(target))
+    try:
+        src.rmdir()
+    except OSError:
+        pass
+
+
+def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
+    """Schema v16: fold sessions into runs, drop the table, move transcripts.
+
+    Every run inherits its session's transcript identity (worktree_ref,
+    harness_name, initiator_command, prompt, file_path, session_type,
+    metadata, state) and the runs of one transcript form a chain through
+    continued_from_run_id (each later run points at the transcript's first
+    run) — that is how fix-continue stays resolvable without sessions.
+    Preview rows keep state='preview' (their stored output carries the
+    ``harness command:`` contract). Then the runs table is rebuilt without
+    the sessions FK, the sessions table dropped, and the on-disk tree moved
+    ``sessions/`` → ``runs/`` with stored paths rewritten. One-way: there is
+    no down migration.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+    if not cols:
+        return False
+    for name, decl in _FOLD_COLS:
+        if name not in cols:
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {name} {decl}")
+    if not list(conn.execute("PRAGMA table_info(sessions)")):
+        return False  # already folded
+    conn.execute(
+        "UPDATE runs SET"
+        " worktree_ref = COALESCE(s.worktree_ref, ''),"
+        " harness_name = COALESCE(s.harness_name, ''),"
+        " initiator_command = COALESCE(s.initiator_command, ''),"
+        " prompt = COALESCE(s.prompt, ''),"
+        " file_path = COALESCE(s.file_path, ''),"
+        " session_type = s.session_type,"
+        " metadata = COALESCE(s.metadata, '{}'),"
+        " state = COALESCE(s.state, 'finished')"
+        " FROM sessions s WHERE s.id = runs.session_id")
+    conn.execute("UPDATE runs SET state = 'preview'"
+                 " WHERE output LIKE 'harness command:%'")
+    conn.execute(
+        "UPDATE runs SET continued_from_run_id ="
+        " (SELECT MIN(r2.id) FROM runs r2 WHERE r2.session_id = runs.session_id)"
+        " WHERE id <> (SELECT MIN(r2.id) FROM runs r2"
+        "              WHERE r2.session_id = runs.session_id)")
+    if conn.in_transaction:
+        conn.commit()
+    was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if was_on:
+        conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        ddl = _canonical_ddl()["runs"]
+        conn.execute('DROP TABLE IF EXISTS "runs_rebuild"')
+        conn.execute(ddl.replace("CREATE TABLE runs", 'CREATE TABLE "runs_rebuild"', 1))
+        new_cols = {r[1] for r in conn.execute('PRAGMA table_info("runs_rebuild")')}
+        old_cols = [r[1] for r in conn.execute("PRAGMA table_info(runs)")
+                    if r[1] in new_cols]
+        names = ", ".join(f'"{c}"' for c in old_cols)
+        conn.execute(f'INSERT INTO "runs_rebuild" ({names}) SELECT {names} FROM runs')
+        conn.execute("DROP TABLE runs")
+        conn.execute('ALTER TABLE "runs_rebuild" RENAME TO runs')
+        # AUTOINCREMENT sequence: keep it at/above the copied max(id).
+        conn.execute("UPDATE sqlite_sequence SET seq ="
+                     " (SELECT COALESCE(MAX(id), 0) FROM runs) WHERE name = 'runs'")
+        conn.execute("DROP TABLE sessions")
+        if conn.in_transaction:
+            conn.commit()
+    finally:
+        if was_on:
+            conn.execute("PRAGMA foreign_keys = ON")
+    if config_dir is None:
+        row = conn.execute("PRAGMA database_list").fetchone()
+        config_dir = Path(row[2]).parent if row and row[2] else None
+    if config_dir is not None:
+        old_root = config_dir / LEGACY_SESSIONS_DIRNAME
+        new_root = config_dir / RUNS_DIRNAME
+        _move_transcripts(old_root, new_root)
+        for rid, fp in conn.execute(
+                "SELECT id, file_path FROM runs WHERE file_path != ''").fetchall():
+            moved = _transcript_alt(fp, old_root, new_root)
+            if moved and Path(moved).exists():
+                conn.execute("UPDATE runs SET file_path = ? WHERE id = ?",
+                             (moved, rid))
+    return True
+
 def _migrate_v2(conn) -> None:
     """Schema v2: trackers gains mandatory vendor/remote_url; repos loses tracker_key.
 
@@ -800,12 +922,6 @@ def _rebuild_required_columns(conn) -> list[str]:
                                      f'CREATE TABLE "{tmp}"', 1))
             new_cols = {r[1] for r in conn.execute(f'PRAGMA table_info("{tmp}")')}
             pairs = [(r[1], r[1]) for r in info if r[1] in new_cols]
-            if table == "sessions" and "harness_name" in new_cols \
-                    and "harness_name" not in {r[1] for r in info} \
-                    and "runtime_name" in {r[1] for r in info}:
-                # Pre-rename DBs carry runtime_name: map it forward so the
-                # rebuild does not drop the harness name.
-                pairs.append(("runtime_name", "harness_name"))
             cols = ", ".join(f'"{dst}"' for _, dst in pairs)
             sel = ", ".join(f'"{src}"' for src, _ in pairs)
             conn.execute(f'INSERT INTO "{tmp}" ({cols}) SELECT {sel} FROM "{table}"')
@@ -830,9 +946,9 @@ _INIT_CACHE: dict[str, bool] = {}
 
 def _schema_current(path: Path) -> bool:
     """Read-only probe: True when all canonical tables exist with the
-    output/truncated runs columns (migrations already applied). Read-only
-    connections can never take the RESERVED write lock, so this never
-    raises ``database is locked`` no matter who holds the DB.
+    post-migration columns (v16 fold included). Read-only connections can
+    never take the RESERVED write lock, so this never raises
+    ``database is locked`` no matter who holds the DB.
     """
     if not path.exists():
         return False
@@ -843,10 +959,19 @@ def _schema_current(path: Path) -> bool:
     try:
         tables = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table'")}
-        if not {"trackers", "repos", "worktrees", "sessions", "runs"} <= tables:
+        if not {"trackers", "repos", "worktrees", "runs"} <= tables:
+            return False
+        # v16 folded the sessions entity into runs: the table must be gone
+        # and runs must carry the transcript columns.
+        if "sessions" in tables:
             return False
         cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
-        if not {"output", "truncated", "validation"} <= cols:
+        if not {"output", "truncated", "validation", "flow_id", "worktree_ref",
+                "harness_name", "initiator_command", "prompt", "file_path",
+                "session_type", "metadata", "state",
+                "continued_from_run_id"} <= cols:
+            return False
+        if any(r[2] == "sessions" for r in conn.execute("PRAGMA foreign_key_list(runs)")):
             return False
         wcols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
         if "active" not in wcols:
@@ -868,12 +993,6 @@ def _schema_current(path: Path) -> bool:
         if not any(c == {"repo_key", "branch"} for c in idx_cols):
             return False
         if any(bool(entry[2]) and c == {"branch"} for entry, c in zip(widx, idx_cols)):
-            return False
-        scols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
-        if not {"harness_name", "session_type", "metadata", "flow_id"} <= scols:
-            return False
-        runcols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
-        if not {"flow_id", "validation"} <= runcols:
             return False
         for table in ("trackers", "repos"):
             fcols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
@@ -967,7 +1086,7 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
                 _migrate_category(conn)
                 _migrate_run_immediately(conn)
                 _migrate_flow_template_icon(conn)
-                _migrate_sessions_no_fk(conn)
+                migrate_sessions_into_runs(conn, path.parent)
                 _migrate_prodtest_cols(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():

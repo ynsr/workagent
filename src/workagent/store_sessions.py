@@ -41,7 +41,8 @@ def session_file_path(session_id: str, harness_name: str,
                       branch: str | None = None,
                       session_type: str | None = None) -> Path:
     from . import store as _store
-    base = (config_dir or _store.config_dir()) / "sessions" / harness_name
+    from .store_sqlite import RUNS_DIRNAME
+    base = (config_dir or _store.config_dir()) / RUNS_DIRNAME / harness_name
     bpath = branch_path(branch or "")
     if bpath:
         base = base / bpath
@@ -308,9 +309,13 @@ def insert_run(path: Path, session_id: str, command: str,
             placeholders += ", ?"
             vals.append(flow_id)
         elif "flow_id" in cols:
+            # A new run joins its transcript's flow tagging: the newest run
+            # of the same transcript carries it (sessions no longer exist).
             try:
-                row = conn.execute("SELECT flow_id FROM sessions WHERE id = ?",
-                                   (session_id,)).fetchone()
+                row = conn.execute(
+                    "SELECT flow_id FROM runs WHERE session_id = ?"
+                    " AND flow_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+                    (session_id,)).fetchone()
                 if row is not None and row[0] is not None:
                     names += ", flow_id"
                     placeholders += ", ?"
@@ -363,31 +368,28 @@ def update_run(path: Path, run_id: int, *,
     except Exception:
         pass
 
-#: Sessions/runs of soft-deleted worktrees stay in the DB (restorable via
-#: undelete) but are hidden from list/detail queries unless
-#: *include_deleted_worktrees*; rows with an empty ref (pre-link attempts)
-#: or a dangling ref (hard-deleted worktree, pending explicit purge) stay
-#: visible — same pass-through rule as list_flows.
-_NOT_DELETED = ("(s.worktree_ref = '' OR w.ref_key IS NULL"
+#: Runs of soft-deleted worktrees stay in the DB (restorable via undelete)
+#: but are hidden from list/detail queries unless *include_deleted_worktrees*;
+#: rows with an empty ref (pre-link attempts) or a dangling ref (hard-deleted
+#: worktree, pending explicit purge) stay visible — same pass-through rule as
+#: list_flows.
+_NOT_DELETED = ("(r.worktree_ref = '' OR w.ref_key IS NULL"
                 " OR (w.deleted_at IS NULL OR w.deleted_at = ''))")
 
 
 def list_runs(path: Path, limit: int = 200,
               include_deleted_worktrees: bool = False) -> list[dict]:
-    """Persisted session-linked runs, newest first (drives GET /api/runs)."""
+    """Persisted runs, newest first (drives GET /api/runs)."""
     import json
     if not path.exists():
         return []
     with _connect(path) as conn:
         conn.row_factory = sqlite3.Row
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
-        vsel = ", r.validation" if "validation" in cols else ""
-        fsel = ", r.flow_id" if "flow_id" in cols else ""
         q = ("SELECT r.id, r.session_id, r.command, r.args, r.exit_code,"
-             " r.created_at, r.output, r.truncated" + vsel + fsel + ","
-             " s.file_path AS session_file, s.worktree_ref"
-             " FROM runs r LEFT JOIN sessions s ON s.id = r.session_id"
-             " LEFT JOIN worktrees w ON w.ref_key = s.worktree_ref")
+             " r.created_at, r.output, r.truncated, r.validation, r.flow_id,"
+             " r.file_path, r.file_path AS session_file, r.worktree_ref,"
+             " r.session_type, r.state"
+             " FROM runs r LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref")
         if not include_deleted_worktrees:
             q += " WHERE " + _NOT_DELETED
         q += " ORDER BY r.id DESC LIMIT ?"

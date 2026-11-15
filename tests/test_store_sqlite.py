@@ -1,4 +1,4 @@
-"""SQLite repository: schema v1, sessions, runs."""
+"""SQLite repository: schema migrations, trackers, worktrees, runs."""
 
 import re
 
@@ -13,61 +13,125 @@ def test_schema_tables_exist(tmp_path):
     import sqlite3
     tables = {r[0] for r in sqlite3.connect(db).execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"trackers", "repos", "worktrees", "pr_cache",
-            "sessions", "runs"} <= tables
-def test_worktree_delete_cascades_sessions(tmp_path):
+    assert {"trackers", "repos", "worktrees", "pr_cache", "runs"} <= tables
+    # v16 folded the sessions table into runs: no session entity survives.
+    assert "sessions" not in tables
+
+
+_LEGACY_RUNS_DDL = ("CREATE TABLE runs (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    " session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,"
+                    " command TEXT NOT NULL, args TEXT NOT NULL, exit_code INTEGER,"
+                    " created_at TEXT NOT NULL, output TEXT NOT NULL DEFAULT '',"
+                    " truncated INTEGER NOT NULL DEFAULT 0,"
+                    " validation TEXT NOT NULL DEFAULT '{}', flow_id INTEGER)")
+
+
+def _seed_legacy_sessions(db, rows: list[tuple], runs: list[tuple]) -> None:
+    """Pre-v16 shape: sessions table + runs carrying the sessions FK.
+
+    *rows* are (id, worktree_ref, state, harness_name, initiator_command,
+    prompt, file_path, session_type); *runs* are (session_id, command,
+    exit_code, output) in insertion order.
+    """
+    import sqlite3
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY NOT NULL,"
+                     " worktree_ref TEXT, state TEXT NOT NULL,"
+                     " harness_name TEXT NOT NULL DEFAULT '',"
+                     " initiator_command TEXT NOT NULL DEFAULT '',"
+                     " prompt TEXT NOT NULL DEFAULT '',"
+                     " file_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,"
+                     " session_type TEXT, metadata TEXT NOT NULL DEFAULT '{}',"
+                     " flow_id INTEGER)")
+        conn.execute(_LEGACY_RUNS_DDL)
+        for r in rows:
+            conn.execute("INSERT INTO sessions (id, worktree_ref, state, harness_name,"
+                         " initiator_command, prompt, file_path, session_type,"
+                         " created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '2026-01-01')", r)
+        for sid, command, exit_code, output in runs:
+            conn.execute("INSERT INTO runs (session_id, command, args, exit_code,"
+                         " created_at, output) VALUES (?, ?, '[]', ?, '2026-01-01', ?)",
+                         (sid, command, exit_code, output))
+    sq._INIT_CACHE.pop(str(db), None)
+
+
+def test_migrate_v16_folds_sessions_into_runs(tmp_path):
+    """v16: transcript columns move onto runs, sessions is dropped, chained
+    runs link back to the transcript's first run, transcripts move
+    sessions/ → runs/ (old stored paths still resolve)."""
+    db = tmp_path / "state.db"
+    transcript = tmp_path / "sessions" / "omp" / "feat-x" / "review" / "t-1.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("{}\n")
+    _seed_legacy_sessions(db, [("t-1", "", "finished", "omp", "review",
+                               "review this PR", str(transcript), "review")],
+                          [("t-1", "review", 0, "harness command: omp review"),
+                           ("t-1", "review", 0, "review log")])
+
+    sq.init_db(db)
+
+    import sqlite3
+    tables = {r[0] for r in sqlite3.connect(db).execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "sessions" not in tables
+    with sq.connect(db) as conn:
+        rows = [dict(zip(("id", "file_path", "session_type", "harness_name",
+                          "initiator_command", "prompt", "state",
+                          "continued_from_run_id"), r))
+                for r in conn.execute(
+                    "SELECT id, file_path, session_type, harness_name,"
+                    " initiator_command, prompt, state, continued_from_run_id"
+                    " FROM runs ORDER BY id")]
+    assert [r["id"] for r in rows] == [1, 2]
+    for r in rows:
+        assert r["file_path"].endswith("t-1.jsonl")
+        assert r["session_type"] == "review"
+        assert r["harness_name"] == "omp"
+        assert r["initiator_command"] == "review"
+        assert r["prompt"] == "review this PR"
+    assert rows[0]["state"] == "preview"     # preview rows stay preview
+    assert rows[1]["state"] == "finished"    # execution row takes the session state
+    assert rows[0]["continued_from_run_id"] is None
+    assert rows[1]["continued_from_run_id"] == 1  # later run → transcript's first run
+
+    # The transcript tree moved, the stored path was rewritten to runs/…
+    moved = tmp_path / "runs" / "omp" / "feat-x" / "review" / "t-1.jsonl"
+    assert moved.is_file() and not transcript.exists()
+    assert rows[1]["file_path"] == str(moved)
+    # Old-style stored paths (pre-migration rows/backups) still resolve.
+    assert sq.resolve_transcript_path(str(transcript), tmp_path) == moved
+    legacy_only = tmp_path / "sessions" / "omp" / "old" / "u.jsonl"
+    legacy_only.parent.mkdir(parents=True)
+    legacy_only.write_text("{}\n")
+    assert sq.resolve_transcript_path(
+        str(tmp_path / "runs" / "omp" / "old" / "u.jsonl"), tmp_path) == legacy_only
+
+    # list_runs reads transcript columns straight off the run row.
+    listed = sq.list_runs(db)
+    assert {r["session_type"] for r in listed} == {"review"}
+    assert all(r["file_path"].endswith(".jsonl") for r in listed)
+
+
+def test_init_db_is_idempotent_post_fold(tmp_path):
+    """A folded DB probes current and keeps its run transcript columns."""
     db = tmp_path / "state.db"
     sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
-        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
-        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
-                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sq.insert_session(db, worktree_ref="k", harness_name="omp",
-                      initiator_command="start", prompt="p",
-                      file_path="/tmp/x.jsonl")
-    with sq.connect(db) as conn:
-        conn.execute("DELETE FROM worktrees WHERE ref_key = 'k'")
-        assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
-
-
-def test_finish_session_states(tmp_path):
-    db = tmp_path / "state.db"
+    assert sq._schema_current(db)
+    sq._INIT_CACHE.pop(str(db), None)
     sq.init_db(db)
     with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
-        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
-        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
-                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
-                            initiator_command="start", prompt="p",
-                            file_path="/tmp/x.jsonl")
-    sq.finish_session(db, sid, "finished")
-    assert sq.get_session(db, sid)["state"] == "finished"
-
-
-def test_finish_session_preview_state(tmp_path):
-    db = tmp_path / "state.db"
-    sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
-        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
-        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
-                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sid = sq.insert_session(db, worktree_ref="k", harness_name="",
-                            initiator_command="sync", prompt="p",
-                            file_path="", session_type="sync")
-    sq.finish_session(db, sid, "preview")
-    assert sq.get_session(db, sid)["state"] == "preview"
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+    assert {"worktree_ref", "harness_name", "initiator_command", "prompt",
+            "file_path", "session_type", "metadata", "state",
+            "continued_from_run_id"} <= cols
 
 
 def test_session_id_shape():
     sid = sq.gen_session_id()
     assert re.fullmatch(
         r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-\d{4}", sid)
+
+
 def test_migrate_copies_and_deletes(tmp_path):
     import json
     cfg = tmp_path / "cfg"
@@ -390,42 +454,37 @@ def test_migrate_worktrees_active_idempotent(tmp_path):
             conn.execute("UPDATE worktrees SET active=1 WHERE 0")
 
 
-def test_migrate_sessions_harness_renames_runtime_column(tmp_path):
-    """Pre-rename DBs carry sessions.runtime_name; the harness rename must
-    migrate it in place so insert_session (harness_name) keeps working."""
+
+def test_migrate_v16_folds_pre_rename_runtime_column(tmp_path):
+    """Pre-rename DBs carry sessions.runtime_name: the fold must land it on
+    runs.harness_name instead of dropping the harness name."""
     import sqlite3
-    from workagent import store_sqlite as sq
     db = tmp_path / "state.db"
-    sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("ALTER TABLE sessions RENAME COLUMN harness_name TO runtime_name")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
-                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
-        conn.execute("INSERT INTO sessions (id, worktree_ref, state, runtime_name,"
-                     " initiator_command, prompt, file_path, created_at)"
-                     " VALUES ('s1', 'k', 'running', 'omp', 'start', 'p', '/tmp/s.jsonl', '2026-01-01')")
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY NOT NULL,"
+                     " worktree_ref TEXT, state TEXT NOT NULL,"
+                     " runtime_name TEXT NOT NULL DEFAULT '',"
+                     " initiator_command TEXT NOT NULL DEFAULT '',"
+                     " prompt TEXT NOT NULL DEFAULT '',"
+                     " file_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,"
+                     " session_type TEXT, metadata TEXT NOT NULL DEFAULT '{}')")
+        conn.execute(_LEGACY_RUNS_DDL)
+        conn.execute("INSERT INTO sessions (id, state, runtime_name, initiator_command,"
+                     " prompt, file_path, created_at)"
+                     " VALUES ('s1', 'running', 'omp', 'start', 'p', '/tmp/s.jsonl', '2026-01-01')")
+        conn.execute("INSERT INTO runs (session_id, command, args, created_at)"
+                     " VALUES ('s1', 'start', '[]', '2026-01-01')")
     sq._INIT_CACHE.pop(str(db), None)
     sq.init_db(db)
     with sq.connect(db) as conn:
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
-        assert "harness_name" in cols
-        assert "runtime_name" not in cols
-        assert conn.execute("SELECT harness_name FROM sessions WHERE id='s1'").fetchone()[0] == "omp"
-    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
-                            initiator_command="start", prompt="p",
-                            file_path="/tmp/new.jsonl")
-    assert sq.get_session(db, sid)["harness_name"] == "omp"
+        assert conn.execute("SELECT harness_name FROM runs").fetchone()[0] == "omp"
 
 
-def test_init_db_repairs_legacy_runtime_column(tmp_path):
-    """init_db on a DB whose sessions table still has runtime_name must end
-    with a harness_name column and a passing _schema_current probe."""
-    from workagent import store_sqlite as sq
+def test_init_db_folds_legacy_schema(tmp_path):
+    """init_db on a DB that still has sessions ends folded and current."""
     db = tmp_path / "state.db"
-    sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("ALTER TABLE sessions RENAME COLUMN harness_name TO runtime_name")
-    sq._INIT_CACHE.pop(str(db), None)
+    _seed_legacy_sessions(db, [("s1", "", "finished", "omp", "start", "p", "", "start")],
+                          [("s1", "start", 0, "log")])
     assert not sq._schema_current(db)
     sq.init_db(db)
     assert sq._schema_current(db)
@@ -495,30 +554,31 @@ def test_save_links_rows_never_resets_active(tmp_path):
     assert "k1" not in sl.load_links_rows(db)
     assert sl.load_links_rows(db, include_inactive=True)["k1"]["active"] == 0
 
-def test_migrate_sessions_type_adds_columns(tmp_path):
-    """Pre-v6 sessions rows backfill session_type from the prompt; the fix
-    prompt header is the only surviving discriminator (initiator_command is
-    the harness name, never the subcommand)."""
-    from workagent import store_sqlite as sq
+def test_migrate_v16_backfills_session_type_from_prompt(tmp_path):
+    """Pre-v6 rows carry no session_type; the fix-comments prompt header is
+    the only surviving discriminator, so the fold lands fix_comments."""
+    import sqlite3
     db = tmp_path / "state.db"
-    sq.init_db(db)
-    with sq.connect(db) as conn:
-        for c in ("session_type", "metadata"):
-            if c in {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}:
-                conn.execute(f"ALTER TABLE sessions DROP COLUMN {c}")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
-                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
-        conn.execute("INSERT INTO sessions (id, worktree_ref, state, harness_name,"
-                     " initiator_command, prompt, file_path, created_at)"
-                     " VALUES ('s1', 'k', 'finished', 'omp', 'omp', ?, '/f', '2026-01-01')",
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY NOT NULL,"
+                     " worktree_ref TEXT, state TEXT NOT NULL,"
+                     " harness_name TEXT NOT NULL DEFAULT '',"
+                     " initiator_command TEXT NOT NULL DEFAULT '',"
+                     " prompt TEXT NOT NULL DEFAULT '',"
+                     " file_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)")
+        conn.execute(_LEGACY_RUNS_DDL)
+        conn.execute("INSERT INTO sessions (id, state, harness_name, initiator_command,"
+                     " prompt, file_path, created_at)"
+                     " VALUES ('s1', 'finished', 'omp', 'omp', ?, '/f', '2026-01-01')",
                      ("Fix all open (not-resolved) review comments on this PR/MR: https://x/1",))
+        conn.execute("INSERT INTO runs (session_id, command, args, created_at)"
+                     " VALUES ('s1', 'omp', '[]', '2026-01-01')")
     sq._INIT_CACHE.pop(str(db), None)
     sq.init_db(db)
     with sq.connect(db) as conn:
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
-        assert {"session_type", "metadata"} <= cols
-        row = conn.execute("SELECT session_type, metadata FROM sessions WHERE id = 's1'").fetchone()
+        row = conn.execute("SELECT session_type, metadata FROM runs").fetchone()
         assert row[0] == "fix_comments"
+        assert row[1] == "{}"
 
 
 def test_derive_session_type_matrix():
@@ -534,46 +594,6 @@ def test_derive_session_type_matrix():
 def test_derive_session_type_adhoc_is_custom_action():
     from workagent.store_sessions import derive_session_type
     assert derive_session_type("adhoc", False) == "custom_action"
-
-def test_set_session_metadata_merges(tmp_path):
-    from workagent import store_sqlite as sq
-    db = tmp_path / "state.db"
-    sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
-                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
-    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
-                            initiator_command="review", prompt="p",
-                            file_path="/f", session_type="review")
-    out = sq.set_session_metadata(db, sid, {"review_comments_fixed_at": "2026-09-26T00:00:00+00:00"})
-    assert out["review_comments_fixed_at"] == "2026-09-26T00:00:00+00:00"
-    assert sq.get_session(db, sid)["metadata"]["review_comments_fixed_at"].startswith("2026-09-26")
-
-
-def test_latest_review_session_skips_running(tmp_path):
-    from workagent import store_sqlite as sq
-    db = tmp_path / "state.db"
-    sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
-                     " VALUES ('k', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
-    sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="review",
-                      prompt="p", file_path="/old", session_id="old-1", session_type="review")
-    sq.finish_session(db, "old-1", "finished")
-    running = sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="review",
-                                prompt="p", file_path="/run", session_type="review")
-    assert sq.latest_review_session(db, "k")["id"] == "old-1"
-    _ = running
-
-
-def test_insert_session_rejects_bad_type(tmp_path):
-    import pytest
-    from workagent import store_sqlite as sq
-    db = tmp_path / "state.db"
-    sq.init_db(db)
-    with pytest.raises(ValueError):
-        sq.insert_session(db, worktree_ref="k", harness_name="omp", initiator_command="x",
-                          prompt="p", file_path="/f", session_type="nonsense")
 
 
 def test_repos_name_unique_fresh_db(tmp_path):
