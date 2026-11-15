@@ -62,7 +62,7 @@ export function DeletedTable({
                   // may hold keys filtered out above.
                   onDestroyDeleted(visibleSelected)
                 }}
-                title={`Permanently destroy ${visibleSelected.length} selected soft-deleted row(s): worktree dir + local branch + AI harness sessions. Remote branches untouched.`}
+                title={`Permanently destroy ${visibleSelected.length} selected soft-deleted row(s): worktree dir + local branch + run history. Remote branches untouched.`}
               >
                 Destroy ({visibleSelected.length})
               </Button>

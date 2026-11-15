@@ -73,7 +73,7 @@ export function argsText(args: string[] | undefined): string {
   return args.join(" ")
 }
 
-/** Shell command that cds to the worktree then continues the session.
+/** Shell command that cds to the worktree then continues the transcript.
  * Real transcripts resume via omp --resume; anything else (missing/empty
  * preview path — the frontend cannot stat it) starts fresh scoped by
  * --session-dir on the parent dir (omp v18+ rejects --resume there).

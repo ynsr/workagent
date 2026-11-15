@@ -4,7 +4,6 @@ import {
   ChevronsLeft,
   ChevronsRight,
   FolderGit2,
-  History,
   Library,
   Tags,
   GitBranch,
@@ -37,7 +36,6 @@ const NAV_TOP_GROUPS = [
   [
     { to: "/flows", label: "Flows", icon: Workflow },
     { to: "/runs", label: "Runs", icon: SquareTerminal },
-    { to: "/sessions", label: "Sessions", icon: History },
   ],
   [
     { to: "/prodtests", label: "Prodtests", icon: FlaskConical },
@@ -191,7 +189,6 @@ const BOTTOM_NAV_ITEMS = [
   { to: "/message-launch", label: "Msg Launch", icon: MessageSquarePlus },
   { to: "/flows", label: "Flows", icon: Workflow },
   { to: "/runs", label: "Runs", icon: SquareTerminal },
-  { to: "/sessions", label: "Sessions", icon: History },
 ] as const
 
 
@@ -201,7 +198,7 @@ function BottomNav() {
       aria-label="Primary"
       className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:hidden"
     >
-      <div className="grid grid-cols-7 pb-[env(safe-area-inset-bottom)]">
+      <div className="grid grid-cols-6 pb-[env(safe-area-inset-bottom)]">
         {BOTTOM_NAV_ITEMS.map((item) => (
           <NavLink
             key={item.to}

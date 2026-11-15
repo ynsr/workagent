@@ -232,7 +232,7 @@ export function Repos() {
           onChange={setRemoveForce}
           label="Remove linked worktrees too"
           flag="--force"
-          description="Remove linked worktrees (and their sessions) too"
+          description="Remove linked worktrees (and their runs) too"
         />
       ),
     })

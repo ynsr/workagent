@@ -1,4 +1,4 @@
-import { Route, Routes } from "react-router-dom"
+import { Navigate, Route, Routes } from "react-router-dom"
 import { AppLayout } from "@/components/layout/AppLayout"
 import { Dashboard } from "@/pages/Dashboard"
 import { Launch } from "@/pages/Launch"
@@ -15,7 +15,6 @@ import { Links } from "@/pages/Links"
 import { Doctor } from "@/pages/Doctor"
 import { Runs } from "@/pages/Runs"
 import { RunDetail } from "@/pages/RunDetail"
-import { Sessions, SessionDetailPage } from "@/pages/Sessions"
 import { Settings } from "@/pages/Settings"
 import { NotFound } from "@/pages/NotFound"
 
@@ -38,8 +37,10 @@ export default function App() {
         <Route path="doctor" element={<Doctor />} />
         <Route path="runs" element={<Runs />} />
         <Route path="runs/:runId" element={<RunDetail />} />
-        <Route path="sessions" element={<Sessions />} />
-        <Route path="sessions/:sessionId" element={<SessionDetailPage />} />
+        {/* Runs own the transcripts; the removed Sessions paths keep working
+            as in-app redirects (no server shim). */}
+        <Route path="sessions" element={<Navigate to="/runs" replace />} />
+        <Route path="sessions/:sessionId" element={<Navigate to="/runs" replace />} />
         <Route path="settings" element={<Settings />} />
         <Route path="*" element={<NotFound />} />
       </Route>

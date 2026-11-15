@@ -14,9 +14,8 @@ export const FIXED_OVERLAY_BUTTONS: readonly { id: string; label: string }[] = [
   { id: "cleanup", label: "Cleanup" },
   { id: "stop-terminal", label: "Stop terminal agent" },
   { id: "open-runs", label: "Open runs" },
-  { id: "open-sessions", label: "Worktree sessions" },
   { id: "open-flows", label: "Open flows" },
-  { id: "resume-session", label: "Resume session" },
+  { id: "resume-session", label: "Resume transcript" },
   { id: "dedicated", label: "Dedicated action/flow buttons" },
 ]
 

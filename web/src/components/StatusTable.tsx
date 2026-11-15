@@ -19,8 +19,6 @@ export interface StatusTableActions {
   onDestroyDeleted?: (key: string) => void
   onOpenWorktree: (key: string) => void
   onOpenRun: (key: string) => void
-  /** Navigate to the Sessions page filtered to this worktree. */
-  onOpenSessions?: (key: string) => void
   /** Navigate to the Flows page filtered to this worktree. */
   onOpenFlows?: (key: string) => void
   /** Stop the terminal-origin agent running on this worktree (404 when none). */

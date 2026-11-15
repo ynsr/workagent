@@ -14,8 +14,8 @@ import {
 import type { RunState } from "@/lib/api"
 import { argsText, relativeTime } from "@/lib/format"
 
-/** One table row: live runs link to /runs/:id, persisted session runs
- * (no registry id) render a plain label and skip state/actions they lack. */
+/** One table row: live runs link to /runs/:id, persisted rows
+ * (`db-<id>`) render their stored label and the transcript kind. */
 export interface RunsTableRow {
   key: string
   /** Link target for the run cell; plain text when absent. */
@@ -23,6 +23,8 @@ export interface RunsTableRow {
   label: string
   command: string
   args: string[]
+  /** Transcript kind label (start/review/fix comments/custom action/…). */
+  kind: string
   target: string
   state?: RunState
   exitCode: number | null
@@ -42,6 +44,7 @@ export function RunsTable({ rows }: { rows: RunsTableRow[] }) {
             <TableRow>
               <TableHead>Run</TableHead>
               <TableHead>Command</TableHead>
+              <TableHead>Kind</TableHead>
               <TableHead>Target</TableHead>
               <TableHead>State</TableHead>
               <TableHead className="text-right">Exit</TableHead>
@@ -74,6 +77,7 @@ export function RunsTable({ rows }: { rows: RunsTableRow[] }) {
                     </span>
                   </CopyCell>
                 </TableCell>
+                <TableCell className="text-sm">{row.kind}</TableCell>
                 <TableCell className="max-w-48 font-mono text-[13px]">
                   <CopyCell text={row.target} />
                 </TableCell>
@@ -125,6 +129,7 @@ export function RunsTable({ rows }: { rows: RunsTableRow[] }) {
                   {argsText(row.args)}
                 </span>
               </p>
+              <p className="text-xs text-muted-foreground">{row.kind}</p>
               <p
                 className="truncate font-mono text-[13px] text-muted-foreground"
                 title={row.target}

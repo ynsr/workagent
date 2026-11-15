@@ -89,6 +89,33 @@ export function commandLabel(command: string): string {
   }
 }
 
+/** Kind label for a run's transcript: mirrors the backend
+ * `derive_session_type` rule (command + `--fix-comments`). GET /api/runs
+ * exposes the initiator command rather than the stored `session_type`
+ * column, so the label derives from that same command. Unknown → the
+ * command itself. */
+export function runKind(command: string, args: readonly string[] = []): string {
+  const c = command.trim().toLowerCase()
+  if (c === "review" && args.includes("--fix-comments")) return "Fix comments"
+  switch (c) {
+    case "start":
+      return "Start (task)"
+    case "review":
+      return "Review"
+    case "sync":
+      return "Sync"
+    case "flow":
+      return "Flow"
+    case "action":
+    case "adhoc":
+      return "Custom action"
+  }
+  const firstTwo = c.split(/\s+/).slice(0, 2).join(" ")
+  if (firstTwo === "prodtest plan") return "Prodtest plan"
+  if (firstTwo === "prodtest run") return "Prodtest run"
+  return command || "—"
+}
+
 /** Short human summary of a run for toasts: "Sync jira:IPG-932". */
 export function runLabel(command: string, args: readonly string[]): string {
   const refs = args.filter((a) => !a.startsWith("-"))

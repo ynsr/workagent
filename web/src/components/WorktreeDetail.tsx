@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { Copy, FolderOpen, History, Rocket, SquareTerminal, Workflow, Zap } from "lucide-react"
+import { Copy, FolderOpen, Rocket, SquareTerminal, Workflow, Zap } from "lucide-react"
 import type { WorktreeEntry } from "@/lib/api"
 import { prLabel, prUrl } from "@/lib/api"
+import { queryKeys } from "@/lib/queries"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -43,7 +44,6 @@ export function WorktreeDetail({
   onClose,
   onOpenWorktree,
   onOpenRun,
-  onOpenSessions,
   onOpenFlows,
   onAdhoc,
   rowActions,
@@ -56,7 +56,6 @@ export function WorktreeDetail({
   onClose: () => void
   onOpenWorktree?: (key: string) => void
   onOpenRun?: (key: string) => void
-  onOpenSessions?: (key: string) => void
   /** Navigate to the Flows page filtered to this worktree. */
   onOpenFlows?: (key: string) => void
   /** Navigate to Launch adhoc tab prefilled with this worktree. */
@@ -70,9 +69,10 @@ export function WorktreeDetail({
     () => new Set(worktreeKey ? [worktreeKey] : []),
     [worktreeKey],
   )
-  // Bare-harness + prodtest terminal launches: the backend pins a session
-  // row + transcript path, spawns the terminal, and records a run so the
-  // StatusTable overlay re-run path finds them like other harness modes.
+  // Bare-harness + prodtest terminal launches: the backend precreates the
+  // run row with its transcript path, spawns the terminal, and records the
+  // invocation so the StatusTable overlay re-run path finds it like other
+  // harness modes.
   const qc = useQueryClient()
   const [pendingMode, setPendingMode] = useState<"harness" | "prodtest" | null>(null)
   const launchTerminal = useMutation({
@@ -83,11 +83,11 @@ export function WorktreeDetail({
         body: JSON.stringify({ mode: mmode }),
       })
       if (!res.ok) throw new Error(`terminal launch failed: ${res.status}`)
-      return res.json() as Promise<{ id: string }>
+      return res.json() as Promise<{ id: number | null; session_file: string; worktree: string; mode: string }>
     },
     onSuccess: () => {
       toast.success("Terminal opened")
-      void qc.invalidateQueries({ queryKey: ["sessions"] })
+      void qc.invalidateQueries({ queryKey: queryKeys.runs })
     },
     onError: (err: unknown) => toast.error(errorText(err)),
   })
@@ -286,16 +286,6 @@ export function WorktreeDetail({
           >
             <Rocket aria-hidden className="size-4" />
             Runs
-          </Button>
-        ) : null}
-        {worktreeKey && onOpenSessions ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onOpenSessions(worktreeKey)}
-          >
-            <History aria-hidden className="size-4" />
-            Sessions
           </Button>
         ) : null}
         {worktreeKey && onOpenFlows ? (

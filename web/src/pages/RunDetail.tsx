@@ -20,8 +20,9 @@ import { api, type CreateRunInput, type RunDetail as RunDetailData, type RunLine
 import { useConfirm } from "@/lib/confirm"
 import { queryKeys, useCancelRun, useRun } from "@/lib/queries"
 import { copyToClipboard, relativeTime, shortId } from "@/lib/format"
-import { commandAction, commandLabel, needsConfirm } from "@/lib/runs"
-import { SessionResumeActions } from "@/components/RunActions"
+import { commandAction, commandLabel, needsConfirm, runKind } from "@/lib/runs"
+import { RunResumeActions } from "@/components/RunActions"
+import { Badge } from "@/components/ui/badge"
 
 function LogViewer({
   lines,
@@ -278,7 +279,7 @@ export function RunDetail() {
     <div>
       <PageHeader
         title={`Run ${shortId(runId)}`}
-        description={`${commandLabel(run.command)} · started ${relativeTime(run.created)} · target ${run.target}`}
+        description={`${runKind(run.command, run.args)} · started ${relativeTime(run.created)} · target ${run.target}`}
         actions={
           <>
             <Button variant="ghost" size="sm" asChild>
@@ -292,7 +293,7 @@ export function RunDetail() {
               </Link>
             </Button>
             {run.session_file ? (
-              <SessionResumeActions runId={run.id} worktree={run.worktree} sessionFile={run.session_file} variant="outline" />
+              <RunResumeActions runId={run.id} worktree={run.worktree} sessionFile={run.session_file} variant="outline" />
             ) : null}
             <RunHarnessCommandAction runId={run.id} lines={lines} />
             {isRunning ? (
@@ -316,12 +317,21 @@ export function RunDetail() {
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         {state ? <RunStateBadge state={state} /> : null}
+        <Badge>{runKind(run.command, run.args)}</Badge>
         <span className="text-sm text-muted-foreground">
           exit code: <span className="font-mono">{exitCode ?? "—"}</span>
         </span>
         <span className="font-mono text-[13px] text-muted-foreground">
           workagent {run.command} {run.args.join(" ")}
         </span>
+        {run.session_file ? (
+          <span
+            className="max-w-full truncate font-mono text-[13px] text-muted-foreground"
+            title={run.session_file}
+          >
+            transcript: {run.session_file}
+          </span>
+        ) : null}
         {run.truncated ? (
           <span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">
             output truncated server-side

@@ -3,7 +3,7 @@ import { useRepoTabs } from "@/lib/useRepoTabs"
 type RepoTabs = ReturnType<typeof useRepoTabs>
 
 /** "All repos" + per-repo pill tabs (?repo=), with an "(other)" bucket.
- * Shared by Runs/Sessions (StatusTable keeps its own count-in-label variant). */
+ * Shared by Runs (StatusTable keeps its own count-in-label variant). */
 export function RepoTabsRow({ repoTabs }: { repoTabs: RepoTabs }) {
   const btn = (active: boolean) =>
     active

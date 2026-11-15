@@ -20,7 +20,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `start --harness omp` | mutating | — | `start` | no | unsupported harness name | |
 | `start --no-tty` | mutating | — | `start` | no | | none — headless mode (`omp -p --auto-approve`, `backend.command_argv(no_tty=True)`); the web UI sends it only with `--launch` (Run agent now), so preview `harness_command` stays TTY (`omp`, no `-p`) |
 | `start --launch` (default: preview) | mutating | — | `start` | no | | without `--launch` lands in interactive shell with the printed command — **UI must not use `--launch`** (needs a TTY shell) |
-| `start --terminal` (XOR `--launch`) | mutating | — | `start` | no (detached terminal) | no graphical session (no `$DISPLAY`/`$WAYLAND_DISPLAY`); no terminal emulator found (set `$TERMINAL`) | persists a preview session row, claims the harness lock with `origin=terminal` (recorded pid = spawned terminal emulator), prints `terminal_pid` in `--json`; stop from the Dashboard via `POST /api/terminal/stop` (Task 5) |
+| `start --terminal` (XOR `--launch`) | mutating | — | `start` | no (detached terminal) | no graphical session (no `$DISPLAY`/`$WAYLAND_DISPLAY`); no terminal emulator found (set `$TERMINAL`) | persists a preview run row with its transcript path, claims the harness lock with `origin=terminal` (recorded pid = spawned terminal emulator), prints `terminal_pid` in `--json`; stop from the Dashboard via `POST /api/terminal/stop` (Task 5) |
 | `start --related-repo NAME` (repeatable) | mutating | Related repos multi-select | `start` | no (child worktrees) | same-repo-as-main (2); PR/MR mode (2) | one child worktree per repo on the same branch, grouped under the parent in StatusTable; cleanup cascades |
 | `start --dry-run` | read-only-ish | — | `start` | no | | none |
 | `start --yes` | mutating | — | `start` | no | | skips confirmations |
@@ -65,7 +65,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `link remove REF [--repo] [--json] [--hard-delete]` | mutating | — | `link:remove` | yes-ish (soft-deletes link, 7-day `link undelete` window; `--hard-delete` drops immediately) | repo not linked (2) | none |
 | `link undelete REF [--json]` | mutating | — | `link:undelete` | no (clears deleted_at) | no worktree link (2) | none |
 | `link gc [--dry-run] [--json]` | mutating | — | `link:gc` | no (purges rows soft-deleted >7d: worktree dir + local branch + row) | | none |
-| `link destroy-deleted [REF] [--all] [--dry-run] [--json] [--yes]` | mutating | `destroy_deleted` (git-wt cleanup + branch -D + row drop) | `link:destroy-deleted` | **yes** (worktree dir + local branch + row; sessions/runs CASCADE; remote branches untouched; irreversible) | no link/no ref (2) | none — Deleted table per-row trash icon + Destroy (N) selection button, irreversible custom confirm dialog |
+| `link destroy-deleted [REF] [--all] [--dry-run] [--json] [--yes]` | mutating | `destroy_deleted` (git-wt cleanup + branch -D + row drop) | `link:destroy-deleted` | **yes** (worktree dir + local branch + row and its runs; remote branches untouched; irreversible) | no link/no ref (2) | none — Deleted table per-row trash icon + Destroy (N) selection button, irreversible custom confirm dialog |
 | `link list [--worktree] [--refresh-pr] [--json/--csv] [--include-deleted]` | read-only | `store.load_config()["trackers"]` + `_enrich_entry` | — | no | | none |
 | `tracker add KEY [--vendor] [--remote-url] [--fetch/--no-fetch] [--json]` | mutating | — | `config` | no (trackers table write) | `--vendor` outside the jira/github enum (2) | none — vendor/URL derive from the key when blank |
 | `tracker list [--json/--csv]` | read-only | `store_sqlite.load_tracker_rows` | — | no | | none |
@@ -102,6 +102,14 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `completions show/install` | mutating (writes rc) | — | — | — | — | **excluded from UI per prompt** |
 | `workagent serve` | — | this feature | — | — | port busy (1), missing web/dist (1) | none |
 
+## Transcripts on runs
+
+Every harness launch is a run that optionally carries its AI transcript: the
+Runs page owns the per-run kind label (start / review / fix comments / sync /
+custom action / flow / prodtest), the transcript path, and the resume/copy
+buttons. There is no separate Sessions page or surface — old `/sessions`
+links land on Runs.
+
 ## Headless agent mechanism (reused, not reimplemented)
 
 - File: `src/workagent/backend.py` → `command_argv(harness, prompt, no_tty=True)` builds
@@ -135,7 +143,7 @@ flags, `--force`-required conflicts (register), repo-picker aborts.
 - `review:<ref>` — one review per PR ref; `review:all` for bulk.
 - `prodtest:<ref>` — one prodtest plan/run per issue ref; `prodtest:run-all` for `run --all` (single sequential bulk run in-process).
 - `adhoc:<first-ref>` — one adhoc run per first ref.
-- `cleanup:<normalized ref>` — one cleanup per session ref; `--merged`
+- `cleanup:<normalized ref>` — one cleanup per worktree ref; `--merged`
   keys as `cleanup:all` (one bulk sweep at a time).
 - Dashboard toolbar acts on the `?sel=` selection when non-empty (N sequential
   per-key runs under one confirm), else `--all`/`--merged`; `review --all`
@@ -149,7 +157,7 @@ flags, `--force`-required conflicts (register), repo-picker aborts.
 - `prodtest` (`plan`/`run`) — require `confirm: true` (the Prodtests page + Prodtest Launch page confirm before spawning runs; `list`/`status` are read-only GETs, no confirm).
 - `adhoc` — spawns an agent; requires `confirm: true`.
 - `repo remove` (registry write)
-- `link remove` (drops tracker relation or session link)
+- `link remove` (drops tracker relation or worktree link)
 - `sync` (without `--dry-run`) — mutates branches (server rebase rewrites
   remote history / local merge + push)
 - `start`/`review` launch auto-approving agents — require `confirm: true`

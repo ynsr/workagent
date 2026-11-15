@@ -2,10 +2,9 @@ import { useMemo } from "react"
 import { useSearchParams } from "react-router-dom"
 import type { Repo } from "@/lib/api"
 
-/** An item counted by the tabs: a bare worktree path (Runs/Sessions) or a
+/** An item counted by the tabs: a bare worktree path (Runs) or a
  * status/link entry carrying the resolved main-checkout `repo` path.
- * Sessions with a NULL worktree_ref (flow-owned rows) map to null and
- * count under "(other)". */
+ * Items with no worktree path map to null and count under "(other)". */
 export type RepoTabItem = string | { worktree?: string; repo?: string } | null | undefined
 
 function normPath(p: string): string {
@@ -68,7 +67,7 @@ export function repoDisplayForEntry(item: RepoTabItem, repos: Repo[]): string {
   return ""
 }
 
-/** Repo tabs (?repo=) shared by Dashboard/Runs/Sessions: "All" + one tab per
+/** Repo tabs (?repo=) shared by Dashboard/Runs: "All" + one tab per
  * registered repo name with at least one item + "(other)" when items fall
  * outside every repo path. A stale ?repo= value that matches no tab falls
  * back to "All" (empty filter). */
