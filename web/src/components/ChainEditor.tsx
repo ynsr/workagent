@@ -33,8 +33,9 @@ export interface ChainEditorProps {
   showExecutionMode?: boolean
 }
 
-/** Backend rule order (mirrors store_flows.validate_template): Start-first,
- * Release-last, review→cleanup needs fix_comments, action before cleanup. */
+/** Backend rule order (mirrors store_flows.validate_template):
+ * Release-last, review→cleanup needs fix_comments, start/action/prodtest_plan
+ * before the first cleanup. */
 export function validateChain(steps: FlowStep[]): string[] {
   const errors: string[] = []
   if (steps.length === 0) {
@@ -47,9 +48,6 @@ export function validateChain(steps: FlowStep[]): string[] {
       errors.push(`Unknown step kind ${JSON.stringify(k)}.`)
     }
   }
-  const starts = kinds.map((k, i) => (k === "start" ? i : -1)).filter((i) => i >= 0)
-  if (starts.length > 1) errors.push("At most one 'start' step is allowed.")
-  if (starts.length === 1 && starts[0] !== 0) errors.push("'start' must be the first step.")
   const releases = kinds.map((k, i) => (k === "release" ? i : -1)).filter((i) => i >= 0)
   if (releases.length > 1) errors.push("At most one 'release' step is allowed.")
   if (releases.length === 1 && releases[0] !== kinds.length - 1) {
@@ -75,6 +73,12 @@ export function validateChain(steps: FlowStep[]): string[] {
     if (step.kind !== "prodtest_plan") return
     if (cleanups.length > 0 && i >= Math.min(...cleanups)) {
       errors.push(`Step ${i + 1}: 'prodtest_plan' steps must come before 'cleanup'.`)
+    }
+  })
+  steps.forEach((step, i) => {
+    if (step.kind !== "start") return
+    if (cleanups.length > 0 && i >= Math.min(...cleanups)) {
+      errors.push(`Step ${i + 1}: 'start' steps must come before 'cleanup'.`)
     }
   })
   steps.forEach((step, i) => {
@@ -111,9 +115,11 @@ export function startRepoState(
   steps: FlowStep[],
   _overrides?: Record<number, Record<string, unknown>>,
 ): "ok" | "missing" {
-  const first = steps[0]
-  if (!first || first.kind !== "start") return "ok"
-  const eff = (first.config ?? {}).repo
+  // Late starts are legal: the wizard's repo requirement follows the
+  // chain's start step wherever it sits, not step 1.
+  const start = steps.find((s) => s.kind === "start")
+  if (!start) return "ok"
+  const eff = (start.config ?? {}).repo
   return typeof eff === "string" && eff.trim() ? "ok" : "missing"
 }
 

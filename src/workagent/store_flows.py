@@ -89,13 +89,6 @@ def validate_template(steps: list[dict] | str,
             raise HarnessError(
                 f"unknown step kind {k!r} (expected one of "
                 f"{', '.join(STEP_KINDS)})", exit_code=2)
-    starts = [i for i, k in enumerate(kinds) if k == "start"]
-    if len(starts) > 1:
-        raise HarnessError("flow template must have at most one "
-                           "'start' step", exit_code=2)
-    if starts and starts[0] != 0:
-        raise HarnessError("'start' must be the first step",
-                           exit_code=2)
     releases = [i for i, k in enumerate(kinds) if k == "release"]
     if len(releases) > 1:
         raise HarnessError("flow template must have at most one "
@@ -110,6 +103,13 @@ def validate_template(steps: list[dict] | str,
     if releases and cleanups and max(cleanups) > releases[0]:
         raise HarnessError("'release' requires a prior 'cleanup' step",
                            exit_code=2)
+    # Start steps may repeat and sit anywhere before teardown, but a start
+    # after cleanup would re-fetch the closed issue, mint a fresh worktree
+    # and launch a second harness for work the flow already finished.
+    for i, k in enumerate(kinds):
+        if k == "start" and cleanups and i >= min(cleanups):
+            raise HarnessError("'start' steps must come before 'cleanup'",
+                               exit_code=2)
     for i, k in enumerate(kinds):
         if k != "review":
             continue
@@ -193,20 +193,8 @@ def validate_template(steps: list[dict] | str,
         out.append(norm)
     return out
 
-def collapse_first_start(steps: list[dict]) -> tuple[list[dict], bool]:
-    """Drop every 'start' except the chain's first step; return (chain, dropped)."""
-    out: list[dict] = []
-    dropped = False
-    for i, s in enumerate(steps or []):
-        if str(s.get("kind", "")) == "start" and i != 0:
-            dropped = True
-            continue
-        out.append(s)
-    return out, dropped
-
-
-def compose_chains(sources: list[tuple[str, list[dict]]]) -> tuple[list[dict], list[str], bool]:
-    """Concatenate (label, steps) pairs; collapse extra starts; index-mapped errors."""
+def compose_chains(sources: list[tuple[str, list[dict]]]) -> tuple[list[dict], list[str]]:
+    """Concatenate (label, steps) pairs; index-mapped errors."""
     from .errors import HarnessError
     merged: list[dict] = []
     origin: list[str] = []
@@ -214,22 +202,13 @@ def compose_chains(sources: list[tuple[str, list[dict]]]) -> tuple[list[dict], l
         for j, s in enumerate(steps or []):
             origin.append(f"{label}:{j + 1}")
             merged.append(dict(s))
-    kept: list[dict] = []
-    kept_origin: list[str] = []
-    dropped = False
-    for i, (s, o) in enumerate(zip(merged, origin)):
-        if str(s.get("kind", "")) == "start" and i != 0:
-            dropped = True
-            continue
-        kept.append(s)
-        kept_origin.append(o)
     try:
-        norm = validate_template(kept)
+        norm = validate_template(merged)
     except HarnessError as e:
         raise HarnessError(
-            f"compose: {e} (sources: {', '.join(kept_origin)})",
+            f"compose: {e} (sources: {', '.join(origin)})",
             exit_code=2) from None
-    return norm, [label for label, _ in sources], dropped
+    return norm, [label for label, _ in sources]
 
 
 def _validate_icon(icon: str) -> str:

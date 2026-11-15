@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
-import { ChainEditor } from "@/components/ChainEditor"
+import { ChainEditor, startRepoState, validateChain } from "@/components/ChainEditor"
 import type { FlowStep } from "@/lib/api"
 import { summarizeExecution } from "@/lib/flowExecution"
 
@@ -13,6 +13,46 @@ const ACTIONS = [
   { label: "lint", name: "Lint" },
   { label: "typecheck", name: "Typecheck" },
 ]
+
+describe("validateChain start steps", () => {
+  it("allows a start step after the first step", () => {
+    const steps: FlowStep[] = [{ kind: "sync", config: {} }, { kind: "start", config: {} }]
+    expect(validateChain(steps)).toEqual([])
+  })
+
+  it("allows two start steps", () => {
+    const steps: FlowStep[] = [
+      { kind: "start", config: {} },
+      { kind: "start", config: { plan: true } },
+    ]
+    expect(validateChain(steps)).toEqual([])
+  })
+
+  it("rejects a start step after cleanup", () => {
+    const steps: FlowStep[] = [
+      { kind: "start", config: {} },
+      { kind: "cleanup", config: {} },
+      { kind: "start", config: {} },
+    ]
+    expect(validateChain(steps)).toEqual([
+      "Step 3: 'start' steps must come before 'cleanup'.",
+    ])
+  })
+})
+
+describe("startRepoState", () => {
+  it("follows a late start step instead of step 1", () => {
+    expect(startRepoState([
+      { kind: "sync", config: {} },
+      { kind: "start", config: {} },
+    ])).toBe("missing")
+    expect(startRepoState([
+      { kind: "sync", config: {} },
+      { kind: "start", config: { repo: "proj" } },
+    ])).toBe("ok")
+    expect(startRepoState([{ kind: "sync", config: {} }])).toBe("ok")
+  })
+})
 
 describe("ChainEditor action dropdown", () => {
   it("lists known actions instead of an empty select", () => {
