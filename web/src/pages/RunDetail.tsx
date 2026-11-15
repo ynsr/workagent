@@ -20,7 +20,7 @@ import { api, type CreateRunInput, type RunDetail as RunDetailData, type RunLine
 import { useConfirm } from "@/lib/confirm"
 import { queryKeys, useCancelRun, useRun } from "@/lib/queries"
 import { copyToClipboard, relativeTime, shortId } from "@/lib/format"
-import { DESTRUCTIVE_COMMANDS, commandAction, commandLabel } from "@/lib/runs"
+import { commandAction, commandLabel, needsConfirm } from "@/lib/runs"
 import { SessionResumeActions } from "@/components/RunActions"
 
 function LogViewer({
@@ -219,7 +219,7 @@ export function RunDetail() {
     // Strip the leading -v (re-added per current Settings) and any appended --yes.
     const stripped = run.args[0] === "-v" ? run.args.slice(1) : [...run.args]
     const args = stripped.filter((a) => a !== "--yes")
-    const destructive = DESTRUCTIVE_COMMANDS.includes(run.command)
+    const destructive = needsConfirm(run.command, args)
     if (destructive) {
       const ok = await confirm({
         action: commandAction(run.command, args),

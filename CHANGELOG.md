@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Flow Re-run from the run detail page works again: it shows the confirm dialog and passes confirm for flow runs like other destructive runs [99]
 - Suggest-icon prompt covers all Lucide icons and avoids already used icons on flows/actions [84]
 - Restarting serve is faster: DB migrations stay synchronous while cleanup and branch backfill run in the background [81]
 - Message runs auto-register unlinked Mattermost permalinks on first use: fetch via mm and register, still fails with a clear --repo hint otherwise [79]
