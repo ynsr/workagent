@@ -17,33 +17,57 @@ prodtest_app = typer.Typer(help="Generate and run production test plans.", no_ar
 app.add_typer(prodtest_app, name="prodtest")
 
 
-def _plan_filename_for(issue_key: str) -> str:
-    """Canonical plan filename for *issue_key* (``<KEY>.yaml``, sanitized)."""
+def _plan_filename_for(issue_key: str, mr_number: str | None = None) -> str:
+    """Canonical plan filename (``<KEY>.yaml``, sanitized; ``mr-<N>.yaml`` fallback)."""
     safe = "".join(c if (c.isalnum() or c in ("-", "_")) else "-" for c in (issue_key or ""))
-    return f"{safe or 'unknown'}.yaml"
+    if safe:
+        return f"{safe}.yaml"
+    if mr_number:
+        mr_safe = "".join(c if (c.isalnum() or c in ("-", "_")) else "-" for c in str(mr_number))
+        return f"mr-{mr_safe or 'unknown'}.yaml"
+    return "unknown.yaml"
 
 
-def _resolve_plan_file(entry: dict, issue_key: str, stored: str) -> Path | None:
+def _resolve_plan_file(entry: dict, issue_key: str, stored: str, mr_number: str | None = None) -> Path | None:
     """Plan file: stored path, else canonical plans/<KEY>.yaml on worktree/repo.
 
-    Returns None when neither resolves to a real file. Best effort, never raises.
+    Falls back to ``plans/mr-<N>.yaml`` (derived from an explicit *mr_number*
+    or the ``issue`` dict's ``mr_url``) since the plan writer uses that name
+    when no issue key exists. Returns None when nothing resolves to a file.
+    Best effort, never raises.
     """
     try:
         if stored and Path(stored).is_file():
             return Path(stored)
     except Exception:
         pass
+    names = [_plan_filename_for(issue_key, mr_number)]
+    try:
+        if mr_number is None and isinstance(entry, dict):
+            mr_url = str((entry.get("mr_url", "") or entry.get("mr", "") or entry.get("pr_url", "") or ""))
+            if mr_url and mr_url not in (issue_key,):
+                from . import refs as _refs
+                try:
+                    p = _refs.parse_ref(mr_url)
+                    if p.get("kind") in ("pr", "mr"):
+                        num = str(p.get("number", "") or "")
+                        if num:
+                            names.append(_plan_filename_for("", num))
+                except Exception:
+                    pass
+    except Exception:
+        pass
     cands: list[Path] = []
     try:
         wt = str((entry or {}).get("worktree", "") or "")
         if wt:
-            cands.append(Path(wt) / ".workagent" / "prodtest" / "plans" / _plan_filename_for(issue_key))
+            cands.extend(Path(wt) / ".workagent" / "prodtest" / "plans" / n for n in names)
     except Exception:
         pass
     try:
         root = str((entry or {}).get("repo", "") or "")
         if root:
-            cands.append(Path(root) / ".workagent" / "prodtest" / "plans" / _plan_filename_for(issue_key))
+            cands.extend(Path(root) / ".workagent" / "prodtest" / "plans" / n for n in names)
     except Exception:
         pass
     for cand in cands:

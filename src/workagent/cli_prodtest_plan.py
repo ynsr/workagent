@@ -19,10 +19,9 @@ from .cli_prodtest import (
 from .errors import HarnessError
 
 def _plan_filename(issue_number: str | None, mr_number: str | None) -> str:
-    if issue_number:
-        safe = "".join(c if (c.isalnum() or c in ("-", "_")) else "-" for c in issue_number)
-        return f"{safe}.yaml"
-    return f"mr-{mr_number or 'unknown'}.yaml"
+    """Write-path filename; delegates to the single canonical helper."""
+    from .cli_prodtest import _plan_filename_for
+    return _plan_filename_for(issue_number or "", mr_number)
 
 
 @prodtest_app.command("plan")
@@ -161,13 +160,19 @@ def prodtest_plan(
                "Re-run `workagent prodtest plan " + (issue_number or store_key) + " --launch --no-tty`.")
     if launch and no_tty:
         _finish_plan(link_key or store_key, issue_number, work_dir, repo, branch, plan_file,
-                     issue_url, result, store_key=store_key)
+                     issue_url, result, store_key=store_key, linked=linked)
 
 
 def _finish_plan(key: str, issue_number: str | None, worktree: str, repo: str,
                  branch: str, plan_file: Path, issue_url: str, result: dict,
-                 store_key: str | None = None) -> None:
-    """Best-effort post-harness: parse result, validate, commit+push, comment, upsert."""
+                 store_key: str | None = None, linked: bool = True) -> None:
+    """Best-effort post-harness: parse result, validate, commit+push, comment, upsert.
+
+    When *linked* is False the plan ran from the bare repo checkout (no
+    linked worktree): the file + DB row + issue comment persist, but the
+    git commit/push is skipped — committing there would land on whatever
+    branch the main checkout has (often main).
+    """
     from . import harness_summary as _hs
     from . import issue_comments as _ic
     from . import prodtest_result as _pr
@@ -221,11 +226,14 @@ def _finish_plan(key: str, issue_number: str | None, worktree: str, repo: str,
                 rels.append(str(manifest.relative_to(worktree)))
             except ValueError:
                 pass
-        if rels and worktree and Path(worktree).is_dir():
+        if rels and linked and worktree and Path(worktree).is_dir():
             run_cmd("git", "-C", worktree, "add", "--", *rels)
             run_cmd("git", "-C", worktree, "commit", "-m",
                     f"prodtest: plan r{revision} for {issue_number or key}")
             run_cmd("git", "-C", worktree, "push")
+        elif rels and not linked:
+            eprint(f"warning: unlinked plan kept uncommitted at {plan_file} "
+                   "(no worktree linked; commit it from an MR branch if needed)")
     except HarnessError as e:
         eprint(f"warning: plan commit/push failed: {e}")
 

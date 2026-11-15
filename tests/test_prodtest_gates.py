@@ -55,7 +55,7 @@ def test_manifest_path_for_defaults_repo_file(tmp_path):
         tmp_path / ".workagent" / "prodtest.yaml")
 
 
-def test_row_gate_skipped_prodtest_stale_in_merged_loop(isolated_config, tmp_path, monkeypatch):
+def test_row_gate_no_longer_blocks_merged_loop(isolated_config, tmp_path, monkeypatch):
     """Stale plan no longer blocks the --merged loop (run-only gate, issue #50)."""
     from workagent import cli
     from workagent import cli_cleanup as cc

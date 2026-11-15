@@ -104,6 +104,15 @@ export function Prodtests() {
   }
 
   async function handlePlan(issue: string) {
+    const ok = await confirm({
+      action: "prodtest",
+      title: `Plan prodtest for ${issue}`,
+      description:
+        "Generates the production test plan via the harness agent (non-TTY).",
+      destructive: true,
+      confirmLabel: "Plan prodtest",
+    })
+    if (!ok) return
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "prodtest",

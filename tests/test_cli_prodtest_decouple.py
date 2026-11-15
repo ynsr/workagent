@@ -20,6 +20,36 @@ def _seed(monkeypatch, tmp_path, links=None, rows=None):
     return db
 
 
+def test_preview_run_never_marks_running(isolated_config, tmp_path, monkeypatch):
+    """Preview/interactive runs skip the running upsert (no stuck GC-blocking row)."""
+    from workagent import cli_prodtest_checks as cpc
+    from workagent import cli
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    db = _seed(monkeypatch, tmp_path, links={}, rows={"IPG-9": {"release_sha": "abc1234"}})
+    seen: list[tuple] = []
+    orig_upsert = cli.store.upsert_prodtest
+
+    def _spy(key, **kw):
+        seen.append((key, dict(kw)))
+        return orig_upsert(key, **kw)
+
+    monkeypatch.setattr(cli.store, "upsert_prodtest", _spy)
+    monkeypatch.setattr("workagent.release_worktree.prepare", lambda repo_, dest, sha: tmp_path)
+    monkeypatch.setattr(cpc, "_enforce_plan_release_binding", lambda *a, **k: None)
+    monkeypatch.setattr(cpc, "_run_validated", lambda *a, **k: None)
+
+    entry = {"repo": str(repo), "worktree": "", "branch": "feat/x", "issue": "IPG-9"}
+    cpc._run_locked("IPG-9", entry, None, "abc1234", "", "report-only",
+                    False, tmp_path / "out", 60, False, False, True, False,
+                    None, None, None, None)
+    running_marks = [kw for _, kw in seen if kw.get("status") == "running"]
+    assert not running_marks, seen
+    from workagent import store_sqlite as sq
+    row = sq.get_prodtest(db, "IPG-9")
+    assert row and row.get("status") != "running", row
+
 def test_run_marks_running_then_passed_with_run_results(isolated_config, tmp_path, monkeypatch):
     """_run_locked upserts running; _finish_run persists passed + run_results."""
     from workagent import cli_prodtest_checks as cpc
@@ -45,7 +75,7 @@ def test_run_marks_running_then_passed_with_run_results(isolated_config, tmp_pat
 
     entry = {"repo": str(repo), "worktree": "", "branch": "feat/x", "issue": "IPG-9"}
     cpc._run_locked("IPG-9", entry, None, "abc1234", "", "report-only",
-                    False, tmp_path / "out", 60, False, False, True, False,
+                    False, tmp_path / "out", 60, True, False, True, False,
                     None, None, None, None)
     from workagent import store_sqlite as sq
     row = sq.get_prodtest(db, "IPG-9")
