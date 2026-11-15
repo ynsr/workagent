@@ -28,6 +28,7 @@ def _message_key(args: list[str]) -> str:
         return f"message:{sub}:{_nth_positional(args[1:], 2, VAL_FLAGS['message ' + sub + ' run'])}"
     vals = {"adhoc": VAL_FLAGS["message adhoc"],
             "validate": VAL_FLAGS["message validate"],
+            "draft-reply": VAL_FLAGS["message draft-reply"],
             "show": (), "update": VAL_FLAGS["message update"],
             "remove": ()}.get(sub)
     if vals is None:
@@ -59,15 +60,16 @@ SPECS: dict[str, dict[str, Any]] = {
                "key": lambda args: "suggest-icon:action" if args[:1] == ["suggest-icon"] else (f"action:{_first_positional(args, VAL_FLAGS['action run'])}:{_first_positional(args[1:], VAL_FLAGS['action run'])}" if args[:1] == ["run"] else "config")},
     "flow": {"confirm": False, "force": False, "confirm_subs": ("run", "delete"),
              "key": lambda args: "suggest-icon:flow" if args[:2] == ["template", "suggest-icon"] else (f"flow:{_nth_positional(args, 1, VAL_FLAGS['flow run'])}:{_nth_positional(args, 2, VAL_FLAGS['flow run'])}" if args[:1] == ["run"] else "config")},
-    "message": {"confirm": False, "force": False, "confirm_subs": ("remove", "adhoc", "validate", "run"),
+    "message": {"confirm": False, "force": False, "confirm_subs": ("remove", "adhoc", "validate", "draft-reply", "run"),
                 "key": _message_key},
     "backup": {"confirm": False, "force": False, "confirm_subs": ("import",),
                "key": "config"},
     "prodtest": {"confirm": True, "force": False,
-                 "confirm_subs": ("plan", "run"),
-                 "key": lambda args: "prodtest:run-all" if args[:1] == ["run"] and "--all" in args
+                 "confirm_subs": ("plan", "run", "delete", "cleanup"),
+                 "key": lambda args: "prodtest:cleanup" if args[:1] == ["cleanup"]
+                 else ("prodtest:run-all" if args[:1] == ["run"] and "--all" in args
                  else (f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest plan'])}" if args[:1] == ["plan"]
-                       else (f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest run'])}" if args[:1] == ["run"] else "config"))},
+                       else (f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest run'])}" if args[:1] == ["run"] else "config")))},
     "adhoc": {"confirm": True, "force": False,
               "key": lambda args: f"adhoc:{_first_positional(args, VAL_FLAGS['adhoc'])}"},
 }
@@ -139,6 +141,8 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "prodtest run": ("--all", "--skip-version-gate", "-L", "--launch", "--terminal", "--no-tty", "--dry-run", "--yes", "--json"),
     "prodtest list": ("--json",),
     "prodtest status": ("--json",),
+    "prodtest delete": ("--json",),
+    "prodtest cleanup": ("--json", "--yes", "--dry-run"),
     "adhoc": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
     "message add": ("--fetch", "--json",),
     "message list": ("--json", "--csv"),
@@ -147,6 +151,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "message remove": ("--yes", "--json"),
     "message adhoc": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
     "message validate": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
+    "message draft-reply": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
     "message action run": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
     "message flow run": ("--dry-run", "--yes", "--json"),
     "message": (),
@@ -186,6 +191,7 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "message list": ("--thread",),
     "message adhoc": ("--prompt", "--ref", "--repo", "--harness", "--extra-prompt", "--env-file", "--session-file"),
     "message validate": ("--prompt", "--ref", "--repo", "--harness"),
+    "message draft-reply": ("--ref", "--repo", "--harness", "--extra-prompt", "--env-file", "--session-file"),
     "message update": ("--thread-id", "--sender", "--content", "--ts", "--repo", "--related-repo", "--worktree"),
     "message action run": ("--ref", "--repo", "--harness", "--extra-prompt", "--env-file", "--session-file"),
     "message flow run": ("--ref", "--repo",),
@@ -197,8 +203,8 @@ SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "action": {"add", "list", "show", "run", "update", "delete", "suggest-icon"},
                                     "flow": {"template", "list", "show", "run"},
                                     "backup": {"export", "import", "run-scheduled"},
-                                    "message": {"add", "list", "show", "update", "remove", "adhoc", "validate", "action", "flow"},
-                                    "prodtest": {"plan", "run", "list", "status"}}
+                                    "message": {"add", "list", "show", "update", "remove", "adhoc", "validate", "draft-reply", "action", "flow"},
+                                    "prodtest": {"plan", "run", "list", "status", "delete", "cleanup"}}
 TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "clone", "compose", "delete", "suggest-icon"}
 def _needs_confirm(command: str, args: list[str]) -> bool:
     """True when the (sub)command needs confirm:true (destructive only).

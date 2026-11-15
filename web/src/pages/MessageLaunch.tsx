@@ -39,6 +39,10 @@ const CONFIRM_COPY: Record<MessageLaunchMode, { title: string; description: stri
     title: "Launch validate claimed issues",
     description: "The agent validates the claimed issues and generates Jira issues if confirmed. The server appends --yes.",
   },
+  "draft-reply": {
+    title: "Draft Persian reply",
+    description: "The agent drafts a Persian coworker-voice reply (mm-reply-drafter + persian-chat-generator: facts-only, ZWNJ-free, ≤160 chars). NEVER sends — review and send via mm. The server appends --yes.",
+  },
   action: {
     title: "Run message action",
     description: "Runs a message-category custom action grounded in this message. The server appends --yes.",
@@ -51,6 +55,7 @@ const CONFIRM_COPY: Record<MessageLaunchMode, { title: string; description: stri
 const NEEDS_RUN_MODE: Record<MessageLaunchMode, boolean> = {
   adhoc: true,
   validate: true,
+  "draft-reply": true,
   action: true,
   flow: false,
 }
@@ -261,6 +266,22 @@ export function MessageLaunch() {
                 rows={3}
                 className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
               />
+            </div>
+          ) : null}
+
+          {tab === "draft-reply" ? (
+            <div className="grid gap-2 rounded-md border border-dashed px-3 py-2.5 text-sm text-muted-foreground">
+              <p>
+                Drafts a Persian coworker-voice reply grounded in this message
+                (skills: <span className="font-mono">mm-reply-drafter</span> +{" "}
+                <span className="font-mono">persian-chat-generator</span>).
+              </p>
+              <ul className="list-disc space-y-1 pl-5 text-xs">
+                <li>Facts only — no invented tests, fixes, ETAs, or causes.</li>
+                <li>ZWNJ-free colloquial Persian, ≤160 chars, output-only draft.</li>
+                <li>NEVER sends — review and send the draft via <span className="font-mono">mm</span>.</li>
+              </ul>
+              <p className="text-xs">Use the Launch tab&apos;s Extra prompt field for extra instructions (e.g. audience, thread facts).</p>
             </div>
           ) : null}
 

@@ -22,6 +22,77 @@ def _resolve_repo(worktree_path: str, repo_str: str) -> Path | None:
     return None
 
 
+def _remove_harness_sessions(key: str) -> None:
+    """Delete harness transcript files + emptied branch dirs for one worktree.
+
+    Session DB rows cascade with the worktree row (FK); the .jsonl files
+    under ~/.config/workagent/sessions/<harness>/<branch-path>/ do not —
+    remove file_path + session_dir hits per session, then prune empty
+    parents up to (not incl.) the harness root. Best effort, never raises
+    (issue #102)."""
+    try:
+        from . import store as _store
+        from . import store_sqlite as _sq
+        db = _sq.db_path()
+        rows: list[dict] = []
+        try:
+            rows = _sq.list_sessions(db, include_deleted_worktrees=True)
+        except Exception:
+            return
+        targets: set[str] = set()
+        for r in rows:
+            if not isinstance(r, dict) or r.get("worktree_ref") != key:
+                continue
+            fp = str(r.get("file_path", "") or "")
+            if fp:
+                targets.add(fp)
+            try:
+                meta = r.get("metadata") or {}
+                if isinstance(meta, str):
+                    import json as _json
+                    try:
+                        meta = _json.loads(meta or "{}")
+                    except Exception:
+                        meta = {}
+                sd = str((meta or {}).get("session_dir", "") or "")
+                if sd:
+                    targets.add(sd)
+            except Exception:
+                continue
+        if not targets:
+            return
+        harness_root = _store.config_dir() / "sessions"
+        try:
+            root = harness_root.resolve()
+        except OSError:
+            root = harness_root
+        for raw in sorted(targets):
+            try:
+                p = Path(raw).expanduser()
+                if p.is_file():
+                    p.unlink()
+                    p = p.parent
+                if not p.is_dir():
+                    continue
+                cur = p.resolve() if p.exists() else p
+                while True:
+                    try:
+                        inside = cur == root or root in cur.parents
+                    except Exception:
+                        break
+                    if not inside or cur == root:
+                        break
+                    try:
+                        cur.rmdir()
+                    except OSError:
+                        break
+                    cur = cur.parent
+            except Exception as e:
+                eprint(f"warning: harness session cleanup failed for {key}: {e}")
+    except Exception as e:
+        eprint(f"warning: harness session cleanup failed for {key}: {e}")
+
+
 def _teardown_local(key: str, branch: str, repo_str: str, worktree_path: str = "") -> None:
     """Remove the worktree dir + git worktree entry + local branch (best effort, never raises)."""
     from . import cli as _cli
@@ -118,6 +189,7 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
                          "status": "skipped:prodtest-pending"})
             continue
         _teardown_local(key, branch, repo, worktree_path)
+        _remove_harness_sessions(key)
         rows.append({"key": key, "branch": branch, "status": "purged"})
     return rows
 
@@ -126,7 +198,8 @@ def destroy_deleted(keys: list[str], dry_run: bool = False) -> list[dict]:
     """Permanently destroy soft-deleted rows: worktree dir + branches + row.
 
     Tears down surviving local state: git-wt cleanup (worktree dir), local
-    branch delete, then row drop. Sessions/runs CASCADE with the row.
+    branch delete, then row drop. Sessions/runs CASCADE with the row and
+    the harness transcript folders/sessions are deleted from disk.
     Remote branches are NOT touched. Returns per-key status dicts.
     Keys blocked by a pending/running prodtest item are refused with
     `skipped:prodtest-pending`. Never raises for unknown keys.
@@ -151,6 +224,8 @@ def destroy_deleted(keys: list[str], dry_run: bool = False) -> list[dict]:
             rows.append({"key": key, "branch": branch, "status": "destroy-dry-run"})
             continue
         _teardown_local(key, branch, repo, worktree_path)
+        _remove_harness_sessions(key)
         store.delete_worktree_row(key)
         rows.append({"key": key, "branch": branch, "status": "destroyed"})
     return rows
+

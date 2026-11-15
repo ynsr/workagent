@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
@@ -19,6 +19,8 @@ import { DeactivatedTable } from "@/components/DeactivatedTable"
 import { DeletedTable } from "@/components/DeletedTable"
 import { PageHeader } from "@/components/PageHeader"
 import { StatusTable } from "@/components/StatusTable"
+import { WorktreeFilterForm } from "@/components/WorktreeFilterForm"
+import type { IssueFilter, PrStatusFilter, WorktreeFilterState } from "@/lib/worktreeFilter"
 import {
   EmptyState,
   ErrorState,
@@ -100,14 +102,28 @@ export function Dashboard() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [deletedSel, setDeletedSel] = useState<Set<string>>(new Set())
   const selCount = selected.size
-  // Prune keys that vanish from the table (cleanup/deactivation).
-  useEffect(() => {
-    if (worktrees && [...selected].some((k) => !(k in worktrees))) {
-      setSelected(new Set([...selected].filter((k) => k in (worktrees ?? {}))))
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [worktrees])
-  /** Scope label + confirm Scope detail for the four bulk buttons. */
+  // Shared worktree filter (issue #102): one form above the tables drives
+  // StatusTable + DeletedTable + DeactivatedTable. URL-backed (?q, ?q_pr,
+  // ?q_issue, ?q_author) so refresh/share preserves the operator's filter.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const sharedFilter: WorktreeFilterState = {
+    q: searchParams.get("q") ?? "",
+    pr: (searchParams.get("q_pr") ?? "") as PrStatusFilter,
+    issue: (searchParams.get("q_issue") ?? "") as IssueFilter,
+    author: searchParams.get("q_author") ?? "",
+  }
+  function setSharedFilter(next: WorktreeFilterState) {
+    const p = new URLSearchParams(searchParams)
+    if (next.q.trim()) p.set("q", next.q.trim())
+    else p.delete("q")
+    if (next.pr) p.set("q_pr", next.pr)
+    else p.delete("q_pr")
+    if (next.issue) p.set("q_issue", next.issue)
+    else p.delete("q_issue")
+    if (next.author.trim()) p.set("q_author", next.author.trim())
+    else p.delete("q_author")
+    setSearchParams(p, { replace: true })
+  }
   function scopeLabel(verb: string): string {
     return selCount > 0 ? `${verb} (${selCount})` : `${verb} all`
   }
@@ -659,6 +675,12 @@ export function Dashboard() {
               </span>
             </p>
           ) : null}
+          <WorktreeFilterForm
+            filter={sharedFilter}
+            onChange={setSharedFilter}
+            worktrees={{ ...(worktrees ?? {}), ...(inactiveAll ?? {}), ...(deletedAll ?? {}) }}
+            idPrefix="dashboard"
+          />
           <StatusTable
             worktrees={worktrees}
             actions={tableActions}
@@ -666,6 +688,7 @@ export function Dashboard() {
             networkExposed={info?.network_exposed ?? false}
             repoTabs={repos ? { ...repoTabs, repos } : undefined}
             selection={{ selected, onSelectionChange: setSelected }}
+            embed={{ externalFilter: sharedFilter, onExternalFilterChange: setSharedFilter, filterParam: null }}
           />
         </div>
       )}
@@ -675,6 +698,7 @@ export function Dashboard() {
             ([k, e]) => !(k in (worktrees ?? {})) && !e.deleted_at,
           ),
         )}
+        filter={sharedFilter}
         actions={{
           onOpenWorktree: handleOpenWorktree,
           onOpenRun: handleOpenRun,
@@ -686,6 +710,7 @@ export function Dashboard() {
           Object.entries(deletedAll ?? {}).filter(([, e]) => !!e.deleted_at),
         )}
         repos={repos}
+        filter={sharedFilter}
         onDestroyDeleted={handleDestroyDeletedMany}
         selection={{ selected: deletedSel, onSelectionChange: setDeletedSel }}
         actions={{

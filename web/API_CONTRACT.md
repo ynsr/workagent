@@ -190,14 +190,16 @@ no launch-time override. `--message-id` accepts a Mattermost permalink for
 `resolve_message` lookups and is normalized to the bare id on write; `message
 add --fetch --message-id <permalink> --repo R` fetches sender/content/ts/
 thread via `mm` so the Register button needs only a permalink + repo.
-Unregistered `message adhoc/validate` and `message action run` /
+Unregistered `message adhoc/validate/draft-reply` and `message action run` /
 `message flow run` refs auto-register via the same `mm` fetch (single repo,
 or the `--ref` worktree's repo when several repos exist — otherwise exit 2
 naming `--repo` candidates). Runs keep a single `--repo` pin; the web repo
 pin is singular (no fan-out). The detail endpoint 404s on unknown ref
-(ambiguous substring → 404). `message adhoc/validate` and `message action
-run` / `message flow run` run via `POST /api/runs` with target key
-`message:<ref>` live run per (subcommand, message).)
+(ambiguous substring → 404). `message adhoc/validate/draft-reply` and
+`message action run` / `message flow run` run via `POST /api/runs` with target
+key `message:<ref>` (draft-reply: `message:<ref>`; skills mm-reply-drafter +
+persian-chat-generator: facts-only, never sends, ZWNJ-free ≤160-char draft)
+live run per (subcommand, message).)
 
 ### `GET /api/default-repo?ref=…`
 Issue #26: repo default for Launch (never the serve CWD). Returns the
@@ -362,8 +364,9 @@ Request:
   (FlowWizard/ChainEditor checkbox).
 - `link destroy-deleted [REF] [--all] [--dry-run] [--json]`: permanently destroys
   soft-deleted rows INCLUDING surviving local state — worktree dir teardown,
-  local branch delete, then row drop (sessions/runs CASCADE). Remote
-  branches are NOT touched. Single-ref or `--all`; missing `--repo` scoping
+  local branch delete, AI harness transcript folders/sessions deleted from
+  disk, then row drop (sessions/runs CASCADE). Remote branches are NOT
+  touched. `link remove --hard-delete` purges the same harness sessions. Single-ref or `--all`; missing `--repo` scoping
   by design. The Dashboard Deleted table runs it per-row (trash icon) and
   per-selection (Destroy (N) button) with the same irreversible confirm.
 
@@ -382,6 +385,9 @@ worktree ref as accelerator); `prodtest list` / `prodtest status <ref>` are
 read endpoints for the pages below. `prodtest run --all` runs every
 released/stored plan sequentially in-process
 (dry-run rows / `skipped:<reason>` / continue-past-failure).
+`prodtest delete <ref> [--json]` drops one prodtest row; `prodtest cleanup
+[--yes] [--dry-run] [--json]` drops every `passed` row (Prodtests page
+per-row Delete + Cleanup-passed buttons; requires `--yes` non-TTY).
 
 ### Prodtests pages (issue #50: decoupled from worktree dev flow)
 `GET /api/prodtests` → `{"prodtests": [...]}` newest first (Prodtests page

@@ -69,4 +69,69 @@ def prodtest_status(
         print(json.dumps(row, indent=2, ensure_ascii=False))
         return
     from .cli_core import _print_result
-    _print_result(row, False)
+
+@prodtest_app.command("delete")
+@_catch_harness_errors
+def prodtest_delete(
+    ref: str = typer.Argument(..., help="Issue ref or worktree ref (key/branch/path)."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Delete one prodtest item row."""
+    from .cli_prodtest import _prodtest_key_for_status as _key_for
+    store_key = _key_for(ref)
+    try:
+        deleted = store.delete_prodtest(store_key)
+    except Exception as e:
+        _fail(f"prodtest delete failed: {e}", 1)
+    if not deleted:
+        _fail(f"no prodtest item for {store_key}", 2)
+    from .cli_core import _print_result
+    _print_result({"deleted": store_key}, json_output)
+
+
+@prodtest_app.command("cleanup")
+@_catch_harness_errors
+def prodtest_cleanup(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    yes: bool = typer.Option(False, "--yes", help="Delete without prompting (required non-TTY)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List rows that would be deleted without acting."),
+) -> None:
+    """Delete every prodtest item whose status is `passed`."""
+    import sys as _sys
+    try:
+        items = store.list_prodtests()
+    except Exception as e:
+        _fail(f"prodtest cleanup failed: {e}", 1)
+    targets = [str(i.get("issue_key", "") or "") for i in (items or [])
+               if isinstance(i, dict) and i.get("status") == "passed"
+               and str(i.get("issue_key", "") or "")]
+    if dry_run:
+        rows = [{"issue": k, "status": "cleanup-dry-run"} for k in sorted(targets)]
+        if json_output:
+            print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
+            return
+        _print_rows(rows, json_output=False, csv_output=False,
+                    columns=["issue", "status"],
+                    title="Prodtest cleanup", empty="no passed prodtest items")
+        return
+    if not targets:
+        _print_rows([], json_output=False, csv_output=False,
+                    columns=["issue", "status"],
+                    title="Prodtest cleanup", empty="no passed prodtest items")
+        return
+    if not yes and not _sys.stdin.isatty():
+        _fail("prodtest cleanup requires --yes (non-interactive); add --dry-run to preview.", 2)
+    rows: list[dict] = []
+    for key in sorted(targets):
+        try:
+            store.delete_prodtest(key)
+        except Exception as e:
+            rows.append({"issue": key, "status": f"failed: {e}"})
+            continue
+        rows.append({"issue": key, "status": "deleted"})
+    if json_output:
+        print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
+        return
+    _print_rows(rows, json_output=False, csv_output=False,
+                columns=["issue", "status"],
+                title="Prodtest cleanup", empty="no passed prodtest items")

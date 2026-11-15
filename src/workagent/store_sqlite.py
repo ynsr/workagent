@@ -1381,6 +1381,16 @@ def set_prodtest_status(path: Path, key: str, status: str) -> dict:
             raise ValueError(f"no prodtest item for {key}")
     return get_prodtest(path, key)
 
+def delete_prodtest(path: Path, key: str) -> bool:
+    """Delete one prodtest item row; True when a row existed."""
+    if not Path(path).exists():
+        return False
+    with connect(path) as conn:
+        cur = conn.execute(
+            "DELETE FROM prodtest_items WHERE issue_key = ?", (key,))
+        return cur.rowcount > 0
+
+
 def list_prodtests(path: Path) -> list[dict]:
     """All prodtest item rows ordered by updated_at desc (empty on no DB)."""
     import sqlite3 as _s3

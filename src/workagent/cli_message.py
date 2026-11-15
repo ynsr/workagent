@@ -303,6 +303,34 @@ def _run_prompt(msg: dict, prompt: str, ref_opt: str, repo_opt: str, launch: boo
     _print_result({"message": msg.get("message_id"), "workdir": workdir,
                    "key": key, "mode": mode}, json_output)
 
+@message_app.command("draft-reply")
+@_catch_harness_errors
+def message_draft_reply(
+    msg: str = typer.Argument(..., help="Message id/message_id/thread/permalink."),
+    ref: str = typer.Option("", "--ref", help="Worktree ref (wins over repos[])."),
+    repo: str = typer.Option("", "--repo", help="Pin one repo for multi-repo messages."),
+    launch: bool = typer.Option(False, "--launch", help="Run headless (default: preview)."),
+    terminal: bool = typer.Option(False, "--terminal", help="Run in OS terminal (XOR --launch)."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured)."),
+    extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions."),
+    env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before commands."),
+    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Draft a Persian coworker-voice reply to one message via the harness agent.
+
+    Applies the `mm-reply-drafter` + `persian-chat-generator` skill prompts:
+    facts-only, ZWNJ-free colloquial Persian, ≤160 chars, output-only draft.
+    NEVER sends — the harness drafts; the operator reviews/sends via `mm`.
+    """
+    row = _resolve_or_fetch(msg, repo, ref)
+    from .message_draft_reply_prompt import DRAFT_REPLY_PROMPT
+    _run_prompt(row, DRAFT_REPLY_PROMPT, ref, repo, launch, terminal, harness, extra_prompt,
+                env_file, session_file, dry_run, yes, json_output)
+
+
 @message_app.command("adhoc")
 @_catch_harness_errors
 def message_adhoc(

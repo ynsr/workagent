@@ -167,23 +167,51 @@ export function Prodtests() {
       toast.error(errorText(err))
     }
   }
-  async function handleRunAll() {
+  async function handleDelete(issue: string) {
     const ok = await confirm({
       action: "prodtest",
-      title: "Run all prodtests",
-      description:
-        "Runs every stored prodtest plan with a recorded release (non-TTY), sequentially in-process, continuing past per-key failures.",
+      title: `Delete prodtest for ${issue}`,
+      description: "Drops the stored prodtest item row (plan results stay on disk).",
       destructive: true,
-      confirmLabel: "Run all prodtests",
+      confirmLabel: `Delete ${issue}`,
     })
     if (!ok) return
     try {
       const { run_id } = await createRun.mutateAsync({
         command: "prodtest",
-        args: ["run", "--all"],
+        args: ["delete", issue],
         confirm: true,
       })
-      toast.success("Prodtest run-all started", {
+      toast.success(`Delete ${issue} started`, {
+        action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+      void refetch()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  async function handleCleanupPassed() {
+    const passed = rows.filter((r) => r.status === "passed").length
+    if (passed === 0) {
+      toast.info("No passed prodtests to clean up")
+      return
+    }
+    const ok = await confirm({
+      action: "prodtest",
+      title: `Delete ${passed} passed prodtest${passed === 1 ? "" : "s"}`,
+      description: "Drops every prodtest item whose status is passed.",
+      destructive: true,
+      confirmLabel: `Delete ${passed} passed`,
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "prodtest",
+        args: ["cleanup", "--yes"],
+        confirm: true,
+      })
+      toast.success("Prodtest cleanup started", {
         action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
       })
       void refetch()
@@ -214,11 +242,18 @@ export function Prodtests() {
             >
               Run all prodtests
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleCleanupPassed()}
+              title="Deletes every prodtest item whose status is passed (prodtest cleanup --yes)"
+            >
+              Cleanup passed
+            </Button>
             <Button variant="outline" size="sm" onClick={() => navigate("/prodtest-launch")}>
               New prodtest
             </Button>
           </>
-        }
       />
 
       <Card className="mb-4">
@@ -292,15 +327,16 @@ export function Prodtests() {
                       {r.updated_at ? relativeDate(r.updated_at) : "—"}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => void handlePlan(r.issue_key)}>
-                          Plan
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => void handleRun(r.issue_key)}>
-                          Run
-                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => navigate(`/prodtest-launch?ref=${encodeURIComponent(r.issue_key)}`)}>
                           Open
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void handleDelete(r.issue_key)}
+                          title={`Delete prodtest item ${r.issue_key}`}
+                        >
+                          Delete
                         </Button>
                       </div>
                     </TableCell>

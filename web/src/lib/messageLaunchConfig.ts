@@ -30,11 +30,12 @@ export function isRegisteredMessageRef(ref: string, registeredIds: Iterable<stri
 
 /** Tabs on the Message Launch page — mirrors the agent operations
  * in MessageRowActions (Delete stays row-only on the Messages page). */
-export type MessageLaunchMode = "adhoc" | "validate" | "action" | "flow"
+export type MessageLaunchMode = "adhoc" | "validate" | "draft-reply" | "action" | "flow"
 
 export const MESSAGE_LAUNCH_MODES: readonly MessageLaunchMode[] = [
   "adhoc",
   "validate",
+  "draft-reply",
   "action",
   "flow",
 ]
@@ -42,6 +43,7 @@ export const MESSAGE_LAUNCH_MODES: readonly MessageLaunchMode[] = [
 export const MESSAGE_LAUNCH_LABELS: Record<MessageLaunchMode, string> = {
   adhoc: "Adhoc",
   validate: "Validate claimed issues",
+  "draft-reply": "Draft reply",
   action: "Run action",
   flow: "Run flow",
 }
@@ -103,6 +105,11 @@ export function buildMessageArgs(
       const args = ["adhoc", ref]
       const prompt = (form.prompt ?? "").trim()
       if (prompt) args.push("--prompt", prompt)
+      args.push(...extra, ...messageRunModeArgs(form.runMode ?? "headless"), "--yes")
+      return args
+    }
+    case "draft-reply": {
+      const args = ["draft-reply", ref]
       args.push(...extra, ...messageRunModeArgs(form.runMode ?? "headless"), "--yes")
       return args
     }
