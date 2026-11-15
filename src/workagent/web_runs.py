@@ -93,6 +93,7 @@ def _precreate_run_row(run: Run) -> None:
         with run.lock:
             run.db_run_id = rid
             run.db_worktree_ref = ref or ""
+            run.session_type = stype
     except Exception as e:
         print(f"[web] run precreate failed: {e}", file=sys.stderr, flush=True)
 
@@ -283,6 +284,7 @@ class Run:
     created: float = field(default_factory=time.time)
     lock: threading.RLock = field(default_factory=threading.RLock)
     session_file: str = ""
+    session_type: str | None = None
     worktree: str = ""
     run_dir: str = ""
     db_run_id: int = 0
@@ -354,6 +356,7 @@ def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
                            "truncated": run.truncated,
                            "created": run.created, "target": run.target,
                            "session_file": run.session_file,
+                           "session_type": run.session_type,
                            "worktree": worktree,
                            "last_seq": run.last_seq}
     if lines is not None:
@@ -431,6 +434,7 @@ def _persisted_summary(row: dict) -> dict:
             "exit_code": exit_code, "truncated": bool(row.get("truncated")),
             "created": created, "target": target,
             "session_file": session_file, "worktree": worktree,
+            "session_type": row.get("session_type"),
             "last_seq": max((ln["seq"] for ln in _persisted_lines(row)), default=-1) + 1,
             "validation": row.get("validation") if isinstance(row.get("validation"), dict) else {}}
 def _persisted_row(run_id: str) -> dict | None:
