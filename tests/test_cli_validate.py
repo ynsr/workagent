@@ -273,11 +273,10 @@ def test_runs_validation_column_roundtrip(isolated_config, monkeypatch):
         conn.execute(
             "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
             " VALUES (?, ?, ?, NULL, '2026-01-01', '{}')", ("k", "/tmp/wt", "b"))
-    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
-                            initiator_command="start", prompt="p",
-                            file_path="/tmp/x.jsonl",
-                            session_id="test-sid")
-    rid = sq.insert_run(db, sid, "start", ["k"], 0, output=["hi"],
+    rid = sq.insert_run(db, "start", ["k"], 0, worktree_ref="k",
+                        harness_name="omp", initiator_command="start",
+                        prompt="p", file_path="/tmp/x.jsonl",
+                        output=["hi"],
                         validation={"attempt": 1, "verdict": "JOB_DONE"})
     rows = sq.list_runs(db)
     row = next(r for r in rows if r["id"] == rid)
@@ -362,7 +361,8 @@ def test_headless_retry_resumes_and_judge_is_fresh(monkeypatch, tmp_path, isolat
     assert "--resume" in calls[2] and calls[2][-1] == result["session_file"]
     assert "--session-dir" in calls[1] and "--session-dir" in calls[3]
     assert calls[1][-1] != calls[3][-1]
-    assert [row["validation"]["attempt"] for row in sq.list_runs(db)] == [2, 1]
+    attempts = [r for r in sq.list_runs(db) if r["validation"]]
+    assert [row["validation"]["attempt"] for row in attempts] == [2, 1]
 
 
 def test_dirty_continuation_crash_never_judges(monkeypatch):
@@ -436,7 +436,8 @@ def test_dirty_continuation_pairs_db_rows(monkeypatch, tmp_path, isolated_config
     result = {"command": "start", "branch": "b", "key": "k"}
     hh._run_harness("omp", "do it", str(tmp_path), str(tmp_path), True, True,
                     result, True, run_key="k")
-    rows = sorted(sq.list_runs(db), key=lambda r: r["id"])
+    rows = sorted((r for r in sq.list_runs(db) if r["validation"]),
+                  key=lambda r: r["id"])
     assert len(main_calls) == 1 and len(judge_calls) == 0
     assert len(rows) == 2
     assert rows[0]["output"].endswith("work in progress")
@@ -460,7 +461,8 @@ def test_crashed_continuation_never_judges_db(monkeypatch, tmp_path, isolated_co
                         result, True, run_key="k")
     assert exc.value.exit_code == 1
     assert judge_calls == []
-    rows = sorted(sq.list_runs(db), key=lambda r: r["id"])
+    rows = sorted((r for r in sq.list_runs(db) if r["validation"]),
+                  key=lambda r: r["id"])
     assert rows and rows[-1]["validation"]["terminal"] == "MAX_RETRIES_EXCEEDED"
     assert all(r["validation"]["phase"] != "judge" for r in rows)
     assert rows[-1]["exit_code"] == 1
@@ -558,24 +560,24 @@ def test_attempts_persist_across_calls(monkeypatch):
     from workagent import cli_validate as cv
     saved = {}
     monkeypatch.setattr(cv, "_attempt_store", lambda: (
-        lambda db, sid, include_deleted_worktrees=False: {
-            "metadata": {"validation_attempts": saved.get(sid, 0)}},
-        lambda db, sid, patch: saved.update({sid: patch["validation_attempts"]})
+        lambda db, rid, include_deleted_worktrees=False: {
+            "metadata": {"validation_attempts": saved.get(rid, 0)}},
+        lambda db, rid, patch: saved.update({rid: patch["validation_attempts"]})
         or patch))
     _pass_gates(monkeypatch)
     first = cv.validate_headless(
         worktree="/wt", branch="b", prompt="do it", session_type="sync",
         run_once=lambda p: {"exit_code": 0, "transcript": "broken"},
         run_judge=lambda p: "nope\nINCOMPLETE_OR_FAILED_JOB",
-        max_retries=0, session_db="db", session_id="s1")
-    assert first["attempts"] == 1 and saved["s1"] == 1
+        max_retries=0, run_db="db", run_id=1)
+    assert first["attempts"] == 1 and saved[1] == 1
     second = cv.validate_headless(
         worktree="/wt", branch="b", prompt="do it", session_type="sync",
         run_once=lambda p: {"exit_code": 0, "transcript": "fixed\nJOB_DONE"},
         run_judge=lambda p: "ok\nJOB_DONE",
-        max_retries=3, session_db="db", session_id="s1")
+        max_retries=3, run_db="db", run_id=1)
     # Prior counter (1) is preserved: the resumed loop continues at 2.
-    assert second["attempts"] == 2 and saved["s1"] == 2
+    assert second["attempts"] == 2 and saved[1] == 2
 
 
 def test_suffix_carries_intentional_token():

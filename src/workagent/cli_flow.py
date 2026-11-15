@@ -354,9 +354,9 @@ def _run_repo_command(repo_name: str, phase: str, command: str, cwd: str) -> Non
     _steps.run_repo_command(repo_name, phase, command, cwd)
 
 
-def _tag_flow_session(key: str, flow_id: int) -> None:
-    """Best-effort: stamp flow_id into the step's newest session metadata."""
-    _steps.tag_flow_session(key, flow_id)
+def _tag_flow_run(key: str, flow_id: int) -> None:
+    """Best-effort: stamp flow_id onto the step's newest run."""
+    _steps.tag_flow_run(key, flow_id)
 
 
 def _find_resumable(template_label: str, ref: str, key: str):

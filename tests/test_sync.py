@@ -455,11 +455,10 @@ def test_sync_local_merge_pushes_automatically(isolated_config, tmp_path,
                      " VALUES ('jira:IPG-929', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
     r = cli_test_invoke("sync", "IPG-929", "--merge", "--yes", "--json")
     assert r.exit_code == 0
-    rows = sq.list_sessions(db)
+    rows = sq.list_runs(db)
     assert len(rows) == 1 and rows[0]["state"] == "preview"
     assert rows[0]["session_type"] == "sync"
-    runs = sq.list_runs(db)
-    assert len(runs) == 1 and runs[0]["command"] == "sync"
+    assert rows[0]["command"] == "sync"
 
 
 def cli_test_invoke(*args):

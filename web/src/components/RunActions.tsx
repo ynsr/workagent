@@ -6,7 +6,7 @@ import { Copy, SquareTerminal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { errorText } from "@/components/StatusFeedback"
 import { copyToClipboard, resumeCommand } from "@/lib/format"
-import { queryKeys, useCreateRun, useResumeRun, useResumeSession } from "@/lib/queries"
+import { queryKeys, useCreateRun, useResumeRun } from "@/lib/queries"
 import type { RunCommand } from "@/lib/api"
 import type { ConfirmDetailRow } from "@/lib/confirm"
 import type { OptOutAction } from "@/lib/settings"
@@ -29,43 +29,38 @@ export function useCopyFeedback(timeoutMs = 1200) {
   return { copied, copy }
 }
 
-/** Resume-in-terminal + copy-resume-command buttons (shared by the Runs page
- * icon variant and the RunDetail/Sessions outline variant). Exactly one of
- * `runId` (live run resume) or `sessionId` (persisted session resume) applies.
- */
-export function SessionResumeActions({
+/** Resume-in-terminal + copy-resume-command buttons for a run that owns a
+ * transcript (shared by the Runs table icon variant and the RunDetail
+ * outline variant). */
+export function RunResumeActions({
   runId,
-  sessionId,
   worktree,
   sessionFile,
-  transcript = "ready",
+  transcriptReady,
   variant = "icon",
 }: {
-  runId?: string
-  sessionId?: string
+  runId: string
   worktree: string
   sessionFile: string
-  /** "missing" when the backend reports no resumable transcript (detail view). */
-  transcript?: string
+  /** Backend readiness: the stored path is a non-empty .jsonl on disk. */
+  transcriptReady: boolean
   variant?: "icon" | "outline"
 }) {
   const resumeRun = useResumeRun()
-  const resumeSession = useResumeSession()
-  const label = runId ? `run ${runId}` : `session ${sessionId}`
-  // Copy button mirrors the backend rule: --resume only for a known-good
-  // transcript, else fresh via --session-dir (omp v18+ rejects --resume
-  // on missing/empty files). Row lists assume ready; the detail view
-  // passes transcript="missing" through.
-  const cmd = resumeCommand(worktree, sessionFile, transcript !== "missing")
+  const label = `run ${runId}`
+  // The backend owns transcript creation/readiness: resume resolves the
+  // minted .jsonl itself (409/404 otherwise), while the copy button must
+  // never emit `omp --resume` on a `--session-dir` scope hint.
+  const cmd = resumeCommand(worktree, sessionFile)
   const icon = variant === "icon"
-  const resumePending = resumeRun.isPending || resumeSession.isPending
+  const resumePending = resumeRun.isPending
   const canResume = Boolean(!resumePending && worktree && sessionFile)
+  const canCopy = Boolean(canResume && transcriptReady)
   const resume = (e: React.MouseEvent) => {
     if (icon) e.preventDefault()
-    const done = () => toast.success("Terminal opened on the session")
+    const done = () => toast.success("Terminal opened on the transcript")
     const fail = (err: unknown) => toast.error(errorText(err))
-    if (runId) void resumeRun.mutateAsync(runId).then(done).catch(fail)
-    else if (sessionId) void resumeSession.mutateAsync(sessionId).then(done).catch(fail)
+    void resumeRun.mutateAsync(runId).then(done).catch(fail)
   }
   const copy = (e: React.MouseEvent) => {
     if (icon) e.preventDefault()
@@ -74,11 +69,11 @@ export function SessionResumeActions({
       .catch((err: unknown) => toast.error(errorText(err)))
   }
   return (
-    <div className="inline-flex items-stretch" role="group" aria-label={`Resume ${label}`}>
+    <div className="inline-flex items-stretch" role="group" aria-label={`Resume transcript of ${label}`}>
       <Button
         variant={icon ? "ghost" : "outline"}
         size={icon ? "icon" : "sm"}
-        aria-label={`Resume session for ${label} in terminal`}
+        aria-label={`Resume transcript of ${label} in terminal`}
         title={cmd || `Resume ${label} in terminal (nothing to resume yet)`}
         disabled={!canResume}
         onClick={resume}
@@ -90,8 +85,8 @@ export function SessionResumeActions({
         variant={icon ? "ghost" : "outline"}
         size={icon ? "icon" : "sm"}
         aria-label={`Copy resume command for ${label}`}
-        title={cmd || `Copy resume command for ${label} (nothing to copy yet)`}
-        disabled={!canResume}
+        title={canCopy ? cmd : `No transcript on disk for ${label} yet`}
+        disabled={!canCopy}
         onClick={copy}
         className={icon ? "size-9 rounded-l-none border-l-0 text-muted-foreground hover:text-foreground" : "rounded-l-none border-l-0"}
       >

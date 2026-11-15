@@ -1,6 +1,9 @@
-"""SQLite state: trackers, repos, worktrees, pr_cache, sessions, runs.
+"""SQLite state: trackers, repos, worktrees, pr_cache, runs.
 
-Stdlib sqlite3 repository (no ORM — see the sessions spec §7). One
+Stdlib sqlite3 repository (no ORM — storage contract in
+docs/superpowers/specs/2026-11-15-remove-session-entity-design.md; the
+sessions table it removes is described in the archived 2026-09-26
+session-type design). One
 state.db in config_dir() holds everything after the one-shot
 JSON→SQLite migration (migrate_json below).
 """
@@ -8,7 +11,9 @@ from __future__ import annotations
 
 import json
 import random
+import shutil
 import sqlite3
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,20 +46,22 @@ CREATE TABLE IF NOT EXISTS worktrees (
   UNIQUE (repo_key, branch));
 CREATE TABLE IF NOT EXISTS pr_cache (
   branch TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, checked_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS sessions (
-  id TEXT PRIMARY KEY NOT NULL, worktree_ref TEXT REFERENCES worktrees(ref_key) ON DELETE CASCADE,
-  state TEXT NOT NULL, harness_name TEXT NOT NULL DEFAULT '',
-  initiator_command TEXT NOT NULL DEFAULT '', prompt TEXT NOT NULL DEFAULT '',
-  file_path TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
-  session_type TEXT, metadata TEXT NOT NULL DEFAULT '{}',
-  flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL);
 CREATE TABLE IF NOT EXISTS runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   command TEXT NOT NULL, args TEXT NOT NULL,
   exit_code INTEGER, created_at TEXT NOT NULL,
   output TEXT NOT NULL DEFAULT '', truncated INTEGER NOT NULL DEFAULT 0,
   validation TEXT NOT NULL DEFAULT '{}',
-  flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL);
+  flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL,
+  worktree_ref TEXT NOT NULL DEFAULT '',
+  harness_name TEXT NOT NULL DEFAULT '',
+  initiator_command TEXT NOT NULL DEFAULT '',
+  prompt TEXT NOT NULL DEFAULT '',
+  file_path TEXT NOT NULL DEFAULT '',
+  session_type TEXT,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  state TEXT NOT NULL DEFAULT 'finished',
+  continued_from_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL);
 CREATE TABLE IF NOT EXISTS issue_cache (
   source TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL,
   fetched_at TEXT NOT NULL);
@@ -334,12 +341,12 @@ def _migrate_flow_template_lineage(conn) -> None:
         conn.execute("ALTER TABLE flows ADD COLUMN effective_steps TEXT NOT NULL DEFAULT ''")
 
 def _migrate_flow_linkage(conn) -> None:
-    """Schema v15: sessions/runs gain flow_id; sessions.worktree_ref nullable.
+    """Schema v15: runs gains flow_id (sessions carried it pre-fold).
 
-    flow_id is the query path (metadata.flow_id stays as history). NULL
-    worktree_ref = unattached flow row, exempt from the worktrees FK.
-    Idempotent: ADD COLUMN skipped when present; sessions rebuilt from the
-    canonical DDL only while worktree_ref is still NOT NULL.
+    flow_id is the query path (metadata.flow_id stays as history).
+    Idempotent: ADD COLUMN / backfill skip what is already present. The
+    sessions table is folded into runs and dropped by
+    migrate_sessions_into_runs (v16), so nothing rebuilds it here.
     """
     import json as _json
     info = list(conn.execute("PRAGMA table_info(sessions)"))
@@ -351,31 +358,7 @@ def _migrate_flow_linkage(conn) -> None:
     rcols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
     if rcols and "flow_id" not in rcols:
         conn.execute("ALTER TABLE runs ADD COLUMN flow_id INTEGER REFERENCES flows(id) ON DELETE SET NULL")
-    wr = next((r for r in info if r[1] == "worktree_ref"), None)
-    if wr is not None and wr[3] == 1 and wr[4] is None:
-        if conn.in_transaction:
-            conn.commit()
-        was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
-        if was_on:
-            conn.execute("PRAGMA foreign_keys = OFF")
-        try:
-            ddl = _canonical_ddl()["sessions"]
-            conn.execute('DROP TABLE IF EXISTS "sessions_rebuild"')
-            conn.execute(ddl.replace("CREATE TABLE sessions", 'CREATE TABLE "sessions_rebuild"', 1))
-            new_cols = {r[1] for r in conn.execute('PRAGMA table_info("sessions_rebuild")')}
-            old_cols = [r[1] for r in info if r[1] in new_cols]
-            select = ", ".join(
-                "NULLIF(\"%s\", '')" % c if c == "worktree_ref" else '"%s"' % c
-                for c in old_cols)
-            columns = ", ".join('"%s"' % c for c in old_cols)
-            conn.execute(f'INSERT INTO "sessions_rebuild" ({columns}) SELECT {select} FROM "sessions"')
-            conn.execute('DROP TABLE "sessions"')
-            conn.execute('ALTER TABLE "sessions_rebuild" RENAME TO "sessions"')
-            if conn.in_transaction:
-                conn.commit()
-        finally:
-            if was_on:
-                conn.execute("PRAGMA foreign_keys = ON")
+
     # Backfill flow_id from metadata.flow_id (integer ids of live flows only).
     try:
         live = {r[0] for r in conn.execute("SELECT id FROM flows")}
@@ -395,55 +378,8 @@ def _migrate_flow_linkage(conn) -> None:
     except Exception:
         pass
 
-def _migrate_sessions_no_fk(conn) -> None:
-    """Schema v14: sessions.worktree_ref restores the worktrees FK (CASCADE).
-
-    Only worktree-attached sessions/runs persist: unattached attempts are
-    never written (callers skip when no linked worktree exists), dangling
-    refs from the FK-less window are purged, and hard-delete cascades
-    again via the FK. Rebuilds the table from the canonical DDL when the
-    FK is missing. NULL worktree_ref rows (flow-owned, v15) are exempt.
-    Idempotent: skipped once the FK exists.
-    """
-    info = list(conn.execute("PRAGMA table_info(sessions)"))
-    if not info:
-        return
-    fk = [r for r in conn.execute("PRAGMA foreign_key_list(sessions)")
-          if r[2] == "worktrees"]
-    if fk:
-        return
-    if conn.in_transaction:
-        conn.commit()
-    was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
-    if was_on:
-        conn.execute("PRAGMA foreign_keys = OFF")
-    try:
-        ddl = _canonical_ddl()["sessions"]
-        conn.execute('DROP TABLE IF EXISTS "sessions_rebuild"')
-        conn.execute(ddl.replace("CREATE TABLE sessions", 'CREATE TABLE "sessions_rebuild"', 1))
-        new_cols = {r[1] for r in conn.execute('PRAGMA table_info("sessions_rebuild")')}
-        old_cols = [r[1] for r in info if r[1] in new_cols]
-        cols = ", ".join(f'"{c}"' for c in old_cols)
-        conn.execute(f'INSERT INTO "sessions_rebuild" ({cols}) SELECT {cols} FROM "sessions"')
-        conn.execute('DROP TABLE "sessions"')
-        conn.execute('ALTER TABLE "sessions_rebuild" RENAME TO "sessions"')
-        # FK-less window may have left dangling refs: purge rows whose
-        # worktree is gone (CASCADE could not fire for them). NULL-ref
-        # flow-owned rows are exempt (v15: no worktree attachment).
-        try:
-            conn.execute("DELETE FROM sessions WHERE worktree_ref IS NOT NULL AND worktree_ref != ''"
-                         " AND worktree_ref NOT IN (SELECT ref_key FROM worktrees)")
-        except Exception:
-            pass
-        if conn.in_transaction:
-            conn.commit()
-    finally:
-        if was_on:
-            conn.execute("PRAGMA foreign_keys = ON")
-
 def _migrate_sessions_harness(conn) -> None:
     """Schema v5: sessions.runtime_name → harness_name (the runtime→harness rename).
-
     Code writes ``harness_name`` but pre-rename DBs still carry
     ``runtime_name`` — every insert_session then fails with ``no such
     column`` and the run mirror silently skips (no session row, no runs
@@ -672,7 +608,6 @@ def _migrate_sessions_type(conn) -> None:
     subcommand), else the command's first word, else NULL (never guess).
     Idempotent: skips present columns; backfills only NULL-typed rows.
     """
-    from .store_sessions import _backfill_session_type
     cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
     if not cols:
         return
@@ -684,6 +619,697 @@ def _migrate_sessions_type(conn) -> None:
             "SELECT id, initiator_command, prompt FROM sessions WHERE session_type IS NULL"):
         conn.execute("UPDATE sessions SET session_type = ? WHERE id = ?",
                      (_backfill_session_type(cmd or "", prompt or ""), sid))
+
+
+#: Allowed transcript roots under config_dir(): v16 renamed sessions/ → runs/.
+RUNS_DIRNAME = "runs"
+LEGACY_SESSIONS_DIRNAME = "sessions"
+
+#: runs columns the v16 fold absorbs from sessions (name → ALTER DDL tail).
+_FOLD_COLS = (
+    ("worktree_ref", "TEXT NOT NULL DEFAULT ''"),
+    ("harness_name", "TEXT NOT NULL DEFAULT ''"),
+    ("initiator_command", "TEXT NOT NULL DEFAULT ''"),
+    ("prompt", "TEXT NOT NULL DEFAULT ''"),
+    ("file_path", "TEXT NOT NULL DEFAULT ''"),
+    ("session_type", "TEXT"),
+    ("metadata", "TEXT NOT NULL DEFAULT '{}'"),
+    ("state", "TEXT NOT NULL DEFAULT 'finished'"),
+    ("continued_from_run_id", "INTEGER REFERENCES runs(id) ON DELETE SET NULL"),
+)
+
+
+def _runs_seq(conn) -> int:
+    """High-water id ever issued for runs (0 when the sequence row is absent)."""
+    try:
+        row = conn.execute(
+            "SELECT seq FROM sqlite_sequence WHERE name = 'runs'").fetchone()
+    except sqlite3.OperationalError:
+        return 0
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+def _restore_runs_seq(conn, prior: int) -> None:
+    """Keep the runs sequence at/above *prior* and the copied max(id).
+
+    Rebuilding the table drops its sqlite_sequence entry, which resets the
+    high-water mark to the copied max(id): a previously issued (and since
+    deleted) id would be handed out again. *prior* is read before the
+    rebuild (_runs_seq) so no issued id is ever reused.
+    """
+    top = int(conn.execute(
+        "SELECT COALESCE(MAX(id), 0) FROM runs").fetchone()[0])
+    want = max(prior, top)
+    row = conn.execute(
+        "SELECT seq FROM sqlite_sequence WHERE name = 'runs'").fetchone()
+    if row is None:
+        conn.execute("INSERT INTO sqlite_sequence (name, seq) VALUES ('runs', ?)",
+                     (want,))
+    else:
+        conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?)"
+                     " WHERE name = 'runs'", (want,))
+
+
+def runs_dir(config_dir: Path | None = None) -> Path:
+    """Transcript root (``<config>/runs``), created on demand."""
+    from . import store as _store
+    base = (config_dir or _store.config_dir()) / RUNS_DIRNAME
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _transcript_alt(file_path: str, src: Path, dst: Path) -> str:
+    """*file_path* re-rooted from *src* onto *dst* ('' when not under src)."""
+    if not file_path:
+        return ""
+    try:
+        rel = Path(file_path).relative_to(src)
+    except ValueError:
+        return ""
+    return str(dst / rel)
+
+
+def resolve_transcript_path(file_path: str,
+                            config_dir: Path | None = None) -> Path | None:
+    """Stored transcript path → the readable file (runs/ first, sessions/ fallback).
+
+    v16 moved transcripts from ``sessions/`` to ``runs/`` and rewrote the
+    stored paths; a row that still names the old root (pre-migration DB,
+    restored backup, transcript that could not move) resolves through the
+    fallback instead of failing to resume. An empty stored path (runs carry
+    ``file_path DEFAULT ''``) resolves to None — never to the CWD.
+    """
+    if not file_path:
+        return None
+    stored = Path(file_path).expanduser()
+    if config_dir is None:
+        from . import store as _store
+        config_dir = _store.config_dir()
+    new_root = config_dir / RUNS_DIRNAME
+    old_root = config_dir / LEGACY_SESSIONS_DIRNAME
+    candidates = [stored]
+    for src, dst in ((old_root, new_root), (new_root, old_root)):
+        alt = _transcript_alt(str(stored), src, dst)
+        if alt:
+            candidates.append(Path(alt))
+    for cand in candidates:
+        if cand.exists():
+            return cand
+    return stored
+
+
+def _move_transcripts(src: Path, dst: Path) -> None:
+    """Merge the legacy transcript tree *src* into *dst* (never overwrites)."""
+    if not src.is_dir():
+        return
+    dst.mkdir(parents=True, exist_ok=True)
+    for child in list(src.iterdir()):
+        target = dst / child.name
+        if target.exists():
+            if child.is_dir() and target.is_dir():
+                _move_transcripts(child, target)
+            continue
+        shutil.move(str(child), str(target))
+    try:
+        src.rmdir()
+    except OSError:
+        pass
+
+
+def _rehome_transcripts(conn, config_dir: Path | None = None) -> None:
+    """Move ``sessions/`` → ``runs/`` and repoint stored paths (idempotent).
+
+    Runs on every init pass, not just the one that drops sessions: a crash
+    between the fold's commit and the tree move leaves rows naming the old
+    root. The stored path is rewritten to the ``runs/`` target
+    unconditionally — a not-yet-moved file still reads through
+    ``resolve_transcript_path``'s old-root fallback — and the next process
+    retries the move while ``sessions/`` exists.
+    """
+    if config_dir is None:
+        row = conn.execute("PRAGMA database_list").fetchone()
+        config_dir = Path(row[2]).parent if row and row[2] else None
+    if config_dir is None:
+        return
+    old_root = config_dir / LEGACY_SESSIONS_DIRNAME
+    new_root = config_dir / RUNS_DIRNAME
+    _move_transcripts(old_root, new_root)
+    for rid, fp in conn.execute(
+            "SELECT id, file_path FROM runs WHERE file_path != ''").fetchall():
+        moved = _transcript_alt(fp, old_root, new_root)
+        if moved:
+            conn.execute("UPDATE runs SET file_path = ? WHERE id = ?",
+                         (moved, rid))
+
+
+def migrate_sessions_into_runs(conn, config_dir: Path | None = None) -> bool:
+    """Schema v16: fold sessions into runs, drop the table, move transcripts.
+
+    Every run inherits its session's transcript identity (worktree_ref,
+    harness_name, initiator_command, prompt, file_path, session_type,
+    metadata, state) and the runs of one transcript form a chain through
+    continued_from_run_id (each later run points at the transcript's first
+    run) — that is how fix-continue stays resolvable without sessions.
+    Preview rows keep state='preview': they carry the single-line
+    ``harness command:`` banner, while a real execution adds the harness log
+    as a second line and keeps the session's finished|failed state. Then the
+    runs table is rebuilt without the sessions FK, the sessions table
+    dropped, and the on-disk tree moved ``sessions/`` → ``runs/`` with stored
+    paths rewritten (``_rehome_transcripts``, retried by every later init
+    pass). One-way: there is no down migration. A DB left
+    half-folded (sessions present, runs already rebuilt without
+    ``session_id``) still completes — its transcript linkage is
+    unrecoverable, so the fold drops sessions without joining on it.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+    if not cols:
+        return False
+    for name, decl in _FOLD_COLS:
+        if name not in cols:
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {name} {decl}")
+    if not list(conn.execute("PRAGMA table_info(sessions)")):
+        # Already folded: still retry a tree move a crash may have skipped.
+        _rehome_transcripts(conn, config_dir)
+        return False
+    # One-way migration: no down migration. The real mitigation is copying
+    # state.db + the transcript trees before upgrading (backup export only
+    # covers actions/flow templates). Notice on stderr only — stdout stays
+    # data-only.
+    print("note: folding sessions into runs (v16, one-way — no down"
+          " migration); copy state.db plus the runs/ and sessions/ trees"
+          " before upgrading to roll back", file=sys.stderr)
+    # A DB left half-folded by an intermediate build of this branch still
+    # has sessions but its runs table was already rebuilt without
+    # session_id (the pre-fold rebuild committed, then the fold raised).
+    # That linkage is unrecoverable, so the fold must still drop sessions —
+    # it just cannot join on the missing column.
+    if "session_id" in cols:
+        conn.execute(
+            "UPDATE runs SET"
+            " worktree_ref = COALESCE(s.worktree_ref, ''),"
+            " harness_name = COALESCE(s.harness_name, ''),"
+            " initiator_command = COALESCE(s.initiator_command, ''),"
+            " prompt = COALESCE(s.prompt, ''),"
+            " file_path = COALESCE(s.file_path, ''),"
+            " session_type = s.session_type,"
+            " metadata = COALESCE(s.metadata, '{}'),"
+            " state = COALESCE(s.state, 'finished')"
+            " FROM sessions s WHERE s.id = runs.session_id")
+    # Preview rows are the single-line ``harness command:`` banner (empty
+    # validation). Real executions store a second output line (the harness
+    # log / validation trace), so they keep the session's finished|failed
+    # state instead of being stamped preview.
+    conn.execute("UPDATE runs SET state = 'preview'"
+                 " WHERE output LIKE 'harness command:%'"
+                 " AND instr(output, char(10)) = 0")
+    if "session_id" in cols:
+        conn.execute(
+            "UPDATE runs SET continued_from_run_id ="
+            " (SELECT MIN(r2.id) FROM runs r2"
+            "  WHERE r2.session_id = runs.session_id)"
+            " WHERE id <> (SELECT MIN(r2.id) FROM runs r2"
+            "              WHERE r2.session_id = runs.session_id)")
+    if conn.in_transaction:
+        conn.commit()
+    was_on = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if was_on:
+        conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        prior_seq = _runs_seq(conn)
+        ddl = _canonical_ddl()["runs"]
+        conn.execute('DROP TABLE IF EXISTS "runs_rebuild"')
+        conn.execute(ddl.replace("CREATE TABLE runs", 'CREATE TABLE "runs_rebuild"', 1))
+        new_cols = {r[1] for r in conn.execute('PRAGMA table_info("runs_rebuild")')}
+        old_cols = [r[1] for r in conn.execute("PRAGMA table_info(runs)")
+                    if r[1] in new_cols]
+        names = ", ".join(f'"{c}"' for c in old_cols)
+        conn.execute(f'INSERT INTO "runs_rebuild" ({names}) SELECT {names} FROM runs')
+        conn.execute("DROP TABLE runs")
+        conn.execute('ALTER TABLE "runs_rebuild" RENAME TO runs')
+        # AUTOINCREMENT sequence: the rebuild reset it to the copied
+        # max(id); restore the pre-fold high-water mark so an id issued
+        # before the migration (and since deleted) is never handed out
+        # again to a stale reference.
+        _restore_runs_seq(conn, prior_seq)
+        conn.execute("DROP TABLE sessions")
+        if conn.in_transaction:
+            conn.commit()
+    finally:
+        if was_on:
+            conn.execute("PRAGMA foreign_keys = ON")
+    _rehome_transcripts(conn, config_dir)
+    return True
+
+#: Cap on persisted run output lines (mirrors the live buffer policy at a
+#: larger scale: enough log to diagnose, bounded DB growth).
+MAX_RUN_OUTPUT_LINES = 10000
+
+#: Allowed values for runs.session_type — an enum, never free text (NULL = unknown).
+SESSION_TYPES = ("start", "review", "sync", "fix_comments", "custom_action",
+                 "flow", "prodtest_plan", "prodtest_run")
+
+#: Allowed values for runs.state — the lifecycle of one execution row.
+RUN_STATES = ("running", "finished", "failed", "preview")
+
+#: Fix-comments prompt header — the only surviving discriminator for history
+#: rows (initiator_command carries the harness name, never the subcommand).
+_FIX_PROMPT_PREFIX = "Fix all open (not-resolved) review comments on this PR/MR:"
+
+
+def db_path(config_dir: Path | None = None) -> Path:
+    """State DB path under *config_dir* (default: store.config_dir())."""
+    from . import store as _store
+    base = config_dir or _store.config_dir()
+    return base / "state.db"
+
+
+def _slug_segment(segment: str) -> str:
+    """Slugify one path segment (branch parts stay nested, never flattened)."""
+    import re
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", (segment or "").lower()).strip("-")
+    return re.sub(r"-{2,}", "-", slug)
+
+
+def branch_path(branch: str) -> str:
+    """Branch name → nested path: `fix/a-b` stays `fix/a-b` (slugs per part).
+
+    Empty/blank → "". Segments that slug to "" are dropped; a branch of
+    only separators yields "".
+    """
+    parts = [p for p in (branch or "").split("/") if p.strip()]
+    slugged = [_slug_segment(p) for p in parts]
+    return "/".join(p for p in slugged if p)
+
+
+def branch_slug(branch: str) -> str:
+    """Normalize a git branch name to one path-safe segment.
+
+    `feature/new-feature` → `feature-new-feature` (same rule as
+    `refs.slugify_repo`, duplicated to avoid a store→refs import cycle).
+    Empty/blank → "".
+    """
+    return _slug_segment(branch)
+
+
+def gen_session_id(now: datetime | None = None) -> str:
+    """Transcript id (UTC timestamp + random suffix) for a harness launch."""
+    ts = (now or datetime.now(timezone.utc)).strftime(
+        "%Y-%m-%dT%H-%M-%S-%f")[:-3] + "Z"
+    return f"{ts}-{random.randint(1000, 9999):04d}"
+
+
+def derive_session_type(command: str, fix_comments: bool = False) -> str | None:
+    """Subcommand + flag → session_type. Unknown → None, never guess."""
+    c = (command or "").strip().lower()
+    if c == "review" and fix_comments:
+        return "fix_comments"
+    if c in ("start", "review", "sync", "flow"):
+        return c
+    if c in ("action", "adhoc"):
+        return "custom_action"
+    first_two = " ".join(c.split()[:2])
+    if first_two == "prodtest plan":
+        return "prodtest_plan"
+    if first_two == "prodtest run":
+        return "prodtest_run"
+    return None
+
+
+def _backfill_session_type(initiator_command: str, prompt: str) -> str | None:
+    """History backfill: prompt header first, then command starts-with."""
+    if (prompt or "").startswith(_FIX_PROMPT_PREFIX):
+        return "fix_comments"
+    first = (initiator_command or "").split(" ", 1)[0].strip().lower()
+    if first in ("start", "review", "sync", "flow"):
+        return first
+    if first == "action":
+        return "custom_action"
+    if "--fix-comments" in (initiator_command or ""):
+        return "fix_comments"
+    return None
+
+
+def session_file_path(session_id: str, harness_name: str,
+                      config_dir: Path | None = None,
+                      branch: str | None = None,
+                      session_type: str | None = None) -> Path:
+    """Transcript path for a harness launch under ``<config>/runs/…``.
+
+    Layout ``runs/<harness>/<branch path>/<kind>/<id>.jsonl``; the dir is
+    created so a ``--session-dir`` argument always points at a real tree.
+    """
+    from . import store as _store
+    base = (config_dir or _store.config_dir()) / RUNS_DIRNAME / harness_name
+    bpath = branch_path(branch or "")
+    if bpath:
+        base = base / bpath
+    stype = (session_type or "").strip().lower().replace("-", "_")
+    if stype in SESSION_TYPES:
+        base = base / stype
+    base.mkdir(parents=True, exist_ok=True)
+    return base / f"{session_id}.jsonl"
+
+
+def newest_transcript(session_dir: Path) -> Path | None:
+    """Newest .jsonl directly under *session_dir* (the harness-minted file).
+
+    None when the dir holds no transcripts yet. Never raises.
+    """
+    try:
+        files = [p for p in session_dir.iterdir()
+                 if p.is_file() and p.suffix == ".jsonl"]
+    except OSError:
+        return None
+    if not files:
+        return None
+    try:
+        return max(files, key=lambda p: p.stat().st_mtime_ns)
+    except OSError:
+        return None
+
+
+def _parse_json_dict(value: object) -> dict:
+    """JSON-object column → dict ({} on NULL/garbage/non-object)."""
+    try:
+        out = json.loads(value or "{}")  # type: ignore[arg-type]
+    except Exception:
+        return {}
+    return out if isinstance(out, dict) else {}
+
+
+def _run_dict(row: sqlite3.Row) -> dict:
+    """One runs row with its JSON columns parsed."""
+    out = dict(row)
+    try:
+        out["args"] = json.loads(out.get("args") or "[]")
+    except Exception:
+        out["args"] = []
+    for col in ("validation", "metadata"):
+        if col in out:
+            out[col] = _parse_json_dict(out.get(col))
+    return out
+
+
+def insert_run(path: Path, command: str, args: list[str],
+               exit_code: int | None = None, *,
+               worktree_ref: str | None = None,
+               harness_name: str = "", initiator_command: str = "",
+               prompt: str = "", file_path: str = "",
+               session_type: str | None = None,
+               metadata: dict | None = None,
+               state: str = "finished",
+               continued_from_run_id: int | None = None,
+               output: list[str] | None = None,
+               truncated: bool = False,
+               validation: dict | None = None,
+               flow_id: int | None = None) -> int:
+    """Insert one execution row; returns its id.
+
+    A run owns its transcript identity (``worktree_ref``, harness,
+    initiator command, prompt, ``file_path``, ``session_type``, metadata) —
+    the folded sessions entity lives here. ``session_type``/``state`` are
+    enums, never free text; an unknown value is rejected. ``worktree_ref``
+    stays '' only for rows with no worktree (pre-link attempts); web and
+    terminal runs pass the ref they were spawned for.
+
+    ``continued_from_run_id`` links a fix-continue row to the transcript's
+    first run. A row inserted without an explicit ``flow_id`` joins its
+    transcript's flow tagging (newest run of the same ``file_path``).
+    """
+    if session_type is not None and session_type not in SESSION_TYPES:
+        raise ValueError(f"session_type must be one of {', '.join(SESSION_TYPES)}"
+                         f" (got {session_type!r})")
+    if state not in RUN_STATES:
+        raise ValueError(f"state must be one of {', '.join(RUN_STATES)}"
+                         f" (got {state!r})")
+    init_db(path)
+    created = datetime.now(timezone.utc).isoformat()
+    out_lines = list(output or [])
+    lines = out_lines[-MAX_RUN_OUTPUT_LINES:]
+    truncated = bool(truncated) or len(out_lines) > len(lines)
+    names = ["command", "args", "exit_code", "created_at",
+             "output", "truncated", "validation", "worktree_ref",
+             "harness_name", "initiator_command", "prompt", "file_path",
+             "session_type", "metadata", "state", "continued_from_run_id"]
+    vals: list = [command, json.dumps(args), exit_code, created,
+                  "\n".join(lines), 1 if truncated else 0,
+                  json.dumps(validation or {}), worktree_ref or "",
+                  harness_name, initiator_command, prompt, file_path,
+                  session_type, json.dumps(metadata or {}), state,
+                  continued_from_run_id]
+    with connect(path) as conn:
+        if flow_id is not None:
+            names.append("flow_id")
+            vals.append(flow_id)
+        elif file_path:
+            row = conn.execute(
+                "SELECT flow_id FROM runs WHERE file_path = ?"
+                " AND flow_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+                (file_path,)).fetchone()
+            if row is not None and row[0] is not None:
+                names.append("flow_id")
+                vals.append(row[0])
+        cur = conn.execute(
+            f"INSERT INTO runs ({', '.join(names)})"
+            f" VALUES ({', '.join(['?'] * len(names))})", vals)
+        return cur.lastrowid
+
+
+def get_run(path: Path, run_id: int,
+            include_deleted_worktrees: bool = False) -> dict | None:
+    """One run row (JSON columns parsed); None when unknown."""
+    if not path.exists():
+        return None
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.* FROM runs r"
+             " LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref"
+             " WHERE r.id = ?")
+        if not include_deleted_worktrees:
+            q += " AND " + _NOT_DELETED
+        row = conn.execute(q, (run_id,)).fetchone()
+    return _run_dict(row) if row is not None else None
+
+
+def finish_run(path: Path, run_id: int, state: str) -> None:
+    """Set a run's terminal state (finished/failed/preview)."""
+    if state not in ("finished", "failed", "preview"):
+        raise ValueError(f"unknown run state: {state!r}")
+    with connect(path) as conn:
+        conn.execute("UPDATE runs SET state = ? WHERE id = ?", (state, run_id))
+
+
+def set_run_file_path(path: Path, run_id: int, file_path: str) -> None:
+    """Point a run at the harness-minted transcript (best effort).
+
+    omp mints its own filename under --session-dir, so the pre-launch
+    guessed path is only a scope hint. After a blocking launch returns the
+    real .jsonl is known — this records it. Never raises.
+    """
+    try:
+        with connect(path) as conn:
+            conn.execute("UPDATE runs SET file_path = ? WHERE id = ?",
+                         (file_path, run_id))
+    except Exception:
+        pass
+
+
+def set_run_metadata(path: Path, run_id: int, patch: dict) -> dict:
+    """Merge *patch* into the run's metadata JSON; return the merged dict."""
+    with connect(path) as conn:
+        row = conn.execute("SELECT metadata FROM runs WHERE id = ?",
+                           (run_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"no run {run_id}")
+        meta = _parse_json_dict(row[0])
+        meta.update(patch or {})
+        conn.execute("UPDATE runs SET metadata = ? WHERE id = ?",
+                     (json.dumps(meta), run_id))
+        return meta
+
+
+def set_run_flow_id(path: Path, run_id: int, flow_id: int) -> None:
+    """Tag a run with *flow_id* (column + metadata history field)."""
+    with connect(path) as conn:
+        conn.execute("UPDATE runs SET flow_id = ? WHERE id = ?", (flow_id, run_id))
+    set_run_metadata(path, run_id, {"flow_id": flow_id})
+
+
+def latest_review_run(path: Path, worktree_ref: str,
+                      include_deleted_worktrees: bool = False) -> dict | None:
+    """Newest non-running review run for the ref with a real transcript.
+
+    An adoption row stamps ``worktree_ref``/``session_type='review'`` while
+    deliberately keeping ``file_path=''``; it names no transcript, so it must
+    never become the "current one to continue".
+    """
+    if not path.exists():
+        return None
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.* FROM runs r"
+             " LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref"
+             " WHERE r.worktree_ref = ? AND r.session_type = 'review'"
+             " AND r.state != 'running' AND r.file_path != ''")
+        if not include_deleted_worktrees:
+            q += " AND " + _NOT_DELETED
+        q += " ORDER BY r.created_at DESC, r.id DESC LIMIT 1"
+        row = conn.execute(q, (worktree_ref,)).fetchone()
+    return _run_dict(row) if row is not None else None
+
+
+def run_by_file_path(path: Path, file_path: str,
+                     include_deleted_worktrees: bool = False) -> dict | None:
+    """Run whose file_path equals *file_path* (the pinned transcript), newest
+    first. A harness-minted filename never matches by stem — the pinned path
+    itself is the reliable join key."""
+    if not file_path or not path.exists():
+        return None
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.* FROM runs r"
+             " LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref"
+             " WHERE r.file_path = ?")
+        if not include_deleted_worktrees:
+            q += " AND " + _NOT_DELETED
+        q += " ORDER BY r.created_at DESC, r.id DESC LIMIT 1"
+        row = conn.execute(q, (file_path,)).fetchone()
+    return _run_dict(row) if row is not None else None
+
+
+def run_by_file_stem(path: Path, stem: str,
+                     include_deleted_worktrees: bool = False) -> dict | None:
+    """Newest run whose stored ``file_path`` names ``<stem>.jsonl``.
+
+    Legacy rows were keyed by the transcript stem (session PK); after the
+    fold the pinned path itself is the join key, so this is the fallback
+    for a row whose ``file_path`` was never updated to the harness-minted
+    filename. The stem is compared, never the whole path, so a row stays
+    findable across the ``sessions/`` → ``runs/`` rename.
+    """
+    if not stem or not path.exists():
+        return None
+    like = "%" + stem.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + ".jsonl"
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.* FROM runs r"
+             " LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref"
+             " WHERE r.file_path LIKE ? ESCAPE '\\'")
+        if not include_deleted_worktrees:
+            q += " AND " + _NOT_DELETED
+        q += " ORDER BY r.created_at DESC, r.id DESC"
+        for row in conn.execute(q, (like,)):
+            if Path(str(row["file_path"] or "")).stem == stem:
+                return _run_dict(row)
+    return None
+
+
+def transcript_root_run(path: Path, file_path: str,
+                        include_deleted_worktrees: bool = False) -> dict | None:
+    """First (earliest) run carrying *file_path* — the transcript's chain head.
+
+    Fix-continue rows link back here via ``continued_from_run_id``: one
+    transcript, one chain head, however many preview/launch/attempt rows
+    name it. Empty *file_path* (no transcript) has no chain.
+    """
+    if not file_path or not path.exists():
+        return None
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.* FROM runs r"
+             " LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref"
+             " WHERE r.file_path = ?")
+        if not include_deleted_worktrees:
+            q += " AND " + _NOT_DELETED
+        q += " ORDER BY r.id ASC LIMIT 1"
+        row = conn.execute(q, (file_path,)).fetchone()
+    return _run_dict(row) if row is not None else None
+
+
+def runs_for_worktree(path: Path, worktree_ref: str,
+                      include_deleted_worktrees: bool = False) -> list[dict]:
+    """Every run recorded for *worktree_ref*, newest first (GC, flow tagging)."""
+    if not worktree_ref or not path.exists():
+        return []
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.* FROM runs r"
+             " LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref"
+             " WHERE r.worktree_ref = ?")
+        if not include_deleted_worktrees:
+            q += " AND " + _NOT_DELETED
+        q += " ORDER BY r.id DESC"
+        return [_run_dict(r) for r in conn.execute(q, (worktree_ref,)).fetchall()]
+
+
+#: Runs of soft-deleted worktrees stay in the DB (restorable via undelete)
+#: but are hidden from list/detail queries unless *include_deleted_worktrees*;
+#: rows with an empty ref (repo-scoped: pre-link attempts, web runs) or a
+#: dangling ref (hard-deleted worktree) stay visible — same pass-through rule
+#: as list_flows. Every query using it aliases runs as ``r``.
+_NOT_DELETED = ("(r.worktree_ref = '' OR w.ref_key IS NULL"
+                " OR (w.deleted_at IS NULL OR w.deleted_at = ''))")
+
+
+def list_runs(path: Path, limit: int = 200,
+              include_deleted_worktrees: bool = False) -> list[dict]:
+    """Persisted runs, newest first (drives GET /api/runs)."""
+    if not path.exists():
+        return []
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.id, r.command, r.args, r.exit_code,"
+             " r.created_at, r.output, r.truncated, r.validation, r.flow_id,"
+             " r.file_path, r.worktree_ref,"
+             " r.session_type, r.state, r.harness_name, r.initiator_command,"
+             " r.metadata, r.continued_from_run_id"
+             " FROM runs r LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref")
+        if not include_deleted_worktrees:
+            q += " WHERE " + _NOT_DELETED
+        q += " ORDER BY r.id DESC LIMIT ?"
+        return [_run_dict(r) for r in conn.execute(q, (limit,)).fetchall()]
+
+
+def update_run(path: Path, run_id: int, *,
+               exit_code: int | None = None,
+               output: list[str] | None = None,
+               truncated: bool | None = None,
+               append: bool = False) -> None:
+    """Progressively update a runs row (live log + final state).
+
+    *append* joins *output* onto the stored tail for that run id;
+    otherwise *output* replaces the stored blob. Unset fields stay.
+    Never raises: callers (tailers/step wrappers) must not fail on DB writes.
+    """
+    try:
+        with connect(path) as conn:
+            row = conn.execute("SELECT output FROM runs WHERE id = ?",
+                               (run_id,)).fetchone()
+            if row is None:
+                return
+            sets: list[str] = []
+            vals: list = []
+            if output is not None:
+                if append:
+                    lines = ((row[0] or "").split("\n") if row[0] else [])
+                    lines += list(output)
+                    lines = lines[-MAX_RUN_OUTPUT_LINES:]
+                else:
+                    lines = list(output)[-MAX_RUN_OUTPUT_LINES:]
+                sets.append("output = ?")
+                vals.append("\n".join(lines))
+            if truncated is not None:
+                sets.append("truncated = ?")
+                vals.append(1 if truncated else 0)
+            if exit_code is not None:
+                sets.append("exit_code = ?")
+                vals.append(exit_code)
+            if not sets:
+                return
+            conn.execute(f"UPDATE runs SET {', '.join(sets)} WHERE id = ?",
+                         (*vals, run_id))
+    except Exception:
+        pass
 
 def _migrate_v2(conn) -> None:
     """Schema v2: trackers gains mandatory vendor/remote_url; repos loses tracker_key.
@@ -750,8 +1376,9 @@ _REQUIRED_COLS = {
     "tracker_repos": ("tracker_key", "repo_key"),
     "worktrees": ("ref_key", "path", "branch", "added_at"),
     "pr_cache": ("branch", "payload", "checked_at"),
-    "sessions": ("id", "state", "created_at"),
-    "runs": ("session_id", "command", "args", "created_at"),
+    # runs: no session_id — legacy DBs still carry it until the v16 fold
+    # rebuilds the table, and folded DBs must not be rebuilt for its loss.
+    "runs": ("command", "args", "created_at"),
     "issue_cache": ("source", "payload", "fetched_at"),
     "pr_candidates_cache": ("source", "payload", "fetched_at"),
     "release_diff_cache": ("repo_key", "count", "fetched_at"),
@@ -784,6 +1411,7 @@ def _rebuild_required_columns(conn) -> list[str]:
     if was_on:
         conn.execute("PRAGMA foreign_keys = OFF")
     rebuilt: list[str] = []
+    runs_seq = _runs_seq(conn)
     try:
         for table, ddl in _canonical_ddl().items():
             info = list(conn.execute(f"PRAGMA table_info({table})"))
@@ -792,6 +1420,17 @@ def _rebuild_required_columns(conn) -> list[str]:
             by_name = {r[1]: r for r in info}
             bad = any(c not in by_name or by_name[c][3] != 1 or by_name[c][4] is not None
                       for c in _REQUIRED_COLS.get(table, ()))
+            if table == "runs":
+                if list(conn.execute("PRAGMA table_info(sessions)")):
+                    # pre-v16: the fold rebuilds runs from the canonical DDL
+                    # and still needs the legacy session_id column for its
+                    # linkage, so rebuilding here would drop it too early
+                    continue
+                if "session_id" in by_name:
+                    # an earlier fold build still declared session_id; the
+                    # dead NOT NULL column must go, insert_run no longer
+                    # fills it (every insert would fail otherwise)
+                    bad = True
             if not bad:
                 continue
             tmp = f"{table}_rebuild"
@@ -800,12 +1439,6 @@ def _rebuild_required_columns(conn) -> list[str]:
                                      f'CREATE TABLE "{tmp}"', 1))
             new_cols = {r[1] for r in conn.execute(f'PRAGMA table_info("{tmp}")')}
             pairs = [(r[1], r[1]) for r in info if r[1] in new_cols]
-            if table == "sessions" and "harness_name" in new_cols \
-                    and "harness_name" not in {r[1] for r in info} \
-                    and "runtime_name" in {r[1] for r in info}:
-                # Pre-rename DBs carry runtime_name: map it forward so the
-                # rebuild does not drop the harness name.
-                pairs.append(("runtime_name", "harness_name"))
             cols = ", ".join(f'"{dst}"' for _, dst in pairs)
             sel = ", ".join(f'"{src}"' for src, _ in pairs)
             conn.execute(f'INSERT INTO "{tmp}" ({cols}) SELECT {sel} FROM "{table}"')
@@ -818,9 +1451,10 @@ def _rebuild_required_columns(conn) -> list[str]:
         if was_on:
             conn.execute("PRAGMA foreign_keys = ON")
     if "runs" in rebuilt:
-        # AUTOINCREMENT sequence: keep it at/above the copied max(id).
-        conn.execute("UPDATE sqlite_sequence SET seq ="
-                     " (SELECT COALESCE(MAX(id), 0) FROM runs) WHERE name = 'runs'")
+        # The rebuild reset the AUTOINCREMENT sequence to the copied
+        # max(id); keep the pre-rebuild high-water mark so a previously
+        # issued id is never reused.
+        _restore_runs_seq(conn, runs_seq)
         conn.commit()
     return rebuilt
 
@@ -830,9 +1464,9 @@ _INIT_CACHE: dict[str, bool] = {}
 
 def _schema_current(path: Path) -> bool:
     """Read-only probe: True when all canonical tables exist with the
-    output/truncated runs columns (migrations already applied). Read-only
-    connections can never take the RESERVED write lock, so this never
-    raises ``database is locked`` no matter who holds the DB.
+    post-migration columns (v16 fold included). Read-only connections can
+    never take the RESERVED write lock, so this never raises
+    ``database is locked`` no matter who holds the DB.
     """
     if not path.exists():
         return False
@@ -843,10 +1477,25 @@ def _schema_current(path: Path) -> bool:
     try:
         tables = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table'")}
-        if not {"trackers", "repos", "worktrees", "sessions", "runs"} <= tables:
+        if not {"trackers", "repos", "worktrees", "runs"} <= tables:
+            return False
+        # v16 folded the sessions entity into runs: the table must be gone
+        # and runs must carry the transcript columns.
+        if "sessions" in tables:
             return False
         cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
-        if not {"output", "truncated", "validation"} <= cols:
+        # A DB folded by an intermediate build still carries the dead
+        # session_id NOT NULL column, which insert_run no longer fills; only
+        # a rebuild can drop it, so it is not current. The pre-fold case
+        # returned above, where the column is still needed.
+        if "session_id" in cols:
+            return False
+        if not {"output", "truncated", "validation", "flow_id", "worktree_ref",
+                "harness_name", "initiator_command", "prompt", "file_path",
+                "session_type", "metadata", "state",
+                "continued_from_run_id"} <= cols:
+            return False
+        if any(r[2] == "sessions" for r in conn.execute("PRAGMA foreign_key_list(runs)")):
             return False
         wcols = {r[1] for r in conn.execute("PRAGMA table_info(worktrees)")}
         if "active" not in wcols:
@@ -868,12 +1517,6 @@ def _schema_current(path: Path) -> bool:
         if not any(c == {"repo_key", "branch"} for c in idx_cols):
             return False
         if any(bool(entry[2]) and c == {"branch"} for entry, c in zip(widx, idx_cols)):
-            return False
-        scols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
-        if not {"harness_name", "session_type", "metadata", "flow_id"} <= scols:
-            return False
-        runcols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
-        if not {"flow_id", "validation"} <= runcols:
             return False
         for table in ("trackers", "repos"):
             fcols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
@@ -967,7 +1610,7 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
                 _migrate_category(conn)
                 _migrate_run_immediately(conn)
                 _migrate_flow_template_icon(conn)
-                _migrate_sessions_no_fk(conn)
+                migrate_sessions_into_runs(conn, path.parent)
                 _migrate_prodtest_cols(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():
@@ -1121,28 +1764,6 @@ def backfill_trackers_repos(path: Path, cfg: dict,
                     "INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
                     (tid, repo_key)).rowcount
     return counts
-from .store_sessions import (  # noqa: F401,E402
-    SESSION_TYPES,
-    _backfill_session_type,
-    branch_path,
-    branch_slug,
-    db_path,
-    derive_session_type,
-    finish_session,
-    gen_session_id,
-    get_session,
-    insert_run,
-    insert_session,
-    latest_review_session,
-    list_runs,
-    list_sessions,
-    newest_transcript,
-    session_by_file_path,
-    session_file_path,
-    set_session_file_path,
-    set_session_metadata,
-    update_run,
-)
 
 from .store_links import (  # noqa: F401,E402
     SOFT_DELETE_RETENTION_DAYS,

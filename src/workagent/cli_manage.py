@@ -409,10 +409,10 @@ def link_list(
             for t, v in trackers_map.items()]
     _print_rows(rows, json_output, csv_output, ["tracker", "vendor", "remote_url", "repos"],
                 "Tracker links", "(no tracker links)")
-    srows, scolumns = _session_rows(links, worktree, refresh_pr)
+    srows, scolumns = _cli._session_rows(links, worktree, refresh_pr)
     _print_rows(srows, json_output, csv_output, scolumns,
                 "Worktree links", "(no worktree links)",
-                colorize=_colorize_session)
+                colorize=_cli._colorize_session)
 
 
 @link_app.command("set")
@@ -449,7 +449,7 @@ def link_remove(
 
     Worktree rows are stamped deleted_at (recoverable for 7 days via
     `link undelete`) — files, branch and PR are left untouched.
-    Sessions survive soft-delete; only GC after 7 days cascades them.
+    Runs survive soft-delete; GC after 7 days purges them with their transcripts.
 
     Example:
       workagent link remove jira:IPG
@@ -473,8 +473,8 @@ def link_remove(
     links = store.load_links(include_inactive=True, include_deleted=True)
     if resolved in links:
         if hard_delete:
-            from .cli_cleanup_gc import _remove_harness_sessions
-            _remove_harness_sessions(resolved)
+            from .cli_cleanup_gc import _remove_harness_runs
+            _remove_harness_runs(resolved)
             store.delete_worktree_row(resolved)
             _print_result({"removed": resolved}, json_output)
         else:
@@ -540,7 +540,7 @@ def link_destroy_deleted(
     """Permanently destroy soft-deleted rows: worktree dir + local branch + row.
 
     Tears down surviving local state (git-wt cleanup + branch -D) then drops
-    the row. Sessions/runs CASCADE. Remote branches are NOT touched.
+    the row. Runs are purged with it. Remote branches are NOT touched.
     """
     from . import cli_cleanup as _cleanup
     links = store.load_links(include_inactive=True, include_deleted=True)

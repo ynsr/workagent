@@ -500,7 +500,7 @@ export function Dashboard() {
       action: "link destroy",
       title: `Destroy ${key} permanently?`,
       description:
-        "Removes the worktree directory, deletes the local branch, and drops the database row (sessions/runs cascade). Remote branches are NOT touched. This cannot be undone.",
+        "Removes the worktree directory, deletes the local branch, and drops the database row plus its runs. Remote branches are NOT touched. This cannot be undone.",
       destructive: true,
       confirmLabel: `Destroy ${key}`,
       details: [{ label: "Scope", value: key }],
@@ -524,7 +524,7 @@ export function Dashboard() {
       action: "link destroy",
       title: `Destroy ${keys.length} deleted row(s) permanently?`,
       description:
-        "Removes each worktree directory, deletes local branches, and drops the database rows (sessions/runs cascade). Remote branches are NOT touched. This cannot be undone.",
+        "Removes each worktree directory, deletes local branches, and drops the database rows plus their runs. Remote branches are NOT touched. This cannot be undone.",
       destructive: true,
       confirmLabel: `Destroy ${keys.length}`,
       details: [{ label: "Scope", value: keys.slice(0, 5).join(", ") + (keys.length > 5 ? ` +${keys.length - 5} more` : "") }],
@@ -623,8 +623,6 @@ export function Dashboard() {
     onCleanup: handleCleanup,
     onOpenWorktree: handleOpenWorktree,
     onOpenRun: handleOpenRun,
-    onOpenSessions: (key: string) =>
-      navigate("/sessions?worktree=" + encodeURIComponent(key)),
     onOpenFlows: (key: string) =>
       navigate("/flows?worktree=" + encodeURIComponent(key)),
   }

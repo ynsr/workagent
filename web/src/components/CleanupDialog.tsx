@@ -79,10 +79,10 @@ export function CleanupDialog({
           </AlertDialogTitle>
           <AlertDialogDescription>
             {invalid
-              ? "The recorded path is missing or not a live git worktree. The entry is removed either way; AI harness folders/sessions for it are deleted from disk too. This cannot be undone."
+              ? "The recorded path is missing or not a live git worktree. The entry is removed either way; its AI harness transcripts are deleted from disk too. This cannot be undone."
               : hardDelete
-              ? "Closes the tracker issue, removes the worktree, deletes the local branch, deletes AI harness folders/sessions, and merges or closes the PR. The remote branch is deleted only when the PR merges. This cannot be undone."
-              : "Closes or merges the PR, then soft-deletes the entry — worktree files, branch, and remote branch all survive, recoverable for 7 days via link undelete. AI harness folders/sessions are deleted at destroy time. Check hard-delete to tear everything down immediately."}
+              ? "Closes the tracker issue, removes the worktree, deletes the local branch, deletes its AI harness transcripts, and merges or closes the PR. The remote branch is deleted only when the PR merges. This cannot be undone."
+              : "Closes or merges the PR, then soft-deletes the entry — worktree files, branch, and remote branch all survive, recoverable for 7 days via link undelete. AI harness transcripts are deleted at destroy time. Check hard-delete to tear everything down immediately."}
           </AlertDialogDescription>
           {!invalid ? (
             <div className="overflow-x-auto rounded-md border">
@@ -152,7 +152,7 @@ export function CleanupDialog({
             </AlertDialogAction>
           ) : null}
           <AlertDialogAction
-            title="link remove — soft-delete the database row (recoverable 7 days); files/branch/PR untouched. --hard-delete also deletes AI harness folders/sessions."
+            title="link remove — soft-delete the database row (recoverable 7 days); files/branch/PR untouched. --hard-delete also deletes the AI harness transcripts."
             onClick={() => onClose({ action: "deleteFromDb", hardDelete })}
           >
             Delete from DB

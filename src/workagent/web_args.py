@@ -471,8 +471,7 @@ def _session_file_for(sid: str, command: str = "", args: list[str] | None = None
     try:
         return str(_sq.session_file_path(sid, "omp", session_type=action))
     except Exception:
-        from . import store as _store
-        base = _store.config_dir() / "sessions" / "omp"
+        base = _sq.runs_dir() / "omp"
         if action:
             base = base / action
         base.mkdir(parents=True, exist_ok=True)

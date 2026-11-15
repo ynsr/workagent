@@ -100,7 +100,7 @@ gate). `repo add`/`repo update` accept `--pre-release <cmd>`
 the per-repo StatusTable overlay visibility map: `{button_id: bool}`,
 missing key or `{}` = every button visible. Fixed ids: `sync`, `review`,
 `fix-comments`, `prodtest`, `adhoc`, `cleanup`, `stop-terminal`,
-`open-runs`, `open-sessions`, `open-flows`, `resume-session`, `dedicated`
+`open-runs`, `open-flows`, `resume-session`, `dedicated`
 (master toggle hiding all dedicated buttons); per-item dedicated ids are
 `flow:<label>` / `action:<label>`. `repo update NAME --overlay-buttons
 "sync,review,-adhoc,flow:deploy"` merges (`-id` hides, later entries win;
@@ -213,11 +213,13 @@ worktree-pinned default when outside it) for the Start repo picker:
 ```
 
 ### `GET /api/review-session?ref=…`
-Latest non-running `review` session for the ref's worktree key (fix-continue
+Latest non-running `review` run for the ref's worktree key (fix-continue
 target). Read-only, always 200 — nulls when the ref is unlinked or no review
-session exists (caller falls through to a fresh `fix_comments` session):
+run exists (caller falls through to a fresh `fix_comments` run). `run_id` is
+the runs-table row id (`file_path` resolved through the `runs/` → legacy
+`sessions/` fallback):
 ```json
-{"ref": "jira:IPG-1", "session_id": "2026-09-26T00-00-00-000Z-1234", "file_path": "/home/x/.config/workagent/sessions/omp/….jsonl"}
+{"ref": "jira:IPG-1", "run_id": 42, "file_path": "/home/x/.config/workagent/runs/omp/….jsonl"}
 ```
 
 ### `GET /api/doctor`
@@ -279,32 +281,6 @@ parallel, never blocking on refetch — stale rows stay visible with an
 overlay Updating badge in the top-right corner; skeletons render only on
 first load):
 
-### `GET /api/sessions` → list (newest first, no prompts)
-```json
-{"sessions": [{"id": "2026-09-22T10-00-00-123Z-4567",
-  "worktree_ref": "jira:IPG-932", "harness_name": "omp",
-  "initiator_command": "start", "session_type": "start",
-  "metadata": {}, "state": "finished",
-  "created_at": "2026-09-22T10:00:00.123Z",
-  "file_path": "/home/x/.config/workagent/sessions/omp/2026-09-22T10-00-00-123Z-4567.jsonl"}]}
-```
-
-### `GET /api/sessions/{id}` → detail (prompt + session runs)
-```json
-{"id": "…", "worktree_ref": "jira:IPG-932", "harness_name": "omp",
- "initiator_command": "start", "state": "finished", "prompt": "…",
- "created_at": "…", "file_path": "…",
- "transcript": "missing",
- "runs": [{"id": 1, "command": "start", "args": ["IPG-932", "--yes", "--session-file", "…"],
-           "exit_code": 0, "created_at": "…"}]}
-```
-Unknown id → 404. `transcript` is `"missing"` when the per-session
-`runs` holds the serve-persisted CLI invocations persisted at spawn with
-progressive output updates (throttled ~2s) and finalized at finish — so
-history survives server restarts. Every web run persists exactly one row,
-including preview/terminal runs and failed runs (exit code set on finish;
-NULL while running).
-
 ### `GET /api/candidates` → `{prs, issues, worktrees, warnings}`
 `issues` rows carry `repo_hint`: the Launch default repo for that ref
 (linked worktree's repo, else the tracker's single linked repo, else
@@ -327,7 +303,7 @@ Request:
  - `command`: one of `start | review | cleanup | release | sync | open | register |
    repo | link | tracker | action | flow | message | backup | prodtest | adhoc` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`; prodtest: `["plan", REF, …]` / `["run", REF, …]`; adhoc: `[REF, --prompt P, …]`).
 - Global `-v` may be passed as `args[0]`.
-- `start`/`review`/`sync`/`release` take `--env-file <script>`: a shell script sourced before every harness command including the preview (`source <file> && …`; headless children also get it parsed into their environment) and before the release pre-release gate. Default: `env_file` in `config.json` (auto-created as `<config_dir>/env.sh` on first launch with `VISUAL`/`EDITOR`/`NO_PROXY`/`PI_EDIT_VARIANT` defaults). Delete the file to opt out; session-resume endpoints reuse the originating run's explicit `--env-file` or the configured default.
+- `start`/`review`/`sync`/`release` take `--env-file <script>`: a shell script sourced before every harness command including the preview (`source <file> && …`; headless children also get it parsed into their environment) and before the release pre-release gate. Default: `env_file` in `config.json` (auto-created as `<config_dir>/env.sh` on first launch with `VISUAL`/`EDITOR`/`NO_PROXY`/`PI_EDIT_VARIANT` defaults). Delete the file to opt out; run resume reuses the originating run's explicit `--env-file` or the configured default.
 - Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`, `adhoc`,
   `action run`/`action delete`, `flow run`/`flow template delete`) need
   `confirm: true` → the server appends `--yes`. `action add`/`update` and
@@ -348,7 +324,7 @@ Request:
   multiple repos → 400 `{code: "repo_ambiguous"}` naming the candidates
   (never a run — the Launch form also blocks submit until a repo is picked).
 - `start`/`review` `--terminal` is XOR `--launch` (child CLI exits 2 when
-  both are passed). `--terminal` persists a preview session row, claims
+  both are passed). `--terminal` records a preview run row, claims
   the harness lock with `origin=terminal` (pid = spawned terminal
   emulator), and prints `terminal_pid` in the run's JSON output; the
   agent is stopped via `POST /api/terminal/stop` with the worktree ref.
@@ -364,9 +340,9 @@ Request:
   (FlowWizard/ChainEditor checkbox).
 - `link destroy-deleted [REF] [--all] [--dry-run] [--json]`: permanently destroys
   soft-deleted rows INCLUDING surviving local state — worktree dir teardown,
-  local branch delete, AI harness transcript folders/sessions deleted from
-  disk, then row drop (sessions/runs CASCADE). Remote branches are NOT
-  touched. `link remove --hard-delete` purges the same harness sessions. Single-ref or `--all`; missing `--repo` scoping
+  local branch delete, AI harness transcript folders deleted from
+  disk, then the run rows drop. Remote branches are NOT
+  touched. `link remove --hard-delete` purges the same transcripts. Single-ref or `--all`; missing `--repo` scoping
   by design. The Dashboard Deleted table runs it per-row (trash icon) and
   per-selection (Destroy (N) button) with the same irreversible confirm.
 
@@ -410,20 +386,36 @@ stale plans.
 [{"id": "abc123", "command": "sync", "args": ["IPG-932"],
   "state": "running", "exit_code": null, "truncated": false,
   "created": 1730000000.0, "target": "sync:jira:IPG-932",
-  "session_file": "/home/x/.config/workagent/sessions/omp/….jsonl",
-  "worktree": "/home/x/wt", "last_seq": 42}]
+  "session_file": "/home/x/.config/workagent/runs/omp/….jsonl",
+  "session_type": "sync", "worktree": "/home/x/wt", "last_seq": 42}]
 ```
 `session_file`/`worktree` are non-empty only for runs that executed a
-harness session (`start`/`review`, or `sync` with an explicit
+harness transcript (`start`/`review`, or `sync` with an explicit
 `--session-file`); the web server injects `--session-file` for
 `start`/`review` launches — including the default preview (no `--launch`;
-the CLI preview pins the path as the session row id (transcript stem) and
-`file_path`, so the first run command already carries the full path and
-future runs of the same session reuse it) — except `--all` runs, which
+the CLI preview pins the path on the run row it records, so the first run
+command already carries the full path and future runs of the same
+transcript reuse it) — except `--all` runs, which
 carry no `--session-file` (the CLI rejects it with `--all`; each
-per-worktree child generates its own transcript). Live summaries also carry
-`session_id` (pinned transcript stem). Clients show resume buttons iff
-`session_file` is present.
+per-worktree child generates its own transcript). Clients show resume
+buttons iff `session_file` is present. `transcript_ready` (bool) says the
+stored path is a non-empty `.jsonl` on the server — a preview row's path is
+only the `--session-dir` scope hint, so it is `false` and the copy button is
+gated on it (resume resolves the minted file itself).
+
+`session_type` is the stored transcript kind
+(`start|review|sync|fix_comments|custom_action|flow|prodtest_plan|prodtest_run`,
+null for rows recorded before the column existed) — the Runs UI label. It is
+authoritative over the command: a persisted fix-comments run carries
+`command="review"` with the flags dropped, so only the type tells it apart
+from the review it fixes.
+
+Serve-persisted runs (`db-<id>`) are the CLI invocations persisted at
+spawn with progressive output updates (throttled ~2s) and finalized at
+finish — so history survives server restarts. Each web invocation persists
+exactly one row, including preview/terminal runs and failed runs (exit
+code set on finish; NULL while running); a headless child's own launch row
+is adopted/finalized, never duplicated.
 
 ### `GET /api/runs/{id}` → detail (adds `lines`)
 `lines`: `[{"seq": 1, "text": "syncing jira:IPG-932 …"}, …]`
@@ -443,10 +435,12 @@ live process is never killed — the run is marked `failed` instead.
 Every `POST /api/runs` child runs detached: `serve` spawns
 `workagent _run-supervised --run-dir <dir> <argv>`, which double-detaches
 the real child (own pgid), streams stdout/stderr straight to
-`<config_dir>/runs/<id>/output.log` (1 MiB head-truncation cap, `truncated`
-marker file + `truncated: true` in list/detail rows; RAM ring stays 10k
-lines), and writes `pid` (pid + start-ticks) / `exit_code` / `meta.json`.
-`serve` only tails the log file. At startup `serve` rehydrates live run
+`<config_dir>/runs/_web/<id>/output.log` (1 MiB head-truncation cap,
+`truncated` marker file + `truncated: true` in list/detail rows; RAM ring
+stays 10k lines), and writes `pid` (pid + start-ticks) / `exit_code` /
+`meta.json`. The `_web/` subdir keeps run state disjoint from the transcript
+tree (`runs/<harness>/…`), so nothing is recognized by a meta.json/pid
+heuristic. `serve` only tails the log file. At startup `serve` rehydrates live run
 dirs into a fresh registry (log backfill + tail continuity); finished-run
 dirs are pruned to the newest 100, running ones never. Only the
 supervisor writes `output.log`. The systemd unit uses `KillMode=process`
@@ -455,11 +449,11 @@ so stop/re-install never kills detached children.
 ### `POST /api/runs/{id}/resume` → `{"id": …, "session_file": …, "worktree": …}`
 When the pinned `--session-file` path is missing/empty (first command run
 manually outside the web server), the endpoint adopts the newest non-empty
-`.jsonl` in the scope dir minted after the session row was created, persists
-it on the session, and resumes that transcript — so the first run stays
-resumable and later runs reuse the full path.
+`.jsonl` in the scope dir minted after the run row was created, persists it
+on that row, and resumes that transcript — so the first run stays resumable
+and later runs reuse the full path.
 Non-destructive (same class as `open`): no confirm needed. Detached-spawns the OS default terminal running `cd <worktree> && omp --resume <session_file>` (`$TERMINAL` → `xdg-terminal-exec` → gnome-terminal/konsole/xfce4-terminal/xterm; macOS `open -a Terminal`; Windows `cmd /k`). Terminal spawns claim the harness lock with `origin=terminal` (pid = spawned terminal emulator) and pre-spawn 409 `{code:"conflict"}` when a live harness already holds the worktree, so no orphan terminal launches; sources the originating run's `--env-file` (or the configured default). 404 `no_session` when the run
-executed no harness session, `missing_session` when the transcript is
+names no harness transcript, `missing_session` when the transcript is
 absent, `no_worktree` when the target has no recorded worktree.
 
 ### `POST /api/runs/{id}/start-terminal` → `{"id": …}`
@@ -467,9 +461,6 @@ Same spawn running the run's last logged `harness command:` entry — the exact 
 
 ### `POST /api/terminal/stop` → `{"worktree_ref", "stopped": true}`
 SIGTERM→SIGKILL the terminal-origin agent behind a worktree ref (the `--terminal` run mode). Body: `{"worktree_ref": "<key>"}`. 404 `not_found` when no live terminal lock (missing, dead-pid swept, or headless origin — headless runs are never stoppable here).
-
-### `POST /api/sessions/{id}/resume` → same shape
-Same terminal spawn for a persisted session row (`worktree` resolved from the row, else the recorded worktree ref via `/api/path`); sources the latest run's `--env-file` for the session's worktree when present. Claims the terminal lock / pre-spawn 409s like the run resume endpoints; 404 `not_found`/`missing_session`/`no_worktree` as applicable.
 
 ## Run states
 `running` → `succeeded` (exit 0) | `failed` (exit 1 or other non-zero)

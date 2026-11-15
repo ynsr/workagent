@@ -11,7 +11,7 @@ export type { WorktreeFilterState } from "@/lib/worktreeFilter"
 /**
  * Shared worktree filter toolbar (issue #102): one form above the Dashboard
  * tables driving StatusTable + DeletedTable + DeactivatedTable, and reusable
- * on Runs/Flows/Sessions where the same predicate logic applies.
+ * on Runs/Flows where the same predicate logic applies.
  *
  * Controlled: the parent owns the state (URL-backed on Dashboard); StatusTable
  * renders this same form internally when no external filter is supplied.

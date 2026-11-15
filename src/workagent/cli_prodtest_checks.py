@@ -404,7 +404,7 @@ def _finish_run(store_key: str, entry: dict, plan_file: Path | None, release_sha
         payload = dict(payload) if isinstance(payload, dict) else {}
         payload.setdefault("overall", "BLOCKED")
         payload.setdefault("notes", f"timed out after {timeout_s}s; harness killed")
-    run_id = str(payload.get("run_id", "") or result.get("session_id", "") or "")
+    run_id = str(payload.get("run_id", "") or result.get("run_id", "") or "")
 
     report = ""
     results_file = str(out_dir / "results.yaml")

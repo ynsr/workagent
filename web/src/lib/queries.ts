@@ -31,8 +31,6 @@ export const queryKeys = {
   candidatesIssues: (force?: boolean, days?: number, mine?: boolean) =>
     ["candidates", "issues", force ? "force" : "cached", days ?? 90, mine ?? true] as const,
   candidatesWorktrees: ["candidates", "worktrees"] as const,
-  sessions: ["sessions"] as const,
-  session: (id: string) => ["sessions", "detail", id] as const,
   release: (name: string) => ["release", name] as const,
 }
 
@@ -239,13 +237,6 @@ export function useReleaseStatuses(names: string[]) {
   })
 }
 
-export function useSessions() {
-  return useQuery({ queryKey: queryKeys.sessions, queryFn: api.sessions })
-}
-export function useSession(id: string) {
-  return useQuery({ queryKey: queryKeys.session(id), queryFn: () => api.session(id) })
-}
-
 export function useRuns() {
   return useQuery({
     queryKey: queryKeys.runs,
@@ -325,7 +316,7 @@ export function useCancelRun() {
   })
 }
 
-/** Resume a run's harness session in the OS terminal (fire-and-forget). */
+/** Resume a run's transcript in the OS terminal (fire-and-forget). */
 export function useResumeRun() {
   return useMutation({
     mutationFn: (id: string) => api.resumeRun(id),
@@ -340,13 +331,6 @@ export function useStopTerminal() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
     },
-  })
-}
-
-/** Resume a persisted session in the OS terminal (fire-and-forget). */
-export function useResumeSession() {
-  return useMutation({
-    mutationFn: (id: string) => api.resumeSession(id),
   })
 }
 

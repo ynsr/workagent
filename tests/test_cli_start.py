@@ -346,9 +346,9 @@ def test_start_terminal_claims_lock_and_persists_preview(isolated_config, tmp_pa
         rec = store.active_harness("github:o/r#22")
         assert rec is not None and rec["origin"] == "terminal"
         assert rec["pid"] == p.pid
-        rows = store_sqlite.list_sessions(store_sqlite.db_path())
+        rows = store_sqlite.list_runs(store_sqlite.db_path())
         assert len(rows) == 1 and rows[0]["state"] == "preview"
-        assert out["session_id"] == rows[0]["id"]
+        assert out["run_id"] == rows[0]["id"]
     finally:
         store.clear_harness_run("github:o/r#22")
         try:
@@ -357,7 +357,7 @@ def test_start_terminal_claims_lock_and_persists_preview(isolated_config, tmp_pa
             pass
 
 
-def test_start_preview_persists_session_row(isolated_config, tmp_path, monkeypatch):
+def test_start_preview_persists_run_row(isolated_config, tmp_path, monkeypatch):
     from workagent import store_sqlite
     repo_dir = tmp_path / "proj"
     repo_dir.mkdir()
@@ -374,19 +374,19 @@ def test_start_preview_persists_session_row(isolated_config, tmp_path, monkeypat
     assert r.exit_code == 0, r.output
     assert launched == []
     out = json.loads(r.stdout)
-    assert out["session_id"], out
+    assert out["run_id"], out
     db = store_sqlite.db_path()
-    row = store_sqlite.get_session(db, out["session_id"])
+    row = store_sqlite.get_run(db, out["run_id"])
     assert row["state"] == "preview"
     assert row["worktree_ref"] == "github:o/r#22"
     assert row["session_type"] == "start"
     assert "Add login" in row["prompt"]
-    assert "/sessions/omp/feat/22-add-login/start/" in row["file_path"]
+    assert "/runs/omp/feat/22-add-login/start/" in row["file_path"]
     runs = store_sqlite.list_runs(db)
     assert len(runs) == 1 and runs[0]["command"] == "start"
     assert runs[0]["output"].startswith("harness command: source ")
-    # stdout stays data-only: no session-row chatter on stdout
-    assert "preview session recorded" not in r.stdout
+    # stdout stays data-only: no run-row chatter on stdout
+    assert "preview run recorded" not in r.stdout
 
 
 def test_start_preview_tty_lands_shell_in_worktree(isolated_config, tmp_path, monkeypatch, capsys):
@@ -497,7 +497,7 @@ def test_start_preview_not_guarded_when_busy(isolated_config, tmp_path, monkeypa
     assert launched == []
 
 
-def test_run_harness_writes_session_row(isolated_config, tmp_path, monkeypatch):
+def test_run_harness_writes_run_row(isolated_config, tmp_path, monkeypatch):
     from workagent import store_sqlite as sq
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
@@ -515,9 +515,10 @@ def test_run_harness_writes_session_row(isolated_config, tmp_path, monkeypatch):
     result = {"key": "jira:IPG-929"}
     cli._run_harness("omp", "prompt", str(wt_dir), str(repo_dir), False,
                      True, result, True, run_key="jira:IPG-929")
-    rows = sq.list_sessions(sq.db_path())
+    rows = sq.list_runs(sq.db_path())
     assert len(rows) == 1 and rows[0]["state"] == "finished"
     assert rows[0]["harness_name"] == "omp"
+    assert rows[0]["worktree_ref"] == "jira:IPG-929"
     assert rows[0]["file_path"].endswith(".jsonl")
 
 
@@ -530,7 +531,7 @@ def test_branch_slug_normalizes():
 
 
 def test_run_harness_scopes_generated_path_by_branch(isolated_config, tmp_path, monkeypatch):
-    """Generated session paths live under sessions/<harness>/<branch>/<action>/."""
+    """Generated transcript paths live under runs/<harness>/<branch>/<action>/."""
     from workagent import store_sqlite as sq
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
@@ -578,9 +579,10 @@ def test_run_harness_scopes_generated_path_by_branch(isolated_config, tmp_path, 
     result = {"key": "jira:IPG-930", "branch": "feature/new-feature", "command": "start"}
     cli._run_harness("omp", "prompt", str(wt_dir), str(repo_dir), True,
                      True, result, True, run_key="jira:IPG-930")
-    rows = sq.list_sessions(sq.db_path())
-    assert len(rows) == 1
-    assert "/sessions/omp/feature/new-feature/" in rows[0]["file_path"]
+    rows = sq.list_runs(sq.db_path())
+    launch = next(r for r in rows if r["file_path"])
+    assert "/runs/omp/feature/new-feature/" in launch["file_path"]
+    assert launch["state"] == "finished"
 
 
 def test_run_harness_records_minted_transcript(isolated_config, tmp_path, monkeypatch):
@@ -635,9 +637,12 @@ def test_run_harness_records_minted_transcript(isolated_config, tmp_path, monkey
     result = {"key": "jira:IPG-931", "branch": "b"}
     cli._run_harness("omp", "prompt", str(wt_dir), str(repo_dir), True,
                      True, result, True, run_key="jira:IPG-931")
-    rows = sq.list_sessions(sq.db_path())
-    assert len(rows) == 1
-    assert rows[0]["file_path"].endswith("minted-by-omp.jsonl")
+    rows = sq.list_runs(sq.db_path())
+    launch = next(r for r in rows if r["file_path"])
+    assert launch["file_path"].endswith("minted-by-omp.jsonl")
+    assert launch["state"] == "finished"
+    # Headless validation rows follow the launch row (one per attempt).
+    assert len([r for r in rows if r["validation"]]) == 1
 
 
 def test_interactive_launch_routes_through_watch_shim(tmp_path, monkeypatch):
@@ -646,10 +651,10 @@ def test_interactive_launch_routes_through_watch_shim(tmp_path, monkeypatch):
     seen: dict = {}
     monkeypatch.setattr(_b.os, "execvp", lambda p, a: seen.update(path=p, argv=a))
     _b.launch("omp", "prompt", str(tmp_path), False, ["--session-dir", "/s"],
-              watch={"sid": "sid-1", "scope_dir": "/s", "before": ""})
+              watch={"run_id": 1, "scope_dir": "/s", "before": ""})
     argv = seen["argv"]
     assert argv[1:4] == ["-m", "workagent", "watch-and-exec"]
-    assert "--sid" in argv and "sid-1" in argv
+    assert "--run-id" in argv and "1" in argv
     assert "--" in argv
     assert argv[argv.index("--") + 1] == "omp"
 
@@ -662,13 +667,47 @@ def test_headless_launch_ignores_watch(tmp_path, monkeypatch):
     monkeypatch.setattr(_b.subprocess, "run",
                         lambda argv, cwd=None, env=None: ran.update(argv=argv) or type("P", (), {"returncode": 0})())
     rc = _b.launch("omp", "prompt", str(tmp_path), True, [],
-                   watch={"sid": "sid-1", "scope_dir": "/s", "before": ""})
+                   watch={"run_id": 1, "scope_dir": "/s", "before": ""})
     assert rc == 0
     assert "watch-and-exec" not in ran["argv"]
 
 
+
+def test_preview_then_launch_share_one_transcript(isolated_config, tmp_path, monkeypatch):
+    """Pinned --session-file preview then a real launch adopt one transcript."""
+    from workagent import cli_harness as ch, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url)"
+                     " VALUES ('t', 'unknown', 't')")
+        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
+        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
+                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
+    pinned = str(sq.session_file_path("pinned-1", "omp", branch="b",
+                                      session_type="start"))
+    preview_id = ch.record_preview_run(
+        "k", "start", "PROMPT", "omp",
+        "harness command: cd /wt && omp 'x'", session_file=pinned)
+    assert preview_id
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: 0)
+    result = {"command": "start", "branch": "b", "key": "k",
+              "session_file": pinned}
+    cli._run_harness("omp", "PROMPT", str(tmp_path), str(tmp_path), False, True,
+                     result, True, run_key="k", session_file=pinned)
+    rows = sq.list_runs(db)
+    assert len(rows) == 2  # preview + launch, one transcript
+    preview = sq.get_run(db, preview_id)
+    launch = sq.get_run(db, max(r["id"] for r in rows))
+    assert launch["id"] != preview["id"]
+    assert launch["file_path"] == preview["file_path"] == pinned
+    assert launch["continued_from_run_id"] == preview["id"]
+    assert preview["state"] == "preview"  # adopted row keeps its state
+    assert launch["state"] == "finished"  # launch row tracks the execution
+
 def test_run_harness_preview_persists_row(isolated_config, tmp_path):
-    """Preview `_run_harness` records a preview session row (no transcript file)."""
+    """Preview `_run_harness` records a preview run row (no transcript file)."""
     from workagent import store_sqlite as sq
     db = sq.db_path()
     sq.init_db(db)
@@ -681,12 +720,12 @@ def test_run_harness_preview_persists_row(isolated_config, tmp_path):
     result = {"key": "k", "command": "start"}
     cli._run_harness("omp", "prompt", "/tmp/wt", "/tmp", False,
                      False, result, True, run_key="k")
-    rows = sq.list_sessions(db)
+    rows = sq.list_runs(db)
     assert len(rows) == 1 and rows[0]["state"] == "preview"
-    assert result["session_id"] == rows[0]["id"]
+    assert result["run_id"] == rows[0]["id"]
 
 
-def test_preview_session_helper_stores_full_prompt(isolated_config):
+def test_preview_run_helper_stores_full_prompt(isolated_config):
     from workagent import cli_harness as ch
     from workagent import store_sqlite as sq
     db = sq.db_path()
@@ -697,18 +736,20 @@ def test_preview_session_helper_stores_full_prompt(isolated_config):
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
                      " VALUES ('jira:IPG-1', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sid = ch.record_preview_session("jira:IPG-1", "start", "PROMPT-BODY",
-                                    "omp", "jira:IPG-1: preview")
-    assert sid
-    row = sq.get_session(db, sid)
+    rid = ch.record_preview_run("jira:IPG-1", "start", "PROMPT-BODY",
+                                "omp", "jira:IPG-1: preview")
+    assert rid
+    row = sq.get_run(db, rid)
     assert row["state"] == "preview"
     assert row["prompt"] == "PROMPT-BODY"
     assert row["file_path"] == ""
+    assert row["session_type"] == "start"
+    assert row["worktree_ref"] == "jira:IPG-1"
     runs = sq.list_runs(db)
     assert len(runs) == 1 and runs[0]["command"] == "start"
+    assert runs[0]["output"] == "jira:IPG-1: preview"
 
-
-def test_cutover_link_write_preserves_sessions(isolated_config):
+def test_cutover_link_write_preserves_runs(isolated_config):
     import json
     from workagent import store_sqlite as sq
     d = Path(str(isolated_config))
@@ -724,17 +765,17 @@ def test_cutover_link_write_preserves_sessions(isolated_config):
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'x')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
                      " VALUES ('jira:IPG-9', '/wt9', 'b9', 'x', '2026-01-01T00:00:00+00:00')")
-    sid = sq.insert_session(db, worktree_ref="jira:IPG-9",
-                            harness_name="omp", initiator_command="start",
-                            prompt="p", file_path="/tmp/s.jsonl",
-                            session_id="sid-1")
+    rid = sq.insert_run(db, "start", ["jira:IPG-9"], 0,
+                        worktree_ref="jira:IPG-9", harness_name="omp",
+                        initiator_command="start", prompt="p",
+                        file_path="/tmp/s.jsonl")
     store.record_link("jira:IPG-3", {"worktree": "/wt3", "branch": "feat/3",
                                      "repo": "/r"})
-    assert sq.get_session(db, sid) is not None
+    assert sq.get_run(db, rid) is not None
     assert "jira:IPG-3" in store.load_links()
 
 
-def test_session_id_matches_file(isolated_config, tmp_path, monkeypatch):
+def test_run_file_path_is_generated_scope(isolated_config, tmp_path, monkeypatch):
     from workagent import store_sqlite as sq
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
@@ -751,9 +792,10 @@ def test_session_id_matches_file(isolated_config, tmp_path, monkeypatch):
     result = {"key": "jira:IPG-929"}
     cli._run_harness("omp", "prompt", str(wt_dir), str(repo_dir), False,
                      True, result, True, run_key="jira:IPG-929")
-    rows = sq.list_sessions(db)
+    rows = sq.list_runs(db)
     assert len(rows) == 1
-    assert rows[0]["file_path"].endswith(rows[0]["id"] + ".jsonl")
+    assert rows[0]["file_path"] == result["session_file"]
+    assert rows[0]["file_path"].endswith(".jsonl")
 
 
 def test_run_harness_lock_blocked_spawns_nothing(monkeypatch):

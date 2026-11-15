@@ -140,7 +140,6 @@ export function Links() {
   const tableActions = {
     onCleanup: handleCleanup,
     onOpenWorktree: handleOpenWorktree,
-    onOpenSessions: (key: string) => navigate(`/sessions?worktree=${encodeURIComponent(key)}`),
     onOpenFlows: (key: string) => navigate(`/flows?worktree=${encodeURIComponent(key)}`),
     onAdhoc: (key: string) => navigate("/launch?mode=adhoc&ref=" + encodeURIComponent(key)),
     onOpenRun: (key: string) => navigate(`/runs?target=${encodeURIComponent(key)}`),

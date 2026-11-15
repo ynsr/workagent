@@ -28,19 +28,128 @@ def test_run_rejects_step_config_then_fix_comments(tmp_path, monkeypatch):
     assert created == []
 
 
-def test_tag_flow_session_stamps_newest(tmp_path, monkeypatch):
-    """F3: the just-minted step session (newest first) gets the flow_id."""
+def test_tag_flow_run_stamps_newest(tmp_path, monkeypatch):
+    """F3: the just-minted step run is stamped when no row owns a transcript."""
     import workagent.cli_flow as m
     import workagent.store_sqlite as sq
-    # list_sessions is ORDER BY created_at DESC (newest first).
-    sessions = [{"id": "new", "worktree_ref": "wt-1"},
-                {"id": "old", "worktree_ref": "wt-1"}]
-    monkeypatch.setattr(sq, "list_sessions", lambda db, **k: sessions)
+    # runs_for_worktree is ORDER BY id DESC: the just-minted step row is first.
+    runs = [{"id": 2, "worktree_ref": "wt-1", "file_path": ""},
+            {"id": 1, "worktree_ref": "wt-1", "file_path": ""}]
+    monkeypatch.setattr(sq, "runs_for_worktree", lambda db, ref, **k: list(runs))
     stamped = {}
-    monkeypatch.setattr(sq, "set_session_metadata",
-                        lambda db, sid, patch: stamped.update({sid: patch}))
-    m._tag_flow_session("wt-1", 9)
-    assert stamped == {"new": {"flow_id": 9}}
+    monkeypatch.setattr(sq, "set_run_flow_id",
+                        lambda db, rid, flow_id: stamped.update({rid: flow_id}))
+    m._tag_flow_run("wt-1", 9)
+    assert stamped == {2: 9}
+
+
+def test_tag_flow_run_prefers_transcript_owner(tmp_path, monkeypatch, isolated_config):
+    """Attempt rows are newer but transcriptless: tag the execution row."""
+    import workagent.cli_flow as m
+    from workagent import store, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('wt-1', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    flow = store.create_flow(template_label="t", worktree_ref="wt-1",
+                             repo_snapshot={}, effective_steps=[])
+    transcript = str(sq.session_file_path("rev-1", "omp", branch="b",
+                                         session_type="review"))
+    launch = sq.insert_run(db, "review", ["wt-1"], 0, worktree_ref="wt-1",
+                           harness_name="omp", initiator_command="review",
+                           prompt="p", file_path=transcript,
+                           session_type="review")
+    # Headless validation attempts: attributed, no transcript of their own.
+    sq.insert_run(db, "review", ["wt-1"], 0, worktree_ref="wt-1",
+                  output=["harness command: omp"],
+                  continued_from_run_id=launch)
+    sq.insert_run(db, "review", ["wt-1"], 1, worktree_ref="wt-1",
+                  output=["harness command: omp"],
+                  continued_from_run_id=launch)
+    m._tag_flow_run("wt-1", flow["id"])
+    rows = {r["id"]: r for r in sq.list_runs(db, limit=100,
+                                             include_deleted_worktrees=True)}
+    assert rows[launch]["flow_id"] == flow["id"]
+    assert rows[launch]["metadata"]["flow_id"] == flow["id"]
+    attempts = [r for rid, r in rows.items() if rid != launch]
+    assert len(attempts) == 2
+    assert all(r["flow_id"] is None and "flow_id" not in r["metadata"]
+               for r in attempts)
+
+
+def test_tag_flow_run_never_steals_another_flows_run(tmp_path, isolated_config):
+    """A no-harness step tags its own row, not an earlier flow's transcript."""
+    import workagent.cli_flow as m
+    from workagent import store, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('wt-1', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    flow1 = store.create_flow(template_label="t", worktree_ref="wt-1",
+                              repo_snapshot={}, effective_steps=[])
+    flow2 = store.create_flow(template_label="t", worktree_ref="wt-1",
+                              repo_snapshot={}, effective_steps=[])
+    transcript = str(sq.session_file_path("rev-1", "omp", branch="b",
+                                         session_type="review"))
+    review = sq.insert_run(db, "review", ["wt-1"], 0, worktree_ref="wt-1",
+                           harness_name="omp", initiator_command="review",
+                           prompt="p", file_path=transcript,
+                           session_type="review")
+    sq.set_run_flow_id(db, review, flow1["id"])
+    # Flow 2's cleanup/sync step launches no harness: transcriptless row.
+    step = sq.insert_run(db, "flow step sync", ["sync", "wt-1"], 0,
+                         worktree_ref="wt-1", initiator_command="flow step sync",
+                         session_type="flow", flow_id=flow2["id"],
+                         metadata={"origin": "flow-step", "flow_id": flow2["id"],
+                                   "step": "sync"})
+    m._tag_flow_run("wt-1", flow2["id"])
+    kept = sq.get_run(db, review)
+    assert kept["flow_id"] == flow1["id"]
+    assert kept["metadata"]["flow_id"] == flow1["id"]
+    tagged = sq.get_run(db, step)
+    assert tagged["flow_id"] == flow2["id"]
+    assert tagged["metadata"]["flow_id"] == flow2["id"]
+
+
+def test_tag_flow_run_respects_metadata_only_pause_row(tmp_path, isolated_config):
+    """A terminal pause row owns its flow through metadata alone.
+
+    `persist_terminal_pause` writes metadata.flow_id while the column stays
+    NULL, so a later flow must not re-stamp that row; a row whose metadata
+    names the current flow is owned and gains the column.
+    """
+    import workagent.cli_flow as m
+    from workagent import store, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('wt-1', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    flow1 = store.create_flow(template_label="t", worktree_ref="wt-1",
+                              repo_snapshot={}, effective_steps=[])
+    flow2 = store.create_flow(template_label="t", worktree_ref="wt-1",
+                              repo_snapshot={}, effective_steps=[])
+    transcript = str(sq.session_file_path("pause-1", "omp", branch="b",
+                                         session_type="start"))
+    pause = sq.insert_run(db, "harness", ["wt-1"], 0, worktree_ref="wt-1",
+                          harness_name="omp", initiator_command="harness",
+                          prompt="p", file_path=transcript,
+                          metadata={"flow_id": flow1["id"],
+                                    "mode": "flow-terminal"})
+    step = sq.insert_run(db, "flow step sync", ["sync", "wt-1"], 0,
+                         worktree_ref="wt-1", initiator_command="flow step sync",
+                         session_type="flow",
+                         metadata={"origin": "flow-step",
+                                   "flow_id": flow2["id"], "step": "sync"})
+    m._tag_flow_run("wt-1", flow2["id"])
+    kept = sq.get_run(db, pause)
+    assert kept["flow_id"] is None
+    assert kept["metadata"]["flow_id"] == flow1["id"]
+    tagged = sq.get_run(db, step)
+    assert tagged["flow_id"] == flow2["id"]
+    assert tagged["metadata"]["flow_id"] == flow2["id"]
 
 
 def test_run_fresh_forces_new_row(tmp_path, monkeypatch):
@@ -314,8 +423,7 @@ def test_adopt_terminal_transcript_resolves_minted(tmp_path, monkeypatch):
     monkeypatch.setattr("workagent.store.config_dir",
                         lambda: tmp_path / "cfg")
     scope_file, scope_dir = u.mint_terminal_scope("start", branch="feat/x")
-    sid = "abc123"
-    assert u.adopt_terminal_transcript(scope_file, sid) == ""  # nothing yet
+    assert u.adopt_terminal_transcript(scope_file, 1) == ""  # nothing yet
     from pathlib import Path as _P
     minted = _P(scope_dir) / "minted.jsonl"
     minted.write_text('{"x": 1}\n')
@@ -324,9 +432,47 @@ def test_adopt_terminal_transcript_resolves_minted(tmp_path, monkeypatch):
         conn.execute(
             "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
             " VALUES ('wt-1', '/tmp/wt', 'b', NULL, '2026-01-01', '{}')")
-    sq.insert_session(db, worktree_ref="wt-1", harness_name="omp",
-                      initiator_command="start", prompt="p",
-                      file_path=scope_file, session_id=sid)
-    assert u.adopt_terminal_transcript(scope_file, sid) == str(minted)
-    row = sq.get_session(db, sid, include_deleted_worktrees=True)
+    rid = sq.insert_run(db, "start", ["wt-1"], 0, worktree_ref="wt-1",
+                        harness_name="omp", initiator_command="start",
+                        prompt="p", file_path=scope_file,
+                        session_type="start", state="preview")
+    assert u.adopt_terminal_transcript(scope_file, rid) == str(minted)
+    row = sq.get_run(db, rid, include_deleted_worktrees=True)
+    assert (row or {}).get("file_path") == str(minted)
+
+
+def test_backfill_terminal_transcripts_sees_pause_row_past_run_cap(tmp_path,
+                                                                   monkeypatch):
+    """The resume backfill is worktree-scoped and uncapped.
+
+    A flow's pause row must be found even once 1000+ newer runs exist,
+    otherwise the resume proceeds from the stale pre-mint path instead of
+    adopting the detached terminal's minted transcript.
+    """
+    import workagent.cli_flow_util as u
+    import workagent.store_sqlite as sq
+    db = tmp_path / "s.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    monkeypatch.setattr("workagent.store.config_dir", lambda: tmp_path / "cfg")
+    scope_file, scope_dir = u.mint_terminal_scope("start", branch="feat/cap")
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+            " VALUES ('wt-cap', '/tmp/wt', 'b', NULL, '2026-01-01', '{}')")
+    pause = sq.insert_run(db, "flow step start", ["start", "wt-cap"], 2,
+                          worktree_ref="wt-cap", file_path=scope_file,
+                          session_type="flow", state="finished",
+                          metadata={"flow_id": 7, "mode": "flow-terminal"})
+    with sq.connect(db) as conn:
+        # Older than list_runs' newest-1000 window: the pause row is id 1.
+        conn.executemany(
+            "INSERT INTO runs (command, args, exit_code, created_at, worktree_ref)"
+            " VALUES ('flow step review', '[]', 0, '2026-01-02', 'wt-cap')",
+            [() for _ in range(1001)])
+    from pathlib import Path as _P
+    minted = _P(scope_dir) / "minted.jsonl"
+    minted.write_text('{"x": 1}\n')
+    u.backfill_terminal_transcripts(7, "wt-cap", "wt-cap")
+    row = sq.get_run(db, pause, include_deleted_worktrees=True)
     assert (row or {}).get("file_path") == str(minted)

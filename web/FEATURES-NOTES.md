@@ -60,7 +60,7 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
    `RefreshOverlay` in a `relative` parent — zero layout shift);
    skeletons render only on first load; a refetch error over stale data shows
    an inline retry line. Applies to Dashboard StatusTable, Candidates tabs,
-   Links, Runs, Sessions, Repos, Trackers, Doctor.
+   Links, Runs, Repos, Trackers, Doctor.
 7. **Candidates Recent-issues filter** is client-side over the loaded rows
    (scope toggles My/All/My-Created with My-Created default-on; created
    range dropdown Last 7/30/90 days / Last year defaulting to Last 30 days;
@@ -84,12 +84,12 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
     selection (`days`, `mine=false`). The UI prefetches the (365d, mine)
     variant in the background once the initial rows land (one idle remote
     round), so switching to Last year is instant; All-scope stays lazy.
-11. **Session join key is the transcript file path:** omp mints its own
-    `.jsonl` filename, so filename-stem lookup never matches the session
-    id — `session_by_file_path` (exact `file_path` match, stem fallback
-    for legacy rows) is the join everywhere (fix-continue adopt, launch
+11. **Transcript join key is the runs row's file path:** omp mints its own
+    `.jsonl` filename, so filename-stem lookup never matches a separate
+    id — `run_by_file_path` (exact `file_path` match, stem fallback for
+    legacy rows) is the join everywhere (fix-continue adopt, launch
     adopt, preview adopt, web run mirror). `_resolve_session_file`
-    prefers the DB row `file_path` over the pinned path (covers the
+    prefers the run row `file_path` over the pinned path (covers the
     child rescoping branch-less → branch-scoped) and the mirror syncs
     the live registry row to the DB path.
 12. **Issue-source gate is any-usable:** a vendor fetches while ANY linked

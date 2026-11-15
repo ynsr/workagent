@@ -455,6 +455,24 @@ def test_link_list_worktrees_enriched(isolated_config, tmp_path, monkeypatch):
     assert "sessions" not in data
     assert data["worktrees"]["jira:IPG-929"]["pr"] == "-"
 
+
+def test_link_list_table_renders_worktree_links(isolated_config, tmp_path, monkeypatch):
+    """The non-JSON path resolves the status helpers through the cli shim.
+
+    Regression: `link list` called `_session_rows`/`_colorize_session` as
+    bare names (they live in cli_status) and raised NameError.
+    """
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: None)
+    r = _invoke("link", "list")
+    assert r.exit_code == 0, r.output
+    assert "Worktree links" in r.output
+    assert "jira:IPG-929" in r.output
+
+
 def test_status_cells_unknown_issue_status_cached(isolated_config, tmp_path, monkeypatch):
     """A gh issue with no status label resolves to "" once, then serves the
     cached negative within the SWR window instead of re-querying gh live

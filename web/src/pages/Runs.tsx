@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import { Copy, SquareTerminal, XCircle } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
 import { RunsTable, type RunsTableRow } from "@/components/RunsTable"
-import { SessionResumeActions, useCopyFeedback } from "@/components/RunActions"
+import { RunResumeActions, useCopyFeedback } from "@/components/RunActions"
 import { RepoTabsRow } from "@/components/RepoTabs"
 import {
   EmptyState,
@@ -18,6 +18,7 @@ import { type Run } from "@/lib/api"
 import { useCancelRun, useFlows, useRepos, useRuns } from "@/lib/queries"
 import { repoKeyForPath, useRepoTabs } from "@/lib/useRepoTabs"
 import { shortId } from "@/lib/format"
+import { runKind } from "@/lib/runs"
 
 const FILTERS = [
   { value: "all", label: "All" },
@@ -224,13 +225,16 @@ export function Runs() {
                   label: shortId(run.id),
                   command: run.command,
                   args: run.args,
+                  kind: runKind(run.command, run.args, run.session_type),
                   target: run.target,
                   state: run.state,
                   exitCode: run.exit_code,
                   started: run.created,
                   actions: (
                     <>
-                      <SessionResumeActions runId={run.id} worktree={run.worktree} sessionFile={run.session_file} variant="icon" />
+                      {run.session_file ? (
+                        <RunResumeActions runId={run.id} worktree={run.worktree} sessionFile={run.session_file} transcriptReady={run.transcript_ready} variant="icon" />
+                      ) : null}
                       {run.state === "running" ? <CancelButton run={run} /> : null}
                     </>
                   ),

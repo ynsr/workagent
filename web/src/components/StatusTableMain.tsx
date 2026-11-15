@@ -544,7 +544,6 @@ export function StatusTable({
                                 onClose={() => setExpanded(null)}
                                 onOpenWorktree={actions.onOpenWorktree}
                                 onOpenRun={actions.onOpenRun}
-                                onOpenSessions={actions.onOpenSessions}
                                 onOpenFlows={actions.onOpenFlows}
                                 onAdhoc={actions.onAdhoc}
                                 rowActions={
@@ -678,7 +677,6 @@ export function StatusTable({
                           onClose={() => setExpanded(null)}
                           onOpenWorktree={actions.onOpenWorktree}
                           onOpenRun={actions.onOpenRun}
-                          onOpenSessions={actions.onOpenSessions}
                           onOpenFlows={actions.onOpenFlows}
                           onAdhoc={actions.onAdhoc}
                           rowActions={

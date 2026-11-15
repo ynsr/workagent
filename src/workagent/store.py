@@ -149,7 +149,7 @@ def set_worktree_active(key: str, active: bool) -> None:
 
 
 def delete_worktree_row(key: str) -> None:
-    """Delete a worktree row only; files/branch/PR untouched."""
+    """Delete a worktree row (with its runs); files/branch/PR untouched."""
     from .errors import HarnessError
     db = _sqlite_path()
     if db is not None:
@@ -164,7 +164,7 @@ def delete_worktree_row(key: str) -> None:
 
 
 def soft_delete_worktree(key: str) -> str:
-    """Stamp deleted_at (soft-delete); row, sessions, and files all survive."""
+    """Stamp deleted_at (soft-delete); row, its runs, and files all survive."""
     from .errors import HarnessError
     db = _sqlite_path()
     if db is not None:
@@ -199,7 +199,7 @@ def gc_soft_deleted(retention_days: int = 7) -> list[dict]:
     """Hard-delete rows soft-deleted longer than *retention_days* ago.
 
     Returns [{ref_key, path, branch, repo}] for the caller to tear down
-    on disk before/after (row is already gone; sessions/runs CASCADE).
+    on disk before/after (row and its runs are already gone).
     """
     db = _sqlite_path()
     if db is not None:
@@ -666,7 +666,8 @@ def load_harnesses() -> dict:
 
 
 def record_harness_run(key: str, harness: str, worktree: str = "",
-                       origin: str = "headless", pid: int | None = None) -> dict | None:
+                       origin: str = "headless", pid: int | None = None,
+                       overwrite: bool = False) -> dict | None:
     """Claim the per-key harness slot; returns the live record that blocks us.
 
     A stale record whose pid is dead is reclaimed silently (crash-orphan
@@ -674,19 +675,24 @@ def record_harness_run(key: str, harness: str, worktree: str = "",
     a different key — blocks the claim and is returned so callers can
     report it without a second lookup. `origin` is 'headless' (the CLI/
     web spawn this process owns) or 'terminal' (a detached terminal run;
-    stoppable via stop_terminal_run).
+    stoppable via stop_terminal_run). `overwrite` replaces the caller's own
+    live record (the pre-claim a spawner made under the same key) with the
+    real spawned pid; another key holding the worktree still blocks.
     """
     path = _harness_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path.parent / (path.name + ".lock"), "w") as lock:
         return _locked(lock, lambda: _record_harness_locked(
-            path, key, harness, worktree, origin, pid))
+            path, key, harness, worktree, origin, pid, overwrite))
 
 
 def _record_harness_locked(path: Path, key: str, harness: str, worktree: str,
-                           origin: str = "headless", pid: int | None = None) -> dict | None:
+                           origin: str = "headless", pid: int | None = None,
+                           overwrite: bool = False) -> dict | None:
     data, _ = _sweep(_read_json(path, {}))
     live = _live_rec(data.get(key))
+    if live is not None and overwrite:
+        live = None
     if live is None and worktree:
         for k, v in data.items():
             if k != key and isinstance(v, dict) and v.get("worktree") == worktree:

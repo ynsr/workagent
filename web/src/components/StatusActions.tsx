@@ -8,8 +8,8 @@ import { ImmediateRunDialog, runsImmediately } from "@/components/ImmediateRunFo
 import type { ActionRow, FlowTemplateRow, WorktreeMap } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { useActions, useCreateRun, useFlowTemplates, useSessions } from "@/lib/queries"
-import { SessionResumeActions } from "@/components/RunActions"
+import { useActions, useCreateRun, useFlowTemplates, useRuns } from "@/lib/queries"
+import { RunResumeActions } from "@/components/RunActions"
 import type { StatusTableActions } from "@/components/StatusTable"
 import { errorText } from "@/components/StatusFeedback"
 import { actionRunModeOf, buildImmediateActionArgs, isRunImmediateAction } from "@/lib/messageRunConfig"
@@ -145,13 +145,13 @@ export function RowActions({
   onToggleDetail?: () => void
   networkExposed?: boolean
   overlay?: boolean
-  /** False hides the Runs/Sessions buttons (StatusTable rows — they live in the details dialog). */
+  /** False hides the run buttons (StatusTable rows — they live in the details dialog). */
   showRuns?: boolean
   /** Overlay ids hidden for this row's repo (`{button_id: false}` map). Detail panels pass nothing. */
   hidden?: Set<string>
 }) {
   const invalid = entry.wt_valid === false
-  const lastSession = useCopyResumeSession(worktreeKey, entry.worktree)
+  const lastRun = useLatestTranscriptRun(entry.worktree)
   // Overlays and StatusTable rows filter by the row repo's hidden set;
   // detail panels (WorktreeDetail) pass nothing → everything visible.
   const hide = hidden ?? new Set<string>()
@@ -246,14 +246,6 @@ export function RowActions({
           <Rocket aria-hidden />
         </ActionIcon>
       ) : null}
-      {showRuns && actions.onOpenSessions && !hide.has("open-sessions") ? (
-        <ActionIcon
-          title={`Worktree sessions for ${worktreeKey}`}
-          onClick={() => actions.onOpenSessions?.(worktreeKey)}
-        >
-          <History aria-hidden />
-        </ActionIcon>
-      ) : null}
       {showRuns && actions.onOpenFlows && !hide.has("open-flows") ? (
         <ActionIcon
           title={`Open flows for ${worktreeKey}`}
@@ -263,16 +255,17 @@ export function RowActions({
         </ActionIcon>
       ) : null}
       {!hide.has("resume-session") ? (
-        lastSession && entry.worktree ? (
-          <SessionResumeActions
-            sessionId={lastSession.id}
+        lastRun && entry.worktree ? (
+          <RunResumeActions
+            runId={lastRun.id}
             worktree={entry.worktree}
-            sessionFile={lastSession.file_path}
+            sessionFile={lastRun.sessionFile}
+            transcriptReady={lastRun.transcriptReady}
             variant="icon"
           />
         ) : (
           <ActionIcon
-            title={`Resume session: no resumable session for ${worktreeKey} yet`}
+            title={`Resume transcript: no resumable transcript for ${worktreeKey} yet`}
             disabled
             onClick={() => undefined}
           >
@@ -284,20 +277,27 @@ export function RowActions({
   )
 }
 
-/** Latest non-running session for a worktree key (any type — start, review,
- * sync, fix_comments — matching the Sessions page; `/api/sessions` is
- * newest-first, so the first match wins). Null while loading or when no
- * resumable session exists. */
-function useCopyResumeSession(worktreeKey: string, worktree?: string): { id: string; file_path: string } | null {
-  const { data } = useSessions()
-  const sessions = data?.sessions
-  if (!sessions || !worktree?.trim()) return null
-  const match = sessions.find(
-    (row) =>
-      row.worktree_ref === worktreeKey &&
-      row.state !== "running" &&
-      row.file_path?.trim(),
-  )
-  if (!match?.file_path) return null
-  return { id: match.id, file_path: match.file_path }
+/** Newest run that still owns a resumable transcript for this worktree path
+ * (Runs own transcripts; live and persisted rows share GET /api/runs, so sort
+ * by createdAt instead of trusting the merged order). Null while loading or
+ * when the worktree has no finished transcript run. */
+function useLatestTranscriptRun(worktree?: string): {
+  id: string
+  sessionFile: string
+  transcriptReady: boolean
+} | null {
+  const { data } = useRuns()
+  if (!data || !worktree?.trim()) return null
+  const match = data
+    .filter(
+      (run) =>
+        run.worktree === worktree &&
+        run.state !== "running" &&
+        run.session_file?.trim(),
+    )
+    .sort((a, b) => b.created - a.created)[0]
+  return match
+    ? { id: match.id, sessionFile: match.session_file,
+        transcriptReady: match.transcript_ready }
+    : null
 }

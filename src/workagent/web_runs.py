@@ -34,6 +34,23 @@ def _strip_ansi(text: str) -> str:
         ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
     return ANSI_RE.sub("", text)
 
+
+def _transcript_ready(session_file: str) -> bool:
+    """True when the path is a non-empty transcript resumable via --resume.
+
+    omp v18+ rejects --resume on missing AND empty files, so both count as
+    missing (the resume endpoint 404s on them; the copy button is gated on
+    this flag — a preview row's path is only a ``--session-dir`` hint).
+    """
+    if not session_file:
+        return False
+    try:
+        p = Path(session_file)
+        return p.is_file() and p.stat().st_size > 0
+    except OSError:
+        return False
+
+
 def _db_row_target(command: str, args: list[str]) -> str:
     """Link ref owning a web run's DB row ("" when no worktree known yet).
 
@@ -49,13 +66,13 @@ def _db_row_target(command: str, args: list[str]) -> str:
     return ""
 
 def _precreate_run_row(run: Run) -> None:
-    """Persist a web run at spawn: NULL-exit row + session, adopted on finish.
+    """Persist a web run at spawn as one state='running' row, adopted on finish.
 
     The row id is stashed on the Run (`db_run_id`); the tailer streams
     output into it every ~2s so the log persists even for long/failed runs.
-    Child self-records (preview/terminal/headless session rows) are left
-    untouched — `_mirror_run` adopts the precreated row instead of adding
-    a duplicate. Never raises.
+    The child CLI records its own rows for the work it performs (preview,
+    launch) — the precreated row is the web invocation itself, finalized by
+    `_mirror_run`, never duplicated there. Never raises.
     """
     try:
         from . import store as _store
@@ -70,23 +87,21 @@ def _precreate_run_row(run: Run) -> None:
                 ref = ""
         except Exception:
             ref = ""
-        stype = _sq.derive_session_type(f"{run.command} {' '.join(run.args or [])}".strip())
-        web_sid = f"web-{run.id}"
+        args = list(run.args or [])
+        # Bare command first so review --fix-comments types as fix_comments
+        # (a 'review' row would masquerade as the fix-continue target);
+        # two-word subcommands (prodtest run/plan) need the joined argv.
+        stype = (_sq.derive_session_type(run.command, "--fix-comments" in args)
+                 or _sq.derive_session_type(f"{run.command} {' '.join(args)}".strip()))
         meta = {"origin": "web-run", "web_run_id": run.id,
                 "target": run.target or ""}
         try:
-            sid = _sq.insert_session(db, worktree_ref=ref or None,
-                                     harness_name="", initiator_command=run.command,
-                                     prompt="", file_path=run.session_file or "",
-                                     session_id=web_sid, session_type=stype,
-                                     metadata=meta)
-        except Exception:
-            # Session row already exists (retry after restart): adopt it.
-            sid = web_sid
-        worktree_ref = ref or ""
-        args = list(run.args or [])
-        try:
-            rid = _sq.insert_run(db, sid, run.command, args, None,
+            rid = _sq.insert_run(db, run.command, args, None,
+                                 worktree_ref=ref or None,
+                                 harness_name="", initiator_command=run.command,
+                                 prompt="", file_path=run.session_file or "",
+                                 session_type=stype, metadata=meta,
+                                 state="running",
                                  output=[f"$ workagent {' '.join([run.command, *args])}".strip()],
                                  validation={"web_run_id": run.id,
                                              "target": run.target or ""})
@@ -94,8 +109,8 @@ def _precreate_run_row(run: Run) -> None:
             return
         with run.lock:
             run.db_run_id = rid
-            run.db_session_id = sid
-            run.db_worktree_ref = worktree_ref
+            run.db_worktree_ref = ref or ""
+            run.session_type = stype
     except Exception as e:
         print(f"[web] run precreate failed: {e}", file=sys.stderr, flush=True)
 
@@ -120,21 +135,71 @@ def _push_run_row(run: Run, *, exit_code: int | None = None) -> None:
     except Exception as e:
         print(f"[web] run update failed: {e}", file=sys.stderr, flush=True)
 
+def _review_run_row(db, session_file: str) -> dict | None:
+    """The review row owning *session_file* (fix-continue metadata target).
+
+    The fix-continue child inserts its own row for the same transcript, so
+    the stored path resolves to that newest row first; its chain head (or
+    the row itself) is the review run the fix stamped.
+    """
+    from . import store_sqlite as _sq
+    row = _sq.run_by_file_path(db, session_file, include_deleted_worktrees=True)
+    if row is None:
+        row = _sq.run_by_file_stem(db, Path(session_file).stem,
+                                   include_deleted_worktrees=True)
+    if row is None:
+        return None
+    try:
+        root = _sq.transcript_root_run(
+            db, str(row.get("file_path") or session_file),
+            include_deleted_worktrees=True)
+    except Exception:
+        root = None
+    for cand in (root, row):
+        if cand is not None and cand.get("session_type") == "review":
+            return cand
+    return None
+
+
+def _stamp_fixed_review(db, run: Run) -> None:
+    """Stamp the review run a successful fix-continue execution updated.
+
+    Targets the review row (the transcript's chain head), never the fix
+    run's own row. Best effort: a missing review row or DB error is a
+    silent skip.
+    """
+    argv = run.argv or []
+    if not (run.command == "review" and run.exit_code == 0
+            and "--fix-comments" in argv and "--use-review-session" in argv):
+        return
+    if not run.session_file:
+        return
+    try:
+        from . import store_sqlite as _sq
+        review = _review_run_row(db, run.session_file)
+        if review is None:
+            return
+        from datetime import datetime, timezone
+        _sq.set_run_metadata(db, int(review["id"]), {
+            "review_comments_fixed_at": datetime.now(timezone.utc).isoformat(),
+            "fixed_by_run_id": run.id})
+    except Exception:
+        pass
+
+
 def _mirror_run(run: Run) -> None:
-    """Best-effort mirror of a session-linked run into the runs table.
+    """Best-effort mirror of a web run into the runs table.
 
-    Only headless-launched runs mirror: their child CLI owns the sessions
-    row (created around the harness launch), so the mirror targets the
-    session id matching the transcript stem. The buffered output lines go
-    with it (capped at MAX_RUN_OUTPUT_LINES) so the log survives a
-    restart. Preview/terminal runs already record their own runs row via
-    record_preview_session — mirroring them would duplicate it. Anything
-    missing (no db, no session row yet) is a silent skip — the live
-    registry remains the source of truth.
-
-    Runs precreated at spawn (`_precreate_run_row`) are adopted instead:
-    the precreated row is finalized with the live log and the child's
-    session is left untouched, so every web run persists exactly one row.
+    A run precreated at spawn (`_precreate_run_row`) is adopted: its row is
+    finalized with the live log, exit code and terminal state, so the web
+    invocation persists exactly one row. A headless child launch owns the
+    row it recorded itself — matched by the transcript it names (`file_path`
+    first, then filename stem for a row never updated to the minted path),
+    never by a separate id — so the mirror only closes a row the child left
+    'running' and stamps fix-continue metadata on the review run. It never
+    adds a row for a transcript that already has one. Anything missing (no
+    db, no row) is a silent skip — the live registry remains the source of
+    truth.
     """
     precreated = bool(getattr(run, "db_run_id", 0))
     if precreated:
@@ -144,17 +209,11 @@ def _mirror_run(run: Run) -> None:
             with run.lock:
                 output = [text for _, text in run.lines]
                 truncated = run.truncated
-            _sq.update_run(db, int(getattr(run, "db_run_id")),
-                           exit_code=run.exit_code, output=output,
+            rid = int(getattr(run, "db_run_id"))
+            _sq.update_run(db, rid, exit_code=run.exit_code, output=output,
                            truncated=truncated)
-            sid = str(getattr(run, "db_session_id", "") or "")
-            if sid and db.exists():
-                try:
-                    final = "finished" if run.exit_code == 0 else "failed"
-                    _sq.finish_session(db, sid, final)
-                except Exception:
-                    pass
-            run.session_file = run.session_file or ""
+            _sq.finish_run(db, rid, "finished" if run.exit_code == 0 else "failed")
+            _stamp_fixed_review(db, run)
         except Exception as e:
             print(f"[web] run mirror failed: {e}", file=sys.stderr, flush=True)
         return
@@ -168,54 +227,30 @@ def _mirror_run(run: Run) -> None:
         db = _sq.db_path()
         if not db.exists():
             return
-        row = _sq.session_by_file_path(db, run.session_file, include_deleted_worktrees=True)
-        if row is None and (sid := Path(run.session_file).stem):
-            row = _sq.get_session(db, sid, include_deleted_worktrees=True)
+        row = _sq.run_by_file_path(db, run.session_file,
+                                   include_deleted_worktrees=True)
+        if row is None:
+            row = _sq.run_by_file_stem(db, Path(run.session_file).stem,
+                                       include_deleted_worktrees=True)
         if row is None:
             return
-        sid = str(row.get("id", ""))
+        rid = int(row.get("id") or 0)
         db_file = str(row.get("file_path") or "")
         if db_file and db_file != run.session_file:
             # The child rescoped the path (branch-less → branch-scoped, or
             # pinned → minted): point the live row at the real transcript.
             with run.lock:
                 run.session_file = db_file
-        # argv is [python, -m, workagent, <command>, ...] (see _build_argv);
-        # fall back to the body fields when the shape is unexpected.
-        if len(argv) > 3:
-            command, args = argv[3], argv[4:]
-        else:
-            command, args = run.command, list(run.args)
-        with run.lock:
-            output = [text for _, text in run.lines]
-            truncated = run.truncated
-        final = "finished" if run.exit_code == 0 else "failed"
-        try:
-            if (_sq.get_session(db, sid, include_deleted_worktrees=True) or {}).get("state") == "running":
-                _sq.finish_session(db, sid, final)
-        except Exception:
-            pass
-        try:
-            if any(r.get("session_id") == sid
-                   for r in _sq.list_runs(db, limit=1000,
-                                         include_deleted_worktrees=True)):
-                # CLI headless already recorded this run (same session):
-                # mirroring would duplicate it (preview-skip rule).
-                return
-        except Exception:
-            pass
-        from datetime import datetime, timezone
-        try:
-            is_fix = (command == "review" and "--fix-comments" in args
-                      and "--use-review-session" in args and run.exit_code == 0)
-            if is_fix and (_sq.get_session(db, sid, include_deleted_worktrees=True) or {}).get("session_type") == "review":
-                _sq.set_session_metadata(db, sid, {
-                    "review_comments_fixed_at": datetime.now(timezone.utc).isoformat(),
-                    "fixed_by_run_id": run.id})
-        except Exception:
-            pass
-        _sq.insert_run(db, sid, command, args, run.exit_code,
-                       output=output, truncated=truncated)
+        if (_sq.get_run(db, rid, include_deleted_worktrees=True)
+                or {}).get("state") == "running":
+            # The child died before closing its own row: finalize it here.
+            with run.lock:
+                output = [text for _, text in run.lines]
+                truncated = run.truncated
+            _sq.update_run(db, rid, exit_code=run.exit_code, output=output,
+                           truncated=truncated)
+            _sq.finish_run(db, rid, "finished" if run.exit_code == 0 else "failed")
+        _stamp_fixed_review(db, run)
     except Exception as e:
         print(f"[web] run mirror failed: {e}", file=sys.stderr, flush=True)
 
@@ -266,10 +301,10 @@ class Run:
     created: float = field(default_factory=time.time)
     lock: threading.RLock = field(default_factory=threading.RLock)
     session_file: str = ""
+    session_type: str | None = None
     worktree: str = ""
     run_dir: str = ""
     db_run_id: int = 0
-    db_session_id: str = ""
     db_worktree_ref: str = ""
 
     def append(self, text: str) -> None:
@@ -338,7 +373,8 @@ def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
                            "truncated": run.truncated,
                            "created": run.created, "target": run.target,
                            "session_file": run.session_file,
-                           "session_id": (Path(run.session_file).stem if run.session_file else None),
+                           "transcript_ready": _transcript_ready(run.session_file),
+                           "session_type": run.session_type,
                            "worktree": worktree,
                            "last_seq": run.last_seq}
     if lines is not None:
@@ -365,13 +401,33 @@ def _persisted_summary(row: dict) -> dict:
         except Exception:
             args = []
     exit_code = row.get("exit_code")
-    state = "succeeded" if exit_code == 0 else "running" if exit_code is None else "failed"
+    # Same derivation as the live summary (`_finish_state`): exit 2 is
+    # "needs input" (a flow step paused on a question), never "failed".
+    state = "running" if exit_code is None else _finish_state(exit_code)
+    # The stored state wins only where the exit code is silent: a row whose
+    # exit code never landed but finished (or failed) stays terminal. A real
+    # exit code always wins — exit 2 is needs_input even though _mirror_run
+    # finished the run as 'failed', matching the live summary.
+    stored = str(row.get("state") or "")
+    if exit_code is None:
+        if stored == "failed":
+            state = "failed"
+        elif stored in ("finished", "preview"):
+            state = "succeeded"
     created = 0.0
     try:
         created = datetime.fromisoformat(str(row.get("created_at", ""))).timestamp()
     except Exception:
         created = 0.0
-    session_file = str(row.get("session_file") or "")
+    session_file = str(row.get("file_path") or "")
+    if session_file:
+        # Legacy rows may name the pre-rename sessions/ tree; resolve it so
+        # the surfaced path is the one a resume command can actually use.
+        try:
+            from . import store_sqlite as _sq
+            session_file = str(_sq.resolve_transcript_path(session_file))
+        except Exception:
+            session_file = str(row.get("file_path") or "")
     worktree = ""
     try:
         from . import store as _store
@@ -416,8 +472,9 @@ def _persisted_summary(row: dict) -> dict:
             "exit_code": exit_code, "truncated": bool(row.get("truncated")),
             "created": created, "target": target,
             "session_file": session_file, "worktree": worktree,
+            "transcript_ready": _transcript_ready(session_file),
+            "session_type": row.get("session_type"),
             "last_seq": max((ln["seq"] for ln in _persisted_lines(row)), default=-1) + 1,
-            "session_id": row.get("session_id"),
             "validation": row.get("validation") if isinstance(row.get("validation"), dict) else {}}
 def _persisted_row(run_id: str) -> dict | None:
     """Fetch a runs-table row for a `db-<id>` run id (None otherwise)."""
@@ -658,11 +715,6 @@ def _cancel(run: Run) -> None:
             run.state = "cancelled"
 
 
-def _worktree_for_session(row: dict) -> str:
-    wt = row.get("worktree", "")
-    if wt:
-        return wt
-    return _worktree_for_target(row.get("worktree_ref", ""))
 
 
 def _resume_shell_command(worktree: str, session_file: str,

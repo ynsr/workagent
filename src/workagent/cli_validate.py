@@ -382,10 +382,10 @@ def _resolve_max_retries(explicit: int | None = None) -> int:
 
 
 def _attempt_store():
-    """Session-metadata seam: (load, save) or (None, None) when unavailable."""
+    """Run-metadata seam: (load, save) or (None, None) when unavailable."""
     try:
-        from . import store_sessions as _ss
-        return _ss.get_session, _ss.set_session_metadata
+        from . import store_sqlite as _sq
+        return _sq.get_run, _sq.set_run_metadata
     except Exception:
         return None, None
 
@@ -395,7 +395,7 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                       run_once, run_judge,
                       max_retries: int | None = None,
                       transcript_path: str | None = None,
-                      session_db=None, session_id: str | None = None) -> dict:
+                      run_db=None, run_id: int | None = None) -> dict:
     """Retry loop. run_once(prompt)->{exit_code, transcript[, transcript_path]}.
 
     Every run_once call (main attempt or dirty continuation) appends exactly one
@@ -403,8 +403,8 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
     decision taken on that run's output. The terminal verdict is stored as
     ``trace["terminal"]`` on the last record; no extra entry is appended.
 
-    ``session_db``/``session_id`` persist ``validation_attempts`` into session
-    metadata (best effort, via store_sessions.set_session_metadata) so a
+    ``run_db``/``run_id`` persist ``validation_attempts`` into the run row's
+    metadata (best effort, via store_sqlite.set_run_metadata) so a
     WAITING resume restarts validation where it stopped. ``run_once`` may
     return ``transcript_path`` to retarget the tool-error scan per attempt.
 
@@ -425,20 +425,20 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
     runs: list[dict] = []
     attempts = 0
 
-    _get_session, _set_meta = _attempt_store()
-    if session_db is not None and session_id and _get_session is not None:
+    _get_run, _set_meta = _attempt_store()
+    if run_db is not None and run_id and _get_run is not None:
         try:
-            row = _get_session(session_db, session_id, include_deleted_worktrees=True)
+            row = _get_run(run_db, run_id, include_deleted_worktrees=True)
             prior = ((row or {}).get("metadata") or {}).get("validation_attempts", 0)
             attempts = max(0, int(prior))
         except Exception:
             pass
 
     def _save_attempts() -> None:
-        if session_db is None or not session_id or _set_meta is None:
+        if run_db is None or not run_id or _set_meta is None:
             return
         try:
-            _set_meta(session_db, session_id, {"validation_attempts": attempts})
+            _set_meta(run_db, run_id, {"validation_attempts": attempts})
         except Exception:
             pass
 

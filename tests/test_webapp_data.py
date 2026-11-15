@@ -1,4 +1,4 @@
-"""Webapp data tests: issues/candidates/sessions/mirror/trackers/resume (split from test_webapp.py)."""
+"""Webapp data tests: issues/candidates/runs mirror/trackers/resume (split from test_webapp.py)."""
 
 from __future__ import annotations
 
@@ -179,32 +179,16 @@ def test_candidates_per_source_endpoints(client, monkeypatch, tmp_path):
     assert wts["worktrees"] == []
 
 
-def test_api_sessions_empty(client):
-    body = client.get("/api/sessions").json()
-    assert body == {"sessions": []}
+def test_api_sessions_endpoints_removed(client):
+    """Session endpoints are gone (runs own transcripts): no aliases remain."""
+    assert client.get("/api/sessions").status_code == 404
+    assert client.get("/api/sessions/some-id").status_code == 404
+    # No POST route exists; the SPA GET catch-all answers 405 (never 200).
+    assert client.post("/api/sessions/some-id/resume").status_code in (404, 405)
 
 
-def test_api_sessions_roundtrip(client, tmp_path, monkeypatch):
-    from workagent import store_sqlite as sq
-    db = sq.db_path()
-    sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
-        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
-        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
-                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
-                            initiator_command="start", prompt="hello",
-                            file_path="/tmp/x.jsonl")
-    body = client.get("/api/sessions").json()
-    assert body["sessions"][0]["id"] == sid
-    detail = client.get(f"/api/sessions/{sid}").json()
-    assert detail["prompt"] == "hello" and detail["runs"] == []
-    assert client.get("/api/sessions/nope").status_code == 404
-
-
-def test_mirror_run_persists_session_run(client):
+def test_mirror_run_finalizes_child_row(client):
+    """A headless child's own transcript row is finalized, never duplicated."""
     from workagent import store_sqlite as sq
     from workagent.webapp import _mirror_run
     db = sq.db_path()
@@ -215,26 +199,30 @@ def test_mirror_run_persists_session_run(client):
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
                      " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
-                            initiator_command="start", prompt="hello",
-                            file_path="/tmp/x.jsonl",
-                            session_id="2026-09-26T00-00-00-000Z-1234")
+    transcript = "/s/runs/omp/2026-09-26T00-00-00-000Z-1234.jsonl"
+    rid = sq.insert_run(db, "start",
+                        ["IPG-1", "--launch", "--yes",
+                         "--session-file", transcript],
+                        None, worktree_ref="k", harness_name="omp",
+                        initiator_command="start", prompt="hello",
+                        file_path=transcript, session_type="start",
+                        state="running")
     run = Run(id="abc123", command="start", args=["IPG-1"], target="start",
               argv=["/py", "-m", "workagent", "start", "IPG-1", "--launch", "--yes",
-                    "--session-file", "/s/sessions/omp/2026-09-26T00-00-00-000Z-1234.jsonl"],
-              session_file="/s/sessions/omp/2026-09-26T00-00-00-000Z-1234.jsonl")
+                    "--session-file", transcript],
+              session_file=transcript)
     run.append("hello log\n")
     run.exit_code = 0
     _mirror_run(run)
-    detail = sq.get_session(db, sid)
-    assert len(detail["runs"]) == 1
-    row = detail["runs"][0]
+    assert len(sq.list_runs(db, include_deleted_worktrees=True)) == 1
+    row = sq.get_run(db, rid)
     assert row["command"] == "start" and row["exit_code"] == 0
-    assert "--session-file" in row["args"]
+    assert row["state"] == "finished"
     assert "hello log" in (row.get("output") or "")
 
 
-def test_mirror_run_finalizes_stuck_running_session(client):
+def test_mirror_run_closes_stuck_child_row(client):
+    """A child that died before closing its row is finished as failed."""
     from workagent import store_sqlite as sq
     from workagent.webapp import _mirror_run
     db = sq.db_path()
@@ -245,19 +233,21 @@ def test_mirror_run_finalizes_stuck_running_session(client):
         conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
         conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
                      " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
-                            initiator_command="review", prompt="p",
-                            file_path="/tmp/stuck.jsonl",
-                            session_id="2026-09-26T06-00-16-776Z-8628")
-    assert sq.get_session(db, sid)["state"] == "running"
+    transcript = "/s/runs/omp/2026-09-26T06-00-16-776Z-8628.jsonl"
+    rid = sq.insert_run(db, "review",
+                        ["MR-38", "--launch", "--yes",
+                         "--session-file", transcript],
+                        None, worktree_ref="k", file_path=transcript,
+                        session_type="review", state="running")
     run = Run(id="deadbeef", command="review", args=["MR-38"], target="review",
               argv=["/py", "-m", "workagent", "review", "MR-38", "--launch", "--yes",
-                    "--session-file", "/s/sessions/omp/2026-09-26T06-00-16-776Z-8628.jsonl"],
-              session_file="/s/sessions/omp/2026-09-26T06-00-16-776Z-8628.jsonl")
+                    "--session-file", transcript],
+              session_file=transcript)
     run.exit_code = 129
     _mirror_run(run)
-    assert sq.get_session(db, sid)["state"] == "failed"
-    assert len(sq.get_session(db, sid)["runs"]) == 1
+    row = sq.get_run(db, rid)
+    assert row["state"] == "failed" and row["exit_code"] == 129
+    assert len(sq.list_runs(db, include_deleted_worktrees=True)) == 1
 
 
 def test_mirror_run_skips_without_session(client):
@@ -359,30 +349,6 @@ def test_start_terminal_missing_command_is_404(client):
     r = client.post(f"/api/runs/{run.id}/start-terminal")
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "no_harness_command"
-
-
-
-def test_resume_session_opens_terminal(client, monkeypatch, tmp_path):
-    from workagent import store_sqlite as sq
-    session = tmp_path / "s.jsonl"
-    session.write_text("{}\n")
-    db = sq.db_path()
-    sq.init_db(db)
-    with sq.connect(db) as conn:
-        conn.execute("INSERT INTO trackers (key_ref, vendor, remote_url) VALUES ('t', 'unknown', 't')")
-        conn.execute("INSERT INTO repos (key_ref, path, name) VALUES ('r', '/r', 'r')")
-        conn.execute("INSERT INTO tracker_repos (tracker_key, repo_key) VALUES ('t', 'r')")
-        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at)"
-                     " VALUES ('k', '/wt', 'b', 'r', '2026-01-01T00:00:00+00:00')")
-    sid = sq.insert_session(db, worktree_ref="k", harness_name="omp",
-                            initiator_command="start", prompt="hello",
-                            file_path=str(session))
-    opened: dict = {}
-    monkeypatch.setattr("workagent.webapp._open_terminal",
-                        lambda wt, sf, env=None: opened.update(wt=wt, sf=sf))
-    r = client.post(f"/api/sessions/{sid}/resume")
-    assert r.status_code == 200, r.text
-    assert opened == {"wt": "/wt", "sf": str(session)}
 
 
 class _FakeProc:
@@ -511,11 +477,7 @@ def test_list_runs_includes_persisted_db_rows(client):
         conn.execute(
             "INSERT OR IGNORE INTO worktrees (ref_key, path, branch, repo_key, added_at)"
             " VALUES ('k', ?, 'b', 'r', '2026-01-01T00:00:00+00:00')", (wt,))
-        conn.execute(
-            "INSERT OR IGNORE INTO sessions (id, worktree_ref, state, created_at)"
-            " VALUES ('sid-1', 'k', 'finished', '2026-01-01T00:00:00+00:00')")
-    sid = "sid-1"
-    sq.insert_run(db, sid, "review", ["o/r#9"], 0)
+    sq.insert_run(db, "review", ["o/r#9"], 0)
     rows = client.get("/api/runs").json()
     assert any(r["id"] == "db-1" and r["command"] == "review"
                and r["state"] == "succeeded" and r["args"] == ["o/r#9"]
@@ -532,15 +494,42 @@ def test_get_persisted_run_detail(client):
         conn.execute(
             "INSERT OR IGNORE INTO worktrees (ref_key, path, branch, repo_key, added_at)"
             " VALUES ('k2', '/tmp/wt2', 'b2', 'r', '2026-01-01T00:00:00+00:00')")
-        conn.execute(
-            "INSERT OR IGNORE INTO sessions (id, worktree_ref, state, created_at)"
-            " VALUES ('sid-2', 'k2', 'finished', '2026-01-01T00:00:00+00:00')")
-    sq.insert_run(db, "sid-2", "sync", ["k2"], 1)
+    sq.insert_run(db, "sync", ["k2"], 1)
     rid = sq.list_runs(db)[0]["id"]
     detail = client.get(f"/api/runs/db-{rid}").json()
     assert detail["command"] == "sync" and detail["state"] == "failed"
     assert detail["lines"] == []
     assert client.get("/api/runs/db-999999").status_code == 404
+
+
+def test_persisted_run_reports_transcript_readiness(client, isolated_config):
+    """`transcript_ready` gates copy: a --session-dir scope hint is false, a
+    real .jsonl is true, and a legacy sessions/ path surfaces its runs/ file."""
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    hint = isolated_config / "runs" / "omp" / "IPG-7"
+    real = isolated_config / "runs" / "omp" / "IPG-7" / "review" / "a.jsonl"
+    real.parent.mkdir(parents=True)
+    real.write_text("{}\n")
+    legacy = isolated_config / "sessions" / "omp" / "IPG-8" / "review" / "b.jsonl"
+    moved = isolated_config / "runs" / "omp" / "IPG-8" / "review" / "b.jsonl"
+    moved.parent.mkdir(parents=True)
+    moved.write_text("{}\n")
+    sq.insert_run(db, "start", ["IPG-7"], 0, file_path=str(hint),
+                  session_type="start")
+    sq.insert_run(db, "review", ["IPG-9"], 0, file_path=str(real),
+                  session_type="review")
+    sq.insert_run(db, "sync", ["IPG-8"], 0, file_path=str(legacy),
+                  session_type="sync")
+
+    rows = {r["session_type"]: r for r in client.get("/api/runs").json()}
+
+    assert rows["start"]["session_file"] == str(hint)
+    assert rows["start"]["transcript_ready"] is False
+    assert rows["review"]["transcript_ready"] is True
+    assert rows["sync"]["session_file"] == str(moved)
+    assert rows["sync"]["transcript_ready"] is True
 
 
 def test_persisted_run_serves_stored_log(client):
@@ -553,10 +542,7 @@ def test_persisted_run_serves_stored_log(client):
         conn.execute(
             "INSERT OR IGNORE INTO worktrees (ref_key, path, branch, repo_key, added_at)"
             " VALUES ('k3', '/tmp/wt3', 'b3', 'r', '2026-01-01T00:00:00+00:00')")
-        conn.execute(
-            "INSERT OR IGNORE INTO sessions (id, worktree_ref, state, created_at)"
-            " VALUES ('sid-3', 'k3', 'finished', '2026-01-01T00:00:00+00:00')")
-    sq.insert_run(db, "sid-3", "sync", ["k3"], 0,
+    sq.insert_run(db, "sync", ["k3"], 0,
                   output=["line one", "line two"], truncated=False)
     rid = sq.list_runs(db)[0]["id"]
     detail = client.get(f"/api/runs/db-{rid}").json()

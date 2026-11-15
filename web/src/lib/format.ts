@@ -73,16 +73,11 @@ export function argsText(args: string[] | undefined): string {
   return args.join(" ")
 }
 
-/** Shell command that cds to the worktree then continues the session.
- * Real transcripts resume via omp --resume; anything else (missing/empty
- * preview path — the frontend cannot stat it) starts fresh scoped by
- * --session-dir on the parent dir (omp v18+ rejects --resume there).
- * Callers with a known-good transcript pass resume=true. */
-export function resumeCommand(worktree: string, sessionFile: string, resume = false): string {
+/** Shell command that cds to the worktree then resumes the transcript.
+ * Copy always mirrors the resume endpoint (omp --resume on a real .jsonl). */
+export function resumeCommand(worktree: string, sessionFile: string): string {
   const q = (s: string) => `'${s.replaceAll("'", "'\\''")}'`
-  if (resume) return `cd ${q(worktree)} && omp --resume ${q(sessionFile)}`
-  const dir = sessionFile.includes("/") ? sessionFile.slice(0, sessionFile.lastIndexOf("/")) || "/" : "."
-  return `cd ${q(worktree)} && omp --session-dir ${q(dir)}`
+  return `cd ${q(worktree)} && omp --resume ${q(sessionFile)}`
 }
 
 export async function copyToClipboard(text: string): Promise<void> {

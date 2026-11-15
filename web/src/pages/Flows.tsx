@@ -260,9 +260,6 @@ export function Flows() {
                 </Button>
               ) : null}
               <Button variant="outline" size="sm" asChild>
-                <Link to={`/sessions?flow=${detail.id}`}>Sessions</Link>
-              </Button>
-              <Button variant="outline" size="sm" asChild>
                 <Link to={`/runs?flow=${detail.id}`}>Runs</Link>
               </Button>
             </>

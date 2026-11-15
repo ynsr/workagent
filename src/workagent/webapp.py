@@ -90,7 +90,6 @@ from .web_runs import (  # noqa: F401,E402
     _open_terminal,
     _open_terminal_command,
     _resume_shell_command,
-    _worktree_for_session,
 )
 
 def run_startup_maintenance() -> dict:
@@ -101,8 +100,7 @@ def run_startup_maintenance() -> dict:
     then runs the other slow non-essential jobs: soft-delete GC (git
     teardown) and run-dir prune. Never raises; {"purged": [...], "pruned": n}.
     """
-    from .store_sessions import db_path
-    from .store_sqlite import init_db
+    from .store_sqlite import db_path, init_db
     try:
         init_db(db_path())
     except Exception as e:
@@ -363,22 +361,26 @@ def create_app(static_dir: Path, host: str, port: int,
 
     @app.get("/api/review-session")
     def review_session(ref: str) -> dict:
-        """Latest non-running review session for *ref* (fix-continue target).
+        """Latest non-running review run for *ref* (fix-continue target).
 
         Read-only, always 200: resolves the ref to its worktree key with the
         same fuzzy resolver as cleanup/open, then returns the newest
-        finished/failed review session or nulls when none exists."""
+        finished/failed review run's row id + transcript path — nulls when
+        none exists."""
         from . import store_sqlite as _sq
         links = store.load_links()
         resolved = worktrees.resolve_worktree(ref, links)
         if resolved is None:
-            return {"ref": ref, "session_id": None, "file_path": None}
+            return {"ref": ref, "run_id": None, "file_path": None}
         key = worktrees.pick_worktree(ref, resolved, links)
         db = _sq.db_path()
-        latest = _sq.latest_review_session(db, key) if db.exists() else None
+        latest = _sq.latest_review_run(db, key) if db.exists() else None
         if latest is None:
-            return {"ref": ref, "session_id": None, "file_path": None}
-        return {"ref": ref, "session_id": latest["id"], "file_path": latest.get("file_path")}
+            return {"ref": ref, "run_id": None, "file_path": None}
+        file_path = str(latest.get("file_path") or "")
+        resolved_path = _sq.resolve_transcript_path(file_path) if file_path else None
+        return {"ref": ref, "run_id": latest["id"],
+                "file_path": str(resolved_path) if resolved_path else None}
 
     @app.get("/api/doctor")
     def doctor() -> dict:
@@ -452,28 +454,6 @@ def create_app(static_dir: Path, host: str, port: int,
         and revalidates the diff in the background (never blocks)."""
         from . import repos as _repos
         return _repos.release_status(name, background=True)
-    @app.get("/api/sessions")
-    def sessions_list() -> dict:
-        """Persisted harness sessions (newest first); [] pre-migration."""
-        from . import store_sqlite as sq
-        db = sq.db_path()
-        if not db.exists():
-            return {"sessions": []}
-        rows = [{k: v for k, v in r.items() if k != "prompt"}
-                for r in sq.list_sessions(db)]
-        return {"sessions": rows}
-
-    @app.get("/api/sessions/{sid}")
-    def session_detail(sid: str) -> dict:
-        from . import store_sqlite as sq
-        from pathlib import Path
-        db = sq.db_path()
-        row = sq.get_session(db, sid) if db.exists() else None
-        if row is None:
-            raise HTTPException(404, f"no session {sid}")
-        if row.get("file_path") and not Path(row["file_path"]).exists():
-            row["transcript"] = "missing"
-        return row
 
     register_runs_routes(app, registry)
 
@@ -533,8 +513,7 @@ def run_server(host: str, port: int, static_dir: Path,
         _apply_env()
     except Exception:
         pass
-    from .store_sessions import db_path
-    from .store_sqlite import init_db
+    from .store_sqlite import db_path, init_db
     init_db(db_path(), defer_backfill=True)
     try:
         import uvicorn

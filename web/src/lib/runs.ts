@@ -89,6 +89,60 @@ export function commandLabel(command: string): string {
   }
 }
 
+/** session_type → the label shown for a run's transcript. */
+const SESSION_TYPE_LABELS: Record<string, string> = {
+  start: "Start (task)",
+  review: "Review",
+  sync: "Sync",
+  fix_comments: "Fix comments",
+  custom_action: "Custom action",
+  flow: "Flow",
+  prodtest_plan: "Prodtest plan",
+  prodtest_run: "Prodtest run",
+}
+
+/** Kind label for a run's transcript. The stored `session_type` wins: a
+ * fix-comments launch stores `command='review'` with the flags dropped, so it
+ * is only distinguishable there. Pre-migration rows (null) fall back to the
+ * initiator command + args, mirroring the backend derivation. Unknown → the
+ * command itself. */
+export function runKind(
+  command: string,
+  args: readonly string[] = [],
+  sessionType?: string | null,
+): string {
+  const key = (sessionType ?? "").trim().toLowerCase()
+  const stored = Object.hasOwn(SESSION_TYPE_LABELS, key)
+    ? SESSION_TYPE_LABELS[key]
+    : undefined
+  if (stored) return stored
+  const c = command.trim().toLowerCase()
+  if (c === "prodtest") {
+    // The web launches prodtest split: command="prodtest", args[0]=plan|run.
+    const sub = (args[0] ?? "").trim().toLowerCase()
+    if (sub === "plan") return "Prodtest plan"
+    if (sub === "run") return "Prodtest run"
+  }
+  if (c === "review" && args.includes("--fix-comments")) return "Fix comments"
+  switch (c) {
+    case "start":
+      return "Start (task)"
+    case "review":
+      return "Review"
+    case "sync":
+      return "Sync"
+    case "flow":
+      return "Flow"
+    case "action":
+    case "adhoc":
+      return "Custom action"
+  }
+  const joined = c.split(/\s+/).slice(0, 2).join(" ")
+  if (joined === "prodtest plan") return "Prodtest plan"
+  if (joined === "prodtest run") return "Prodtest run"
+  return command || "—"
+}
+
 /** Short human summary of a run for toasts: "Sync jira:IPG-932". */
 export function runLabel(command: string, args: readonly string[]): string {
   const refs = args.filter((a) => !a.startsWith("-"))

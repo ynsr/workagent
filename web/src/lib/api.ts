@@ -259,29 +259,6 @@ export interface CandidatesResponse {
   warnings: string[]
 }
 
-/** One persisted harness session (prompt excluded from the list; see SessionDetail).
- * worktree_ref is null for flow-owned rows recorded before a worktree is adopted. */
-export interface SessionRow {
-  id: string; worktree_ref: string | null; state: string; harness_name: string;
-  initiator_command: string; file_path: string; created_at: string;
-  /** Session kind: start | review | sync | fix_comments (null = pre-v6 row). */
-  session_type?: string | null;
-  /** Fix outcome etc. — review_comments_fixed_at + fixed_by_run_id on continue. */
-  metadata?: Record<string, unknown>;
-}
-
-export interface SessionRun {
-  id: number; command: string; args: string[]; exit_code: number | null; created_at: string;
-}
-
-export interface SessionDetail extends SessionRow {
-  prompt: string; runs: SessionRun[]; transcript?: string;
-}
-
-export interface SessionsResponse {
-  sessions: SessionRow[];
-}
-
 export interface DoctorInfo {
   status: string
   live_hash?: string
@@ -306,7 +283,17 @@ export interface Run {
   truncated: boolean
   created: number
   target: string
+  /** Stored transcript path (`--session-file`); may be a scope hint only —
+   * see `transcript_ready`. */
   session_file: string
+  /** Backend readiness: `session_file` names a non-empty .jsonl on disk, so
+   * `omp --resume` on it works. Copy is gated on this (preview rows store a
+   * `--session-dir` hint that never existed). */
+  transcript_ready: boolean
+  /** Stored transcript kind (start/review/sync/fix_comments/custom_action/
+   * flow/prodtest_plan/prodtest_run); null for rows recorded before the type
+   * existed. The Runs label prefers it over the command. */
+  session_type: string | null
   worktree: string
   last_seq: number
 }
@@ -508,14 +495,9 @@ export const api = {
   defaultRepo: (ref: string) =>
     request<{ ref: string; repo: string; repos: string[] }>(`/api/default-repo${qs({ ref })}`),
 
-  /** GET /api/review-session?ref=... - latest non-running review session (fix-continue target). */
+  /** GET /api/review-session?ref=... - latest non-running review run (fix-continue target). */
   reviewSession: (ref: string) =>
-    request<{ ref: string; session_id: string | null; file_path: string | null }>(`/api/review-session${qs({ ref })}`),
-
-  /** GET /api/sessions — persisted harness sessions (newest first). */
-  sessions: () => request<SessionsResponse>("/api/sessions"),
-  session: (id: string) =>
-    request<SessionDetail>(`/api/sessions/${encodeURIComponent(id)}`),
+    request<{ ref: string; run_id: number | null; file_path: string | null }>(`/api/review-session${qs({ ref })}`),
 
   runs: () => request<Run[]>("/api/runs"),
   run: (id: string) => request<RunDetail>(`/api/runs/${encodeURIComponent(id)}`),
@@ -535,7 +517,7 @@ export const api = {
       { method: "POST" },
     ),
 
-  /** POST /api/runs/{id}/resume — open OS terminal resumed on the run session. */
+  /** POST /api/runs/{id}/resume — open OS terminal resumed on the run's transcript. */
   resumeRun: (id: string) =>
     request<{ id: string; session_file: string; worktree: string }>(
       `/api/runs/${encodeURIComponent(id)}/resume`,
@@ -546,13 +528,6 @@ export const api = {
   startTerminal: (id: string) =>
     request<{ id: string }>(
       `/api/runs/${encodeURIComponent(id)}/start-terminal`,
-      { method: "POST" },
-    ),
-
-  /** POST /api/sessions/{id}/resume — open OS terminal resumed on the session. */
-  resumeSession: (id: string) =>
-    request<{ id: string; session_file: string; worktree: string }>(
-      `/api/sessions/${encodeURIComponent(id)}/resume`,
       { method: "POST" },
     ),
 

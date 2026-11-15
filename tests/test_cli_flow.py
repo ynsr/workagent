@@ -226,6 +226,35 @@ def test_run_paused_on_preview(tmp_path, monkeypatch):
     assert res.exit_code == 0, res.output
     assert states.get("status") == "paused"
 
+
+def test_paused_step_run_finishes_not_failed(tmp_path, monkeypatch, isolated_config):
+    """A resumable pause keeps the step's run row finished (exit 2), not failed."""
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401  (register commands)
+    import workagent.cli_flow as cli_mod
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    tpl = {"label": "p", "name": "P",
+           "steps": [{"kind": "start", "config": {"preview": True}}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.get_action", lambda l: {"label": l})
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [])
+    monkeypatch.setattr(cli_mod, "_run_start_step",
+                        lambda *a, **k: {"key": "wt-9", "preview": True,
+                                         "command": "omp run ..."})
+    monkeypatch.setattr(cli_mod, "_resolve_ref",
+                        lambda *a, **k: ("", {}, {"kind": "issue"}))
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["flow", "run", "p", "jira:X-1", "--yes"])
+    assert res.exit_code == 0, res.output
+    rows = sq.list_runs(db, limit=100, include_deleted_worktrees=True)
+    steps = [r for r in rows if r["session_type"] == "flow"]
+    assert len(steps) == 1
+    assert steps[0]["exit_code"] == 2
+    assert steps[0]["state"] == "finished"
+
+
 def test_run_prints_step_banner_separators(tmp_path, monkeypatch):
     """Each step prints a ### banner with ##### separators (cmd vs output)."""
     from typer.testing import CliRunner
@@ -502,7 +531,7 @@ def test_run_action_skip_records_skipped_and_continues(monkeypatch):
     monkeypatch.setattr(cli_mod, "_run_cleanup_step",
                         lambda *a, **k: ran.append("cleanup") or {"key": "wt-1",
                                                                   "status": "cleaned"})
-    monkeypatch.setattr(cli_mod, "_tag_flow_session", lambda *a, **k: None)
+    monkeypatch.setattr(cli_mod, "_tag_flow_run", lambda *a, **k: None)
     runner = CliRunner()
     res = runner.invoke(cli_mod.app,
                         ["flow", "run", "skipflow", "wt-1", "--yes", "--json"])
@@ -609,7 +638,7 @@ def test_skip_steps_marks_resume_step_done(monkeypatch):
     monkeypatch.setattr(cli_mod, "_resolve_ref",
                         lambda ref: ("wt-1", {"worktree": "/tmp/wt", "repo": "r",
                                              "branch": "b", "active": 1}, None))
-    monkeypatch.setattr(cli_mod, "_tag_flow_session", lambda *a, **k: None)
+    monkeypatch.setattr(cli_mod, "_tag_flow_run", lambda *a, **k: None)
     runner = CliRunner()
     res = runner.invoke(cli_mod.app,
                         ["flow", "run", "pipe", "wt-1", "--yes",
@@ -676,7 +705,7 @@ def test_skip_start_adopts_terminal_worktree(monkeypatch):
         return {"key": key, "status": "reviewed", "fix_comments": fix}
 
     monkeypatch.setattr(cli_mod, "_run_review_step", _review)
-    monkeypatch.setattr(cli_mod, "_tag_flow_session", lambda *a, **k: None)
+    monkeypatch.setattr(cli_mod, "_tag_flow_run", lambda *a, **k: None)
     runner = CliRunner()
     res = runner.invoke(cli_mod.app,
                         ["flow", "run", "pipe", "jira:X-1", "--yes",
