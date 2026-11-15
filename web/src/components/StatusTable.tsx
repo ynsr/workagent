@@ -42,7 +42,10 @@ export interface StatusTableSelection {
 
 /** Embedded-table options: hide the inner filter toolbar and namespace URL params. */
 export interface StatusTableEmbed {
-  /** Skip the filter toolbar (parent owns the single filter input). */
+  /** Skip the inner filter form (text/PR/issue/author inputs, repo tabs,
+   * Clear-filters button). The selection pill still renders so embedded
+   * tables (Deleted, issue #102/105) keep their clear-selection control.
+   * Parent owns the single shared filter input (Dashboard). */
   hideFilter?: boolean
   /** URL param carrying the selection (default "sel"); null = internal-only, never touches the URL. */
   selParam?: string | null

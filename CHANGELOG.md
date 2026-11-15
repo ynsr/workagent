@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Dashboard Close released also covers deleted-table picks and Destroy deletes every selected row sequentially [105]
 - Flow Re-run from the run detail page works again: it shows the confirm dialog and passes confirm for flow runs like other destructive runs [99]
 - Suggest-icon prompt covers all Lucide icons and avoids already used icons on flows/actions [84]
 - Messages page gains a Register button and Message Launch auto-registers unknown permalinks, pinned by repo or worktree [94]

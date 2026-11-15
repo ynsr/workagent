@@ -309,16 +309,20 @@ export function Dashboard() {
     }
   }
 
+  // Active + deleted selections: per-ref `cleanup <ref> --released` falls
+  // back to the deleted-row path on NoLinkedState, so deleted-table picks
+  // close here; empty both = all-mode sweep (active + inactive + deleted).
+  const scopeKeys = [...selected, ...[...deletedSel].filter((k) => !selected.has(k))].sort()
   async function handleCloseReleased() {
-    const targeting = selCount > 0
+    const targeting = scopeKeys.length > 0
     const ok = await confirm({
       action: "cleanup",
-      title: targeting ? `Close released issues (${selCount} selected)` : "Close released issues",
+      title: targeting ? `Close released issues (${scopeKeys.length} selected)` : "Close released issues",
       description: targeting
-        ? "Closes the tracker issue for each selected worktree whose branch is contained in its repo release branch (merge-base --is-ancestor). Deactivated, deleted, or release-branch-less rows still close when their Jira issue is already in Product Test. Worktrees, branches, and PRs are left untouched — issue state only."
+        ? "Closes the tracker issue for each selected worktree (active + deleted selections) whose branch is contained in its repo release branch (merge-base --is-ancestor). Deactivated, deleted, or release-branch-less rows still close when their Jira issue is already in Product Test. Worktrees, branches, and PRs are left untouched — issue state only."
         : "Closes the tracker issue for every linked worktree (active, deactivated, and soft-deleted) whose branch is contained in its repo release branch (merge-base --is-ancestor). Deactivated, deleted, or release-branch-less rows still close when their Jira issue is already in Product Test. Worktrees, branches, and PRs are left untouched — issue state only.",
       destructive: true,
-      confirmLabel: targeting ? `Close ${selCount}` : "Close released",
+      confirmLabel: targeting ? `Close ${scopeKeys.length}` : "Close released",
       details: [{ label: "Scope", value: "Release-branch-contained links only" }],
     })
     if (!ok) return
@@ -335,7 +339,7 @@ export function Dashboard() {
       }
       return
     }
-    for (const key of [...selected].sort()) {
+    for (const key of scopeKeys) {
       try {
         const { run_id } = await createRun.mutateAsync({
           command: "cleanup",
@@ -493,6 +497,21 @@ export function Dashboard() {
       details: [{ label: "Scope", value: keys.slice(0, 5).join(", ") + (keys.length > 5 ? ` +${keys.length - 5} more` : "") }],
     })
     if (!ok) return
+    // Destroy runs share the constant `link:destroy-deleted` target key
+    // (web_args SPECS), so only the first parallel create wins — the rest
+    // 409. Poll each run to completion before creating the next.
+    async function waitRun(runId: string): Promise<void> {
+      const deadline = Date.now() + 30_000
+      for (;;) {
+        try {
+          const run = await api.run(runId)
+          if (run.state !== "running" || Date.now() >= deadline) return
+        } catch {
+          if (Date.now() >= deadline) return
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 750))
+      }
+    }
     for (const key of [...keys].sort()) {
       try {
         const { run_id } = await createRun.mutateAsync({
@@ -503,6 +522,7 @@ export function Dashboard() {
         toast.success(`Destroy ${key} started`, {
           action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
         })
+        await waitRun(run_id)
       } catch (err) {
         toast.error(`${key}: ${errorText(err)}`)
       }
@@ -603,9 +623,9 @@ export function Dashboard() {
               onCopyJson={() => void handleCopyJson()}
               onDownloadCsv={handleDownloadCsv}
             />
-            <span title={selCount > 0 ? "Close issues for selected worktrees contained in the release branch" : "Close every released linked issue"}>
+            <span title={scopeKeys.length > 0 ? `Close issues for ${scopeKeys.length} selected worktrees (active + deleted) contained in the release branch` : "Close every released linked issue"}>
               <Button variant="outline" size="sm" onClick={handleCloseReleased}>
-                {selCount > 0 ? `Close released (${selCount})` : "Close released"}
+                {scopeKeys.length > 0 ? `Close released (${scopeKeys.length})` : "Close released"}
               </Button>
             </span>
             <label className="flex min-h-9 items-center gap-2 rounded-md border px-3 text-sm">
@@ -688,7 +708,7 @@ export function Dashboard() {
             networkExposed={info?.network_exposed ?? false}
             repoTabs={repos ? { ...repoTabs, repos } : undefined}
             selection={{ selected, onSelectionChange: setSelected }}
-            embed={{ externalFilter: sharedFilter, onExternalFilterChange: setSharedFilter, filterParam: null }}
+            embed={{ externalFilter: sharedFilter, onExternalFilterChange: setSharedFilter, filterParam: null, hideFilter: true }}
           />
         </div>
       )}
