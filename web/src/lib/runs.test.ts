@@ -24,5 +24,7 @@ describe("needsConfirm (backend _needs_confirm mirror)", () => {
 
   it("maps flow runs to the flow opt-out bucket", () => {
     expect(commandAction("flow", ["run", "full", "jira:X"])).toBe("flow")
+    expect(commandAction("flow", ["template", "delete", "full"])).toBe("flow template delete")
+    expect(commandAction("flow", ["template", "add", "--name", "X"])).toBe("flow")
   })
 })

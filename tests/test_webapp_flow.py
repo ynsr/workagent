@@ -77,3 +77,10 @@ def test_flow_run_requires_confirm(client, monkeypatch):
     })
     assert r.status_code == 400, r.text
     assert r.json()["error"]["code"] == "confirm_required"
+    r = client.post("/api/runs", json={
+        "command": "flow",
+        "args": ["run", "workagent_review_fix_cleanup",
+                 "github:ynsr/workagent#95"],
+        "confirm": True,
+    })
+    assert r.status_code == 202, r.text

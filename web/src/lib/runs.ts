@@ -39,6 +39,7 @@ export function commandAction(
   command: string,
   args: readonly string[],
 ): OptOutAction | null {
+  const rest = args[0] === "-v" || args[0] === "--verbose" ? args.slice(1) : args
   switch (command) {
     case "cleanup":
       return "cleanup"
@@ -51,12 +52,12 @@ export function commandAction(
     case "prodtest":
       return "prodtest"
     case "flow":
-      return "flow"
+      return rest[0] === "template" && rest[1] === "delete" ? "flow template delete" : "flow"
     case "repo":
-      return args[0] === "remove" ? "repo remove" : null
+      return rest[0] === "remove" ? "repo remove" : null
     case "link":
-      if (args[0] === "remove") return "link remove"
-      if (args[0] === "destroy-deleted") return "link destroy"
+      if (rest[0] === "remove") return "link remove"
+      if (rest[0] === "destroy-deleted") return "link destroy"
       return null
     default:
       return null
