@@ -140,7 +140,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "prodtest list": ("--json",),
     "prodtest status": ("--json",),
     "adhoc": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
-    "message add": ("--json",),
+    "message add": ("--fetch", "--json",),
     "message list": ("--json", "--csv"),
     "message show": ("--json",),
     "message update": ("--json",),

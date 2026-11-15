@@ -186,11 +186,18 @@ by the Dashboard Actions dropdown.)
 (`message add --worktree W...` links worktree refs alongside `--repo R...`;
 `--related-repo R...` (Start-style) records extra linked repos whose paths
 are appended to the run prompt body as `Related repos:` context — record-only,
-no launch-time override. Runs keep a single `--repo` pin; the web repo pin is
-singular (no fan-out). The detail endpoint 404s on unknown ref (ambiguous
-substring → 404). `message adhoc/validate` and `message action run` /
-`message flow run` run via `POST /api/runs` with target key `message:<ref>`
-live run per (subcommand, message).)
+no launch-time override. `--message-id` accepts a Mattermost permalink for
+`resolve_message` lookups and is normalized to the bare id on write; `message
+add --fetch --message-id <permalink> --repo R` fetches sender/content/ts/
+thread via `mm` so the Register button needs only a permalink + repo.
+Unregistered `message adhoc/validate` and `message action run` /
+`message flow run` refs auto-register via the same `mm` fetch (single repo,
+or the `--ref` worktree's repo when several repos exist — otherwise exit 2
+naming `--repo` candidates). Runs keep a single `--repo` pin; the web repo
+pin is singular (no fan-out). The detail endpoint 404s on unknown ref
+(ambiguous substring → 404). `message adhoc/validate` and `message action
+run` / `message flow run` run via `POST /api/runs` with target key
+`message:<ref>` live run per (subcommand, message).)
 
 ### `GET /api/default-repo?ref=…`
 Issue #26: repo default for Launch (never the serve CWD). Returns the

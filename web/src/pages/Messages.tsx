@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import { ChevronDown, ChevronRight, Copy, Download, MessageSquare } from "lucide-react"
+import { ChevronDown, ChevronRight, Copy, Download, MessageSquare, Plus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -25,11 +25,12 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { copyToClipboard, downloadText, relativeDate, toCsv } from "@/lib/format"
-import { useCreateRun, useMessages } from "@/lib/queries"
+import { useCreateRun, useMessages, useRepos } from "@/lib/queries"
 import { useConfirm } from "@/lib/confirm"
+import { ActionDialog } from "@/components/LinkDialogs"
+import { SearchableSelect } from "@/components/SearchableSelect"
 import { toast } from "sonner"
 import type { MessageRow } from "@/lib/api"
-
 export interface MessageFilters {
   q: string
   sender: string
@@ -72,6 +73,7 @@ export function Messages() {
   const [repo, setRepo] = useState("")
   const [grouped, setGrouped] = useState(false)
   const [expanded, setExpanded] = useState<number | null>(null)
+  const [registerOpen, setRegisterOpen] = useState(false)
   const { data, isPending, isFetching, isError, error, refetch } = useMessages(threadParam || undefined)
   const confirm = useConfirm()
   const createRun = useCreateRun()
@@ -126,6 +128,9 @@ export function Messages() {
         description="Registered chat messages (message add / adhoc / validate). Runs go through POST /api/runs."
         actions={
           <>
+            <Button size="sm" onClick={() => setRegisterOpen(true)}>
+              <Plus aria-hidden /> Register
+            </Button>
             <Button variant="outline" size="sm" onClick={() => void handleExportJson()}>
               <Copy aria-hidden /> JSON
             </Button>
@@ -184,8 +189,10 @@ export function Messages() {
             <EmptyState
               icon={<MessageSquare className="size-10" aria-hidden />}
               title={rows.length === 0 ? "No registered messages" : "No messages match the filters"}
-              description="Register one with `message add --message-id … --repo … [--related-repo …] [--worktree …]`."
-            />
+              description="Register one with the Register button (permalink + repo) or `message add --message-id … --repo …`."
+            >
+              {rows.length === 0 ? <Button size="sm" onClick={() => setRegisterOpen(true)}><Plus aria-hidden /> Register message</Button> : null}
+            </EmptyState>
           ) : grouped ? (
             <div className="space-y-4">
               {groups.map((g) => (
@@ -203,6 +210,7 @@ export function Messages() {
           )}
         </CardContent>
       </Card>
+      {registerOpen ? <MessageRegisterDialog onClose={() => setRegisterOpen(false)} onDone={() => { setRegisterOpen(false); void refetch() }} /> : null}
     </div>
   )
 }
@@ -282,5 +290,76 @@ function MessageTable({ rows, expanded, setExpanded, onDelete, onRefetch }: {
         ))}
       </TableBody>
     </Table>
+  )
+}
+
+/** Top-bar Register: permalink + repo → `message add --fetch` (sender/content/thread via `mm`). */
+function MessageRegisterDialog({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const { data: reposData } = useRepos()
+  const createRun = useCreateRun()
+  const [ref, setRef] = useState("")
+  const [repo, setRepo] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+  const repoOptions = useMemo(() => (reposData ?? []).map((r) => r.name).sort(), [reposData])
+  const trimmed = ref.trim()
+  const valid = trimmed.length > 0 && repo.trim().length > 0
+
+  async function handleSubmit() {
+    if (!valid || submitting) return
+    if (repoOptions.length === 0) {
+      toast.error("No repos registered — register a repo first.")
+      return
+    }
+    setSubmitting(true)
+    try {
+      await createRun.mutateAsync({
+        command: "message",
+        args: ["add", "--message-id", trimmed, "--repo", repo.trim(), "--fetch"],
+        confirm: true,
+      })
+      toast.success("Message register started")
+      onDone()
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <ActionDialog
+      title="Register message"
+      description="Register a Mattermost message by permalink — sender, content, thread, and timestamp are fetched via mm. Needs one repo."
+      onClose={onClose}
+      busy={submitting}
+      footer={
+        <Button disabled={!valid || submitting} onClick={() => void handleSubmit()}>
+          <Plus aria-hidden /> {submitting ? "Registering…" : "Register"}
+        </Button>
+      }
+    >
+      <div className="grid gap-2">
+        <Label htmlFor="msg-register-ref">Message permalink or id</Label>
+        <Input
+          id="msg-register-ref"
+          value={ref}
+          onChange={(e) => setRef(e.target.value)}
+          placeholder="https://<host>/<team>/pl/<message_id>"
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor="msg-register-repo">Repo</Label>
+        <SearchableSelect
+          id="msg-register-repo"
+          value={repo}
+          options={repoOptions}
+          onChange={setRepo}
+          placeholder="Registered repo name"
+          allowCustom
+        />
+      </div>
+    </ActionDialog>
   )
 }

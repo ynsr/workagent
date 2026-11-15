@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { MESSAGE_LAUNCH_INITIAL, MESSAGE_LAUNCH_MODES, VALIDATE_CLAIMED_ISSUES_PROMPT, buildMessageArgs, messageLaunchValid } from "@/lib/messageLaunchConfig"
+import { MESSAGE_LAUNCH_INITIAL, MESSAGE_LAUNCH_MODES, VALIDATE_CLAIMED_ISSUES_PROMPT, buildMessageArgs, extractMessageId, isRegisteredMessageRef, messageLaunchValid } from "@/lib/messageLaunchConfig"
 
 describe("messageLaunchConfig modes", () => {
   it("exposes the four message tabs without draft-reply", () => {
@@ -9,6 +9,24 @@ describe("messageLaunchConfig modes", () => {
   it("seeds the validate prompt with claimed-issues copy", () => {
     expect(VALIDATE_CLAIMED_ISSUES_PROMPT).toMatch(/claimed issues/i)
     expect(VALIDATE_CLAIMED_ISSUES_PROMPT).toMatch(/jira/i)
+  })
+})
+
+describe("message ref helpers", () => {
+  const MID = "swqrz9mfitdqmq7uaxtet7gb1h"
+  it("extracts a bare id and permalink tails", () => {
+    expect(extractMessageId(MID)).toBe(MID)
+    expect(extractMessageId(`https://chat.jibit.cloud/jibit/pl/${MID}`)).toBe(MID)
+    expect(extractMessageId(`https://chat.jibit.cloud/jibit/pl/${MID}?x=1#y`)).toBe(MID)
+  })
+  it("rejects non-id refs", () => {
+    expect(extractMessageId("p1")).toBe("")
+    expect(extractMessageId("https://chat.jibit.cloud/jibit/pl/nope")).toBe("")
+  })
+  it("matches permalinks to registered ids and threads to raw rows", () => {
+    expect(isRegisteredMessageRef(`https://x/pl/${MID}`, [MID])).toBe(true)
+    expect(isRegisteredMessageRef("thread-1", [MID, "thread-1"])).toBe(true)
+    expect(isRegisteredMessageRef(`https://x/pl/${MID}`, ["other"])).toBe(false)
   })
 })
 

@@ -378,3 +378,89 @@ def test_message_adhoc_headless_reaches_harness(tmp_path, monkeypatch):
     cm._run_prompt(msg, "what does this mean?", "", "", True, False,
                    None, None, None, None, False, True, False)
     assert calls == {"no_tty": True, "launch": True, "terminal": False}
+
+
+def test_message_add_normalizes_permalink_to_bare_id(tmp_path, monkeypatch):
+    """Issue #94: register dialog passes the permalink straight through."""
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent import store_messages as sm
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    mid = "swqrz9mfitdqmq7uaxtet7gb1h"
+    res = runner.invoke(cli_mod.app, ["message", "add",
+                                      "--message-id", f"https://chat.jibit.cloud/jibit/pl/{mid}",
+                                      "--repo", "r1", "--content", "hi", "--json"])
+    assert res.exit_code == 0, res.output
+    row = sm.resolve_message(sm_db_path(tmp_path), mid)
+    assert row["message_id"] == mid
+
+
+def test_message_add_fetch_pulls_fields_via_mm(tmp_path, monkeypatch):
+    """Issue #94: `message add --fetch` stores sender/content/ts/thread."""
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent import store_messages as sm
+    import workagent.cli_message as cm
+    _seed(tmp_path, monkeypatch)
+    mid = "swqrz9mfitdqmq7uaxtet7gb1h"
+    monkeypatch.setattr(cm, "_mm", lambda *a: {"post": {
+        "id": mid, "user": "y.rahimi", "text": "hello world",
+        "created_at": "2026-11-14T08:45:07+00:00",
+        "thread_root_id": "t1", "parent_id": None}})
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["message", "add",
+                                      "--message-id", f"https://chat.jibit.cloud/jibit/pl/{mid}",
+                                      "--repo", "r1", "--fetch", "--json"])
+    assert res.exit_code == 0, res.output
+    row = sm.resolve_message(sm_db_path(tmp_path), mid)
+    assert row["content"] == "hello world"
+    assert row["sender_username"] == "y.rahimi"
+    assert row["thread_id"] == "t1"
+
+
+def test_message_add_fetch_miss_fails_cleanly(tmp_path, monkeypatch):
+    """Issue #94: unfetchable permalink → exit 2, no row written."""
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent import store_messages as sm
+    import workagent.cli_message as cm
+    _seed(tmp_path, monkeypatch)
+    monkeypatch.setattr(cm, "_mm", lambda *a: {"post": {}})
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["message", "add",
+                                      "--message-id", "https://chat.jibit.cloud/jibit/pl/nope-nope-nope-nope00",
+                                      "--repo", "r1", "--fetch", "--json"])
+    assert res.exit_code == 2
+    assert sm.get_message(sm_db_path(tmp_path), "nope-nope-nope-nope00") is None
+
+
+def test_message_adhoc_auto_register_uses_ref_worktree_repo(tmp_path, monkeypatch):
+    """Issue #94: --ref worktree disambiguates multi-repo auto-register."""
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    from workagent import store_messages as sm
+    from workagent import store_sqlite as sq
+    import workagent.cli_message as cm
+    _seed(tmp_path, monkeypatch, repo="r1")
+    db = sm_db_path(tmp_path)
+    conn = sq.connect(db)
+    conn.execute("INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
+                 ("r2", "/tmp/r2", "r2"))
+    conn.commit()
+    from workagent import store as _store
+    _store.record_link("jira:IPG-1", {"worktree": "/tmp/wt-k2", "repo": "r2", "branch": "feat/x"})
+    mid = "swqrz9mfitdqmq7uaxtet7gb1h"
+    monkeypatch.setattr(cm, "_mm", lambda *a: {"post": {
+        "id": mid, "user": "u", "text": "t", "created_at": "ts",
+        "thread_root_id": None, "parent_id": None}})
+    monkeypatch.setattr("workagent.cli_message._resolve_exec", lambda msg, ref, repo: ("/tmp/r2", "k2"))
+    monkeypatch.setattr("workagent.cli_harness._run_harness", lambda *a, **k: None)
+    monkeypatch.setattr("workagent.cli_harness._guard_harness", lambda *a, **k: None)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["message", "adhoc",
+                                      f"https://chat.jibit.cloud/jibit/pl/{mid}",
+                                      "--ref", "jira:IPG-1",
+                                      "--prompt", "hi", "--dry-run", "--json"])
+    assert res.exit_code == 0, res.output
+    assert sm.resolve_message(db, mid)["repos"] == ["r2"]
