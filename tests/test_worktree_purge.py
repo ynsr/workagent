@@ -140,11 +140,53 @@ def test_repo_removal_purges_flows_and_message_links(tmp_path):
                      " VALUES ('tpl', 'k', '2026-01-01', '2026-01-01')")
         conn.execute("INSERT INTO messages (message_id, worktrees, added_at)"
                      " VALUES ('m1', ?, '2026-01-01')", (json.dumps(["k"]),))
+        conn.execute("INSERT INTO runs (command, args, created_at,"
+                     " worktree_ref)"
+                     " VALUES ('start', '[]', '2026-01-01', 'k')")
     assert sq.remove_repo_row(db, "proj") is True
     with sq.connect(db) as conn:
         assert conn.execute("SELECT COUNT(*) FROM flows").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
         assert json.loads(conn.execute("SELECT worktrees FROM messages"
                                        ).fetchone()[0]) == []
+
+
+def test_v26_shape_with_folded_blank_refs_is_normalized(tmp_path):
+    """A DB already at the v26 shape still gets the '' -> NULL normalization.
+
+    The v16 fold and ``_rebuild_required_columns`` copy rows from the
+    canonical DDL with foreign_keys off, so init_db sees the cascade FK and
+    the nullable column while folded '' rows remain — those must become NULL
+    or they violate the FK (review #111).
+    """
+    from workagent import store_sqlite as sq
+    db = tmp_path / "state.db"
+    conn = sqlite3.connect(db)  # foreign_keys off: the '' row can exist
+    conn.executescript(sq.SCHEMA)
+    conn.execute("INSERT INTO runs (command, args, created_at, worktree_ref)"
+                 " VALUES ('start', '[]', '2026-01-01', '')")
+    conn.commit()
+    conn.close()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        assert conn.execute("SELECT worktree_ref FROM runs").fetchone()[0] is None
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_transcript_cleanup_skips_paths_outside_transcript_trees(
+        isolated_config, tmp_path, capsys):
+    """Only recorded paths inside runs/ and sessions/ are ever unlinked."""
+    from workagent import cli_cleanup_gc as gc
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text("{}\n")
+    inside = isolated_config / "runs" / "omp" / "b" / "t.jsonl"
+    inside.parent.mkdir(parents=True)
+    inside.write_text("{}\n")
+    gc._remove_transcripts({str(outside), str(inside)}, "k")
+    assert outside.exists()
+    assert not inside.exists()
+    assert not inside.parent.exists()
+    assert "skipping transcript cleanup" in capsys.readouterr().err
 
 
 def test_purge_orphans_removes_dangling_records_and_reports_transcripts(tmp_path):

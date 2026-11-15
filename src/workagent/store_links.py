@@ -91,8 +91,6 @@ def purge_orphans_conn(conn, dry_run: bool = False) -> dict:
         if session_dir:
             targets.add(session_dir)
 
-    flow_refs = {r[0] for r in conn.execute(
-        "SELECT DISTINCT worktree_ref FROM flows WHERE worktree_ref <> ''")} - linked
     flow_count = conn.execute(
         "SELECT COUNT(*) FROM flows WHERE worktree_ref <> ''"
         " AND worktree_ref NOT IN (SELECT ref_key FROM worktrees)").fetchone()[0]
@@ -119,14 +117,14 @@ def purge_orphans_conn(conn, dry_run: bool = False) -> dict:
            "parent_links": parent_count, "transcripts": sorted(targets)}
     if dry_run or not any(out[k] for k in ("runs", "flows", "messages", "parent_links")):
         return out
-    if run_refs:
-        marks = ",".join("?" * len(run_refs))
-        conn.execute(f"DELETE FROM runs WHERE worktree_ref IN ({marks})",
-                     tuple(run_refs))
-    if flow_refs:
-        marks = ",".join("?" * len(flow_refs))
-        conn.execute(f"DELETE FROM flows WHERE worktree_ref IN ({marks})",
-                     tuple(flow_refs))
+    # Correlated predicates, not the precomputed ref sets: linked/runs were
+    # read in autocommit, so a worktree created in between must not have its
+    # fresh run (or flow) swept.
+    conn.execute("DELETE FROM runs WHERE worktree_ref IS NOT NULL"
+                 " AND worktree_ref <> ''"
+                 " AND worktree_ref NOT IN (SELECT ref_key FROM worktrees)")
+    conn.execute("DELETE FROM flows WHERE worktree_ref <> ''"
+                 " AND worktree_ref NOT IN (SELECT ref_key FROM worktrees)")
     _strip_message_refs_conn(conn, dangling_msg)
     conn.execute("UPDATE worktrees SET parent_key_ref = ''"
                  " WHERE parent_key_ref <> ''"

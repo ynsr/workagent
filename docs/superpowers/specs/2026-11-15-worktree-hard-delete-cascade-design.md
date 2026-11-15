@@ -29,9 +29,12 @@ worktree_ref TEXT REFERENCES worktrees(ref_key) ON DELETE CASCADE
 - SQLite cannot add a FK in place: `_migrate_runs_worktree_fk` rebuilds
   `runs` from the canonical DDL with `foreign_keys` off, copies rows,
   restores the AUTOINCREMENT high-water mark (`_restore_runs_seq`), then
-  `UPDATE runs SET worktree_ref = NULL WHERE worktree_ref = ''`.
-  Idempotent: skipped once the cascade FK and the nullable column exist;
-  `_schema_current` probes both so a stale DB never caches as current.
+  `UPDATE runs SET worktree_ref = NULL WHERE worktree_ref = ''` whenever the
+  column is nullable — before the early return, because the v16 fold and
+  `_rebuild_required_columns` arrive at the v26 shape with folded `''` rows.
+  Idempotent: skipped once the cascade FK and the nullable column exist and
+  the sentinel rows are gone; `_schema_current` probes the shape so a stale
+  DB never caches as current.
 - Inserts of an unknown ref now fail fast (`IntegrityError`). Call sites
   already guard (`key in load_links(...)`), and per-run recorders swallow
   the error — a bug no longer silently creates a dangling row.
@@ -47,7 +50,7 @@ the records with no FK:
 | `flows` | explicit delete by `worktree_ref` |
 | `messages.worktrees` (JSON) | the dead refs are stripped, the message row survives |
 | `worktrees.parent_key_ref` | children are re-parented to top level (`''`) |
-| harness transcripts | deleted from disk by the CLI layer (`_remove_transcripts`) |
+| harness transcripts | recorded transcript files deleted from disk by the CLI layer (`_remove_transcripts`); emptied branch dirs pruned |
 
 Applied by `delete_worktree_row` (covers `cleanup --hard-delete`,
 `link remove --hard-delete`, `link destroy-deleted`), `gc_soft_deleted`
@@ -72,9 +75,14 @@ leftovers, since the FK now prevents new ones), their flows, dangling
 message refs, and dangling `parent_key_ref` labels. The orphan runs'
 transcript targets (`file_path` + `metadata.session_dir`) are snapshotted
 before the delete and returned, so `cli_cleanup_gc.purge_orphans` can remove
-the files (`_remove_transcripts`). There is no blanket walk of the `runs/`
-tree: detached run dirs (`run_store`), harness-minted files, and live
-sessions share that root, so only recorded targets are touched.
+them (`_remove_transcripts`): recorded files (`file_path`) are unlinked,
+`session_dir` entries are only pruned when empty (the harness-minted file
+inside is not identifiable, and the dir is branch-scoped, shared with other
+runs), and every target outside `runs/` and `sessions/` is skipped with a
+warning (`file_path` can name any file via `--session-file`). There is no
+blanket walk of the `runs/` tree: detached run dirs (`run_store`),
+harness-minted files, and live sessions share that root, so only recorded
+targets are touched.
 
 Surfaced as `workagent link purge-orphans [--dry-run] [--json]` and run by
 serve startup maintenance after the soft-delete GC (`run_startup_maintenance`

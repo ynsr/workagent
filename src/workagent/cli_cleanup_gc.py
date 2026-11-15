@@ -50,7 +50,10 @@ def _remove_transcripts(targets: set[str], key: str = "") -> None:
 
     Files live under ~/.config/workagent/runs/<harness>/<branch-path>/ (or
     the legacy ``sessions/`` tree) — prune empty parents up to (not incl.)
-    either transcript root. Best effort, never raises (issue #102).
+    either transcript root. Targets outside those roots are skipped with a
+    warning: ``file_path`` can name any file (``--session-file <existing
+    file>`` is stored verbatim), and the orphan sweep runs unattended at
+    serve startup. Best effort, never raises (issue #102).
     """
     if not targets:
         return
@@ -67,17 +70,23 @@ def _remove_transcripts(targets: set[str], key: str = "") -> None:
         for raw in sorted(targets):
             try:
                 p = Path(raw).expanduser()
+                try:
+                    resolved = p.resolve()
+                except OSError:
+                    resolved = p
+                under = next((r for r in roots
+                              if resolved == r or r in resolved.parents), None)
+                if under is None:
+                    eprint(f"warning: skipping transcript cleanup outside the"
+                           f" transcript tree for {key}: {raw}")
+                    continue
                 if p.is_file():
                     p.unlink()
                     p = p.parent
                 if not p.is_dir():
                     continue
                 cur = p.resolve() if p.exists() else p
-                while True:
-                    root = next((r for r in roots
-                                 if cur == r or r in cur.parents), None)
-                    if root is None or cur == root:
-                        break
+                while cur != under:
                     try:
                         cur.rmdir()
                     except OSError:

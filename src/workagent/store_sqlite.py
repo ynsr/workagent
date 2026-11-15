@@ -296,17 +296,24 @@ def _migrate_runs_worktree_fk(conn) -> None:
     canonical DDL with foreign_keys off. Historical dangling refs are left
     to store_links.purge_orphans (it snapshots their transcripts before
     dropping the rows). Idempotent: skipped once the cascade FK and the
-    nullable column are present.
+    nullable column are present *and* no '' sentinel rows remain — the v16
+    fold and `_rebuild_required_columns` rebuild `runs` from the canonical
+    DDL with foreign_keys off, so they arrive at the v26 shape while still
+    carrying folded '' rows.
     """
     info = {r[1]: r for r in conn.execute("PRAGMA table_info(runs)")}
     if not info:
         return
+    nullable = "worktree_ref" in info and info["worktree_ref"][3] == 0
+    if nullable:
+        # Normalize before any early return: a shape-complete v26 table can
+        # still hold '' rows left by a fold/rebuild (a no-op on a clean DB).
+        conn.execute("UPDATE runs SET worktree_ref = NULL WHERE worktree_ref = ''")
     if list(conn.execute("PRAGMA table_info(sessions)")):
         # pre-v16: the fold rebuilds runs from the same canonical DDL.
         return
     fk = next((r for r in conn.execute("PRAGMA foreign_key_list(runs)")
                if r[2] == "worktrees" and (r[3] or "") == "worktree_ref"), None)
-    nullable = "worktree_ref" in info and info["worktree_ref"][3] == 0
     if fk is not None and (fk[6] or "").upper() == "CASCADE" and nullable:
         return
     if conn.in_transaction:
@@ -1082,8 +1089,8 @@ def insert_run(path: Path, command: str, args: list[str],
     initiator command, prompt, ``file_path``, ``session_type``, metadata) —
     the folded sessions entity lives here. ``session_type``/``state`` are
     enums, never free text; an unknown value is rejected. ``worktree_ref``
-    stays '' only for rows with no worktree (pre-link attempts); web and
-    terminal runs pass the ref they were spawned for.
+    is stored as NULL for rows with no worktree (pre-link attempts, web
+    runs); web and terminal runs pass the ref they were spawned for.
 
     ``continued_from_run_id`` links a fix-continue row to the transcript's
     first run. A row inserted without an explicit ``flow_id`` joins its

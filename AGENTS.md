@@ -138,8 +138,10 @@ gc`, serve startup GC, repo removal — drops the worktree row together with
 its runs and purges flows, `messages.worktrees` links, and child
 `parent_key_ref` labels. `link purge-orphans [--dry-run] [--json]` (also
 run by serve startup maintenance) removes pre-v26 leftovers: dangling runs
-plus their recorded harness transcripts, flows, message links, and parent
-labels. `prodtest_items.worktree_ref` is deliberately not cascaded — it is
+plus their recorded transcript files (paths outside the `runs/`/`sessions/`
+trees are skipped with a warning, emptied dirs pruned), flows, message
+links, and parent labels.
+`prodtest_items.worktree_ref` is deliberately not cascaded — it is
 issue-scoped ledger attribution that survives teardown.
 
 ## Conventions
