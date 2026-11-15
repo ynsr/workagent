@@ -303,16 +303,22 @@ def run_repo_command(repo_name: str, phase: str, command: str, cwd: str) -> None
 
 
 def tag_flow_run(key: str, flow_id: int) -> None:
-    """Best-effort: stamp flow_id onto the step's newest run.
+    """Best-effort: stamp flow_id onto the step's execution run.
 
     The run row carries the flow column plus the metadata history field,
     so the Runs page can group a flow's steps and history rows keep the
-    mapping after the flow is gone.
+    mapping after the flow is gone. Headless validation-attempt rows are
+    newer and attributed to the worktree too, but only the execution row
+    owns the transcript: prefer the newest row with a ``file_path`` so
+    later runs of that transcript inherit the flow (``insert_run``'s
+    file_path lookup).
     """
     try:
         from . import store_sqlite as _sq
         db = _sq.db_path()
-        row = _sq.newest_run(db, key, include_deleted_worktrees=True)
+        rows = _sq.runs_for_worktree(db, key, include_deleted_worktrees=True)
+        row = next((r for r in rows if str(r.get("file_path") or "")),
+                   rows[0] if rows else None)
         if row is not None:
             _sq.set_run_flow_id(db, int(row["id"]), flow_id)
     except Exception as e:

@@ -29,18 +29,53 @@ def test_run_rejects_step_config_then_fix_comments(tmp_path, monkeypatch):
 
 
 def test_tag_flow_run_stamps_newest(tmp_path, monkeypatch):
-    """F3: the just-minted step run (newest) gets the flow_id."""
+    """F3: the just-minted step run is stamped when no row owns a transcript."""
     import workagent.cli_flow as m
     import workagent.store_sqlite as sq
-    # newest_run is ORDER BY id DESC: the just-minted step row comes first.
-    runs = [{"id": 2, "worktree_ref": "wt-1"},
-            {"id": 1, "worktree_ref": "wt-1"}]
-    monkeypatch.setattr(sq, "newest_run", lambda db, ref, **k: runs[0])
+    # runs_for_worktree is ORDER BY id DESC: the just-minted step row is first.
+    runs = [{"id": 2, "worktree_ref": "wt-1", "file_path": ""},
+            {"id": 1, "worktree_ref": "wt-1", "file_path": ""}]
+    monkeypatch.setattr(sq, "runs_for_worktree", lambda db, ref, **k: list(runs))
     stamped = {}
     monkeypatch.setattr(sq, "set_run_flow_id",
                         lambda db, rid, flow_id: stamped.update({rid: flow_id}))
     m._tag_flow_run("wt-1", 9)
     assert stamped == {2: 9}
+
+
+def test_tag_flow_run_prefers_transcript_owner(tmp_path, monkeypatch, isolated_config):
+    """Attempt rows are newer but transcriptless: tag the execution row."""
+    import workagent.cli_flow as m
+    from workagent import store, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute("INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+                     " VALUES ('wt-1', '/tmp/w', 'b', NULL, '2026-01-01', '{}')")
+    flow = store.create_flow(template_label="t", worktree_ref="wt-1",
+                             repo_snapshot={}, effective_steps=[])
+    transcript = str(sq.session_file_path("rev-1", "omp", branch="b",
+                                         session_type="review"))
+    launch = sq.insert_run(db, "review", ["wt-1"], 0, worktree_ref="wt-1",
+                           harness_name="omp", initiator_command="review",
+                           prompt="p", file_path=transcript,
+                           session_type="review")
+    # Headless validation attempts: attributed, no transcript of their own.
+    sq.insert_run(db, "review", ["wt-1"], 0, worktree_ref="wt-1",
+                  output=["harness command: omp"],
+                  continued_from_run_id=launch)
+    sq.insert_run(db, "review", ["wt-1"], 1, worktree_ref="wt-1",
+                  output=["harness command: omp"],
+                  continued_from_run_id=launch)
+    m._tag_flow_run("wt-1", flow["id"])
+    rows = {r["id"]: r for r in sq.list_runs(db, limit=100,
+                                             include_deleted_worktrees=True)}
+    assert rows[launch]["flow_id"] == flow["id"]
+    assert rows[launch]["metadata"]["flow_id"] == flow["id"]
+    attempts = [r for rid, r in rows.items() if rid != launch]
+    assert len(attempts) == 2
+    assert all(r["flow_id"] is None and "flow_id" not in r["metadata"]
+               for r in attempts)
 
 
 def test_run_fresh_forces_new_row(tmp_path, monkeypatch):
