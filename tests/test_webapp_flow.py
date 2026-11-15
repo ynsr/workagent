@@ -63,3 +63,24 @@ def test_flow_template_mutations_require_confirm(client, monkeypatch):
         "confirm": True,
     })
     assert r.status_code == 202, r.text
+
+def test_flow_run_requires_confirm(client, monkeypatch):
+    """Issue #99: POST /api/runs flow run without confirm:true 400s."""
+    from tests.webapp_helpers import _stub_spawn
+    _stub_spawn(monkeypatch)
+    store.create_template(name="Full", label="workagent_review_fix_cleanup",
+                          steps='[{"kind": "start"}]')
+    r = client.post("/api/runs", json={
+        "command": "flow",
+        "args": ["run", "workagent_review_fix_cleanup",
+                 "github:ynsr/workagent#95"],
+    })
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["code"] == "confirm_required"
+    r = client.post("/api/runs", json={
+        "command": "flow",
+        "args": ["run", "workagent_review_fix_cleanup",
+                 "github:ynsr/workagent#95"],
+        "confirm": True,
+    })
+    assert r.status_code == 202, r.text

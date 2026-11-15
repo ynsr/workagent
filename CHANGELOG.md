@@ -1,6 +1,6 @@
 # Changelog
 ## Unreleased
-- Start with an already-linked worktree accepts a registered --repo name pointing at the same path instead of failing [95]
+- Flow Re-run from the run detail page works again: it shows the confirm dialog and passes confirm for flow runs like other destructive runs [99]
 - Suggest-icon prompt covers all Lucide icons and avoids already used icons on flows/actions [84]
 - Restarting serve is faster: DB migrations stay synchronous while cleanup and branch backfill run in the background [81]
 - Message runs auto-register unlinked Mattermost permalinks on first use: fetch via mm and register, still fails with a clear --repo hint otherwise [79]
@@ -581,6 +581,7 @@
 - Message adhoc on an already-registered message no longer fails asking for --repo: local lookup runs before the mm fetch [85]
 - Fixed message adhoc/validate runs failing with a missing-argument error: prompt runs now reach the harness in every mode [83]
 - Start gains plan mode: --plan constrains the agent to spec+plan only (no implementation), with an Implement/Plan toggle on the Launch form and a plan checkbox on flow start steps [88]
+- Start with an already-linked worktree accepts a registered --repo name pointing at the same path instead of failing [95]
 - Prodtests table shows what each status means on hover, Prodtest Launch explains its buttons and offers worktrees in the ref field, and Run-all moved to the Prodtests page [97]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
