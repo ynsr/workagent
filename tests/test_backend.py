@@ -199,15 +199,18 @@ def test_omp_harness_resume_and_bare_terminal_argv(tmp_path):
     assert h.resume_argv(str(ready)) == ["omp", "--resume", str(ready)]
 
 
-def test_get_harness_default_and_explicit():
+def test_get_harness_default_and_explicit(isolated_config):
     from workagent.backend import get_harness, OmpHarness
-    # None or empty string resolves to default harness, falling back to OmpHarness during Task 1
+    from workagent.agy_harness import AgyHarness
+    # None or empty string resolves to default harness (agy)
     h = get_harness()
-    assert isinstance(h, OmpHarness)
+    assert isinstance(h, AgyHarness)
     h2 = get_harness("")
-    assert isinstance(h2, OmpHarness)
+    assert isinstance(h2, AgyHarness)
     h3 = get_harness("omp")
     assert isinstance(h3, OmpHarness)
+    h4 = get_harness("agy")
+    assert isinstance(h4, AgyHarness)
     with pytest.raises(HarnessError) as excinfo:
         get_harness("unsupported_harness_xyz")
     assert excinfo.value.exit_code == 2
@@ -263,5 +266,230 @@ def test_doctor_inspects_agy_guard_and_omp():
     assert "agy-guard" in res["tools"]
     assert "omp" in res["tools"]
     assert "git-wt" in res["tools"]
+
+
+def test_agy_command_argv_attaches_prompt_with_equals():
+    from workagent.agy_harness import AgyHarness
+    h = AgyHarness()
+    assert h.binary == "agy-guard"
+    argv_headless = h.command_argv("fix --flag bug", no_tty=True, extra_args=["--model", "gemini-3.8-flash-low"])
+    assert argv_headless == [
+        "agy-guard",
+        "--dangerously-skip-permissions",
+        "--output-format", "stream-json",
+        "--model", "gemini-3.8-flash-low",
+        "-p=fix --flag bug",
+    ]
+    assert h.command_argv("hello", no_tty=False) == ["agy-guard", "-i=hello"]
+    assert h.command_argv("", no_tty=False) == ["agy-guard"]
+    assert h.bare_terminal_argv("/tmp/ignored") == ["agy-guard"]
+    assert h.judge_argv == ["--model", "gemini-3.8-flash-low", "--disable-slash-commands", "--mode", "plan"]
+
+
+def test_agy_session_file_flag_and_resume_argv(tmp_path):
+    import json
+    from workagent.agy_harness import AgyHarness
+    h = AgyHarness()
+    fresh = tmp_path / "fresh.jsonl"
+    assert h.session_file_flag(str(fresh)) == []
+    assert h.resume_argv(str(fresh)) == ["agy-guard"]
+    assert h.session_file_flag(str(fresh), metadata={"conversation_id": "cid-1"}) == ["--conversation", "cid-1"]
+    fresh.write_text(json.dumps({"type": "agy_meta", "conversation_id": "cid-2"}) + "\n", encoding="utf-8")
+    assert h.session_file_flag(str(fresh)) == ["--conversation", "cid-2"]
+    assert h.resume_argv(str(fresh)) == ["agy-guard", "--conversation", "cid-2"]
+
+
+def test_agy_launch_headless_streams_and_mirrors(tmp_path, monkeypatch):
+    import io, json
+    from workagent import agy_harness
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "agy-home"))
+    monkeypatch.setattr("workagent.backend.shutil.which", lambda n: f"/usr/bin/{n}")
+    session = tmp_path / "runs" / "agy" / "feat" / "run.jsonl"
+    session.parent.mkdir(parents=True)
+    ndjson = "\n".join([
+        json.dumps({"event": "init", "conversation_id": "conv-123"}),
+        json.dumps({"event": "step_update", "step_update": {"step_type": "agent_response", "text_delta": "Working...\n"}}),
+        json.dumps({"event": "result", "result": {"conversation_id": "conv-123", "status": "SUCCESS", "response": "Done\nJOB_DONE"}}),
+    ]) + "\n"
+
+    class FakeProc:
+        stdout = io.StringIO(ndjson)
+        returncode = 0
+        pid = 12345
+        def wait(self, timeout=None): return 0
+
+    monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: FakeProc())
+    seen_cid = []
+    code = agy_harness.AgyHarness().launch(
+        "do work", str(tmp_path), no_tty=True,
+        session_file=str(session), on_conversation_id=seen_cid.append,
+    )
+    assert code == 0
+    assert seen_cid == ["conv-123"]
+    assert agy_harness.resolve_conversation_id(str(session)) == "conv-123"
+    assert agy_harness.AgyHarness().extract_last_assistant_text(str(session), max_chars=None) == "Done\nJOB_DONE"
+
+
+def test_agy_adopt_from_workspace_disambiguates_concurrent(tmp_path, monkeypatch):
+    import json, sqlite3
+    from workagent import agy_harness
+    home = tmp_path / "agy-home"
+    home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(home))
+    wt_a = tmp_path / "wt-a"
+    wt_b = tmp_path / "wt-b"
+    wt_a.mkdir(); wt_b.mkdir()
+    for cid in ("cid-a", "cid-b"):
+        log_dir = home / "brain" / cid / ".system_generated" / "logs"
+        log_dir.mkdir(parents=True)
+        (log_dir / "transcript.jsonl").write_text(
+            json.dumps({"type": "PLANNER_RESPONSE", "status": "DONE", "content": f"reply-{cid}"}) + "\n",
+            encoding="utf-8",
+        )
+    db = home / "conversation_summaries.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, workspace_uris TEXT, last_modified_time TEXT)")
+        conn.execute("INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+                     ("cid-a", json.dumps([wt_a.resolve().as_uri()]), "2026-11-16T22:00:05+00:00"))
+        conn.execute("INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+                     ("cid-b", json.dumps([wt_b.resolve().as_uri()]), "2026-11-16T22:00:06+00:00"))
+    dest = tmp_path / "runs" / "out.jsonl"
+    cid, path = agy_harness.adopt_from_workspace(str(wt_a), 1794866400.0, str(dest))
+    assert cid == "cid-a"
+    assert agy_harness.AgyHarness().extract_last_assistant_text(path) == "reply-cid-a"
+
+
+def test_agy_adopt_from_workspace_brain_fallback(tmp_path, monkeypatch):
+    import json
+    from workagent import agy_harness
+    home = tmp_path / "agy-home"
+    home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(home))
+    log_dir = home / "brain" / "cid-fallback" / ".system_generated" / "logs"
+    log_dir.mkdir(parents=True)
+    (log_dir / "transcript.jsonl").write_text(
+        json.dumps({"type": "PLANNER_RESPONSE", "status": "DONE", "content": "fallback-reply"}) + "\n",
+        encoding="utf-8",
+    )
+    dest = tmp_path / "runs" / "fallback.jsonl"
+    cid, path = agy_harness.adopt_from_workspace(str(tmp_path / "wt"), 0.0, str(dest))
+    assert cid == "cid-fallback"
+    assert agy_harness.AgyHarness().extract_last_assistant_text(path) == "fallback-reply"
+
+
+def test_agy_watch_transcript_discovers_conversation(tmp_path, monkeypatch):
+    import json, sqlite3, threading, time
+    from workagent import agy_harness, store_sqlite as sq
+    home = tmp_path / "agy-home"
+    home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(home))
+    wt = tmp_path / "wt-watch"
+    wt.mkdir()
+
+    state_db = tmp_path / "state.db"
+    sq.init_db(state_db)
+    run_id = sq.insert_run(state_db, "start", ["feat/watch"], harness_name="agy", metadata={})
+
+    res = {}
+    dest_session = tmp_path / "watch_session.jsonl"
+    stop = threading.Event()
+
+    def _mint():
+        time.sleep(0.1)
+        log_dir = home / "brain" / "cid-watch" / ".system_generated" / "logs"
+        log_dir.mkdir(parents=True)
+        (log_dir / "transcript.jsonl").write_text(
+            json.dumps({"type": "PLANNER_RESPONSE", "status": "DONE", "content": "watch-discovered"}) + "\n",
+            encoding="utf-8",
+        )
+        db_path = home / "conversation_summaries.db"
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, workspace_uris TEXT, last_modified_time TEXT)")
+            conn.execute("INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+                         ("cid-watch", json.dumps([wt.resolve().as_uri()]), "2026-11-16T22:00:05+00:00"))
+
+    t = threading.Thread(target=_mint)
+    t.start()
+    try:
+        agy_harness.AgyHarness().watch_transcript(
+            str(wt), tmp_path, None, run_id, state_db, result=res,
+            session_file=str(dest_session), launched_at=1794866400.0, stop_event=stop,
+        )
+    finally:
+        t.join()
+
+    assert res.get("session_file") == str(dest_session)
+    row = sq.get_run(state_db, run_id)
+    assert row["metadata"].get("conversation_id") == "cid-watch"
+    assert row["file_path"] == str(dest_session)
+
+
+def test_agy_watch_transcript_cancelled_exits_promptly(tmp_path, monkeypatch):
+    import threading, time
+    from workagent import agy_harness
+    home = tmp_path / "agy-home"
+    home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(home))
+    stop = threading.Event()
+    stop.set()
+    res = {}
+    t0 = time.time()
+    agy_harness.AgyHarness().watch_transcript(
+        str(tmp_path), tmp_path, None, None, tmp_path / "state.db",
+        result=res, stop_event=stop,
+    )
+    assert time.time() - t0 < 1.0
+    assert "session_file" not in res
+
+
+def test_agy_launch_headless_timeout(tmp_path, monkeypatch):
+    import io, time
+    from workagent import agy_harness
+    from workagent.errors import HarnessTimeout
+    monkeypatch.setattr("workagent.backend.shutil.which", lambda n: f"/usr/bin/{n}")
+
+    class TimeoutProc:
+        stdout = io.StringIO("")
+        returncode = -15
+        pid = 12345
+        def wait(self, timeout=None):
+            time.sleep(0.05)
+            return -15
+
+    monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: TimeoutProc())
+    monkeypatch.setattr(agy_harness.os, "killpg", lambda pid, sig: None)
+
+    with pytest.raises(HarnessTimeout):
+        agy_harness.AgyHarness().launch("timed out prompt", str(tmp_path), no_tty=True, timeout_s=0.01)
+
+
+def test_agy_launch_headless_non_success_exit(tmp_path, monkeypatch):
+    import io, json
+    from workagent import agy_harness
+    monkeypatch.setattr("workagent.backend.shutil.which", lambda n: f"/usr/bin/{n}")
+
+    ndjson = json.dumps({"event": "result", "result": {"status": "ERROR", "response": "failed"}}) + "\n"
+
+    class ErrProc:
+        stdout = io.StringIO(ndjson)
+        returncode = 0
+        pid = 12345
+        def wait(self, timeout=None): return 0
+
+    monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: ErrProc())
+    rc = agy_harness.AgyHarness().launch("failing prompt", str(tmp_path), no_tty=True)
+    assert rc == 1
+
+
+def test_agy_launch_tty(tmp_path, monkeypatch):
+    from workagent import agy_harness
+    monkeypatch.setattr("workagent.backend.shutil.which", lambda n: f"/usr/bin/{n}")
+    seen = {}
+    monkeypatch.setattr(agy_harness, "exec_tty", lambda argv, wd, env_file: seen.update(argv=argv, wd=wd) or 0)
+    rc = agy_harness.AgyHarness().launch("hello", str(tmp_path), no_tty=False)
+    assert rc == 0
+    assert seen["argv"] == ["agy-guard", "-i=hello"]
+    assert seen["wd"] == str(tmp_path)
+
 
 

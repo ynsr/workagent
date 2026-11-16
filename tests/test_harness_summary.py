@@ -37,3 +37,28 @@ def test_truncates_long_summary(tmp_path):
     ])
     out = hs.last_assistant_text(p)
     assert len(out) < 5000 and out.endswith("…(truncated)")
+
+
+def test_agy_planner_response_and_generic_error_rate(tmp_path):
+    p = _write(tmp_path / "agy.jsonl", [
+        {"type": "agy_meta", "conversation_id": "c-1"},
+        {"type": "GENERIC", "status": "DONE", "content": "tool ok"},
+        {"type": "GENERIC", "status": "ERROR", "content": "tool failed"},
+        {"type": "PLANNER_RESPONSE", "status": "DONE", "content": "final answer"},
+    ])
+    assert hs.last_assistant_text(p) == "final answer"
+    assert hs.tool_error_rate(p) == (1, 2)
+    assert hs.tool_error_rate(p, since_line=2) == (1, 1)
+
+
+def test_stream_json_fallback_in_harness_summary(tmp_path):
+    # Only step_update deltas, followed by trailing non-text records, truncated by max_chars
+    p = _write(tmp_path / "stream.jsonl", [
+        {"event": "init", "conversation_id": "conv-99"},
+        {"event": "step_update", "step_update": {"step_type": "agent_response", "text_delta": "Part 1 "}},
+        {"event": "step_update", "step_update": {"step_type": "agent_response", "text_delta": "Part 2"}},
+        {"event": "tool_call", "tool_call": {"name": "bash"}},
+    ])
+    assert hs.last_assistant_text(p, max_chars=None) == "Part 1 Part 2"
+    assert hs.last_assistant_text(p, max_chars=4) == "Part\n…(truncated)"
+

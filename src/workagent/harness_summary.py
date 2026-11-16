@@ -82,6 +82,17 @@ def tool_error_rate(transcript, since_line: int = 0) -> tuple[int, int] | None:
             continue
         if not isinstance(data, dict):
             continue
+
+        if data.get("type") == "GENERIC":
+            status = str(data.get("status") or "").strip().upper()
+            if status in ("DONE", "ERROR"):
+                total += 1
+                if status == "ERROR" or _is_error(data):
+                    errors += 1
+                elif _ERR_RE.search(str(data.get("content") or "")):
+                    errors += 1
+                continue
+
         msg = data.get("message")
         if not isinstance(msg, dict):
             continue
@@ -113,6 +124,7 @@ def last_assistant_text(transcript: str | Path, max_chars: int | None = 4000) ->
     except OSError:
         return ""
     last = ""
+    stream_deltas: list[str] = []
     for line in lines:
         line = line.strip()
         if not line:
@@ -123,12 +135,50 @@ def last_assistant_text(transcript: str | Path, max_chars: int | None = 4000) ->
             continue
         if not isinstance(data, dict):
             continue
+
+        etype = data.get("event")
         msg = data.get("message")
-        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+
+        # Clear stream deltas on new user/system input
+        if (isinstance(msg, dict) and msg.get("role") in ("user", "system")) or \
+           data.get("type") in ("USER", "SYSTEM", "user") or \
+           etype in ("user_message", "init"):
+            stream_deltas.clear()
+
+        # Omp assistant message
+        if isinstance(msg, dict) and msg.get("role") == "assistant":
+            texts = _texts(msg.get("content"))
+            if texts:
+                last = "\n".join(texts).strip()
+                stream_deltas.clear()
             continue
-        texts = _texts(msg.get("content"))
-        if texts:
-            last = "\n".join(texts).strip()
-    if limit is not None and len(last) > limit:
-        last = last[:limit].rstrip() + "\n…(truncated)"
-    return last
+
+        # Antigravity brain log PLANNER_RESPONSE
+        if data.get("type") == "PLANNER_RESPONSE":
+            content = str(data.get("content") or "").strip()
+            if content:
+                last = content
+                stream_deltas.clear()
+            continue
+
+        # Antigravity stream-json events
+        if etype == "result":
+            res = data.get("result") or {}
+            resp = str(res.get("response") or "").strip()
+            if resp:
+                last = resp
+                stream_deltas.clear()
+            continue
+        elif etype == "step_update":
+            su = data.get("step_update") or {}
+            if su.get("step_type") == "agent_response":
+                delta = su.get("text_delta")
+                if isinstance(delta, str) and delta:
+                    stream_deltas.append(delta)
+            continue
+
+    stream_text = "".join(stream_deltas).strip()
+    final_text = stream_text if stream_text else last
+    if limit is not None and len(final_text) > limit:
+        final_text = final_text[:limit].rstrip() + "\n…(truncated)"
+    return final_text

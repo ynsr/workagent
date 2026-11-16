@@ -200,18 +200,29 @@ class OmpHarness(Harness):
         return _hs.tool_error_rate(transcript_path, since_line=since_line)
 
 
-HARNESSES = {"omp": OmpHarness()}
+HARNESSES: dict[str, Harness] = {"omp": OmpHarness()}
+
+
+def _load_harnesses() -> None:
+    if "agy" not in HARNESSES:
+        try:
+            from .agy_harness import AgyHarness
+            HARNESSES["agy"] = AgyHarness()
+        except ImportError:
+            pass
+
+
+_load_harnesses()
 
 
 def get_harness(name: str | None = None) -> Harness:
     from . import store as _store
+    _load_harnesses()
     key = name or _store.default_harness()
     if key in HARNESSES:
         return HARNESSES[key]
-    if not name and HARNESSES:
-        return next(iter(HARNESSES.values()))
     raise HarnessError(
-        f"unsupported harness: {name} (v1 supports: {', '.join(sorted(HARNESSES))})",
+        f"unsupported harness: {name or key} (v1 supports: {', '.join(sorted(HARNESSES))})",
         exit_code=2)
 
 
