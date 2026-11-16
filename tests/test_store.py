@@ -10,8 +10,18 @@ from workagent import store
 
 def test_config_defaults(isolated_config):
     cfg = store.load_config()
-    assert cfg["default_harness"] == "omp"
+    assert cfg["default_harness"] == "agy"
     assert cfg["repos"] == {} and cfg["trackers"] == {}
+
+
+def test_default_harness_is_agy(isolated_config):
+    from workagent import store
+    assert store.DEFAULT_HARNESS == "agy"
+    assert set(store.SUPPORTED_HARNESSES) == {"agy", "omp"}
+    assert store.default_harness() == "agy"
+    cfg = store.load_config()
+    assert cfg["default_harness"] == "agy"
+
 
 
 def test_record_and_lookup_link(isolated_config):

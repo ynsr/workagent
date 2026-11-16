@@ -1,7 +1,7 @@
 """Persistent state: repo registry, tracker links, session links.
 
 Layout (~/.config/workagent/, override with WORKAGENT_CONFIG_DIR):
-  config.json   — {"default_harness": "omp", "repos": {...}, "trackers": {...}}
+  config.json   — {"default_harness": "agy", "repos": {...}, "trackers": {...}}
   links.json    — {"<issue-key>": {"issue": ..., "pr_url": ..., "worktree": ...,
                                    "branch": ..., "repo": ...}}
 """
@@ -14,8 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-DEFAULT_HARNESS = "omp"
-SUPPORTED_HARNESSES = ("omp",)
+DEFAULT_HARNESS = "agy"
+SUPPORTED_HARNESSES = ("agy", "omp")
+
+
+def default_harness() -> str:
+    return str(load_config().get("default_harness") or DEFAULT_HARNESS)
+
 
 
 def config_dir() -> Path:

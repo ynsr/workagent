@@ -178,3 +178,90 @@ def test_preview_command_sources_env(tmp_path, monkeypatch, isolated_config):
     _h._run_harness("omp", "do things", str(worktree), str(worktree),
                     False, False, result, False)
     assert result["harness_command"].startswith("source ")
+
+
+def test_harness_is_abstract():
+    from workagent.backend import Harness
+    with pytest.raises(TypeError):
+        Harness()
+
+
+def test_omp_harness_resume_and_bare_terminal_argv(tmp_path):
+    from workagent.backend import OmpHarness
+    h = OmpHarness()
+    assert h.binary == "omp"
+    assert h.bare_terminal_argv("") == ["omp"]
+    assert h.bare_terminal_argv("/tmp/scope") == ["omp", "--session-dir", "/tmp/scope"]
+    missing = tmp_path / "fresh.jsonl"
+    assert h.resume_argv(str(missing)) == ["omp", "--session-dir", str(tmp_path)]
+    ready = tmp_path / "ready.jsonl"
+    ready.write_text('{"type":"session"}\n', encoding="utf-8")
+    assert h.resume_argv(str(ready)) == ["omp", "--resume", str(ready)]
+
+
+def test_get_harness_default_and_explicit():
+    from workagent.backend import get_harness, OmpHarness
+    # None or empty string resolves to default harness, falling back to OmpHarness during Task 1
+    h = get_harness()
+    assert isinstance(h, OmpHarness)
+    h2 = get_harness("")
+    assert isinstance(h2, OmpHarness)
+    h3 = get_harness("omp")
+    assert isinstance(h3, OmpHarness)
+    with pytest.raises(HarnessError) as excinfo:
+        get_harness("unsupported_harness_xyz")
+    assert excinfo.value.exit_code == 2
+
+
+def test_check_binary(monkeypatch):
+    from workagent.backend import check_binary
+    monkeypatch.setattr(backend.shutil, "which", lambda name: "/bin/ok" if name == "ok" else None)
+    check_binary("ok")
+    with pytest.raises(HarnessError) as excinfo:
+        check_binary("missing")
+    assert "`missing` not found on PATH" in str(excinfo.value)
+
+
+def test_omp_command_argv_omits_empty_prompt_in_tty():
+    from workagent.backend import OmpHarness
+    h = OmpHarness()
+    assert h.command_argv("", no_tty=False) == ["omp"]
+    assert h.command_argv("do something", no_tty=False) == ["omp", "do something"]
+    assert h.command_argv("", no_tty=False, extra_args=["--flag"]) == ["omp", "--flag"]
+
+
+def test_omp_harness_extract_and_error_rate(tmp_path):
+    from workagent.backend import OmpHarness
+    h = OmpHarness()
+    p = tmp_path / "transcript.jsonl"
+    p.write_text(
+        '{"message": {"role": "assistant", "content": [{"type": "text", "text": "hello world"}]}}\n'
+        '{"message": {"role": "toolResult", "content": [{"type": "text", "text": "error: failed"}]}}\n',
+        encoding="utf-8",
+    )
+    assert h.extract_last_assistant_text(str(p)) == "hello world"
+    rate = h.tool_error_rate(str(p))
+    assert rate == (1, 1)
+
+
+def test_omp_watch_transcript(tmp_path):
+    from workagent.backend import OmpHarness
+    import threading
+    h = OmpHarness()
+    db = tmp_path / "state.db"
+    res = {}
+    stop = threading.Event()
+    stop.set()
+    # When stop is set immediately and no minted transcript, it returns without error
+    h.watch_transcript(str(tmp_path), tmp_path, None, None, db, result=res, stop_event=stop)
+    assert "session_file" not in res
+
+
+def test_doctor_inspects_agy_guard_and_omp():
+    from workagent import doctor
+    res = doctor.check()
+    assert "agy-guard" in res["tools"]
+    assert "omp" in res["tools"]
+    assert "git-wt" in res["tools"]
+
+
