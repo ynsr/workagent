@@ -47,3 +47,22 @@ def test_has_banned_scans_keys_and_values_without_blob_false_positives():
     # cleanup flags
     assert u.has_banned({"hard_delete": True}, sf._BANNED_CLEANUP_FLAGS)
     assert u.has_banned({}, sf._BANNED_CLEANUP_FLAGS) is None
+
+
+def test_terminal_capable_includes_prodtest():
+    from workagent import cli_flow_util as u
+    assert "prodtest" in u.TERMINAL_CAPABLE
+    assert u.TERMINAL_CAPABLE == ("start", "review", "action", "prodtest")
+
+
+def test_persist_terminal_pause_records_harness_name(monkeypatch):
+    from workagent import cli_flow_util as u
+    from workagent import cli_harness as h
+    recorded = []
+    monkeypatch.setattr(h, "record_headless_attempt",
+                        lambda *a, **k: recorded.append((a, k)) or 42)
+    rid = u.persist_terminal_pause("key-1", "start", ["start", "key-1"], "cmd", 1,
+                                   harness_name="omp")
+    assert rid == 42
+    assert recorded[0][1].get("harness_name") == "omp"
+

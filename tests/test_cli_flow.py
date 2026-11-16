@@ -1104,3 +1104,28 @@ def test_flow_review_step_explicit_repo_wins(isolated_config, monkeypatch):
     out = m._run_review_step("k1", {"launch": True, "repo": "/repos/other"}, False, False)
     assert out["status"] == "reviewed"
     assert calls and calls[0][1].get("repo") == "/repos/other"
+
+
+def test_flow_run_harness_cli_overrides_step_config(tmp_path, monkeypatch):
+    import json as _json
+    from typer.testing import CliRunner
+    from workagent import cli_flow as cli_mod
+    tpl = {"label": "t1", "name": "T1",
+           "steps": [{"kind": "start", "config": {"harness": "agy"}}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["flow", "run", "t1", "jira:X-1", "--dry-run", "--json", "--harness", "omp"])
+    assert res.exit_code == 0, res.output
+    body = _json.loads(res.stdout)
+    assert body["chain"][0]["config"]["harness"] == "omp"
+
+
+def test_flow_run_unknown_harness(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from workagent import cli_flow as cli_mod
+    tpl = {"label": "t1", "name": "T1", "steps": [{"kind": "start"}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["flow", "run", "t1", "jira:X-1", "--harness", "unknown-harness"])
+    assert res.exit_code == 2
+

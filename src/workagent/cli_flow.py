@@ -212,7 +212,7 @@ def template_suggest_icon(
     pre_execution: Optional[str] = typer.Option(None, "--pre-execution", help="Pre-flow script (context for the model)."),
     post_execution: Optional[str] = typer.Option(None, "--post-execution", help="Post-flow script (context for the model)."),
     used_icons: Optional[str] = typer.Option(None, "--used-icons", help="Comma-separated icons already taken (frontend passes the other rows' icons; the server store is the fallback)."),
-    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to ask (default: omp)."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to ask (default: configured default)."),
     yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; suggest prompts nothing so this is a no-op."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
@@ -234,7 +234,7 @@ def template_suggest_icon(
                            label=label or "", prompt="",
                            steps=steps or "", pre=pre_execution or "",
                            post=post_execution or "", used=taken),
-        harness=harness or "omp")
+        harness=harness or store.default_harness())
     icon = _si.parse_suggested_icon(text)
     _print_result({"icon": _si.validate_suggested_icon(icon)}, json_output)
 
@@ -299,7 +299,7 @@ def _manual_step(kind: str, args: list[str]) -> dict:
 
 
 def _spawn_terminal_step(kind: str, args: list[str], cwd: str = "",
-                         branch: str = "", harness: str = "omp") -> dict:
+                         branch: str = "", harness: str = "") -> dict:
     """Terminal-mode step (delegates to cli_flow_steps; keeps this file small)."""
     return _futil.spawn_terminal_step(kind, args, cwd, branch, harness)
 

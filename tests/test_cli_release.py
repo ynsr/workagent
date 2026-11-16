@@ -903,6 +903,17 @@ def _record_launches(monkeypatch, calls):
                 env_file=None, watch=None, **kwargs):
         import json as _json_fix
         from pathlib import Path as _Path_fix
+        if "workagent-judge-" in str(workdir):
+            _sf = kwargs.get("session_file")
+            if _sf:
+                _p = _Path_fix(str(_sf))
+                _p.parent.mkdir(parents=True, exist_ok=True)
+                _p.write_text(_json_fix.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "ok\nJOB_DONE"}]}}) + "\n")
+                return 0
+            _d_fix = _Path_fix(str(workdir))
+            _d_fix.mkdir(parents=True, exist_ok=True)
+            (_d_fix / "judge.jsonl").write_text(_json_fix.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "ok\nJOB_DONE"}]}}) + "\n")
+            return 0
         _args_fix = list(extra_args or [])
         for _i_fix, _a_fix in enumerate(_args_fix[:-1]):
             if _a_fix == "--session-dir" and "workagent-judge-" in str(_args_fix[_i_fix + 1]):
@@ -1112,3 +1123,39 @@ def test_fix_default_ci_prompts_both_branches_when_both_fail(
     assert "Fix the failing CI on master: https://ci/jobs/9" in prompt
     assert prompt.index("main:") < prompt.index("master:")
     assert calls == []
+
+
+def test_release_fix_default_selects_harness(isolated_config, tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    from workagent.errors import HarnessError
+    _fix = _fix_repo(monkeypatch, tmp_path)
+    monkeypatch.setattr(_fix, "_find_or_open_mr", lambda *a, **k: "https://h/o/r/-/merge_requests/7")
+
+    def _boom(*a, **k):
+        raise HarnessError("rebase API unavailable")
+
+    monkeypatch.setattr(_fix, "_remote_rebase", _boom)
+    calls = []
+    _record_launches(monkeypatch, calls)
+    r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1",
+                                      "--action", "rebase",
+                                      "--run-mode", "headless", "--yes",
+                                      "--json", "--harness", "omp"])
+    assert r.exit_code == 0, r.output
+    assert calls and calls[0]["harness"] == "omp"
+
+
+def test_release_fix_default_unknown_harness(isolated_config):
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    r = CliRunner().invoke(_cli.app, ["release", "fix-default", "r1", "--harness", "nope"])
+    assert r.exit_code == 2
+
+
+def test_release_unknown_harness(isolated_config):
+    from typer.testing import CliRunner
+    from workagent import cli as _cli
+    r = CliRunner().invoke(_cli.app, ["release", "r1", "--harness", "nope"])
+    assert r.exit_code == 2
+

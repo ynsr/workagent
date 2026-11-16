@@ -51,8 +51,12 @@ def release(
     run_mode: str = typer.Option("preview", "--run-mode", help="fix-default run mode: preview, headless, or terminal (only with `release fix-default NAME`)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the fix-default harness prompt."),
     no_status: bool = typer.Option(False, "--no-status", help="Skip automatic issue status transitions."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Coding harness name (e.g. agy; default: configured default)."),
 ) -> None:
     """Ship default -> release via pinned-SHA MR merge (FF-only, never squash)."""
+    if harness:
+        from . import backend
+        backend.get_harness(harness)
     if repo == "fix-default":
         # `release fix-default NAME ...`: dispatch here (not a Typer group:
         # this command's required positional would swallow the subcommand
@@ -75,7 +79,7 @@ def release(
         _fix.run_fix_default(positionals[0], action=action,
                              run_mode=run_mode, extra_prompt=extra_prompt,
                              yes=yes, dry_run=dry_run, json_output=json_output,
-                             env_file=env_file)
+                             env_file=env_file, harness=harness)
         return
     if action != "both":
         _fail("--action is only valid with `release fix-default NAME`.", EXIT_USAGE)
