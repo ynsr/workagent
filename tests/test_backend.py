@@ -492,4 +492,91 @@ def test_agy_launch_tty(tmp_path, monkeypatch):
     assert seen["wd"] == str(tmp_path)
 
 
+def test_launch_watch_shim_includes_harness_workdir_session_file(tmp_path, monkeypatch):
+    seen_exec = {}
+
+    def fake_exec_tty(argv, workdir, env_file=None):
+        seen_exec["argv"] = argv
+        seen_exec["workdir"] = workdir
+        return 0
+
+    monkeypatch.setattr(backend, "exec_tty", fake_exec_tty)
+    watch = {"run_id": 42, "scope_dir": "/tmp/scope", "before": "/tmp/scope/b.jsonl"}
+    backend.launch(
+        harness="agy", prompt="hello", workdir=str(tmp_path), no_tty=False,
+        watch=watch, session_file=str(tmp_path / "sess.jsonl")
+    )
+    argv = seen_exec["argv"]
+    assert "watch-and-exec" in argv
+    assert "--harness" in argv and argv[argv.index("--harness") + 1] == "agy"
+    assert "--workdir" in argv and argv[argv.index("--workdir") + 1] == str(tmp_path)
+    assert "--session-file" in argv and argv[argv.index("--session-file") + 1] == str(tmp_path / "sess.jsonl")
+    assert "--scope-dir" in argv and argv[argv.index("--scope-dir") + 1] == "/tmp/scope"
+    assert "--before" in argv and argv[argv.index("--before") + 1] == "/tmp/scope/b.jsonl"
+    assert "--" in argv
+
+
+def test_watch_and_exec_options_and_fork(monkeypatch, tmp_path):
+    from workagent import cli_harness
+    from typer.testing import CliRunner
+    runner = CliRunner()
+
+    execed = []
+    monkeypatch.setattr(cli_harness.os, "fork", lambda: 1234)
+    monkeypatch.setattr(cli_harness.os, "execvp", lambda f, a: execed.append((f, a)))
+    r = runner.invoke(cli_harness.app, [
+        "watch-and-exec", "--run-id", "12",
+        "--harness", "omp",
+        "--workdir", str(tmp_path),
+        "--session-file", str(tmp_path / "sess.jsonl"),
+        "--scope-dir", str(tmp_path),
+        "--before", "",
+        "--", "echo", "done"
+    ])
+    assert execed and execed[0] == ("echo", ["echo", "done"])
+
+
+def test_watch_and_exec_child_delegates_to_watch_transcript(monkeypatch, tmp_path):
+    from workagent import cli_harness
+    from typer.testing import CliRunner
+    runner = CliRunner()
+
+    watched = []
+
+    class FakeHarness:
+        def watch_transcript(self, workdir, scope_dir, before, run_id, db,
+                             result=None, session_file="", launched_at=0.0,
+                             stop_event=None):
+            watched.append({
+                "workdir": workdir,
+                "scope_dir": scope_dir,
+                "before": before,
+                "run_id": run_id,
+                "session_file": session_file,
+            })
+
+    monkeypatch.setattr("workagent.backend.get_harness", lambda name: FakeHarness())
+    monkeypatch.setattr(cli_harness.os, "fork", lambda: 0)  # child branch
+    exited = []
+    monkeypatch.setattr(cli_harness.os, "_exit", lambda code: exited.append(code))
+
+    r = runner.invoke(cli_harness.app, [
+        "watch-and-exec", "--run-id", "12",
+        "--harness", "omp",
+        "--workdir", str(tmp_path),
+        "--session-file", str(tmp_path / "sess.jsonl"),
+        "--scope-dir", str(tmp_path),
+        "--before", "",
+        "--", "echo", "done"
+    ])
+    assert exited == [0]
+    assert len(watched) == 1
+    assert watched[0]["run_id"] == 12
+    assert watched[0]["workdir"] == str(tmp_path)
+    assert watched[0]["session_file"] == str(tmp_path / "sess.jsonl")
+
+
+
+
+
 

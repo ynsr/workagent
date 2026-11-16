@@ -328,9 +328,10 @@ def test_open_mr_preset_gate_detects_existing_mr(tmp_path, monkeypatch):
     """
     import re
     import tempfile
+    from pathlib import Path
     from typer.testing import CliRunner
     from workagent import cli as cli_mod
-    src = open("web/src/lib/actionPresets.ts").read()
+    src = (Path(__file__).resolve().parents[1] / "web" / "src" / "lib" / "actionPresets.ts").read_text(encoding="utf-8")
     pre = re.search(r"const OPEN_MR_PRE_EXECUTION = `(.*?)`\n", src, re.S).group(1)
     assert "--state" not in pre, "glab mr list has no --state flag"
     assert "-F json" in pre

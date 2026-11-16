@@ -267,9 +267,13 @@ def launch(harness: str | None = None, prompt: str = "", workdir: str = "", no_t
     argv = get_harness(harness).command_argv(prompt, no_tty, extra_args)
     print(f"$ {' '.join(argv)}", file=sys.stderr, flush=True)
     if watch and not no_tty:
+        h_name = get_harness(harness).name
         shim = [sys.executable, "-m", "workagent", "watch-and-exec",
                 "--run-id", str(watch["run_id"]),
-                "--scope-dir", str(watch["scope_dir"]),
+                "--harness", h_name,
+                "--workdir", workdir,
+                "--session-file", str(session_file or watch.get("session_file") or ""),
+                "--scope-dir", str(watch.get("scope_dir") or ""),
                 "--before", str(watch.get("before") or ""),
                 "--", *argv]
         # Shim exec replaces this process: apply the overlay first so the

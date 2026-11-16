@@ -122,7 +122,7 @@ def test_review_preview_prints_command_and_skips_launch(isolated_config, tmp_pat
     out = json.loads(r.stdout)
     assert out["worktree_path"] == str(worktree)
     assert out["harness_command"].startswith("source ")
-    assert f"cd {worktree} && omp " in out["harness_command"]
+    assert f"cd {worktree} && agy-guard " in out["harness_command"]
     assert "harness command: source " in r.stderr
     assert str(worktree) in r.stderr
 
@@ -153,7 +153,7 @@ def test_review_preview_persists_run_row(isolated_config, tmp_path, monkeypatch)
     row = rows[0]
     assert row["state"] == "preview"
     assert row["session_type"] == "review"
-    assert "/runs/omp/feat/33/review/" in row["file_path"]
+    assert "/runs/agy/feat/33/review/" in row["file_path"]
     assert row["worktree_ref"] == "feat/33"
     # prompt is not part of the polled list projection; the detail read has it.
     detail = store_sqlite.get_run(store_sqlite.db_path(), row["id"])
@@ -565,7 +565,7 @@ def test_fix_comments_minted_filename_resumes_in_all_modes(isolated_config, tmp_
     # preview: printed command resumes the minted transcript
     # preview with --use-review-session: printed command resumes the transcript
     r = runner.invoke(cli.app, ["review", PR, "--fix-comments",
-                                "--use-review-session", "--json"])
+                                "--use-review-session", "--harness", "omp", "--json"])
     assert r.exit_code == 0, r.output
     out = json.loads(r.stdout)
     assert out["session_file"] == str(transcript)
@@ -596,6 +596,7 @@ def test_fix_comments_minted_filename_resumes_in_all_modes(isolated_config, tmp_
     monkeypatch.setattr(_h.store, "clear_harness_run", lambda *a, **k: None)
     r = runner.invoke(cli.app, ["review", PR, "--fix-comments",
                                 "--use-review-session",
+                                "--harness", "omp",
                                 "--no-tty", "--launch", "--yes", "--json"])
     assert r.exit_code == 0, r.output
     assert "--resume" in calls[0] and str(transcript) in calls[0]
@@ -605,6 +606,7 @@ def test_fix_comments_minted_filename_resumes_in_all_modes(isolated_config, tmp_
                         lambda cmd, wd: (spawned.update(cmd=cmd), 4242)[1])
     r = runner.invoke(cli.app, ["review", PR, "--fix-comments",
                                 "--use-review-session",
+                                "--harness", "omp",
                                 "--terminal", "--yes", "--json"])
     assert r.exit_code == 0, r.output
     assert f"--resume {transcript}" in spawned["cmd"]
@@ -874,7 +876,7 @@ def test_review_new_pr_keys_row_by_branch(isolated_config, tmp_path, monkeypatch
     monkeypatch.setattr(cli.backend, "launch", _launch77)
     monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     url = "https://github.com/o/r/pull/77"
-    r = runner.invoke(cli.app, ["review", url, "--no-tty", "--launch", "--json"])
+    r = runner.invoke(cli.app, ["review", url, "--harness", "omp", "--no-tty", "--launch", "--json"])
     assert r.exit_code == 0, r.output
     links = store.load_links()
     assert set(links) == {"feat/77"}

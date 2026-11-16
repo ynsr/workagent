@@ -302,7 +302,7 @@ def test_start_preview_prints_command_and_skips_launch(isolated_config, tmp_path
     out = json.loads(r.stdout)
     assert out["worktree_path"] == str(worktree)
     assert out["harness_command"].startswith("source ")
-    assert f"cd {worktree} && omp " in out["harness_command"]
+    assert f"cd {worktree} && agy-guard " in out["harness_command"]
     assert "harness command: source " in r.stderr
     assert str(worktree) in r.stderr
 
@@ -381,7 +381,7 @@ def test_start_preview_persists_run_row(isolated_config, tmp_path, monkeypatch):
     assert row["worktree_ref"] == "github:o/r#22"
     assert row["session_type"] == "start"
     assert "Add login" in row["prompt"]
-    assert "/runs/omp/feat/22-add-login/start/" in row["file_path"]
+    assert "/runs/agy/feat/22-add-login/start/" in row["file_path"]
     runs = store_sqlite.list_runs(db)
     assert len(runs) == 1 and runs[0]["command"] == "start"
     assert runs[0]["output"].startswith("harness command: source ")

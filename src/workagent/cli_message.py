@@ -294,7 +294,7 @@ def _run_prompt(msg: dict, prompt: str, ref_opt: str, repo_opt: str, launch: boo
         _guard_harness(key or None, workdir)
     use_launch = mode == "headless"
     use_terminal = mode == "terminal"
-    _run_harness(harness or store.load_config().get("default_harness", "omp"),
+    _run_harness(harness or store.default_harness(),
                  body, workdir, workdir, use_launch, use_launch,
                  {"command": "message", "session_metadata": {"action": "message",
                   "mode": mode, "message_id": msg.get("message_id")}},

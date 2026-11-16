@@ -273,7 +273,7 @@ def _run_validated(store_key: str, entry: dict, plan_file: Path | None, release_
     prompt = ("Use the prodtest-run skill with run request: "
               + json.dumps(run_request, indent=2))
     prompt = append_extra_prompt(prompt, extra_prompt)
-    harness_name = harness or store.load_config().get("default_harness", "omp")
+    harness_name = harness or store.default_harness()
     worktree = str(entry.get("worktree", "") or repo or ".")
     branch = str(entry.get("branch", "") or "")
     result: dict = {"worktree_path": worktree, "branch": branch,

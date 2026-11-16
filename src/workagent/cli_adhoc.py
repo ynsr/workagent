@@ -69,7 +69,7 @@ def adhoc(
             if (_sys.stdin.readline() or "").strip().lower() not in ("y", "yes"):
                 _fail("aborted", EXIT_USAGE)
         _guard_harness(key, wt)
-        harness_name = harness or store.load_config().get("default_harness", "omp")
+        harness_name = harness or store.default_harness()
         _run_harness(harness_name, body, wt, str(entry.get("repo", wt)),
                      True, use_launch, {"command": "adhoc",
                                         "session_metadata": {"action": "adhoc", "mode": mode}},

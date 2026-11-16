@@ -127,7 +127,7 @@ def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool
     """Re-launch the harness in an already-linked worktree (issue #26 rule 1)."""
     worktree = str(entry.get("worktree", ""))
     repo = str(entry.get("repo", worktree))
-    harness_name = harness or store.load_config().get("default_harness", "omp")
+    harness_name = harness or store.default_harness()
     prompt = append_extra_prompt(backend.prompt_for_issue(
         str(entry.get("issue", key)), "", key,
         worktree=worktree, branch=str(entry.get("branch", "")), plan_mode=plan), extra_prompt)
@@ -194,7 +194,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
 
     Every real launch carries a transcript file: an explicit session_file
     (CLI --session-file) wins, otherwise a path is generated under
-    runs/<harness>/<branch>/<action>/ and passed to the harness (--resume for omp).
+    runs/<harness>/<branch>/<action>/ and passed to the harness.
     Preview (no --launch, no --terminal) and --dry-run (never reaches
     here) write no transcript file; both persist a state='preview' run
     row via record_preview_run. --terminal spawns the harness command in
@@ -281,7 +281,22 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             fix_comments=bool(result.get("fix_comments")))
         if rid:
             result["run_id"] = rid
-        tpid = spawn_in_terminal(full_cmd, worktree or fallback_dir)
+        term_cmd = full_cmd
+        if rid:
+            try:
+                watch_shim = [
+                    sys.executable, "-m", "workagent", "watch-and-exec",
+                    "--run-id", str(rid),
+                    "--harness", harness_name,
+                    "--workdir", worktree or fallback_dir,
+                    "--session-file", session_file or "",
+                    "--scope-dir", session_dir or "",
+                    "--", "bash", "-lc", full_cmd,
+                ]
+                term_cmd = " ".join(shlex.quote(a) for a in watch_shim)
+            except Exception:
+                term_cmd = full_cmd
+        tpid = spawn_in_terminal(term_cmd, worktree or fallback_dir)
         key_t = run_key or str(result.get("key", "")) or ""
         if key_t:
             blocker = store.record_harness_run(
@@ -328,12 +343,9 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                   "finish or kill it", 1)
     # Every real launch gets a transcript path: explicit --session-file wins,
     # otherwise generate one under runs/<harness>/<branch>/<action>/.
-    # Fresh (missing or empty) paths are passed as --session-dir (omp v18+
-    # rejects --resume on them); only non-empty transcripts resume via
-    # --resume (see backend.session_file_flag). The parent dir is created;
-    # the file itself must NOT be pre-touched — omp also rejects empty
-    # transcripts (`holds no entries`). Pre-cutover (no state.db) there is
-    # no runs row — the dir alone still scopes the transcript location.
+    # The parent dir is created; the file itself must NOT be pre-touched.
+    # Pre-cutover (no state.db) there is no runs row — the dir alone still
+    # scopes the transcript location.
     branch = str(result.get("branch", "") or "")
     reuse_run_id = result.get("reuse_run_id")
     rescoped_launch = (session_path if reuse_run_id
@@ -411,8 +423,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                 continued_from_run_id=chain_root)
         except Exception as e:
             # Post-cutover insert failure: launch continues, warn only.
-            # No transcript file is pre-created (omp owns the filename
-            # under --session-dir), so there is nothing to clean up.
+            # No transcript file is pre-created, so there is nothing to clean up.
             eprint(f"warning: run record failed: {e}")
             run_id = None
             session_path = session_file or ""
@@ -421,7 +432,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         # scope path so callers carry the full path from the very first run
         # and reuse it for future runs of the same transcript.
         result["session_file"] = session_path
-    # omp mints its own .jsonl under --session-dir seconds after start, so
+    # The harness mints its own transcript or mirrors it after start, so
     # the pre-launch guessed path is only a scope hint.
     # Headless (blocking): daemon watcher thread records the minted file
     # ASAP during the run. Interactive (execvp, never returns): exec goes
@@ -430,11 +441,16 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # (return instantly): no watcher; metadata carries the scope dir.
     scope_dir = Path(session_path).parent if session_path else None
     before = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
-    stop_watch = (_watch_minted_transcript(db, scope_dir, before, run_id, result)
-                  if no_tty and run_id and scope_dir is not None else None)
-    watch = ({"run_id": run_id, "scope_dir": str(scope_dir),
-              "before": str(before) if before else ""}
-             if not no_tty and run_id and scope_dir is not None else None)
+    stop_watch = (_watch_minted_transcript(db, scope_dir, before, run_id, result,
+                                           harness_name=harness_name,
+                                           workdir=worktree or fallback_dir,
+                                           session_file=session_path)
+                  if no_tty and run_id else None)
+    watch = ({"run_id": run_id,
+              "scope_dir": str(scope_dir) if scope_dir else "",
+              "before": str(before) if before else "",
+              "session_file": session_path}
+             if not no_tty and run_id else None)
     try:
         extra = harness.session_file_flag(session_path) if session_path else None
         _launch_kw: dict = {}
@@ -451,10 +467,22 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             def run_once(attempt_prompt):
                 nonlocal current_path
                 flags = harness.session_file_flag(current_path) if current_path else []
+
+                def on_cid(cid: str) -> None:
+                    if run_id:
+                        try:
+                            _sq.set_run_metadata(db, run_id, {"conversation_id": cid})
+                        except Exception:
+                            pass
+                    result["session_file"] = current_path
+
                 code = backend.launch(harness_name, attempt_prompt, worktree or fallback_dir,
                                       True, _HARNESS_ARGS + flags,
                                       env_file=str(env_path) if env_path else None,
-                                      watch=None, **_launch_kw)
+                                      watch=None,
+                                      session_file=current_path,
+                                      on_conversation_id=on_cid,
+                                      **_launch_kw)
                 minted = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
                 if minted is not None and minted != before:
                     current_path = str(minted)
@@ -462,7 +490,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                     result["session_file"] = current_path
                     if run_id:
                         _sq.set_run_file_path(db, run_id, current_path)
-                text = _hs.last_assistant_text(current_path, max_chars=None) if current_path else ""
+                text = harness.extract_last_assistant_text(current_path, max_chars=None) if current_path else ""
                 return {"exit_code": code, "transcript": text,
                         "transcript_path": current_path}
 
@@ -472,14 +500,18 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                     flags = harness.session_file_flag(judge_path)
                     # Bare judge session: cheap model, no skills/tools/rules/
                     # context (judge_argv) — prompt carries everything inline.
-                    code = backend.launch(harness_name, judge_prompt, worktree or fallback_dir,
+                    code = backend.launch(harness_name, judge_prompt, directory,
                                           True, _HARNESS_ARGS + harness.judge_argv + flags,
                                           env_file=str(env_path) if env_path else None,
-                                          watch=None, **_launch_kw)
-                    minted = _sq.newest_transcript(Path(directory))
-                    if code != 0 or minted is None:
+                                          watch=None,
+                                          session_file=judge_path,
+                                          **_launch_kw)
+                    target = (Path(judge_path)
+                              if (Path(judge_path).is_file() and Path(judge_path).stat().st_size > 0)
+                              else (_sq.newest_transcript(Path(directory)) if Path(directory).is_dir() else None))
+                    if code != 0 or target is None:
                         raise RuntimeError(f"judge failed (exit {code}) or produced no transcript")
-                    return _hs.last_assistant_text(str(minted), max_chars=None)
+                    return harness.extract_last_assistant_text(str(target), max_chars=None)
 
             validation = _cv.validate_headless(
                 worktree=worktree or fallback_dir, branch=branch, prompt=prompt,
@@ -489,7 +521,8 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                 # invocation's fresh row: key it on the chain head so a
                 # WAITING resume continues where validation stopped. A new
                 # transcript has no chain yet — its fresh row is the head.
-                run_id=chain_root or run_id)
+                run_id=chain_root or run_id,
+                harness_name=harness_name)
             verdict = validation["verdict"]
             exit_code = 2 if verdict == "WAITING_USER_RESPONSE" else (
                 0 if verdict in ("JOB_DONE", "INTENTIONALLY_UNCOMMITTED_CHANGES") else 1)
@@ -510,6 +543,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             backend.launch(harness_name, prompt, worktree or fallback_dir, False,
                            (_HARNESS_ARGS + extra) if extra else _HARNESS_ARGS,
                            env_file=str(env_path) if env_path else None, watch=watch,
+                           session_file=session_path,
                            **_launch_kw)
             minted = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
             if minted is not None and minted != before and run_id:
@@ -517,7 +551,8 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         if run_id:
             _sq.finish_run(db, run_id, "failed" if exit_code == 1 else "finished")
         if no_tty and run_key:
-            _publish_headless_summary(result, json_output)
+            _publish_headless_summary(result, json_output, harness_name=harness_name)
+
     except Exception:
         if run_id:
             try:
@@ -546,7 +581,8 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             exit_code=exit_code)
 
 
-def _publish_headless_summary(result: dict, json_output: bool = False) -> None:
+def _publish_headless_summary(result: dict, json_output: bool = False,
+                              harness_name: str | None = None) -> None:
     """Print the run summary and post it to the linked issue (best effort).
 
     Headless runs only (no_tty): parses the last assistant text from the
@@ -554,13 +590,14 @@ def _publish_headless_summary(result: dict, json_output: bool = False) -> None:
     (--json), and posts it to the worktree record's issue_url when present.
     Never raises; failures warn on stderr.
     """
-    from . import harness_summary as _hs
     from . import issue_comments as _ic
     summary = ""
     try:
         session_file = str(result.get("session_file", "") or "")
         if session_file:
-            summary = _hs.last_assistant_text(session_file)
+            h_name = harness_name or str(result.get("harness") or "") or store.default_harness()
+            harness_obj = backend.get_harness(h_name)
+            summary = harness_obj.extract_last_assistant_text(session_file)
     except Exception as e:
         eprint(f"warning: summary parse failed: {e}")
     if not summary:
@@ -583,45 +620,39 @@ def _publish_headless_summary(result: dict, json_output: bool = False) -> None:
         _ic.post_issue_comment(issue_url, summary)
 
 
-def _watch_minted_transcript(db, scope_dir, before, run_id, result):
-    """Poll *scope_dir* for the harness-minted .jsonl; record it ASAP.
+def _watch_minted_transcript(db, scope_dir, before, run_id, result,
+                             harness_name: str | None = None,
+                             workdir: str = "", session_file: str = ""):
+    """Poll for the harness-minted transcript or conversation; record it ASAP.
 
     Returns a threading.Event the caller sets when the launch returns
-    (stops the daemon). First poll at ~1s, then every ~2s; first new file
-    wins and the watcher exits. Never raises; all DB writes best-effort.
+    (stops the daemon). Never raises; all DB writes best-effort.
     Only started for blocking headless launches (returning control).
     """
     import threading
+    import time
     stop = threading.Event()
-    if scope_dir is None or run_id is None:
+    if run_id is None:
         return stop
 
+    h_name = harness_name or store.default_harness()
+    harness_obj = backend.get_harness(h_name)
+
     def _poll() -> None:
-        import time
-        from . import store_sqlite as _sq
-        time.sleep(1.0)
-        while not stop.is_set():
-            try:
-                minted = _sq.newest_transcript(scope_dir)
-            except Exception:
-                return
-            if minted is not None and minted != before:
-                try:
-                    _sq.set_run_file_path(db, run_id, str(minted))
-                except Exception:
-                    pass
-                try:
-                    result["session_file"] = str(minted)
-                except Exception:
-                    pass
-                return
-            if stop.wait(2.0):
-                return
+        try:
+            harness_obj.watch_transcript(
+                workdir, scope_dir, before, run_id, db,
+                result=result, session_file=session_file, launched_at=time.time(),
+                stop_event=stop,
+            )
+        except Exception:
+            pass
 
     t = threading.Thread(target=_poll, name="workagent-minted-watch",
                          daemon=True)
     t.start()
     return stop
+
 
 def record_headless_attempt(key: str, command: str, args: list[str],
                             output: str, exit_code: int = 1,
@@ -735,43 +766,73 @@ def record_preview_run(key: str, command: str, prompt: str,
 @app.command("watch-and-exec", hidden=True)
 def watch_and_exec(
     run_id: int = typer.Option(..., "--run-id", help="Run row id to update."),
-    scope_dir: str = typer.Option(..., "--scope-dir", help="Branch-scoped transcript dir to watch."),
+    harness: str = typer.Option("", "--harness", help="AI harness name (empty = default)."),
+    workdir: str = typer.Option("", "--workdir", help="Working directory."),
+    session_file: str = typer.Option("", "--session-file", help="Pinned session file path."),
+    scope_dir: str = typer.Option("", "--scope-dir", help="Branch-scoped transcript dir to watch."),
     before: str = typer.Option("", "--before", help="Pre-launch newest transcript (empty = none)."),
     argv: list[str] = typer.Argument(..., help="Harness argv after --."),
 ) -> None:
-    """Watch *scope_dir* for the harness-minted .jsonl, record it ASAP, exec *argv*.
+    """Watch transcript, record it ASAP, exec *argv*.
 
     Hidden shim: `backend.launch` execs through here for interactive runs so
     the minted transcript lands in the DB seconds after start even though the
     parent process is replaced. Signals need no forwarding — exec replaces
     this process with the harness, restoring native semantics.
     """
-    import threading
     import time
     from . import store_sqlite as _sq
-    scope = Path(scope_dir)
+    harness_name = harness or store.default_harness()
+    w_dir = workdir or os.getcwd()
+    scope = Path(scope_dir) if scope_dir else None
     before_p = Path(before) if before else None
-    stop = threading.Event()
+    harness_obj = backend.get_harness(harness_name)
+    db = _sq.db_path()
 
-    def _poll() -> None:
-        time.sleep(1.0)
-        while not stop.is_set():
+    if hasattr(os, "fork"):
+        parent_pid = os.getpid()
+        pid = os.fork()
+        if pid == 0:
+            import threading
+            stop_event = threading.Event()
+
+            def _parent_monitor():
+                deadline = time.time() + 86400.0
+                while not stop_event.is_set() and time.time() < deadline:
+                    if os.getppid() != parent_pid:
+                        stop_event.set()
+                        break
+                    time.sleep(1.0)
+                stop_event.set()
+
+            monitor = threading.Thread(target=_parent_monitor, name="parent-liveness-monitor", daemon=True)
+            monitor.start()
             try:
-                minted = _sq.newest_transcript(scope)
+                harness_obj.watch_transcript(
+                    w_dir, scope, before_p, run_id, db,
+                    session_file=session_file, launched_at=time.time(),
+                    stop_event=stop_event,
+                )
             except Exception:
-                return
-            if minted is not None and minted != before_p:
-                try:
-                    _sq.set_run_file_path(_sq.db_path(), run_id, str(minted))
-                except Exception:
-                    pass
-                return
-            if stop.wait(2.0):
-                return
+                pass
+            finally:
+                os._exit(0)
+        else:
+            os.execvp(argv[0], argv)
+    else:
+        import threading
+        stop = threading.Event()
+        t = threading.Thread(
+            target=lambda: harness_obj.watch_transcript(
+                w_dir, scope, before_p, run_id, db,
+                session_file=session_file, launched_at=time.time(),
+                stop_event=stop,
+            ),
+            name="workagent-watch-thread", daemon=True
+        )
+        t.start()
+        os.execvp(argv[0], argv)
 
-    t = threading.Thread(target=_poll, name="workagent-minted-watch", daemon=True)
-    t.start()
-    os.execvp(argv[0], argv)
 @app.command("_run-supervised", hidden=True,
               context_settings={"allow_extra_args": True,
                                 "ignore_unknown_options": True})

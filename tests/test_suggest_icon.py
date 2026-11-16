@@ -165,3 +165,35 @@ def test_union_used_icons_merges_explicit_and_store(tmp_path, monkeypatch):
     assert si.union_used_icons(["Zap", "zap", "Rocket"],
                                exclude_label="x",
                                exclude_kind="action") == ["Rocket", "Zap"]
+
+
+def test_suggest_icon_agy_harness(tmp_path, monkeypatch):
+    from workagent import suggest_icon as si
+    from workagent import backend
+    calls = []
+
+    def fake_launch(harness, prompt, workdir, no_tty, extra_args=None,
+                    env_file=None, watch=None, timeout_s=None,
+                    session_file=None, on_conversation_id=None):
+        calls.append({
+            "harness": harness,
+            "workdir": workdir,
+            "session_file": session_file,
+            "extra_args": extra_args,
+        })
+        if session_file:
+            from pathlib import Path
+            p = Path(session_file)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text('{"event": "result", "result": {"response": "Rocket"}}\n', encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(backend, "launch", fake_launch)
+    res = si.run_suggest_icon("suggest an icon", harness="agy")
+    assert res == "Rocket"
+    assert len(calls) == 1
+    assert calls[0]["harness"] == "agy"
+    assert calls[0]["session_file"] is not None
+    assert str(calls[0]["session_file"]).endswith("judge.jsonl")
+    assert calls[0]["workdir"] != ""
+
