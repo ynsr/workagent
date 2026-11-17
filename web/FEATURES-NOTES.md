@@ -15,14 +15,14 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
 | `sync [ref]` | Dashboard row action → confirm dialog (server-side rebase by default) |
 | `sync -m/--merge` | Sync dialog option (local merge instead of remote rebase) |
 | `sync --all` | Dashboard → "Sync all" button (dialog states it implies no per-step stopping) |
-| `sync --harness` | Launch page "Harness" select (start only) — not a sync option in this UI; sync uses the harness configured in the CLI config |
+| `sync --harness` | `<HarnessSelect>` in Dashboard Sync / Sync-all confirm dialogs and Launch Sync tab |
 | `sync --yes/--force` | not sent by the UI — the server appends it when `confirm: true`; the web confirm dialog is the interactive equivalent (see below) |
 | `sync --dry-run` | Sync dialog option; when set, POST is sent with `confirm:false` |
-| `start` / `review` | Launch page tabs, full option set |
+| `start` / `review` | Launch page tabs, full option set (`<HarnessSelect>` on Start, Review, Sync, Adhoc tabs) |
 | `start/review --repo` | Launch "Repo" select (populated from GET /api/repos, plus "Registry default (auto)") |
 | `start/review --depth` | Launch "Clone depth" number input |
 | `start/review --base` | Launch "Base branch" input (start only) |
-| `start/review --no-tty` | sent only with `--launch` (Run agent now) for headless runs; preview omits it so `harness_command` stays TTY (`omp`, no `-p`); the Launch page shows an auto-approve warning when launching |
+| `start/review --no-tty` | sent only with `--launch` (Run agent now) for headless runs; preview omits it so `harness_command` stays interactive (`agy-guard -i=…` or `omp`, no `-p`); the Launch page shows an auto-approve warning when launching |
 | `start/review --dry-run` | Launch checkbox (POST `confirm:false`) |
 | `start/review --json` | Launch checkbox |
 | `cleanup` | Dashboard row action → confirm dialog listing issue URL, PR, worktree path, branch from /api/status?ref= |
@@ -36,6 +36,7 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
 | `register PATH [--key --issue --repo --force]` | Links page "Register an existing worktree" form; force runs always confirm |
 | `cancel` of a running command | Runs list + Run detail → Cancel button (POST /api/runs/{id}/cancel, no body) |
 | `-v` (verbose) | Settings toggle; `useCreateRun` prepends `-v` as `args[0]` on every run started from the UI |
+| `config show` / `config set default-harness` | Settings → "Default AI Harness" card (`GET /api/config`, `<HarnessSelect allowDefault={false}>`, runs `config set default-harness <name>`) |
 | Theme light/dark/system | Settings + system preference tracking (localStorage `theme`) |
 
 ## Documented exceptions
@@ -44,8 +45,10 @@ out of scope per the task: shell `completions`, `--quiet`, `-N/--no-runtime`.
    carries `confirm: true` (per API_CONTRACT.md). The web confirm dialogs with a
    per-action "Don't ask again for this action" opt-out (localStorage
    `harness.confirm.optout`) are the interactive equivalent of `--yes`.
-2. **`sync --harness`**: no control in the web UI; sync runs use the harness
-   configured in the CLI config file. Only start/review expose `--harness`.
+2. **AI harnesses (`DEFAULT_HARNESS = "agy"` via `agy-guard`, plus `omp`):**
+   - `agy-guard` is the default harness (`DEFAULT_HARNESS = "agy"`). Headless runs pass `--dangerously-skip-permissions --output-format stream-json -p=<prompt>` and mirror Antigravity `brain/<cid>/.system_generated/logs/transcript.jsonl` into `runs/agy/….jsonl` with an `agy_meta` header; interactive/preview runs pass `-i=<prompt>` (or bare `agy-guard`).
+   - Resume routes through `Harness.resume_argv` (`agy-guard --conversation <id>` for `agy`, `omp --resume <session_file>` for `omp`); `POST /api/runs/{id}/start-terminal` and `POST /api/worktrees/{ref}/terminal` wrap terminal spawns in `workagent watch-and-exec` to capture minted conversation IDs and transcripts back onto the DB run row.
+   - `<HarnessSelect>` exposes `--harness` (and `POST /api/worktrees/{ref}/terminal` `harness` body param) across Launch, MessageLaunch, ProdtestLaunch, ActionForm, ImmediateRunForm, ChainEditor, FlowWizard, Dashboard bulk confirms (Sync / Sync-all / Review-all / Fix-all), ReleaseCard `FixDefaultDialog`, WorktreeDetail terminal picker, and Settings.
 3. **`completions`, `--quiet`, `-N/--no-runtime`**: out of scope per task.
 4. **Backend 404 error shape**: `GET /api/status?ref=` and `GET /api/path?ref=`
    return FastAPI's `{"detail": "…"}` instead of the documented

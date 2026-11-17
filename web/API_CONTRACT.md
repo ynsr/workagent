@@ -16,6 +16,21 @@ same-origin check passes).
  "network_exposed": false}
 ```
 
+### `GET /api/config`
+```json
+{
+  "default_harness": "agy",
+  "supported_harnesses": ["agy", "omp"],
+  "harnesses": [
+    {"name": "agy", "label": "Antigravity (agy-guard)", "binary": "agy-guard", "available": true},
+    {"name": "omp", "label": "OMP (omp)", "binary": "omp", "available": true}
+  ]
+}
+```
+Read-only runtime harness configuration (`store.default_harness()` — defaults
+to `"agy"` — plus every registered `Harness` in `backend.HARNESSES` with
+`shutil.which(binary)` availability). Always 200.
+
 ### `GET /api/status` → all worktrees
 Map of worktree key → entry (same shape as `workagent status --json`).
 Query params: `ref` (single detail), `refresh=true` (re-query PR),
@@ -171,7 +186,7 @@ by the Dashboard Actions dropdown.)
  `flow template clone SRC [--name] [--label]` duplicates one template (lineage in `parent_labels`);
  `flow template compose LABEL --from A,B [--name]` concatenates chains (starts preserved, but a start after the first cleanup is rejected; lineage recorded).
  Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection.
- `flow run TEMPLATE REF [--steps JSON] [--step-config JSON] [--skip-steps 0[,N]] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`. Resume keeps the stored chain: passing a different `--steps` chain for a resumable run fails (exit 2) — use `--fresh` for the new chain or drop `--steps` to resume.
+ `flow run TEMPLATE REF [--steps JSON] [--step-config JSON] [--skip-steps 0[,N]] [--harness NAME] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`. Resume keeps the stored chain: passing a different `--steps` chain for a resumable run fails (exit 2) — use `--fresh` for the new chain or drop `--steps` to resume. When `--harness` is given, it applies to every step and overrides step-level `config.harness`.
 ### `GET /api/links`
 ```json
 {"trackers": {"jira:IPG": {"repos": ["/home/x/projects/projectx"]}},
@@ -196,7 +211,7 @@ or the `--ref` worktree's repo when several repos exist — otherwise exit 2
 naming `--repo` candidates). Runs keep a single `--repo` pin; the web repo
 pin is singular (no fan-out). The detail endpoint 404s on unknown ref
 (ambiguous substring → 404). `message adhoc/validate/draft-reply` and
-`message action run` / `message flow run` run via `POST /api/runs` with target
+`message action run` / `message flow run` (`--harness NAME` supported) run via `POST /api/runs` with target
 key `message:<ref>` (draft-reply: `message:<ref>`; skills mm-reply-drafter +
 persian-chat-generator: facts-only, never sends, ZWNJ-free ≤160-char draft)
 live run per (subcommand, message).)
@@ -225,8 +240,8 @@ the runs-table row id (`file_path` resolved through the `runs/` → legacy
 ### `GET /api/doctor`
 ```json
 {"status": "ok", "live_hash": "…", "recorded_hash": "…",
- "tools": {"git-wt": true, "omp": true, "gh": true, "glab": true,
-            "jira": true}, "receipt": "/home/x/.local/share/…"}
+ "tools": {"git-wt": true, "agy-guard": true, "omp": true, "gh": true,
+            "glab": true, "jira": true}, "receipt": "/home/x/.local/share/…"}
 ```
 
 ### `GET /api/issues`
@@ -291,7 +306,7 @@ first load):
 through `POST /api/runs` with `tracker update KEY [--vendor] [--remote-url] [--fetch/--no-fetch] [--enable/--disable]`.
 ### `GET /api/tracker-domains` → `{disabled_domains: [...]}`; `POST /api/tracker-domains` `{domains: [...]}` replaces the list (normalized lowercase/sorted; empty = all enabled). Trackers on a listed host (or subdomain) are skipped by fetching.
 ### `GET /api/release/status?name=` → `{repo, path, default_branch, release_branch, diff_count, behind, releasable, reason, stale, ci, ci_url, fetched_at, releasing}`
-Read-only releasability for one repo (1h fresh / 1d SWR diff cache). Always serves the cached row instantly and revalidates the diff in the background -- the ReleaseCard polls every 30 s, so fresh diffs swap in on the next poll without blocking or clearing the rendered rows. `releasable` = release branch set + diff > 0. `behind` = commits the release branch has that default lacks (local rev-list, 0 on unknown refs: drives the Fix-default button, never a gate); `ci`/`ci_url` are the release branch's newest pipeline (`success|failure|running|not_started`, empty when the lookup soft-fails); `fetched_at` is the diff-cache stamp. `releasing` is True while the repo's release lock is held (a release is running). `POST /api/runs` `{command: "release", args: [repo, "--yes"]}` runs the release (confirm dialog appends `--yes`). New flags: `--checks ci|local|both|none` (default `ci`: local pre-release gate in a detached worktree at the pinned SHA, pinned-commit CI poll, or both), `--diff remote|local` (default `remote`), `--pre-release-timeout` (default `10m`), `--ci-timeout` (default `15m`), `--env-file <script>` (default `env_file` in `config.json`; sourced before the pre-release gate). Result summary: `{repo, pinned_sha, checks, strategy, mr_url, merged}` + stderr `released <sha> via <strategy> checks=<checks> <url>`. `release fix-default REPO [--action rebase|ci|both] [--run-mode preview|headless|terminal] [--extra-prompt] [--dry-run] [--json] [--yes]`: rebase default onto release (remote rebase, harness fallback rewriting origin/default with force-push) and/or fix failing CI via the harness (checks both the default and the release branch pipelines; `release_ci`/`release_ci_url` carry the release-branch result); no-op (exit 0) when `behind` = 0 and neither branch CI is failing. The ReleaseCard shows a "Fix default" button per releasable repo row when `behind > 0 || ci === "failure"`; its dialog (action segmented Both/Rebase/CI default Both, run-mode control, extra-prompt input, force-push warning for rebase/both) runs `createRun({command: "release", args: ["fix-default", repo, "--action", a, "--run-mode", m, ...extra]})`.
+Read-only releasability for one repo (1h fresh / 1d SWR diff cache). Always serves the cached row instantly and revalidates the diff in the background -- the ReleaseCard polls every 30 s, so fresh diffs swap in on the next poll without blocking or clearing the rendered rows. `releasable` = release branch set + diff > 0. `behind` = commits the release branch has that default lacks (local rev-list, 0 on unknown refs: drives the Fix-default button, never a gate); `ci`/`ci_url` are the release branch's newest pipeline (`success|failure|running|not_started`, empty when the lookup soft-fails); `fetched_at` is the diff-cache stamp. `releasing` is True while the repo's release lock is held (a release is running). `POST /api/runs` `{command: "release", args: [repo, "--yes"]}` runs the release (confirm dialog appends `--yes`). New flags: `--checks ci|local|both|none` (default `ci`: local pre-release gate in a detached worktree at the pinned SHA, pinned-commit CI poll, or both), `--diff remote|local` (default `remote`), `--pre-release-timeout` (default `10m`), `--ci-timeout` (default `15m`), `--env-file <script>` (default `env_file` in `config.json`; sourced before the pre-release gate). Result summary: `{repo, pinned_sha, checks, strategy, mr_url, merged}` + stderr `released <sha> via <strategy> checks=<checks> <url>`. `release fix-default REPO [--action rebase|ci|both] [--run-mode preview|headless|terminal] [--harness NAME] [--extra-prompt] [--dry-run] [--json] [--yes]`: rebase default onto release (remote rebase, harness fallback rewriting origin/default with force-push) and/or fix failing CI via the harness (checks both the default and the release branch pipelines; `release_ci`/`release_ci_url` carry the release-branch result); no-op (exit 0) when `behind` = 0 and neither branch CI is failing. The ReleaseCard shows a "Fix default" button per releasable repo row when `behind > 0 || ci === "failure"`; its dialog (action segmented Both/Rebase/CI default Both, run-mode control, `<HarnessSelect>`, extra-prompt input, force-push warning for rebase/both) runs `createRun({command: "release", args: ["fix-default", repo, "--action", a, "--run-mode", m, ...extra]})` (`release` also accepts `--harness <name>`).
 ## Runs (mutating CLI commands as child processes)
 ### `POST /api/runs` → 202
 Request:
@@ -299,9 +314,10 @@ Request:
 {"command": "cleanup", "args": ["IPG-932"],
  "confirm": true, "force": false}
 ```
- - `action suggest-icon [--name --label --prompt --pre-execution --post-execution --used-icons --harness --json]` / `flow template suggest-icon [--name --label --steps --pre-execution --post-execution --used-icons --harness --json]`: Ask-AI Lucide icon (issues #62, #84) — ONE bare judge-style harness session (`--smol --no-skills --no-tools`, temp dir, no checkout), stdout `{"icon": "Rocket"}`; target keys `suggest-icon:action` / `suggest-icon:flow` so long AI runs never 409-block saves; the prompt lists all 1611 Lucide icons (pinned lucide-react 0.525.0 registry) plus the already-used icons of other actions/templates (explicit `--used-icons` unioned with the store-collected fallback) so the model avoids duplicates; parsed against `SUGGEST_ICON_CHOICES`, never confirmed.
+ - `action suggest-icon [--name --label --prompt --pre-execution --post-execution --used-icons --harness --json]` / `flow template suggest-icon [--name --label --steps --pre-execution --post-execution --used-icons --harness --json]`: Ask-AI Lucide icon (issues #62, #84) — ONE bare judge-style harness session (temp dir, no checkout; uses `Harness.judge_argv`, e.g. `agy-guard --model gemini-3.8-flash-low --disable-slash-commands --mode plan` or `omp --smol --no-skills --no-tools ...`), stdout `{"icon": "Rocket"}`; target keys `suggest-icon:action` / `suggest-icon:flow` so long AI runs never 409-block saves; the prompt lists all 1611 Lucide icons (pinned lucide-react 0.525.0 registry) plus the already-used icons of other actions/templates (explicit `--used-icons` unioned with the store-collected fallback) so the model avoids duplicates; parsed against `SUGGEST_ICON_CHOICES`, never confirmed.
  - `command`: one of `start | review | cleanup | release | sync | open | register |
-   repo | link | tracker | action | flow | message | backup | prodtest | adhoc` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`; prodtest: `["plan", REF, …]` / `["run", REF, …]`; adhoc: `[REF, --prompt P, …]`).
+   repo | link | tracker | action | flow | message | backup | prodtest | adhoc | config` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`; prodtest: `["plan", REF, …]` / `["run", REF, …]`; adhoc: `[REF, --prompt P, …]`; config: `["show"]` or `["set", "default-harness", "agy|omp"]`, non-destructive under target key `"config"`).
+ - `sync [REF]` accepts `--harness <name>` (selects the conflict-resolution harness; default: configured `default_harness`). `agy` (`agy-guard`) is the default AI harness (`DEFAULT_HARNESS = "agy"`): headless uses `agy-guard --dangerously-skip-permissions --output-format stream-json -p=<prompt>` and preview/interactive uses `agy-guard -i=<prompt>` (or bare `agy-guard`).
 - Global `-v` may be passed as `args[0]`.
 - `start`/`review`/`sync`/`release` take `--env-file <script>`: a shell script sourced before every harness command including the preview (`source <file> && …`; headless children also get it parsed into their environment) and before the release pre-release gate. Default: `env_file` in `config.json` (auto-created as `<config_dir>/env.sh` on first launch with `VISUAL`/`EDITOR`/`NO_PROXY`/`PI_EDIT_VARIANT` defaults). Delete the file to opt out; run resume reuses the originating run's explicit `--env-file` or the configured default.
 - Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`, `adhoc`,
@@ -364,7 +380,7 @@ another run holds the same target key.
 `start`, `review:<ref>` / `review:all` (`--all`, plus `--force-all` to
 re-include already-reviewed and unresolved-comment worktrees),
 `cleanup:<ref>` / `cleanup:all`, `action:<label>:<ref>` / `config` (template CRUD),
-`flow:<template>:<ref>` / `config` (template CRUD),
+`flow:<template>:<ref>` / `config` (template CRUD, `config show`/`config set`),
 `prodtest:<ref>` / `prodtest:run-all` — one prodtest plan/run per issue ref,
 `adhoc:<first-ref>` — one adhoc run per ref. `prodtest plan <ref>` generates
 the plan; `prodtest run <ref>` runs it at its release SHA (issue-key first,
@@ -397,8 +413,12 @@ stale plans.
 [{"id": "abc123", "command": "sync", "args": ["IPG-932"],
   "state": "running", "exit_code": null, "truncated": false,
   "created": 1730000000.0, "target": "sync:jira:IPG-932",
-  "session_file": "/home/x/.config/workagent/runs/omp/….jsonl",
-  "session_type": "sync", "worktree": "/home/x/wt", "last_seq": 42}]
+  "session_file": "/home/x/.config/workagent/runs/agy/….jsonl",
+  "transcript_ready": true,
+  "session_type": "sync", "worktree": "/home/x/wt",
+  "harness_name": "agy",
+  "resume_command": "cd /home/x/wt && agy-guard --conversation …",
+  "last_seq": 42}]
 ```
 `session_file`/`worktree` are non-empty only for runs that executed a
 harness transcript (`start`/`review`, or `sync` with an explicit
@@ -412,7 +432,14 @@ per-worktree child generates its own transcript). Clients show resume
 buttons iff `session_file` is present. `transcript_ready` (bool) says the
 stored path is a non-empty `.jsonl` on the server — a preview row's path is
 only the `--session-dir` scope hint, so it is `false` and the copy button is
-gated on it (resume resolves the minted file itself).
+gated on it (resume resolves the minted file itself). `harness_name` is the
+resolved harness (`"agy" | "omp"`, falling back to `store.default_harness()`).
+`resume_command` is the server-computed shell command (`""` when not yet
+resumable) built via `Harness.resume_argv` (`agy-guard --conversation <id>`
+for `agy` or `omp --resume <session_file>` for `omp`, wrapped with the env
+file). For `agy`, `agy-guard` streams NDJSON and mirrors
+`brain/<cid>/.system_generated/logs/transcript.jsonl` into `runs/agy/….jsonl`
+prefixed with an `agy_meta` header containing `conversation_id`.
 
 `session_type` is the stored transcript kind
 (`start|review|sync|fix_comments|custom_action|flow|prodtest_plan|prodtest_run`,
@@ -429,7 +456,7 @@ code set on finish; NULL while running); a headless child's own launch row
 is adopted/finalized, never duplicated.
 
 ### `GET /api/runs/{id}` → detail (adds `lines`)
-`lines`: `[{"seq": 1, "text": "syncing jira:IPG-932 …"}, …]`
+Includes every `Run` field (`harness_name`, `resume_command`, `transcript_ready`, etc.) plus `lines`: `[{"seq": 1, "text": "syncing jira:IPG-932 …"}, …]`
 (ANSI already stripped server-side). Post-restart rows (`db-<id>`) replay
 the DB-persisted output (last 2000 lines, `truncated` when the live buffer
 had dropped older lines) — the log survives `serve` restarts.
@@ -459,16 +486,22 @@ so stop/re-install never kills detached children.
 
 ### `POST /api/runs/{id}/resume` → `{"id": …, "session_file": …, "worktree": …}`
 When the pinned `--session-file` path is missing/empty (first command run
-manually outside the web server), the endpoint adopts the newest non-empty
+manually outside the web server), the endpoint adopts the transcript: for
+`agy`, it resolves `conversation_id` from run metadata, `agy_meta`, or the
+workspace in `$ANTIGRAVITY_HOME` (`conversation_summaries.db` / `brain/<cid>`)
+and mirrors it into `session_file`; for `omp`, it adopts the newest non-empty
 `.jsonl` in the scope dir minted after the run row was created, persists it
 on that row, and resumes that transcript — so the first run stays resumable
 and later runs reuse the full path.
-Non-destructive (same class as `open`): no confirm needed. Detached-spawns the OS default terminal running `cd <worktree> && omp --resume <session_file>` (`$TERMINAL` → `xdg-terminal-exec` → gnome-terminal/konsole/xfce4-terminal/xterm; macOS `open -a Terminal`; Windows `cmd /k`). Terminal spawns claim the harness lock with `origin=terminal` (pid = spawned terminal emulator) and pre-spawn 409 `{code:"conflict"}` when a live harness already holds the worktree, so no orphan terminal launches; sources the originating run's `--env-file` (or the configured default). 404 `no_session` when the run
+Non-destructive (same class as `open`): no confirm needed. Detached-spawns the OS default terminal running `cd <worktree> && <harness resume_argv>` (`agy-guard --conversation <id>` for `agy`, `omp --resume <session_file>` for `omp`, routed through `Harness.resume_argv`; `$TERMINAL` → `xdg-terminal-exec` → gnome-terminal/konsole/xfce4-terminal/xterm; macOS `open -a Terminal`; Windows `cmd /k`). Terminal spawns claim the harness lock with `origin=terminal` (pid = spawned terminal emulator) and pre-spawn 409 `{code:"conflict"}` when a live harness already holds the worktree, so no orphan terminal launches; sources the originating run's `--env-file` (or the configured default). 404 `no_session` when the run
 names no harness transcript, `missing_session` when the transcript is
 absent, `no_worktree` when the target has no recorded worktree.
 
 ### `POST /api/runs/{id}/start-terminal` → `{"id": …}`
-Same spawn running the run's last logged `harness command:` entry — the exact command behind the Run page "Copy harness command" button (the button is disabled exactly when this returns 404 `no_harness_command`). Claims the harness lock with `origin=terminal` and pre-spawn 409s `{code:"conflict"}` on a live lock, like the resume endpoints.
+Same spawn running the run's last logged `harness command:` entry — the exact command behind the Run page "Copy harness command" button (the button is disabled exactly when this returns 404 `no_harness_command`). When a DB row, worktree, and `session_file` exist, wraps the command in `workagent watch-and-exec --run-id <id> --harness <name> ...` so the spawned terminal's minted transcript/conversation ID is captured back onto the run row (mirroring `agy` brain transcripts via `agy-guard` or `omp` `.jsonl` files). Claims the harness lock with `origin=terminal` and pre-spawn 409s `{code:"conflict"}` on a live lock, like the resume endpoints.
+
+### `POST /api/worktrees/{ref}/terminal` → `{"id", "session_file", "worktree", "mode"}`
+Spawns a bare harness (`agy-guard` or `omp`, via `Harness.bare_terminal_argv`) in the OS terminal for a worktree (no prompt). Body: `{"mode": "harness" | "prodtest", "harness"?: string}` (`harness` optional, defaults to `store.default_harness()`, validated via `backend.get_harness` → 400 `bad_arg` on unknown harness). Records one `preview` run row with the pinned transcript path (`session_type` from `mode`), wraps the spawn in `workagent watch-and-exec` for transcript/conversation capture, and claims the terminal lock (409 `conflict` if a live harness holds the worktree).
 
 ### `POST /api/terminal/stop` → `{"worktree_ref", "stopped": true}`
 SIGTERM→SIGKILL the terminal-origin agent behind a worktree ref (the `--terminal` run mode). Body: `{"worktree_ref": "<key>"}`. 404 `not_found` when no live terminal lock (missing, dead-pid swept, or headless origin — headless runs are never stoppable here).
