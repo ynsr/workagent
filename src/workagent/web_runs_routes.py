@@ -172,7 +172,16 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
                 meta = row.get("metadata") or {}
                 if not isinstance(meta, dict):
                     meta = {}
+                dest = session_file or db_file
+                if not dest:
+                    dest = str(_sq.session_file_path(_sq.gen_session_id(), "agy", session_type=row.get("session_type")))
                 cid = str(meta.get("conversation_id") or "")
+                if cid:
+                    if _agy.mirror_brain_transcript(cid, dest) and _transcript_ready(dest):
+                        if row_id and db.exists():
+                            _sq.set_run_file_path(db, row_id, dest)
+                            _sq.set_run_metadata(db, row_id, meta)
+                        return dest
                 worktree = ""
                 ref = str(row.get("worktree_ref") or "")
                 if ref:
@@ -188,11 +197,8 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
                     cmd = str(row.get("command") or "")
                     if cmd in ("start", "review"):
                         worktree = _worktree_for_target(
-                            f"{cmd}:{_first_positional(list(args), VAL_FLAGS.get(cmd, ()))})") or ""
+                            f"{cmd}:{_first_positional(list(args), VAL_FLAGS.get(cmd, ()))}") or ""
                 if worktree:
-                    dest = session_file or db_file
-                    if not dest:
-                        dest = str(_sq.session_file_path(_sq.gen_session_id(), "agy", session_type=row.get("session_type")))
                     created_ts = 0.0
                     if created:
                         try:
@@ -249,9 +255,8 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
             try:
                 if scope.parent != scope:
                     roots.append(scope.parent)
-            except Exception as e:
-                import sys; print("AGY ADOPT EXC:", type(e), e, file=sys.stderr)
-                import traceback; traceback.print_exc()
+            except Exception:
+                pass
             same: list[tuple[float, str]] = []
             any_: list[tuple[float, str]] = []
             for root in roots:
@@ -278,9 +283,8 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
         if best and row_id and db.exists():
             try:
                 _sq.set_run_file_path(db, row_id, best)
-            except Exception as e:
-                import sys; print("AGY ADOPT EXC:", type(e), e, file=sys.stderr)
-                import traceback; traceback.print_exc()
+            except Exception:
+                pass
         return best
     except Exception:
         return ""

@@ -1566,3 +1566,96 @@ def test_resolve_session_file_adopts_agy_workspace(tmp_path, monkeypatch):
     row = sq.get_run(db, rid)
     assert row["file_path"] == resolved
     assert row["metadata"].get("conversation_id") == "conv-adopt-123"
+
+
+def test_resolve_session_file_mirrors_known_conversation_id(tmp_path, monkeypatch):
+    import sqlite3
+    import json
+    from pathlib import Path
+    from workagent import store_sqlite as sq, store as _store
+    from workagent.web_runs_routes import _resolve_session_file
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = tmp_path / "wt-known"
+    wt.mkdir()
+    _store.record_link("rk-known", {"worktree": str(wt), "branch": "b-known", "repo": "/tmp/r"})
+    _seed_worktree(db, "rk-known")
+
+    agy_home = tmp_path / "antigravity"
+    agy_home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(agy_home))
+
+    # Known conversation transcript in brain
+    brain_known = agy_home / "brain" / "conv-known-456" / ".system_generated" / "logs"
+    brain_known.mkdir(parents=True)
+    (brain_known / "transcript.jsonl").write_text('{"event":"known_transcript"}\n')
+
+    # Newer conversation in conversation_summaries.db that should NOT be adopted
+    sum_db = agy_home / "conversation_summaries.db"
+    with sqlite3.connect(sum_db) as conn:
+        conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT, workspace_uris TEXT, last_modified_time TEXT)")
+        conn.execute(
+            "INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+            ("conv-newer-789", json.dumps([wt.resolve().as_uri()]), "2026-11-17T12:00:00+00:00")
+        )
+    brain_newer = agy_home / "brain" / "conv-newer-789" / ".system_generated" / "logs"
+    brain_newer.mkdir(parents=True)
+    (brain_newer / "transcript.jsonl").write_text('{"event":"newer_unrelated"}\n')
+
+    rid = sq.insert_run(db, "start", ["rk-known"], None, worktree_ref="rk-known",
+                        harness_name="agy", file_path="", state="running",
+                        metadata={"conversation_id": "conv-known-456"})
+
+    resolved = _resolve_session_file("", run_id=rid)
+    assert resolved and resolved.endswith(".jsonl")
+    content = Path(resolved).read_text(encoding="utf-8")
+    assert "conv-known-456" in content
+    assert "known_transcript" in content
+    assert "newer_unrelated" not in content
+    row = sq.get_run(db, rid)
+    assert row["file_path"] == resolved
+    assert row["metadata"].get("conversation_id") == "conv-known-456"
+
+
+def test_resolve_session_file_resolves_worktree_from_command_target(tmp_path, monkeypatch):
+    import sqlite3
+    import json
+    from pathlib import Path
+    from workagent import store_sqlite as sq, store as _store
+    from workagent.web_runs_routes import _resolve_session_file
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = tmp_path / "wt-target"
+    wt.mkdir()
+    _store.record_link("rk-target", {"worktree": str(wt), "branch": "b-target", "repo": "/tmp/r"})
+    _seed_worktree(db, "rk-target")
+
+    agy_home = tmp_path / "antigravity"
+    agy_home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(agy_home))
+
+    sum_db = agy_home / "conversation_summaries.db"
+    with sqlite3.connect(sum_db) as conn:
+        conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT, workspace_uris TEXT, last_modified_time TEXT)")
+        conn.execute(
+            "INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+            ("conv-target-999", json.dumps([wt.resolve().as_uri()]), "2026-11-17T00:00:00+00:00")
+        )
+    brain_log = agy_home / "brain" / "conv-target-999" / ".system_generated" / "logs"
+    brain_log.mkdir(parents=True)
+    (brain_log / "transcript.jsonl").write_text('{"event":"target_test"}\n')
+
+    # Run with empty worktree_ref, so worktree must be resolved from command target "start:rk-target"
+    rid = sq.insert_run(db, "start", ["rk-target"], None, worktree_ref=None,
+                        harness_name="agy", file_path="", state="running")
+
+    resolved = _resolve_session_file("", run_id=rid)
+    assert resolved and resolved.endswith(".jsonl")
+    content = Path(resolved).read_text(encoding="utf-8")
+    assert "conv-target-999" in content
+    assert "target_test" in content
+    row = sq.get_run(db, rid)
+    assert row["file_path"] == resolved
+    assert row["metadata"].get("conversation_id") == "conv-target-999"
