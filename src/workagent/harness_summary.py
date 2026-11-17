@@ -49,6 +49,20 @@ def tool_error_rate(transcript, since_line: int = 0) -> tuple[int, int] | None:
         return None
     lines = lines[max(0, since_line):]
 
+    def _part_is_error(part: dict) -> bool:
+        for key in ("isError", "is_error", "error"):
+            val = part.get(key)
+            if val is True or (key == "error" and ((isinstance(val, str) and bool(val.strip())) or isinstance(val, dict))):
+                return True
+        for key in ("status", "level"):
+            if str(part.get(key) or "").strip().lower() in ("error", "failed", "failure"):
+                return True
+        for key in ("text", "content", "output", "message"):
+            val = part.get(key)
+            if isinstance(val, str) and _ERR_RE.search(val):
+                return True
+        return False
+
     def _is_error(data: dict) -> bool:
         msg = data.get("message")
         if not isinstance(msg, dict):
@@ -57,21 +71,14 @@ def tool_error_rate(transcript, since_line: int = 0) -> tuple[int, int] | None:
         parts = content if isinstance(content, list) else [content]
         for part in parts:
             if isinstance(part, dict):
-                for key in ("isError", "is_error", "error"):
-                    if part.get(key) is True:
-                        return True
-                for key in ("status", "level"):
-                    if str(part.get(key) or "").strip().lower() in ("error", "failed"):
-                        return True
-                for key in ("text", "content", "output", "message"):
-                    val = part.get(key)
-                    if isinstance(val, str) and _ERR_RE.search(val):
-                        return True
+                if _part_is_error(part):
+                    return True
             elif isinstance(part, str) and _ERR_RE.search(part):
                 return True
         return data.get("isError", data.get("is_error")) is True
 
     total = errors = 0
+    stream_failed = False
     for line in lines:
         line = line.strip()
         if not line:
@@ -93,6 +100,36 @@ def tool_error_rate(transcript, since_line: int = 0) -> tuple[int, int] | None:
                     errors += 1
                 continue
 
+        etype = data.get("event")
+        if etype == "tool_result":
+            payload = data.get("tool_result") if isinstance(data.get("tool_result"), dict) else data
+            total += 1
+            if _part_is_error(payload) or _part_is_error(data):
+                errors += 1
+            continue
+        if etype == "tool_call":
+            payload = data.get("tool_call") if isinstance(data.get("tool_call"), dict) else data
+            st = str(payload.get("status") or "").strip().upper()
+            has_outcome = (
+                st in ("DONE", "SUCCESS", "OK", "ERROR", "FAILED", "FAILURE")
+                or isinstance(payload.get("isError"), bool)
+                or isinstance(payload.get("is_error"), bool)
+                or bool(payload.get("error"))
+            )
+            if has_outcome:
+                total += 1
+                if _part_is_error(payload) or _part_is_error(data):
+                    errors += 1
+                continue
+        if etype == "result":
+            res = data.get("result") if isinstance(data.get("result"), dict) else data
+            st = str(res.get("status") or "").strip().upper()
+            if st in ("ERROR", "FAILED", "FAILURE") or res.get("is_error") is True or res.get("isError") is True:
+                stream_failed = True
+            elif st in ("SUCCESS", "DONE", "OK"):
+                stream_failed = False
+            continue
+
         msg = data.get("message")
         if not isinstance(msg, dict):
             continue
@@ -105,7 +142,9 @@ def tool_error_rate(transcript, since_line: int = 0) -> tuple[int, int] | None:
         total += 1
         if _is_error(data):
             errors += 1
-    return (errors, total) if total else None
+    if total:
+        return (errors, total)
+    return (1, 1) if stream_failed else None
 
 
 

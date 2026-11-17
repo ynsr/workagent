@@ -348,6 +348,11 @@ def adopt_terminal_transcript(scope_file: str, run_id: int) -> str:
         if p is not None:
             try:
                 if p.is_file() and p.stat().st_size > 0:
+                    try:
+                        from . import agy_harness as _agy
+                        _agy.refresh_if_meta_stub(str(p))
+                    except Exception:
+                        pass
                     return str(p)
             except OSError:
                 pass
@@ -363,6 +368,13 @@ def adopt_terminal_transcript(scope_file: str, run_id: int) -> str:
             if db_p is not None:
                 try:
                     if db_p.is_file() and db_p.stat().st_size > 0:
+                        try:
+                            from . import agy_harness as _agy
+                            meta = row.get("metadata")
+                            _agy.refresh_if_meta_stub(
+                                str(db_p), meta if isinstance(meta, dict) else None)
+                        except Exception:
+                            pass
                         return str(db_p)
                 except OSError:
                     pass
@@ -384,18 +396,7 @@ def adopt_terminal_transcript(scope_file: str, run_id: int) -> str:
                             _sq.set_run_file_path(db, run_id, dest)
                             _sq.set_run_metadata(db, run_id, meta)
                             return dest
-                    worktree = ""
-                    ref = str(row.get("worktree_ref") or "")
-                    if ref:
-                        links = _store.load_links()
-                        if ref in links and isinstance(links[ref], dict):
-                            worktree = str(links[ref].get("worktree") or "")
-                    if not worktree:
-                        args = row.get("args") if isinstance(row.get("args"), list) else []
-                        if len(args) >= 2 and isinstance(args[1], str):
-                            links = _store.load_links()
-                            if args[1] in links and isinstance(links[args[1]], dict):
-                                worktree = str(links[args[1]].get("worktree") or "")
+                    worktree = _agy.resolve_worktree_for_run(row)
                     if worktree:
                         created_ts = 0.0
                         created = str(row.get("created_at") or "")

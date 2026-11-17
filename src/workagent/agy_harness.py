@@ -77,6 +77,43 @@ def mirror_brain_transcript(cid: str, dest_path: str) -> bool:
     return True
 
 
+def is_meta_stub(path: str) -> bool:
+    """True when *path* holds only agy_meta lines and zero real transcript events."""
+    if not path:
+        return False
+    p = Path(path)
+    try:
+        if not p.is_file() or p.stat().st_size == 0:
+            return False
+        saw_meta = False
+        with p.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    return False
+                if isinstance(obj, dict) and obj.get("type") == "agy_meta":
+                    saw_meta = True
+                else:
+                    return False
+        return saw_meta
+    except OSError:
+        return False
+
+
+def refresh_if_meta_stub(path: str, metadata: dict | None = None) -> bool:
+    """If *path* is only an agy_meta stub, mirror brain/<cid> into it."""
+    if not is_meta_stub(path):
+        return False
+    cid = resolve_conversation_id(path, metadata)
+    if not cid:
+        return False
+    return mirror_brain_transcript(cid, path)
+
+
 def _parse_iso_ts(raw: str) -> float:
     try:
         s = raw.strip().replace("Z", "+00:00")
@@ -154,6 +191,43 @@ def adopt_from_workspace(worktree: str, created_ts: float, dest_path: str) -> tu
     return cid, ""
 
 
+def resolve_worktree_for_run(row: dict, *extra_candidates: str) -> str:
+    """Resolve a run row's worktree path across active, inactive, and deleted links."""
+    from . import store as _store, worktrees as _wt
+    try:
+        links = _store.load_links(include_inactive=True, include_deleted=True)
+    except Exception:
+        return ""
+    cmd_name = str(row.get("command") or "").strip()
+    candidates: list[str] = []
+    ref = str(row.get("worktree_ref") or "").strip()
+    if ref:
+        candidates.append(ref)
+    for cand in extra_candidates:
+        c = str(cand or "").strip()
+        if c and c not in candidates:
+            candidates.append(c)
+    args = row.get("args") if isinstance(row.get("args"), list) else []
+    for idx in (1, 0):
+        if len(args) > idx and isinstance(args[idx], str):
+            a = args[idx].strip()
+            if a and not a.startswith("-") and a != cmd_name and a not in candidates:
+                candidates.append(a)
+    for cand in candidates:
+        if cand in links and isinstance(links[cand], dict):
+            wt = str(links[cand].get("worktree") or "")
+            if wt:
+                return wt
+    for cand in candidates:
+        resolved = _wt.resolve_worktree(cand, links)
+        if (isinstance(resolved, str) and resolved in links
+                and isinstance(links[resolved], dict)):
+            wt = str(links[resolved].get("worktree") or "")
+            if wt:
+                return wt
+    return ""
+
+
 class AgyHarness(Harness):
     name = "agy"
     label = "Antigravity (agy-guard)"
@@ -209,19 +283,25 @@ class AgyHarness(Harness):
             sf_path.parent.mkdir(parents=True, exist_ok=True)
         timer: threading.Timer | None = None
         timed_out = False
+        done = threading.Event()
         if timeout_s is not None:
             def _kill() -> None:
                 nonlocal timed_out
+                if done.is_set():
+                    return
                 timed_out = True
                 try:
                     os.killpg(proc.pid, signal.SIGTERM)
                 except OSError:
                     pass
-                time.sleep(2.0)
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except OSError:
-                    pass
+                if done.wait(2.0):
+                    return
+                poll = getattr(proc, "poll", None)
+                if not callable(poll) or poll() is None:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except OSError:
+                        pass
             timer = threading.Timer(timeout_s, _kill)
             timer.daemon = True
             timer.start()
@@ -252,11 +332,12 @@ class AgyHarness(Harness):
                                 on_conversation_id(cid)
                     elif etype == "step_update":
                         su = ev.get("step_update") or {}
-                        delta = su.get("text_delta")
-                        if isinstance(delta, str) and delta:
-                            saw_delta = True
-                            sys.stderr.write(delta)
-                            sys.stderr.flush()
+                        if su.get("step_type") == "agent_response":
+                            delta = su.get("text_delta")
+                            if isinstance(delta, str) and delta:
+                                saw_delta = True
+                                sys.stderr.write(delta)
+                                sys.stderr.flush()
                     elif etype == "result":
                         res = ev.get("result") or {}
                         result_status = str(res.get("status") or "SUCCESS")
@@ -274,6 +355,7 @@ class AgyHarness(Harness):
                     fh.close()
             rc = proc.wait()
         finally:
+            done.set()
             if timer is not None:
                 timer.cancel()
         if timed_out:
@@ -291,34 +373,44 @@ class AgyHarness(Harness):
                          stop_event=None) -> None:
         from . import store_sqlite as _sq
         since = launched_at or time.time()
+        target_path = session_file or (str(scope_dir / f"{_sq.gen_session_id()}.jsonl") if scope_dir else "")
+        run_meta: dict | None = None
+        if run_id and db and db.exists():
+            try:
+                row = _sq.get_run(db, run_id, include_deleted_worktrees=True)
+                if isinstance((row or {}).get("metadata"), dict):
+                    run_meta = row["metadata"]
+            except Exception:
+                run_meta = None
+        resumed_cid = resolve_conversation_id(target_path, run_meta)
         brain = antigravity_home() / "brain"
         existing = {d.name for d in brain.iterdir() if d.is_dir()} if brain.is_dir() else set()
-        target_path = session_file or (str(scope_dir / f"{_sq.gen_session_id()}.jsonl") if scope_dir else "")
+        if resumed_cid:
+            existing.discard(resumed_cid)
         if stop_event is not None and stop_event.wait(1.0):
             return
         elif stop_event is None:
             time.sleep(1.0)
+        known_cid = ""
+        recorded_meta = False
         while stop_event is None or not stop_event.is_set():
-            cid = find_conversation_for_workspace(workdir, since, exclude_ids=existing)
+            cid = known_cid or find_conversation_for_workspace(workdir, since, exclude_ids=existing)
             if cid:
-                if target_path:
-                    mirror_brain_transcript(cid, target_path)
-                    if not Path(target_path).is_file():
-                        Path(target_path).parent.mkdir(parents=True, exist_ok=True)
-                        Path(target_path).write_text(
-                            json.dumps({"type": "agy_meta", "conversation_id": cid}) + "\n",
-                            encoding="utf-8",
-                        )
+                known_cid = cid
+                if not recorded_meta and run_id and db and db.exists():
+                    try:
+                        _sq.set_run_metadata(db, run_id, {"conversation_id": cid})
+                        recorded_meta = True
+                    except Exception:
+                        pass
+                if not target_path:
+                    return
+                if mirror_brain_transcript(cid, target_path):
                     if result is not None:
                         result["session_file"] = target_path
                     if run_id and db and db.exists():
                         _sq.set_run_file_path(db, run_id, target_path)
-                if run_id and db and db.exists():
-                    try:
-                        _sq.set_run_metadata(db, run_id, {"conversation_id": cid})
-                    except Exception:
-                        pass
-                return
+                    return
             if stop_event is not None and stop_event.wait(2.0):
                 return
             if stop_event is None:

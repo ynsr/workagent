@@ -75,3 +75,30 @@ def test_tool_error_rate_returns_none_when_zero_tool_results(tmp_path):
     ])
     assert hs.tool_error_rate(p2, since_line=1) is None
 
+
+def test_tool_error_rate_scores_stream_json_events(tmp_path):
+    p = _write(tmp_path / "stream_tools.jsonl", [
+        {"event": "init", "conversation_id": "c-stream"},
+        {"event": "tool_call", "tool_call": {"name": "bash"}},
+        {"event": "tool_result", "tool_result": {"status": "DONE", "output": "ok"}},
+        {"event": "tool_result", "tool_result": {"is_error": True, "output": "boom"}},
+        {"event": "tool_call", "tool_call": {"name": "bash", "status": "ERROR", "error": "bad"}},
+        {"event": "result", "result": {"status": "SUCCESS", "response": "done"}},
+    ])
+    assert hs.tool_error_rate(p) == (2, 3)
+    assert hs.tool_error_rate(p, since_line=4) == (1, 1)
+
+    p_err = _write(tmp_path / "stream_failed.jsonl", [
+        {"event": "init", "conversation_id": "c-fail"},
+        {"event": "result", "result": {"status": "ERROR", "response": "failed"}},
+    ])
+    assert hs.tool_error_rate(p_err) == (1, 1)
+
+    p_ok = _write(tmp_path / "stream_ok.jsonl", [
+        {"event": "init", "conversation_id": "c-ok"},
+        {"event": "tool_call", "tool_call": {"name": "read"}},
+        {"event": "result", "result": {"status": "SUCCESS", "response": "done"}},
+    ])
+    assert hs.tool_error_rate(p_ok) is None
+
+

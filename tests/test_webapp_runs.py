@@ -1660,3 +1660,76 @@ def test_resolve_session_file_resolves_worktree_from_command_target(tmp_path, mo
     row = sq.get_run(db, rid)
     assert row["file_path"] == resolved
     assert row["metadata"].get("conversation_id") == "conv-target-999"
+
+
+def test_resolve_session_file_refreshes_agy_meta_stub(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    from workagent import store_sqlite as sq
+    from workagent.web_runs_routes import _resolve_session_file
+
+    db = sq.db_path()
+    sq.init_db(db)
+    agy_home = tmp_path / "antigravity"
+    agy_home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(agy_home))
+
+    stub = sq.session_file_path("stub-id", "agy", branch="feat/stub", session_type="start")
+    stub.write_text(json.dumps({"type": "agy_meta", "conversation_id": "conv-web-stub"}) + "\n", encoding="utf-8")
+
+    brain_log = agy_home / "brain" / "conv-web-stub" / ".system_generated" / "logs"
+    brain_log.mkdir(parents=True)
+    (brain_log / "transcript.jsonl").write_text(
+        json.dumps({"type": "PLANNER_RESPONSE", "status": "DONE", "content": "web-stub-refreshed"}) + "\n",
+        encoding="utf-8",
+    )
+
+    resolved = _resolve_session_file(str(stub))
+    assert resolved == str(stub)
+    assert "web-stub-refreshed" in Path(resolved).read_text(encoding="utf-8")
+
+
+def test_resolve_session_file_resolves_inactive_link_from_issue_url_target(tmp_path, monkeypatch):
+    import json, sqlite3
+    from pathlib import Path
+    from workagent import store_sqlite as sq, store as _store
+    from workagent.web_runs_routes import _resolve_session_file
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = tmp_path / "wt-web-inact"
+    wt.mkdir()
+    _store.record_link(
+        "github:o/r#88",
+        {
+            "worktree": str(wt),
+            "branch": "feat/88",
+            "repo": "/tmp/r",
+            "issue_url": "https://github.com/o/r/issues/88",
+        },
+    )
+    _store.set_worktree_active("github:o/r#88", False)
+
+    agy_home = tmp_path / "antigravity"
+    agy_home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(agy_home))
+    sum_db = agy_home / "conversation_summaries.db"
+    with sqlite3.connect(sum_db) as conn:
+        conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT, workspace_uris TEXT, last_modified_time TEXT)")
+        conn.execute(
+            "INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+            ("conv-web-inact-88", json.dumps([wt.resolve().as_uri()]), "2099-01-01T00:00:00+00:00"),
+        )
+    brain_log = agy_home / "brain" / "conv-web-inact-88" / ".system_generated" / "logs"
+    brain_log.mkdir(parents=True)
+    (brain_log / "transcript.jsonl").write_text('{"event":"web_inact_88"}\n', encoding="utf-8")
+
+    rid = sq.insert_run(
+        db, "start", ["https://github.com/o/r/issues/88"], None,
+        worktree_ref=None, harness_name="agy", file_path="", state="running",
+    )
+    resolved = _resolve_session_file("", run_id=rid)
+    assert resolved and resolved.endswith(".jsonl")
+    assert "web_inact_88" in Path(resolved).read_text(encoding="utf-8")
+
+

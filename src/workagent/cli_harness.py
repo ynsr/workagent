@@ -536,6 +536,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                                        [run_key],
                                        exit_code if index == last else run["exit_code"],
                                        worktree_ref=wt_ref,
+                                       harness_name=harness_name,
                                        output=[f"harness command: {full_cmd}", run["output"]],
                                        validation=run["trace"],
                                        continued_from_run_id=chain_root)

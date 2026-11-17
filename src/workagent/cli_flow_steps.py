@@ -187,8 +187,12 @@ def run_sync_step(key: str, config: dict, json_output: bool,
     from . import store as _store
     extra = flag_argv(config, *SYNC_FLAGS)
     if bool(config.get("terminal", False)):
-        wt = str((_store.load_links().get(key, {}) or {}).get("worktree", "") or "")
-        return spawn("sync", [key, *extra], wt)
+        links = _store.load_links()
+        wt = str((links.get(key, {}) or {}).get("worktree", "") or "")
+        harness = str(config.get("harness", "") or _store.default_harness())
+        dlinks = _store.load_links(include_deleted=True)
+        branch = str((dlinks.get(key, {}) or {}).get("branch", "") or "")
+        return spawn("sync", [key, *extra], wt, branch=branch, harness=harness)
     if not (bool(config.get("launch", True))
             and not any(config.get(k) for k in ("preview", "dry_run", "terminal"))):
         return manual("sync", [key, *extra])

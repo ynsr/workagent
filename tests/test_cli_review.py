@@ -1076,3 +1076,25 @@ def test_stored_legacy_sessions_path_still_resolves(isolated_config):
     _r._apply_fix_session(result, "k", True, True, str(legacy))
     assert result["reuse_run_id"] == rid
     assert result["session_file"] == str(moved)
+
+
+def test_review_all_preview_records_harness_name(isolated_config, monkeypatch):
+    from workagent import cli_review as _cr, store_sqlite as sq
+
+    db = sq.db_path()
+    sq.init_db(db)
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, repo_key, added_at, payload)"
+            " VALUES ('k-all', '/tmp/w', 'feat/all', NULL, '2026-01-01', '{}')"
+        )
+    monkeypatch.setattr(
+        _cr, "_reviewable_keys",
+        lambda links, force=False: [("k-all", "https://github.com/o/r/pull/99")],
+    )
+    r = runner.invoke(cli.app, ["review", "--all", "--harness", "omp", "--yes"])
+    assert r.exit_code == 0, r.output
+    rows = sq.list_runs(db, limit=10, include_deleted_worktrees=True)
+    assert len(rows) == 1
+    assert rows[0]["harness_name"] == "omp"
+

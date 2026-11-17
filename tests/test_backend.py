@@ -761,6 +761,218 @@ def test_cli_terminal_watch_passes_before_transcript(tmp_path, monkeypatch, isol
     assert str(stale) in spawned["cmd"]
 
 
+def test_agy_watch_transcript_keeps_polling_until_brain_file_exists(tmp_path, monkeypatch):
+    import json, sqlite3, threading, time
+    from workagent import agy_harness, store_sqlite as sq
+
+    home = tmp_path / "agy-home"
+    home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(home))
+    wt = tmp_path / "wt-delay"
+    wt.mkdir()
+
+    state_db = tmp_path / "state.db"
+    sq.init_db(state_db)
+    run_id = sq.insert_run(state_db, "start", ["feat/delay"], harness_name="agy", metadata={})
+    dest_session = tmp_path / "delayed_session.jsonl"
+    res = {}
+    stop = threading.Event()
+
+    # Phase 1: DB already has cid-delay, but brain/<cid>/transcript.jsonl does not exist yet.
+    sum_db = home / "conversation_summaries.db"
+    with sqlite3.connect(sum_db) as conn:
+        conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, workspace_uris TEXT, last_modified_time TEXT)")
+        conn.execute("INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+                     ("cid-delay", json.dumps([wt.resolve().as_uri()]), "2026-11-16T22:00:05+00:00"))
+
+    # Speed up polling in test by tightening wait
+    orig_sleep = agy_harness.time.sleep
+    monkeypatch.setattr(agy_harness.time, "sleep", lambda s: orig_sleep(min(s, 0.02)))
+
+    def _delayed_brain():
+        for _ in range(50):
+            row = sq.get_run(state_db, run_id)
+            if (row or {}).get("metadata", {}).get("conversation_id") == "cid-delay":
+                break
+            orig_sleep(0.02)
+        # Before brain transcript is written, target_path MUST NOT contain a 1-line stub.
+        assert not dest_session.exists()
+        log_dir = home / "brain" / "cid-delay" / ".system_generated" / "logs"
+        log_dir.mkdir(parents=True)
+        (log_dir / "transcript.jsonl").write_text(
+            json.dumps({"type": "PLANNER_RESPONSE", "status": "DONE", "content": "delayed-ready"}) + "\n",
+            encoding="utf-8",
+        )
+
+    t = threading.Thread(target=_delayed_brain)
+    t.start()
+    try:
+        agy_harness.AgyHarness().watch_transcript(
+            str(wt), tmp_path, None, run_id, state_db, result=res,
+            session_file=str(dest_session), launched_at=1794866400.0, stop_event=stop,
+        )
+    finally:
+        t.join(timeout=5)
+
+    assert res.get("session_file") == str(dest_session)
+    txt = dest_session.read_text(encoding="utf-8")
+    assert "cid-delay" in txt
+    assert "delayed-ready" in txt
+
+
+def test_agy_watch_transcript_matches_resumed_conversation(tmp_path, monkeypatch):
+    import json, sqlite3, threading
+    from workagent import agy_harness, store_sqlite as sq
+
+    home = tmp_path / "agy-home"
+    home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(home))
+    wt = tmp_path / "wt-resume"
+    wt.mkdir()
+
+    # Pre-existing brain directory from prior run
+    log_dir = home / "brain" / "cid-resume" / ".system_generated" / "logs"
+    log_dir.mkdir(parents=True)
+    (log_dir / "transcript.jsonl").write_text(
+        json.dumps({"type": "PLANNER_RESPONSE", "status": "DONE", "content": "resumed-turn"}) + "\n",
+        encoding="utf-8",
+    )
+    sum_db = home / "conversation_summaries.db"
+    with sqlite3.connect(sum_db) as conn:
+        conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, workspace_uris TEXT, last_modified_time TEXT)")
+        conn.execute("INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+                     ("cid-resume", json.dumps([wt.resolve().as_uri()]), "2099-01-01T00:00:00+00:00"))
+
+    dest_session = tmp_path / "resume_session.jsonl"
+    dest_session.write_text(json.dumps({"type": "agy_meta", "conversation_id": "cid-resume"}) + "\n", encoding="utf-8")
+    state_db = tmp_path / "state.db"
+    sq.init_db(state_db)
+    run_id = sq.insert_run(state_db, "start", ["feat/resume"], harness_name="agy",
+                           file_path=str(dest_session), metadata={"conversation_id": "cid-resume"})
+    res = {}
+    orig_sleep = agy_harness.time.sleep
+    monkeypatch.setattr(agy_harness.time, "sleep", lambda s: orig_sleep(min(s, 0.02)))
+    stop = threading.Event()
+    agy_harness.AgyHarness().watch_transcript(
+        str(wt), tmp_path, None, run_id, state_db, result=res,
+        session_file=str(dest_session), launched_at=1794866400.0, stop_event=stop,
+    )
+    assert res.get("session_file") == str(dest_session)
+    assert "resumed-turn" in dest_session.read_text(encoding="utf-8")
+
+
+def test_agy_launch_timeout_skips_sigkill_when_reaped_and_kills_when_alive(tmp_path, monkeypatch):
+    import io, signal, threading, time
+    from workagent import agy_harness
+    from workagent.errors import HarnessTimeout
+
+    monkeypatch.setattr("workagent.backend.shutil.which", lambda n: f"/usr/bin/{n}")
+
+    # Case 1: process exits promptly on SIGTERM (poll() == 0) -> no SIGKILL
+    sent_sigs: list[int] = []
+
+    class ReapedProc:
+        stdout = io.StringIO("")
+        returncode = -15
+        pid = 22222
+        _reaped = False
+
+        def poll(self):
+            return 0 if self._reaped else None
+
+        def wait(self, timeout=None):
+            time.sleep(0.05)
+            self._reaped = True
+            return -15
+
+    monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: ReapedProc())
+    monkeypatch.setattr(agy_harness.os, "killpg", lambda pid, sig: sent_sigs.append(sig))
+    t0 = time.time()
+    with pytest.raises(HarnessTimeout):
+        agy_harness.AgyHarness().launch("p", str(tmp_path), no_tty=True, timeout_s=0.01)
+    assert signal.SIGTERM in sent_sigs
+    assert signal.SIGKILL not in sent_sigs
+    assert time.time() - t0 < 1.0  # did not sleep full 2.0s after reap
+
+    # Case 2: process remains alive (poll() is None) -> SIGKILL escalated
+    sent_sigs2: list[int] = []
+    orig_wait = threading.Event.wait
+
+    class StubbornProc:
+        stdout = io.StringIO("")
+        returncode = -9
+        pid = 33333
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            time.sleep(0.08)
+            return -9
+
+    def _fast_wait(self, timeout=None):
+        if timeout == 2.0:
+            return False
+        return orig_wait(self, timeout=timeout)
+
+    monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: StubbornProc())
+    monkeypatch.setattr(agy_harness.os, "killpg", lambda pid, sig: sent_sigs2.append(sig))
+    monkeypatch.setattr(threading.Event, "wait", _fast_wait)
+    with pytest.raises(HarnessTimeout):
+        agy_harness.AgyHarness().launch("p", str(tmp_path), no_tty=True, timeout_s=0.01)
+    assert sent_sigs2 == [signal.SIGTERM, signal.SIGKILL]
+
+
+def test_agy_launch_non_response_step_update_does_not_suppress_result(tmp_path, monkeypatch, capsys):
+    import io, json
+    from workagent import agy_harness
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "agy-home"))
+    monkeypatch.setattr("workagent.backend.shutil.which", lambda n: f"/usr/bin/{n}")
+    ndjson = "\n".join([
+        json.dumps({"event": "init", "conversation_id": "conv-nr"}),
+        json.dumps({"event": "step_update", "step_update": {"step_type": "thought", "text_delta": "thinking...\n"}}),
+        json.dumps({"event": "result", "result": {"conversation_id": "conv-nr", "status": "SUCCESS", "response": "final-visible-answer"}}),
+    ]) + "\n"
+
+    class FakeProc:
+        stdout = io.StringIO(ndjson)
+        returncode = 0
+        pid = 44444
+        def wait(self, timeout=None): return 0
+
+    monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: FakeProc())
+    rc = agy_harness.AgyHarness().launch("p", str(tmp_path), no_tty=True)
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "thinking..." not in err
+    assert "final-visible-answer" in err
+
+
+def test_run_harness_records_harness_name_on_validation_child_rows(tmp_path, monkeypatch, isolated_config):
+    from workagent import cli_harness as _h, cli_validate as _cv, store_sqlite as sq, store as _store
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = tmp_path / "wt-val"
+    wt.mkdir()
+    _store.record_link("k-val", {"worktree": str(wt), "branch": "feat/val", "repo": str(wt)})
+    monkeypatch.setattr(
+        _cv, "validate_headless",
+        lambda **kw: {
+            "verdict": "JOB_DONE",
+            "attempts": 1,
+            "runs": [{"exit_code": 0, "output": "ok", "trace": {"verdict": "JOB_DONE"}}],
+        },
+    )
+    result = {"branch": "feat/val", "command": "start", "key": "k-val"}
+    _h._run_harness("omp", "do things", str(wt), str(wt),
+                    True, True, result, False, run_key="k-val")
+    rows = sq.list_runs(db, limit=10, include_deleted_worktrees=True)
+    assert len(rows) >= 2
+    assert all(r["harness_name"] == "omp" for r in rows)
+
+
+
 
 
 

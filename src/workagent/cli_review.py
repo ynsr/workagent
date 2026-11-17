@@ -613,11 +613,13 @@ def review(
                         columns=["key", "pr_url", "command", "exit_code"],
                         title="Review runs", empty="nothing reviewed")
             from . import cli_harness as _h
+            h_name = harness or store.default_harness()
             for k, pr in reviewable:
                 _h.record_headless_attempt(
                     k, "review", _child_argv(pr),
                     f"harness command: {_child_cmd(pr)}",
-                    exit_code=0, fix_comments=fix_comments,
+                    exit_code=0, harness_name=h_name,
+                    fix_comments=fix_comments,
                     metadata={"pr_url": pr, "mode": "all-preview"})
             return
         rows: list[dict] = []

@@ -118,3 +118,103 @@ def test_adopt_terminal_transcript_adopts_agy_workspace(tmp_path, monkeypatch):
     assert ((row or {}).get("metadata") or {}).get("conversation_id") == "conv-flow-1"
     assert "flow-done" in (tmp_path / scope_file).read_text(encoding="utf-8")
 
+
+def test_adopt_terminal_transcript_refreshes_agy_meta_stub(tmp_path, monkeypatch):
+    import json
+    from workagent import cli_flow_util as u, store_sqlite as sq
+
+    db = tmp_path / "s.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    monkeypatch.setattr("workagent.store.config_dir", lambda: tmp_path / "cfg")
+    agy_home = tmp_path / "agy-home"
+    agy_home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(agy_home))
+    sq.init_db(db)
+
+    scope_file, _ = u.mint_terminal_scope("start", branch="feat/stub", harness="agy")
+    from pathlib import Path
+    Path(scope_file).write_text(
+        json.dumps({"type": "agy_meta", "conversation_id": "conv-stub-1"}) + "\n",
+        encoding="utf-8",
+    )
+    brain_log = agy_home / "brain" / "conv-stub-1" / ".system_generated" / "logs"
+    brain_log.mkdir(parents=True)
+    (brain_log / "transcript.jsonl").write_text(
+        json.dumps({"type": "PLANNER_RESPONSE", "status": "DONE", "content": "stub-refreshed"}) + "\n",
+        encoding="utf-8",
+    )
+
+    adopted = u.adopt_terminal_transcript(scope_file, 0)
+    assert adopted == scope_file
+    assert "stub-refreshed" in Path(scope_file).read_text(encoding="utf-8")
+
+
+def test_adopt_terminal_transcript_resolves_inactive_link_and_issue_ref(tmp_path, monkeypatch):
+    import json, sqlite3
+    from workagent import cli_flow_util as u, store as _store, store_sqlite as sq
+
+    db = tmp_path / "s.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    monkeypatch.setattr("workagent.store.config_dir", lambda: tmp_path / "cfg")
+    agy_home = tmp_path / "agy-home"
+    agy_home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(agy_home))
+
+    wt = tmp_path / "wt-inactive"
+    wt.mkdir()
+    sq.init_db(db)
+    _store.record_link(
+        "github:o/r#77",
+        {
+            "worktree": str(wt),
+            "branch": "feat/77-inactive",
+            "repo": "/tmp/r",
+            "issue_url": "https://github.com/o/r/issues/77",
+        },
+    )
+    _store.set_worktree_active("github:o/r#77", False)
+    scope_file, _ = u.mint_terminal_scope("start", branch="feat/77-inactive", harness="agy")
+    rid = sq.insert_run(
+        db, "start", ["start", "https://github.com/o/r/issues/77"], 0,
+        worktree_ref=None, harness_name="agy", initiator_command="start",
+        prompt="p", file_path=scope_file, session_type="start", state="preview",
+    )
+
+    brain_log = agy_home / "brain" / "conv-inact-77" / ".system_generated" / "logs"
+    brain_log.mkdir(parents=True)
+    (brain_log / "transcript.jsonl").write_text(
+        json.dumps({"type": "PLANNER_RESPONSE", "status": "DONE", "content": "inactive-adopted"}) + "\n",
+        encoding="utf-8",
+    )
+    sum_db = agy_home / "conversation_summaries.db"
+    with sqlite3.connect(sum_db) as conn:
+        conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT, workspace_uris TEXT, last_modified_time TEXT)")
+        conn.execute(
+            "INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+            ("conv-inact-77", json.dumps([wt.resolve().as_uri()]), "2099-01-01T00:00:00+00:00"),
+        )
+
+    adopted = u.adopt_terminal_transcript(scope_file, rid)
+    assert adopted == scope_file
+    assert "inactive-adopted" in (tmp_path / scope_file).read_text(encoding="utf-8")
+
+
+def test_run_sync_step_forwards_harness_and_branch_to_spawn(tmp_path, monkeypatch):
+    from workagent import cli_flow_steps as steps, store as _store
+
+    monkeypatch.setattr("workagent.store.config_dir", lambda: tmp_path / "cfg")
+    _store.record_link("wt-sync-1", {"worktree": "/tmp/wt-sync", "branch": "feat/sync-h", "repo": "/tmp/r"})
+    spawned = []
+    out = steps.run_sync_step(
+        "wt-sync-1",
+        {"terminal": True, "harness": "omp"},
+        False,
+        lambda *a, **k: (spawned.append((a, k)), {"preview": True})[1],
+        lambda *a, **k: {},
+    )
+    assert out == {"preview": True}
+    assert spawned[0][0] == ("sync", ["wt-sync-1", "--harness", "omp"], "/tmp/wt-sync")
+    assert spawned[0][1]["harness"] == "omp"
+    assert spawned[0][1]["branch"] == "feat/sync-h"
+
+

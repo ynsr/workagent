@@ -134,6 +134,11 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
     from pathlib import Path as _Path
     session_file = _stored_transcript(session_file)
     if _transcript_ready(session_file):
+        try:
+            from . import agy_harness as _agy
+            _agy.refresh_if_meta_stub(session_file)
+        except Exception:
+            pass
         return session_file
     try:
         from . import store_sqlite as _sq
@@ -159,6 +164,13 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
                 created = ""
                 hname = ""
         if db_file and db_file != session_file and _transcript_ready(db_file):
+            try:
+                from . import agy_harness as _agy
+                meta = (row or {}).get("metadata")
+                _agy.refresh_if_meta_stub(
+                    db_file, meta if isinstance(meta, dict) else None)
+            except Exception:
+                pass
             return db_file
         if not hname:
             try:
@@ -182,22 +194,16 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
                             _sq.set_run_file_path(db, row_id, dest)
                             _sq.set_run_metadata(db, row_id, meta)
                         return dest
-                worktree = ""
-                ref = str(row.get("worktree_ref") or "")
-                if ref:
-                    try:
-                        from . import store as _store
-                        links = _store.load_links()
-                        if ref in links and isinstance(links[ref], dict):
-                            worktree = str(links[ref].get("worktree") or "")
-                    except Exception:
-                        pass
-                if not worktree:
-                    args = row.get("args") if isinstance(row.get("args"), list) else []
-                    cmd = str(row.get("command") or "")
-                    if cmd in ("start", "review"):
-                        worktree = _worktree_for_target(
-                            f"{cmd}:{_first_positional(list(args), VAL_FLAGS.get(cmd, ()))}") or ""
+                args = row.get("args") if isinstance(row.get("args"), list) else []
+                cmd = str(row.get("command") or "")
+                extra_cand = ""
+                if cmd in ("start", "review"):
+                    pos = _first_positional(list(args), VAL_FLAGS.get(cmd, ()))
+                    if pos:
+                        extra_cand = pos
+                worktree = _agy.resolve_worktree_for_run(row, extra_cand)
+                if not worktree and cmd in ("start", "review") and extra_cand:
+                    worktree = _worktree_for_target(f"{cmd}:{extra_cand}") or ""
                 if worktree:
                     created_ts = 0.0
                     if created:
