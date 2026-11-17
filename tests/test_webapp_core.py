@@ -499,9 +499,14 @@ def test_post_runs_config_set(client, isolated_config):
     assert r.status_code == 202
     body = r.json()
     assert "run_id" in body
-    run_detail = client.get(f"/api/runs/{body['run_id']}").json()
+    rid = body["run_id"]
+    assert _wait_state(client, rid, {"succeeded"}) == "succeeded"
+    run_detail = client.get(f"/api/runs/{rid}").json()
     assert run_detail["command"] == "config"
     assert run_detail["target"] == "config"
+    assert run_detail["exit_code"] == 0
+    assert store.default_harness() == "omp"
+    assert client.get("/api/config").json()["default_harness"] == "omp"
 
 
 
