@@ -37,6 +37,7 @@ function renderSettings() {
 beforeEach(() => {
   localStorage.clear()
   mutateAsync.mockClear()
+  mockConfig.default_harness = "agy"
   Object.defineProperty(window, "matchMedia", {
     writable: true,
     value: vi.fn().mockImplementation((query: string) => ({
@@ -65,6 +66,42 @@ describe("Settings Default AI Harness", () => {
 
     await user.click(screen.getByRole("radio", { name: "omp" }))
 
+    expect(mutateAsync).toHaveBeenCalledWith({
+      command: "config",
+      args: ["set", "default-harness", "omp"],
+      confirm: false,
+    })
+  })
+
+  it("updates cleanly when cfg.default_harness changes externally without reverting to stale optimistic state", async () => {
+    const user = userEvent.setup()
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const tree = () => (
+      <QueryClientProvider client={client}>
+        <ThemeProvider>
+          <Settings />
+        </ThemeProvider>
+      </QueryClientProvider>
+    )
+    const { rerender } = render(tree())
+
+    await user.click(screen.getByRole("radio", { name: "omp" }))
+    expect(screen.getByRole("radio", { name: "omp" })).toHaveAttribute("aria-checked", "true")
+
+    // Server config settles to "omp".
+    mockConfig.default_harness = "omp"
+    rerender(tree())
+    expect(screen.getByRole("radio", { name: "omp" })).toHaveAttribute("aria-checked", "true")
+
+    // External CLI change switches config back to "agy" while Settings stays mounted.
+    mockConfig.default_harness = "agy"
+    rerender(tree())
+    expect(screen.getByRole("radio", { name: "agy" })).toHaveAttribute("aria-checked", "true")
+    expect(screen.getByRole("radio", { name: "omp" })).toHaveAttribute("aria-checked", "false")
+
+    // Clicking "omp" again must not be blocked by stale optimistic state.
+    mutateAsync.mockClear()
+    await user.click(screen.getByRole("radio", { name: "omp" }))
     expect(mutateAsync).toHaveBeenCalledWith({
       command: "config",
       args: ["set", "default-harness", "omp"],

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { Monitor, Moon, RotateCcw, Sun } from "lucide-react"
@@ -39,10 +39,17 @@ export function Settings() {
   const { theme, setTheme } = useTheme()
   const { data: cfg } = useConfig()
   const createRun = useCreateRun()
-  const [pendingHarness, setPendingHarness] = useState<string | null>(null)
-  const resolvedHarness =
-    pendingHarness !== null && pendingHarness !== cfg?.default_harness ? pendingHarness : cfg?.default_harness
+  const [pending, setPending] = useState<{ value: string; baseline: string | undefined } | null>(null)
+  const optimisticActive = pending !== null && cfg?.default_harness === pending.baseline
+  const resolvedHarness = optimisticActive ? pending.value : cfg?.default_harness
   const currentHarness = resolvedHarness && resolvedHarness.length > 0 ? resolvedHarness : "agy"
+
+  useEffect(() => {
+    if (pending !== null && cfg?.default_harness !== pending.baseline) {
+      setPending(null)
+    }
+  }, [cfg?.default_harness, pending])
+
   const [verbose, setVerboseState] = useState(() => getVerbose())
   const [optOuts, setOptOutsState] = useState<Partial<Record<OptOutAction, boolean>>>(
     () => getOptOuts(),
@@ -50,7 +57,8 @@ export function Settings() {
 
   async function handleDefaultHarness(next: string) {
     if (next === currentHarness) return
-    setPendingHarness(next)
+    const baseline = cfg?.default_harness
+    setPending({ value: next, baseline })
     try {
       await createRun.mutateAsync({
         command: "config",
@@ -60,7 +68,7 @@ export function Settings() {
       toast.success(`Default AI harness set to ${next}`)
       void qc.invalidateQueries({ queryKey: queryKeys.config })
     } catch (err) {
-      setPendingHarness(null)
+      setPending((cur) => (cur?.value === next && cur.baseline === baseline ? null : cur))
       toast.error(errorText(err))
     }
   }
