@@ -63,6 +63,7 @@ class Harness(abc.ABC):
     label: str = ""
     binary: str = ""
     judge_argv: list[str] = []
+    watches_headless: bool = True
 
     @abc.abstractmethod
     def command_argv(self, prompt: str, no_tty: bool,
@@ -224,7 +225,7 @@ def get_harness(name: str | None = None) -> Harness:
     if key in HARNESSES:
         return HARNESSES[key]
     raise HarnessError(
-        f"unsupported harness: {name or key} (v1 supports: {', '.join(sorted(HARNESSES))})",
+        f"unknown harness {(name or key)!r} (supported: {', '.join(sorted(HARNESSES))})",
         exit_code=2)
 
 

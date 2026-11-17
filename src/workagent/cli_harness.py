@@ -284,6 +284,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         term_cmd = full_cmd
         if rid:
             try:
+                before_t = _sq.newest_transcript(Path(session_dir)) if session_dir else None
                 watch_shim = [
                     sys.executable, "-m", "workagent", "watch-and-exec",
                     "--run-id", str(rid),
@@ -291,6 +292,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                     "--workdir", worktree or fallback_dir,
                     "--session-file", session_file or "",
                     "--scope-dir", session_dir or "",
+                    "--before", str(before_t) if before_t else "",
                     "--", "bash", "-lc", full_cmd,
                 ]
                 term_cmd = " ".join(shlex.quote(a) for a in watch_shim)
@@ -445,7 +447,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                                            harness_name=harness_name,
                                            workdir=worktree or fallback_dir,
                                            session_file=session_path)
-                  if no_tty and run_id else None)
+                  if no_tty and run_id and getattr(harness, "watches_headless", True) else None)
     watch = ({"run_id": run_id,
               "scope_dir": str(scope_dir) if scope_dir else "",
               "before": str(before) if before else "",

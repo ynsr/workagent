@@ -76,13 +76,15 @@ export function argsText(args: string[] | undefined): string {
 /** Shell command that cds to the worktree then resumes the transcript.
  * Fallback when `run.resume_command` is absent; prefers agy-guard unless `harnessName === "omp"`. */
 export function resumeCommand(worktree: string, sessionFile: string, harnessName?: string): string {
+  if (!worktree || !sessionFile) return ""
   const q = (s: string) => `'${s.replaceAll("'", "'\\''")}'`
   if (harnessName === "omp") {
     return `cd ${q(worktree)} && omp --resume ${q(sessionFile)}`
   }
-  return sessionFile
-    ? `cd ${q(worktree)} && agy-guard --conversation ${q(sessionFile)}`
-    : `cd ${q(worktree)} && agy-guard`
+  const isPath = sessionFile.includes("/") || sessionFile.includes("\\") || sessionFile.endsWith(".jsonl")
+  return isPath
+    ? `cd ${q(worktree)} && agy-guard`
+    : `cd ${q(worktree)} && agy-guard --conversation ${q(sessionFile)}`
 }
 
 export async function copyToClipboard(text: string): Promise<void> {

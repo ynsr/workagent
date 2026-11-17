@@ -96,6 +96,9 @@ def find_conversation_for_workspace(workdir: str, since_ts: float,
             target_uri = Path(workdir).expanduser().resolve().as_uri()
         except Exception:
             target_uri = f"file://{workdir}"
+    if not target_uri:
+        return ""
+    db_ok = False
     sum_db = home / "conversation_summaries.db"
     if sum_db.is_file():
         try:
@@ -105,6 +108,7 @@ def find_conversation_for_workspace(workdir: str, since_ts: float,
                     "SELECT conversation_id, workspace_uris, last_modified_time "
                     "FROM conversation_summaries ORDER BY last_modified_time DESC LIMIT 50"
                 ).fetchall()
+            db_ok = True
             for cid, uris_raw, mod_raw in rows:
                 if not cid or cid in excluded:
                     continue
@@ -115,10 +119,12 @@ def find_conversation_for_workspace(workdir: str, since_ts: float,
                 except ValueError:
                     uris = []
                 norm_uris = [u.rstrip("/") for u in uris if isinstance(u, str)]
-                if not target_uri or target_uri.rstrip("/") in norm_uris:
+                if target_uri.rstrip("/") in norm_uris:
                     return str(cid)
         except Exception:
             pass
+    if db_ok:
+        return ""
     # Fallback: scan brain/<cid>/.system_generated/logs/transcript.jsonl mtime.
     brain = home / "brain"
     if brain.is_dir():
@@ -152,6 +158,7 @@ class AgyHarness(Harness):
     name = "agy"
     label = "Antigravity (agy-guard)"
     binary = "agy-guard"
+    watches_headless = False
     judge_argv: list[str] = ["--model", "gemini-3.8-flash-low",
                              "--disable-slash-commands", "--mode", "plan"]
 
@@ -229,7 +236,7 @@ class AgyHarness(Harness):
                     try:
                         ev = json.loads(line)
                     except ValueError:
-                        print(line, flush=True)
+                        print(line, file=sys.stderr, flush=True)
                         continue
                     if not isinstance(ev, dict):
                         continue
@@ -248,8 +255,8 @@ class AgyHarness(Harness):
                         delta = su.get("text_delta")
                         if isinstance(delta, str) and delta:
                             saw_delta = True
-                            sys.stdout.write(delta)
-                            sys.stdout.flush()
+                            sys.stderr.write(delta)
+                            sys.stderr.flush()
                     elif etype == "result":
                         res = ev.get("result") or {}
                         result_status = str(res.get("status") or "SUCCESS")
@@ -257,8 +264,8 @@ class AgyHarness(Harness):
                         if not saw_delta and isinstance(resp, str) and resp:
                             if not resp.endswith("\n"):
                                 resp += "\n"
-                            sys.stdout.write(resp)
-                            sys.stdout.flush()
+                            sys.stderr.write(resp)
+                            sys.stderr.flush()
                     if fh is not None:
                         fh.write(line + "\n")
                         fh.flush()

@@ -54,7 +54,9 @@ export function RunResumeActions({
   const label = `run ${runId}`
   // The backend owns transcript creation/readiness and builds the exact
   // `resume_command`; fall back to the harness-aware shell command when absent.
-  const cmd = serverResumeCommand?.trim() || resumeCommand(worktree, sessionFile, harnessName)
+  const cmd = worktree && sessionFile
+    ? (serverResumeCommand?.trim() || resumeCommand(worktree, sessionFile, harnessName))
+    : ""
   const icon = variant === "icon"
   const resumePending = resumeRun.isPending
   const canResume = Boolean(!resumePending && worktree && sessionFile)

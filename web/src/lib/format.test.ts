@@ -21,7 +21,18 @@ describe("resumeCommand", () => {
     expect(resumeCommand("/home/x/wt", "conv-2", "")).toBe(
       "cd '/home/x/wt' && agy-guard --conversation 'conv-2'",
     )
-    expect(resumeCommand("/home/x/wt", "")).toBe(
+    expect(resumeCommand("/home/x/wt", "")).toBe("")
+    expect(resumeCommand("", "conv-2")).toBe("")
+  })
+
+  it("never passes filesystem paths or .jsonl files to --conversation", () => {
+    expect(resumeCommand("/home/x/wt", "/home/x/runs/agy/IPG-5/s.jsonl", "agy")).toBe(
+      "cd '/home/x/wt' && agy-guard",
+    )
+    expect(resumeCommand("/home/x/wt", "s.jsonl", "agy")).toBe(
+      "cd '/home/x/wt' && agy-guard",
+    )
+    expect(resumeCommand("/home/x/wt", "C:\\runs\\s.jsonl")).toBe(
       "cd '/home/x/wt' && agy-guard",
     )
   })

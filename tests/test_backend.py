@@ -214,6 +214,8 @@ def test_get_harness_default_and_explicit(isolated_config):
     with pytest.raises(HarnessError) as excinfo:
         get_harness("unsupported_harness_xyz")
     assert excinfo.value.exit_code == 2
+    assert "supported:" in str(excinfo.value)
+    assert "v1 supports:" not in str(excinfo.value)
 
 
 def test_check_binary(monkeypatch):
@@ -639,6 +641,124 @@ def test_no_omp_outside_omp_harness():
         Visitor().visit(tree)
 
     assert not violations, f"Found banned constants outside OmpHarness: {violations}"
+
+
+def test_agy_find_conversation_skips_brain_fallback_when_db_ok(tmp_path, monkeypatch):
+    import json, sqlite3
+    from workagent import agy_harness
+    home = tmp_path / "agy-home"
+    home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(home))
+    wt_target = tmp_path / "wt-target"
+    wt_other = tmp_path / "wt-other"
+    wt_target.mkdir()
+    wt_other.mkdir()
+    log_dir = home / "brain" / "cid-other" / ".system_generated" / "logs"
+    log_dir.mkdir(parents=True)
+    (log_dir / "transcript.jsonl").write_text('{"type":"PLANNER_RESPONSE","status":"DONE","content":"other"}\n')
+    db = home / "conversation_summaries.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, workspace_uris TEXT, last_modified_time TEXT)")
+        conn.execute("INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+                     ("cid-other", json.dumps([wt_other.resolve().as_uri()]), "2026-11-16T22:00:05+00:00"))
+    # DB is healthy and has 0 matches for wt_target -> must NOT fall back to brain/
+    assert agy_harness.find_conversation_for_workspace(str(wt_target), 0.0) == ""
+
+
+def test_agy_find_conversation_empty_workdir_returns_empty(tmp_path, monkeypatch):
+    import json, sqlite3
+    from workagent import agy_harness
+    home = tmp_path / "agy-home"
+    home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(home))
+    log_dir = home / "brain" / "cid-any" / ".system_generated" / "logs"
+    log_dir.mkdir(parents=True)
+    (log_dir / "transcript.jsonl").write_text('{"type":"PLANNER_RESPONSE","status":"DONE","content":"any"}\n')
+    db = home / "conversation_summaries.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, workspace_uris TEXT, last_modified_time TEXT)")
+        conn.execute("INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+                     ("cid-any", json.dumps([(tmp_path / "wt").resolve().as_uri()]), "2026-11-16T22:00:05+00:00"))
+    assert agy_harness.find_conversation_for_workspace("", 0.0) == ""
+
+
+def test_agy_launch_headless_writes_stream_to_stderr_not_stdout(tmp_path, monkeypatch, capsys):
+    import io, json
+    from workagent import agy_harness
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "agy-home"))
+    monkeypatch.setattr("workagent.backend.shutil.which", lambda n: f"/usr/bin/{n}")
+    ndjson_deltas = "\n".join([
+        "plain non-json line",
+        json.dumps({"event": "init", "conversation_id": "conv-stream"}),
+        json.dumps({"event": "step_update", "step_update": {"step_type": "agent_response", "text_delta": "delta-out\n"}}),
+        json.dumps({"event": "result", "result": {"conversation_id": "conv-stream", "status": "SUCCESS", "response": "delta-out"}}),
+    ]) + "\n"
+
+    class FakeProc:
+        def __init__(self, payload):
+            self.stdout = io.StringIO(payload)
+            self.returncode = 0
+            self.pid = 111
+        def wait(self, timeout=None): return 0
+
+    monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: FakeProc(ndjson_deltas))
+    assert agy_harness.AgyHarness().launch("p", str(tmp_path), no_tty=True) == 0
+    cap = capsys.readouterr()
+    assert cap.out == ""
+    assert "plain non-json line" in cap.err
+    assert "delta-out" in cap.err
+
+    # Also verify result.response fallback when no text_delta was seen goes to stderr only
+    ndjson_resp = json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "final-resp"}}) + "\n"
+    monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: FakeProc(ndjson_resp))
+    assert agy_harness.AgyHarness().launch("p", str(tmp_path), no_tty=True) == 0
+    cap2 = capsys.readouterr()
+    assert cap2.out == ""
+    assert "final-resp" in cap2.err
+
+
+def test_agy_headless_skips_transcript_watcher(tmp_path, monkeypatch, isolated_config):
+    from workagent import cli_harness as _h, cli_validate as _cv
+    from workagent.agy_harness import AgyHarness
+    from workagent.backend import OmpHarness
+    assert AgyHarness.watches_headless is False
+    assert OmpHarness.watches_headless is True
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    watcher_calls = []
+    monkeypatch.setattr(_h, "_watch_minted_transcript", lambda *a, **k: watcher_calls.append((a, k)))
+    monkeypatch.setattr(_cv, "validate_headless",
+                        lambda **kw: {"verdict": "JOB_DONE", "attempts": 1, "runs": []})
+    from workagent import store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    from workagent import store as _store
+    _store.record_link("k-agy", {"worktree": str(worktree), "branch": "feat/x", "repo": str(worktree)})
+    result = {"branch": "feat/x", "command": "start", "key": "k-agy"}
+    _h._run_harness("agy", "do things", str(worktree), str(worktree),
+                    True, True, result, False, run_key="k-agy")
+    assert watcher_calls == []
+
+
+def test_cli_terminal_watch_passes_before_transcript(tmp_path, monkeypatch, isolated_config):
+    from workagent import cli_harness as _h, store_sqlite as sq
+    db = sq.db_path()
+    sq.init_db(db)
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    sess = sq.session_file_path("pinned", "omp", branch="feat/x", session_type="start")
+    stale = sess.parent / "stale.jsonl"
+    stale.write_text('{"type":"session"}\n', encoding="utf-8")
+    spawned = {}
+    monkeypatch.setattr(_h, "spawn_in_terminal",
+                        lambda cmd, cwd="": (spawned.update(cmd=cmd, cwd=cwd), 9999)[1])
+    result = {"branch": "feat/x", "command": "start", "key": "k-term"}
+    _h._run_harness("omp", "do things", str(worktree), str(worktree),
+                    False, False, result, False, run_key="k-term",
+                    session_file=str(sess), terminal=True)
+    assert "--before" in spawned["cmd"]
+    assert str(stale) in spawned["cmd"]
 
 
 

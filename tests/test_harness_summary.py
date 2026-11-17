@@ -62,3 +62,16 @@ def test_stream_json_fallback_in_harness_summary(tmp_path):
     assert hs.last_assistant_text(p, max_chars=None) == "Part 1 Part 2"
     assert hs.last_assistant_text(p, max_chars=4) == "Part\n…(truncated)"
 
+
+def test_tool_error_rate_returns_none_when_zero_tool_results(tmp_path):
+    p = _write(tmp_path / "no_tools.jsonl", [
+        {"type": "agy_meta", "conversation_id": "c-2"},
+        {"type": "PLANNER_RESPONSE", "status": "DONE", "content": "done"},
+    ])
+    assert hs.tool_error_rate(p) is None
+    p2 = _write(tmp_path / "since_past.jsonl", [
+        {"type": "GENERIC", "status": "DONE", "content": "ok"},
+        {"type": "PLANNER_RESPONSE", "status": "DONE", "content": "done"},
+    ])
+    assert hs.tool_error_rate(p2, since_line=1) is None
+

@@ -743,14 +743,16 @@ def register_runs_routes(app, registry) -> None:
         if db_run_id and worktree and session_file:
             import shlex as _shlex
             from pathlib import Path as _Path
+            from . import store_sqlite as _sq
             scope = str(_Path(session_file).parent) if session_file else worktree
+            before = _sq.newest_transcript(_Path(scope)) if scope else None
             shim_argv = [sys.executable, "-m", "workagent", "watch-and-exec",
                          "--run-id", str(db_run_id),
                          "--harness", hname,
                          "--workdir", worktree,
                          "--session-file", session_file,
                          "--scope-dir", scope,
-                         "--before", "",
+                         "--before", str(before) if before else "",
                          "--", "bash", "-lc", cmd]
             cmd = " ".join(_shlex.quote(a) for a in shim_argv)
         pid = _w._open_terminal_command(cmd, worktree)

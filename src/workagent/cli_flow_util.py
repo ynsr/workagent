@@ -334,13 +334,16 @@ def adopt_terminal_transcript(scope_file: str, run_id: int) -> str:
 
     The spawned terminal mints its transcript seconds after we return;
     by resume time it exists under the scope dir. Mirrors the web resume
-    fallback: pinned path when ready, else the newest non-empty .jsonl
-    under the scope dir (persisted on the run). A stored pre-rename
-    ``sessions/…`` path resolves through the runs tree. Returns "" when
-    nothing resumable is found. Never raises.
+    fallback: pinned path when ready, agy workspace adoption when
+    applicable, else the newest non-empty .jsonl under the scope dir
+    (persisted on the run). A stored pre-rename ``sessions/…`` path
+    resolves through the runs tree. Returns "" when nothing resumable is
+    found. Never raises.
     """
     try:
-        from . import store_sqlite as _sq
+        from datetime import datetime
+        from pathlib import Path as _Path
+        from . import store as _store, store_sqlite as _sq
         p = _sq.resolve_transcript_path(scope_file) if scope_file else None
         if p is not None:
             try:
@@ -348,6 +351,72 @@ def adopt_terminal_transcript(scope_file: str, run_id: int) -> str:
                     return str(p)
             except OSError:
                 pass
+        db = _sq.db_path()
+        row = None
+        if run_id and db.exists():
+            try:
+                row = _sq.get_run(db, run_id, include_deleted_worktrees=True)
+            except Exception:
+                row = None
+        if row is not None:
+            db_p = _sq.resolve_transcript_path(str(row.get("file_path") or ""))
+            if db_p is not None:
+                try:
+                    if db_p.is_file() and db_p.stat().st_size > 0:
+                        return str(db_p)
+                except OSError:
+                    pass
+            hname = str(row.get("harness_name") or "") or _store.default_harness()
+            if hname == "agy":
+                try:
+                    from . import agy_harness as _agy
+                    meta = row.get("metadata")
+                    meta = dict(meta) if isinstance(meta, dict) else {}
+                    dest = (str(p) if p is not None else str(row.get("file_path") or ""))
+                    if not dest:
+                        dest = str(_sq.session_file_path(
+                            _sq.gen_session_id(), "agy",
+                            session_type=row.get("session_type")))
+                    cid = str(meta.get("conversation_id") or "")
+                    if cid and _agy.mirror_brain_transcript(cid, dest):
+                        dp = _Path(dest)
+                        if dp.is_file() and dp.stat().st_size > 0:
+                            _sq.set_run_file_path(db, run_id, dest)
+                            _sq.set_run_metadata(db, run_id, meta)
+                            return dest
+                    worktree = ""
+                    ref = str(row.get("worktree_ref") or "")
+                    if ref:
+                        links = _store.load_links()
+                        if ref in links and isinstance(links[ref], dict):
+                            worktree = str(links[ref].get("worktree") or "")
+                    if not worktree:
+                        args = row.get("args") if isinstance(row.get("args"), list) else []
+                        if len(args) >= 2 and isinstance(args[1], str):
+                            links = _store.load_links()
+                            if args[1] in links and isinstance(links[args[1]], dict):
+                                worktree = str(links[args[1]].get("worktree") or "")
+                    if worktree:
+                        created_ts = 0.0
+                        created = str(row.get("created_at") or "")
+                        if created:
+                            try:
+                                created_ts = datetime.fromisoformat(created).timestamp()
+                            except Exception:
+                                created_ts = 0.0
+                        adopted_cid, adopted_path = _agy.adopt_from_workspace(
+                            worktree, created_ts, dest)
+                        if adopted_cid:
+                            meta["conversation_id"] = adopted_cid
+                            if adopted_path:
+                                ap = _Path(adopted_path)
+                                if ap.is_file() and ap.stat().st_size > 0:
+                                    _sq.set_run_file_path(db, run_id, adopted_path)
+                                    _sq.set_run_metadata(db, run_id, meta)
+                                    return adopted_path
+                            _sq.set_run_metadata(db, run_id, meta)
+                except Exception:
+                    pass
         scope = p.parent if p is not None else None
         if scope is None:
             return ""
@@ -360,7 +429,6 @@ def adopt_terminal_transcript(scope_file: str, run_id: int) -> str:
         if minted is None:
             return ""
         try:
-            db = _sq.db_path()
             if run_id and db.exists():
                 _sq.set_run_file_path(db, run_id, str(minted))
         except Exception:

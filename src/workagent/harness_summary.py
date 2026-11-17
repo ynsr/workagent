@@ -105,7 +105,7 @@ def tool_error_rate(transcript, since_line: int = 0) -> tuple[int, int] | None:
         total += 1
         if _is_error(data):
             errors += 1
-    return (errors, total)
+    return (errors, total) if total else None
 
 
 

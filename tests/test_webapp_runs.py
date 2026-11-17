@@ -1497,6 +1497,7 @@ def test_start_terminal_wraps_watch_and_exec(client, monkeypatch, tmp_path):
         assert "--harness agy" in cmd
         assert f"--workdir {wt}" in cmd
         assert f"--session-file {sess}" in cmd
+        assert f"--before {sess}" in cmd
         rec = _store.active_harness("rk-wrap")
         assert rec is not None and rec.get("harness") == "agy"
         assert rec.get("pid") == holder.pid
@@ -1551,7 +1552,7 @@ def test_resolve_session_file_adopts_agy_workspace(tmp_path, monkeypatch):
         conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT, workspace_uris TEXT, last_modified_time TEXT)")
         conn.execute(
             "INSERT INTO conversation_summaries VALUES (?, ?, ?)",
-            ("conv-adopt-123", json.dumps([wt.resolve().as_uri()]), "2026-11-17T00:00:00+00:00")
+            ("conv-adopt-123", json.dumps([wt.resolve().as_uri()]), "2099-01-01T00:00:00+00:00")
         )
     brain_log = agy_home / "brain" / "conv-adopt-123" / ".system_generated" / "logs"
     brain_log.mkdir(parents=True)
@@ -1641,7 +1642,7 @@ def test_resolve_session_file_resolves_worktree_from_command_target(tmp_path, mo
         conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT, workspace_uris TEXT, last_modified_time TEXT)")
         conn.execute(
             "INSERT INTO conversation_summaries VALUES (?, ?, ?)",
-            ("conv-target-999", json.dumps([wt.resolve().as_uri()]), "2026-11-17T00:00:00+00:00")
+            ("conv-target-999", json.dumps([wt.resolve().as_uri()]), "2099-01-01T00:00:00+00:00")
         )
     brain_log = agy_home / "brain" / "conv-target-999" / ".system_generated" / "logs"
     brain_log.mkdir(parents=True)
