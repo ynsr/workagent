@@ -50,3 +50,16 @@ describe("buildReviewArgs", () => {
     expect(args).not.toContain("--then-fix-comments")
   })
 })
+
+describe("harness args", () => {
+  it("emits --harness in buildStartArgs and buildReviewArgs when selected", () => {
+    expect(buildStartArgs({ ...INITIAL, ref: "IPG-1", repo: "r", harness: "omp" })).toEqual(
+      expect.arrayContaining(["--harness", "omp"]),
+    )
+    expect(buildStartArgs({ ...INITIAL, ref: "IPG-1", repo: "r", harness: "" })).not.toContain("--harness")
+    expect(buildReviewArgs({ ...INITIAL, ref: "u", repo: "r", harness: "agy" })).toEqual(
+      expect.arrayContaining(["--harness", "agy"]),
+    )
+    expect(buildReviewArgs({ ...INITIAL, ref: "u", repo: "r", harness: "" })).not.toContain("--harness")
+  })
+})

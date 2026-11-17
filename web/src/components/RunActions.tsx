@@ -37,21 +37,24 @@ export function RunResumeActions({
   worktree,
   sessionFile,
   transcriptReady,
+  harnessName,
+  resumeCommand: serverResumeCommand,
   variant = "icon",
 }: {
   runId: string
   worktree: string
   sessionFile: string
-  /** Backend readiness: the stored path is a non-empty .jsonl on disk. */
+  /** Backend readiness: the stored path is a non-empty transcript on disk. */
   transcriptReady: boolean
+  harnessName?: string
+  resumeCommand?: string
   variant?: "icon" | "outline"
 }) {
   const resumeRun = useResumeRun()
   const label = `run ${runId}`
-  // The backend owns transcript creation/readiness: resume resolves the
-  // minted .jsonl itself (409/404 otherwise), while the copy button must
-  // never emit `omp --resume` on a `--session-dir` scope hint.
-  const cmd = resumeCommand(worktree, sessionFile)
+  // The backend owns transcript creation/readiness and builds the exact
+  // `resume_command`; fall back to the harness-aware shell command when absent.
+  const cmd = serverResumeCommand?.trim() || resumeCommand(worktree, sessionFile, harnessName)
   const icon = variant === "icon"
   const resumePending = resumeRun.isPending
   const canResume = Boolean(!resumePending && worktree && sessionFile)

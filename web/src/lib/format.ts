@@ -74,10 +74,15 @@ export function argsText(args: string[] | undefined): string {
 }
 
 /** Shell command that cds to the worktree then resumes the transcript.
- * Copy always mirrors the resume endpoint (omp --resume on a real .jsonl). */
-export function resumeCommand(worktree: string, sessionFile: string): string {
+ * Fallback when `run.resume_command` is absent; prefers agy-guard unless `harnessName === "omp"`. */
+export function resumeCommand(worktree: string, sessionFile: string, harnessName?: string): string {
   const q = (s: string) => `'${s.replaceAll("'", "'\\''")}'`
-  return `cd ${q(worktree)} && omp --resume ${q(sessionFile)}`
+  if (harnessName === "omp") {
+    return `cd ${q(worktree)} && omp --resume ${q(sessionFile)}`
+  }
+  return sessionFile
+    ? `cd ${q(worktree)} && agy-guard --conversation ${q(sessionFile)}`
+    : `cd ${q(worktree)} && agy-guard`
 }
 
 export async function copyToClipboard(text: string): Promise<void> {

@@ -261,6 +261,8 @@ export function RowActions({
             worktree={entry.worktree}
             sessionFile={lastRun.sessionFile}
             transcriptReady={lastRun.transcriptReady}
+            harnessName={lastRun.harnessName}
+            resumeCommand={lastRun.resumeCommand}
             variant="icon"
           />
         ) : (
@@ -285,6 +287,8 @@ function useLatestTranscriptRun(worktree?: string): {
   id: string
   sessionFile: string
   transcriptReady: boolean
+  harnessName?: string
+  resumeCommand?: string
 } | null {
   const { data } = useRuns()
   if (!data || !worktree?.trim()) return null
@@ -297,7 +301,12 @@ function useLatestTranscriptRun(worktree?: string): {
     )
     .sort((a, b) => b.created - a.created)[0]
   return match
-    ? { id: match.id, sessionFile: match.session_file,
-        transcriptReady: match.transcript_ready }
+    ? {
+        id: match.id,
+        sessionFile: match.session_file,
+        transcriptReady: match.transcript_ready,
+        harnessName: match.harness_name,
+        resumeCommand: match.resume_command,
+      }
     : null
 }

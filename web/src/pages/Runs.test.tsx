@@ -39,6 +39,15 @@ const RUNS: Run[] = [
     transcript_ready: false, session_type: "start",
     worktree: "/home/x/wt", last_seq: 1,
   },
+  {
+    id: "db-5", command: "start", args: ["jira:IPG-5"],
+    state: "succeeded", exit_code: 0, truncated: false, created: 1_756_000_000,
+    target: "start:jira:IPG-5", session_file: "/home/x/runs/agy/IPG-5/conv-1.jsonl",
+    transcript_ready: true, session_type: "start",
+    worktree: "/home/x/wt", last_seq: 1,
+    harness_name: "agy",
+    resume_command: "cd '/home/x/wt' && agy-guard --conversation conv-1",
+  },
 ]
 
 vi.mock("@/lib/queries", () => ({
@@ -90,5 +99,19 @@ describe("Runs transcript affordances", () => {
     const copies = screen.getAllByLabelText(/Copy resume command for run db-1/)
     expect(copies.length).toBeGreaterThan(0)
     for (const b of copies) expect((b as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it("renders server resume_command for agy runs", () => {
+    renderRuns()
+    const resumeBtns = screen.getAllByLabelText(/Resume transcript of run db-5 in terminal/)
+    expect(resumeBtns.length).toBeGreaterThan(0)
+    for (const b of resumeBtns) {
+      expect(b).toHaveAttribute("title", "cd '/home/x/wt' && agy-guard --conversation conv-1")
+    }
+    const copyBtns = screen.getAllByLabelText(/Copy resume command for run db-5/)
+    expect(copyBtns.length).toBeGreaterThan(0)
+    for (const b of copyBtns) {
+      expect(b).toHaveAttribute("title", "cd '/home/x/wt' && agy-guard --conversation conv-1")
+    }
   })
 })

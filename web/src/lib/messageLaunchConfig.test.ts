@@ -146,3 +146,28 @@ describe("messageLaunchValid", () => {
     expect(messageLaunchValid("flow", { ...MESSAGE_LAUNCH_INITIAL, ref: "p1", label: "h", refOverride: "jira:X" })).toBe(true)
   })
 })
+
+describe("buildMessageArgs harness", () => {
+  it("emits --harness across all five message tabs when selected", () => {
+    expect(buildMessageArgs("adhoc", { ref: "m1", prompt: "hi", harness: "agy" })).toEqual(
+      expect.arrayContaining(["--harness", "agy"]),
+    )
+    expect(buildMessageArgs("validate", { ref: "m1", prompt: "hi", harness: "omp" })).toEqual(
+      expect.arrayContaining(["--harness", "omp"]),
+    )
+    expect(buildMessageArgs("draft-reply", { ref: "m1", harness: "agy" })).toEqual(
+      expect.arrayContaining(["--harness", "agy"]),
+    )
+    expect(buildMessageArgs("action", { ref: "m1", label: "a1", harness: "omp" })).toEqual(
+      expect.arrayContaining(["--harness", "omp"]),
+    )
+    expect(buildMessageArgs("flow", { ref: "m1", label: "f1", refOverride: "wt1", harness: "omp" })).toEqual(
+      expect.arrayContaining(["--harness", "omp"]),
+    )
+  })
+
+  it("omits --harness when blank", () => {
+    expect(buildMessageArgs("adhoc", { ref: "m1", prompt: "hi", harness: "" })).not.toContain("--harness")
+    expect(buildMessageArgs("flow", { ref: "m1", label: "f1", refOverride: "wt1", harness: "" })).not.toContain("--harness")
+  })
+})

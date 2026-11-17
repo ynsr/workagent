@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/PageHeader"
+import { HarnessSelect } from "@/components/HarnessSelect"
 import { ProdtestActionSelect, RunModeSelect } from "@/components/StartForm"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { Button } from "@/components/ui/button"
@@ -29,7 +30,7 @@ export function ProdtestLaunch() {
   const refParam = params.get("ref") ?? ""
   const actionParam = params.get("prodtestAction")
 
-  const [form, setForm] = useState<Pick<LaunchForm, "ref" | "repo" | "runMode" | "prodtestAction" | "extraPrompt">>(() => {
+  const [form, setForm] = useState<Pick<LaunchForm, "ref" | "repo" | "runMode" | "prodtestAction" | "extraPrompt" | "harness">>(() => {
     const stored = loadLaunchPrefs()
     return {
       ref: refParam,
@@ -37,6 +38,7 @@ export function ProdtestLaunch() {
       runMode: stored.prodtest.runMode as RunMode,
       prodtestAction: (actionParam === "plan" ? "plan" : stored.prodtest.prodtestAction) as ProdtestAction,
       extraPrompt: "",
+      harness: stored.prodtest.harness,
     }
   })
   const [submitting, setSubmitting] = useState(false)
@@ -47,9 +49,9 @@ export function ProdtestLaunch() {
   }
 
   useEffect(() => {
-    saveLaunchPrefs({ ...loadLaunchPrefs(), prodtest: { runMode: form.runMode, prodtestAction: form.prodtestAction } })
+    saveLaunchPrefs({ ...loadLaunchPrefs(), prodtest: { runMode: form.runMode, prodtestAction: form.prodtestAction, harness: form.harness } })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.runMode, form.prodtestAction])
+  }, [form.runMode, form.prodtestAction, form.harness])
 
   useEffect(() => {
     if (prefillChecked || !refParam || !links) return
@@ -78,6 +80,7 @@ export function ProdtestLaunch() {
 
   function buildArgs(): string[] {
     const args = isRunAll ? ["run", "--all"] : [form.prodtestAction, refValue]
+    if (form.harness.trim()) args.push("--harness", form.harness.trim())
     args.push(...runModeArgs(form.runMode))
     if (form.extraPrompt.trim()) args.push(...extraPromptArgs(form))
     return args
@@ -153,6 +156,7 @@ export function ProdtestLaunch() {
           <div className="flex flex-wrap gap-x-6 gap-y-3">
             <RunModeSelect idPrefix="ptl" value={form.runMode} onChange={(v) => update("runMode", v)} />
             <ProdtestActionSelect idPrefix="ptl" value={form.prodtestAction} onChange={(v) => update("prodtestAction", v)} />
+            <HarnessSelect idPrefix="ptl" value={form.harness} onChange={(v) => update("harness", v)} />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="ptl-extra-prompt">

@@ -65,6 +65,7 @@ export interface MessageLaunchForm {
   /** Optional single repo pin for multi-repo messages (`--repo`). */
   repo: string
   runMode: RunMode
+  harness: string
 }
 
 export const MESSAGE_LAUNCH_INITIAL: MessageLaunchForm = {
@@ -75,6 +76,7 @@ export const MESSAGE_LAUNCH_INITIAL: MessageLaunchForm = {
   refOverride: "",
   repo: "",
   runMode: "headless",
+  harness: "",
 }
 
 /** Run-mode flags for the agent-spawning tabs (adhoc/validate/action).
@@ -85,13 +87,15 @@ export function messageRunModeArgs(mode: RunMode): string[] {
   return []
 }
 
-/** Extra argv shared by every tab: worktree override + single `--repo` pin. */
+/** Extra argv shared by every tab: worktree override, single `--repo` pin, and `--harness`. */
 export function messageScopeArgs(form: Partial<MessageLaunchForm>): string[] {
   const refOverride = (form.refOverride ?? "").trim()
   const repo = (form.repo ?? "").trim()
+  const harness = (form.harness ?? "").trim()
   return [
     ...(refOverride ? ["--ref", refOverride] : []),
     ...(repo ? ["--repo", repo] : []),
+    ...(harness ? ["--harness", harness] : []),
   ]
 }
 

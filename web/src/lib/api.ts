@@ -267,6 +267,19 @@ export interface DoctorInfo {
   receipt?: string
 }
 
+export interface HarnessInfo {
+  name: string
+  label: string
+  binary: string
+  available: boolean
+}
+
+export interface ConfigInfo {
+  default_harness: string
+  supported_harnesses: string[]
+  harnesses: HarnessInfo[]
+}
+
 export type RunState =
   | "running"
   | "succeeded"
@@ -295,6 +308,10 @@ export interface Run {
    * existed. The Runs label prefers it over the command. */
   session_type: string | null
   worktree: string
+  /** AI harness name that produced this run (e.g. "agy" | "omp"). */
+  harness_name?: string
+  /** Shell resume command computed by the server when transcript is ready. */
+  resume_command?: string
   last_seq: number
 }
 
@@ -324,6 +341,7 @@ export type RunCommand =
   | "prodtest"
   | "backup"
   | "adhoc"
+  | "config"
 export interface MessageRow { id: number; message_id: string; thread_id: string; app_name: string; sender_username: string; content: string; ts: string; repos: string[]; related_repos?: string[]; worktrees?: string[]; added_at: string }
 export type FlowExecutionMode = "sequential" | "parallel"
 export interface FlowStep { kind: string; action_label?: string; execution_mode?: FlowExecutionMode; config?: Record<string, unknown> }
@@ -415,6 +433,7 @@ function qs(params: Record<string, string | undefined>): string {
 
 export const api = {
   info: () => request<Info>("/api/info"),
+  config: () => request<ConfigInfo>("/api/config"),
 
   /** GET /api/status — all worktrees. `refresh` re-queries PR status (slow). */
   statusAll: (opts?: { refresh?: boolean; includeInactive?: boolean; includeDeleted?: boolean }) =>
