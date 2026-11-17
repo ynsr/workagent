@@ -96,9 +96,10 @@ def _precreate_run_row(run: Run) -> None:
         meta = {"origin": "web-run", "web_run_id": run.id,
                 "target": run.target or ""}
         try:
+            hname = run.harness_name or _harness_arg(args) or _store.default_harness()
             rid = _sq.insert_run(db, run.command, args, None,
                                  worktree_ref=ref or None,
-                                 harness_name="", initiator_command=run.command,
+                                 harness_name=hname, initiator_command=run.command,
                                  prompt="", file_path=run.session_file or "",
                                  session_type=stype, metadata=meta,
                                  state="running",
@@ -285,6 +286,15 @@ def _worktree_for_target(target: str) -> str:
     return ""
 
 
+def _harness_arg(args: list[str]) -> str:
+    for i, a in enumerate(args):
+        if a == "--harness" and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith("--harness="):
+            return a.split("=", 1)[1]
+    return ""
+
+
 @dataclass
 class Run:
     id: str
@@ -306,6 +316,8 @@ class Run:
     run_dir: str = ""
     db_run_id: int = 0
     db_worktree_ref: str = ""
+    harness_name: str = ""
+    resume_command: str = ""
 
     def append(self, text: str) -> None:
         with self.lock:
@@ -339,8 +351,9 @@ class Registry:
                     "conflict",
                     f"a run for target {target!r} is already in progress "
                     f"({self.targets[target]})", 409)
+            hname = _harness_arg(args)
             run = Run(id=uuid.uuid4().hex[:12], command=command, args=args,
-                      target=target)
+                      target=target, harness_name=hname)
             self.runs[run.id] = run
             self.targets[target] = run.id
             return run
@@ -362,20 +375,31 @@ class Registry:
 
 
 def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
+    from . import store as _store
     worktree = run.worktree
     if not worktree and run.state != "running" and run.command in ("start", "review"):
         # Replays after the child recorded its link: the global `start` key
         # can't know the worktree at spawn time.
         worktree = _worktree_for_target(f"{run.command}:{_first_positional(run.args, VAL_FLAGS[run.command])}") or ""
+    hname = run.harness_name or _harness_arg(run.args) or _store.default_harness()
+    t_ready = _transcript_ready(run.session_file)
+    resume_cmd = ""
+    if t_ready and worktree and run.session_file:
+        try:
+            resume_cmd = _resume_shell_command(worktree, run.session_file, harness_name=hname)
+        except Exception:
+            resume_cmd = ""
     out: dict[str, Any] = {"id": run.id, "command": run.command,
                            "args": run.args, "state": run.state,
                            "exit_code": run.exit_code,
                            "truncated": run.truncated,
                            "created": run.created, "target": run.target,
                            "session_file": run.session_file,
-                           "transcript_ready": _transcript_ready(run.session_file),
+                           "transcript_ready": t_ready,
                            "session_type": run.session_type,
                            "worktree": worktree,
+                           "harness_name": hname,
+                           "resume_command": resume_cmd,
                            "last_seq": run.last_seq}
     if lines is not None:
         out["lines"] = [{"seq": s, "text": t} for s, t in lines]
@@ -467,12 +491,24 @@ def _persisted_summary(row: dict) -> dict:
         target = _target_for(cmd, argv)
     except Exception:
         target = ""
+    from . import store as _store
+    hname = str(row.get("harness_name") or "") or _harness_arg(argv) or _store.default_harness()
+    t_ready = _transcript_ready(session_file)
+    resume_cmd = ""
+    if t_ready and worktree and session_file:
+        try:
+            meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else None
+            resume_cmd = _resume_shell_command(worktree, session_file, harness_name=hname, metadata=meta)
+        except Exception:
+            resume_cmd = ""
     return {"id": f"db-{row.get('id')}", "command": cmd,
             "args": argv, "state": state,
             "exit_code": exit_code, "truncated": bool(row.get("truncated")),
             "created": created, "target": target,
             "session_file": session_file, "worktree": worktree,
-            "transcript_ready": _transcript_ready(session_file),
+            "harness_name": hname,
+            "resume_command": resume_cmd,
+            "transcript_ready": t_ready,
             "session_type": row.get("session_type"),
             "last_seq": max((ln["seq"] for ln in _persisted_lines(row)), default=-1) + 1,
             "validation": row.get("validation") if isinstance(row.get("validation"), dict) else {}}
@@ -588,7 +624,8 @@ def _spawn(run: Run, registry: Registry) -> None:
     _rs.write_meta(d, {"command": run.command, "args": run.args,
                        "target": run.target, "created": created,
                        "session_file": run.session_file,
-                       "worktree": run.worktree})
+                       "worktree": run.worktree,
+                       "harness_name": run.harness_name})
     _precreate_run_row(run)
     try:
         from .env import apply_env_file as _apply_env
@@ -637,6 +674,7 @@ def rehydrate(registry: Registry) -> dict:
             run.run_dir = str(d)
             run.session_file = str(meta.get("session_file", ""))
             run.worktree = str(meta.get("worktree", ""))
+            run.harness_name = str(meta.get("harness_name", ""))
             with registry.lock:
                 registry.runs[run.id] = run
                 registry.targets.setdefault(run.target, run.id)
@@ -718,30 +756,24 @@ def _cancel(run: Run) -> None:
 
 
 def _resume_shell_command(worktree: str, session_file: str,
-                          env_file: str | None = None) -> str:
+                          env_file: str | None = None,
+                          harness_name: str = "",
+                          metadata: dict | None = None) -> str:
     """Shell command that cds to the worktree then continues the session.
 
-    A non-empty existing transcript resumes via omp --resume; anything
-    else (missing/empty/preview path) starts fresh scoped by
-    --session-dir on the parent dir — omp v18+ rejects --resume on
-    those (`Session ... not found` / `holds no entries`). The env file
-    (explicit or configured default) is sourced first so terminal
-    launches see the same env as login shells.
+    Routes through the configured harness (Harness.resume_argv).
+    The env file (explicit or configured default) is sourced first so
+    terminal launches see the same env as login shells.
     """
-    from pathlib import Path as _Path
+    from . import backend as _backend
     from . import env as _env
-    fresh = True
-    try:
-        p = _Path(session_file)
-        fresh = not (p.is_file() and p.stat().st_size > 0)
-    except OSError:
-        fresh = True
-    if fresh:
-        cmd = (f"cd {shlex.quote(worktree)} && omp --session-dir "
-               f"{shlex.quote(str(_Path(session_file).parent))}")
-    else:
-        cmd = (f"cd {shlex.quote(worktree)} && omp --resume "
-               f"{shlex.quote(session_file)}")
+    from . import store as _store
+
+    hname = harness_name or _store.default_harness()
+    harness = _backend.get_harness(hname)
+    argv = harness.resume_argv(session_file, metadata=metadata)
+    harness_cmd = " ".join(shlex.quote(a) for a in argv)
+    cmd = f"cd {shlex.quote(worktree)} && {harness_cmd}"
     resolved = _env.resolve_env_file(env_file)
     return _env.wrap_command(cmd, resolved)
 
@@ -781,8 +813,12 @@ def _open_terminal_command(cmd: str, cwd: str = "") -> int | None:
 
 
 def _open_terminal(worktree: str, session_file: str,
-                   env_file: str | None = None) -> int | None:
+                   env_file: str | None = None,
+                   harness_name: str = "",
+                   metadata: dict | None = None) -> int | None:
     """Detached-spawn the OS default terminal resumed on the session
     (mirrors `workagent open` detachment). Returns the spawned pid."""
     return _open_terminal_command(
-        _resume_shell_command(worktree, session_file, env_file), worktree)
+        _resume_shell_command(worktree, session_file, env_file,
+                              harness_name=harness_name, metadata=metadata),
+        worktree)

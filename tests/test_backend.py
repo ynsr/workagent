@@ -576,6 +576,71 @@ def test_watch_and_exec_child_delegates_to_watch_transcript(monkeypatch, tmp_pat
     assert watched[0]["session_file"] == str(tmp_path / "sess.jsonl")
 
 
+def test_no_omp_outside_omp_harness():
+    """Static AST guard: zero omp, --session-dir, --auto-approve constants in workagent."""
+    import ast
+    from pathlib import Path
+
+    banned = {"omp", "--session-dir", "--auto-approve"}
+    src_dir = Path(__file__).resolve().parent.parent / "src" / "workagent"
+    violations = []
+
+    for py_file in sorted(src_dir.glob("*.py")):
+        if py_file.name == "doctor.py":
+            continue
+        tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+
+        class Visitor(ast.NodeVisitor):
+            def __init__(self):
+                self.in_omp_harness = False
+
+            def _visit_body_skip_docstring(self, body):
+                start = 0
+                if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+                    start = 1
+                for stmt in body[start:]:
+                    self.visit(stmt)
+
+            def visit_Module(self, node):
+                self._visit_body_skip_docstring(node.body)
+
+            def visit_ClassDef(self, node):
+                was_in_omp = self.in_omp_harness
+                if node.name == "OmpHarness":
+                    self.in_omp_harness = True
+                self._visit_body_skip_docstring(node.body)
+                self.in_omp_harness = was_in_omp
+
+            def visit_FunctionDef(self, node):
+                self._visit_body_skip_docstring(node.body)
+
+            def visit_AsyncFunctionDef(self, node):
+                self._visit_body_skip_docstring(node.body)
+
+            def visit_Assign(self, node):
+                target_names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+                if (py_file.name == "backend.py" and "HARNESSES" in target_names) or \
+                   (py_file.name == "store.py" and "SUPPORTED_HARNESSES" in target_names):
+                    return
+                self.generic_visit(node)
+
+            def visit_AnnAssign(self, node):
+                if isinstance(node.target, ast.Name):
+                    target_name = node.target.id
+                    if (py_file.name == "backend.py" and target_name == "HARNESSES") or \
+                       (py_file.name == "store.py" and target_name == "SUPPORTED_HARNESSES"):
+                        return
+                self.generic_visit(node)
+
+            def visit_Constant(self, node):
+                if not self.in_omp_harness and node.value in banned:
+                    violations.append(f"{py_file.name}:{node.lineno}: banned constant {node.value!r}")
+
+        Visitor().visit(tree)
+
+    assert not violations, f"Found banned constants outside OmpHarness: {violations}"
+
+
 
 
 

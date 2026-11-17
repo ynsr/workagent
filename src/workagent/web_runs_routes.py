@@ -27,6 +27,7 @@ from .web_args import (
 )
 from .web_runs import (
     _cancel,
+    _harness_arg,
     _persisted_lines,
     _persisted_row,
     _persisted_summary,
@@ -145,16 +146,72 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
             row_id = 0
         db_file = ""
         created = ""
+        hname = ""
+        row = None
         if row_id and db.exists():
             try:
                 row = _sq.get_run(db, row_id, include_deleted_worktrees=True)
                 db_file = _stored_transcript(str((row or {}).get("file_path") or ""))
                 created = str((row or {}).get("created_at") or "")
+                hname = str((row or {}).get("harness_name") or "")
             except Exception:
                 db_file = ""
                 created = ""
+                hname = ""
         if db_file and db_file != session_file and _transcript_ready(db_file):
             return db_file
+        if not hname:
+            try:
+                from . import store as _store
+                hname = _store.default_harness()
+            except Exception:
+                hname = ""
+        if hname == "agy" and row:
+            try:
+                from . import agy_harness as _agy
+                meta = row.get("metadata") or {}
+                if not isinstance(meta, dict):
+                    meta = {}
+                cid = str(meta.get("conversation_id") or "")
+                worktree = ""
+                ref = str(row.get("worktree_ref") or "")
+                if ref:
+                    try:
+                        from . import store as _store
+                        links = _store.load_links()
+                        if ref in links and isinstance(links[ref], dict):
+                            worktree = str(links[ref].get("worktree") or "")
+                    except Exception:
+                        pass
+                if not worktree:
+                    args = row.get("args") if isinstance(row.get("args"), list) else []
+                    cmd = str(row.get("command") or "")
+                    if cmd in ("start", "review"):
+                        worktree = _worktree_for_target(
+                            f"{cmd}:{_first_positional(list(args), VAL_FLAGS.get(cmd, ()))})") or ""
+                if worktree:
+                    dest = session_file or db_file
+                    if not dest:
+                        dest = str(_sq.session_file_path(_sq.gen_session_id(), "agy", session_type=row.get("session_type")))
+                    created_ts = 0.0
+                    if created:
+                        try:
+                            created_ts = datetime.fromisoformat(created).timestamp()
+                        except Exception:
+                            created_ts = 0.0
+                    adopted_cid, adopted_path = _agy.adopt_from_workspace(worktree, created_ts, dest)
+                    if adopted_cid:
+                        meta["conversation_id"] = adopted_cid
+                        if adopted_path and _transcript_ready(adopted_path):
+                            if row_id and db.exists():
+                                _sq.set_run_file_path(db, row_id, adopted_path)
+                                _sq.set_run_metadata(db, row_id, meta)
+                            return adopted_path
+                        else:
+                            if row_id and db.exists():
+                                _sq.set_run_metadata(db, row_id, meta)
+            except Exception:
+                pass
         # Stem fallback: the CLI child recorded its own row under the same
         # stem after rescoping to the branch dir; point the web row at it.
         stem = _Path(session_file).stem if session_file else ""
@@ -192,8 +249,9 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
             try:
                 if scope.parent != scope:
                     roots.append(scope.parent)
-            except Exception:
-                pass
+            except Exception as e:
+                import sys; print("AGY ADOPT EXC:", type(e), e, file=sys.stderr)
+                import traceback; traceback.print_exc()
             same: list[tuple[float, str]] = []
             any_: list[tuple[float, str]] = []
             for root in roots:
@@ -220,8 +278,9 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
         if best and row_id and db.exists():
             try:
                 _sq.set_run_file_path(db, row_id, best)
-            except Exception:
-                pass
+            except Exception as e:
+                import sys; print("AGY ADOPT EXC:", type(e), e, file=sys.stderr)
+                import traceback; traceback.print_exc()
         return best
     except Exception:
         return ""
@@ -278,7 +337,8 @@ def _conflict_msg(worktree: str, blocker: dict) -> str:
 
 
 def _claim_terminal_lock(worktree: str, ref_key: str = "",
-                         pid: int | None = None, overwrite: bool = False) -> None:
+                         pid: int | None = None, overwrite: bool = False,
+                         harness_name: str = "") -> None:
     """Claim the terminal harness lock; 409 when a live harness holds it.
 
     *overwrite* replaces this key's own pre-claim with the spawned terminal
@@ -287,7 +347,8 @@ def _claim_terminal_lock(worktree: str, ref_key: str = "",
     """
     from . import store as _store
     key = ref_key or _ref_key_for_worktree(worktree) or worktree
-    blocker = _store.record_harness_run(key, "omp", worktree,
+    hname = harness_name or _store.default_harness()
+    blocker = _store.record_harness_run(key, hname, worktree,
                                         origin="terminal", pid=pid,
                                         overwrite=overwrite)
     if blocker is not None:
@@ -295,41 +356,53 @@ def _claim_terminal_lock(worktree: str, ref_key: str = "",
 
 
 def _open_terminal(worktree: str, session_file: str,
-                   env_file: str | None = None) -> int | None:
+                   env_file: str | None = None,
+                   harness_name: str = "",
+                   metadata: dict | None = None) -> int | None:
     from . import webapp as _w
-    return _w._open_terminal(worktree, session_file, env_file)
+    try:
+        return _w._open_terminal(worktree, session_file, env_file,
+                                 harness_name=harness_name, metadata=metadata)
+    except TypeError:
+        return _w._open_terminal(worktree, session_file, env_file)
 
 
 def _open_terminal_watch(worktree: str, session_file: str, run_id: int | None,
                          scope_dir: str, before: str,
                          env_file: str | None = None,
-                         harness_name: str = "omp") -> int | None:
+                         harness_name: str = "") -> int | None:
     """Spawn the OS terminal on a bare session file via the watch shim.
 
     A bare terminal launch has no prompt/command for the harness: build the
-    bare `<harness> --session-dir <scope>` shell command (mirrors
-    `web_runs._resume_shell_command` fresh-file branch — omp mints the
-    .jsonl on first write) and spawn the terminal on it through
-    `cli_harness.spawn_in_terminal` with the `watch-and-exec` watcher
-    encoded in the shell command, so the minted transcript lands on the
-    preview run row seconds after start like headless/interactive launches.
+    bare harness command through Harness.bare_terminal_argv and spawn the
+    terminal on it through `cli_harness.spawn_in_terminal` with the
+    `watch-and-exec` watcher encoded in the shell command.
     Without a row (no DB) the plain command is spawned: nothing to record.
     Best effort on the watch encoding — the spawn must succeed even when
     the shim argv cannot be built.
     """
     import shlex as _shlex
     from pathlib import Path as _Path
+    from . import backend as _backend
     from . import env as _env
+    from . import store as _store
     from .cli_harness import spawn_in_terminal as _spawn_term
+    hname = harness_name or _store.default_harness()
     scope = scope_dir or (str(_Path(session_file).parent) if session_file else "")
-    harness_cmd = f"{harness_name} --session-dir {_shlex.quote(scope)}" if scope else harness_name
+    harness_argv = _backend.get_harness(hname).bare_terminal_argv(scope)
+    harness_cmd = " ".join(_shlex.quote(a) for a in harness_argv)
     full_cmd = _env.wrap_command(f"cd {_shlex.quote(worktree)} && {harness_cmd}",
                                  _env.resolve_env_file(env_file))
     if not run_id:
         return _spawn_term(full_cmd, worktree)
     shim_argv = [sys.executable, "-m", "workagent", "watch-and-exec",
-                 "--run-id", str(run_id), "--scope-dir", scope or worktree,
-                 "--before", before or "", "--", "bash", "-lc", full_cmd]
+                 "--run-id", str(run_id),
+                 "--harness", hname,
+                 "--workdir", worktree,
+                 "--session-file", session_file or "",
+                 "--scope-dir", scope or worktree,
+                 "--before", before or "",
+                 "--", "bash", "-lc", full_cmd]
     shim_cmd = " ".join(_shlex.quote(a) for a in shim_argv)
     try:
         return _spawn_term(shim_cmd, worktree)
@@ -539,6 +612,7 @@ def register_runs_routes(app, registry) -> None:
         runs (db-<id>) resolve from the runs table since the registry is
         empty after a restart.
         """
+        from . import store as _store
         try:
             run = registry.get(run_id)
         except ApiError:
@@ -559,9 +633,16 @@ def register_runs_routes(app, registry) -> None:
             ref = str(row.get("worktree_ref") or "")
             if (blocker := _live_terminal_blocker(worktree, ref)) is not None:
                 raise ApiError("conflict", _conflict_msg(worktree, blocker), 409)
-            pid = _open_terminal(worktree, session_file,
-                                 _env_file_arg(list(args)) or None)
-            _claim_terminal_lock(worktree, ref, pid)
+            hname = str(row.get("harness_name") or "") or _harness_arg(list(args)) or _store.default_harness()
+            meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else None
+            try:
+                pid = _open_terminal(worktree, session_file,
+                                     _env_file_arg(list(args)) or None,
+                                     harness_name=hname, metadata=meta)
+            except TypeError:
+                pid = _open_terminal(worktree, session_file,
+                                     _env_file_arg(list(args)) or None)
+            _claim_terminal_lock(worktree, ref, pid, harness_name=hname)
             return {"id": run_id, "session_file": session_file,
                     "worktree": worktree}
         session_file = run.session_file \
@@ -590,9 +671,15 @@ def register_runs_routes(app, registry) -> None:
         ref = _target_ref_key(run)
         if (blocker := _live_terminal_blocker(worktree, ref)) is not None:
             raise ApiError("conflict", _conflict_msg(worktree, blocker), 409)
-        pid = _open_terminal(worktree, session_file,
-                             _session_file_env(run))
-        _claim_terminal_lock(worktree, ref, pid)
+        hname = run.harness_name or _harness_arg(run.args) or _store.default_harness()
+        try:
+            pid = _open_terminal(worktree, session_file,
+                                 _session_file_env(run),
+                                 harness_name=hname)
+        except TypeError:
+            pid = _open_terminal(worktree, session_file,
+                                 _session_file_env(run))
+        _claim_terminal_lock(worktree, ref, pid, harness_name=hname)
         return {"id": run.id, "session_file": session_file,
                 "worktree": worktree}
 
@@ -609,17 +696,27 @@ def register_runs_routes(app, registry) -> None:
 
         ref_key = ""
         worktree = ""
+        session_file = ""
+        db_run_id = None
+        hname = ""
         try:
             live = registry.get(run_id)
             worktree = live.worktree or _worktree_for_target(live.target)
             if not worktree and live.command in ("start", "review"):
                 worktree = _worktree_for_target(
                     f"{live.command}:{_first_positional(live.args, VAL_FLAGS[live.command])}")
+            ref_key = _target_ref_key(live)
+            session_file = live.session_file or ""
+            db_run_id = live.db_run_id
+            hname = live.harness_name or _harness_arg(live.args)
         except ApiError:
             row = _persisted_row(run_id)
             if row is not None:
                 ref_key = str(row.get("worktree_ref") or "")
                 worktree = _persisted_summary(row).get("worktree") or ""
+                session_file = str(row.get("file_path") or "")
+                db_run_id = row.get("id")
+                hname = str(row.get("harness_name") or "")
         def _lines() -> list[str]:
             try:
                 run = registry.get(run_id)
@@ -637,8 +734,23 @@ def register_runs_routes(app, registry) -> None:
                            f"run {run_id} logged no harness command", 404)
         if (blocker := _live_terminal_blocker(worktree, ref_key)) is not None:
             raise ApiError("conflict", _conflict_msg(worktree, blocker), 409)
+        from . import store as _store
+        hname = hname or _store.default_harness()
+        if db_run_id and worktree and session_file:
+            import shlex as _shlex
+            from pathlib import Path as _Path
+            scope = str(_Path(session_file).parent) if session_file else worktree
+            shim_argv = [sys.executable, "-m", "workagent", "watch-and-exec",
+                         "--run-id", str(db_run_id),
+                         "--harness", hname,
+                         "--workdir", worktree,
+                         "--session-file", session_file,
+                         "--scope-dir", scope,
+                         "--before", "",
+                         "--", "bash", "-lc", cmd]
+            cmd = " ".join(_shlex.quote(a) for a in shim_argv)
         pid = _w._open_terminal_command(cmd, worktree)
-        _claim_terminal_lock(worktree, ref_key, pid)
+        _claim_terminal_lock(worktree, ref_key, pid, harness_name=hname)
         return {"id": run_id}
 
     @app.post("/api/terminal/stop")
@@ -684,7 +796,16 @@ def register_runs_routes(app, registry) -> None:
         worktree = str(entry.get("worktree") or "")
         if not worktree:
             raise ApiError("no_worktree", f"no worktree for {key!r}", 404)
-        harness_name = str(_store.load_config().get("default_harness", "omp") or "omp")
+        raw_harness = (body or {}).get("harness")
+        if raw_harness is not None and str(raw_harness):
+            harness_name = str(raw_harness)
+            try:
+                from . import backend as _backend
+                _backend.get_harness(harness_name)
+            except Exception as exc:
+                raise ApiError("bad_arg", str(exc), 400)
+        else:
+            harness_name = _store.default_harness()
         branch = str(entry.get("branch") or "")
         db = _sq.db_path()
         transcript_id = _sq.gen_session_id()
@@ -703,7 +824,7 @@ def register_runs_routes(app, registry) -> None:
         # Claim the slot BEFORE the spawn: two concurrent POSTs must not
         # both pass the blocker check above. Re-claimed with the real pid
         # after a successful spawn (record_harness_run overwrites own slot).
-        _claim_terminal_lock(worktree, key, None)
+        _claim_terminal_lock(worktree, key, None, harness_name=harness_name)
         row_id: int | None = None
         try:
             if db.exists() and key in _store.load_links(include_inactive=True, include_deleted=True):
@@ -738,7 +859,7 @@ def register_runs_routes(app, registry) -> None:
                                output=[f"terminal spawn failed: {exc}"])
                 _sq.finish_run(db, row_id, "failed")
             raise
-        _claim_terminal_lock(worktree, key, pid, overwrite=True)
+        _claim_terminal_lock(worktree, key, pid, overwrite=True, harness_name=harness_name)
         if row_id:
             _sq.update_run(db, row_id, output=[f"terminal pid: {pid}"])
         return {"id": row_id, "session_file": session_path, "worktree": worktree, "mode": mode}

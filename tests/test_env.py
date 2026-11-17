@@ -60,10 +60,12 @@ def test_resume_shell_command_sources_env(tmp_path, isolated_config, monkeypatch
     env_file.write_text("export A=1\n")
     real = tmp_path / "r.jsonl"
     real.write_text("{}\n")
-    cmd = _resume_shell_command("/wt", str(real))
+    cmd = _resume_shell_command("/wt", str(real), harness_name="omp")
     assert cmd.startswith(f"source {env_file} && cd /wt && omp --resume")
-    fresh = _resume_shell_command("/wt", str(tmp_path / "missing.jsonl"))
+    fresh = _resume_shell_command("/wt", str(tmp_path / "missing.jsonl"), harness_name="omp")
     assert fresh.startswith(f"source {env_file} && cd /wt && omp --session-dir")
+    cmd_agy = _resume_shell_command("/wt", str(real))
+    assert cmd_agy.startswith(f"source {env_file} && cd /wt && agy-guard")
 
 
 def test_headless_launch_gets_parsed_env(tmp_path, isolated_config, monkeypatch):

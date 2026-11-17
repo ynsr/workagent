@@ -464,6 +464,7 @@ def _session_file_arg(command: str, args: list[str]) -> str:
 
 
 def _session_file_for(sid: str, command: str = "", args: list[str] | None = None) -> str:
+    from . import store as _store
     from . import store_sqlite as _sq
     action: str | None = None
     try:
@@ -471,10 +472,24 @@ def _session_file_for(sid: str, command: str = "", args: list[str] | None = None
         action = _sq.derive_session_type(command, fix)
     except Exception:
         action = None
+    hname = ""
+    if args:
+        for i, a in enumerate(args):
+            if a == "--harness" and i + 1 < len(args):
+                hname = args[i + 1]
+                break
+            if a.startswith("--harness="):
+                hname = a.split("=", 1)[1]
+                break
+    if not hname:
+        try:
+            hname = _store.default_harness()
+        except Exception:
+            hname = _store.DEFAULT_HARNESS
     try:
-        return str(_sq.session_file_path(sid, "omp", session_type=action))
+        return str(_sq.session_file_path(sid, hname, session_type=action))
     except Exception:
-        base = _sq.runs_dir() / "omp"
+        base = _sq.runs_dir() / hname
         if action:
             base = base / action
         base.mkdir(parents=True, exist_ok=True)
