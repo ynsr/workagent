@@ -454,7 +454,7 @@ export function Launch() {
       })
     } else if (mode === "adhoc") {
       saveLaunchPrefs({ ...prev, adhoc: { runMode: form.runMode, harness: form.harness } })
-    } else {
+    } else if (mode === "sync") {
       saveLaunchPrefs({ ...prev, sync: { merge: form.merge, harness: form.harness } })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
