@@ -3,6 +3,7 @@ import { Play, Workflow } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import { ActionDialog } from "@/components/LinkDialogs"
+import { HarnessSelect } from "@/components/HarnessSelect"
 import { RunModeSelect } from "@/components/StartForm"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { SegmentedControl } from "@/components/FormControls"
@@ -69,6 +70,7 @@ export function ImmediateRunForm({
   const [refOverride, setRefOverride] = useState("")
   const [repo, setRepo] = useState("")
   const [runMode, setRunMode] = useState<RunMode>("headless")
+  const [harness, setHarness] = useState("")
   const [running, setRunning] = useState(false)
 
   const rows = useMemo(() => {
@@ -90,16 +92,16 @@ export function ImmediateRunForm({
         return {
           command: "message",
           args: buildMessageArgs("action", {
-            ref: message.trim(), label: lbl, runMode, refOverride, repo,
+            ref: message.trim(), label: lbl, runMode, refOverride, repo, harness,
           }),
         }
       }
-      return { command: "message", args: buildImmediateFlowArgs(lbl, message.trim(), refOverride) }
+      return { command: "message", args: buildImmediateFlowArgs(lbl, message.trim(), refOverride, harness) }
     }
     if (kind === "action") {
-      return { command: "action", args: buildImmediateActionArgs(lbl, ref, runMode) }
+      return { command: "action", args: buildImmediateActionArgs(lbl, ref, runMode, harness) }
     }
-    return { command: "flow", args: buildImmediateWorktreeFlowArgs(lbl, ref) }
+    return { command: "flow", args: buildImmediateWorktreeFlowArgs(lbl, ref, harness) }
   }
 
   async function handleRun() {
@@ -121,6 +123,7 @@ export function ImmediateRunForm({
         ...(category === "message" && repo.trim()
           ? [{ label: "Repo", value: repo.trim(), mono: true }]
           : []),
+        ...(harness ? [{ label: "Harness", value: harness, mono: true }] : []),
       ],
     })
     if (!ok) return
@@ -216,6 +219,7 @@ export function ImmediateRunForm({
       {kind === "action" ? (
         <RunModeSelect idPrefix="immediate-run" value={runMode} onChange={setRunMode} />
       ) : null}
+      <HarnessSelect idPrefix="immediate-run" value={harness} onChange={setHarness} allowDefault />
       <Button type="button" disabled={!valid || running} onClick={() => void handleRun()}>
         {kind === "action" ? <Play aria-hidden /> : <Workflow aria-hidden />}
         {running ? "Launching…" : `Run ${kind} now`}

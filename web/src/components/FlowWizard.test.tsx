@@ -12,6 +12,16 @@ vi.mock("@/lib/queries", () => ({
   useActions: () => ({
     data: { actions: [{ label: "lint", name: "Lint" }, { label: "typecheck", name: "Typecheck" }] },
   }),
+  useConfig: () => ({
+    data: {
+      default_harness: "agy",
+      supported_harnesses: ["agy", "omp"],
+      harnesses: [
+        { name: "agy", label: "Antigravity (agy-guard)", binary: "agy-guard", available: true },
+        { name: "omp", label: "OMP (omp)", binary: "omp", available: true },
+      ],
+    },
+  }),
   useCreateRun: () => ({ mutateAsync }),
   useRepos: () => ({ data: [] }),
 }))
@@ -145,6 +155,23 @@ describe("FlowWizard start step constraints", () => {
     expect(steps.map((s) => s.kind)).toEqual(["sync", "start", "start"])
     expect(steps[1]?.config).toEqual({ repo: "proj", plan: true })
     expect(steps[2]?.config).toEqual({ repo: "proj", plan: true })
+    unmount()
+  })
+
+  it("forwards top-level harness selection to flow run args", async () => {
+    mutateAsync.mockClear()
+    cleanup()
+    const user = userEvent.setup()
+    const { unmount } = renderWizard()
+    expect(screen.getByRole("radio", { name: "Use template / default" })).toBeInTheDocument()
+    await user.click(screen.getByRole("radio", { name: "omp" }))
+    await user.click(screen.getByRole("button", { name: "Run flow" }))
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled())
+    expect(mutateAsync).toHaveBeenCalledWith({
+      command: "flow",
+      args: ["run", "ship", "jira:IPG-1", "--harness", "omp", "--yes"],
+      confirm: true,
+    })
     unmount()
   })
 })

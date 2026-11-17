@@ -185,4 +185,25 @@ describe("worktree-scope immediate run args", () => {
     expect(splitRefs(" a, b\n c ")).toEqual(["a", "b", "c"])
     expect(splitRefs("   ")).toEqual([])
   })
+
+  it("persists harness in action default_options and emits --harness on immediate action/flow runs", () => {
+    const args = buildActionUpsertArgs(null, {
+      name: "A", label: "a", icon: "Zap", prompt: "p", pre: "", post: "",
+      runMode: "headless", runImmediately: false, category: "worktree", harness: "omp",
+    })
+    const idx = args.indexOf("--default-options")
+    expect(JSON.parse(args[idx + 1]!)).toEqual({ run_mode: "headless", harness: "omp" })
+    expect(buildImmediateActionArgs("a", "wt-1", "headless", "agy")).toEqual(
+      ["run", "a", "wt-1", "--launch", "--harness", "agy", "--yes"],
+    )
+    expect(buildImmediateMessageActionArgs("a", "m1", "omp")).toEqual(
+      ["action", "run", "a", "m1", "--harness", "omp", "--yes"],
+    )
+    expect(buildImmediateWorktreeFlowArgs("f", "wt-1", "omp")).toEqual(
+      ["run", "f", "wt-1", "--harness", "omp", "--yes"],
+    )
+    expect(buildImmediateFlowArgs("f", "m1", "wt-1", "agy")).toEqual(
+      ["flow", "run", "f", "m1", "--ref", "wt-1", "--harness", "agy", "--yes"],
+    )
+  })
 })

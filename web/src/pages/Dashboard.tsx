@@ -14,6 +14,7 @@ import { ReleaseCard } from "@/components/ReleaseCard"
 import { ActionsMenu } from "@/components/ActionsMenu"
 import { DashboardBulkMenu } from "@/components/DashboardBulkMenu"
 import { FlowsMenu } from "@/components/FlowsMenu"
+import { HarnessSelect } from "@/components/HarnessSelect"
 import { CleanupDialog } from "@/components/CleanupDialog"
 import { DeactivatedTable } from "@/components/DeactivatedTable"
 import { DeletedTable } from "@/components/DeletedTable"
@@ -85,6 +86,53 @@ const DESTROY_POLL_MS = 750
  * `git worktree remove` can take minutes). */
 const DESTROY_RUN_TIMEOUT_MS = 10 * 60_000
 
+/** Stateful extras rendered inside ConfirmDialog so checkbox/harness toggles
+ * update visually and populate caller refs without re-opening the dialog. */
+function BulkConfirmExtras({
+  idPrefix,
+  harnessRef,
+  checkbox,
+}: {
+  idPrefix: string
+  harnessRef: { current: string }
+  checkbox?: {
+    id: string
+    label: string
+    flag: string
+    description: string
+    checkedRef: { current: boolean }
+  }
+}) {
+  const [harness, setHarness] = useState("")
+  const [checked, setChecked] = useState(false)
+  return (
+    <div className="grid gap-2.5">
+      {checkbox ? (
+        <CheckRow
+          id={checkbox.id}
+          checked={checked}
+          onChange={(v) => {
+            setChecked(v)
+            checkbox.checkedRef.current = v
+          }}
+          label={checkbox.label}
+          flag={checkbox.flag}
+          description={checkbox.description}
+        />
+      ) : null}
+      <HarnessSelect
+        idPrefix={idPrefix}
+        value={harness}
+        onChange={(v) => {
+          setHarness(v)
+          harnessRef.current = v
+        }}
+        allowDefault
+      />
+    </div>
+  )
+}
+
 export function Dashboard() {
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -108,8 +156,6 @@ export function Dashboard() {
     persistShowWorktree(value)
   }
   const [refreshingPr, setRefreshingPr] = useState(false)
-  const [syncMerge, setSyncMerge] = useState(false)
-  const [reviewForceAll, setReviewForceAll] = useState(false)
   const [cleanupTarget, setCleanupTarget] = useState<string | null>(null)
   // Bulk-action selection (StatusTable `?sel=` column). Empty = all linked.
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -187,7 +233,8 @@ export function Dashboard() {
   }
 
   async function handleSyncAll() {
-    setSyncMerge(false)
+    const mergeRef = { current: false }
+    const harnessRef = { current: "" }
     const targeting = selCount > 0
     const ok = await confirm({
       action: "sync",
@@ -199,24 +246,29 @@ export function Dashboard() {
       confirmLabel: targeting ? `Sync ${selCount}` : "Sync all",
       details: [scopeDetail("Every active linked worktree")],
       extras: (
-        <div className="grid gap-2.5">
-          <CheckRow
-            id="syncall-merge"
-            checked={syncMerge}
-            onChange={setSyncMerge}
-            label="Merge locally"
-            flag="--merge (-m)"
-            description="Merge locally instead of the remote rebase"
-          />
-        </div>
+        <BulkConfirmExtras
+          idPrefix="syncall"
+          harnessRef={harnessRef}
+          checkbox={{
+            id: "syncall-merge",
+            label: "Merge locally",
+            flag: "--merge (-m)",
+            description: "Merge locally instead of the remote rebase",
+            checkedRef: mergeRef,
+          }}
+        />
       ),
     })
     if (!ok) return
+    const extraArgs = [
+      ...(mergeRef.current ? ["--merge"] : []),
+      ...(harnessRef.current ? ["--harness", harnessRef.current] : []),
+    ]
     if (!targeting) {
       try {
         const { run_id } = await createRun.mutateAsync({
           command: "sync",
-          args: ["--all", ...(syncMerge ? ["--merge"] : [])],
+          args: ["--all", ...extraArgs],
           confirm: true,
         })
         runCreated(run_id, "Sync all")
@@ -229,7 +281,7 @@ export function Dashboard() {
       try {
         const { run_id } = await createRun.mutateAsync({
           command: "sync",
-          args: [key, ...(syncMerge ? ["--merge"] : [])],
+          args: [key, ...extraArgs],
           confirm: true,
         })
         toast.success(`Sync ${key} started`, {
@@ -242,7 +294,8 @@ export function Dashboard() {
   }
 
   async function handleReviewAll() {
-    setReviewForceAll(false)
+    const forceAllRef = { current: false }
+    const harnessRef = { current: "" }
     const targeting = selCount > 0
     const ok = await confirm({
       action: "review",
@@ -254,24 +307,29 @@ export function Dashboard() {
       confirmLabel: targeting ? `Review ${selCount}` : "Review all",
       details: [scopeDetail("Every active linked worktree")],
       extras: (
-        <div className="grid gap-2.5">
-          <CheckRow
-            id="reviewall-force"
-            checked={reviewForceAll}
-            onChange={setReviewForceAll}
-            label="Include already-reviewed worktrees"
-            flag="--force-all"
-            description="Include already-reviewed and unresolved-comment worktrees too"
-          />
-        </div>
+        <BulkConfirmExtras
+          idPrefix="reviewall"
+          harnessRef={harnessRef}
+          checkbox={{
+            id: "reviewall-force",
+            label: "Include already-reviewed worktrees",
+            flag: "--force-all",
+            description: "Include already-reviewed and unresolved-comment worktrees too",
+            checkedRef: forceAllRef,
+          }}
+        />
       ),
     })
     if (!ok) return
+    const extraArgs = [
+      ...(forceAllRef.current ? ["--force-all"] : []),
+      ...(harnessRef.current ? ["--harness", harnessRef.current] : []),
+    ]
     if (!targeting) {
       try {
         const { run_id } = await createRun.mutateAsync({
           command: "review",
-          args: ["--all", ...(reviewForceAll ? ["--force-all"] : [])],
+          args: ["--all", ...extraArgs],
           confirm: true,
         })
         runCreated(run_id, "Review all")
@@ -284,7 +342,7 @@ export function Dashboard() {
       try {
         const { run_id } = await createRun.mutateAsync({
           command: "review",
-          args: [key, ...(reviewForceAll ? ["--force-all"] : [])],
+          args: [key, ...extraArgs],
           confirm: true,
         })
         toast.success(`Review ${key} started`, {
@@ -297,6 +355,7 @@ export function Dashboard() {
   }
 
   async function handleFixAll() {
+    const harnessRef = { current: "" }
     const targeting = selCount > 0
     const ok = await confirm({
       action: "review",
@@ -307,13 +366,15 @@ export function Dashboard() {
       destructive: true,
       confirmLabel: targeting ? `Fix ${selCount}` : "Fix all",
       details: [scopeDetail("Every active linked worktree with a PR/MR")],
+      extras: <BulkConfirmExtras idPrefix="fixall" harnessRef={harnessRef} />,
     })
     if (!ok) return
+    const harnessArgs = harnessRef.current ? ["--harness", harnessRef.current] : []
     if (!targeting) {
       try {
         const { run_id } = await createRun.mutateAsync({
           command: "review",
-          args: ["--all", "--fix-comments"],
+          args: ["--all", "--fix-comments", ...harnessArgs],
           confirm: true,
         })
         runCreated(run_id, "Fix all PR comments")
@@ -326,7 +387,7 @@ export function Dashboard() {
       try {
         const { run_id } = await createRun.mutateAsync({
           command: "review",
-          args: [key, "--fix-comments"],
+          args: [key, "--fix-comments", ...harnessArgs],
           confirm: true,
         })
         toast.success(`Fix ${key} started`, {

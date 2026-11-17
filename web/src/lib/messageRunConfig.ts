@@ -21,12 +21,17 @@ export interface ActionUpsertForm {
   runMode: string
   runImmediately: boolean
   category: RowCategory
+  harness?: string
 }
 
 /** CLI argv (after `command: "action"`) for the add/update form.
  * run_immediately is a first-class backend column (v20). */
 export function buildActionUpsertArgs(editingLabel: string | null, f: ActionUpsertForm): string[] {
-  const opts = JSON.stringify({ run_mode: f.runMode })
+  const harness = f.harness?.trim()
+  const opts = JSON.stringify({
+    run_mode: f.runMode,
+    ...(harness ? { harness } : {}),
+  })
   const flag = f.runImmediately ? "--run-immediately" : "--no-run-immediately"
   if (editingLabel !== null) {
     return [
@@ -63,6 +68,13 @@ export function actionRunModeOf(row: { default_options?: unknown }): string {
   const opts = row.default_options
   const m = opts && typeof opts === "object" ? (opts as Record<string, unknown>).run_mode : undefined
   return typeof m === "string" && (RUN_MODES as readonly string[]).includes(m) ? m : "preview"
+}
+
+/** Row's default AI harness (default_options.harness, "" when unset). */
+export function actionHarnessOf(row: { default_options?: unknown }): string {
+  const opts = row.default_options
+  const h = opts && typeof opts === "object" ? (opts as Record<string, unknown>).harness : undefined
+  return typeof h === "string" ? h.trim() : ""
 }
 
 export interface FlowTemplateUpsertForm {
@@ -120,31 +132,43 @@ export function isRunImmediateTemplate(row: { run_immediately?: unknown }): bool
 }
 
 /** CLI argv (after `command: "message"`) for an immediate action run. */
-export function buildImmediateMessageActionArgs(label: string, messageId: string): string[] {
-  return ["action", "run", label, messageId, "--yes"]
+export function buildImmediateMessageActionArgs(label: string, messageId: string, harness = ""): string[] {
+  const args = ["action", "run", label, messageId]
+  const h = harness.trim()
+  if (h) args.push("--harness", h)
+  args.push("--yes")
+  return args
 }
 
 /** CLI argv (after `command: "message"`) for an immediate flow run. */
-export function buildImmediateFlowArgs(label: string, messageId: string, worktreeRef: string): string[] {
+export function buildImmediateFlowArgs(label: string, messageId: string, worktreeRef: string, harness = ""): string[] {
   const args = ["flow", "run", label, messageId]
   const ref = worktreeRef.trim()
   if (ref) args.push("--ref", ref)
+  const h = harness.trim()
+  if (h) args.push("--harness", h)
   args.push("--yes")
   return args
 }
 
 /** CLI argv (after `command: "action"`) for a worktree-scope immediate run. */
-export function buildImmediateActionArgs(label: string, ref: string, runMode: string): string[] {
+export function buildImmediateActionArgs(label: string, ref: string, runMode: string, harness = ""): string[] {
   const args = ["run", label, ref]
   if (runMode === "headless") args.push("--launch")
   else if (runMode === "terminal") args.push("--terminal")
+  const h = harness.trim()
+  if (h) args.push("--harness", h)
   args.push("--yes")
   return args
 }
 
 /** CLI argv (after `command: "flow"`) for a worktree-scope immediate run. */
-export function buildImmediateWorktreeFlowArgs(label: string, ref: string): string[] {
-  return ["run", label, ref, "--yes"]
+export function buildImmediateWorktreeFlowArgs(label: string, ref: string, harness = ""): string[] {
+  const args = ["run", label, ref]
+  const h = harness.trim()
+  if (h) args.push("--harness", h)
+  args.push("--yes")
+  return args
 }
 
 /** Split a free-text ref list (whitespace or commas) into refs. */

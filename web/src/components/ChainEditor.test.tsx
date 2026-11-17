@@ -7,6 +7,16 @@ import { summarizeExecution } from "@/lib/flowExecution"
 
 vi.mock("@/lib/queries", () => ({
   useRepos: () => ({ data: [] }),
+  useConfig: () => ({
+    data: {
+      default_harness: "agy",
+      supported_harnesses: ["agy", "omp"],
+      harnesses: [
+        { name: "agy", label: "Antigravity (agy-guard)", binary: "agy-guard", available: true },
+        { name: "omp", label: "OMP (omp)", binary: "omp", available: true },
+      ],
+    },
+  }),
 }))
 
 const ACTIONS = [
@@ -245,5 +255,55 @@ describe("ChainEditor launch mode", () => {
     expect(within(container).getByText("∥ parallel")).toBeInTheDocument()
     expect(within(container).queryByRole("radiogroup")).not.toBeInTheDocument()
     unmount()
+  })
+})
+
+describe("ChainEditor step harness", () => {
+  it("renders Harness select on start/sync/prodtest_plan and omits it on cleanup/release", async () => {
+    const user = userEvent.setup()
+    for (const kind of ["start", "review", "fix_comments", "sync", "action", "prodtest_plan"]) {
+      let next: FlowStep[] = []
+      const { container, unmount } = render(
+        <ChainEditor
+          mode="edit"
+          steps={[{ kind, config: {} }]}
+          onChange={(s) => { next = s }}
+          knownActions={ACTIONS}
+        />,
+      )
+      const select = within(container).getByLabelText<HTMLSelectElement>("Harness")
+      await user.selectOptions(select, "omp")
+      expect(next[0]?.config?.harness).toBe("omp")
+      unmount()
+    }
+    for (const kind of ["cleanup", "release"]) {
+      const { container, unmount } = render(
+        <ChainEditor
+          mode="edit"
+          steps={[{ kind, config: {} }]}
+          onChange={() => undefined}
+          knownActions={[]}
+        />,
+      )
+      expect(within(container).queryByLabelText("Harness")).not.toBeInTheDocument()
+      unmount()
+    }
+  })
+
+  it("omits config.harness when reset to default", async () => {
+    const user = userEvent.setup()
+    let next: FlowStep[] = []
+    const { container } = render(
+      <ChainEditor
+        mode="edit"
+        steps={[{ kind: "sync", config: { harness: "omp" } }]}
+        onChange={(s) => { next = s }}
+        knownActions={[]}
+      />,
+    )
+    const select = within(container).getByLabelText<HTMLSelectElement>("Harness")
+    expect(select.value).toBe("omp")
+    await user.selectOptions(select, "")
+    expect(next[0]?.config).toEqual({})
   })
 })
