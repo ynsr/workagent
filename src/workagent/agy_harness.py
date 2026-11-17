@@ -150,6 +150,7 @@ def adopt_from_workspace(worktree: str, created_ts: float, dest_path: str) -> tu
 
 class AgyHarness(Harness):
     name = "agy"
+    label = "Antigravity (agy-guard)"
     binary = "agy-guard"
     judge_argv: list[str] = ["--model", "gemini-3.8-flash-low",
                              "--disable-slash-commands", "--mode", "plan"]

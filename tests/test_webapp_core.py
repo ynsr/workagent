@@ -478,4 +478,31 @@ def test_default_static_dir_no_receipt_returns_source_default(
         tmp_path / "web" / "dist"
 
 
+def test_get_config_lists_harnesses(client, monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda b: f"/usr/bin/{b}" if b == "agy-guard" else None)
+    r = client.get("/api/config")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["default_harness"] == "agy"
+    assert body["supported_harnesses"] == ["agy", "omp"]
+    by_name = {h["name"]: h for h in body["harnesses"]}
+    assert by_name["agy"]["available"] is True and by_name["agy"]["binary"] == "agy-guard"
+    assert by_name["omp"]["available"] is False and by_name["omp"]["binary"] == "omp"
+
+
+def test_post_runs_config_set(client, isolated_config):
+    r = client.post("/api/runs", json={
+        "command": "config",
+        "args": ["set", "default-harness", "omp"],
+        "confirm": False,
+    })
+    assert r.status_code == 202
+    body = r.json()
+    assert "run_id" in body
+    run_detail = client.get(f"/api/runs/{body['run_id']}").json()
+    assert run_detail["command"] == "config"
+    assert run_detail["target"] == "config"
+
+
+
 # ── /api/issues + /api/candidates (candidates listing) ────────────────

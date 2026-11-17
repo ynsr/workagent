@@ -60,6 +60,7 @@ def exec_tty(argv: list[str], workdir: str, env_file: str | None = None) -> int:
 class Harness(abc.ABC):
     """Abstract AI harness interface."""
     name: str = ""
+    label: str = ""
     binary: str = ""
     judge_argv: list[str] = []
 
@@ -102,6 +103,7 @@ class Harness(abc.ABC):
 
 class OmpHarness(Harness):
     name = "omp"
+    label = "OMP (omp)"
     binary = "omp"
 
     # Bare judge sessions: cheap model, no repo-touching surface. Verified

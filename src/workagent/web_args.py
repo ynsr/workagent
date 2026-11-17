@@ -74,6 +74,7 @@ SPECS: dict[str, dict[str, Any]] = {
                        else (f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest run'])}" if args[:1] == ["run"] else "config")))},
     "adhoc": {"confirm": True, "force": False,
               "key": lambda args: f"adhoc:{_first_positional(args, VAL_FLAGS['adhoc'])}"},
+    "config": {"confirm": False, "force": False, "key": "config"},
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
@@ -160,6 +161,9 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "message": (),
     "message action": (),
     "message flow": (),
+    "config": (),
+    "config show": ("--json",),
+    "config set": ("--json",),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "adhoc": ("--prompt", "--harness", "--extra-prompt", "--session-file", "--env-file"),
@@ -199,6 +203,9 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "message action run": ("--ref", "--repo", "--harness", "--extra-prompt", "--env-file", "--session-file"),
     "message flow run": ("--ref", "--repo", "--harness"),
     "message": (),
+    "config": (),
+    "config show": (),
+    "config set": (),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "link": {"list", "set", "remove", "deactivate", "reactivate", "undelete", "destroy-deleted"},
@@ -207,7 +214,8 @@ SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "flow": {"template", "list", "show", "run"},
                                     "backup": {"export", "import", "run-scheduled"},
                                     "message": {"add", "list", "show", "update", "remove", "adhoc", "validate", "draft-reply", "action", "flow"},
-                                    "prodtest": {"plan", "run", "list", "status", "delete", "cleanup"}}
+                                    "prodtest": {"plan", "run", "list", "status", "delete", "cleanup"},
+                                    "config": {"show", "set"}}
 TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "clone", "compose", "delete", "suggest-icon"}
 def _needs_confirm(command: str, args: list[str]) -> bool:
     """True when the (sub)command needs confirm:true (destructive only).

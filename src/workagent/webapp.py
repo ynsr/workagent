@@ -20,6 +20,7 @@ import ipaddress
 import itertools
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -36,7 +37,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import __version__, store, worktrees
+from . import __version__, backend, store, worktrees
 
 
 
@@ -228,6 +229,24 @@ def create_app(static_dir: Path, host: str, port: int,
     def info() -> dict:
         return {"version": __version__, "host": host, "port": port,
                 "network_exposed": network_exposed}
+
+    @app.get("/api/config")
+    def get_config() -> dict:
+        backend._load_harnesses()
+        harnesses_list = [
+            {
+                "name": name,
+                "label": h.label or name,
+                "binary": h.binary,
+                "available": shutil.which(h.binary) is not None,
+            }
+            for name, h in sorted(backend.HARNESSES.items())
+        ]
+        return {
+            "default_harness": store.default_harness(),
+            "supported_harnesses": sorted(backend.HARNESSES),
+            "harnesses": harnesses_list,
+        }
 
     @app.get("/api/path")
     def path(ref: str):
