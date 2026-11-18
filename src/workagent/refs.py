@@ -467,14 +467,16 @@ def fetch_pr_merge_state(pr_url: str, cwd: str | None = None) -> dict:
     m = _GITHUB_PR.match(pr_url or "")
     if m:
         out = run_cmd("gh", "pr", "view", pr_url, "--json",
-                      "state,mergeable,mergeStateStatus", cwd=cwd)
+                      "state,mergeable,mergeStateStatus,autoMergeRequest", cwd=cwd)
         try:
             data = json.loads(out or "{}")
         except json.JSONDecodeError:
             raise HarnessError(f"cannot parse gh output for {pr_url}")
+        auto = data.get("autoMergeRequest") or {}
         return {"state": str(data.get("state") or ""),
                 "mergeable": str(data.get("mergeable") or ""),
-                "merge_state": str(data.get("mergeStateStatus") or "")}
+                "merge_state": str(data.get("mergeStateStatus") or ""),
+                "squash": str(auto.get("mergeMethod") or "").upper() == "SQUASH"}
     m = _GITLAB_MR.match(pr_url or "")
     if m:
         # -F json: without it glab prints human text and the JSON parse

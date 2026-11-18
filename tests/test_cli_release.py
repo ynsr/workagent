@@ -709,6 +709,8 @@ def test_gitlab_ff_uses_mr_sha(monkeypatch):
 def test_github_ff_push_then_merge_commit_fallback(monkeypatch):
     rel = _flow_registry(monkeypatch)
     monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    monkeypatch.setattr(rel, "_mr_state_now",
+                        lambda *a, **k: {"state": "OPEN", "mergeable": "MERGEABLE", "squash": False})
     calls = []
     def _fake(*a, **k):
         calls.append(a)
@@ -1205,3 +1207,62 @@ def test_merge_pinned_glab_squash_still_enabled_after_update_fails_closed(monkey
     assert "never squash" in capsys.readouterr().err
     assert any(c[:3] == ("glab", "mr", "update") for c in calls)
     assert not any(c[:3] == ("glab", "mr", "merge") for c in calls)
+
+
+def test_merge_pinned_gh_unknown_state_fails_closed(monkeypatch, capsys):
+    """When GitHub PR state lookup returns None, fail closed without calling gh pr merge."""
+    import typer
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    monkeypatch.setattr(rel, "_mr_state_now", lambda *a, **k: None)
+    calls = []
+    monkeypatch.setattr(rel, "run_cmd", lambda *a, **k: calls.append(a) or "")
+    with pytest.raises(typer.Exit) as exc:
+        rel._merge_pinned("gh", "/r", "master", "abc123", "https://github.com/o/r/pull/1",
+                          ["github-pr-merge-commit"])
+    assert exc.value.exit_code == 1
+    assert "never squash" in capsys.readouterr().err
+    assert not any(c[:3] == ("gh", "pr", "merge") for c in calls)
+
+
+@pytest.mark.parametrize("squash_on", [True, False])
+def test_merge_pinned_gh_clears_squash_auto_merge_before_merge(monkeypatch, squash_on):
+    """GitHub PR with auto-merge SQUASH has --disable-auto called before --merge."""
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    states = [{"state": "OPEN", "mergeable": "MERGEABLE", "squash": squash_on},
+              {"state": "OPEN", "mergeable": "MERGEABLE", "squash": False}]
+    monkeypatch.setattr(rel, "_mr_state_now", lambda *a, **k: states.pop(0))
+    monkeypatch.setattr(rel, "_verify_head", lambda *a, **k: None)
+    calls = []
+    monkeypatch.setattr(rel, "run_cmd", lambda *a, **k: calls.append(a) or "")
+    out = rel._merge_pinned("gh", "/r", "master", "abc123", "https://github.com/o/r/pull/1",
+                            ["github-pr-merge-commit"])
+    assert out == "github-pr-merge-commit"
+    disable_calls = [c for c in calls if "--disable-auto" in c]
+    merge_calls = [c for c in calls if "--merge" in c]
+    assert len(merge_calls) == 1
+    if squash_on:
+        assert disable_calls == [("gh", "pr", "merge", "--disable-auto",
+                                  "https://github.com/o/r/pull/1")]
+        assert calls.index(disable_calls[0]) < calls.index(merge_calls[0])
+    else:
+        assert disable_calls == []
+
+
+def test_merge_pinned_gh_squash_auto_merge_still_enabled_fails_closed(monkeypatch, capsys):
+    """If GitHub PR still reports squash=True after --disable-auto, fail closed."""
+    import typer
+    rel = _flow_registry(monkeypatch)
+    monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
+    monkeypatch.setattr(rel, "_mr_state_now",
+                        lambda *a, **k: {"state": "OPEN", "mergeable": "MERGEABLE", "squash": True})
+    calls = []
+    monkeypatch.setattr(rel, "run_cmd", lambda *a, **k: calls.append(a) or "")
+    with pytest.raises(typer.Exit) as exc:
+        rel._merge_pinned("gh", "/r", "master", "abc123", "https://github.com/o/r/pull/1",
+                          ["github-pr-merge-commit"])
+    assert exc.value.exit_code == 1
+    assert "never squash" in capsys.readouterr().err
+    assert any("--disable-auto" in c for c in calls)
+    assert not any("--merge" in c for c in calls)

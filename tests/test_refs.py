@@ -168,8 +168,19 @@ def test_fetch_pr_merge_state_github(monkeypatch):
     monkeypatch.setattr(r, "run_cmd", fake)
     out = refs.fetch_pr_merge_state("https://github.com/o/r/pull/9")
     assert out == {"state": "OPEN", "mergeable": "CONFLICTING",
-                   "merge_state": "DIRTY"}
+                   "merge_state": "DIRTY", "squash": False}
     assert "mergeStateStatus" in str(calls)
+    assert "autoMergeRequest" in str(calls)
+
+
+def test_fetch_pr_merge_state_github_squash_auto_merge(monkeypatch):
+    import workagent.refs as r
+    monkeypatch.setattr(
+        r, "run_cmd",
+        lambda *a, **k: '{"state": "OPEN", "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "autoMergeRequest": {"mergeMethod": "SQUASH"}}',
+    )
+    out = refs.fetch_pr_merge_state("https://github.com/o/r/pull/10")
+    assert out["squash"] is True
 
 
 def test_fetch_pr_merge_state_404_surfaces(monkeypatch):
