@@ -216,7 +216,8 @@ def test_fetch_pr_merge_state_gitlab_passes_json_flag(monkeypatch):
         "https://git.jibit.cloud/server/projectx/-/merge_requests/1")
     assert out == {"state": "opened",
                    "mergeable": "discussions_not_resolved",
-                   "merge_state": ""}
+                   "merge_state": "",
+                   "squash": False}
     assert "-F" in calls[0] and "json" in calls[0]
 
 

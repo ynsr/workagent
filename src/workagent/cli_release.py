@@ -126,7 +126,8 @@ def _open_mr(tool: str, path: str, default_branch: str, release_branch: str, tit
                       "--head", default_branch, "--title", title, cwd=path)
     else:
         out = run_cmd("glab", "mr", "create", "--source-branch", default_branch,
-                      "--target-branch", release_branch, "--title", title, cwd=path)
+                      "--target-branch", release_branch, "--title", title,
+                      "--squash-before-merge=false", cwd=path)
     url = (out or "").strip().splitlines()[-1] if out else ""
     if not url:
         raise HarnessError("host CLI opened the MR but returned no URL", exit_code=1)
@@ -319,6 +320,9 @@ def _merge_pinned(tool: str, path: str, release_branch: str, pinned: str,
                     if _rms in ("merged",):
                         _verify_head(path, release_branch, pinned)
                         return strat
+                    if _rum.get("squash"):
+                        run_cmd("glab", "mr", "update", mr_url,
+                                "--squash-before-merge=false", cwd=path)
                 argv = ["glab", "mr", "merge", "--sha", pinned]
                 if force:
                     argv.append("--auto-merge=false")

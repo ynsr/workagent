@@ -485,7 +485,8 @@ def fetch_pr_merge_state(pr_url: str, cwd: str | None = None) -> dict:
             raise HarnessError(f"cannot parse glab output for {pr_url}")
         return {"state": str(data.get("state") or ""),
                 "mergeable": str(data.get("detailed_merge_status") or ""),
-                "merge_state": "conflicts" if data.get("has_conflicts") else ""}
+                "merge_state": "conflicts" if data.get("has_conflicts") else "",
+                "squash": bool(data.get("squash"))}
     raise HarnessError(f"not a PR/MR URL: {pr_url}")
 
 

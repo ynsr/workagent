@@ -1112,3 +1112,41 @@ def test_fix_default_ci_prompts_both_branches_when_both_fail(
     assert "Fix the failing CI on master: https://ci/jobs/9" in prompt
     assert prompt.index("main:") < prompt.index("master:")
     assert calls == []
+
+
+def test_open_mr_glab_disables_squash(monkeypatch):
+    """glab mr create must pass --squash-before-merge=false to override project default_on."""
+    calls = []
+    monkeypatch.setattr(_rel, "run_cmd",
+                        lambda *a, **k: calls.append(a) or "https://h/mr/12")
+    url = _rel._open_mr("glab", "/r", "develop", "master", "Release develop -> master")
+    assert url == "https://h/mr/12"
+    assert calls == [("glab", "mr", "create", "--source-branch", "develop",
+                      "--target-branch", "master", "--title",
+                      "Release develop -> master", "--squash-before-merge=false")]
+
+
+@pytest.mark.parametrize("squash_on", [True, False])
+def test_merge_pinned_glab_clears_squash_when_enabled(monkeypatch, squash_on):
+    """Reused/existing MR with squash=True is updated to --squash-before-merge=false before merge."""
+    _registry(monkeypatch)
+    calls = []
+    monkeypatch.setattr(_rel, "run_cmd", lambda *a, **k: calls.append(a) or "abc123")
+    monkeypatch.setattr(_rel, "_find_or_open_mr", lambda *a, **k: "https://h/mr/1")
+    monkeypatch.setattr(_rel, "_wait_mr_mergeable",
+                        lambda *a, **k: {"state": "opened", "mergeable": "mergeable",
+                                         "squash": squash_on})
+    monkeypatch.setattr(_rel, "_wait_mr_merged", lambda *a, **k: True)
+    monkeypatch.setattr(_rel, "_verify_head", lambda *a, **k: None)
+    monkeypatch.setattr(rel_gates, "run_local_gate", lambda *a, **k: None)
+    monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: None)
+    _rel.run_release("rx", yes=True, dry_run=False, json_output=False)
+    update_calls = [c for c in calls if c[:3] == ("glab", "mr", "update")]
+    merge_idx = next(i for i, c in enumerate(calls) if c[:3] == ("glab", "mr", "merge"))
+    if squash_on:
+        assert update_calls == [("glab", "mr", "update", "https://h/mr/1",
+                                 "--squash-before-merge=false")]
+        update_idx = next(i for i, c in enumerate(calls) if c[:3] == ("glab", "mr", "update"))
+        assert update_idx < merge_idx
+    else:
+        assert update_calls == []
