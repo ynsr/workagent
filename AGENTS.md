@@ -15,6 +15,13 @@ cd /home/bs/projects/personal/harness
 uv run pytest -v
 ```
 
+- **Test DB/config isolation:** Tests MUST NEVER read or modify the real
+  `~/.config/workagent/` (`state.db`, `config.json`, `runs/`) or
+  `~/.gemini/antigravity-cli/`. `tests/conftest.py` enforces `autouse`
+  isolation of `WORKAGENT_CONFIG_DIR` and `ANTIGRAVITY_HOME` into
+  `tmp_path`; new tests touching `store`, `store_sqlite`, or `agy_harness`
+  must use `isolated_config` / `tmp_path` and never bypass that isolation.
+
 Install locally:
 
 ```bash

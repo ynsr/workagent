@@ -1530,7 +1530,7 @@ def test_run_summary_json_contains_harness_and_resume_command(client, tmp_path):
     assert r2.json()["resume_command"] == ""
 
 
-def test_resolve_session_file_adopts_agy_workspace(tmp_path, monkeypatch):
+def test_resolve_session_file_adopts_agy_workspace(isolated_config, tmp_path, monkeypatch):
     import sqlite3
     import json
     from workagent import store_sqlite as sq, store as _store
@@ -1569,7 +1569,7 @@ def test_resolve_session_file_adopts_agy_workspace(tmp_path, monkeypatch):
     assert row["metadata"].get("conversation_id") == "conv-adopt-123"
 
 
-def test_resolve_session_file_mirrors_known_conversation_id(tmp_path, monkeypatch):
+def test_resolve_session_file_mirrors_known_conversation_id(isolated_config, tmp_path, monkeypatch):
     import sqlite3
     import json
     from pathlib import Path
@@ -1619,7 +1619,7 @@ def test_resolve_session_file_mirrors_known_conversation_id(tmp_path, monkeypatc
     assert row["metadata"].get("conversation_id") == "conv-known-456"
 
 
-def test_resolve_session_file_resolves_worktree_from_command_target(tmp_path, monkeypatch):
+def test_resolve_session_file_resolves_worktree_from_command_target(isolated_config, tmp_path, monkeypatch):
     import sqlite3
     import json
     from pathlib import Path
@@ -1662,7 +1662,7 @@ def test_resolve_session_file_resolves_worktree_from_command_target(tmp_path, mo
     assert row["metadata"].get("conversation_id") == "conv-target-999"
 
 
-def test_resolve_session_file_refreshes_agy_meta_stub(tmp_path, monkeypatch):
+def test_resolve_session_file_refreshes_agy_meta_stub(isolated_config, tmp_path, monkeypatch):
     import json
     from pathlib import Path
     from workagent import store_sqlite as sq
@@ -1689,7 +1689,7 @@ def test_resolve_session_file_refreshes_agy_meta_stub(tmp_path, monkeypatch):
     assert "web-stub-refreshed" in Path(resolved).read_text(encoding="utf-8")
 
 
-def test_resolve_session_file_resolves_inactive_link_from_issue_url_target(tmp_path, monkeypatch):
+def test_resolve_session_file_resolves_inactive_link_from_issue_url_target(isolated_config, tmp_path, monkeypatch):
     import json, sqlite3
     from pathlib import Path
     from workagent import store_sqlite as sq, store as _store
