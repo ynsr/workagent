@@ -378,43 +378,46 @@ def validate_suggested_icon(icon: str | None) -> str:
     return icon
 
 
-def run_suggest_icon(prompt_text: str, *, harness: str = "omp",
+def run_suggest_icon(prompt_text: str, *, harness: str | None = None,
                      timeout_s: float = 120) -> str:
     """Run ONE bare judge-style harness session and return its last text.
 
-    Cheap by construction: ``judge_argv`` (``--smol``, no skills/tools/
+    Cheap by construction: ``judge_argv`` (cheap model, no skills/tools/
     rules/context/LSP/extensions/pty) in a fresh temp dir — the prompt
     carries everything inline, no repo checkout needed. Raises
     HarnessError when the harness is missing, times out, exits non-zero,
     or mints no transcript.
     """
-    from . import backend
-    from . import harness_summary as _hs
+    from . import backend, store
     from . import store_sqlite as _sq
     from .errors import HarnessError
+    harness_name = harness or store.default_harness()
     try:
-        harness_obj = backend.get_harness(harness)
+        harness_obj = backend.get_harness(harness_name)
     except HarnessError:
         raise HarnessError(
-            f"unsupported harness: {harness!r}", exit_code=2) from None
+            f"unsupported harness: {harness_name!r}", exit_code=2) from None
     with tempfile.TemporaryDirectory(prefix="workagent-suggest-icon-") as directory:
         judge_path = str(Path(directory) / "judge.jsonl")
         flags = harness_obj.session_file_flag(judge_path)
         try:
             argv_extra = [*harness_obj.judge_argv, *flags]
             code = backend.launch(
-                harness, prompt_text, directory, True, argv_extra,
-                env_file=None, watch=None, timeout_s=timeout_s)
+                harness_name, prompt_text, directory, True, argv_extra,
+                env_file=None, watch=None, timeout_s=timeout_s,
+                session_file=judge_path)
         except HarnessError:
             raise
         except Exception as e:
             raise HarnessError(f"icon suggestion failed: {e}", exit_code=1) from e
-        minted = _sq.newest_transcript(Path(directory))
-        if code != 0 or minted is None:
+        target = (Path(judge_path)
+                  if (Path(judge_path).is_file() and Path(judge_path).stat().st_size > 0)
+                  else (_sq.newest_transcript(Path(directory)) if Path(directory).is_dir() else None))
+        if code != 0 or target is None:
             raise HarnessError(
                 f"icon suggestion failed (exit {code}) — "
                 "the AI session produced no answer", exit_code=1)
-        text = _hs.last_assistant_text(str(minted), max_chars=None)
+        text = harness_obj.extract_last_assistant_text(str(target), max_chars=None)
         if not (text or "").strip():
             raise HarnessError(
                 "icon suggestion produced an empty answer — try again",

@@ -35,7 +35,7 @@ def prodtest_plan(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
-    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured)."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before harness commands."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path for the harness session."),
@@ -130,7 +130,7 @@ def prodtest_plan(
     auto_update = plan_file.exists()
     update_mode = bool(update or auto_update)
 
-    harness_name = harness or store.load_config().get("default_harness", "omp")
+    harness_name = harness or store.default_harness()
 
     if dry_run:
         _print_result({"key": store_key, "plan_file": str(plan_file), "update": update_mode,

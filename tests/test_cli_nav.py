@@ -146,6 +146,13 @@ def test_launch_shorthand_L_on_start_and_review(isolated_config, tmp_path, monke
                 _d_nav.mkdir(parents=True, exist_ok=True)
                 (_d_nav / "judge.jsonl").write_text(_json_nav.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "ok\nJOB_DONE"}]}}) + "\n")
                 return 0
+        if kwargs.get("session_file"):
+            _sf_nav = _Path_nav(kwargs["session_file"])
+            _sf_nav.parent.mkdir(parents=True, exist_ok=True)
+            _sf_nav.write_text(_json_nav.dumps({"message": {
+                "role": "assistant", "content": [{"type": "text",
+                                                  "text": "did the work\nJOB_DONE"}]}}) + "\n")
+            return 0
         if "--session-dir" in _args_nav:
             _d_nav = _Path_nav(_args_nav[_args_nav.index("--session-dir") + 1])
             _d_nav.mkdir(parents=True, exist_ok=True)

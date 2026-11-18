@@ -1,13 +1,17 @@
-"""Backend launcher: run the configured AI harness (omp for v1)."""
+"""Backend launcher: run the configured AI harness."""
 
 from __future__ import annotations
 
+import abc
 import os
 import shutil
+import signal
 import subprocess
 import sys
+from pathlib import Path
+from typing import Callable
 
-from .errors import HarnessError
+from .errors import HarnessError, HarnessTimeout
 
 VERDICT_SUFFIX = (
     "\n\nAt the very end of your reply, print exactly one line containing "
@@ -20,27 +24,118 @@ VERDICT_SUFFIX = (
     "WAITING_USER_RESPONSE instead.")
 
 
-class Harness:
-    """AI harness: argv, launch, transcript-file flag."""
+def check_binary(binary: str) -> None:
+    if shutil.which(binary) is None:
+        raise HarnessError(f"`{binary}` not found on PATH")
+
+
+def run_blocking_cmd(argv: list[str], workdir: str, env_file: str | None = None,
+                     timeout_s: int | None = None) -> int:
+    from . import env as _env
+    merged = _env.merged_env(env_file)
+    if timeout_s is None:
+        return subprocess.run(argv, cwd=workdir, env=merged).returncode
+    proc = subprocess.Popen(argv, cwd=workdir, env=merged, start_new_session=True)
+    try:
+        proc.wait(timeout=timeout_s)
+        return proc.returncode
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGTERM)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+        raise HarnessTimeout(f"command timed out: {' '.join(argv)}")
+
+
+def exec_tty(argv: list[str], workdir: str, env_file: str | None = None) -> int:
+    from . import env as _env
+    os.environ.update(_env.launch_env(env_file))
+    cd_worktree(workdir)
+    os.execvp(argv[0], argv)
+    return 0
+
+
+class Harness(abc.ABC):
+    """Abstract AI harness interface."""
     name: str = ""
+    label: str = ""
+    binary: str = ""
+    judge_argv: list[str] = []
+    watches_headless: bool = True
+
+    @abc.abstractmethod
+    def command_argv(self, prompt: str, no_tty: bool,
+                     extra_args: list[str] | None = None) -> list[str]: ...
+
+    @abc.abstractmethod
+    def launch(self, prompt: str, workdir: str, no_tty: bool,
+               extra_args: list[str] | None = None,
+               env_file: str | None = None,
+               timeout_s: int | None = None,
+               session_file: str | None = None,
+               on_conversation_id: Callable[[str], None] | None = None) -> int: ...
+
+    @abc.abstractmethod
+    def session_file_flag(self, path: str, metadata: dict | None = None) -> list[str]: ...
+
+    @abc.abstractmethod
+    def resume_argv(self, session_file: str, metadata: dict | None = None) -> list[str]: ...
+
+    @abc.abstractmethod
+    def bare_terminal_argv(self, scope_dir: str = "") -> list[str]: ...
+
+    @abc.abstractmethod
+    def watch_transcript(self, workdir: str, scope_dir: Path | None,
+                         before: Path | None, run_id: int | None,
+                         db: Path, result: dict | None = None,
+                         session_file: str = "", launched_at: float = 0.0,
+                         stop_event=None) -> None: ...
+
+    @abc.abstractmethod
+    def extract_last_assistant_text(self, transcript_path: str,
+                                    max_chars: int | None = 4000) -> str: ...
+
+    @abc.abstractmethod
+    def tool_error_rate(self, transcript_path: str,
+                        since_line: int = 0) -> tuple[int, int] | None: ...
+
+
+class OmpHarness(Harness):
+    name = "omp"
+    label = "OMP (omp)"
+    binary = "omp"
+
+    # Bare judge sessions: cheap model, no repo-touching surface. Verified
+    # against `omp -h`: each flag exists (--smol bare selects the configured
+    # cheap model). Judge prompts carry task + transcript + gates inline.
+    judge_argv: list[str] = ["--smol", "--no-skills", "--no-tools",
+                             "--no-rules", "--no-context-files",
+                             "--no-lsp", "--no-extensions", "--no-pty"]
 
     def command_argv(self, prompt: str, no_tty: bool,
                      extra_args: list[str] | None = None) -> list[str]:
-        raise NotImplementedError
+        if no_tty:
+            return ["omp", "-p", "--auto-approve", *(extra_args or []), prompt]
+        args = ["omp", *(extra_args or [])]
+        if prompt:
+            args.append(prompt)
+        return args
 
     def launch(self, prompt: str, workdir: str, no_tty: bool,
                extra_args: list[str] | None = None,
                env_file: str | None = None,
-               timeout_s: "int | None" = None) -> int:
-        raise NotImplementedError
+               timeout_s: int | None = None,
+               session_file: str | None = None,
+               on_conversation_id: Callable[[str], None] | None = None) -> int:
+        check_binary(self.binary)
+        argv = self.command_argv(prompt, no_tty, extra_args)
+        if no_tty:
+            return run_blocking_cmd(argv, workdir, env_file=env_file, timeout_s=timeout_s)
+        return exec_tty(argv, workdir, env_file=env_file)
 
-    #: argv fragment for bare judge sessions: no skills/tools/rules/context
-    #: files — the judge prompt carries everything inline. Harness-specific;
-    #: omitted when empty so other harnesses keep their launch shape.
-    judge_argv: list[str] = []
-
-
-    def session_file_flag(self, path: str) -> list[str]:
+    def session_file_flag(self, path: str, metadata: dict | None = None) -> list[str]:
         """Argv fragment routing a transcript path to the harness.
 
         Fresh (missing/empty) paths MUST NOT use --resume: omp v18+
@@ -51,7 +146,6 @@ class Harness:
         """
         if not path:
             return []
-        from pathlib import Path
         try:
             p = Path(path)
             if p.is_file() and p.stat().st_size > 0:
@@ -60,75 +154,82 @@ class Harness:
             pass
         return ["--session-dir", str(Path(path).parent)]
 
+    def resume_argv(self, session_file: str, metadata: dict | None = None) -> list[str]:
+        return ["omp", *self.session_file_flag(session_file, metadata)]
 
-class OmpHarness(Harness):
-    name = "omp"
+    def bare_terminal_argv(self, scope_dir: str = "") -> list[str]:
+        if scope_dir:
+            return ["omp", "--session-dir", scope_dir]
+        return ["omp"]
 
-    def command_argv(self, prompt, no_tty, extra_args=None):
-        if no_tty:
-            return ["omp", "-p", "--auto-approve", *(extra_args or []), prompt]
-        return ["omp", *(extra_args or []), prompt]
-
-    # Bare judge sessions: cheap model, no repo-touching surface. Verified
-    # against `omp -h`: each flag exists (--smol bare selects the configured
-    # cheap model). Judge prompts carry task + transcript + gates inline.
-    judge_argv: list[str] = ["--smol", "--no-skills", "--no-tools",
-                             "--no-rules", "--no-context-files",
-                             "--no-lsp", "--no-extensions", "--no-pty"]
-
-    def launch(self, prompt, workdir, no_tty, extra_args=None, env_file=None,
-               timeout_s=None):
-        from . import env as _env
-        from .errors import HarnessTimeout as _HarnessTimeout
-        argv = self.command_argv(prompt, no_tty, extra_args)
-        if shutil.which(argv[0]) is None:
-            raise HarnessError(f"`{argv[0]}` not found on PATH")
-        if no_tty:
-            merged = _env.merged_env(env_file)
-            if timeout_s is None:
-                proc = subprocess.run(argv, cwd=workdir, env=merged)
-                return proc.returncode
-            proc = subprocess.Popen(argv, cwd=workdir, env=merged,
-                                      start_new_session=True)
+    def watch_transcript(self, workdir: str, scope_dir: Path | None,
+                         before: Path | None, run_id: int | None,
+                         db: Path, result: dict | None = None,
+                         session_file: str = "", launched_at: float = 0.0,
+                         stop_event=None) -> None:
+        if not scope_dir:
+            return
+        import time
+        from . import store_sqlite as _sq
+        time.sleep(1.0)
+        while stop_event is None or not stop_event.is_set():
             try:
-                proc.wait(timeout=timeout_s)
-                return proc.returncode
-            except subprocess.TimeoutExpired:
-                import os as _os
-                import signal as _signal
-                _os.killpg(proc.pid, _signal.SIGTERM)
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    _os.killpg(proc.pid, _signal.SIGKILL)
-                    proc.wait()
-                raise _HarnessTimeout(f"command timed out: {' '.join(argv)}")
-        # TTY exec replaces this process: apply the parsed overlay to our
-        # own environ first so the harness inherits it (same values the
-        # headless child and the sourced shell command would see).
-        os.environ.update(_env.launch_env(env_file))
-        cd_worktree(workdir)
-        os.execvp(argv[0], argv)
-        return 0  # unreachable; keeps type checkers quiet
-    def session_file_flag(self, path: str) -> list[str]:
-        # Fresh (missing/empty) paths route via --session-dir (omp v18+
-        # rejects --resume on those); non-empty transcripts resume.
-        return super().session_file_flag(path)
+                minted = _sq.newest_transcript(scope_dir)
+            except Exception:
+                return
+            if minted is not None and minted != before:
+                if result is not None:
+                    result["session_file"] = str(minted)
+                if run_id is not None and db is not None:
+                    try:
+                        _sq.set_run_file_path(db, run_id, str(minted))
+                    except Exception:
+                        pass
+                return
+            if stop_event is not None:
+                if stop_event.wait(2.0):
+                    return
+            else:
+                time.sleep(2.0)
+
+    def extract_last_assistant_text(self, transcript_path: str,
+                                    max_chars: int | None = 4000) -> str:
+        from . import harness_summary as _hs
+        return _hs.last_assistant_text(transcript_path, max_chars=max_chars)
+
+    def tool_error_rate(self, transcript_path: str,
+                        since_line: int = 0) -> tuple[int, int] | None:
+        from . import harness_summary as _hs
+        return _hs.tool_error_rate(transcript_path, since_line=since_line)
 
 
 HARNESSES: dict[str, Harness] = {"omp": OmpHarness()}
 
 
-def get_harness(name: str) -> Harness:
-    try:
-        return HARNESSES[name]
-    except KeyError:
-        raise HarnessError(
-            f"unsupported harness: {name} (v1 supports: {', '.join(sorted(HARNESSES))})",
-            exit_code=2) from None
+def _load_harnesses() -> None:
+    if "agy" not in HARNESSES:
+        try:
+            from .agy_harness import AgyHarness
+            HARNESSES["agy"] = AgyHarness()
+        except ImportError:
+            pass
 
 
-def command_argv(harness: str, prompt: str, no_tty: bool,
+_load_harnesses()
+
+
+def get_harness(name: str | None = None) -> Harness:
+    from . import store as _store
+    _load_harnesses()
+    key = name or _store.default_harness()
+    if key in HARNESSES:
+        return HARNESSES[key]
+    raise HarnessError(
+        f"unknown harness {(name or key)!r} (supported: {', '.join(sorted(HARNESSES))})",
+        exit_code=2)
+
+
+def command_argv(harness: str | None = None, prompt: str = "", no_tty: bool = False,
                  extra_args: list[str] | None = None) -> list[str]:
     """Full harness argv — shared by launch() and the preview (no --launch)."""
     return get_harness(harness).command_argv(prompt, no_tty, extra_args)
@@ -146,11 +247,13 @@ def cd_worktree(workdir: str) -> None:
         raise HarnessError(f"cannot cd into {workdir}: {e}") from e
 
 
-def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
+def launch(harness: str | None = None, prompt: str = "", workdir: str = "", no_tty: bool = False,
            extra_args: list[str] | None = None,
            env_file: str | None = None,
            watch: dict | None = None,
-           timeout_s: "int | None" = None) -> int:
+           timeout_s: int | None = None,
+           session_file: str | None = None,
+           on_conversation_id: Callable[[str], None] | None = None) -> int:
     """Exec the harness in the worktree. Returns its exit code.
 
     TTY mode: chdirs into the worktree and replaces this process (os.execvp)
@@ -160,30 +263,30 @@ def launch(harness: str, prompt: str, workdir: str, no_tty: bool,
     through the `watch-and-exec` shim instead: it records the minted
     transcript ASAP, then execs the harness — same UX, signals forwarded
     by exec semantics.
-    Non-TTY (--no-tty): runs `omp -p <prompt>` as a child and waits, with
+    Non-TTY (--no-tty): runs harness in headless mode as a child and waits, with
     the env file parsed into the child environment.
     The full argv is echoed to stderr first so run logs capture it.
     """
     argv = get_harness(harness).command_argv(prompt, no_tty, extra_args)
     print(f"$ {' '.join(argv)}", file=sys.stderr, flush=True)
     if watch and not no_tty:
-        from . import env as _env
+        h_name = get_harness(harness).name
         shim = [sys.executable, "-m", "workagent", "watch-and-exec",
                 "--run-id", str(watch["run_id"]),
-                "--scope-dir", str(watch["scope_dir"]),
+                "--harness", h_name,
+                "--workdir", workdir,
+                "--session-file", str(session_file or watch.get("session_file") or ""),
+                "--scope-dir", str(watch.get("scope_dir") or ""),
                 "--before", str(watch.get("before") or ""),
                 "--", *argv]
         # Shim exec replaces this process: apply the overlay first so the
-        # harness inherits it (mirrors OmpHarness.launch TTY path).
-        os.environ.update(_env.launch_env(env_file))
-        cd_worktree(workdir)
-        os.execvp(shim[0], shim)
-        return 0  # unreachable; keeps type checkers quiet
-    _kw: dict = {}
-    if timeout_s is not None:
-        _kw["timeout_s"] = timeout_s
+        # harness inherits it (mirrors Harness.launch TTY path).
+        return exec_tty(shim, workdir, env_file=env_file)
     return get_harness(harness).launch(prompt, workdir, no_tty, extra_args,
-                                       env_file=env_file, **_kw)
+                                       env_file=env_file, timeout_s=timeout_s,
+                                       session_file=session_file,
+                                       on_conversation_id=on_conversation_id)
+
 
 
 def _push_target_lines(worktree: str, branch: str) -> str:

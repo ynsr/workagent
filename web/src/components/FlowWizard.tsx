@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { ChainEditor, startRepoState, validateChain } from "@/components/ChainEditor"
+import { HarnessSelect } from "@/components/HarnessSelect"
 import { chainRunsParallel, runChainOnWorktrees, summarizeExecution } from "@/lib/flowExecution"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { Button } from "@/components/ui/button"
@@ -26,6 +27,7 @@ export function FlowWizard({
   const createRun = useCreateRun()
   const { data: actionsData } = useActions()
   const [working, setWorking] = useState<FlowStep[]>(() => structuredClone(template.steps ?? []))
+  const [harness, setHarness] = useState("")
   const [fresh, setFresh] = useState(false)
   const [saving, setSaving] = useState(false)
   const knownActions = (actionsData?.actions ?? []).map((a) => ({ label: a.label, name: a.name }))
@@ -35,6 +37,7 @@ export function FlowWizard({
   const repoMissing = repoState === "missing"
   const runDisabled = sorted.length === 0 || repoMissing || chainErrors.length > 0
   const dirty = JSON.stringify(working) !== JSON.stringify(template.steps ?? [])
+  const harnessArgs = harness ? ["--harness", harness] : []
   const stepArgs = dirty ? ["--steps", JSON.stringify(working)] : []
   const freshArgs = fresh ? ["--fresh"] : []
   function handleConfirm() {
@@ -46,7 +49,7 @@ export function FlowWizard({
       parallel,
       createRun: (key) => createRun.mutateAsync({
         command: "flow",
-        args: ["run", label, key, ...stepArgs, ...freshArgs, "--yes"],
+        args: ["run", label, key, ...harnessArgs, ...stepArgs, ...freshArgs, "--yes"],
         confirm: true,
       }),
       hooks: {
@@ -185,6 +188,15 @@ export function FlowWizard({
           })()}
         </p>
       ) : null}
+      <div className="mb-3">
+        <HarnessSelect
+          idPrefix="flow-wizard"
+          value={harness}
+          onChange={setHarness}
+          allowDefault
+          defaultLabel="Use template / default"
+        />
+      </div>
       <p className="mb-2 text-[13px] text-muted-foreground">
         Steps edited for this run only — the template is untouched.
       </p>

@@ -1,7 +1,10 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { Monitor, Moon, RotateCcw, Sun } from "lucide-react"
+import { HarnessSelect } from "@/components/HarnessSelect"
 import { PageHeader } from "@/components/PageHeader"
+import { errorText } from "@/components/StatusFeedback"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -12,6 +15,7 @@ import {
 } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
+import { queryKeys, useConfig, useCreateRun } from "@/lib/queries"
 import {
   OPTOUT_ACTIONS,
   OPTOUT_LABELS,
@@ -31,11 +35,43 @@ const THEME_OPTIONS = [
   { value: "system", label: "System", icon: Monitor },
 ] as const
 export function Settings() {
+  const qc = useQueryClient()
   const { theme, setTheme } = useTheme()
+  const { data: cfg } = useConfig()
+  const createRun = useCreateRun()
+  const [pending, setPending] = useState<{ value: string; baseline: string | undefined } | null>(null)
+  const optimisticActive = pending !== null && cfg?.default_harness === pending.baseline
+  const resolvedHarness = optimisticActive ? pending.value : cfg?.default_harness
+  const currentHarness = resolvedHarness && resolvedHarness.length > 0 ? resolvedHarness : "agy"
+
+  useEffect(() => {
+    if (pending !== null && cfg?.default_harness !== pending.baseline) {
+      setPending(null)
+    }
+  }, [cfg?.default_harness, pending])
+
   const [verbose, setVerboseState] = useState(() => getVerbose())
   const [optOuts, setOptOutsState] = useState<Partial<Record<OptOutAction, boolean>>>(
     () => getOptOuts(),
   )
+
+  async function handleDefaultHarness(next: string) {
+    if (next === currentHarness) return
+    const baseline = cfg?.default_harness
+    setPending({ value: next, baseline })
+    try {
+      await createRun.mutateAsync({
+        command: "config",
+        args: ["set", "default-harness", next],
+        confirm: false,
+      })
+      toast.success(`Default AI harness set to ${next}`)
+      void qc.invalidateQueries({ queryKey: queryKeys.config })
+    } catch (err) {
+      setPending((cur) => (cur?.value === next && cur.baseline === baseline ? null : cur))
+      toast.error(errorText(err))
+    }
+  }
 
   function handleVerbose(next: boolean) {
     setVerboseState(next)
@@ -88,6 +124,25 @@ export function Settings() {
               </button>
             ))}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Default AI Harness</CardTitle>
+          <CardDescription>
+            Coding agent CLI used when <span className="font-mono text-[13px]">--harness</span> is not passed.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <HarnessSelect
+            idPrefix="settings-default"
+            allowDefault={false}
+            value={currentHarness}
+            onChange={(next) => void handleDefaultHarness(next)}
+            label="Default harness"
+            description="Default AI harness persisted in config.json."
+          />
         </CardContent>
       </Card>
 

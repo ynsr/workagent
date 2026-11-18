@@ -74,6 +74,7 @@ SPECS: dict[str, dict[str, Any]] = {
                        else (f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest run'])}" if args[:1] == ["run"] else "config")))},
     "adhoc": {"confirm": True, "force": False,
               "key": lambda args: f"adhoc:{_first_positional(args, VAL_FLAGS['adhoc'])}"},
+    "config": {"confirm": False, "force": False, "key": "config"},
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
@@ -84,7 +85,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--released", "--no-squash", "--hard-delete", "--merge-only", "--create-prodtest"),
     "release": ("--yes", "--dry-run", "--json", "--no-status"),
     "open": (),
-    "sync": ("-m", "--merge", "--harness", "--all", "--yes", "--force",
+    "sync": ("-m", "--merge", "--all", "--yes", "--force",
              "-y", "--dry-run", "--json"),
     "register": ("--yes", "-y", "--force", "--json"),
     "repo add": ("--json", "--fetch", "--no-fetch"),
@@ -160,6 +161,9 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "message": (),
     "message action": (),
     "message flow": (),
+    "config": (),
+    "config show": ("--json",),
+    "config set": ("--json",),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "adhoc": ("--prompt", "--harness", "--extra-prompt", "--session-file", "--env-file"),
@@ -168,9 +172,9 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "prodtest run": ("--fix-mode", "--run-dir", "--harness", "--session-file", "--env-file", "--extra-prompt"),
     "start": ("--repo", "--depth", "--base", "--harness", "--session-file", "--env-file", "--extra-prompt", "--related-repo"),
     "review": ("--repo", "--depth", "--harness", "--session-file", "--env-file", "--extra-prompt"),
-    "sync": ("--session-file", "--env-file", "--extra-prompt"),
+    "sync": ("--session-file", "--env-file", "--extra-prompt", "--harness"),
     "register": ("--key", "--issue", "--repo"),
-    "release": ("--checks", "--diff", "--pre-release-timeout", "--ci-timeout", "--env-file", "--action", "--run-mode", "--extra-prompt"),
+    "release": ("--checks", "--diff", "--pre-release-timeout", "--ci-timeout", "--env-file", "--action", "--run-mode", "--extra-prompt", "--harness"),
     "repo add": ("--name", "--path", "--tracker", "--release-branch", "--pre-release"),
     "repo update": ("--default-branch", "--release-branch", "--pre-release", "--overlay-buttons"),
     "link remove": ("--repo",),
@@ -186,7 +190,7 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "flow template compose": ("--from", "--name"),
     "flow template suggest-icon": ("--name", "--label", "--steps", "--pre-execution", "--post-execution", "--used-icons", "--harness"),
     "flow list": ("--worktree",),
-    "flow run": ("--step-config", "--skip-steps", "--steps"),
+    "flow run": ("--step-config", "--skip-steps", "--steps", "--harness"),
     "backup export": ("--path",),
     "backup import": (),
     "backup run-scheduled": ("--keep",),
@@ -197,8 +201,11 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "message draft-reply": ("--ref", "--repo", "--harness", "--extra-prompt", "--env-file", "--session-file"),
     "message update": ("--thread-id", "--sender", "--content", "--ts", "--repo", "--related-repo", "--worktree"),
     "message action run": ("--ref", "--repo", "--harness", "--extra-prompt", "--env-file", "--session-file"),
-    "message flow run": ("--ref", "--repo",),
+    "message flow run": ("--ref", "--repo", "--harness"),
     "message": (),
+    "config": (),
+    "config show": (),
+    "config set": (),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "link": {"list", "set", "remove", "deactivate", "reactivate", "undelete", "destroy-deleted"},
@@ -207,7 +214,8 @@ SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "flow": {"template", "list", "show", "run"},
                                     "backup": {"export", "import", "run-scheduled"},
                                     "message": {"add", "list", "show", "update", "remove", "adhoc", "validate", "draft-reply", "action", "flow"},
-                                    "prodtest": {"plan", "run", "list", "status", "delete", "cleanup"}}
+                                    "prodtest": {"plan", "run", "list", "status", "delete", "cleanup"},
+                                    "config": {"show", "set"}}
 TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "clone", "compose", "delete", "suggest-icon"}
 def _needs_confirm(command: str, args: list[str]) -> bool:
     """True when the (sub)command needs confirm:true (destructive only).
@@ -464,6 +472,7 @@ def _session_file_arg(command: str, args: list[str]) -> str:
 
 
 def _session_file_for(sid: str, command: str = "", args: list[str] | None = None) -> str:
+    from . import store as _store
     from . import store_sqlite as _sq
     action: str | None = None
     try:
@@ -471,10 +480,24 @@ def _session_file_for(sid: str, command: str = "", args: list[str] | None = None
         action = _sq.derive_session_type(command, fix)
     except Exception:
         action = None
+    hname = ""
+    if args:
+        for i, a in enumerate(args):
+            if a == "--harness" and i + 1 < len(args):
+                hname = args[i + 1]
+                break
+            if a.startswith("--harness="):
+                hname = a.split("=", 1)[1]
+                break
+    if not hname:
+        try:
+            hname = _store.default_harness()
+        except Exception:
+            hname = _store.DEFAULT_HARNESS
     try:
-        return str(_sq.session_file_path(sid, "omp", session_type=action))
+        return str(_sq.session_file_path(sid, hname, session_type=action))
     except Exception:
-        base = _sq.runs_dir() / "omp"
+        base = _sq.runs_dir() / hname
         if action:
             base = base / action
         base.mkdir(parents=True, exist_ok=True)

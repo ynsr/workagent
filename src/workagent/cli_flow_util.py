@@ -50,7 +50,7 @@ REVIEW_FLAGS = (("repo", "--repo", "str"),
 
 #: sync-step config keys for the terminal/manual handoff.
 SYNC_FLAGS = (("merge", "--merge", "bool"),
-              ("harness", "--harness", "bool"),
+              ("harness", "--harness", "str"),
               ("session_file", "--session-file", "str"),
               ("env_file", "--env-file", "str"),
               ("extra_prompt", "--extra-prompt", "str"))
@@ -186,11 +186,11 @@ def has_banned(config: object, banned: tuple[str, ...]) -> str | None:
 #: harness in the OS terminal instead of printing its command). sync,
 #: cleanup and release have no such flag — their terminal steps degrade
 #: to a manual pause with the runnable command printed.
-TERMINAL_CAPABLE = ("start", "review", "action")
+TERMINAL_CAPABLE = ("start", "review", "action", "prodtest")
 
 
 def spawn_terminal_step(kind: str, args: list[str], cwd: str = "",
-                        branch: str = "", harness: str = "omp") -> dict:
+                        branch: str = "", harness: str = "") -> dict:
     """Terminal-mode step: mint the transcript scope, spawn, then pause.
 
     *kind* selects terminal support: terminal-capable kinds get
@@ -204,8 +204,10 @@ def spawn_terminal_step(kind: str, args: list[str], cwd: str = "",
     minted HERE and returned as ``session_scope``/``session_dir``. The
     resume path re-resolves the minted file via
     ``adopt_terminal_transcript`` — the file itself is never pre-touched
-    (omp rejects empty transcripts). Best effort: ("", "") on failure.
+    (the harness rejects empty transcripts). Best effort: ("", "") on failure.
     """
+    from . import store as _store
+    harness = harness or _store.default_harness()
     scope_file, scope_dir = mint_terminal_scope(kind, branch, harness)
     from . import cli_harness as _h
     argv = [*args, "--terminal"] if kind in TERMINAL_CAPABLE else args
@@ -229,7 +231,8 @@ def spawn_terminal_step(kind: str, args: list[str], cwd: str = "",
 def persist_terminal_pause(key_or_ref: str, manual_kind: str,
                            manual_args: list, output: str, flow_id: int,
                            terminal_pid=None, scope: str = "",
-                           scope_dir: str = "") -> int | None:
+                           scope_dir: str = "",
+                           harness_name: str | None = None) -> int | None:
     """Persist a terminal/manual pause run tagged with the flow.
 
     The scope (fresh transcript id minted pre-spawn) pins the run's
@@ -245,6 +248,7 @@ def persist_terminal_pause(key_or_ref: str, manual_kind: str,
     try:
         rid = _h.record_headless_attempt(
             key_or_ref, manual_kind, manual_args, output, exit_code=0,
+            harness_name=harness_name or "",
             metadata=meta, session_file=scope or None)
         if rid and scope:
             try:
@@ -299,20 +303,23 @@ def backfill_terminal_transcripts(flow_id: int, key: str, ref: str) -> None:
 #: sync/cleanup/release have no harness phase — their terminal/manual
 #: pause carries no session scope.
 _SESSION_TYPE = {"start": "start", "review": "review",
-                 "fix_comments": "fix_comments", "action": "action"}
+                 "fix_comments": "fix_comments", "action": "action",
+                 "prodtest": "prodtest"}
 
 
 def mint_terminal_scope(kind: str, branch: str = "",
-                        harness: str = "omp") -> tuple[str, str]:
+                        harness: str = "") -> tuple[str, str]:
     """Mint the pre-spawn transcript scope for a terminal flow step.
 
     Returns (scope_session_file, scope_dir): the session id is fresh
     (never reused), the parent dir is created, and the file itself is
-    NOT pre-touched — omp owns the minted filename under --session-dir
-    and rejects empty transcripts. Best effort: ("", "") on failure.
+    NOT pre-touched — the harness owns the minted filename and
+    rejects empty transcripts. Best effort: ("", "") on failure.
     """
     try:
+        from . import store as _store
         from . import store_sqlite as _sq
+        harness = harness or _store.default_harness()
         stype = _SESSION_TYPE.get(kind, "")
         path = _sq.session_file_path(_sq.gen_session_id(), harness,
                                      branch=branch or None,
@@ -327,20 +334,90 @@ def adopt_terminal_transcript(scope_file: str, run_id: int) -> str:
 
     The spawned terminal mints its transcript seconds after we return;
     by resume time it exists under the scope dir. Mirrors the web resume
-    fallback: pinned path when ready, else the newest non-empty .jsonl
-    under the scope dir (persisted on the run). A stored pre-rename
-    ``sessions/…`` path resolves through the runs tree. Returns "" when
-    nothing resumable is found. Never raises.
+    fallback: pinned path when ready, agy workspace adoption when
+    applicable, else the newest non-empty .jsonl under the scope dir
+    (persisted on the run). A stored pre-rename ``sessions/…`` path
+    resolves through the runs tree. Returns "" when nothing resumable is
+    found. Never raises.
     """
     try:
-        from . import store_sqlite as _sq
+        from datetime import datetime
+        from pathlib import Path as _Path
+        from . import store as _store, store_sqlite as _sq
         p = _sq.resolve_transcript_path(scope_file) if scope_file else None
         if p is not None:
             try:
                 if p.is_file() and p.stat().st_size > 0:
+                    try:
+                        from . import agy_harness as _agy
+                        _agy.refresh_if_meta_stub(str(p))
+                    except Exception:
+                        pass
                     return str(p)
             except OSError:
                 pass
+        db = _sq.db_path()
+        row = None
+        if run_id and db.exists():
+            try:
+                row = _sq.get_run(db, run_id, include_deleted_worktrees=True)
+            except Exception:
+                row = None
+        if row is not None:
+            db_p = _sq.resolve_transcript_path(str(row.get("file_path") or ""))
+            if db_p is not None:
+                try:
+                    if db_p.is_file() and db_p.stat().st_size > 0:
+                        try:
+                            from . import agy_harness as _agy
+                            meta = row.get("metadata")
+                            _agy.refresh_if_meta_stub(
+                                str(db_p), meta if isinstance(meta, dict) else None)
+                        except Exception:
+                            pass
+                        return str(db_p)
+                except OSError:
+                    pass
+            hname = str(row.get("harness_name") or "") or _store.default_harness()
+            if hname == "agy":
+                try:
+                    from . import agy_harness as _agy
+                    meta = row.get("metadata")
+                    meta = dict(meta) if isinstance(meta, dict) else {}
+                    dest = (str(p) if p is not None else str(row.get("file_path") or ""))
+                    if not dest:
+                        dest = str(_sq.session_file_path(
+                            _sq.gen_session_id(), "agy",
+                            session_type=row.get("session_type")))
+                    cid = str(meta.get("conversation_id") or "")
+                    if cid and _agy.mirror_brain_transcript(cid, dest):
+                        dp = _Path(dest)
+                        if dp.is_file() and dp.stat().st_size > 0:
+                            _sq.set_run_file_path(db, run_id, dest)
+                            _sq.set_run_metadata(db, run_id, meta)
+                            return dest
+                    worktree = _agy.resolve_worktree_for_run(row)
+                    if worktree:
+                        created_ts = 0.0
+                        created = str(row.get("created_at") or "")
+                        if created:
+                            try:
+                                created_ts = datetime.fromisoformat(created).timestamp()
+                            except Exception:
+                                created_ts = 0.0
+                        adopted_cid, adopted_path = _agy.adopt_from_workspace(
+                            worktree, created_ts, dest)
+                        if adopted_cid:
+                            meta["conversation_id"] = adopted_cid
+                            if adopted_path:
+                                ap = _Path(adopted_path)
+                                if ap.is_file() and ap.stat().st_size > 0:
+                                    _sq.set_run_file_path(db, run_id, adopted_path)
+                                    _sq.set_run_metadata(db, run_id, meta)
+                                    return adopted_path
+                            _sq.set_run_metadata(db, run_id, meta)
+                except Exception:
+                    pass
         scope = p.parent if p is not None else None
         if scope is None:
             return ""
@@ -353,7 +430,6 @@ def adopt_terminal_transcript(scope_file: str, run_id: int) -> str:
         if minted is None:
             return ""
         try:
-            db = _sq.db_path()
             if run_id and db.exists():
                 _sq.set_run_file_path(db, run_id, str(minted))
         except Exception:

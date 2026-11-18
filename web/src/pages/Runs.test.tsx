@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
+import { RunResumeActions } from "@/components/RunActions"
 import { Runs } from "@/pages/Runs"
 import type { Run } from "@/lib/api"
 
@@ -38,6 +39,24 @@ const RUNS: Run[] = [
     target: "start:jira:IPG-4", session_file: "/home/x/runs/omp/IPG-4",
     transcript_ready: false, session_type: "start",
     worktree: "/home/x/wt", last_seq: 1,
+  },
+  {
+    id: "db-5", command: "start", args: ["jira:IPG-5"],
+    state: "succeeded", exit_code: 0, truncated: false, created: 1_756_000_000,
+    target: "start:jira:IPG-5", session_file: "/home/x/runs/agy/IPG-5/conv-1.jsonl",
+    transcript_ready: true, session_type: "start",
+    worktree: "/home/x/wt", last_seq: 1,
+    harness_name: "agy",
+    resume_command: "cd '/home/x/wt' && agy-guard --conversation conv-1",
+  },
+  {
+    id: "db-6", command: "start", args: ["jira:IPG-6"],
+    state: "succeeded", exit_code: 0, truncated: false, created: 1_755_000_000,
+    target: "start:jira:IPG-6", session_file: "/home/x/runs/agy/IPG-6/abc.jsonl",
+    transcript_ready: false, session_type: "start",
+    worktree: "/home/x/wt", last_seq: 1,
+    harness_name: "agy",
+    resume_command: "",
   },
 ]
 
@@ -90,5 +109,52 @@ describe("Runs transcript affordances", () => {
     const copies = screen.getAllByLabelText(/Copy resume command for run db-1/)
     expect(copies.length).toBeGreaterThan(0)
     for (const b of copies) expect((b as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it("renders server resume_command for agy runs", () => {
+    renderRuns()
+    const resumeBtns = screen.getAllByLabelText(/Resume transcript of run db-5 in terminal/)
+    expect(resumeBtns.length).toBeGreaterThan(0)
+    for (const b of resumeBtns) {
+      expect(b).toHaveAttribute("title", "cd '/home/x/wt' && agy-guard --conversation conv-1")
+    }
+    const copyBtns = screen.getAllByLabelText(/Copy resume command for run db-5/)
+    expect(copyBtns.length).toBeGreaterThan(0)
+    for (const b of copyBtns) {
+      expect(b).toHaveAttribute("title", "cd '/home/x/wt' && agy-guard --conversation conv-1")
+    }
+  })
+
+  it("never passes .jsonl paths to --conversation on unready agy runs", () => {
+    renderRuns()
+    const resumeBtns = screen.getAllByLabelText(/Resume transcript of run db-6 in terminal/)
+    expect(resumeBtns.length).toBeGreaterThan(0)
+    for (const b of resumeBtns) {
+      const title = b.getAttribute("title") ?? ""
+      expect(title).toBe("cd '/home/x/wt' && agy-guard")
+      expect(title).not.toContain("--conversation")
+      expect(title).not.toContain(".jsonl")
+    }
+  })
+
+  it("shows nothing-to-resume-yet fallback when sessionFile is empty", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <RunResumeActions
+            runId="empty-1"
+            worktree="/home/x/wt"
+            sessionFile=""
+            transcriptReady={false}
+            harnessName="agy"
+            resumeCommand=""
+          />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
+    const btn = screen.getByLabelText("Resume transcript of run empty-1 in terminal")
+    expect((btn as HTMLButtonElement).disabled).toBe(true)
+    expect(btn).toHaveAttribute("title", "Resume run empty-1 in terminal (nothing to resume yet)")
   })
 })

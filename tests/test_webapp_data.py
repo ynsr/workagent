@@ -387,7 +387,7 @@ def test_open_terminal_supports_ptyxis_and_kitty(monkeypatch, tmp_path, isolated
         monkeypatch.setattr("subprocess.Popen",
                             lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
         # No env.sh in the isolated config → no source prefix.
-        _wr._open_terminal("/wt", str(session))
+        _wr._open_terminal("/wt", str(session), harness_name="omp")
         assert got["argv"] == [*head, "bash", "-lc", f"cd /wt && omp --resume {session}"], term
 
 
@@ -406,25 +406,32 @@ def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch, tmp_path, 
     monkeypatch.setattr("subprocess.Popen",
                         lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
     # No env.sh in the isolated config → no source prefix.
-    _wr._open_terminal("/wt", str(session))
+    _wr._open_terminal("/wt", str(session), harness_name="omp")
     assert got["argv"] == ["xterm", "-e", "bash", "-lc", f"cd /wt && omp --resume {session}"]
 
 def test_resume_shell_command_splits_fresh_and_real(tmp_path, isolated_config):
     """omp v18+ rejects --resume on missing/empty transcripts: fresh
-    paths route via --session-dir, real ones via --resume."""
+    paths route via --session-dir, real ones via --resume.
+    agy routes via agy-guard [--conversation <id>].
+    """
     from workagent import web_runs as _wr
     # No env.sh in the isolated config → no source prefix.
     missing = str(tmp_path / "2026-10-07T10-06-39-103Z-6317.jsonl")
-    assert _wr._resume_shell_command("/wt", missing) == \
+    assert _wr._resume_shell_command("/wt", missing, harness_name="omp") == \
         f"cd /wt && omp --session-dir {tmp_path}"
     empty = tmp_path / "empty.jsonl"
     empty.touch()
-    assert _wr._resume_shell_command("/wt", str(empty)) == \
+    assert _wr._resume_shell_command("/wt", str(empty), harness_name="omp") == \
         f"cd /wt && omp --session-dir {tmp_path}"
     real = tmp_path / "real.jsonl"
     real.write_text('{"type":"session"}\n')
-    assert _wr._resume_shell_command("/wt", str(real)) == \
+    assert _wr._resume_shell_command("/wt", str(real), harness_name="omp") == \
         f"cd /wt && omp --resume {real}"
+
+    # agy with default harness (omitted harness_name defaults to agy)
+    assert _wr._resume_shell_command("/wt", missing) == "cd /wt && agy-guard"
+    assert _wr._resume_shell_command("/wt", str(real), metadata={"conversation_id": "c-123"}) == \
+        "cd /wt && agy-guard --conversation c-123"
 
 def test_specs_mirror_cli_flags():
     """Parity: webapp BOOL_FLAGS/VAL_FLAGS mirror the real Typer CLI (#25 checklist).

@@ -237,7 +237,7 @@ def _adopt_fix_reuse(result: dict, review_key: str) -> bool:
 
     The web server passes the saved run `file_path` as explicit
     --session-file. The owning run is found by exact file_path match (the
-    pinned path itself — omp-minted filenames never match their stem, so
+    pinned path itself — minted filenames never match their stem, so
     stem lookup silently misses). When the newest row on the path is a
     continuation (`fix_comments`) row rather than the review identity,
     the key's latest review run is used instead, as long as it names the
@@ -245,7 +245,7 @@ def _adopt_fix_reuse(result: dict, review_key: str) -> bool:
     owner is the latest non-running review run for the key, mark the
     reuse so the harness layer treats the path as a resume target
     verbatim instead of rescoping it under fix_comments/ (same stem,
-    wrong dir → omp starts fresh). Returns True when the reuse was
+    wrong dir starts fresh). Returns True when the reuse was
     adopted.
     """
     try:
@@ -516,7 +516,7 @@ def review(
     ref: Optional[str] = typer.Argument(None, autocompletion=_complete_refs, help="PR/MR URL, OWNER/REPO#NUM, or worktree ref (key/branch/worktree); optional with --all."),
     repo: Optional[str] = typer.Option(None, "--repo", autocompletion=_complete_repos, help="Registered name, local path, or clone URL."),
     depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
-    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured)."),
     no_tty: bool = typer.Option(False, "--no-tty", help="Run harness non-interactively."),
     launch: bool = typer.Option(False, "-L", "--launch", help="Launch the harness in the worktree (default: print the harness command and land in an interactive shell inside the worktree)."),
     terminal: bool = typer.Option(False, "--terminal", help="Open the harness command in the OS terminal instead of running headless (mutually exclusive with --launch)."),
@@ -531,7 +531,7 @@ def review(
     fix_comments: bool = typer.Option(False, "--fix-comments", help="Fix open PR/MR review comments instead of reviewing: validate each finding, apply, resolve/close, commit and push."),
     then_fix_comments: bool = typer.Option(False, "--then-fix-comments", help="After a successful review run (exit 0), chain a fix-comments run in the same harness session. Headless runs it automatically; preview/terminal print the follow-up command for manual use. (deprecated: use flows; ignored inside flow templates)"),
     use_review_session: bool = typer.Option(False, "--use-review-session", help="With --fix-comments or --then-fix-comments: continue the latest review session instead of starting a fresh fix session."),
-    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path: resumed via omp --resume when non-empty, otherwise used as --session-dir scope for a fresh session."),
+    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path to resume or populate."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before terminal/headless harness commands (default: env_file in config.json, auto-created)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
     no_status: bool = typer.Option(False, "--no-status", help="Skip automatic issue status transitions."),
@@ -581,6 +581,8 @@ def review(
                 argv += ["--env-file", env_file]
             if no_status:
                 argv += ["--no-status"]
+            if harness:
+                argv += ["--harness", harness]
             if fix_comments:
                 return argv + ["--fix-comments"]
             return argv + ["--post-comments"] + (["--fix"] if fix else [])
@@ -611,11 +613,13 @@ def review(
                         columns=["key", "pr_url", "command", "exit_code"],
                         title="Review runs", empty="nothing reviewed")
             from . import cli_harness as _h
+            h_name = harness or store.default_harness()
             for k, pr in reviewable:
                 _h.record_headless_attempt(
                     k, "review", _child_argv(pr),
                     f"harness command: {_child_cmd(pr)}",
-                    exit_code=0, fix_comments=fix_comments,
+                    exit_code=0, harness_name=h_name,
+                    fix_comments=fix_comments,
                     metadata={"pr_url": pr, "mode": "all-preview"})
             return
         rows: list[dict] = []
@@ -691,7 +695,7 @@ def review(
     if outcome == "recorded" and tid and not dry_run:
         eprint(f"note: linked tracker {tid} to repo {repo_dir}")
     base_branch = repos.default_branch(repo_dir)
-    harness_name = harness or store.load_config().get("default_harness", "omp")
+    harness_name = harness or store.default_harness()
     pr_url = parsed["url"]
     info: dict = {}
     if parsed["kind"] in ("pr", "mr"):

@@ -201,6 +201,7 @@ from . import cli_adhoc  # noqa: F401  (registers `adhoc`)
 from . import cli_prodtest  # noqa: F401  (registers `prodtest`)
 from . import cli_flow  # noqa: F401  (registers `flow`)
 from . import cli_backup  # noqa: F401  (registers `backup`)
+from . import cli_config  # noqa: F401  (registers `config`)
 
 
 @app.command("doctor")

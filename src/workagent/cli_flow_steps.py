@@ -83,7 +83,8 @@ def run_start_step(ref: str, key: str, config: dict,
     target = _start_target(ref, key)
     extra = flag_argv(config, *START_FLAGS)
     if bool(config.get("terminal", False)):
-        harness = str(config.get("harness", "") or "omp")
+        from . import store as _store
+        harness = str(config.get("harness", "") or _store.default_harness())
         return spawn("start", [target, *extra], branch="", harness=harness)
     if not (bool(config.get("launch", True))
             and not any(config.get(k) for k in ("preview", "dry_run", "terminal"))):
@@ -163,7 +164,7 @@ def run_review_step(key: str, config: dict, fix_comments: bool,
     fix_argv = ["--fix-comments"] if fix else []
     extra = flag_argv(config, *REVIEW_FLAGS)
     if bool(config.get("terminal", False)):
-        harness = str(config.get("harness", "") or "omp")
+        harness = str(config.get("harness", "") or _store.default_harness())
         links = _store.load_links(include_deleted=True)
         branch = str((links.get(key, {}) or {}).get("branch", "") or "")
         return spawn("review", [key, *fix_argv, *extra],
@@ -186,8 +187,12 @@ def run_sync_step(key: str, config: dict, json_output: bool,
     from . import store as _store
     extra = flag_argv(config, *SYNC_FLAGS)
     if bool(config.get("terminal", False)):
-        wt = str((_store.load_links().get(key, {}) or {}).get("worktree", "") or "")
-        return spawn("sync", [key, *extra], wt)
+        links = _store.load_links()
+        wt = str((links.get(key, {}) or {}).get("worktree", "") or "")
+        harness = str(config.get("harness", "") or _store.default_harness())
+        dlinks = _store.load_links(include_deleted=True)
+        branch = str((dlinks.get(key, {}) or {}).get("branch", "") or "")
+        return spawn("sync", [key, *extra], wt, branch=branch, harness=harness)
     if not (bool(config.get("launch", True))
             and not any(config.get(k) for k in ("preview", "dry_run", "terminal"))):
         return manual("sync", [key, *extra])
@@ -210,7 +215,7 @@ def run_action_step(key: str, action_label: str, config: dict,
     if bool(config.get("terminal", False)):
         links = _store.load_links()
         wt = str((links.get(key, {}) or {}).get("worktree", "") or "")
-        harness = str(config.get("harness", "") or "omp")
+        harness = str(config.get("harness", "") or _store.default_harness())
         dlinks = _store.load_links(include_deleted=True)
         branch = str((dlinks.get(key, {}) or {}).get("branch", "") or "")
         return spawn("action", ["run", action_label, key, *extra], wt,
@@ -241,7 +246,7 @@ def run_prodtest_plan_step(key: str, config: dict, json_output: bool,
     if bool(config.get("terminal", False)):
         links = _store.load_links()
         wt = str((links.get(key, {}) or {}).get("worktree", "") or "")
-        harness = str(config.get("harness", "") or "omp")
+        harness = str(config.get("harness", "") or _store.default_harness())
         dlinks = _store.load_links(include_deleted=True)
         branch = str((dlinks.get(key, {}) or {}).get("branch", "") or "")
         return spawn("prodtest", ["plan", key, *extra], wt,

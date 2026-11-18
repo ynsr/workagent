@@ -3,6 +3,7 @@ import { ChevronDown, GripVertical, Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { HarnessSelect } from "@/components/HarnessSelect"
 import { RelatedReposSelect } from "@/components/RelatedReposSelect"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { EXECUTION_MODES, SEQUENTIAL_ONLY_STEPS, summarizeExecution } from "@/lib/flowExecution"
@@ -177,6 +178,15 @@ function StepConfigForm({
   const showMergeOnly = kind === "cleanup"
   const showUpdate = kind === "prodtest_plan"
   const showRelease = kind === "release"
+  const showHarness =
+    kind === "start" ||
+    kind === "review" ||
+    kind === "fix_comments" ||
+    kind === "sync" ||
+    kind === "action" ||
+    kind === "prodtest_plan"
+  const harness = typeof config.harness === "string" ? config.harness : ""
+  const hintHarness = typeof hints?.harness === "string" ? hints.harness : ""
   const releaseChecks = typeof config.checks === "string" ? config.checks : "ci"
   const releaseDiff = typeof config.diff === "string" ? config.diff : "remote"
   function patch(key: string, value: unknown) {
@@ -318,6 +328,17 @@ function StepConfigForm({
             </select>
           </div>
         </>
+      ) : null}
+      {showHarness ? (
+        <div className="sm:col-span-2">
+          <HarnessSelect
+            idPrefix={idPrefix}
+            variant="select"
+            allowDefault
+            value={harness || hintHarness}
+            onChange={(v) => patch("harness", v)}
+          />
+        </div>
       ) : null}
       <div className="sm:col-span-2">
         <button

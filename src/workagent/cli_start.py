@@ -62,14 +62,14 @@ def start(
     related_repo: Optional[list[str]] = typer.Option(None, "--related-repo", autocompletion=_complete_repos, help="Additional repo checkouts to fan out (repeatable): one child worktree per repo on the same branch."),
     depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
     base: Optional[str] = typer.Option(None, "--base", autocompletion=_complete_branches, help="Base branch (default: repo default). A non-default branch runs on that branch instead of creating a new one."),
-    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured; v1: omp)."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured)."),
     no_tty: bool = typer.Option(False, "--no-tty", help="Run harness non-interactively (auto commit/push/MR prompt suffix)."),
     launch: bool = typer.Option(False, "-L", "--launch", help="Launch the harness in the worktree (default: print the harness command and land in an interactive shell inside the worktree)."),
     terminal: bool = typer.Option(False, "--terminal", help="Open the harness command in the OS terminal instead of running headless (mutually exclusive with --launch)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
-    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path: resumed via omp --resume when non-empty, otherwise used as --session-dir scope for a fresh session."),
+    session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path to resume or populate."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before terminal/headless harness commands (default: env_file in config.json, auto-created)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
     no_status: bool = typer.Option(False, "--no-status", help="Skip automatic issue status transitions."),
@@ -190,7 +190,7 @@ def start(
     issue = refs.fetch_issue(parsed)
     if parsed["tool"] == "jira":
         key = refs.issue_key(parsed, Path(r).name)
-    harness_name = harness or store.load_config().get("default_harness", "omp")
+    harness_name = harness or store.default_harness()
 
     # git-wt detects the tracker from a URL (--link must be a URL, never a
     # shorthand like `OWNER/REPO#N`); build full issue URLs from parsed refs.
@@ -386,7 +386,7 @@ def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
     """Start a coding session on a PR/MR source branch (branch-keyed row)."""
     repo_dir, base_branch, tid, outcome = trackers.resolve_repo_for_ref(
         parsed, repo, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
-    harness_name = harness or store.load_config().get("default_harness", "omp")
+    harness_name = harness or store.default_harness()
     pr_url = parsed["url"]
     try:
         info, head_ref = refs.require_head_ref(parsed, repo_dir, ref)

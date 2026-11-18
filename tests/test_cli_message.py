@@ -116,6 +116,33 @@ def test_message_flow_resolves_linked_worktree_without_ref(tmp_path, monkeypatch
     assert seen == {"label": "resolv", "ref": "k1"}
 
 
+def test_message_flow_run_forwards_harness(tmp_path, monkeypatch):
+    import json as _json
+    from typer.testing import CliRunner
+    from workagent import cli as cli_mod
+    import workagent.store_flows as sfl
+    db = _seed(tmp_path, monkeypatch)
+    sfl.create_template(db, name="Syncer", category="message",
+                        steps=_json.dumps([{"kind": "sync"}]))
+    from workagent import store_messages as sm
+    sm.create_message(db, message_id="p1", repos=["r1"])
+    import workagent.cli_message as cm
+    monkeypatch.setattr(cm, "_resolve_exec", lambda row, ref, repo: ("/tmp/wt", "k1"))
+    monkeypatch.setattr(cm.store, "load_links",
+                        lambda: {"k1": {"worktree": "/tmp/wt"}})
+    import workagent.worktrees as _wt
+    monkeypatch.setattr(_wt, "is_valid_worktree", lambda p: True)
+    seen = {}
+    monkeypatch.setattr("workagent.cli_flow_run.flow_run",
+                        lambda label, ref, **kw: seen.update(label=label, ref=ref, kw=kw))
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["message", "flow", "run", "syncer", "p1", "--yes", "--json", "--harness", "omp"])
+    assert res.exit_code == 0, res.output
+    assert seen.get("kw", {}).get("harness") == "omp"
+
+
+
+
 def test_message_action_run_repo_path_fail_fast(tmp_path, monkeypatch):
     from typer.testing import CliRunner
     from workagent import cli as cli_mod

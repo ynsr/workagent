@@ -40,6 +40,16 @@ vi.mock("@/lib/queries", () => ({
     refetch: vi.fn(),
   }),
   useActions: () => ({ data: { actions: [] } }),
+  useConfig: () => ({
+    data: {
+      default_harness: "agy",
+      supported_harnesses: ["agy", "omp"],
+      harnesses: [
+        { name: "agy", label: "Antigravity (agy-guard)", binary: "agy-guard", available: true },
+        { name: "omp", label: "OMP (omp)", binary: "omp", available: true },
+      ],
+    },
+  }),
   useCreateRun: () => ({ mutateAsync }),
   useRepos: () => ({ data: [] }),
 }))

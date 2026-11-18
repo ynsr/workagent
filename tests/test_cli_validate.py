@@ -820,3 +820,21 @@ def test_retry_cap_controls_loop(monkeypatch, isolated_config):
         run_once=run_once, run_judge=lambda p: "ok\nJOB_DONE")
     assert res["verdict"] == "MAX_RETRIES_EXCEEDED"
     assert len(calls) == 7
+
+
+def test_validate_headless_uses_harness_tool_error_rate(monkeypatch):
+    from workagent import cli_validate as cv
+
+    class FakeHarness:
+        def tool_error_rate(self, path, since_line=0):
+            return (5, 5)  # 100% error rate
+
+    monkeypatch.setattr("workagent.backend.get_harness", lambda name: FakeHarness())
+    monkeypatch.setattr(cv, "_branch_pushed", lambda *a, **k: (True, "ok"))
+    monkeypatch.setattr(cv, "_git_diff_stat", lambda *a, **k: "1 file changed")
+    res = cv.run_deterministic_gates("/tmp", 0, "summary", True,
+                                     transcript_path="/tmp/t.jsonl",
+                                     harness_name="agy")
+    assert res["passed"] is False
+    assert any("tool error rate" in r for r in res["reasons"])
+

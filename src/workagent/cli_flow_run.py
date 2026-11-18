@@ -199,8 +199,12 @@ def flow_run(
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     fresh: bool = typer.Option(False, "--fresh", help="Force a new flow row instead of resuming."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Coding harness name (e.g. agy; default: configured default)."),
 ) -> None:
     """Run a flow template against an issue ref or worktree."""
+    if harness:
+        from . import backend
+        backend.get_harness(harness)
     tpl = store.get_template(template)
     if tpl is None:
         _fail(f"unknown flow template: {template!r}", EXIT_USAGE)
@@ -223,6 +227,9 @@ def flow_run(
     merged_steps = [{**s, "config": _merge_config(
         s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
         for i, s in enumerate(steps)]
+    if harness:
+        for s in merged_steps:
+            s.setdefault("config", {})["harness"] = harness
     # Fail fast on per-run overrides (before any flow row exists): banned
     # shortcut/cleanup flags rejected via the shared keys+values scanner.
     for step in merged_steps:
@@ -279,6 +286,9 @@ def flow_run(
             merged_steps = [{**s, "config": _merge_config(
                 s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
                 for i, s in enumerate(steps)]
+            if harness:
+                for s in merged_steps:
+                    s.setdefault("config", {})["harness"] = harness
         elif steps_override:
             # Legacy/template-launched row: no stored chain, so the old
             # cursor cannot be trusted against a new --steps chain either.
@@ -402,6 +412,9 @@ def flow_run(
         step = merged_steps[idx]
         kind = step["kind"]
         config = step.get("config") or {}
+        if harness:
+            config = {**config, "harness": harness}
+        step_harness = harness or config.get("harness") or store.default_harness()
         label = str(step.get("action_label") or "")
         child_key = _flow_child_key(key, ref, entry)
         banner = _step_title(idx, kind, label)
@@ -499,7 +512,8 @@ def flow_run(
                     f"harness command: {cmd}", fid,
                     terminal_pid=outcome.get("terminal_pid"),
                     scope=str(outcome.get("session_scope", "") or ""),
-                    scope_dir=str(outcome.get("session_dir", "") or ""))
+                    scope_dir=str(outcome.get("session_dir", "") or ""),
+                    harness_name=step_harness)
             except Exception:
                 pass
             if outcome.get("terminal_pid") is not None:

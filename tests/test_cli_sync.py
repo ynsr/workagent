@@ -288,3 +288,27 @@ def test_sync_open_pr_missing_ref_still_syncs(
     monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
     r = _invoke("sync", "IPG-929", "--yes", "--json")
     assert r.exit_code == 0
+
+
+def test_sync_harness_option_selects_harness(isolated_config, tmp_path, monkeypatch):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    subprocess.run(["git", "init", "-q", str(wt)], check=True)
+    _link_session(tmp_path / "proj", wt, monkeypatch)
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda *a: "up-to-date")
+    monkeypatch.setattr(cli.sync_mod, "local_merge", lambda *a, **k: {"status": "conflict", "conflicts": ["a.txt"]})
+    monkeypatch.setattr(cli.sync_mod, "auto_resolve_changelog", lambda *a: False)
+    seen = []
+    monkeypatch.setattr(cli, "_run_harness", lambda name, *a, **k: seen.append(name))
+    r = _invoke("sync", "IPG-929", "--merge", "--harness", "omp")
+    assert r.exit_code == 0, r.output
+    assert seen == ["omp"]
+
+
+def test_sync_unknown_harness(isolated_config, tmp_path, monkeypatch):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    _link_session(tmp_path / "proj", wt, monkeypatch)
+    r = _invoke("sync", "IPG-929", "--harness", "unknown-harness")
+    assert r.exit_code == 2
+

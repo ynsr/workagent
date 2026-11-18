@@ -1420,3 +1420,316 @@ def test_persisted_summary_maps_step_rows_to_real_command():
     assert out["command"] == "review" and out["args"] == ["review"]
     out = web_runs._persisted_summary(row("flow step sync", ["IPG-2"]))
     assert out["command"] == "sync" and out["args"] == ["IPG-2"]
+
+
+def test_resume_shell_command_uses_harness(tmp_path, isolated_config):
+    from workagent.web_runs import _resume_shell_command
+    # agy with metadata conversation_id
+    cmd = _resume_shell_command("/wt", str(tmp_path / "sess.jsonl"),
+                                harness_name="agy", metadata={"conversation_id": "conv-9"})
+    assert cmd == "cd /wt && agy-guard --conversation conv-9"
+    assert "omp" not in cmd
+
+    # agy default without cid
+    cmd_bare = _resume_shell_command("/wt", str(tmp_path / "sess.jsonl"), harness_name="agy")
+    assert cmd_bare == "cd /wt && agy-guard"
+
+    # omp harness with real file
+    real = tmp_path / "real.jsonl"
+    real.write_text("{}\n")
+    cmd_omp = _resume_shell_command("/wt", str(real), harness_name="omp")
+    assert cmd_omp == f"cd /wt && omp --resume {real}"
+
+
+def test_worktree_terminal_spawns_agy_and_locks(client, monkeypatch, tmp_path):
+    import subprocess as sp
+    from workagent import store as _store
+    wt = tmp_path / "wt-term"
+    wt.mkdir()
+    _store.record_link("rk-term", {"worktree": str(wt), "branch": "b-term", "repo": "/tmp/r"})
+    holder = sp.Popen(["sleep", "30"])
+    spawned = {}
+    monkeypatch.setattr("workagent.cli_harness.spawn_in_terminal",
+                        lambda cmd, cwd="": (spawned.update(cmd=cmd, cwd=cwd), holder.pid)[1])
+    try:
+        r_bad = client.post("/api/worktrees/rk-term/terminal", json={"mode": "harness", "harness": "unknown-harness"})
+        assert r_bad.status_code == 400
+
+        r = client.post("/api/worktrees/rk-term/terminal", json={"mode": "harness", "harness": "agy"})
+        assert r.status_code == 200, r.text
+        assert spawned["cwd"] == str(wt)
+        assert "agy-guard" in spawned["cmd"]
+        assert "omp" not in spawned["cmd"]
+        rec = _store.active_harness("rk-term")
+        assert rec is not None
+        assert rec.get("harness") == "agy"
+        assert rec.get("origin") == "terminal"
+        assert rec.get("pid") == holder.pid
+    finally:
+        holder.kill()
+        _store.clear_harness_run("rk-term")
+
+
+def test_start_terminal_wraps_watch_and_exec(client, monkeypatch, tmp_path):
+    import subprocess as sp
+    from workagent import store as _store
+    wt = tmp_path / "wt-wrap"
+    wt.mkdir()
+    _store.record_link("rk-wrap", {"worktree": str(wt), "branch": "b-wrap", "repo": "/tmp/r"})
+    sess = tmp_path / "s-wrap.jsonl"
+    sess.write_text("{}\n")
+    holder = sp.Popen(["sleep", "30"])
+    opened = {}
+    monkeypatch.setattr("workagent.webapp._open_terminal_command",
+                        lambda cmd, cwd="": (opened.update(cmd=cmd, cwd=cwd), holder.pid)[1])
+    run = client.app.state.registry.create("start", ["rk-wrap"], "start:rk-wrap")
+    run.worktree = str(wt)
+    run.session_file = str(sess)
+    run.db_run_id = 42
+    run.harness_name = "agy"
+    run.append("harness command: cd /tmp && agy-guard -i=hello\n")
+    try:
+        r = client.post(f"/api/runs/{run.id}/start-terminal")
+        assert r.status_code == 200, r.text
+        cmd = opened["cmd"]
+        assert "watch-and-exec" in cmd
+        assert "--run-id 42" in cmd
+        assert "--harness agy" in cmd
+        assert f"--workdir {wt}" in cmd
+        assert f"--session-file {sess}" in cmd
+        assert f"--before {sess}" in cmd
+        rec = _store.active_harness("rk-wrap")
+        assert rec is not None and rec.get("harness") == "agy"
+        assert rec.get("pid") == holder.pid
+    finally:
+        holder.kill()
+        _store.clear_harness_run("rk-wrap")
+
+
+def test_run_summary_json_contains_harness_and_resume_command(client, tmp_path):
+    sess = tmp_path / "sess.jsonl"
+    sess.write_text('{"type":"session"}\n')
+    run = client.app.state.registry.create("start", ["IPG-10"], "start:IPG-10")
+    run.worktree = str(tmp_path)
+    run.session_file = str(sess)
+    run.harness_name = "agy"
+
+    r = client.get(f"/api/runs/{run.id}")
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["harness_name"] == "agy"
+    assert data["resume_command"] == f"cd {tmp_path} && agy-guard"
+
+    # When transcript not ready, resume_command must be empty string
+    empty_sess = tmp_path / "empty.jsonl"
+    run2 = client.app.state.registry.create("start", ["IPG-11"], "start:IPG-11")
+    run2.worktree = str(tmp_path)
+    run2.session_file = str(empty_sess)
+    r2 = client.get(f"/api/runs/{run2.id}")
+    assert r2.status_code == 200
+    assert r2.json()["resume_command"] == ""
+
+
+def test_resolve_session_file_adopts_agy_workspace(isolated_config, tmp_path, monkeypatch):
+    import sqlite3
+    import json
+    from workagent import store_sqlite as sq, store as _store
+    from workagent.web_runs_routes import _resolve_session_file
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = tmp_path / "wt-adopt"
+    wt.mkdir()
+    _store.record_link("rk-adopt", {"worktree": str(wt), "branch": "b-adopt", "repo": "/tmp/r"})
+    _seed_worktree(db, "rk-adopt")
+
+    agy_home = tmp_path / "antigravity"
+    agy_home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(agy_home))
+
+    sum_db = agy_home / "conversation_summaries.db"
+    with sqlite3.connect(sum_db) as conn:
+        conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT, workspace_uris TEXT, last_modified_time TEXT)")
+        conn.execute(
+            "INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+            ("conv-adopt-123", json.dumps([wt.resolve().as_uri()]), "2099-01-01T00:00:00+00:00")
+        )
+    brain_log = agy_home / "brain" / "conv-adopt-123" / ".system_generated" / "logs"
+    brain_log.mkdir(parents=True)
+    (brain_log / "transcript.jsonl").write_text('{"event":"test"}\n')
+
+    rid = sq.insert_run(db, "start", ["rk-adopt"], None, worktree_ref="rk-adopt",
+                        harness_name="agy", file_path="", state="running")
+
+    resolved = _resolve_session_file("", run_id=rid)
+    assert resolved and resolved.endswith(".jsonl")
+    assert (brain_log / "transcript.jsonl").read_text() == '{"event":"test"}\n'
+    row = sq.get_run(db, rid)
+    assert row["file_path"] == resolved
+    assert row["metadata"].get("conversation_id") == "conv-adopt-123"
+
+
+def test_resolve_session_file_mirrors_known_conversation_id(isolated_config, tmp_path, monkeypatch):
+    import sqlite3
+    import json
+    from pathlib import Path
+    from workagent import store_sqlite as sq, store as _store
+    from workagent.web_runs_routes import _resolve_session_file
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = tmp_path / "wt-known"
+    wt.mkdir()
+    _store.record_link("rk-known", {"worktree": str(wt), "branch": "b-known", "repo": "/tmp/r"})
+    _seed_worktree(db, "rk-known")
+
+    agy_home = tmp_path / "antigravity"
+    agy_home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(agy_home))
+
+    # Known conversation transcript in brain
+    brain_known = agy_home / "brain" / "conv-known-456" / ".system_generated" / "logs"
+    brain_known.mkdir(parents=True)
+    (brain_known / "transcript.jsonl").write_text('{"event":"known_transcript"}\n')
+
+    # Newer conversation in conversation_summaries.db that should NOT be adopted
+    sum_db = agy_home / "conversation_summaries.db"
+    with sqlite3.connect(sum_db) as conn:
+        conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT, workspace_uris TEXT, last_modified_time TEXT)")
+        conn.execute(
+            "INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+            ("conv-newer-789", json.dumps([wt.resolve().as_uri()]), "2026-11-17T12:00:00+00:00")
+        )
+    brain_newer = agy_home / "brain" / "conv-newer-789" / ".system_generated" / "logs"
+    brain_newer.mkdir(parents=True)
+    (brain_newer / "transcript.jsonl").write_text('{"event":"newer_unrelated"}\n')
+
+    rid = sq.insert_run(db, "start", ["rk-known"], None, worktree_ref="rk-known",
+                        harness_name="agy", file_path="", state="running",
+                        metadata={"conversation_id": "conv-known-456"})
+
+    resolved = _resolve_session_file("", run_id=rid)
+    assert resolved and resolved.endswith(".jsonl")
+    content = Path(resolved).read_text(encoding="utf-8")
+    assert "conv-known-456" in content
+    assert "known_transcript" in content
+    assert "newer_unrelated" not in content
+    row = sq.get_run(db, rid)
+    assert row["file_path"] == resolved
+    assert row["metadata"].get("conversation_id") == "conv-known-456"
+
+
+def test_resolve_session_file_resolves_worktree_from_command_target(isolated_config, tmp_path, monkeypatch):
+    import sqlite3
+    import json
+    from pathlib import Path
+    from workagent import store_sqlite as sq, store as _store
+    from workagent.web_runs_routes import _resolve_session_file
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = tmp_path / "wt-target"
+    wt.mkdir()
+    _store.record_link("rk-target", {"worktree": str(wt), "branch": "b-target", "repo": "/tmp/r"})
+    _seed_worktree(db, "rk-target")
+
+    agy_home = tmp_path / "antigravity"
+    agy_home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(agy_home))
+
+    sum_db = agy_home / "conversation_summaries.db"
+    with sqlite3.connect(sum_db) as conn:
+        conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT, workspace_uris TEXT, last_modified_time TEXT)")
+        conn.execute(
+            "INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+            ("conv-target-999", json.dumps([wt.resolve().as_uri()]), "2099-01-01T00:00:00+00:00")
+        )
+    brain_log = agy_home / "brain" / "conv-target-999" / ".system_generated" / "logs"
+    brain_log.mkdir(parents=True)
+    (brain_log / "transcript.jsonl").write_text('{"event":"target_test"}\n')
+
+    # Run with empty worktree_ref, so worktree must be resolved from command target "start:rk-target"
+    rid = sq.insert_run(db, "start", ["rk-target"], None, worktree_ref=None,
+                        harness_name="agy", file_path="", state="running")
+
+    resolved = _resolve_session_file("", run_id=rid)
+    assert resolved and resolved.endswith(".jsonl")
+    content = Path(resolved).read_text(encoding="utf-8")
+    assert "conv-target-999" in content
+    assert "target_test" in content
+    row = sq.get_run(db, rid)
+    assert row["file_path"] == resolved
+    assert row["metadata"].get("conversation_id") == "conv-target-999"
+
+
+def test_resolve_session_file_refreshes_agy_meta_stub(isolated_config, tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    from workagent import store_sqlite as sq
+    from workagent.web_runs_routes import _resolve_session_file
+
+    db = sq.db_path()
+    sq.init_db(db)
+    agy_home = tmp_path / "antigravity"
+    agy_home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(agy_home))
+
+    stub = sq.session_file_path("stub-id", "agy", branch="feat/stub", session_type="start")
+    stub.write_text(json.dumps({"type": "agy_meta", "conversation_id": "conv-web-stub"}) + "\n", encoding="utf-8")
+
+    brain_log = agy_home / "brain" / "conv-web-stub" / ".system_generated" / "logs"
+    brain_log.mkdir(parents=True)
+    (brain_log / "transcript.jsonl").write_text(
+        json.dumps({"type": "PLANNER_RESPONSE", "status": "DONE", "content": "web-stub-refreshed"}) + "\n",
+        encoding="utf-8",
+    )
+
+    resolved = _resolve_session_file(str(stub))
+    assert resolved == str(stub)
+    assert "web-stub-refreshed" in Path(resolved).read_text(encoding="utf-8")
+
+
+def test_resolve_session_file_resolves_inactive_link_from_issue_url_target(isolated_config, tmp_path, monkeypatch):
+    import json, sqlite3
+    from pathlib import Path
+    from workagent import store_sqlite as sq, store as _store
+    from workagent.web_runs_routes import _resolve_session_file
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = tmp_path / "wt-web-inact"
+    wt.mkdir()
+    _store.record_link(
+        "github:o/r#88",
+        {
+            "worktree": str(wt),
+            "branch": "feat/88",
+            "repo": "/tmp/r",
+            "issue_url": "https://github.com/o/r/issues/88",
+        },
+    )
+    _store.set_worktree_active("github:o/r#88", False)
+
+    agy_home = tmp_path / "antigravity"
+    agy_home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(agy_home))
+    sum_db = agy_home / "conversation_summaries.db"
+    with sqlite3.connect(sum_db) as conn:
+        conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT, workspace_uris TEXT, last_modified_time TEXT)")
+        conn.execute(
+            "INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+            ("conv-web-inact-88", json.dumps([wt.resolve().as_uri()]), "2099-01-01T00:00:00+00:00"),
+        )
+    brain_log = agy_home / "brain" / "conv-web-inact-88" / ".system_generated" / "logs"
+    brain_log.mkdir(parents=True)
+    (brain_log / "transcript.jsonl").write_text('{"event":"web_inact_88"}\n', encoding="utf-8")
+
+    rid = sq.insert_run(
+        db, "start", ["https://github.com/o/r/issues/88"], None,
+        worktree_ref=None, harness_name="agy", file_path="", state="running",
+    )
+    resolved = _resolve_session_file("", run_id=rid)
+    assert resolved and resolved.endswith(".jsonl")
+    assert "web_inact_88" in Path(resolved).read_text(encoding="utf-8")
+
+

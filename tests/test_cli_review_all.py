@@ -318,3 +318,23 @@ def test_review_all_fix_comments_reaches_child_argv(isolated_config, tmp_path, m
     assert r.exit_code == 0, r.output
     assert seen and "--fix-comments" in seen[0]
     assert "--post-comments" not in seen[0] and "--fix" not in seen[0]
+
+
+def test_review_all_forwards_harness_to_children(isolated_config, tmp_path, monkeypatch):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    store.record_link("jira:IPG-9", {"worktree": str(wt), "branch": "feat/x", "pr_url": "https://x/pull/9"})
+    monkeypatch.setattr("workagent.cli_review._reviewable_keys", lambda *a, **k: [("jira:IPG-9", "https://x/pull/9")])
+    spawned = []
+
+    class FakeProc:
+        returncode = 0
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr("workagent.cli_review.subprocess.Popen", lambda argv, **kw: spawned.append(argv) or FakeProc())
+    from tests.cli_helpers import _invoke
+    r = _invoke("review", "--all", "--launch", "--harness", "omp", "--yes")
+    assert r.exit_code == 0
+    assert spawned and "--harness" in spawned[0] and "omp" in spawned[0]
+

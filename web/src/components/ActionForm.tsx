@@ -3,6 +3,7 @@ import { Pencil, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import { SegmentedControl, SuggestIconButton } from "@/components/FormControls"
+import { HarnessSelect } from "@/components/HarnessSelect"
 import { IconPicker } from "@/components/IconPicker"
 import { ScriptField } from "@/components/ScriptBlock"
 import { errorText } from "@/components/StatusFeedback"
@@ -14,6 +15,7 @@ import { useCreateRun } from "@/lib/queries"
 import { ACTION_PRESETS } from "@/lib/actionPresets"
 import {
   ROW_CATEGORIES,
+  actionHarnessOf,
   actionRunModeOf,
   buildActionUpsertArgs,
   isRunImmediateAction,
@@ -48,6 +50,7 @@ export function ActionFormCard({ editing, onDone, onCancel, usedIcons }: {
   const [pre, setPre] = useState(editing?.pre_execution ?? "")
   const [post, setPost] = useState(editing?.post_execution ?? "")
   const [mode, setMode] = useState<string>(editing ? actionRunModeOf(editing) : "preview")
+  const [harness, setHarness] = useState<string>(editing ? actionHarnessOf(editing) : "")
   const [category, setCategory] = useState<RowCategory>(
     (editing?.category as RowCategory | undefined) ?? "worktree",
   )
@@ -87,7 +90,7 @@ export function ActionFormCard({ editing, onDone, onCancel, usedIcons }: {
     setSaving(true)
     try {
       const form: ActionUpsertForm = {
-        name, label, icon, prompt, pre, post, runMode: mode, runImmediately, category,
+        name, label, icon, prompt, pre, post, runMode: mode, runImmediately, category, harness,
       }
       const { run_id } = await createRun.mutateAsync({
         command: "action",
@@ -169,6 +172,7 @@ export function ActionFormCard({ editing, onDone, onCancel, usedIcons }: {
                 ...(prompt.trim() ? ["--prompt", prompt.trim()] : []),
                 ...(pre.trim() ? ["--pre-execution", pre.trim()] : []),
                 ...(post.trim() ? ["--post-execution", post.trim()] : []),
+                ...(harness ? ["--harness", harness] : []),
                 ...((usedIcons ?? []).length > 0 ? ["--used-icons", (usedIcons ?? []).join(",")] : []),
                 "--json"]}
               onSuggest={setIcon}
@@ -199,6 +203,13 @@ export function ActionFormCard({ editing, onDone, onCancel, usedIcons }: {
           ]}
           value={RUN_MODES.includes(mode as (typeof RUN_MODES)[number]) ? mode as (typeof RUN_MODES)[number] : "preview"}
           onChange={setMode}
+        />
+        <HarnessSelect
+          idPrefix="action-default"
+          value={harness}
+          onChange={setHarness}
+          allowDefault
+          description="Default AI harness stored in default_options (defaults to Settings)."
         />
         <SegmentedControl
           idPrefix="action-category"

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { Rocket } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
+import { HarnessSelect } from "@/components/HarnessSelect"
 import { RunModeSelect } from "@/components/StartForm"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { Button } from "@/components/ui/button"
@@ -382,6 +383,11 @@ export function MessageLaunch() {
                 onChange={(v: RunMode) => update("runMode", v)}
               />
             ) : null}
+            <HarnessSelect
+              idPrefix="message-launch"
+              value={form.harness}
+              onChange={(v) => update("harness", v)}
+            />
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2">

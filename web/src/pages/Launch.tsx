@@ -13,11 +13,12 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useConfirm } from "@/lib/confirm"
 import { errorText } from "@/components/StatusFeedback"
-import { queryKeys, useCreateRun, useFlowTemplates, useLinks, useRepos } from "@/lib/queries"
+import { queryKeys, useConfig, useCreateRun, useFlowTemplates, useLinks, useRepos } from "@/lib/queries"
 import { api, type FlowTemplateRow } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
+import { HarnessSelect } from "@/components/HarnessSelect"
 import { ReviewActionSelect, RunModeSelect, StartFormFields, buildReviewArgs, buildStartArgs } from "@/components/StartForm"
 import { COPY, INITIAL, MODES, adhocArgs, extraPromptArgs, isPrShaped, runModeArgs, splitAdhocRefs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
@@ -72,7 +73,7 @@ function TemplatePickerDialog({
  * start base, and the review fix flags. `ref`/`repo`/free text are never
  * persisted, and deep-link URL params win over stored values on mount. */
 function prefsForMode(p: LaunchPrefs, mode: Mode): Partial<LaunchForm> {
-  if (mode === "sync") return { merge: p.sync.merge }
+  if (mode === "sync") return { merge: p.sync.merge, harness: p.sync.harness }
   if (mode === "review") {
     return {
       runMode: p.review.runMode as LaunchForm["runMode"],
@@ -80,12 +81,18 @@ function prefsForMode(p: LaunchPrefs, mode: Mode): Partial<LaunchForm> {
       fixComments: p.review.fixAction === "fix",
       thenFixComments: p.review.thenFix,
       useReviewSession: p.review.useReviewSession,
+      harness: p.review.harness,
     }
   }
   if (mode === "adhoc") {
-    return { runMode: p.adhoc.runMode as LaunchForm["runMode"] }
+    return { runMode: p.adhoc.runMode as LaunchForm["runMode"], harness: p.adhoc.harness }
   }
-  return { runMode: p.start.runMode as LaunchForm["runMode"], startAction: p.start.startAction as LaunchForm["startAction"], base: p.start.base }
+  return {
+    runMode: p.start.runMode as LaunchForm["runMode"],
+    startAction: p.start.startAction as LaunchForm["startAction"],
+    base: p.start.base,
+    harness: p.start.harness,
+  }
 }
 
 /** Review/Sync fields (kept on the Launch page; Start lives in StartForm). */
@@ -304,6 +311,7 @@ export function Launch() {
   const qc = useQueryClient()
   const { data: links } = useLinks()
   const { data: repos } = useRepos()
+  const { data: cfg } = useConfig()
   const modeParam = params.get("mode")
   const refParam = params.get("ref") ?? ""
   const templateParam = params.get("template") ?? ""
@@ -432,7 +440,7 @@ export function Launch() {
   useEffect(() => {
     const prev = loadLaunchPrefs()
     if (mode === "start") {
-      saveLaunchPrefs({ ...prev, start: { runMode: form.runMode, startAction: form.startAction, base: form.base } })
+      saveLaunchPrefs({ ...prev, start: { runMode: form.runMode, startAction: form.startAction, base: form.base, harness: form.harness } })
     } else if (mode === "review") {
       saveLaunchPrefs({
         ...prev,
@@ -441,15 +449,16 @@ export function Launch() {
           thenFix: form.thenFixComments,
           fixAction: urlForcedFix.current ? prev.review.fixAction : form.reviewAction,
           useReviewSession: form.useReviewSession,
+          harness: form.harness,
         },
       })
     } else if (mode === "adhoc") {
-      saveLaunchPrefs({ ...prev, adhoc: { runMode: form.runMode } })
-    } else {
-      saveLaunchPrefs({ ...prev, sync: { merge: form.merge } })
+      saveLaunchPrefs({ ...prev, adhoc: { runMode: form.runMode, harness: form.harness } })
+    } else if (mode === "sync") {
+      saveLaunchPrefs({ ...prev, sync: { merge: form.merge, harness: form.harness } })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, form.runMode, form.startAction, form.base, form.reviewAction, form.thenFixComments, form.useReviewSession, form.merge])
+  }, [mode, form.runMode, form.startAction, form.base, form.reviewAction, form.thenFixComments, form.useReviewSession, form.merge, form.harness])
 
   function switchMode(next: Mode) {
     setMode(next)
@@ -464,22 +473,36 @@ export function Launch() {
   const copy = COPY[mode]
   const repoNames = useMemo(() => (repos ?? []).map((r) => r.name), [repos])
   function buildArgs(): string[] {
+    const harness = form.harness.trim()
     if (mode === "sync") {
-      return [refValue, ...(form.merge ? ["--merge"] : []), ...extraPromptArgs(form)]
+      return [
+        refValue,
+        ...(form.merge ? ["--merge"] : []),
+        ...(harness ? ["--harness", harness] : []),
+        ...extraPromptArgs(form),
+      ]
     }
     if (mode === "start") return buildStartArgs(form)
     if (mode === "adhoc") {
-      return [...splitAdhocRefs(form.ref), ...adhocArgs(form), ...runModeArgs(form.runMode)]
+      return [
+        ...splitAdhocRefs(form.ref),
+        ...adhocArgs(form),
+        ...(harness ? ["--harness", harness] : []),
+        ...runModeArgs(form.runMode),
+      ]
     }
     return buildReviewArgs(form)
   }
   const extra = form.extraPrompt.trim()
+  const harnessFlag = form.harness.trim()
+  const effectiveHarness = harnessFlag || cfg?.default_harness || "agy"
   const adhocRefs = splitAdhocRefs(form.ref)
   const flagList = mode === "sync"
-    ? [form.merge ? "--merge (local merge)" : "remote rebase (default)", extra ? `--extra-prompt ${extra}` : null].filter((v): v is string => v !== null)
+    ? [form.merge ? "--merge (local merge)" : "remote rebase (default)", harnessFlag ? `--harness ${harnessFlag}` : null, extra ? `--extra-prompt ${extra}` : null].filter((v): v is string => v !== null)
     : mode === "adhoc"
       ? [
           form.adhocPrompt.trim() ? `--prompt ${form.adhocPrompt.trim().slice(0, 80)}` : "prompt: required",
+          harnessFlag ? `--harness ${harnessFlag}` : null,
           form.runMode === "terminal" ? "--terminal (open the agent in the OS terminal)"
             : "--launch (run the agent now)",
           extra ? `--extra-prompt ${extra}` : null,
@@ -492,6 +515,7 @@ export function Launch() {
         repoValue ? `--repo ${repoValue}` : "repo: pick a repo",
         `--depth ${form.depth.trim() || "7"}`,
         mode === "start" && form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
+        harnessFlag ? `--harness ${harnessFlag}` : null,
         form.runMode === "headless" ? "--launch (run the agent now)"
           : form.runMode === "terminal" ? "--terminal (open the agent in the OS terminal)"
           : "preview (print command, no run)",
@@ -663,6 +687,13 @@ export function Launch() {
                 description="Skip automatic tracker issue status transitions."
               />
             ) : null}
+            {mode !== "start" ? (
+              <HarnessSelect
+                idPrefix="launch"
+                value={form.harness}
+                onChange={(v) => update("harness", v)}
+              />
+            ) : null}
           </div>
           {mode === "sync" ? <ExtraPromptField form={form} onChange={update} /> : null}
           <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200">
@@ -684,7 +715,11 @@ export function Launch() {
                   <>
                     Headless auto-approve: the web server runs{" "}
                     <span className="font-mono text-[13px]">--no-tty</span> (
-                    <span className="font-mono text-[13px]">omp -p --auto-approve</span>
+                    <span className="font-mono text-[13px]">
+                      {effectiveHarness === "omp"
+                        ? "omp -p --auto-approve"
+                        : "agy-guard --dangerously-skip-permissions -p=…"}
+                    </span>
                     ), so the agent can commit, push and open MRs/PRs on its own.
                   </>
                 ) : form.runMode === "terminal" ? (

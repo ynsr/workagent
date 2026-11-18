@@ -93,6 +93,7 @@ export interface LaunchForm {
   relatedRepos: string[]
   prodtestAction: ProdtestAction
   adhocPrompt: string
+  harness: string
 }
 export const INITIAL: LaunchForm = {
   ref: "",
@@ -113,6 +114,7 @@ export const INITIAL: LaunchForm = {
   relatedRepos: [],
   prodtestAction: "run",
   adhocPrompt: "",
+  harness: "",
 }
 
 

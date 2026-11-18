@@ -9,6 +9,7 @@ import { api } from "@/lib/api"
 import { RUN_MODE_OPTIONS, REVIEW_ACTION_OPTIONS, PRODTEST_ACTION_OPTIONS, START_ACTION_OPTIONS, INITIAL, extraPromptArgs, runModeArgs } from "@/lib/launchConfig"
 import type { LaunchForm, RunMode, ReviewAction, ProdtestAction, StartAction } from "@/lib/launchConfig"
 import { RelatedReposSelect } from "@/components/RelatedReposSelect"
+import { HarnessSelect } from "@/components/HarnessSelect"
 import { loadLaunchPrefs } from "@/lib/launchPrefs"
 import { FieldHelp } from "@/components/FieldHelp"
 export interface StartFormValue extends LaunchForm {}
@@ -329,6 +330,11 @@ export function StartFormFields({
           value={form.runMode}
           onChange={(v) => onChange("runMode", v)}
         />
+        <HarnessSelect
+          idPrefix={idPrefix}
+          value={form.harness}
+          onChange={(v) => onChange("harness", v)}
+        />
         <label className="flex items-center gap-2 text-sm">
           <input
             id={`${idPrefix}-no-status`}
@@ -376,6 +382,7 @@ export function buildReviewArgs(form: StartFormValue): string[] {
   if (repo) args.push("--repo", repo)
   if (form.depth.trim()) args.push("--depth", form.depth.trim())
   if (form.noStatus) args.push("--no-status")
+  if (form.harness.trim()) args.push("--harness", form.harness.trim())
   args.push(...runModeArgs(form.runMode))
   args.push(...extraPromptArgs(form))
   return args
@@ -386,7 +393,7 @@ export function buildStartArgs(form: StartFormValue): string[] {
   const repo = form.repo.trim()
   const args = [ref]
   // Preview/terminal are TTY copy-paste: no -p flag. Headless
-  // (--no-tty, omp -p --auto-approve) only when actually running now.
+  // (--no-tty, auto-approve) only when actually running now.
   if (form.runMode === "headless") args.push("--no-tty")
   if (form.startAction === "plan") args.push("--plan")
   if (repo) args.push("--repo", repo)
@@ -396,6 +403,7 @@ export function buildStartArgs(form: StartFormValue): string[] {
   if (form.depth.trim()) args.push("--depth", form.depth.trim())
   if (form.base.trim()) args.push("--base", form.base.trim())
   if (form.noStatus) args.push("--no-status")
+  if (form.harness.trim()) args.push("--harness", form.harness.trim())
   args.push(...runModeArgs(form.runMode))
   args.push(...extraPromptArgs(form))
   return args
@@ -404,6 +412,7 @@ export function buildStartArgs(form: StartFormValue): string[] {
 export function startFlagList(form: StartFormValue): string {
   const repo = form.repo.trim()
   const extra = form.extraPrompt.trim()
+  const harness = form.harness.trim()
   const related = (form.relatedRepos ?? []).filter((n) => n.trim())
   return [
     form.runMode === "headless" ? "headless (--no-tty)" : form.runMode === "terminal" ? "terminal (--terminal)" : "tty preview (no --no-tty)",
@@ -412,6 +421,7 @@ export function startFlagList(form: StartFormValue): string {
     related.length ? `--related-repo ${related.join(", ")}` : null,
     `--depth ${form.depth.trim() || "7"}`,
     form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
+    harness ? `--harness ${harness}` : null,
     form.runMode === "headless" ? "--launch (run the agent now)"
       : form.runMode === "terminal" ? "--terminal (open the agent in the OS terminal)"
       : "preview (print command, no run)",
@@ -422,9 +432,9 @@ export function startFlagList(form: StartFormValue): string {
 export function useStartForm(initial?: Partial<StartFormValue>) {
   const [form, setForm] = useState<StartFormValue>(() => {
     // Candidate Start dialog mirrors the Launch Start tab's stored prefs
-    // (run mode + base); the clicked row's ref still wins via `initial`.
+    // (run mode + base + harness); the clicked row's ref still wins via `initial`.
     const stored = loadLaunchPrefs().start
-    return { ...INITIAL, runMode: stored.runMode, startAction: stored.startAction, base: stored.base, ...initial }
+    return { ...INITIAL, runMode: stored.runMode, startAction: stored.startAction, base: stored.base, harness: stored.harness, ...initial }
   })
   function update<K extends keyof StartFormValue>(key: K, value: StartFormValue[K]) {
     setForm((f) => ({ ...f, [key]: value }))

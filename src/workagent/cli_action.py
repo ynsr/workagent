@@ -231,7 +231,7 @@ def action_suggest_icon(
     pre_execution: Optional[str] = typer.Option(None, "--pre-execution", help="Pre-harness script (context for the model)."),
     post_execution: Optional[str] = typer.Option(None, "--post-execution", help="Post-harness script (context for the model)."),
     used_icons: Optional[str] = typer.Option(None, "--used-icons", help="Comma-separated icons already taken (frontend passes the other rows' icons; the server store is the fallback)."),
-    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to ask (default: omp)."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Harness to ask (default: configured)."),
     yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; suggest prompts nothing so this is a no-op."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
@@ -253,7 +253,7 @@ def action_suggest_icon(
                            label=label or "", prompt=prompt or "",
                            steps="", pre=pre_execution or "",
                            post=post_execution or "", used=taken),
-        harness=harness or "omp")
+        harness=harness)
     icon = _si.parse_suggested_icon(text)
     _print_result({"icon": _si.validate_suggested_icon(icon)}, json_output)
 
@@ -377,7 +377,7 @@ def action_run(
     else:
         if mode != "preview":
             _guard_harness(key, wt)
-        harness_name = harness_name or store.load_config().get("default_harness", "omp")
+        harness_name = harness_name or store.default_harness()
         prompt = build_action_prompt(action, entry, key, links)
         appended = extract_append_prompt(pre_stdout)
         if appended:

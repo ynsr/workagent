@@ -289,7 +289,8 @@ def plan_fix_default(name: str, action: str) -> dict:
 def run_fix_default(name: str, *, action: str, run_mode: str = "preview",
                     extra_prompt: Optional[str] = None, yes: bool = False,
                     dry_run: bool = False, json_output: bool = False,
-                    env_file: Optional[str] = None) -> None:
+                    env_file: Optional[str] = None,
+                    harness: Optional[str] = None) -> None:
     """Execute (or preview) the fix-default plan for one repo."""
     if run_mode not in RUN_MODES:
         _fail(f"bad --run-mode {run_mode!r}: use "
@@ -327,7 +328,7 @@ def run_fix_default(name: str, *, action: str, run_mode: str = "preview",
         return
     prompt = append_extra_prompt("\n\n".join(prompts), extra_prompt)
     result["harness_prompt"] = prompt
-    harness_name = store.load_config().get("default_harness", "omp")
+    harness_name = harness or store.default_harness()
     _run_harness(harness_name, prompt, ctx["path"], ctx["path"],
                  run_mode in ("headless", "terminal"),
                  run_mode == "headless", result, json_output,

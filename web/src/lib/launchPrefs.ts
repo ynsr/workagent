@@ -8,6 +8,7 @@ export interface LaunchStartPrefs {
   runMode: RunMode
   startAction: StartAction
   base: string
+  harness: string
 }
 
 export interface LaunchReviewPrefs {
@@ -15,19 +16,23 @@ export interface LaunchReviewPrefs {
   thenFix: boolean
   fixAction: ReviewAction
   useReviewSession: boolean
+  harness: string
 }
 
 export interface LaunchProdtestPrefs {
   runMode: RunMode
   prodtestAction: ProdtestAction
+  harness: string
 }
 
 export interface LaunchSyncPrefs {
   merge: boolean
+  harness: string
 }
 
 export interface LaunchAdhocPrefs {
   runMode: RunMode
+  harness: string
 }
 
 export interface LaunchPrefs {
@@ -46,21 +51,21 @@ const START_ACTIONS: readonly string[] = START_ACTION_OPTIONS.map((o) => o.value
 
 export function loadLaunchPrefs(): LaunchPrefs {
   const fallback: LaunchPrefs = {
-    start: { runMode: "preview", startAction: "implement", base: "" },
-    review: { runMode: "preview", thenFix: false, fixAction: "review", useReviewSession: false },
-    prodtest: { runMode: "preview", prodtestAction: "run" },
-    sync: { merge: false },
-    adhoc: { runMode: "headless" },
+    start: { runMode: "preview", startAction: "implement", base: "", harness: "" },
+    review: { runMode: "preview", thenFix: false, fixAction: "review", useReviewSession: false, harness: "" },
+    prodtest: { runMode: "preview", prodtestAction: "run", harness: "" },
+    sync: { merge: false, harness: "" },
+    adhoc: { runMode: "headless", harness: "" },
   }
   try {
     const raw = localStorage.getItem(KEY)
     if (!raw) return fallback
     const p = JSON.parse(raw) as {
-      start?: { runMode?: unknown; startAction?: unknown; base?: unknown }
-      review?: { runMode?: unknown; thenFix?: unknown; fixAction?: unknown; useReviewSession?: unknown }
-      prodtest?: { runMode?: unknown; prodtestAction?: unknown }
-      sync?: { merge?: unknown }
-      adhoc?: { runMode?: unknown }
+      start?: { runMode?: unknown; startAction?: unknown; base?: unknown; harness?: unknown }
+      review?: { runMode?: unknown; thenFix?: unknown; fixAction?: unknown; useReviewSession?: unknown; harness?: unknown }
+      prodtest?: { runMode?: unknown; prodtestAction?: unknown; harness?: unknown }
+      sync?: { merge?: unknown; harness?: unknown }
+      adhoc?: { runMode?: unknown; harness?: unknown }
     }
     return {
       start: {
@@ -71,6 +76,7 @@ export function loadLaunchPrefs(): LaunchPrefs {
           ? (p.start.startAction as StartAction)
           : "implement",
         base: typeof p.start?.base === "string" ? p.start.base : "",
+        harness: typeof p.start?.harness === "string" ? p.start.harness : "",
       },
       review: {
         runMode: typeof p.review?.runMode === "string" && RUN_MODES.includes(p.review.runMode)
@@ -81,6 +87,7 @@ export function loadLaunchPrefs(): LaunchPrefs {
           ? (p.review.fixAction as ReviewAction)
           : "review",
         useReviewSession: p.review?.useReviewSession === true,
+        harness: typeof p.review?.harness === "string" ? p.review.harness : "",
       },
       prodtest: {
         runMode: typeof p.prodtest?.runMode === "string" && RUN_MODES.includes(p.prodtest.runMode)
@@ -89,12 +96,17 @@ export function loadLaunchPrefs(): LaunchPrefs {
         prodtestAction: typeof p.prodtest?.prodtestAction === "string" && PRODTEST_ACTIONS.includes(p.prodtest.prodtestAction)
           ? (p.prodtest.prodtestAction as ProdtestAction)
           : "run",
+        harness: typeof p.prodtest?.harness === "string" ? p.prodtest.harness : "",
       },
-      sync: { merge: p.sync?.merge === true },
+      sync: {
+        merge: p.sync?.merge === true,
+        harness: typeof p.sync?.harness === "string" ? p.sync.harness : "",
+      },
       adhoc: {
         runMode: typeof p.adhoc?.runMode === "string" && RUN_MODES.includes(p.adhoc.runMode)
           ? (p.adhoc.runMode as RunMode)
           : "headless",
+        harness: typeof p.adhoc?.harness === "string" ? p.adhoc.harness : "",
       },
     }
   } catch {

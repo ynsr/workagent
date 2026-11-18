@@ -10,8 +10,18 @@ from workagent import store
 
 def test_config_defaults(isolated_config):
     cfg = store.load_config()
-    assert cfg["default_harness"] == "omp"
+    assert cfg["default_harness"] == "agy"
     assert cfg["repos"] == {} and cfg["trackers"] == {}
+
+
+def test_default_harness_is_agy(isolated_config):
+    from workagent import store
+    assert store.DEFAULT_HARNESS == "agy"
+    assert set(store.SUPPORTED_HARNESSES) == {"agy", "omp"}
+    assert store.default_harness() == "agy"
+    cfg = store.load_config()
+    assert cfg["default_harness"] == "agy"
+
 
 
 def test_record_and_lookup_link(isolated_config):
@@ -186,3 +196,19 @@ def test_stop_terminal_run_kills_and_clears(isolated_config):
             p.kill()
         except OSError:
             pass
+
+
+def test_conftest_isolates_config_and_antigravity_home_by_default(tmp_path):
+    """Even without isolated_config, autouse isolation prevents touching prod DB/home."""
+    from pathlib import Path
+    from workagent import agy_harness, store_sqlite as sq
+
+    cfg = store.config_dir().resolve()
+    real_cfg = (Path.home() / ".config" / "workagent").resolve()
+    assert cfg != real_cfg
+    assert cfg.is_relative_to(tmp_path.resolve())
+    assert sq.db_path().resolve().is_relative_to(tmp_path.resolve())
+    agy_home = agy_harness.antigravity_home().resolve()
+    assert agy_home != (Path.home() / ".gemini" / "antigravity-cli").resolve()
+    assert agy_home.is_relative_to(tmp_path.resolve())
+

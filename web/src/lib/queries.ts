@@ -5,6 +5,7 @@ import { getVerbose } from "./settings"
 
 export const queryKeys = {
   info: ["info"] as const,
+  config: ["config"] as const,
   statusAll: ["status", "all"] as const,
   statusInactive: ["status", "inactive"] as const,
   statusDeleted: ["status", "deleted"] as const,
@@ -84,6 +85,9 @@ export function useStatusDeleted() {
 
 export function useInfo() {
   return useQuery({ queryKey: queryKeys.info, queryFn: api.info, staleTime: 60_000 })
+}
+export function useConfig() {
+  return useQuery({ queryKey: queryKeys.config, queryFn: api.config, staleTime: 60_000 })
 }
 export function useRepos() {
   return useQuery({ queryKey: queryKeys.repos, queryFn: api.repos })
@@ -337,6 +341,7 @@ export function useStopTerminal() {
 /** Invalidate shared queries after any run finishes (config-changing commands). */
 export function invalidateAfterRun(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: queryKeys.runs })
+  void qc.invalidateQueries({ queryKey: queryKeys.config })
   void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
   void qc.invalidateQueries({ queryKey: queryKeys.repos })
   void qc.invalidateQueries({ queryKey: queryKeys.trackers })

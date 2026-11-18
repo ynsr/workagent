@@ -19,6 +19,7 @@ import { CiBadge } from "@/components/StateBadge"
 import { CopyCell } from "@/components/CopyCell"
 import { ReviewsCell } from "@/components/StatusCells"
 import { ActionsMenu } from "@/components/ActionsMenu"
+import { HarnessSelect } from "@/components/HarnessSelect"
 import { copyToClipboard } from "@/lib/format"
 import { errorText } from "@/components/StatusFeedback"
 /** Editable subset rendered in edit mode; strings are trimmed by the caller. */
@@ -74,13 +75,17 @@ export function WorktreeDetail({
   // invocation so the StatusTable overlay re-run path finds it like other
   // harness modes.
   const qc = useQueryClient()
+  const [terminalHarness, setTerminalHarness] = useState("")
   const [pendingMode, setPendingMode] = useState<"harness" | "prodtest" | null>(null)
   const launchTerminal = useMutation({
     mutationFn: async (mmode: "harness" | "prodtest") => {
       const res = await fetch(`/api/worktrees/${encodeURIComponent(worktreeKey ?? "")}/terminal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: mmode }),
+        body: JSON.stringify({
+          mode: mmode,
+          ...(terminalHarness ? { harness: terminalHarness } : {}),
+        }),
       })
       if (!res.ok) throw new Error(`terminal launch failed: ${res.status}`)
       return res.json() as Promise<{ id: number | null; session_file: string; worktree: string; mode: string }>
@@ -313,6 +318,15 @@ export function WorktreeDetail({
         {worktreeKey ? (
           <>
             <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden />
+            <div className="w-36 [&_label]:sr-only [&_select]:h-8">
+              <HarnessSelect
+                idPrefix="wd-terminal"
+                variant="select"
+                allowDefault
+                value={terminalHarness}
+                onChange={setTerminalHarness}
+              />
+            </div>
             <Button variant="outline" size="sm" disabled={launchTerminal.isPending || networkExposed} title="Open a bare AI harness in the OS terminal (no initial prompt)" onClick={() => launchMode("harness")}>
               <SquareTerminal aria-hidden className="size-4" />
               {pendingMode === "harness" && launchTerminal.isPending ? "Opening…" : "Harness"}

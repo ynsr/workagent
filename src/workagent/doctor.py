@@ -64,7 +64,7 @@ def check(json_output: bool = False) -> dict:
     """doctor handler: status ok|stale|missing; caller decides the exit code."""
     import shutil
     import sys
-    tools = {t: shutil.which(t) is not None for t in ("git-wt", "omp", "gh", "glab", "jira")}
+    tools = {t: shutil.which(t) is not None for t in ("git-wt", "agy-guard", "omp", "gh", "glab", "jira")}
     live = source_hash()
     receipt = receipt_path()
     try:

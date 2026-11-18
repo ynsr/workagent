@@ -59,9 +59,18 @@ def _mock_network_clis(request, monkeypatch):
     monkeypatch.setattr(subprocess, "run", network_guard(subprocess.run))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_workagent_env(tmp_path, monkeypatch):
+    """Isolate config/DB and Antigravity home for every test so prod DB is never touched."""
+    cfg = tmp_path / "workagent-config"
+    cfg.mkdir(exist_ok=True)
+    agy = tmp_path / "antigravity-home"
+    agy.mkdir(exist_ok=True)
+    monkeypatch.setenv("WORKAGENT_CONFIG_DIR", str(cfg))
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(agy))
+    return cfg
+
+
 @pytest.fixture
-def isolated_config(tmp_path, monkeypatch):
-    d = tmp_path / "workagent-config"
-    d.mkdir()
-    monkeypatch.setenv("WORKAGENT_CONFIG_DIR", str(d))
-    return d
+def isolated_config(_isolate_workagent_env):
+    return _isolate_workagent_env

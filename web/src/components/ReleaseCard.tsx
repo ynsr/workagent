@@ -9,6 +9,7 @@ import { EmptyState, ErrorState, RefreshOverlay } from "@/components/StatusFeedb
 import { useRepos, useReleaseStatus, useReleaseStatuses } from "@/lib/queries"
 import { useConfirmedRun } from "@/components/RunActions"
 import { ActionDialog } from "@/components/LinkDialogs"
+import { HarnessSelect } from "@/components/HarnessSelect"
 import { RunModeSelect } from "@/components/StartForm"
 import type { RunMode } from "@/lib/launchConfig"
 import { extraPromptArgs } from "@/lib/launchConfig"
@@ -204,12 +205,21 @@ export function FixDefaultDialog({ status, onClose }: { status: ReleaseStatus; o
   const runConfirmed = useConfirmedRun()
   const [action, setAction] = useState<FixAction>("both")
   const [runMode, setRunMode] = useState<RunMode>("preview")
+  const [harness, setHarness] = useState("")
   const [extra, setExtra] = useState("")
   const touchesRebase = action !== "ci"
   async function handleFix() {
     // fix-default takes --run-mode (preview|headless|terminal), not the
     // --launch/--terminal pair start/review use (both rejected here).
-    const args = ["fix-default", status.repo, "--action", action, "--run-mode", runMode]
+    const args = [
+      "fix-default",
+      status.repo,
+      "--action",
+      action,
+      "--run-mode",
+      runMode,
+      ...(harness ? ["--harness", harness] : []),
+    ]
     const trimmed = extra.trim()
     if (trimmed) args.push(...extraPromptArgs({ extraPrompt: trimmed }))
     onClose()
@@ -229,6 +239,7 @@ export function FixDefaultDialog({ status, onClose }: { status: ReleaseStatus; o
         { label: "Release", value: status.release_branch, mono: true },
         { label: "Action", value: action, mono: true },
         { label: "Run mode", value: runMode, mono: true },
+        ...(harness ? [{ label: "Harness", value: harness, mono: true }] : []),
       ],
       command: "release",
       args,
@@ -282,6 +293,7 @@ export function FixDefaultDialog({ status, onClose }: { status: ReleaseStatus; o
         </div>
       </div>
       <RunModeSelect idPrefix="fix-default" value={runMode} onChange={setRunMode} />
+      <HarnessSelect idPrefix="fix-default" value={harness} onChange={setHarness} allowDefault />
       <div className="grid gap-2">
         <Label htmlFor="fix-default-extra">
           <FieldHelp

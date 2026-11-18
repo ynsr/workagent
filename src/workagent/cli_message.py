@@ -294,7 +294,7 @@ def _run_prompt(msg: dict, prompt: str, ref_opt: str, repo_opt: str, launch: boo
         _guard_harness(key or None, workdir)
     use_launch = mode == "headless"
     use_terminal = mode == "terminal"
-    _run_harness(harness or store.load_config().get("default_harness", "omp"),
+    _run_harness(harness or store.default_harness(),
                  body, workdir, workdir, use_launch, use_launch,
                  {"command": "message", "session_metadata": {"action": "message",
                   "mode": mode, "message_id": msg.get("message_id")}},
@@ -438,6 +438,7 @@ def message_flow_run(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Coding harness name (e.g. agy; default: configured default)."),
 ) -> None:
     """Run a message-category flow template grounded in one message."""
     from .store_flows import validate_template
@@ -480,4 +481,4 @@ def message_flow_run(
             merged["extra_prompt"] = f"{header}\n\n{prev}".strip() if prev else header
             s["config"] = merged
     from . import cli_flow_run as _cfr
-    _cfr.flow_run(label, ref_opt, dry_run=dry_run, yes=yes, json_output=json_output)
+    _cfr.flow_run(label, ref_opt, dry_run=dry_run, yes=yes, json_output=json_output, harness=harness)

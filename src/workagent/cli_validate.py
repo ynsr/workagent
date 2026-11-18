@@ -181,19 +181,29 @@ def _transcript_lines(path: str | None) -> int:
         return 0
 
 def _tool_error_rate(transcript_path: str | None,
-                     since_line: int = 0) -> tuple[int, int] | None:
+                     since_line: int = 0,
+                     harness_name: str | None = None) -> tuple[int, int] | None:
     """(errors, total) over toolResult lines; None when none/unreadable."""
+    if not transcript_path:
+        return None
+    if harness_name:
+        try:
+            from . import backend as _b
+            h = _b.get_harness(harness_name)
+            return h.tool_error_rate(transcript_path, since_line=since_line)
+        except Exception:
+            pass
     try:
         from .harness_summary import tool_error_rate as _scan
     except Exception:
         return None
     try:
-        return _scan(transcript_path, since_line) if transcript_path else None
+        return _scan(transcript_path, since_line)
     except TypeError:
         # Test fakes with the legacy 1-arg shape: same result, whole file.
         try:
             from .harness_summary import tool_error_rate as _legacy
-            return _legacy(transcript_path) if transcript_path else None
+            return _legacy(transcript_path)
         except Exception:
             return None
     except Exception:
@@ -204,7 +214,8 @@ def run_deterministic_gates(worktree: str, exit_code: int,
                             expect_changes: bool,
                             transcript_path: str | None = None,
                             branch: str = "",
-                            tool_since_line: int = 0) -> dict:
+                            tool_since_line: int = 0,
+                            harness_name: str | None = None) -> dict:
     """Zero-LLM gates. Never raises; git failures are failed checks."""
     checks: dict = {}
     reasons: list[str] = []
@@ -224,7 +235,7 @@ def run_deterministic_gates(worktree: str, exit_code: int,
                             "detail": "non-empty" if has_text else "empty transcript tail"}
     if not has_text:
         reasons.append("empty transcript tail")
-    err_rate = (_tool_error_rate(transcript_path, tool_since_line)
+    err_rate = (_tool_error_rate(transcript_path, tool_since_line, harness_name=harness_name)
                 if transcript_path else None)
     if err_rate is not None and err_rate[1] > 0:
         errors, total = err_rate
@@ -395,7 +406,8 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                       run_once, run_judge,
                       max_retries: int | None = None,
                       transcript_path: str | None = None,
-                      run_db=None, run_id: int | None = None) -> dict:
+                      run_db=None, run_id: int | None = None,
+                      harness_name: str | None = None) -> dict:
     """Retry loop. run_once(prompt)->{exit_code, transcript[, transcript_path]}.
 
     Every run_once call (main attempt or dirty continuation) appends exactly one
@@ -592,12 +604,19 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
             import inspect as _inspect
             try:
                 _params = _inspect.signature(run_deterministic_gates).parameters
+                _takes_harness = "harness_name" in _params
                 _takes_offset = len(_params) >= 7
                 _takes_branch = len(_params) >= 6
                 _takes_path = len(_params) >= 5
             except (TypeError, ValueError):
-                _takes_offset = _takes_branch = _takes_path = True
-            if _takes_offset:  # real 7-arg gates: score this attempt only
+                _takes_harness = _takes_offset = _takes_branch = _takes_path = True
+            if _takes_harness:
+                gates = run_deterministic_gates(
+                    worktree, code, transcript[-4000:], expect_changes,
+                    runs[-1].get("transcript_path"), branch,
+                    runs[-1].get("tool_since_line", 0),
+                    harness_name=harness_name)
+            elif _takes_offset:  # real 7-arg gates: score this attempt only
                 gates = run_deterministic_gates(
                     worktree, code, transcript[-4000:], expect_changes,
                     runs[-1].get("transcript_path"), branch,
