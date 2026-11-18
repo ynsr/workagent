@@ -234,7 +234,7 @@ def template_suggest_icon(
                            label=label or "", prompt="",
                            steps=steps or "", pre=pre_execution or "",
                            post=post_execution or "", used=taken),
-        harness=harness or store.default_harness())
+        harness=harness)
     icon = _si.parse_suggested_icon(text)
     _print_result({"icon": _si.validate_suggested_icon(icon)}, json_output)
 

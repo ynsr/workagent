@@ -234,7 +234,7 @@ class AgyHarness(Harness):
     binary = "agy-guard"
     watches_headless = False
     judge_argv: list[str] = ["--model", "gemini-3.8-flash-low",
-                             "--disable-slash-commands", "--mode", "plan"]
+                             "--disable-slash-commands"]
 
     def command_argv(self, prompt: str, no_tty: bool,
                      extra_args: list[str] | None = None) -> list[str]:
@@ -278,6 +278,7 @@ class AgyHarness(Harness):
         cid = ""
         result_status = "SUCCESS"
         saw_delta = False
+        has_response = False
         sf_path = Path(session_file) if session_file else None
         if sf_path is not None:
             sf_path.parent.mkdir(parents=True, exist_ok=True)
@@ -336,12 +337,15 @@ class AgyHarness(Harness):
                             delta = su.get("text_delta")
                             if isinstance(delta, str) and delta:
                                 saw_delta = True
+                                has_response = True
                                 sys.stderr.write(delta)
                                 sys.stderr.flush()
                     elif etype == "result":
                         res = ev.get("result") or {}
                         result_status = str(res.get("status") or "SUCCESS")
                         resp = res.get("response")
+                        if isinstance(resp, str) and resp:
+                            has_response = True
                         if not saw_delta and isinstance(resp, str) and resp:
                             if not resp.endswith("\n"):
                                 resp += "\n"
@@ -364,7 +368,7 @@ class AgyHarness(Harness):
             mirror_brain_transcript(cid, session_file)
         if rc != 0:
             return rc
-        return 0 if result_status.upper() == "SUCCESS" else 1
+        return 0 if (result_status.upper() == "SUCCESS" or has_response) else 1
 
     def watch_transcript(self, workdir: str, scope_dir: Path | None,
                          before: Path | None, run_id: int | None,
@@ -393,6 +397,29 @@ class AgyHarness(Harness):
             time.sleep(1.0)
         known_cid = ""
         recorded_meta = False
+        recorded_file = False
+        last_sig: tuple[int, int] | None = None
+
+        def _sync_if_changed() -> bool:
+            nonlocal recorded_file, last_sig
+            src = brain / known_cid / ".system_generated" / "logs" / "transcript.jsonl"
+            try:
+                st = src.stat()
+            except OSError:
+                return False
+            sig = (st.st_mtime_ns, st.st_size)
+            if sig == last_sig:
+                return False
+            if mirror_brain_transcript(known_cid, target_path):
+                last_sig = sig
+                if result is not None:
+                    result["session_file"] = target_path
+                if not recorded_file and run_id and db and db.exists():
+                    _sq.set_run_file_path(db, run_id, target_path)
+                    recorded_file = True
+                return True
+            return False
+
         while stop_event is None or not stop_event.is_set():
             cid = known_cid or find_conversation_for_workspace(workdir, since, exclude_ids=existing)
             if cid:
@@ -405,16 +432,15 @@ class AgyHarness(Harness):
                         pass
                 if not target_path:
                     return
-                if mirror_brain_transcript(cid, target_path):
-                    if result is not None:
-                        result["session_file"] = target_path
-                    if run_id and db and db.exists():
-                        _sq.set_run_file_path(db, run_id, target_path)
+                _sync_if_changed()
+                if stop_event is None and last_sig is not None:
                     return
             if stop_event is not None and stop_event.wait(2.0):
-                return
+                break
             if stop_event is None:
                 time.sleep(2.0)
+        if known_cid and target_path:
+            _sync_if_changed()
 
     def extract_last_assistant_text(self, transcript_path: str,
                                     max_chars: int | None = 4000) -> str:

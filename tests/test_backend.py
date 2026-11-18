@@ -285,7 +285,7 @@ def test_agy_command_argv_attaches_prompt_with_equals():
     assert h.command_argv("hello", no_tty=False) == ["agy-guard", "-i=hello"]
     assert h.command_argv("", no_tty=False) == ["agy-guard"]
     assert h.bare_terminal_argv("/tmp/ignored") == ["agy-guard"]
-    assert h.judge_argv == ["--model", "gemini-3.8-flash-low", "--disable-slash-commands", "--mode", "plan"]
+    assert h.judge_argv == ["--model", "gemini-3.8-flash-low", "--disable-slash-commands"]
 
 
 def test_agy_session_file_flag_and_resume_argv(tmp_path):
@@ -415,7 +415,7 @@ def test_agy_watch_transcript_discovers_conversation(tmp_path, monkeypatch):
     try:
         agy_harness.AgyHarness().watch_transcript(
             str(wt), tmp_path, None, run_id, state_db, result=res,
-            session_file=str(dest_session), launched_at=1794866400.0, stop_event=stop,
+            session_file=str(dest_session), launched_at=1794866400.0, stop_event=None,
         )
     finally:
         t.join()
@@ -470,7 +470,7 @@ def test_agy_launch_headless_non_success_exit(tmp_path, monkeypatch):
     from workagent import agy_harness
     monkeypatch.setattr("workagent.backend.shutil.which", lambda n: f"/usr/bin/{n}")
 
-    ndjson = json.dumps({"event": "result", "result": {"status": "ERROR", "response": "failed"}}) + "\n"
+    ndjson = json.dumps({"event": "result", "result": {"status": "ERROR", "response": ""}}) + "\n"
 
     class ErrProc:
         stdout = io.StringIO(ndjson)
@@ -809,7 +809,7 @@ def test_agy_watch_transcript_keeps_polling_until_brain_file_exists(tmp_path, mo
     try:
         agy_harness.AgyHarness().watch_transcript(
             str(wt), tmp_path, None, run_id, state_db, result=res,
-            session_file=str(dest_session), launched_at=1794866400.0, stop_event=stop,
+            session_file=str(dest_session), launched_at=1794866400.0, stop_event=None,
         )
     finally:
         t.join(timeout=5)
@@ -855,7 +855,7 @@ def test_agy_watch_transcript_matches_resumed_conversation(tmp_path, monkeypatch
     stop = threading.Event()
     agy_harness.AgyHarness().watch_transcript(
         str(wt), tmp_path, None, run_id, state_db, result=res,
-        session_file=str(dest_session), launched_at=1794866400.0, stop_event=stop,
+        session_file=str(dest_session), launched_at=1794866400.0, stop_event=None,
     )
     assert res.get("session_file") == str(dest_session)
     assert "resumed-turn" in dest_session.read_text(encoding="utf-8")
@@ -970,6 +970,109 @@ def test_run_harness_records_harness_name_on_validation_child_rows(tmp_path, mon
     rows = sq.list_runs(db, limit=10, include_deleted_worktrees=True)
     assert len(rows) >= 2
     assert all(r["harness_name"] == "omp" for r in rows)
+
+
+def test_agy_launch_error_status_respects_produced_response(tmp_path, monkeypatch):
+    import io, json
+    from workagent import agy_harness
+
+    monkeypatch.setattr("workagent.backend.shutil.which", lambda n: f"/usr/bin/{n}")
+
+    def _run(events):
+        ndjson = "\n".join(json.dumps(e) for e in events) + "\n"
+
+        class FakeProc:
+            stdout = io.StringIO(ndjson)
+            returncode = 0
+            pid = 55555
+            def wait(self, timeout=None): return 0
+
+        monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: FakeProc())
+        return agy_harness.AgyHarness().launch("p", str(tmp_path), no_tty=True)
+
+    # Prior error step + recovered response with rc==0 -> exit 0
+    assert _run([
+        {"event": "init", "conversation_id": "c-err-ok"},
+        {"event": "step_update", "step_update": {"step_type": "error_message"}},
+        {"event": "step_update", "step_update": {"step_type": "agent_response", "text_delta": "recovered"}},
+        {"event": "result", "result": {"status": "ERROR", "response": "recovered"}},
+    ]) == 0
+
+    # Result-only response with status=ERROR and rc==0 -> exit 0
+    assert _run([
+        {"event": "init", "conversation_id": "c-err-res"},
+        {"event": "result", "result": {"status": "ERROR", "response": "answer"}},
+    ]) == 0
+
+    # status=ERROR with no response and rc==0 -> exit 1
+    assert _run([
+        {"event": "init", "conversation_id": "c-err-empty"},
+        {"event": "result", "result": {"status": "ERROR", "response": ""}},
+    ]) == 1
+
+
+def test_agy_watch_transcript_re_mirrors_until_stopped(tmp_path, monkeypatch):
+    import json, sqlite3, threading
+    from workagent import agy_harness, store_sqlite as sq
+
+    home = tmp_path / "agy-home"
+    home.mkdir()
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(home))
+    wt = tmp_path / "wt-stream"
+    wt.mkdir()
+
+    log_dir = home / "brain" / "cid-stream" / ".system_generated" / "logs"
+    brain_file = log_dir / "transcript.jsonl"
+    sum_db = home / "conversation_summaries.db"
+    with sqlite3.connect(sum_db) as conn:
+        conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, workspace_uris TEXT, last_modified_time TEXT)")
+        conn.execute("INSERT INTO conversation_summaries VALUES (?, ?, ?)",
+                     ("cid-stream", json.dumps([wt.resolve().as_uri()]), "2099-01-01T00:00:00+00:00"))
+
+    dest_session = tmp_path / "stream_session.jsonl"
+    state_db = tmp_path / "state.db"
+    sq.init_db(state_db)
+    run_id = sq.insert_run(state_db, "start", ["feat/stream"], harness_name="agy", metadata={})
+    res = {}
+    stop = threading.Event()
+    orig_wait = stop.wait
+    monkeypatch.setattr(stop, "wait", lambda s: orig_wait(min(s, 0.02)))
+
+    t = threading.Thread(
+        target=agy_harness.AgyHarness().watch_transcript,
+        args=(str(wt), tmp_path, None, run_id, state_db),
+        kwargs={"result": res, "session_file": str(dest_session),
+                "launched_at": 1794866400.0, "stop_event": stop},
+    )
+    t.start()
+    try:
+        orig_sleep = agy_harness.time.sleep
+        orig_sleep(0.05)
+        log_dir.mkdir(parents=True)
+        brain_file.write_text(
+            json.dumps({"type": "USER_INPUT", "status": "DONE", "content": "hello"}) + "\n",
+            encoding="utf-8",
+        )
+        for _ in range(100):
+            if dest_session.is_file() and "hello" in dest_session.read_text(encoding="utf-8"):
+                break
+            orig_sleep(0.02)
+        assert "hello" in dest_session.read_text(encoding="utf-8")
+        assert t.is_alive()
+
+        # Append assistant turn after initial mirror
+        with brain_file.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"type": "PLANNER_RESPONSE", "status": "DONE", "content": "assistant-reply"}) + "\n")
+
+        for _ in range(100):
+            if "assistant-reply" in dest_session.read_text(encoding="utf-8"):
+                break
+            orig_sleep(0.02)
+        assert "assistant-reply" in dest_session.read_text(encoding="utf-8")
+    finally:
+        stop.set()
+        t.join(timeout=5)
+    assert not t.is_alive()
 
 
 
