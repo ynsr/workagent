@@ -1150,3 +1150,21 @@ def test_merge_pinned_glab_clears_squash_when_enabled(monkeypatch, squash_on):
         assert update_idx < merge_idx
     else:
         assert update_calls == []
+
+
+def test_merge_pinned_glab_unknown_state_warns(monkeypatch, capsys):
+    """When MR state lookup returns None, warn loudly about unknown squash state before merge."""
+    _registry(monkeypatch)
+    calls = []
+    monkeypatch.setattr(_rel, "run_cmd", lambda *a, **k: calls.append(a) or "abc123")
+    monkeypatch.setattr(_rel, "_find_or_open_mr", lambda *a, **k: "https://h/mr/1")
+    monkeypatch.setattr(_rel, "_wait_mr_mergeable", lambda *a, **k: None)
+    monkeypatch.setattr(_rel, "_wait_mr_merged", lambda *a, **k: True)
+    monkeypatch.setattr(_rel, "_verify_head", lambda *a, **k: None)
+    monkeypatch.setattr(rel_gates, "run_local_gate", lambda *a, **k: None)
+    monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: None)
+    _rel.run_release("rx", yes=True, dry_run=False, json_output=False)
+    err = capsys.readouterr().err
+    assert "squash state unknown" in err
+    assert any(c[:3] == ("glab", "mr", "merge") for c in calls)
+    assert not any(c[:3] == ("glab", "mr", "update") for c in calls)

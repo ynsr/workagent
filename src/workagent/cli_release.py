@@ -323,6 +323,9 @@ def _merge_pinned(tool: str, path: str, release_branch: str, pinned: str,
                     if _rum.get("squash"):
                         run_cmd("glab", "mr", "update", mr_url,
                                 "--squash-before-merge=false", cwd=path)
+                else:
+                    eprint(f"warning: MR squash state unknown for {mr_url}; "
+                           f"cannot verify squash-before-merge=false before merge.")
                 argv = ["glab", "mr", "merge", "--sha", pinned]
                 if force:
                     argv.append("--auto-merge=false")
