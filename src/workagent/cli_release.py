@@ -130,7 +130,8 @@ def _open_mr(tool: str, path: str, default_branch: str, release_branch: str, tit
                       "--head", default_branch, "--title", title, cwd=path)
     else:
         out = run_cmd("glab", "mr", "create", "--source-branch", default_branch,
-                      "--target-branch", release_branch, "--title", title, cwd=path)
+                      "--target-branch", release_branch, "--title", title,
+                      "--squash-before-merge=false", cwd=path)
     url = (out or "").strip().splitlines()[-1] if out else ""
     if not url:
         raise HarnessError("host CLI opened the MR but returned no URL", exit_code=1)
@@ -317,12 +318,24 @@ def _merge_pinned(tool: str, path: str, release_branch: str, pinned: str,
         try:
             if strat == "gitlab-mr-ff" and tool == "glab":
                 _rum = _wait_mr_mergeable(path, mr_url)
-                if _rum is not None:
-                    _rms = str(_rum.get("state") or "").lower()
-                    _rmm = str(_rum.get("mergeable") or "").lower()
-                    if _rms in ("merged",):
-                        _verify_head(path, release_branch, pinned)
-                        return strat
+                if _rum is None:
+                    _fail(f"cannot verify MR squash state for {mr_url}; refusing to "
+                          f"merge blind (release MRs must never squash). MR left open: {mr_url}",
+                          EXIT_GENERAL)
+                _rms = str(_rum.get("state") or "").lower()
+                _rmm = str(_rum.get("mergeable") or "").lower()
+                if _rms in ("merged",):
+                    _verify_head(path, release_branch, pinned)
+                    return strat
+                if _rum.get("squash"):
+                    run_cmd("glab", "mr", "update", mr_url,
+                            "--squash-before-merge=false", cwd=path)
+                    _after = _mr_state_now(mr_url, path)
+                    if _after is not None and _after.get("squash"):
+                        _fail(f"MR {mr_url} still has squash-before-merge enabled "
+                              f"(project may require squashing); release MRs must "
+                              f"never squash. MR left open: {mr_url}",
+                              EXIT_GENERAL)
                 argv = ["glab", "mr", "merge", "--sha", pinned]
                 if force:
                     argv.append("--auto-merge=false")
@@ -362,6 +375,21 @@ def _merge_pinned(tool: str, path: str, release_branch: str, pinned: str,
                 _verify_head(path, release_branch, pinned)
                 return strat
             if strat == "github-pr-merge-commit" and tool == "gh":
+                _gh_state = _mr_state_now(mr_url, path)
+                if _gh_state is None:
+                    _fail(f"cannot verify PR squash state for {mr_url}; refusing to "
+                          f"merge blind (release PRs must never squash). PR left open: {mr_url}",
+                          EXIT_GENERAL)
+                if str(_gh_state.get("state") or "").upper() == "MERGED":
+                    _verify_head(path, release_branch, pinned)
+                    return strat
+                if _gh_state.get("squash"):
+                    run_cmd("gh", "pr", "merge", "--disable-auto", mr_url, cwd=path)
+                    _after = _mr_state_now(mr_url, path)
+                    if _after is not None and _after.get("squash"):
+                        _fail(f"PR {mr_url} still has squash auto-merge enabled; "
+                              f"release PRs must never squash. PR left open: {mr_url}",
+                              EXIT_GENERAL)
                 run_cmd("gh", "pr", "merge", "--merge", "--match-head-commit",
                         mr_url, cwd=path)
                 _verify_head(path, release_branch, pinned)
