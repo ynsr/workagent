@@ -314,18 +314,24 @@ def _merge_pinned(tool: str, path: str, release_branch: str, pinned: str,
         try:
             if strat == "gitlab-mr-ff" and tool == "glab":
                 _rum = _wait_mr_mergeable(path, mr_url)
-                if _rum is not None:
-                    _rms = str(_rum.get("state") or "").lower()
-                    _rmm = str(_rum.get("mergeable") or "").lower()
-                    if _rms in ("merged",):
-                        _verify_head(path, release_branch, pinned)
-                        return strat
-                    if _rum.get("squash"):
-                        run_cmd("glab", "mr", "update", mr_url,
-                                "--squash-before-merge=false", cwd=path)
-                else:
-                    eprint(f"warning: MR squash state unknown for {mr_url}; "
-                           f"cannot verify squash-before-merge=false before merge.")
+                if _rum is None:
+                    _fail(f"cannot verify MR squash state for {mr_url}; refusing to "
+                          f"merge blind (release MRs must never squash). MR left open: {mr_url}",
+                          EXIT_GENERAL)
+                _rms = str(_rum.get("state") or "").lower()
+                _rmm = str(_rum.get("mergeable") or "").lower()
+                if _rms in ("merged",):
+                    _verify_head(path, release_branch, pinned)
+                    return strat
+                if _rum.get("squash"):
+                    run_cmd("glab", "mr", "update", mr_url,
+                            "--squash-before-merge=false", cwd=path)
+                    _after = _mr_state_now(mr_url, path)
+                    if _after is not None and _after.get("squash"):
+                        _fail(f"MR {mr_url} still has squash-before-merge enabled "
+                              f"(project may require squashing); release MRs must "
+                              f"never squash. MR left open: {mr_url}",
+                              EXIT_GENERAL)
                 argv = ["glab", "mr", "merge", "--sha", pinned]
                 if force:
                     argv.append("--auto-merge=false")

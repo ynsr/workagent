@@ -48,6 +48,8 @@ def test_release_ff_argv_per_host(monkeypatch):
     calls = []
     monkeypatch.setattr(_rel, "run_cmd", lambda *a, **k: calls.append(a) or "abc123")
     monkeypatch.setattr(_rel, "_find_or_open_mr", lambda *a, **k: "https://h/mr/1")
+    monkeypatch.setattr(_rel, "_wait_mr_mergeable",
+                        lambda *a, **k: {"state": "opened", "mergeable": "mergeable", "squash": False})
     monkeypatch.setattr(rel_gates, "run_local_gate", lambda *a, **k: None)
     monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: None)
     _rel.run_release("rx", yes=True, dry_run=False, json_output=False)
@@ -380,7 +382,8 @@ def _merge_state_script(monkeypatch, states):
     """Stub host MR state lookups with a canned sequence, instant clock."""
     import workagent.cli_release as rel
     from workagent import refs as _refs
-    monkeypatch.setattr(rel, "_wait_mr_mergeable", lambda *a, **k: None)
+    monkeypatch.setattr(rel, "_wait_mr_mergeable",
+                        lambda *a, **k: {"state": "opened", "mergeable": "mergeable", "squash": False})
     seen = []
     def _fake(url, cwd=None):
         seen.append(url)
@@ -395,7 +398,8 @@ def _merge_state_script(monkeypatch, states):
 def test_gitlab_ff_local_forces_immediate_merge(monkeypatch):
     rel = _flow_registry(monkeypatch)
     monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
-    monkeypatch.setattr(rel, "_wait_mr_mergeable", lambda *a, **k: None)
+    monkeypatch.setattr(rel, "_wait_mr_mergeable",
+                        lambda *a, **k: {"state": "opened", "mergeable": "mergeable", "squash": False})
     calls = []
     monkeypatch.setattr(rel, "run_cmd", lambda *a, **k: calls.append(a) or "")
     seen = _merge_state_script(monkeypatch, ["merged"])
@@ -453,7 +457,8 @@ def test_gitlab_ff_pipeline_gate_message_hints_ci(monkeypatch, capsys):
     from workagent.errors import HarnessError
     rel = _flow_registry(monkeypatch)
     monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
-    monkeypatch.setattr(rel, "_wait_mr_mergeable", lambda *a, **k: None)
+    monkeypatch.setattr(rel, "_wait_mr_mergeable",
+                        lambda *a, **k: {"state": "opened", "mergeable": "mergeable", "squash": False})
     def _fake(*a, **k):
         if "merge" in a:
             raise HarnessError("405 Method Not Allowed: "
@@ -474,7 +479,8 @@ def test_gitlab_ff_transient_405_retries_once(monkeypatch):
     from workagent.errors import HarnessError
     rel = _flow_registry(monkeypatch)
     monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
-    monkeypatch.setattr(rel, "_wait_mr_mergeable", lambda *a, **k: None)
+    monkeypatch.setattr(rel, "_wait_mr_mergeable",
+                        lambda *a, **k: {"state": "opened", "mergeable": "mergeable", "squash": False})
     monkeypatch.setattr(rel, "_wait_mr_merged", lambda *a, **k: True)
     monkeypatch.setattr(rel, "_verify_head", lambda *a, **k: None)
     calls = []
@@ -495,7 +501,8 @@ def test_gitlab_ff_bare_405_not_mislabeled_as_pipeline(monkeypatch, capsys):
     from workagent.errors import HarnessError
     rel = _flow_registry(monkeypatch)
     monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
-    monkeypatch.setattr(rel, "_wait_mr_mergeable", lambda *a, **k: None)
+    monkeypatch.setattr(rel, "_wait_mr_mergeable",
+                        lambda *a, **k: {"state": "opened", "mergeable": "mergeable", "squash": False})
     monkeypatch.setattr(rel, "_verify_head", lambda *a, **k: None)
     def _fake(*a, **k):
         if "merge" in a:
@@ -664,6 +671,8 @@ def test_cli_prompts_without_yes_and_aborts_on_no(monkeypatch):
     rel = _flow_registry(monkeypatch)
     monkeypatch.setattr(rel.repos, "validate_release", lambda *a, **k: _valid_ctx())
     monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: "http://mr/1")
+    monkeypatch.setattr(rel, "_wait_mr_mergeable",
+                        lambda *a, **k: {"state": "opened", "mergeable": "mergeable", "squash": False})
     monkeypatch.setattr(rel_gates, "run_local_gate", lambda *a, **k: None)
     monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: None)
     monkeypatch.setattr(rel, "_merge_pinned", lambda *a, **k: "gitlab-mr-ff")
@@ -687,6 +696,8 @@ def test_gitlab_ff_uses_mr_sha(monkeypatch):
     rel = _flow_registry(monkeypatch)
     monkeypatch.setattr(rel, "_origin_tip_now", lambda *a: "abc123")
     monkeypatch.setattr(rel.repos, "release_status", lambda *a, **k: {})
+    monkeypatch.setattr(rel, "_wait_mr_mergeable",
+                        lambda *a, **k: {"state": "opened", "mergeable": "mergeable", "squash": False})
     calls = []
     monkeypatch.setattr(rel, "run_cmd", lambda *a, **k: calls.append(a) or "")
     rel._merge_pinned("glab", "/r", "master", "abc123", "http://mr/1", ["gitlab-mr-ff"])
@@ -717,6 +728,8 @@ def test_source_branch_never_deleted(monkeypatch):
     rel = _flow_registry(monkeypatch)
     monkeypatch.setattr(rel.repos, "validate_release", lambda *a, **k: _valid_ctx())
     monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: "http://mr/1")
+    monkeypatch.setattr(rel, "_wait_mr_mergeable",
+                        lambda *a, **k: {"state": "opened", "mergeable": "mergeable", "squash": False})
     monkeypatch.setattr(rel_gates, "run_local_gate", lambda *a, **k: None)
     monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: None)
     calls = []
@@ -787,6 +800,8 @@ def test_interrupt_triggers_cleanup(monkeypatch):
     rel = _flow_registry(monkeypatch)
     monkeypatch.setattr(rel.repos, "validate_release", lambda *a, **k: _valid_ctx())
     monkeypatch.setattr(rel, "_find_or_open_mr", lambda *a, **k: "http://mr/1")
+    monkeypatch.setattr(rel, "_wait_mr_mergeable",
+                        lambda *a, **k: {"state": "opened", "mergeable": "mergeable", "squash": False})
     def _boom(*a, **k):
         raise KeyboardInterrupt()
     monkeypatch.setattr(rel_gates, "run_ci_gate", _boom)
@@ -1152,19 +1167,41 @@ def test_merge_pinned_glab_clears_squash_when_enabled(monkeypatch, squash_on):
         assert update_calls == []
 
 
-def test_merge_pinned_glab_unknown_state_warns(monkeypatch, capsys):
-    """When MR state lookup returns None, warn loudly about unknown squash state before merge."""
+def test_merge_pinned_glab_unknown_state_fails_closed(monkeypatch, capsys):
+    """When MR state lookup returns None, fail closed without calling glab mr merge."""
+    import typer
     _registry(monkeypatch)
     calls = []
     monkeypatch.setattr(_rel, "run_cmd", lambda *a, **k: calls.append(a) or "abc123")
     monkeypatch.setattr(_rel, "_find_or_open_mr", lambda *a, **k: "https://h/mr/1")
     monkeypatch.setattr(_rel, "_wait_mr_mergeable", lambda *a, **k: None)
-    monkeypatch.setattr(_rel, "_wait_mr_merged", lambda *a, **k: True)
-    monkeypatch.setattr(_rel, "_verify_head", lambda *a, **k: None)
     monkeypatch.setattr(rel_gates, "run_local_gate", lambda *a, **k: None)
     monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: None)
-    _rel.run_release("rx", yes=True, dry_run=False, json_output=False)
-    err = capsys.readouterr().err
-    assert "squash state unknown" in err
-    assert any(c[:3] == ("glab", "mr", "merge") for c in calls)
-    assert not any(c[:3] == ("glab", "mr", "update") for c in calls)
+    with pytest.raises(typer.Exit) as exc:
+        _rel.run_release("rx", yes=True, dry_run=False, json_output=False)
+    assert exc.value.exit_code == 1
+    assert "never squash" in capsys.readouterr().err
+    assert not any(c[:3] == ("glab", "mr", "merge") for c in calls)
+
+
+def test_merge_pinned_glab_squash_still_enabled_after_update_fails_closed(monkeypatch, capsys):
+    """If MR still reports squash=True after glab mr update (e.g. always_on), fail closed."""
+    import typer
+    _registry(monkeypatch)
+    calls = []
+    monkeypatch.setattr(_rel, "run_cmd", lambda *a, **k: calls.append(a) or "abc123")
+    monkeypatch.setattr(_rel, "_find_or_open_mr", lambda *a, **k: "https://h/mr/1")
+    monkeypatch.setattr(_rel, "_wait_mr_mergeable",
+                        lambda *a, **k: {"state": "opened", "mergeable": "mergeable",
+                                         "squash": True})
+    monkeypatch.setattr(_rel, "_mr_state_now",
+                        lambda *a, **k: {"state": "opened", "mergeable": "mergeable",
+                                         "squash": True})
+    monkeypatch.setattr(rel_gates, "run_local_gate", lambda *a, **k: None)
+    monkeypatch.setattr(rel_gates, "run_ci_gate", lambda *a, **k: None)
+    with pytest.raises(typer.Exit) as exc:
+        _rel.run_release("rx", yes=True, dry_run=False, json_output=False)
+    assert exc.value.exit_code == 1
+    assert "never squash" in capsys.readouterr().err
+    assert any(c[:3] == ("glab", "mr", "update") for c in calls)
+    assert not any(c[:3] == ("glab", "mr", "merge") for c in calls)
