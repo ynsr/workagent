@@ -5,10 +5,9 @@ Add a generic ACP (Agent Client Protocol) harness type so workagent drives AI ha
 
 ## Decisions (from user)
 - Keep legacy `Harness`, `OmpHarness`, `AgyHarness`. Default harness stays `agy` (agy-guard); Web UI harness select defaults to the configured default (`agy`).
-- Both `OmpHarness` and `AgyHarness` implement `AcpHarness` (stubs where unsupported).
-- YOLO everywhere: every harness run (ACP, non-TTY, interactive terminal) auto-approves. ACP: `omp acp` with `--approval-mode=yolo` (verify flag applies to `acp`), `agy-guard acp --dangerously-skip-permissions`; non-TTY keeps `omp -p --auto-approve` / `agy-guard --dangerously-skip-permissions`; TTY/terminal/resume argv gain `--approval-mode=yolo` (omp) and `--dangerously-skip-permissions` (agy). Because all runs auto-approve, `session/request_permission` is answered automatically with the allow option; no permission UI.
+- Both `OmpHarness` and `AgyHarness` implement `AcpHarness` (stubs where unsupported) for backward compatibility.
+- YOLO everywhere: every harness run (ACP, non-TTY, interactive terminal, resume, bare terminal) auto-approves. Verified locally (2026-11-20): `omp acp --approval-mode=yolo` and `agy-guard acp --dangerously-skip-permissions` both initialize cleanly; non-TTY keeps `omp -p --auto-approve` / `agy-guard --dangerously-skip-permissions`; TTY/terminal/resume argv add `--approval-mode=yolo` (omp) and `--dangerously-skip-permissions` (agy). Because all runs auto-approve, `session/request_permission` is answered automatically with the allow option; no permission UI.
 - New ACP harnesses are selectable in UI/actions: `OmpAcpHarness`, `AgyAcpHarness`. `AcpHarness` is the abstract base.
-- `OmpHarness` additionally implements `AcpHarness` (stubs for unsupported methods) for backward compatibility.
 - Run answers: `POST /api/runs/{id}/input` -> CLI child stdin -> ACP.
 - Model/effort discovery: `GET /api/harnesses/{name}/options` with server-side TTL cache; input disabled when ACP returns no values.
 - Rendering: frontend parses structured events into collapsible React blocks; raw log view stays available.
@@ -32,15 +31,15 @@ Consequence: an agent question ends the current turn. The answer is sent as the 
 - `AcpClient`: stdio JSON-RPC transport. Line-delimited JSON, id correlation, reader thread, notification callback, handles agent->client requests (`session/request_permission`; fs/terminal capabilities not advertised). Errors -> `HarnessError`; timeout -> `HarnessTimeout`.
 - `AcpHarness(Harness, abc.ABC)`: common flow `initialize -> authenticate (per-harness) -> session/new|load -> apply model/effort -> prompt turns -> close`. Abstract hooks: `acp_argv()`, `authenticate_method()`, `parse_options(session_new_result) -> HarnessOptions`, `extract_question(update) -> Question|None`, `set_model/set_effort` mapping (id of config option, or model-id suffix for agy).
 - `OmpAcpHarness` (`name="omp-acp"`), `AgyAcpHarness` (`name="agy-acp"`): fine-tuning only.
-- `OmpHarness(AcpHarness)` keeps TTY/`omp -p` behavior; ACP-only methods return "unsupported" (empty options, `supports_acp=False`). `AgyHarness` unchanged.
+- `OmpHarness(AcpHarness)` and `AgyHarness(AcpHarness)` keep their existing CLI/TTY/non-TTY behavior, add yolo/auto-approve flags (`--approval-mode=yolo` for omp, `--dangerously-skip-permissions` for agy) to TTY/resume/bare-terminal argv, and stub ACP-only methods (empty options, `supports_acp=False`).
 - `HarnessOptions {models:[{id,name}], efforts:[{id,name}], current_model, current_effort}`; empty list => UI disables that input.
 - Default model/effort: when the user selects none, send no `set_config_option`; harness default applies.
 - Registry: `HARNESSES["omp-acp"]`, `HARNESSES["agy-acp"]`; `config.default_harness` unchanged (`agy`). "Replace OmpHarness with OmpAcpHarness everywhere" is satisfied by routing web runs through ACP only when an ACP harness is selected (see Open items).
 
 ### Run execution
 - CLI: `--harness omp-acp|agy-acp`, `--model`, `--effort` on every command that has `--harness` today (start, review, action run, flow run, adhoc, message *, prodtest *, release). Mirror in `web_args.py` `BOOL_FLAGS/VAL_FLAGS`, `SPECS`, `web/API_CONTRACT.md`, `web/FEATURE_INVENTORY.md`.
-- ACP run child writes structured events as one JSON object per output line prefixed `ACP:` (e.g. `ACP:{"t":"thought","id":..,"text":..}`) alongside normal log lines so existing log storage/SSE/persistence work unchanged and raw view still works. Event types: `message`, `thought`, `tool_call` (id,name,kind,status,args,output), `usage`, `question` (qid, text, options, multi), `permission` (qid, options), `turn_end`.
-- Question/permission: child emits `question`, then blocks reading stdin. `POST /api/runs/{id}/input {qid, answer|choice}` writes one JSON line to the child's stdin. Non-TTY/`--no-tty` unattended mode keeps current behavior (auto-approve permissions, no questions awaited: emit question, treat as `INCOMPLETE`/`WAITING_USER_RESPONSE`).
+- ACP run child writes structured events as one JSON object per output line prefixed `ACP:` (e.g. `ACP:{"t":"thought","id":..,"text":..}`) alongside normal log lines so existing log storage/SSE/persistence work unchanged and raw view still works. Event types: `message`, `thought`, `tool_call` (id,name,kind,status,args,output), `usage`, `question` (qid, text, options, multi), `turn_end`.
+- Question handling & permissions: `AcpClient` always auto-approves `session/request_permission` defensively (yolo everywhere). When an agent emits a `question`, the child emits `ACP:{"t":"question",...}` and blocks reading stdin; `POST /api/runs/{id}/input {qid, answer|choice}` writes one JSON line to the child's stdin. Unattended `--no-tty` mode does not block on questions (emits `question`, treats as `INCOMPLETE`/`WAITING_USER_RESPONSE`).
 - Persistence: lines are already persisted per run; `GET /api/runs/{id}` replays them, so the structured view rebuilds from history.
 
 ### Web API
@@ -56,7 +55,7 @@ Consequence: an agent question ends the current turn. The answer is sent as the 
   - Tool calls: one `<details>` each, summary shows icon by `kind`, title, status; running/pending/failed expanded, completed collapsed; stdout in monospace.
   - Assistant messages: markdown, always open.
   - Sticky-bottom autoscroll that pauses when the user scrolls up (reuse existing follow logic); batch updates via `requestAnimationFrame`.
-- `QuestionCard`: shown pinned above the log when a question is pending; renders option buttons (radio/checkbox for multi) plus free-text box; submit -> `POST input`; permission requests render allow/deny options expanded and highlighted. Disabled once answered.
+- `QuestionCard`: shown pinned above the log when a question is pending; renders option buttons (radio/checkbox for multi) plus free-text box; submit -> `POST input`. Disabled once answered.
 
 ## Error handling
 - Missing binary -> `HarnessError` exit 2 (existing `check_binary`).
@@ -72,7 +71,7 @@ Consequence: an agent question ends the current turn. The answer is sent as the 
 
 ## Open items / risks
 1. "Replace OmpHarness with OmpAcpHarness everywhere" conflicts with "keep defaults / keep OmpHarness". Interpreted as: OmpHarness inherits AcpHarness and ACP harnesses are selectable; default stays `agy`. Resolved by user 2026-11-20.
-2. Confirm yolo flags per harness/mode (`omp acp --approval-mode`, `omp` TTY, `agy-guard acp`); `request_permission` auto-allow still handled defensively.
+2. Yolo flags verified on `omp acp --approval-mode=yolo` and `agy-guard acp --dangerously-skip-permissions`; `AcpClient` still handles `session/request_permission` defensively with auto-allow.
 3. agy auth: `authenticate` method list is OAuth/API-key; relying on existing local credentials. Unauthenticated agy -> clear error.
 4. agy effort is both a `thought_level` option and baked into `modelId` suffixes; effort select uses `thought_level` when present, else none.
 5. Model ids for omp are long provider paths; show `name`, send `value`.

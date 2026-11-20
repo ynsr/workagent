@@ -4,7 +4,7 @@ Spec: `docs/superpowers/specs/2026-11-20-acp-harness-design.md`. TDD throughout 
 
 1. **Fake ACP agent fixture** → verify: `tests/fixtures/fake_acp_agent.py` speaks initialize/auth/session/new/prompt with chunks, a tool_call, an ask question; fixture payloads from recorded omp/agy `session/new` responses.
 2. **`AcpClient` transport** (`acp_harness.py`) → verify: unit tests for id correlation, notifications, agent->client requests, timeout (`HarnessTimeout`), malformed lines, process exit.
-3. **Yolo flags**: probe `omp acp --approval-mode=yolo`, `omp --approval-mode=yolo`, `agy-guard acp --dangerously-skip-permissions`; record `session/request_permission` payload → verify: flags accepted; auto-allow fixture added.
+3. **Defensive permission fixture**: yolo flags are verified (`omp acp --approval-mode=yolo`, `agy-guard acp --dangerously-skip-permissions`); add a `session/request_permission` test fixture to verify `AcpClient` auto-allows defensively → verify: auto-allow unit test green.
 4. **`AcpHarness` base + `HarnessOptions`** → verify: lifecycle test (init, auth, session/new, set options, prompt turns, close) against the fake agent; default model/effort sends no `set_config_option`.
 5. **`OmpAcpHarness`, `AgyAcpHarness`** (auth method, option parsing, question extraction) → verify: fixture-driven parser tests; omp plain-text question yields no `question` event.
 6. **`OmpHarness` and `AgyHarness` implement `AcpHarness` (stubs), add yolo flags to ACP/non-TTY/TTY/resume/bare-terminal argv, registry entries `omp-acp`/`agy-acp`** → verify: existing harness tests unchanged and green; `get_harness` lists new names; default harness stays `agy`; tests assert every argv carries the yolo flag.
