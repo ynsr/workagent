@@ -37,3 +37,15 @@ def test_recorded_key_legacy_row_without_repo_still_matches():
 
 def test_invalid_path_is_false(tmp_path):
     assert worktrees.is_valid_worktree(str(tmp_path / "gone")) is False
+
+
+def test_recorded_key_path_match_requires_matching_branch():
+    links = {
+        "feat/old": {"branch": "feat/old", "worktree": "/tmp/wt-shared", "repo": "/tmp/repo"}
+    }
+    # Different branch on the same path must not match feat/old
+    assert worktrees.recorded_key("/tmp/wt-shared", "feat/new", links, repo="/tmp/repo") is None
+    # Matching branch on the same path matches
+    assert worktrees.recorded_key("/tmp/wt-shared", "feat/old", links, repo="/tmp/repo") == "feat/old"
+    # Empty branch matches path fallback
+    assert worktrees.recorded_key("/tmp/wt-shared", "", links, repo="/tmp/repo") == "feat/old"

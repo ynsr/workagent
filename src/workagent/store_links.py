@@ -181,11 +181,48 @@ def load_links_rows(path: Path, include_inactive: bool = False,
         return out
 
 
+def _evict_collisions_conn(conn, key: str, wt_path: str, repo_key: str,
+                           branch: str) -> None:
+    """Free the path / (repo, branch) *key* is about to take (issue #119).
+
+    Only soft-deleted rows are evicted, with their dependents purged. A live
+    row holding either raises instead of being silently dropped.
+    """
+    from .errors import HarnessError
+    clauses, params = [], []
+    if wt_path:
+        norm = _norm(wt_path)
+        clauses.append("path IN (?, ?)")
+        params += [wt_path, norm]
+    if repo_key and branch:
+        clauses.append("(repo_key = ? AND branch = ?)")
+        params += [repo_key, branch]
+    if not clauses:
+        return
+    rows = conn.execute(
+        "SELECT ref_key, deleted_at FROM worktrees WHERE ref_key != ? AND ("
+        + " OR ".join(clauses) + ")", (key, *params)).fetchall()
+    live = [r[0] for r in rows if not r[1]]
+    if live:
+        raise HarnessError(
+            f"cannot record {key}: worktree path or branch already recorded "
+            f"by live link {live[0]}; reuse that key or clean it up first",
+            exit_code=1)
+    stale = [r[0] for r in rows]
+    if stale:
+        conn.execute("DELETE FROM worktrees WHERE ref_key IN (%s)"
+                     % ",".join("?" * len(stale)), tuple(stale))
+        _purge_dependents_conn(conn, stale)
+
+
 def save_links_rows(path: Path, links: dict) -> None:
     """Merge a legacy links dict into worktree rows (cutover writes).
 
     Upserts only the given keys and deletes rows absent from the dict —
     never a blanket DELETE, so run rows survive ordinary link mutations.
+    Deletes gone keys first; soft-deleted rows colliding on path or
+    (repo, branch) are evicted with their dependents, live ones raise
+    (issue #119).
     `active` is never reset by a re-save: entries carrying it are honored,
     others keep their stored value (new rows default to 1 via the column
     default). Pruned keys lose their runs with them (v26 FK cascade) plus
@@ -194,6 +231,18 @@ def save_links_rows(path: Path, links: dict) -> None:
     init_db(path)
     with connect(path) as conn:
         conn.execute("PRAGMA defer_foreign_keys = ON")
+        if links:
+            marks = ",".join("?" * len(links))
+            gone = [r[0] for r in conn.execute(
+                f"SELECT ref_key FROM worktrees WHERE ref_key NOT IN ({marks})",
+                tuple(links))]
+            conn.execute(f"DELETE FROM worktrees WHERE ref_key NOT IN ({marks})",
+                         tuple(links))
+        else:
+            gone = [r[0] for r in conn.execute("SELECT ref_key FROM worktrees")]
+            conn.execute("DELETE FROM worktrees")
+        _purge_dependents_conn(conn, gone)
+
         for key, e in links.items():
             extra = {k: v for k, v in e.items() if k not in (
                 "worktree", "branch", "repo", "issue_url", "pr_url",
@@ -221,6 +270,9 @@ def save_links_rows(path: Path, links: dict) -> None:
             has_deleted = "deleted_at" in e
             has_related = "related_repos" in e
             has_parent = "parent_key_ref" in e
+            wt_path_str = str(e.get("worktree", ""))
+            _evict_collisions_conn(conn, key, wt_path_str, repo_key,
+                                   str(e.get("branch", "")))
             conn.execute(
                 "INSERT INTO worktrees (ref_key, path, branch, repo_key,"
                 " issue_url, pr_url, added_at, payload, active, deleted_at,"
@@ -234,7 +286,7 @@ def save_links_rows(path: Path, links: dict) -> None:
                 + (", deleted_at=excluded.deleted_at" if has_deleted else "")
                 + (", related_repos=excluded.related_repos" if has_related else "")
                 + (", parent_key_ref=excluded.parent_key_ref" if has_parent else ""),
-                (key, str(e.get("worktree", "")), str(e.get("branch", "")),
+                (key, wt_path_str, str(e.get("branch", "")),
                  repo_key, str(e.get("issue_url", "")),
                  str(e.get("pr_url", "")), str(e.get("added_at")
                  or datetime.now(timezone.utc).isoformat()),
@@ -242,17 +294,6 @@ def save_links_rows(path: Path, links: dict) -> None:
                  str(e.get("deleted_at", "") or ""),
                  json.dumps(e.get("related_repos", [])),
                  str(e.get("parent_key_ref", "") or "")))
-        if links:
-            marks = ",".join("?" * len(links))
-            gone = [r[0] for r in conn.execute(
-                f"SELECT ref_key FROM worktrees WHERE ref_key NOT IN ({marks})",
-                tuple(links))]
-            conn.execute(f"DELETE FROM worktrees WHERE ref_key NOT IN ({marks})",
-                         tuple(links))
-        else:
-            gone = [r[0] for r in conn.execute("SELECT ref_key FROM worktrees")]
-            conn.execute("DELETE FROM worktrees")
-        _purge_dependents_conn(conn, gone)
 
 
 def set_worktree_active(path: Path, key: str, active: bool) -> None:

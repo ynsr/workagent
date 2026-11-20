@@ -1098,3 +1098,40 @@ def test_review_all_preview_records_harness_name(isolated_config, monkeypatch):
     assert len(rows) == 1
     assert rows[0]["harness_name"] == "omp"
 
+
+def test_ensure_branch_worktree_replaces_existing_path_collision(isolated_config, monkeypatch):
+    """When a review worktree is created on a path that previously had another (e.g. soft-deleted)
+    branch row, it must not crash on UNIQUE constraint failed: worktrees.path (issue #119)."""
+    from workagent import cli_review as _cr, store_sqlite as sq, gitwt
+    db = sq.db_path()
+    sq.init_db(db)
+    repo_dir = store.config_dir() / "rulesmith"
+    repo_dir.mkdir(parents=True, exist_ok=True)
+
+    # Existing soft-deleted row on that repo path under another branch/key
+    store.record_link("feat/old", {
+        "branch": "feat/old",
+        "worktree": str(repo_dir),
+        "repo": str(repo_dir),
+    })
+    store.soft_delete_worktree("feat/old")
+
+    # Mock gitwt.start_worktree to return the worktree path on the new branch
+    monkeypatch.setattr(gitwt, "start_worktree", lambda repo, branch, base: {
+        "worktree_path": str(repo_dir),
+        "branch": branch,
+    })
+    monkeypatch.setattr(_cr.repos, "register_repo", lambda name, path: None)
+
+    key, worktree, branch = _cr._ensure_branch_worktree(
+        repo_dir, "fix/new-feature", "main", "https://github.com/o/r/pull/2"
+    )
+    assert key == "fix/new-feature"
+    assert worktree == str(repo_dir)
+    assert branch == "fix/new-feature"
+
+    links = store.load_links(include_deleted=True)
+    assert "fix/new-feature" in links
+    assert "feat/old" not in links
+
+

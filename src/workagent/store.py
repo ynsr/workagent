@@ -248,6 +248,28 @@ def save_links(links: dict) -> None:
         return
     _write_json(config_dir() / "links.json", links)
 
+def _evict_soft_deleted_collisions(links: dict, issue_key: str, merged: dict) -> None:
+    """Drop soft-deleted rows holding *merged*'s worktree path or (repo, branch).
+
+    Live rows are never evicted: a collision with one makes save_links_rows
+    raise an actionable error (callers reuse the key via worktrees.recorded_key).
+    Dropped keys are purged with their dependents on save (issue #108).
+    """
+    from .store_sqlite import _norm
+    wt_path = _norm(str(merged.get("worktree") or ""))
+    repo = _norm(str(merged.get("repo") or ""))
+    branch = str(merged.get("branch") or "")
+    for k, v in list(links.items()):
+        if k == issue_key or not isinstance(v, dict) or not v.get("deleted_at"):
+            continue
+        same_path = bool(wt_path) and _norm(str(v.get("worktree") or "")) == wt_path
+        same_branch = bool(repo and branch
+                           and _norm(str(v.get("repo") or "")) == repo
+                           and str(v.get("branch") or "") == branch)
+        if same_path or same_branch:
+            links.pop(k, None)
+
+
 def record_link(issue_key: str, entry: dict) -> None:
     if _sqlite_path() is not None:
         # include_inactive + include_deleted: save_links_rows deletes
@@ -258,6 +280,7 @@ def record_link(issue_key: str, entry: dict) -> None:
         merged.setdefault("added_at", _now_iso())
         if merged.get("deleted_at"):
             merged["deleted_at"] = None  # re-recording revives a soft-deleted row
+        _evict_soft_deleted_collisions(links, issue_key, merged)
         links[issue_key] = merged
         save_links(links)
         return
