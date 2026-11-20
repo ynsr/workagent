@@ -11,7 +11,8 @@ from .errors import HarnessError
 
 
 def _norm_path(p: str) -> str:
-    return str(Path(p).expanduser().resolve()) if p else ""
+    from .store_sqlite import _norm
+    return _norm(p)
 
 
 def recorded_key(worktree: str, branch: str, links: dict, repo: str = "") -> str | None:

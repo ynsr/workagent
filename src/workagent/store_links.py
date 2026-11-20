@@ -181,13 +181,48 @@ def load_links_rows(path: Path, include_inactive: bool = False,
         return out
 
 
+def _evict_collisions_conn(conn, key: str, wt_path: str, repo_key: str,
+                           branch: str) -> None:
+    """Free the path / (repo, branch) *key* is about to take (issue #119).
+
+    Only soft-deleted rows are evicted, with their dependents purged. A live
+    row holding either raises instead of being silently dropped.
+    """
+    from .errors import HarnessError
+    clauses, params = [], []
+    if wt_path:
+        norm = _norm(wt_path)
+        clauses.append("path IN (?, ?)")
+        params += [wt_path, norm]
+    if repo_key and branch:
+        clauses.append("(repo_key = ? AND branch = ?)")
+        params += [repo_key, branch]
+    if not clauses:
+        return
+    rows = conn.execute(
+        "SELECT ref_key, deleted_at FROM worktrees WHERE ref_key != ? AND ("
+        + " OR ".join(clauses) + ")", (key, *params)).fetchall()
+    live = [r[0] for r in rows if not r[1]]
+    if live:
+        raise HarnessError(
+            f"cannot record {key}: worktree path or branch already recorded "
+            f"by live link {live[0]}; reuse that key or clean it up first",
+            exit_code=1)
+    stale = [r[0] for r in rows]
+    if stale:
+        conn.execute("DELETE FROM worktrees WHERE ref_key IN (%s)"
+                     % ",".join("?" * len(stale)), tuple(stale))
+        _purge_dependents_conn(conn, stale)
+
+
 def save_links_rows(path: Path, links: dict) -> None:
     """Merge a legacy links dict into worktree rows (cutover writes).
 
     Upserts only the given keys and deletes rows absent from the dict —
     never a blanket DELETE, so run rows survive ordinary link mutations.
-    Deletes gone keys first so reassignments of path or (repo, branch)
-    never hit SQLite UNIQUE constraints on worktrees (issue #119).
+    Deletes gone keys first; soft-deleted rows colliding on path or
+    (repo, branch) are evicted with their dependents, live ones raise
+    (issue #119).
     `active` is never reset by a re-save: entries carrying it are honored,
     others keep their stored value (new rows default to 1 via the column
     default). Pruned keys lose their runs with them (v26 FK cascade) plus
@@ -208,27 +243,7 @@ def save_links_rows(path: Path, links: dict) -> None:
             conn.execute("DELETE FROM worktrees")
         _purge_dependents_conn(conn, gone)
 
-        seen_paths: set[str] = set()
-        seen_repo_branches: set[tuple[str, str]] = set()
-        filtered_items = []
-        for key, e in reversed(list(links.items())):
-            wt_p = _norm(str(e.get("worktree", ""))) if e.get("worktree") else ""
-            repo = str(e.get("repo", ""))
-            repo_norm = _norm(repo) if repo else ""
-            branch = str(e.get("branch", ""))
-            rb = (repo_norm, branch) if (repo_norm and branch) else None
-            if wt_p and wt_p in seen_paths:
-                continue
-            if rb and rb in seen_repo_branches:
-                continue
-            if wt_p:
-                seen_paths.add(wt_p)
-            if rb:
-                seen_repo_branches.add(rb)
-            filtered_items.append((key, e))
-        filtered_items.reverse()
-
-        for key, e in filtered_items:
+        for key, e in links.items():
             extra = {k: v for k, v in e.items() if k not in (
                 "worktree", "branch", "repo", "issue_url", "pr_url",
                 "added_at", "ref_key", "issue", "active", "deleted_at",
@@ -256,13 +271,8 @@ def save_links_rows(path: Path, links: dict) -> None:
             has_related = "related_repos" in e
             has_parent = "parent_key_ref" in e
             wt_path_str = str(e.get("worktree", ""))
-            if wt_path_str:
-                conn.execute("DELETE FROM worktrees WHERE path = ? AND ref_key != ?",
-                             (wt_path_str, key))
-                norm_wt = _norm(wt_path_str)
-                if norm_wt and norm_wt != wt_path_str:
-                    conn.execute("DELETE FROM worktrees WHERE path = ? AND ref_key != ?",
-                                 (norm_wt, key))
+            _evict_collisions_conn(conn, key, wt_path_str, repo_key,
+                                   str(e.get("branch", "")))
             conn.execute(
                 "INSERT INTO worktrees (ref_key, path, branch, repo_key,"
                 " issue_url, pr_url, added_at, payload, active, deleted_at,"

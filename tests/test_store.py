@@ -1,5 +1,6 @@
 """Store round-trips under an isolated config dir."""
 
+import pytest
 import os
 import subprocess
 from datetime import datetime
@@ -213,17 +214,63 @@ def test_conftest_isolates_config_and_antigravity_home_by_default(tmp_path):
     assert agy_home.is_relative_to(tmp_path.resolve())
 
 
-def test_record_link_replaces_existing_path_collision(isolated_config):
-    """When a new worktree is recorded on a path previously occupied by another
-    (e.g. soft-deleted or superseded), it must not crash with UNIQUE constraint failed: worktrees.path (issue #119)."""
+@pytest.fixture
+def sqlite_store(isolated_config):
     from workagent import store_sqlite
     store_sqlite.init_db(store.config_dir() / "state.db")
-    store.record_link("feat/old", {"branch": "feat/old", "worktree": "/tmp/my-repo", "repo": "/tmp/my-repo"})
+    return isolated_config
+
+
+def _wt(tmp_path, name="wt", branch="b"):
+    return {"branch": branch, "worktree": str(tmp_path / name), "repo": str(tmp_path / "repo")}
+
+
+def test_record_link_evicts_soft_deleted_path_collision(sqlite_store, tmp_path):
+    """Soft-deleted row on the same path is evicted (issue #119)."""
+    store.record_link("feat/old", _wt(tmp_path, branch="feat/old"))
     store.soft_delete_worktree("feat/old")
-    # Recording new worktree on the same path must succeed without IntegrityError
-    store.record_link("feat/new", {"branch": "feat/new", "worktree": "/tmp/my-repo", "repo": "/tmp/my-repo"})
+    store.record_link("feat/new", _wt(tmp_path, branch="feat/new"))
     links = store.load_links(include_deleted=True)
     assert "feat/new" in links
     assert "feat/old" not in links
 
 
+def test_record_link_evicts_soft_deleted_same_repo_branch(sqlite_store, tmp_path):
+    store.record_link("jira:A-1", _wt(tmp_path, "w1"))
+    store.soft_delete_worktree("jira:A-1")
+    store.record_link("pr:u", _wt(tmp_path, "w2"))
+    links = store.load_links(include_deleted=True)
+    assert "pr:u" in links and "jira:A-1" not in links
+
+
+def test_record_link_live_path_collision_raises_and_keeps_row(sqlite_store, tmp_path):
+    from workagent.errors import HarnessError
+    store.record_link("live", _wt(tmp_path, branch="b1"))
+    with pytest.raises(HarnessError):
+        store.record_link("other", _wt(tmp_path, branch="b2"))
+    links = store.load_links(include_deleted=True)
+    assert "live" in links and "other" not in links
+
+
+def test_record_link_live_same_repo_branch_raises(sqlite_store, tmp_path):
+    from workagent.errors import HarnessError
+    store.record_link("jira:X", _wt(tmp_path, "w1"))
+    with pytest.raises(HarnessError):
+        store.record_link("pr:u", _wt(tmp_path, "w2"))
+    assert "jira:X" in store.load_links(include_deleted=True)
+
+
+def test_record_link_eviction_purges_dependents(sqlite_store, tmp_path):
+    from workagent import store_sqlite as sq
+    store.record_link("old", _wt(tmp_path, branch="b1"))
+    db = sq.db_path()
+    store.soft_delete_worktree("old")
+    store.record_link("new", _wt(tmp_path, branch="b2"))
+    with sq.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM worktrees WHERE ref_key='old'").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM runs WHERE worktree_ref='old'").fetchone()[0] == 0
+
+
+def test_record_link_invalid_empty_entry_is_noop_safe(isolated_config):
+    store.record_link("bare", {"branch": ""})
+    assert "bare" in store.load_links(include_deleted=True)
