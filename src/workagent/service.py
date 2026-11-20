@@ -21,6 +21,10 @@ BACKUP_INTERVAL = "6h"
 #: Timestamped backup files kept (pruned oldest-first by the timer script).
 BACKUP_KEEP = 7
 
+# Set by the serve unit next to NO_COLOR so children can tell the unit's
+# NO_COLOR from one the user set deliberately.
+SERVICE_MARKER = "WORKAGENT_SERVICE"
+
 def unit_path(home: Path | None = None) -> Path:
     h = home or Path(os.environ.get("HOME", str(Path.home())))
     return h / ".config" / "systemd" / "user" / UNIT_NAME
@@ -60,6 +64,7 @@ def render_unit(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> str:
         "RestartSec=5\n"
         "StartLimitBurst=3\n"
         "Environment=NO_COLOR=1\n"
+        f"Environment={SERVICE_MARKER}=1\n"
         f"Environment=PATH={path_env}\n"
         "\n"
         "[Install]\n"

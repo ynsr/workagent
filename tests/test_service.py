@@ -16,6 +16,7 @@ def test_render_unit_defaults():
     assert "WantedBy=default.target" in text
     assert "After=network-online.target" in text
     assert "Environment=NO_COLOR=1" in text
+    assert "Environment=WORKAGENT_SERVICE=1" in text
     assert "Environment=PATH=" in text
 
 

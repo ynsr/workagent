@@ -1082,24 +1082,60 @@ def test_agy_watch_transcript_re_mirrors_until_stopped(tmp_path, monkeypatch):
 
 
 
-def test_exec_tty_drops_no_color(monkeypatch, tmp_path):
+def test_exec_tty_drops_service_no_color(monkeypatch, tmp_path):
     monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("WORKAGENT_SERVICE", "1")
     monkeypatch.setattr(backend, "cd_worktree", lambda wd: None)
     monkeypatch.setattr(backend.os, "execvp", lambda a, argv: None)
     backend.exec_tty(["x"], str(tmp_path))
     assert "NO_COLOR" not in backend.os.environ
 
 
-def test_spawn_in_terminal_drops_no_color(monkeypatch):
+def test_exec_tty_keeps_user_no_color(monkeypatch, tmp_path):
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.delenv("WORKAGENT_SERVICE", raising=False)
+    monkeypatch.setattr(backend, "cd_worktree", lambda wd: None)
+    monkeypatch.setattr(backend.os, "execvp", lambda a, argv: None)
+    backend.exec_tty(["x"], str(tmp_path))
+    assert backend.os.environ["NO_COLOR"] == "1"
+
+
+def test_exec_tty_keeps_env_file_no_color(monkeypatch, tmp_path):
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("WORKAGENT_SERVICE", "1")
+    monkeypatch.setattr(backend, "cd_worktree", lambda wd: None)
+    monkeypatch.setattr(backend.os, "execvp", lambda a, argv: None)
+    from workagent import env as _env
+    monkeypatch.setattr(_env, "launch_env", lambda f: {"NO_COLOR": "1"})
+    backend.exec_tty(["x"], str(tmp_path), env_file="e.sh")
+    assert backend.os.environ["NO_COLOR"] == "1"
+
+
+def _spawn(monkeypatch, service):
     import subprocess as sp
     from workagent import cli_harness as ch
     seen = {}
     class P:
         pid = 1
     monkeypatch.setenv("NO_COLOR", "1")
+    if service:
+        monkeypatch.setenv("WORKAGENT_SERVICE", "1")
+    else:
+        monkeypatch.delenv("WORKAGENT_SERVICE", raising=False)
     monkeypatch.setenv("TERMINAL", "xterm")
     monkeypatch.setattr(ch.shutil, "which", lambda t: "/bin/" + t)
     monkeypatch.setattr(sp, "Popen", lambda argv, **kw: seen.update(argv=argv, **kw) or P())
     ch.spawn_in_terminal("echo hi", "/tmp")
+    return seen
+
+
+def test_spawn_in_terminal_drops_service_no_color(monkeypatch):
+    seen = _spawn(monkeypatch, True)
     assert "NO_COLOR" not in seen["env"]
     assert "unset NO_COLOR" in seen["argv"][-1]
+
+
+def test_spawn_in_terminal_keeps_user_no_color(monkeypatch):
+    seen = _spawn(monkeypatch, False)
+    assert "env" not in seen
+    assert "unset NO_COLOR" not in seen["argv"][-1]
