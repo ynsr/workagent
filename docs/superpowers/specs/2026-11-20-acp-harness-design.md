@@ -4,7 +4,9 @@
 Add a generic ACP (Agent Client Protocol) harness type so workagent drives AI harnesses (`omp acp`, `agy-guard acp`) over stdio JSON-RPC. Runs stream structured output to the Run page (collapsible blocks), users pick harness/model/effort from ACP-discovered values, and users answer agent questions from the Run page.
 
 ## Decisions (from user)
-- Keep legacy `Harness`, `OmpHarness`, `AgyHarness`. Defaults unchanged (`omp` stays the default harness; Web UI harness select defaults to OmpHarness).
+- Keep legacy `Harness`, `OmpHarness`, `AgyHarness`. Default harness stays `agy` (agy-guard); Web UI harness select defaults to the configured default (`agy`).
+- Both `OmpHarness` and `AgyHarness` implement `AcpHarness` (stubs where unsupported).
+- YOLO everywhere: every harness run (ACP, non-TTY, interactive terminal) auto-approves. ACP: `omp acp` with `--approval-mode=yolo` (verify flag applies to `acp`), `agy-guard acp --dangerously-skip-permissions`; non-TTY keeps `omp -p --auto-approve` / `agy-guard --dangerously-skip-permissions`; TTY/terminal/resume argv gain `--approval-mode=yolo` (omp) and `--dangerously-skip-permissions` (agy). Because all runs auto-approve, `session/request_permission` is answered automatically with the allow option; no permission UI.
 - New ACP harnesses are selectable in UI/actions: `OmpAcpHarness`, `AgyAcpHarness`. `AcpHarness` is the abstract base.
 - `OmpHarness` additionally implements `AcpHarness` (stubs for unsupported methods) for backward compatibility.
 - Run answers: `POST /api/runs/{id}/input` -> CLI child stdin -> ACP.
@@ -33,7 +35,7 @@ Consequence: an agent question ends the current turn. The answer is sent as the 
 - `OmpHarness(AcpHarness)` keeps TTY/`omp -p` behavior; ACP-only methods return "unsupported" (empty options, `supports_acp=False`). `AgyHarness` unchanged.
 - `HarnessOptions {models:[{id,name}], efforts:[{id,name}], current_model, current_effort}`; empty list => UI disables that input.
 - Default model/effort: when the user selects none, send no `set_config_option`; harness default applies.
-- Registry: `HARNESSES["omp-acp"]`, `HARNESSES["agy-acp"]`; `config.default_harness` unchanged. "Replace OmpHarness with OmpAcpHarness everywhere" is satisfied by routing web runs through ACP only when an ACP harness is selected (see Open items).
+- Registry: `HARNESSES["omp-acp"]`, `HARNESSES["agy-acp"]`; `config.default_harness` unchanged (`agy`). "Replace OmpHarness with OmpAcpHarness everywhere" is satisfied by routing web runs through ACP only when an ACP harness is selected (see Open items).
 
 ### Run execution
 - CLI: `--harness omp-acp|agy-acp`, `--model`, `--effort` on every command that has `--harness` today (start, review, action run, flow run, adhoc, message *, prodtest *, release). Mirror in `web_args.py` `BOOL_FLAGS/VAL_FLAGS`, `SPECS`, `web/API_CONTRACT.md`, `web/FEATURE_INVENTORY.md`.
@@ -47,7 +49,7 @@ Consequence: an agent question ends the current turn. The answer is sent as the 
 - Host/Origin/Content-Type guard applies as for other mutating endpoints.
 
 ### Frontend
-- Restore `HarnessSelect` in Launch page action forms and Run Flow modals/cards (ActionForm, FlowWizard, ChainEditor, ImmediateRunForm, ReleaseCard, StartForm, Prodtest/Message launch). Default `omp` (current default).
+- Restore `HarnessSelect` in Launch page action forms and Run Flow modals/cards (ActionForm, FlowWizard, ChainEditor, ImmediateRunForm, ReleaseCard, StartForm, Prodtest/Message launch). Default `agy` (current default).
 - New `ModelSelect`, `EffortSelect` driven by `useHarnessOptions(harness)`; disabled with tooltip when empty/unsupported/loading-failed; empty value = "Default".
 - `RunDetail`: `AcpTranscript` parses `ACP:` lines into blocks; falls back to raw log lines for non-ACP runs; toggle Structured/Raw.
   - Thoughts: grouped in one collapsed `<details>` ("Thinking"), muted style.
@@ -69,8 +71,8 @@ Consequence: an agent question ends the current turn. The answer is sent as the 
 - Isolation: tests use `isolated_config`/`tmp_path`; never touch real `~/.config/workagent` or `~/.gemini/antigravity-cli`.
 
 ## Open items / risks
-1. "Replace OmpHarness with OmpAcpHarness everywhere" conflicts with "keep defaults / keep OmpHarness". Interpreted as: OmpHarness inherits AcpHarness and ACP harnesses are selectable; default stays `omp`. Confirm.
-2. `session/request_permission` behavior not yet probed for omp/agy (needs a tool that asks permission); verify in plan step 3. Unattended runs auto-approve.
+1. "Replace OmpHarness with OmpAcpHarness everywhere" conflicts with "keep defaults / keep OmpHarness". Interpreted as: OmpHarness inherits AcpHarness and ACP harnesses are selectable; default stays `agy`. Resolved by user 2026-11-20.
+2. Confirm yolo flags per harness/mode (`omp acp --approval-mode`, `omp` TTY, `agy-guard acp`); `request_permission` auto-allow still handled defensively.
 3. agy auth: `authenticate` method list is OAuth/API-key; relying on existing local credentials. Unauthenticated agy -> clear error.
 4. agy effort is both a `thought_level` option and baked into `modelId` suffixes; effort select uses `thought_level` when present, else none.
 5. Model ids for omp are long provider paths; show `name`, send `value`.
