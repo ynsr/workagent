@@ -212,3 +212,18 @@ def test_conftest_isolates_config_and_antigravity_home_by_default(tmp_path):
     assert agy_home != (Path.home() / ".gemini" / "antigravity-cli").resolve()
     assert agy_home.is_relative_to(tmp_path.resolve())
 
+
+def test_record_link_replaces_existing_path_collision(isolated_config):
+    """When a new worktree is recorded on a path previously occupied by another
+    (e.g. soft-deleted or superseded), it must not crash with UNIQUE constraint failed: worktrees.path (issue #119)."""
+    from workagent import store_sqlite
+    store_sqlite.init_db(store.config_dir() / "state.db")
+    store.record_link("feat/old", {"branch": "feat/old", "worktree": "/tmp/my-repo", "repo": "/tmp/my-repo"})
+    store.soft_delete_worktree("feat/old")
+    # Recording new worktree on the same path must succeed without IntegrityError
+    store.record_link("feat/new", {"branch": "feat/new", "worktree": "/tmp/my-repo", "repo": "/tmp/my-repo"})
+    links = store.load_links(include_deleted=True)
+    assert "feat/new" in links
+    assert "feat/old" not in links
+
+

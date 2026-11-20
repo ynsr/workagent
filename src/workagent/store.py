@@ -258,6 +258,22 @@ def record_link(issue_key: str, entry: dict) -> None:
         merged.setdefault("added_at", _now_iso())
         if merged.get("deleted_at"):
             merged["deleted_at"] = None  # re-recording revives a soft-deleted row
+        wt_path = str(Path(merged.get("worktree", "")).expanduser().resolve()) if merged.get("worktree") else ""
+        rec_repo = str(Path(merged.get("repo", "")).expanduser().resolve()) if merged.get("repo") else ""
+        rec_branch = str(merged.get("branch", "") or "")
+        for k in list(links.keys()):
+            if k == issue_key:
+                continue
+            v = links[k]
+            if not isinstance(v, dict):
+                continue
+            k_wt = str(Path(v.get("worktree", "")).expanduser().resolve()) if v.get("worktree") else ""
+            k_repo = str(Path(v.get("repo", "")).expanduser().resolve()) if v.get("repo") else ""
+            k_branch = str(v.get("branch", "") or "")
+            same_path = bool(wt_path and k_wt == wt_path)
+            same_branch = bool(rec_repo and rec_branch and k_repo == rec_repo and k_branch == rec_branch)
+            if (same_path and (v.get("deleted_at") or not k_branch or k_branch != rec_branch)) or same_branch:
+                links.pop(k, None)
         links[issue_key] = merged
         save_links(links)
         return

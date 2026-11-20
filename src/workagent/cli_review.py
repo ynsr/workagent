@@ -477,13 +477,16 @@ def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
     wt = gitwt.start_worktree(repo_dir, branch=head_ref, base=base_branch)
     worktree = wt.get("worktree_path", "")
     branch = wt.get("branch", head_ref)
-    store.record_link(head_ref, {"pr_url": pr_url, "worktree": worktree,
-                                 "branch": branch, "repo": str(repo_dir)})
+    prior = worktrees.recorded_key(
+        worktree, branch, store.load_links(include_deleted=True), repo=str(repo_dir))
+    use_key = prior if isinstance(prior, str) else head_ref
+    store.record_link(use_key, {"pr_url": pr_url, "worktree": worktree,
+                                "branch": branch, "repo": str(repo_dir)})
     try:
         repos.register_repo(repos.repo_name(repo_dir), repo_dir)
     except HarnessError:
         pass
-    return head_ref, worktree, branch
+    return use_key, worktree, branch
 
 
 def _mark_reviewed(key: str, worktree: str) -> None:

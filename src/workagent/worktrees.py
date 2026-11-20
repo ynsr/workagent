@@ -37,6 +37,12 @@ def recorded_key(worktree: str, branch: str, links: dict, repo: str = "") -> str
     if want:
         for k, v in links.items():
             if isinstance(v, dict) and want == _norm_path(v.get("worktree", "") or ""):
+                rec_branch = v.get("branch", "") or ""
+                if branch and rec_branch and branch != rec_branch:
+                    continue
+                recorded_repo = _norm_path(v.get("repo", "") or "")
+                if want_repo and recorded_repo and want_repo != recorded_repo:
+                    continue
                 return k
     return None
 

@@ -186,6 +186,8 @@ def save_links_rows(path: Path, links: dict) -> None:
 
     Upserts only the given keys and deletes rows absent from the dict —
     never a blanket DELETE, so run rows survive ordinary link mutations.
+    Deletes gone keys first so reassignments of path or (repo, branch)
+    never hit SQLite UNIQUE constraints on worktrees (issue #119).
     `active` is never reset by a re-save: entries carrying it are honored,
     others keep their stored value (new rows default to 1 via the column
     default). Pruned keys lose their runs with them (v26 FK cascade) plus
@@ -194,7 +196,39 @@ def save_links_rows(path: Path, links: dict) -> None:
     init_db(path)
     with connect(path) as conn:
         conn.execute("PRAGMA defer_foreign_keys = ON")
-        for key, e in links.items():
+        if links:
+            marks = ",".join("?" * len(links))
+            gone = [r[0] for r in conn.execute(
+                f"SELECT ref_key FROM worktrees WHERE ref_key NOT IN ({marks})",
+                tuple(links))]
+            conn.execute(f"DELETE FROM worktrees WHERE ref_key NOT IN ({marks})",
+                         tuple(links))
+        else:
+            gone = [r[0] for r in conn.execute("SELECT ref_key FROM worktrees")]
+            conn.execute("DELETE FROM worktrees")
+        _purge_dependents_conn(conn, gone)
+
+        seen_paths: set[str] = set()
+        seen_repo_branches: set[tuple[str, str]] = set()
+        filtered_items = []
+        for key, e in reversed(list(links.items())):
+            wt_p = _norm(str(e.get("worktree", ""))) if e.get("worktree") else ""
+            repo = str(e.get("repo", ""))
+            repo_norm = _norm(repo) if repo else ""
+            branch = str(e.get("branch", ""))
+            rb = (repo_norm, branch) if (repo_norm and branch) else None
+            if wt_p and wt_p in seen_paths:
+                continue
+            if rb and rb in seen_repo_branches:
+                continue
+            if wt_p:
+                seen_paths.add(wt_p)
+            if rb:
+                seen_repo_branches.add(rb)
+            filtered_items.append((key, e))
+        filtered_items.reverse()
+
+        for key, e in filtered_items:
             extra = {k: v for k, v in e.items() if k not in (
                 "worktree", "branch", "repo", "issue_url", "pr_url",
                 "added_at", "ref_key", "issue", "active", "deleted_at",
@@ -221,6 +255,14 @@ def save_links_rows(path: Path, links: dict) -> None:
             has_deleted = "deleted_at" in e
             has_related = "related_repos" in e
             has_parent = "parent_key_ref" in e
+            wt_path_str = str(e.get("worktree", ""))
+            if wt_path_str:
+                conn.execute("DELETE FROM worktrees WHERE path = ? AND ref_key != ?",
+                             (wt_path_str, key))
+                norm_wt = _norm(wt_path_str)
+                if norm_wt and norm_wt != wt_path_str:
+                    conn.execute("DELETE FROM worktrees WHERE path = ? AND ref_key != ?",
+                                 (norm_wt, key))
             conn.execute(
                 "INSERT INTO worktrees (ref_key, path, branch, repo_key,"
                 " issue_url, pr_url, added_at, payload, active, deleted_at,"
@@ -234,7 +276,7 @@ def save_links_rows(path: Path, links: dict) -> None:
                 + (", deleted_at=excluded.deleted_at" if has_deleted else "")
                 + (", related_repos=excluded.related_repos" if has_related else "")
                 + (", parent_key_ref=excluded.parent_key_ref" if has_parent else ""),
-                (key, str(e.get("worktree", "")), str(e.get("branch", "")),
+                (key, wt_path_str, str(e.get("branch", "")),
                  repo_key, str(e.get("issue_url", "")),
                  str(e.get("pr_url", "")), str(e.get("added_at")
                  or datetime.now(timezone.utc).isoformat()),
@@ -242,17 +284,6 @@ def save_links_rows(path: Path, links: dict) -> None:
                  str(e.get("deleted_at", "") or ""),
                  json.dumps(e.get("related_repos", [])),
                  str(e.get("parent_key_ref", "") or "")))
-        if links:
-            marks = ",".join("?" * len(links))
-            gone = [r[0] for r in conn.execute(
-                f"SELECT ref_key FROM worktrees WHERE ref_key NOT IN ({marks})",
-                tuple(links))]
-            conn.execute(f"DELETE FROM worktrees WHERE ref_key NOT IN ({marks})",
-                         tuple(links))
-        else:
-            gone = [r[0] for r in conn.execute("SELECT ref_key FROM worktrees")]
-            conn.execute("DELETE FROM worktrees")
-        _purge_dependents_conn(conn, gone)
 
 
 def set_worktree_active(path: Path, key: str, active: bool) -> None:
