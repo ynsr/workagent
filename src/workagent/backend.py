@@ -51,6 +51,10 @@ def run_blocking_cmd(argv: list[str], workdir: str, env_file: str | None = None,
 
 def exec_tty(argv: list[str], workdir: str, env_file: str | None = None) -> int:
     from . import env as _env
+    # Only the serve unit's NO_COLOR is dropped (marker set by service.py);
+    # a NO_COLOR from the user's shell or env.sh (applied below) is kept.
+    if os.environ.get("WORKAGENT_SERVICE"):
+        os.environ.pop("NO_COLOR", None)
     os.environ.update(_env.launch_env(env_file))
     cd_worktree(workdir)
     os.execvp(argv[0], argv)

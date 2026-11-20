@@ -77,11 +77,21 @@ def spawn_in_terminal(cmd: str, cwd: str = "") -> int | None:
                 cwd = parts[1]
         except ValueError:
             cwd = ""
+    # serve's unit exports NO_COLOR=1 plus WORKAGENT_SERVICE=1 (agy-guard
+    # honors NO_COLOR, omp doesn't). Strip it only in that case so a
+    # user-set NO_COLOR survives. Two layers: env= covers the terminal
+    # process; the `unset` prefix covers emulators that reuse an existing
+    # server (ptyxis/kitty/macOS open) and ignore our env.
+    from_service = bool(os.environ.get("WORKAGENT_SERVICE"))
+    if os.name == "posix" and from_service:
+        cmd = f"unset NO_COLOR; {cmd}"
     kwargs: dict = {"stdin": subprocess.DEVNULL,
                     "stdout": subprocess.DEVNULL,
                     "stderr": subprocess.DEVNULL}
     if os.name == "posix":
         kwargs["start_new_session"] = True
+    if from_service:
+        kwargs["env"] = {k: v for k, v in os.environ.items() if k != "NO_COLOR"}
     if sys.platform == "darwin":
         argv = ["open", "-a", "Terminal", *([cwd] if cwd else []),
                 "--args", "bash", "-lc", cmd]
