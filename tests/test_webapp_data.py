@@ -388,7 +388,7 @@ def test_open_terminal_supports_ptyxis_and_kitty(monkeypatch, tmp_path, isolated
                             lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
         # No env.sh in the isolated config → no source prefix.
         _wr._open_terminal("/wt", str(session), harness_name="omp")
-        assert got["argv"] == [*head, "bash", "-lc", f"cd /wt && omp --resume {session}"], term
+        assert got["argv"] == [*head, "bash", "-lc", f"unset NO_COLOR; cd /wt && omp --resume {session}"], term
 
 
 def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch, tmp_path, isolated_config):
@@ -407,7 +407,7 @@ def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch, tmp_path, 
                         lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
     # No env.sh in the isolated config → no source prefix.
     _wr._open_terminal("/wt", str(session), harness_name="omp")
-    assert got["argv"] == ["xterm", "-e", "bash", "-lc", f"cd /wt && omp --resume {session}"]
+    assert got["argv"] == ["xterm", "-e", "bash", "-lc", f"unset NO_COLOR; cd /wt && omp --resume {session}"]
 
 def test_resume_shell_command_splits_fresh_and_real(tmp_path, isolated_config):
     """omp v18+ rejects --resume on missing/empty transcripts: fresh
