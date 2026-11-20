@@ -544,6 +544,13 @@ def _shutdown_leave_detached_running(server: Any) -> None:
 
 def run_server(host: str, port: int, static_dir: Path,
                allowed_hosts: list[str]) -> None:
+    # Legacy workagent.service units (installed before WORKAGENT_SERVICE was
+    # added) export NO_COLOR=1 without WORKAGENT_SERVICE=1, and `install.sh`
+    # only restarts the unit. Mark WORKAGENT_SERVICE=1 when started by systemd
+    # (INVOCATION_ID present) so spawned interactive terminals drop NO_COLOR.
+    if os.environ.get("INVOCATION_ID"):
+        from .service import SERVICE_MARKER as _SERVICE_MARKER
+        os.environ.setdefault(_SERVICE_MARKER, "1")
     try:
         from .env import apply_env_file as _apply_env
         _apply_env()
