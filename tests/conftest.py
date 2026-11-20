@@ -62,13 +62,21 @@ def _mock_network_clis(request, monkeypatch):
 @pytest.fixture(autouse=True)
 def _isolate_workagent_env(tmp_path, monkeypatch):
     """Isolate config/DB and Antigravity home for every test so prod DB is never touched."""
+    import os
     cfg = tmp_path / "workagent-config"
     cfg.mkdir(exist_ok=True)
     agy = tmp_path / "antigravity-home"
     agy.mkdir(exist_ok=True)
     monkeypatch.setenv("WORKAGENT_CONFIG_DIR", str(cfg))
     monkeypatch.setenv("ANTIGRAVITY_HOME", str(agy))
-    return cfg
+    # Clear WORKAGENT_SERVICE before and after each test so neither a systemd
+    # host env nor a test calling run_server() leaks into later tests.
+    monkeypatch.setenv("WORKAGENT_SERVICE", "")
+    monkeypatch.delenv("WORKAGENT_SERVICE", raising=False)
+    try:
+        yield cfg
+    finally:
+        os.environ.pop("WORKAGENT_SERVICE", None)
 
 
 @pytest.fixture

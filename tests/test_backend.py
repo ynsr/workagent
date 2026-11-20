@@ -1089,6 +1089,7 @@ def test_exec_tty_drops_service_no_color(monkeypatch, tmp_path):
     monkeypatch.setattr(backend.os, "execvp", lambda a, argv: None)
     backend.exec_tty(["x"], str(tmp_path))
     assert "NO_COLOR" not in backend.os.environ
+    assert "WORKAGENT_SERVICE" not in backend.os.environ
 
 
 def test_exec_tty_keeps_user_no_color(monkeypatch, tmp_path):
@@ -1132,7 +1133,8 @@ def _spawn(monkeypatch, service):
 def test_spawn_in_terminal_drops_service_no_color(monkeypatch):
     seen = _spawn(monkeypatch, True)
     assert "NO_COLOR" not in seen["env"]
-    assert "unset NO_COLOR" in seen["argv"][-1]
+    assert "WORKAGENT_SERVICE" not in seen["env"]
+    assert "unset NO_COLOR WORKAGENT_SERVICE" in seen["argv"][-1]
 
 
 def test_spawn_in_terminal_keeps_user_no_color(monkeypatch):

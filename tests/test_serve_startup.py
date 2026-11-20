@@ -103,3 +103,63 @@ def test_init_db_defer_backfill_skips_inline_git(isolated_config, monkeypatch):
     assert calls == ["async"]
 
 
+def _stub_run_server(monkeypatch, tmp_path):
+    from workagent import webapp as _web
+    from workagent.store_sqlite import _INIT_CACHE
+    import uvicorn
+
+    monkeypatch.setattr(_web, "_port_free", lambda host, port: True)
+    monkeypatch.setattr(_web, "create_app", lambda *a, **k: "app")
+    monkeypatch.setattr(_web, "start_background_maintenance", lambda: None)
+    monkeypatch.setattr("workagent.store_sqlite.backfill_async", lambda: None)
+
+    class _Cfg:
+        def __init__(self, *a, **k):
+            pass
+
+    class _Server:
+        def __init__(self, config):
+            self.handle_exit = None
+
+        def run(self):
+            pass
+
+    monkeypatch.setattr(uvicorn, "Config", _Cfg)
+    monkeypatch.setattr(uvicorn, "Server", _Server)
+    dist = tmp_path / "dist"
+    dist.mkdir(exist_ok=True)
+    (dist / "index.html").write_text("x")
+    _INIT_CACHE.pop("backfill", None)
+    return _web, dist
+
+
+def test_run_server_marks_service_under_systemd_without_marker(
+    isolated_config, tmp_path, monkeypatch
+):
+    """Legacy workagent.service units (pre-#121) set NO_COLOR=1 without
+    WORKAGENT_SERVICE=1; run_server must still mark WORKAGENT_SERVICE=1 when
+    launched under systemd (INVOCATION_ID present) so spawned terminals drop
+    NO_COLOR."""
+    import os
+    _web, dist = _stub_run_server(monkeypatch, tmp_path)
+    monkeypatch.setenv("INVOCATION_ID", "deadbeef")
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.delenv("WORKAGENT_SERVICE", raising=False)
+
+    _web.run_server("127.0.0.1", 3344, dist, [])
+    assert os.environ.get("WORKAGENT_SERVICE") == "1"
+
+
+def test_run_server_skips_service_marker_outside_systemd(
+    isolated_config, tmp_path, monkeypatch
+):
+    import os
+    _web, dist = _stub_run_server(monkeypatch, tmp_path)
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
+    monkeypatch.delenv("WORKAGENT_SERVICE", raising=False)
+
+    _web.run_server("127.0.0.1", 3344, dist, [])
+    assert "WORKAGENT_SERVICE" not in os.environ
+
+
+

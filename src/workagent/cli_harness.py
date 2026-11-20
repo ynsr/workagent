@@ -84,14 +84,17 @@ def spawn_in_terminal(cmd: str, cwd: str = "") -> int | None:
     # server (ptyxis/kitty/macOS open) and ignore our env.
     from_service = bool(os.environ.get("WORKAGENT_SERVICE"))
     if os.name == "posix" and from_service:
-        cmd = f"unset NO_COLOR; {cmd}"
+        cmd = f"unset NO_COLOR WORKAGENT_SERVICE; {cmd}"
     kwargs: dict = {"stdin": subprocess.DEVNULL,
                     "stdout": subprocess.DEVNULL,
                     "stderr": subprocess.DEVNULL}
     if os.name == "posix":
         kwargs["start_new_session"] = True
     if from_service:
-        kwargs["env"] = {k: v for k, v in os.environ.items() if k != "NO_COLOR"}
+        kwargs["env"] = {
+            k: v for k, v in os.environ.items()
+            if k not in ("NO_COLOR", "WORKAGENT_SERVICE")
+        }
     if sys.platform == "darwin":
         argv = ["open", "-a", "Terminal", *([cwd] if cwd else []),
                 "--args", "bash", "-lc", cmd]
