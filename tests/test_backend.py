@@ -1080,3 +1080,26 @@ def test_agy_watch_transcript_re_mirrors_until_stopped(tmp_path, monkeypatch):
 
 
 
+
+
+def test_exec_tty_drops_no_color(monkeypatch, tmp_path):
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setattr(backend, "cd_worktree", lambda wd: None)
+    monkeypatch.setattr(backend.os, "execvp", lambda a, argv: None)
+    backend.exec_tty(["x"], str(tmp_path))
+    assert "NO_COLOR" not in backend.os.environ
+
+
+def test_spawn_in_terminal_drops_no_color(monkeypatch):
+    import subprocess as sp
+    from workagent import cli_harness as ch
+    seen = {}
+    class P:
+        pid = 1
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("TERMINAL", "xterm")
+    monkeypatch.setattr(ch.shutil, "which", lambda t: "/bin/" + t)
+    monkeypatch.setattr(sp, "Popen", lambda argv, **kw: seen.update(argv=argv, **kw) or P())
+    ch.spawn_in_terminal("echo hi", "/tmp")
+    assert "NO_COLOR" not in seen["env"]
+    assert "unset NO_COLOR" in seen["argv"][-1]

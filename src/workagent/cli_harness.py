@@ -77,11 +77,16 @@ def spawn_in_terminal(cmd: str, cwd: str = "") -> int | None:
                 cwd = parts[1]
         except ValueError:
             cwd = ""
+    # serve's unit exports NO_COLOR=1 (agy-guard honors it, omp doesn't);
+    # drop it for the spawned terminal and inside the shell command.
+    if os.name == "posix":
+        cmd = f"unset NO_COLOR; {cmd}"
     kwargs: dict = {"stdin": subprocess.DEVNULL,
                     "stdout": subprocess.DEVNULL,
                     "stderr": subprocess.DEVNULL}
     if os.name == "posix":
         kwargs["start_new_session"] = True
+    kwargs["env"] = {k: v for k, v in os.environ.items() if k != "NO_COLOR"}
     if sys.platform == "darwin":
         argv = ["open", "-a", "Terminal", *([cwd] if cwd else []),
                 "--args", "bash", "-lc", cmd]

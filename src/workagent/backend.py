@@ -52,6 +52,8 @@ def run_blocking_cmd(argv: list[str], workdir: str, env_file: str | None = None,
 def exec_tty(argv: list[str], workdir: str, env_file: str | None = None) -> int:
     from . import env as _env
     os.environ.update(_env.launch_env(env_file))
+    # serve's systemd unit sets NO_COLOR=1; interactive harnesses must render color.
+    os.environ.pop("NO_COLOR", None)
     cd_worktree(workdir)
     os.execvp(argv[0], argv)
     return 0
