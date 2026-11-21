@@ -307,6 +307,49 @@ def create_app(static_dir: Path, host: str, port: int,
             raise HTTPException(404, f"worktree missing for {key}: {wt}")
         return {"key": key, "worktree": wt}
 
+    @app.get("/api/worktrees/{ref}/files")
+    def worktree_files(ref: str, mode: str = "base") -> dict:
+        """Read-only list of changed files (+additions/-deletions, status) in a worktree."""
+        from . import git_diff
+        links = store.load_links(include_inactive=True)
+        resolved = worktrees.resolve_worktree(ref, links)
+        if resolved is None:
+            raise HTTPException(404, f"no linked state for {ref}")
+        key = worktrees.pick_worktree(ref, resolved, links)
+        entry = links[key]
+        wt = entry.get("worktree", "")
+        if not wt or not Path(wt).is_dir():
+            raise HTTPException(404, f"worktree missing for {key}: {wt}")
+        try:
+            out = git_diff.list_changed_files(Path(wt), mode=mode, base_branch=entry.get("base_branch"))
+        except git_diff.DiffModeError as exc:
+            raise HTTPException(400, str(exc))
+        return {"key": key, **out}
+
+    @app.get("/api/worktrees/{ref}/diff")
+    def worktree_diff(ref: str, path: str = "", mode: str = "base") -> dict:
+        """Read-only structured unified diff hunks for one file in a worktree."""
+        from . import git_diff
+        links = store.load_links(include_inactive=True)
+        resolved = worktrees.resolve_worktree(ref, links)
+        if resolved is None:
+            raise HTTPException(404, f"no linked state for {ref}")
+        key = worktrees.pick_worktree(ref, resolved, links)
+        entry = links[key]
+        wt = entry.get("worktree", "")
+        if not wt or not Path(wt).is_dir():
+            raise HTTPException(404, f"worktree missing for {key}: {wt}")
+        try:
+            out = git_diff.get_file_diff(
+                Path(wt),
+                path,
+                mode=mode,
+                base_branch=entry.get("base_branch"),
+            )
+        except (git_diff.DiffModeError, git_diff.DiffPathError) as exc:
+            raise HTTPException(400, str(exc))
+        return {"key": key, **out}
+
     @app.get("/api/repos")
     def repos_list() -> list[dict]:
         return [{"name": n, "path": v.get("path", ""),
@@ -365,6 +408,17 @@ def create_app(static_dir: Path, host: str, port: int,
         """All prodtest items, newest first (Prodtests page source). Always 200."""
         return {"prodtests": store.list_prodtests()}
 
+
+    @app.get("/api/prodtests/{issue_key}/plan")
+    def prodtest_plan_view(issue_key: str) -> dict:
+        """Read-only prodtest YAML plan content + parsed cases/metadata."""
+        from . import git_diff
+        try:
+            return git_diff.read_prodtest_plan(issue_key)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except git_diff.DiffPathError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     @app.get("/api/prodtests/{ref}")
     def prodtest_detail(ref: str) -> dict:
