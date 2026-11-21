@@ -19,6 +19,7 @@ import asyncio
 import ipaddress
 import itertools
 import json
+import logging
 import os
 import shutil
 import signal
@@ -38,6 +39,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import __version__, backend, store, worktrees
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -210,20 +213,64 @@ def create_app(static_dir: Path, host: str, port: int,
     )
     from . import trackers as trackers_mod
 
+    def _runs_and_flows_by_worktree() -> tuple[dict[str, list[dict]], dict[str, list[dict]]]:
+        runs_by_key: dict[str, list[dict]] = {}
+        seen_latest: set[str] = set()
+        try:
+            for r in registry.list():
+                wref = str(r.get("worktree_ref") or "").strip()
+                if not wref:
+                    continue
+                is_latest = wref not in seen_latest
+                seen_latest.add(wref)
+                state = str(r.get("state") or "").strip().lower()
+                if state in ("running", "needs_input") or r.get("pending_question"):
+                    runs_by_key.setdefault(wref, []).append(r)
+                elif is_latest and state == "failed":
+                    runs_by_key.setdefault(wref, []).append(r)
+        except Exception as exc:
+            logger.warning("Failed to list runs for status enrichment: %s", exc)
+        flows_by_key: dict[str, list[dict]] = {}
+        try:
+            if store._use_sqlite():
+                for fl in store.list_flows():
+                    wref = str(fl.get("worktree_ref") or fl.get("worktree") or "").strip()
+                    if not wref:
+                        continue
+                    flows_by_key.setdefault(wref, []).append(fl)
+        except Exception as exc:
+            logger.warning("Failed to list flows for status enrichment: %s", exc)
+        return runs_by_key, flows_by_key
+
     @app.get("/api/status")
     def status(ref: str | None = None, refresh: bool = False, include_inactive: bool = False,
                include_deleted: bool = False):
         links = store.load_links(include_inactive=include_inactive, include_deleted=include_deleted)
+        runs_by_key, flows_by_key = _runs_and_flows_by_worktree()
         if not ref:
             _fetch_origins(links, refresh)
-            return {k: _enrich_entry(k, v, refresh)
-                    for k, v in links.items()}
+            return {
+                k: _enrich_entry(
+                    k,
+                    v,
+                    refresh,
+                    active_runs=runs_by_key.get(k, []),
+                    active_flows=flows_by_key.get(k, []),
+                )
+                for k, v in links.items()
+            }
         resolved = worktrees.resolve_worktree(ref, links)
         if resolved is None:
             raise HTTPException(404, f"no linked state for {ref}")
         key = worktrees.pick_worktree(ref, resolved, links)
         _fetch_origins({key: links[key]}, refresh)
-        return _session_detail(key, links[key], refresh=refresh)
+        return _session_detail(
+            key,
+            links[key],
+            refresh=refresh,
+            active_runs=runs_by_key.get(key, []),
+            active_flows=flows_by_key.get(key, []),
+        )
 
     @app.get("/api/info")
     def info() -> dict:

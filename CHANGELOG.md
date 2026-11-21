@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Add derived delivery stage (kanban_column, display_status, attention_reason) and Dashboard Kanban Board view with Board/Table toggle [134]
 - Add global Command Palette (Cmd+K / Ctrl+K) and keyboard navigation shortcuts across Dashboard, Runs, Messages, and Prodtests [136]
 - Add agent-orchestrator vs. Workagent UI/UX comparison report and 14-issue improvement roadmap [126]
 - Fix ACP harness runtime bugs (supervised Q&A, stderr tail, validation, env.sh, options refresh, transcript UI) [128]
