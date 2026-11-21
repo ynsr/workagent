@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
+import { useListHotkeys } from "@/hooks/useHotkeys"
 import { Copy, Download, FlaskConical } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -85,6 +86,16 @@ export function Prodtests() {
   const rows: ProdtestRow[] = data?.prodtests ?? []
   const filters: ProdtestFilters = { q: issueParam || q, status }
   const visible = useMemo(() => filterProdtests(rows, filters), [rows, issueParam, q, status])
+  const { activeIndex } = useListHotkeys({
+    items: visible,
+    onOpen: (r) =>
+      navigate(
+        r.last_run_id
+          ? `/runs/${r.last_run_id}`
+          : `/prodtest-launch?ref=${encodeURIComponent(r.issue_key)}`,
+      ),
+    onFocusSearch: () => document.getElementById("pt-q")?.focus(),
+  })
   const statuses = useMemo(() => [...new Set(rows.map((r) => r.status).filter(Boolean))].sort(), [rows])
 
   function setIssue(issue: string) {
@@ -245,8 +256,12 @@ export function Prodtests() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visible.map((r) => (
-                  <TableRow key={r.issue_key}>
+                {visible.map((r, idx) => (
+                  <TableRow
+                    key={r.issue_key}
+                    data-focused={idx === activeIndex ? "true" : undefined}
+                    className={idx === activeIndex ? "bg-accent/50" : undefined}
+                  >
                     <TableCell className="font-mono text-[13px]">{r.issue_key}</TableCell>
                     <TableCell>
                       <Badge
