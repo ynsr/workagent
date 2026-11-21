@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Add agent-orchestrator vs. Workagent UI/UX comparison report and 14-issue improvement roadmap [126]
 - Fix ACP harness runtime bugs (supervised Q&A, stderr tail, validation, env.sh, options refresh, transcript UI) [128]
 - Harden ACP follow-ups: sync stderr drain on init failure, own block for unknown events, explicit transcript styling with sticky user toggles, shared run-mode flags [128]
 - Re-running a flow after a step-0 failure now starts a fresh run instead of failing when step configs differ [132]
