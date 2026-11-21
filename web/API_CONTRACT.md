@@ -476,6 +476,9 @@ failure). `?refresh=1` bypasses the TTL cache and re-probes the harness
 Model/Effort selects when `supported` is
 false or the lists are empty.
 
+### `POST /api/runs/{id}/follow-up` → `202 {"run_id", "continued_from_run_id", "worktree_ref"}` (issue #144)
+Spawns a linked continuation run (`workagent adhoc <ref> --prompt <prompt> --follow-up --continue-run <id> --run-mode <mode> --yes`) on the same worktree/session without weakening `POST /api/runs/{id}/input`'s strict `pending_question` guard. Body: `{"prompt": str, "harness"?: str, "run_mode"?: "preview"|"headless"|"acp"|"terminal", "model"?: str, "effort"?: str}`. Errors: `422` blank prompt, `404` unknown run or no associated worktree, `409` active run on target `adhoc:<ref>`.
+
 ### `POST /api/runs/{id}/input` → `{"id", "ok": true}` (issue #112)
 Append a user answer to a running run's `input.jsonl` (the ACP run loop
 tails `WORKAGENT_RUN_DIR/input.jsonl` from offset 0, consuming each line

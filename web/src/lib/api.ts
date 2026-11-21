@@ -582,6 +582,16 @@ export const api = {
       { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
     ),
 
+  /** POST /api/runs/{id}/follow-up — spawn a linked continuation run on the same worktree/session. */
+  followUpRun: (
+    id: string,
+    body: { prompt: string; harness?: string; run_mode?: string; model?: string; effort?: string },
+  ) =>
+    request<{ run_id: string; continued_from_run_id: number | null; worktree_ref: string }>(
+      `/api/runs/${encodeURIComponent(id)}/follow-up`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+    ),
+
   /** POST /api/runs/{id}/resume — open OS terminal resumed on the run's transcript. */
   resumeRun: (id: string) =>
     request<{ id: string; session_file: string; worktree: string }>(

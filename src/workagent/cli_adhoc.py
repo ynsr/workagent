@@ -25,6 +25,8 @@ def adhoc(
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the prompt."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before commands."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path."),
+    continue_run: Optional[int] = typer.Option(None, "--continue-run", help="Continue from a previous run id (links continued_from_run_id and resumes ACP session when supported)."),
+    follow_up: bool = typer.Option(False, "--follow-up", help="Mark this adhoc run as a follow-up turn."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
@@ -79,9 +81,34 @@ def adhoc(
                 _fail("aborted", EXIT_USAGE)
         _guard_harness(key, wt)
         harness_name = harness or store.default_harness()
+        run_meta: dict = {"action": "adhoc", "mode": mode}
+        if follow_up or continue_run is not None:
+            run_meta["follow_up"] = True
+        run_result: dict = {"command": "adhoc", "session_metadata": run_meta}
+        if isinstance(continue_run, int) and continue_run > 0:
+            run_result["continued_from_run_id"] = continue_run
+            run_meta["continued_from_run_id"] = continue_run
+            try:
+                from . import backend as _backend, store_sqlite as _sq
+                db = _sq.db_path()
+                prev = _sq.get_run(db, continue_run, include_deleted_worktrees=True) if db.exists() else None
+                if prev:
+                    prev_meta = prev.get("metadata") if isinstance(prev.get("metadata"), dict) else {}
+                    prev_sid = str(prev_meta.get("acp_session_id") or "")
+                    if prev_sid:
+                        run_result["resume_session_id"] = prev_sid
+                    prev_path = str(prev.get("file_path") or "")
+                    if prev_path:
+                        h = _backend.get_harness(harness_name)
+                        summary = h.extract_last_assistant_text(prev_path, max_chars=2000)
+                        if summary:
+                            run_result["resume_context"] = (
+                                f"[Continuing from run #{continue_run} — previous assistant summary]\n{summary}"
+                            )
+            except Exception:
+                pass
         _run_harness(harness_name, body, wt, str(entry.get("repo", wt)),
-                     True, use_launch, {"command": "adhoc",
-                                        "session_metadata": {"action": "adhoc", "mode": mode}},
+                     True, use_launch, run_result,
                      json_output, run_key=key,
                      session_file=session_file if isinstance(session_file, str) else None,
                      terminal=use_terminal, env_file=env_file,

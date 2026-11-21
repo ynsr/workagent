@@ -571,3 +571,73 @@ def test_run_harness_non_1_exit_marks_run_failed(tmp_path, isolated_config, monk
     runs = sq.list_runs(db)
     assert len(runs) == 1
     assert runs[0]["state"] == "failed"
+
+
+def test_launch_acp_session_load_and_on_session_id(tmp_path):
+    """T07.1: launch_acp calls on_session_id and uses session/load when advertised."""
+    import sys
+    from workagent.agy_harness import AgyAcpHarness
+
+    seen_methods: list[str] = []
+    fake_agent = tmp_path / "load_agent.py"
+    fake_agent.write_text(
+        "import json, sys\n"
+        "for raw in sys.stdin:\n"
+        "    msg = json.loads(raw)\n"
+        "    m = msg.get('method')\n"
+        "    if m == 'initialize':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'protocolVersion':1,'agentCapabilities':{'loadSession':True}}}), flush=True)\n"
+        "    elif m == 'session/load':\n"
+        "        sid = msg['params']['sessionId']\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'sessionId':sid}}), flush=True)\n"
+        "    elif m == 'session/prompt':\n"
+        "        sid = msg['params']['sessionId']\n"
+        "        print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':sid,'update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'resumed ok'}}}}), flush=True)\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'stopReason':'end_turn'}}), flush=True)\n"
+    )
+    h = AgyAcpHarness()
+    h.acp_argv = lambda: [sys.executable, str(fake_agent)]
+    captured_sids: list[str] = []
+    rc = h.launch_acp(
+        "follow up", str(tmp_path), no_tty=True,
+        resume_session_id="sess-prev-1",
+        on_session_id=lambda s: captured_sids.append(s),
+    )
+    assert rc == 0
+    assert captured_sids == ["sess-prev-1"]
+
+
+def test_launch_acp_falls_back_to_session_new_with_resume_context(tmp_path):
+    """T07.1: when loadSession is not advertised, fall back to session/new + resume_context."""
+    import sys
+    from workagent.agy_harness import AgyAcpHarness
+
+    prompt_log = tmp_path / "prompt.txt"
+    fake_agent = tmp_path / "fallback_agent.py"
+    fake_agent.write_text(
+        "import json, sys\n"
+        "for raw in sys.stdin:\n"
+        "    msg = json.loads(raw)\n"
+        "    m = msg.get('method')\n"
+        "    if m == 'initialize':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'protocolVersion':1}}), flush=True)\n"
+        "    elif m == 'session/new':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'sessionId':'sess-new-2'}}), flush=True)\n"
+        "    elif m == 'session/prompt':\n"
+        f"        open({str(prompt_log)!r}, 'w').write(msg['params']['prompt'][0]['text'])\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'stopReason':'end_turn'}}), flush=True)\n"
+    )
+    h = AgyAcpHarness()
+    h.acp_argv = lambda: [sys.executable, str(fake_agent)]
+    captured_sids: list[str] = []
+    rc = h.launch_acp(
+        "please fix tests", str(tmp_path), no_tty=True,
+        resume_session_id="sess-old-1",
+        resume_context="[Previous summary] built feature X",
+        on_session_id=lambda s: captured_sids.append(s),
+    )
+    assert rc == 0
+    assert captured_sids == ["sess-new-2"]
+    sent = prompt_log.read_text()
+    assert "[Previous summary] built feature X" in sent
+    assert "please fix tests" in sent

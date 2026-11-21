@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react"
+import { Link } from "react-router-dom"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { Copy, FolderOpen, Rocket, SquareTerminal, Workflow, Zap } from "lucide-react"
@@ -296,6 +297,13 @@ export function WorktreeDetail({
           >
             <Rocket aria-hidden className="size-4" />
             Runs
+          </Button>
+        ) : null}
+        {worktreeKey ? (
+          <Button variant="default" size="sm" asChild>
+            <Link to={`/worktrees/${encodeURIComponent(worktreeKey)}`}>
+              Open Workspace
+            </Link>
           </Button>
         ) : null}
         {worktreeKey && onOpenFlows ? (
