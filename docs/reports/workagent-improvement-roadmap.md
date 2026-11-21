@@ -2,7 +2,7 @@
 
 **Issue:** [ynsr/workagent#126](https://github.com/ynsr/workagent/issues/126)  
 **Companion Report:** [Agent Orchestrator vs. Workagent: Architecture, Data Modeling & UI/UX Analysis](./agent-orchestrator-vs-workagent-analysis.md)  
-**Baseline Assumption:** Includes incoming ACP harness support from [PR #123 (`feat/112--add-harness-acp`)](https://github.com/ynsr/workagent/pull/123) (`AcpHarness`, `OmpAcpHarness`, `AgyAcpHarness`, 4 execution modes `preview | headless | acp | terminal`, `GET /api/harnesses/{name}/options` for `--model` and `--effort`, `POST /api/runs/{id}/input` via `input.jsonl`, and `AcpTranscript` + `QuestionCard` in `RunDetail.tsx`).
+**Baseline Verified Against `main` (`ff8b1ab`):** Includes the merged ACP harness implementation from [PR #123 (`#112`)](https://github.com/ynsr/workagent/pull/123) (`AcpHarness`, `OmpAcpHarness`, `AgyAcpHarness`, 4 execution modes `preview | headless | acp | terminal`, `GET /api/harnesses/{name}/options` for `--model` and `--effort`, `POST /api/runs/{id}/input` via `input.jsonl`, and `AcpTranscript` + `QuestionCard` in `RunDetail.tsx`).
 
 ---
 
@@ -234,13 +234,14 @@ flowchart LR
   2. In `Prodtests.tsx`, format `plan_path` as a compact `IPG-1069.yaml · rev3 · <risk>` badge with a tooltip and copy/preview action for the full path.
   3. In `FlowTemplates.tsx` and `Actions.tsx`, group the `Protected`, `Top`, `Overlay`, and `Order` columns into a compact trailing control cluster so the table fits comfortably without horizontal scrolling.
 
-#### Issue 5: Add `ActivityRun` consecutive tool-call folding and turn work summaries to `AcpTranscript`
-- **Scope**: Frontend (`web/src/components/AcpTranscript.tsx`) — follow-up to PR #123.
-- **Problem**: Even with PR #123's collapsible `<details>` per tool call, an agent turn that performs 20 consecutive file reads and searches renders 20 vertical tool rows, pushing assistant prose off-screen.
+#### Issue 5: Upgrade `AcpTranscript` with chunk coalescing, collapsible `<details>`, `ActivityRun` tool-call folding, Markdown, and a `Structured / Raw` toggle
+- **Scope**: Frontend (`web/src/components/AcpTranscript.tsx`, `web/src/lib/harness.ts`, `web/src/pages/RunDetail.tsx`) — follow-up to merged PR #123 (`ff8b1ab`).
+- **Problem**: In merged PR #123, `AcpTranscript.tsx` renders one flat `<div>` per streamed `ACP:` line (`agent_message_chunk`, `agent_thought_chunk`, and `tool_call`/`tool_call_update` are not coalesced or merged by `toolCallId`), has no collapsible `<details>` blocks, renders plain text instead of Markdown for assistant messages, prints raw JSON for `usage` blocks, and stacks simultaneously above raw `LogViewer` without a `Structured / Raw` toggle.
 - **Solution**:
-  1. Group consecutive exploratory tool calls (`read`, `search`, `list`, non-mutating shell commands) into a single collapsible `ActivityRun` summary bar: `"Explored N files, M searches, K commands"` with aggregate `+additions/-deletions` badges when file edits occurred.
-  2. Automatically surface any **failed** tool call unfolded immediately beneath the summary bar (`FailedCalls`).
-  3. Show a settled turn header (`"Worked for <duration> · <model> (<effort>)"`) at the top of each completed turn.
+  1. Coalesce consecutive `message` and `thought` chunks and merge `tool_call` / `tool_call_update` events by `toolCallId` in `parseAcpBlocks`.
+  2. Render collapsible `<details>` for `thought` blocks, Markdown for assistant `message` blocks, formatted token summaries for `usage` blocks, and a `Structured | Raw` toggle replacing the stacked duplicate `LogViewer`.
+  3. Group consecutive exploratory tool calls (`read`, `search`, `list`, non-mutating shell commands) into a single collapsible `ActivityRun` summary bar: `"Explored N files, M searches, K commands"` with aggregate `+additions/-deletions` badges when file edits occurred, while surfacing any **failed** tool call unfolded immediately beneath (`FailedCalls`).
+  4. Show a settled turn header (`"Worked for <duration> · <model> (<effort>)"`) at the top of each completed turn.
 
 #### Issue 6: Hierarchical parent-child run tree in `RunsTable` and visual stepper progress bar in `Flows`
 - **Scope**: Backend (`src/workagent/store_sqlite.py`, `src/workagent/cli_flow_run.py`) + Frontend (`web/src/components/RunsTable.tsx`, `web/src/pages/Flows.tsx`, `web/src/components/StatusTableMain.tsx`).
@@ -252,10 +253,11 @@ flowchart LR
 
 #### Issue 7: Dedicated Worktree Workspace View (`/worktrees/:ref`) with multi-turn ACP follow-up composer
 - **Scope**: Backend (`src/workagent/acp_harness.py`, `src/workagent/web_runs_routes.py`) + Frontend (`web/src/pages/WorktreeWorkspace.tsx`, `web/src/components/WorktreeDetail.tsx`).
-- **Problem**: Supervising an agent on a worktree requires jumping between `Dashboard` (for PR/CI/worktree metadata), `Launch` (to send an adhoc prompt or next action), `Flows` (to check step progress), and `RunDetail` (to read logs or answer questions).
+- **Problem**: Supervising an agent on a worktree requires jumping between `Dashboard`, `Launch`, `Flows`, and `RunDetail`. Additionally, in merged PR #123 (`ff8b1ab`), `AcpHarness.launch_acp` always calls `session/new` (no `session/load` resume yet) and exits whenever no `question` event is pending (always true for `omp`), while `POST /api/runs/{id}/input` returns `409 not_running` once a run finishes.
 - **Solution**:
-  1. Create a split-pane **Worktree Workspace View** (`/worktrees/:ref`):
-     - **Center Pane**: Live `AcpTranscript` + `QuestionCard` + bottom **Follow-up Prompt Composer** (allowing the user to send a follow-up prompt or trigger `Review` / `Fix comments` / `Sync` / `Custom Action` in-place on the worktree, automatically resuming the latest ACP/harness transcript via `continued_from_run_id` or `input.jsonl`).
+  1. Persist the ACP `sessionId` in `runs.metadata`, add `session/load` resume support (and optional keep-alive mode) to `AcpHarness.launch_acp`, and expose `POST /api/runs/{id}/follow-up` so finished ACP runs can continue seamlessly in-place.
+  2. Create a split-pane **Worktree Workspace View** (`/worktrees/:ref`):
+     - **Center Pane**: Live `AcpTranscript` + `QuestionCard` + bottom **Follow-up Prompt Composer** (allowing the user to send a follow-up prompt or trigger `Review` / `Fix comments` / `Sync` / `Custom Action` in-place on the worktree).
      - **Right Inspector Rail**: Tabs for `Summary & Timeline`, `Diff / Files`, `Flows & Runs`, and `Prodtest`.
 
 #### Issue 8: In-app Git Diff Viewer, Prodtest YAML Plan Viewer, and Inline Line Annotations
@@ -289,12 +291,12 @@ flowchart LR
   2. Run a background observer loop in `workagent serve` (and `workagent watch` CLI subcommand) that checks active worktrees with open PRs, deduplicates via `last_nudge_signature = sha256(head_sha + ci_state + unresolved_ids)`, skips worktrees with an active harness lock or paused flow, and automatically spawns an ACP/headless fix run when new CI failures or review comments appear.
 
 #### Issue 12: Capture run token, cost, model, and duration telemetry and add Usage summary view
-- **Scope**: Backend (`src/workagent/store_sqlite.py`, `src/workagent/acp_harness.py`, `src/workagent/agy_harness.py`, `src/workagent/webapp.py`) + Frontend (`web/src/pages/Runs.tsx`, `web/src/pages/RunDetail.tsx`).
-- **Problem**: Workagent does not persist how long a run took (`duration_ms`), which model/effort was used, or token/cost metrics reported by ACP `usage_update` events.
+- **Scope**: Backend (`src/workagent/store_sqlite.py`, `src/workagent/acp_harness.py`, `src/workagent/agy_harness.py`, `src/workagent/webapp.py`) + Frontend (`web/src/lib/harness.ts`, `web/src/pages/Runs.tsx`, `web/src/pages/RunDetail.tsx`).
+- **Problem**: Merged PR #123 emits `{"t": "usage", "id": ..., "usage": ...}` events on stdout (`acp_harness.py:411-413`), but does not persist `duration_ms`, `model_id`, `effort`, or token/cost metrics into `runs` in `state.db`, and `harness.ts:75` falls back to raw `JSON.stringify(obj)` when displaying `usage` blocks.
 - **Solution**:
   1. Add `duration_ms`, `model_id`, `effort`, `input_tokens`, `output_tokens`, `cached_tokens`, and `cost_usd` to `runs` in `state.db`.
-  2. Populate these fields from `AcpClient` `usage_update` events and headless stream-json summaries on run completion.
-  3. Display duration, model/effort badges, and token/cost pills on `RunsTable`, `RunDetail`, and a compact usage summary bar on `Runs.tsx`.
+  2. Populate these fields from `AcpHarness` `{"t": "usage", "usage": ...}` events and headless stream-json summaries on run completion.
+  3. Format `usage` blocks cleanly in `harness.ts` and display duration, model/effort badges, and token/cost pills on `RunsTable`, `RunDetail`, and a compact usage summary bar on `Runs.tsx`.
 
 #### Issue 13: Add built-in recurring Cron/RRULE Schedules for Flow Templates, Custom Actions, and Maintenance commands
 - **Scope**: Backend (`src/workagent/store_sqlite.py`, `src/workagent/scheduler.py`, `src/workagent/cli_schedule.py`, `src/workagent/webapp.py`) + Frontend (`web/src/pages/FlowTemplates.tsx`).
