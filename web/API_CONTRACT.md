@@ -461,6 +461,30 @@ Includes every `Run` field (`harness_name`, `resume_command`, `transcript_ready`
 the DB-persisted output (last 2000 lines, `truncated` when the live buffer
 had dropped older lines) — the log survives `serve` restarts.
 
+### `GET /api/harnesses/{name}/options` → model/effort discovery (issue #112)
+ACP-discovered options via `<bin> acp` (`initialize` + `session/new` in a
+temp cwd, 10-min server TTL). 404 unknown harness (`{"error": {"code":
+"not_found"}}`); 200 + `supported: false` for non-ACP harnesses (no probe);
+200 + `warning` when the probe fails. Shape:
+`{"harness", "supported", "models": [{"id", "name"}], "efforts": [...],
+"current_model", "current_effort", "cached"}` (`warning` only on probe
+failure). The UI disables the Model/Effort selects when `supported` is
+false or the lists are empty.
+
+### `POST /api/runs/{id}/input` → `{"id", "ok": true}` (issue #112)
+Append a user answer to a running run's `input.jsonl` (the ACP run loop
+tails `WORKAGENT_RUN_DIR/input.jsonl` from offset 0, consuming each line
+once, qid-correlated). 404 unknown run,
+409 finished run (`not_running`), 422 empty text (`bad_arg`). Body:
+`{"text": "...", "qid": "..."}` (the qid is persisted so the run loop can
+correlate the answer). A pending ACP question surfaces as
+`pending_question` (`{"qid", "text", "options", "multi"}` — dict-shaped
+options normalized to label strings — or null) on
+`GET /api/runs` rows and `GET /api/runs/{id}` detail — parsed from the
+newest unanswered `ACP: {"t": "question", ...}` log line. A co-emitted
+non-waiting `turn_end` from the same unanswered turn does not clear it;
+only an `answer` event resolves it.
+
 ### `GET /api/runs/{id}/events` — SSE
 - `event: log`, `data: {"seq": N, "text": "…"}`, `id: N`. For `db-<id>`
   rows the stream replays the stored lines then the terminal state event.
@@ -501,7 +525,7 @@ absent, `no_worktree` when the target has no recorded worktree.
 Same spawn running the run's last logged `harness command:` entry — the exact command behind the Run page "Copy harness command" button (the button is disabled exactly when this returns 404 `no_harness_command`). When a DB row, worktree, and `session_file` exist, wraps the command in `workagent watch-and-exec --run-id <id> --harness <name> ...` so the spawned terminal's minted transcript/conversation ID is captured back onto the run row (mirroring `agy` brain transcripts via `agy-guard` or `omp` `.jsonl` files). Claims the harness lock with `origin=terminal` and pre-spawn 409s `{code:"conflict"}` on a live lock, like the resume endpoints.
 
 ### `POST /api/worktrees/{ref}/terminal` → `{"id", "session_file", "worktree", "mode"}`
-Spawns a bare harness (`agy-guard` or `omp`, via `Harness.bare_terminal_argv`) in the OS terminal for a worktree (no prompt). Body: `{"mode": "harness" | "prodtest", "harness"?: string}` (`harness` optional, defaults to `store.default_harness()`, validated via `backend.get_harness` → 400 `bad_arg` on unknown harness). Records one `preview` run row with the pinned transcript path (`session_type` from `mode`), wraps the spawn in `workagent watch-and-exec` for transcript/conversation capture, and claims the terminal lock (409 `conflict` if a live harness holds the worktree).
+Spawns a bare harness (`agy-guard` or `omp`, via `Harness.bare_terminal_argv`) in the OS terminal for a worktree (no prompt). Body: `{"mode": "harness" | "prodtest", "harness"?: string, "model"?: string, "effort"?: string}` (`harness` optional, defaults to `store.default_harness()`, validated via `backend.get_harness` → 400 `bad_arg` on unknown harness; `model`/`effort` thread into `Harness.bare_terminal_argv`). Records one `preview` run row with the pinned transcript path (`session_type` from `mode`), wraps the spawn in `workagent watch-and-exec` for transcript/conversation capture, and claims the terminal lock (409 `conflict` if a live harness holds the worktree).
 
 ### `POST /api/terminal/stop` → `{"worktree_ref", "stopped": true}`
 SIGTERM→SIGKILL the terminal-origin agent behind a worktree ref (the `--terminal` run mode). Body: `{"worktree_ref": "<key>"}`. 404 `not_found` when no live terminal lock (missing, dead-pid swept, or headless origin — headless runs are never stoppable here).

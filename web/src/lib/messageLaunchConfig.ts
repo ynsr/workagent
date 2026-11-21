@@ -66,6 +66,8 @@ export interface MessageLaunchForm {
   repo: string
   runMode: RunMode
   harness: string
+  model: string
+  effort: string
 }
 
 export const MESSAGE_LAUNCH_INITIAL: MessageLaunchForm = {
@@ -77,6 +79,8 @@ export const MESSAGE_LAUNCH_INITIAL: MessageLaunchForm = {
   repo: "",
   runMode: "headless",
   harness: "",
+  model: "",
+  effort: "",
 }
 
 /** Run-mode flags for the agent-spawning tabs (adhoc/validate/action).
@@ -84,18 +88,23 @@ export const MESSAGE_LAUNCH_INITIAL: MessageLaunchForm = {
 export function messageRunModeArgs(mode: RunMode): string[] {
   if (mode === "headless") return ["--launch"]
   if (mode === "terminal") return ["--terminal"]
+  if (mode === "acp") return ["--acp"]
   return []
 }
 
-/** Extra argv shared by every tab: worktree override, single `--repo` pin, and `--harness`. */
+/** Extra argv shared by every tab: worktree override, single `--repo` pin, `--harness`, `--model`, `--effort`. */
 export function messageScopeArgs(form: Partial<MessageLaunchForm>): string[] {
   const refOverride = (form.refOverride ?? "").trim()
   const repo = (form.repo ?? "").trim()
   const harness = (form.harness ?? "").trim()
+  const model = (form.model ?? "").trim()
+  const effort = (form.effort ?? "").trim()
   return [
     ...(refOverride ? ["--ref", refOverride] : []),
     ...(repo ? ["--repo", repo] : []),
     ...(harness ? ["--harness", harness] : []),
+    ...(model ? ["--model", model] : []),
+    ...(effort ? ["--effort", effort] : []),
   ]
 }
 

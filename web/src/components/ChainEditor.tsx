@@ -377,6 +377,7 @@ function StepConfigForm({
               >
                 <option value="headless">headless</option>
                 <option value="preview">preview</option>
+                <option value="acp">acp</option>
                 <option value="terminal">terminal</option>
               </select>
             </div>

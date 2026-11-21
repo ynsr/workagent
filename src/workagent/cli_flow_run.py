@@ -200,6 +200,10 @@ def flow_run(
     fresh: bool = typer.Option(False, "--fresh", help="Force a new flow row instead of resuming."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Coding harness name (e.g. agy; default: configured default)."),
+    acp: bool = typer.Option(False, "--acp", help="Run this step via ACP stdio (JSON-RPC) instead of CLI argv."),
+    run_mode: Optional[str] = typer.Option(None, "--run-mode", help="Run mode: preview|headless|acp|terminal (default: derived from --launch/--terminal/--acp)."),
+    model: Optional[str] = typer.Option(None, "--model", help="Model id (ACP-discovered; non-ACP harnesses pass --model through when supported)."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="Effort level (ACP-discovered; non-ACP harnesses pass --effort through when supported)."),
 ) -> None:
     """Run a flow template against an issue ref or worktree."""
     if harness:
@@ -227,9 +231,15 @@ def flow_run(
     merged_steps = [{**s, "config": _merge_config(
         s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
         for i, s in enumerate(steps)]
-    if harness:
+    _cascade = {"harness": harness, "acp": acp or None,
+                "run_mode": run_mode, "model": model, "effort": effort}
+    _cascade = {k: v for k, v in _cascade.items()
+                if v is not None and v is not False}
+    if run_mode == "acp":
+        _cascade["acp"] = True
+    if _cascade:
         for s in merged_steps:
-            s.setdefault("config", {})["harness"] = harness
+            s.setdefault("config", {}).update(_cascade)
     # Fail fast on per-run overrides (before any flow row exists): banned
     # shortcut/cleanup flags rejected via the shared keys+values scanner.
     for step in merged_steps:
@@ -286,9 +296,9 @@ def flow_run(
             merged_steps = [{**s, "config": _merge_config(
                 s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
                 for i, s in enumerate(steps)]
-            if harness:
+            if _cascade:
                 for s in merged_steps:
-                    s.setdefault("config", {})["harness"] = harness
+                    s.setdefault("config", {}).update(_cascade)
         elif steps_override:
             # Legacy/template-launched row: no stored chain, so the old
             # cursor cannot be trusted against a new --steps chain either.

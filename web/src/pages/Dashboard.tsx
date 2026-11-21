@@ -15,6 +15,7 @@ import { ActionsMenu } from "@/components/ActionsMenu"
 import { DashboardBulkMenu } from "@/components/DashboardBulkMenu"
 import { FlowsMenu } from "@/components/FlowsMenu"
 import { HarnessSelect } from "@/components/HarnessSelect"
+import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { CleanupDialog } from "@/components/CleanupDialog"
 import { DeactivatedTable } from "@/components/DeactivatedTable"
 import { DeletedTable } from "@/components/DeletedTable"
@@ -88,13 +89,21 @@ const DESTROY_RUN_TIMEOUT_MS = 10 * 60_000
 
 /** Stateful extras rendered inside ConfirmDialog so checkbox/harness toggles
  * update visually and populate caller refs without re-opening the dialog. */
+/** Caller-supplied refs populated from the dialog extras (harness + model + effort). */
+export interface BulkLaunchRefs {
+  harnessRef: { current: string }
+  modelRef: { current: string }
+  effortRef: { current: string }
+}
+
 function BulkConfirmExtras({
   idPrefix,
   harnessRef,
+  modelRef,
+  effortRef,
   checkbox,
-}: {
+}: BulkLaunchRefs & {
   idPrefix: string
-  harnessRef: { current: string }
   checkbox?: {
     id: string
     label: string
@@ -104,6 +113,8 @@ function BulkConfirmExtras({
   }
 }) {
   const [harness, setHarness] = useState("")
+  const [model, setModel] = useState("")
+  const [effort, setEffort] = useState("")
   const [checked, setChecked] = useState(false)
   return (
     <div className="grid gap-2.5">
@@ -126,8 +137,28 @@ function BulkConfirmExtras({
         onChange={(v) => {
           setHarness(v)
           harnessRef.current = v
+          modelRef.current = ""
+          effortRef.current = ""
         }}
         allowDefault
+      />
+      <ModelSelect
+        idPrefix={idPrefix}
+        harness={harness}
+        value={model}
+        onChange={(v) => {
+          setModel(v)
+          modelRef.current = v
+        }}
+      />
+      <EffortSelect
+        idPrefix={idPrefix}
+        harness={harness}
+        value={effort}
+        onChange={(v) => {
+          setEffort(v)
+          effortRef.current = v
+        }}
       />
     </div>
   )
@@ -235,6 +266,8 @@ export function Dashboard() {
   async function handleSyncAll() {
     const mergeRef = { current: false }
     const harnessRef = { current: "" }
+    const modelRef = { current: "" }
+    const effortRef = { current: "" }
     const targeting = selCount > 0
     const ok = await confirm({
       action: "sync",
@@ -249,6 +282,8 @@ export function Dashboard() {
         <BulkConfirmExtras
           idPrefix="syncall"
           harnessRef={harnessRef}
+          modelRef={modelRef}
+          effortRef={effortRef}
           checkbox={{
             id: "syncall-merge",
             label: "Merge locally",
@@ -263,6 +298,8 @@ export function Dashboard() {
     const extraArgs = [
       ...(mergeRef.current ? ["--merge"] : []),
       ...(harnessRef.current ? ["--harness", harnessRef.current] : []),
+      ...(modelRef.current ? ["--model", modelRef.current] : []),
+      ...(effortRef.current ? ["--effort", effortRef.current] : []),
     ]
     if (!targeting) {
       try {
@@ -296,6 +333,8 @@ export function Dashboard() {
   async function handleReviewAll() {
     const forceAllRef = { current: false }
     const harnessRef = { current: "" }
+    const modelRef = { current: "" }
+    const effortRef = { current: "" }
     const targeting = selCount > 0
     const ok = await confirm({
       action: "review",
@@ -310,6 +349,8 @@ export function Dashboard() {
         <BulkConfirmExtras
           idPrefix="reviewall"
           harnessRef={harnessRef}
+          modelRef={modelRef}
+          effortRef={effortRef}
           checkbox={{
             id: "reviewall-force",
             label: "Include already-reviewed worktrees",
@@ -324,6 +365,8 @@ export function Dashboard() {
     const extraArgs = [
       ...(forceAllRef.current ? ["--force-all"] : []),
       ...(harnessRef.current ? ["--harness", harnessRef.current] : []),
+      ...(modelRef.current ? ["--model", modelRef.current] : []),
+      ...(effortRef.current ? ["--effort", effortRef.current] : []),
     ]
     if (!targeting) {
       try {
@@ -356,6 +399,8 @@ export function Dashboard() {
 
   async function handleFixAll() {
     const harnessRef = { current: "" }
+    const modelRef = { current: "" }
+    const effortRef = { current: "" }
     const targeting = selCount > 0
     const ok = await confirm({
       action: "review",
@@ -366,10 +411,10 @@ export function Dashboard() {
       destructive: true,
       confirmLabel: targeting ? `Fix ${selCount}` : "Fix all",
       details: [scopeDetail("Every active linked worktree with a PR/MR")],
-      extras: <BulkConfirmExtras idPrefix="fixall" harnessRef={harnessRef} />,
+      extras: <BulkConfirmExtras idPrefix="fixall" harnessRef={harnessRef} modelRef={modelRef} effortRef={effortRef} />,
     })
     if (!ok) return
-    const harnessArgs = harnessRef.current ? ["--harness", harnessRef.current] : []
+    const harnessArgs = [...(harnessRef.current ? ["--harness", harnessRef.current] : []), ...(modelRef.current ? ["--model", modelRef.current] : []), ...(effortRef.current ? ["--effort", effortRef.current] : [])]
     if (!targeting) {
       try {
         const { run_id } = await createRun.mutateAsync({

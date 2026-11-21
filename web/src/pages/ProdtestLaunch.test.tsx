@@ -19,6 +19,7 @@ const { mutateAsync, mockConfig } = vi.hoisted(() => ({
 }))
 
 vi.mock("@/lib/queries", () => ({
+  queryKeys: { harnessOptions: (name: string) => ["harnesses", "options", name] },
   useConfig: () => ({ data: mockConfig }),
   useCreateRun: () => ({ mutateAsync }),
   useLinks: () => ({ data: { trackers: {}, worktrees: { "jira:IPG-10": { repo: "proj" } } } }),

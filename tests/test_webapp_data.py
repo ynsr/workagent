@@ -376,6 +376,8 @@ def test_open_terminal_prefers_debian_alternative(monkeypatch, tmp_path):
 
 def test_open_terminal_supports_ptyxis_and_kitty(monkeypatch, tmp_path, isolated_config):
     import os
+    monkeypatch.delenv("WORKAGENT_SERVICE", raising=False)
+    monkeypatch.delenv("NO_COLOR", raising=False)
     from workagent import web_runs as _wr
     session = tmp_path / "s.jsonl"
     session.write_text('{"type":"session"}\n')
@@ -388,7 +390,7 @@ def test_open_terminal_supports_ptyxis_and_kitty(monkeypatch, tmp_path, isolated
                             lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
         # No env.sh in the isolated config → no source prefix.
         _wr._open_terminal("/wt", str(session), harness_name="omp")
-        assert got["argv"] == [*head, "bash", "-lc", f"cd /wt && omp --resume {session}"], term
+        assert got["argv"] == [*head, "bash", "-lc", f"cd /wt && omp --approval-mode=yolo --resume {session}"], term
 
 
 def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch, tmp_path, isolated_config):
@@ -407,7 +409,7 @@ def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch, tmp_path, 
                         lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
     # No env.sh in the isolated config → no source prefix.
     _wr._open_terminal("/wt", str(session), harness_name="omp")
-    assert got["argv"] == ["xterm", "-e", "bash", "-lc", f"cd /wt && omp --resume {session}"]
+    assert got["argv"] == ["xterm", "-e", "bash", "-lc", f"cd /wt && omp --approval-mode=yolo --resume {session}"]
 
 def test_resume_shell_command_splits_fresh_and_real(tmp_path, isolated_config):
     """omp v18+ rejects --resume on missing/empty transcripts: fresh
@@ -418,20 +420,20 @@ def test_resume_shell_command_splits_fresh_and_real(tmp_path, isolated_config):
     # No env.sh in the isolated config → no source prefix.
     missing = str(tmp_path / "2026-10-07T10-06-39-103Z-6317.jsonl")
     assert _wr._resume_shell_command("/wt", missing, harness_name="omp") == \
-        f"cd /wt && omp --session-dir {tmp_path}"
+        f"cd /wt && omp --approval-mode=yolo --session-dir {tmp_path}"
     empty = tmp_path / "empty.jsonl"
     empty.touch()
     assert _wr._resume_shell_command("/wt", str(empty), harness_name="omp") == \
-        f"cd /wt && omp --session-dir {tmp_path}"
+        f"cd /wt && omp --approval-mode=yolo --session-dir {tmp_path}"
     real = tmp_path / "real.jsonl"
     real.write_text('{"type":"session"}\n')
     assert _wr._resume_shell_command("/wt", str(real), harness_name="omp") == \
-        f"cd /wt && omp --resume {real}"
+        f"cd /wt && omp --approval-mode=yolo --resume {real}"
 
     # agy with default harness (omitted harness_name defaults to agy)
-    assert _wr._resume_shell_command("/wt", missing) == "cd /wt && agy-guard"
+    assert _wr._resume_shell_command("/wt", missing) == "cd /wt && agy-guard --dangerously-skip-permissions"
     assert _wr._resume_shell_command("/wt", str(real), metadata={"conversation_id": "c-123"}) == \
-        "cd /wt && agy-guard --conversation c-123"
+        "cd /wt && agy-guard --dangerously-skip-permissions --conversation c-123"
 
 def test_specs_mirror_cli_flags():
     """Parity: webapp BOOL_FLAGS/VAL_FLAGS mirror the real Typer CLI (#25 checklist).

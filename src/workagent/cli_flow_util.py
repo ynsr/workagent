@@ -9,7 +9,7 @@ import shlex
 
 
 #: run_mode values the wizard emits → backend manual-mode flags.
-_RUN_MODES = ("preview", "dry_run", "terminal")
+_RUN_MODES = ("preview", "dry_run", "terminal", "acp")
 
 
 def _coerce(value: str) -> object:
@@ -28,6 +28,9 @@ START_FLAGS = (("repo", "--repo", "str"),
                ("depth", "--depth", "str"),
                ("base", "--base", "str"),
                ("harness", "--harness", "str"),
+               ("acp", "--acp", "bool"),
+               ("model", "--model", "str"),
+               ("effort", "--effort", "str"),
                ("no_tty", "--no-tty", "bool"),
                ("session_file", "--session-file", "str"),
                ("env_file", "--env-file", "str"),
@@ -41,6 +44,9 @@ START_FLAGS = (("repo", "--repo", "str"),
 REVIEW_FLAGS = (("repo", "--repo", "str"),
                 ("depth", "--depth", "str"),
                 ("harness", "--harness", "str"),
+                ("acp", "--acp", "bool"),
+                ("model", "--model", "str"),
+                ("effort", "--effort", "str"),
                 ("no_tty", "--no-tty", "bool"),
                 ("use_review_session", "--use-review-session", "bool"),
                 ("session_file", "--session-file", "str"),
@@ -51,12 +57,18 @@ REVIEW_FLAGS = (("repo", "--repo", "str"),
 #: sync-step config keys for the terminal/manual handoff.
 SYNC_FLAGS = (("merge", "--merge", "bool"),
               ("harness", "--harness", "str"),
+              ("acp", "--acp", "bool"),
+              ("model", "--model", "str"),
+              ("effort", "--effort", "str"),
               ("session_file", "--session-file", "str"),
               ("env_file", "--env-file", "str"),
               ("extra_prompt", "--extra-prompt", "str"))
 
 #: custom-action config keys for the terminal/manual handoff.
 ACTION_FLAGS = (("harness", "--harness", "str"),
+                ("acp", "--acp", "bool"),
+                ("model", "--model", "str"),
+                ("effort", "--effort", "str"),
                 ("extra_prompt", "--extra-prompt", "str"),
                 ("env_file", "--env-file", "str"),
                 ("session_file", "--session-file", "str"))
@@ -64,6 +76,9 @@ ACTION_FLAGS = (("harness", "--harness", "str"),
 #: prodtest-plan step config keys for the terminal/manual handoff.
 PRODTEST_PLAN_FLAGS = (("update", "--update", "bool"),
                        ("harness", "--harness", "str"),
+                       ("acp", "--acp", "bool"),
+                       ("model", "--model", "str"),
+                       ("effort", "--effort", "str"),
                        ("session_file", "--session-file", "str"),
                        ("env_file", "--env-file", "str"),
                        ("extra_prompt", "--extra-prompt", "str"))
@@ -74,6 +89,9 @@ RELEASE_FLAGS = (("checks", "--checks", "str"),
                  ("pre_release_timeout", "--pre-release-timeout", "str"),
                  ("ci_timeout", "--ci-timeout", "str"),
                  ("env_file", "--env-file", "str"),
+                 ("acp", "--acp", "bool"),
+                 ("model", "--model", "str"),
+                 ("effort", "--effort", "str"),
                  ("no_status", "--no-status", "bool"))
 
 
@@ -123,6 +141,8 @@ def normalize_config(config: object) -> dict:
             out["preview" if mode == "preview" else "dry_run"] = True
         elif mode == "terminal":
             out["terminal"] = True
+        elif mode == "acp":
+            out["acp"] = True
         # "headless" (or unknown): manual flags already stripped above.
     raw_flags = out.pop("extra-flags", None)
     if raw_flags is None:
@@ -379,15 +399,15 @@ def adopt_terminal_transcript(scope_file: str, run_id: int) -> str:
                 except OSError:
                     pass
             hname = str(row.get("harness_name") or "") or _store.default_harness()
-            if hname == "agy":
+            from . import agy_harness as _agy
+            if hname == _agy.AgyAcpHarness.name:
                 try:
-                    from . import agy_harness as _agy
                     meta = row.get("metadata")
                     meta = dict(meta) if isinstance(meta, dict) else {}
                     dest = (str(p) if p is not None else str(row.get("file_path") or ""))
                     if not dest:
                         dest = str(_sq.session_file_path(
-                            _sq.gen_session_id(), "agy",
+                            _sq.gen_session_id(), _agy.AgyAcpHarness.name,
                             session_type=row.get("session_type")))
                     cid = str(meta.get("conversation_id") or "")
                     if cid and _agy.mirror_brain_transcript(cid, dest):

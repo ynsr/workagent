@@ -10,9 +10,11 @@ import { useRepos, useReleaseStatus, useReleaseStatuses } from "@/lib/queries"
 import { useConfirmedRun } from "@/components/RunActions"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { HarnessSelect } from "@/components/HarnessSelect"
+import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { RunModeSelect } from "@/components/StartForm"
 import type { RunMode } from "@/lib/launchConfig"
 import { extraPromptArgs } from "@/lib/launchConfig"
+import { modelEffortArgs } from "@/lib/harness"
 import type { ReleaseStatus } from "@/lib/api"
 import { ReleaseButton } from "@/components/ReleaseButton"
 import { FieldHelp } from "@/components/FieldHelp"
@@ -206,11 +208,13 @@ export function FixDefaultDialog({ status, onClose }: { status: ReleaseStatus; o
   const [action, setAction] = useState<FixAction>("both")
   const [runMode, setRunMode] = useState<RunMode>("preview")
   const [harness, setHarness] = useState("")
+  const [model, setModel] = useState("")
+  const [effort, setEffort] = useState("")
   const [extra, setExtra] = useState("")
   const touchesRebase = action !== "ci"
   async function handleFix() {
-    // fix-default takes --run-mode (preview|headless|terminal), not the
-    // --launch/--terminal pair start/review use (both rejected here).
+    // fix-default takes --run-mode (preview|headless|acp|terminal), not the
+    // --launch/--terminal/--acp pair start/review use (all rejected here).
     const args = [
       "fix-default",
       status.repo,
@@ -219,6 +223,7 @@ export function FixDefaultDialog({ status, onClose }: { status: ReleaseStatus; o
       "--run-mode",
       runMode,
       ...(harness ? ["--harness", harness] : []),
+      ...modelEffortArgs({ model, effort }),
     ]
     const trimmed = extra.trim()
     if (trimmed) args.push(...extraPromptArgs({ extraPrompt: trimmed }))
@@ -240,6 +245,8 @@ export function FixDefaultDialog({ status, onClose }: { status: ReleaseStatus; o
         { label: "Action", value: action, mono: true },
         { label: "Run mode", value: runMode, mono: true },
         ...(harness ? [{ label: "Harness", value: harness, mono: true }] : []),
+        ...(model ? [{ label: "Model", value: model, mono: true }] : []),
+        ...(effort ? [{ label: "Effort", value: effort, mono: true }] : []),
       ],
       command: "release",
       args,
@@ -293,7 +300,9 @@ export function FixDefaultDialog({ status, onClose }: { status: ReleaseStatus; o
         </div>
       </div>
       <RunModeSelect idPrefix="fix-default" value={runMode} onChange={setRunMode} />
-      <HarnessSelect idPrefix="fix-default" value={harness} onChange={setHarness} allowDefault />
+      <HarnessSelect idPrefix="fix-default" value={harness} onChange={(v) => { setHarness(v); setModel(""); setEffort("") }} allowDefault />
+      <ModelSelect idPrefix="fix-default" harness={harness} value={model} onChange={setModel} />
+      <EffortSelect idPrefix="fix-default" harness={harness} value={effort} onChange={setEffort} />
       <div className="grid gap-2">
         <Label htmlFor="fix-default-extra">
           <FieldHelp

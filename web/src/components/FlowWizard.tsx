@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { ChainEditor, startRepoState, validateChain } from "@/components/ChainEditor"
 import { HarnessSelect } from "@/components/HarnessSelect"
+import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { modelEffortArgs } from "@/lib/harness"
 import { chainRunsParallel, runChainOnWorktrees, summarizeExecution } from "@/lib/flowExecution"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { Button } from "@/components/ui/button"
@@ -28,6 +30,8 @@ export function FlowWizard({
   const { data: actionsData } = useActions()
   const [working, setWorking] = useState<FlowStep[]>(() => structuredClone(template.steps ?? []))
   const [harness, setHarness] = useState("")
+  const [model, setModel] = useState("")
+  const [effort, setEffort] = useState("")
   const [fresh, setFresh] = useState(false)
   const [saving, setSaving] = useState(false)
   const knownActions = (actionsData?.actions ?? []).map((a) => ({ label: a.label, name: a.name }))
@@ -37,7 +41,7 @@ export function FlowWizard({
   const repoMissing = repoState === "missing"
   const runDisabled = sorted.length === 0 || repoMissing || chainErrors.length > 0
   const dirty = JSON.stringify(working) !== JSON.stringify(template.steps ?? [])
-  const harnessArgs = harness ? ["--harness", harness] : []
+  const harnessArgs = [...(harness ? ["--harness", harness] : []), ...modelEffortArgs({ model, effort })]
   const stepArgs = dirty ? ["--steps", JSON.stringify(working)] : []
   const freshArgs = fresh ? ["--fresh"] : []
   function handleConfirm() {
@@ -188,13 +192,25 @@ export function FlowWizard({
           })()}
         </p>
       ) : null}
-      <div className="mb-3">
+      <div className="mb-3 grid gap-2.5">
         <HarnessSelect
           idPrefix="flow-wizard"
           value={harness}
-          onChange={setHarness}
+          onChange={(v) => { setHarness(v); setModel(""); setEffort("") }}
           allowDefault
           defaultLabel="Use template / default"
+        />
+        <ModelSelect
+          idPrefix="flow-wizard"
+          harness={harness}
+          value={model}
+          onChange={setModel}
+        />
+        <EffortSelect
+          idPrefix="flow-wizard"
+          harness={harness}
+          value={effort}
+          onChange={setEffort}
         />
       </div>
       <p className="mb-2 text-[13px] text-muted-foreground">

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/PageHeader"
 import { HarnessSelect } from "@/components/HarnessSelect"
+import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { ProdtestActionSelect, RunModeSelect } from "@/components/StartForm"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { Button } from "@/components/ui/button"
@@ -16,6 +17,7 @@ import { useCreateRun, useLinks, useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
 import type { LaunchForm, ProdtestAction, RunMode } from "@/lib/launchConfig"
 import { extraPromptArgs, runModeArgs } from "@/lib/launchConfig"
+import { modelEffortArgs } from "@/lib/harness"
 import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
 
 
@@ -30,7 +32,7 @@ export function ProdtestLaunch() {
   const refParam = params.get("ref") ?? ""
   const actionParam = params.get("prodtestAction")
 
-  const [form, setForm] = useState<Pick<LaunchForm, "ref" | "repo" | "runMode" | "prodtestAction" | "extraPrompt" | "harness">>(() => {
+  const [form, setForm] = useState<Pick<LaunchForm, "ref" | "repo" | "runMode" | "prodtestAction" | "extraPrompt" | "harness" | "model" | "effort">>(() => {
     const stored = loadLaunchPrefs()
     return {
       ref: refParam,
@@ -39,6 +41,8 @@ export function ProdtestLaunch() {
       prodtestAction: (actionParam === "plan" ? "plan" : stored.prodtest.prodtestAction) as ProdtestAction,
       extraPrompt: "",
       harness: stored.prodtest.harness,
+      model: stored.prodtest.model,
+      effort: stored.prodtest.effort,
     }
   })
   const [submitting, setSubmitting] = useState(false)
@@ -49,7 +53,7 @@ export function ProdtestLaunch() {
   }
 
   useEffect(() => {
-    saveLaunchPrefs({ ...loadLaunchPrefs(), prodtest: { runMode: form.runMode, prodtestAction: form.prodtestAction, harness: form.harness } })
+    saveLaunchPrefs({ ...loadLaunchPrefs(), prodtest: { runMode: form.runMode, prodtestAction: form.prodtestAction, harness: form.harness, model: form.model, effort: form.effort } })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.runMode, form.prodtestAction, form.harness])
 
@@ -82,6 +86,7 @@ export function ProdtestLaunch() {
     const args = isRunAll ? ["run", "--all"] : [form.prodtestAction, refValue]
     if (form.harness.trim()) args.push("--harness", form.harness.trim())
     args.push(...runModeArgs(form.runMode))
+    args.push(...modelEffortArgs(form))
     if (form.extraPrompt.trim()) args.push(...extraPromptArgs(form))
     return args
   }
@@ -156,7 +161,9 @@ export function ProdtestLaunch() {
           <div className="flex flex-wrap gap-x-6 gap-y-3">
             <RunModeSelect idPrefix="ptl" value={form.runMode} onChange={(v) => update("runMode", v)} />
             <ProdtestActionSelect idPrefix="ptl" value={form.prodtestAction} onChange={(v) => update("prodtestAction", v)} />
-            <HarnessSelect idPrefix="ptl" value={form.harness} onChange={(v) => update("harness", v)} />
+            <HarnessSelect idPrefix="ptl" value={form.harness} onChange={(v) => { update("harness", v); update("model", ""); update("effort", "") }} />
+            <ModelSelect idPrefix="ptl" harness={form.harness} value={form.model} onChange={(v) => update("model", v)} />
+            <EffortSelect idPrefix="ptl" harness={form.harness} value={form.effort} onChange={(v) => update("effort", v)} />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="ptl-extra-prompt">

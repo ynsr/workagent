@@ -78,15 +78,15 @@ SPECS: dict[str, dict[str, Any]] = {
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
-    "start": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
+    "start": ("-L", "--no-tty", "--launch", "--terminal", "--acp", "--dry-run",
               "--yes", "--json", "--no-status", "--no-review", "--plan"),
-    "review": ("-L", "--no-tty", "--launch", "--terminal", "--dry-run",
+    "review": ("-L", "--no-tty", "--launch", "--terminal", "--acp", "--dry-run",
                "--yes", "--json", "--all", "--sequential", "--fix", "--fix-comments", "--then-fix-comments", "--use-review-session", "--force-all", "--post-comments", "--no-status"),
     "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--released", "--no-squash", "--hard-delete", "--merge-only", "--create-prodtest"),
     "release": ("--yes", "--dry-run", "--json", "--no-status"),
     "open": (),
     "sync": ("-m", "--merge", "--all", "--yes", "--force",
-             "-y", "--dry-run", "--json"),
+             "-y", "--dry-run", "--json", "--acp"),
     "register": ("--yes", "-y", "--force", "--json"),
     "repo add": ("--json", "--fetch", "--no-fetch"),
     "repo list": ("--json", "--csv"),
@@ -111,7 +111,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
                    "--run-immediately", "--no-run-immediately"),
     "action list": ("--json", "--csv"),
     "action show": ("--json",),
-    "action run": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
+    "action run": ("--launch", "--terminal", "--acp", "--dry-run", "--yes", "--json"),
     "action suggest-icon": ("--yes", "--json"),
     "action update": ("--json", "--yes", "--protected", "--no-protected",
                       "--dedicated-top-bar", "--no-dedicated-top-bar",
@@ -136,28 +136,28 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "flow template suggest-icon": ("--yes", "--json"),
     "flow list": ("--json", "--csv"),
     "flow show": ("--json",),
-    "flow run": ("--dry-run", "--yes", "--json", "--fresh"),
+    "flow run": ("--dry-run", "--yes", "--json", "--fresh", "--acp"),
     "backup export": ("--json",),
     "backup import": ("--yes", "--json"),
     "backup run-scheduled": ("--json",),
     "prodtest": (),
-    "prodtest plan": ("--update", "-L", "--launch", "--terminal", "--no-tty", "--dry-run", "--yes", "--json"),
-    "prodtest run": ("--all", "--skip-version-gate", "-L", "--launch", "--terminal", "--no-tty", "--dry-run", "--yes", "--json"),
+    "prodtest plan": ("--update", "-L", "--launch", "--terminal", "--acp", "--no-tty", "--dry-run", "--yes", "--json"),
+    "prodtest run": ("--all", "--skip-version-gate", "-L", "--launch", "--terminal", "--acp", "--no-tty", "--dry-run", "--yes", "--json"),
     "prodtest list": ("--json",),
     "prodtest status": ("--json",),
     "prodtest delete": ("--json",),
     "prodtest cleanup": ("--json", "--yes", "--dry-run"),
-    "adhoc": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
+    "adhoc": ("--launch", "--terminal", "--acp", "--dry-run", "--yes", "--json"),
     "message add": ("--fetch", "--json",),
     "message list": ("--json", "--csv"),
     "message show": ("--json",),
     "message update": ("--json",),
     "message remove": ("--yes", "--json"),
-    "message adhoc": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
-    "message validate": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
-    "message draft-reply": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
-    "message action run": ("--launch", "--terminal", "--dry-run", "--yes", "--json"),
-    "message flow run": ("--dry-run", "--yes", "--json"),
+    "message adhoc": ("--launch", "--terminal", "--acp", "--dry-run", "--yes", "--json"),
+    "message validate": ("--launch", "--terminal", "--acp", "--dry-run", "--yes", "--json"),
+    "message draft-reply": ("--launch", "--terminal", "--acp", "--dry-run", "--yes", "--json"),
+    "message action run": ("--launch", "--terminal", "--acp", "--dry-run", "--yes", "--json"),
+    "message flow run": ("--dry-run", "--yes", "--json", "--acp"),
     "message": (),
     "message action": (),
     "message flow": (),
@@ -166,13 +166,13 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "config set": ("--json",),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
-    "adhoc": ("--prompt", "--harness", "--extra-prompt", "--session-file", "--env-file"),
+    "adhoc": ("--prompt", "--harness", "--run-mode", "--model", "--effort", "--extra-prompt", "--session-file", "--env-file"),
     "prodtest": (),
-    "prodtest plan": ("--harness", "--session-file", "--env-file", "--extra-prompt"),
-    "prodtest run": ("--fix-mode", "--run-dir", "--harness", "--session-file", "--env-file", "--extra-prompt"),
-    "start": ("--repo", "--depth", "--base", "--harness", "--session-file", "--env-file", "--extra-prompt", "--related-repo"),
-    "review": ("--repo", "--depth", "--harness", "--session-file", "--env-file", "--extra-prompt"),
-    "sync": ("--session-file", "--env-file", "--extra-prompt", "--harness"),
+    "prodtest plan": ("--harness", "--run-mode", "--model", "--effort", "--session-file", "--env-file", "--extra-prompt"),
+    "prodtest run": ("--fix-mode", "--run-dir", "--harness", "--run-mode", "--model", "--effort", "--session-file", "--env-file", "--extra-prompt"),
+    "start": ("--repo", "--depth", "--base", "--harness", "--run-mode", "--model", "--effort", "--session-file", "--env-file", "--extra-prompt", "--related-repo"),
+    "review": ("--repo", "--depth", "--harness", "--run-mode", "--model", "--effort", "--session-file", "--env-file", "--extra-prompt"),
+    "sync": ("--session-file", "--env-file", "--extra-prompt", "--harness", "--run-mode", "--model", "--effort"),
     "register": ("--key", "--issue", "--repo"),
     "release": ("--checks", "--diff", "--pre-release-timeout", "--ci-timeout", "--env-file", "--action", "--run-mode", "--extra-prompt", "--harness"),
     "repo add": ("--name", "--path", "--tracker", "--release-branch", "--pre-release"),
@@ -182,7 +182,7 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "tracker update": ("--vendor", "--remote-url"),
     "action add": ("--name", "--label", "--icon", "--prompt", "--pre-execution", "--post-execution", "--default-options", "--sort-order", "--category"),
     "action update": ("--name", "--icon", "--prompt", "--pre-execution", "--post-execution", "--default-options", "--new-label", "--sort-order", "--category"),
-    "action run": ("--harness", "--extra-prompt", "--env-file", "--session-file"),
+    "action run": ("--harness", "--run-mode", "--model", "--effort", "--extra-prompt", "--env-file", "--session-file"),
     "action suggest-icon": ("--name", "--label", "--prompt", "--pre-execution", "--post-execution", "--used-icons", "--harness"),
     "flow template add": ("--name", "--label", "--icon", "--steps", "--pre-execution", "--post-execution", "--sort-order", "--category"),
     "flow template update": ("--name", "--icon", "--steps", "--pre-execution", "--post-execution", "--new-label", "--sort-order", "--category"),
@@ -190,18 +190,18 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "flow template compose": ("--from", "--name"),
     "flow template suggest-icon": ("--name", "--label", "--steps", "--pre-execution", "--post-execution", "--used-icons", "--harness"),
     "flow list": ("--worktree",),
-    "flow run": ("--step-config", "--skip-steps", "--steps", "--harness"),
+    "flow run": ("--step-config", "--skip-steps", "--steps", "--harness", "--run-mode", "--model", "--effort"),
     "backup export": ("--path",),
     "backup import": (),
     "backup run-scheduled": ("--keep",),
     "message add": ("--message-id", "--thread-id", "--app", "--sender", "--content", "--ts", "--repo", "--related-repo", "--worktree"),
     "message list": ("--thread",),
-    "message adhoc": ("--prompt", "--ref", "--repo", "--harness", "--extra-prompt", "--env-file", "--session-file"),
-    "message validate": ("--prompt", "--ref", "--repo", "--harness"),
-    "message draft-reply": ("--ref", "--repo", "--harness", "--extra-prompt", "--env-file", "--session-file"),
+    "message adhoc": ("--prompt", "--ref", "--repo", "--harness", "--run-mode", "--model", "--effort", "--extra-prompt", "--env-file", "--session-file"),
+    "message validate": ("--prompt", "--ref", "--repo", "--harness", "--run-mode", "--model", "--effort"),
+    "message draft-reply": ("--ref", "--repo", "--harness", "--run-mode", "--model", "--effort", "--extra-prompt", "--env-file", "--session-file"),
     "message update": ("--thread-id", "--sender", "--content", "--ts", "--repo", "--related-repo", "--worktree"),
-    "message action run": ("--ref", "--repo", "--harness", "--extra-prompt", "--env-file", "--session-file"),
-    "message flow run": ("--ref", "--repo", "--harness"),
+    "message action run": ("--ref", "--repo", "--harness", "--run-mode", "--model", "--effort", "--extra-prompt", "--env-file", "--session-file"),
+    "message flow run": ("--ref", "--repo", "--harness", "--run-mode", "--model", "--effort"),
     "message": (),
     "config": (),
     "config show": (),
@@ -361,6 +361,19 @@ def _validate_args(command: str, args: list[str], body_force: bool = False) -> N
                        "--session-file cannot be used with --all "
                        "(one transcript per worktree — omit it and each "
                        "launch gets its own file)", 400)
+    if "--acp" in rest and ("--launch" in rest or "--terminal" in rest):
+        raise ApiError("bad_arg",
+                       "--acp cannot be used with --launch/--terminal "
+                       "(it selects the ACP run mode itself)", 400)
+    _run_mode = ""
+    for _i, _a in enumerate(rest):
+        if _a == "--run-mode" and _i + 1 < len(rest):
+            _run_mode = rest[_i + 1]
+        elif _a.startswith("--run-mode="):
+            _run_mode = _a.split("=", 1)[1]
+    if _run_mode and _run_mode not in ("preview", "headless", "acp", "terminal"):
+        raise ApiError("bad_arg",
+                       f"bad --run-mode {_run_mode!r}: use preview, headless, acp, or terminal", 400)
     if sub == "tracker add":
         try:
             uidx = rest.index("add")

@@ -19,7 +19,7 @@ const { mutateAsync, mockConfig } = vi.hoisted(() => ({
 }))
 
 vi.mock("@/lib/queries", () => ({
-  queryKeys: { issues: () => ["issues"] },
+  queryKeys: { issues: () => ["issues"], harnessOptions: (name: string) => ["harnesses", "options", name] },
   useConfig: () => ({ data: mockConfig }),
   useCreateRun: () => ({ mutateAsync }),
   useFlowTemplates: () => ({ data: { templates: [] } }),
@@ -113,9 +113,9 @@ describe("Launch harness integration", () => {
     await user.click(screen.getByRole("tab", { name: "Flow" }))
 
     const storedAfterFlow = JSON.parse(localStorage.getItem("launch.prefs.v1") ?? "{}") as {
-      sync?: { merge?: boolean; harness?: string }
+      sync?: { merge?: boolean; harness?: string; model?: string; effort?: string }
     }
-    expect(storedAfterFlow.sync).toEqual({ merge: true, harness: "omp" })
+    expect(storedAfterFlow.sync).toEqual({ merge: true, harness: "omp", model: "", effort: "" })
 
     await user.click(screen.getByRole("tab", { name: "Sync" }))
     expect(screen.getByRole("radio", { name: "omp" })).toHaveAttribute("aria-checked", "true")
@@ -139,6 +139,7 @@ describe("Launch harness integration", () => {
     const stored = JSON.parse(localStorage.getItem("launch.prefs.v1") ?? "{}") as {
       sync?: { merge?: boolean; harness?: string }
     }
+    // ?mode=flow mount writes nothing back — the legacy seed stays untouched.
     expect(stored.sync).toEqual({ merge: true, harness: "omp" })
   })
 })

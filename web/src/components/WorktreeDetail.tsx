@@ -20,6 +20,7 @@ import { CopyCell } from "@/components/CopyCell"
 import { ReviewsCell } from "@/components/StatusCells"
 import { ActionsMenu } from "@/components/ActionsMenu"
 import { HarnessSelect } from "@/components/HarnessSelect"
+import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { copyToClipboard } from "@/lib/format"
 import { errorText } from "@/components/StatusFeedback"
 /** Editable subset rendered in edit mode; strings are trimmed by the caller. */
@@ -76,6 +77,8 @@ export function WorktreeDetail({
   // harness modes.
   const qc = useQueryClient()
   const [terminalHarness, setTerminalHarness] = useState("")
+  const [terminalModel, setTerminalModel] = useState("")
+  const [terminalEffort, setTerminalEffort] = useState("")
   const [pendingMode, setPendingMode] = useState<"harness" | "prodtest" | null>(null)
   const launchTerminal = useMutation({
     mutationFn: async (mmode: "harness" | "prodtest") => {
@@ -85,6 +88,8 @@ export function WorktreeDetail({
         body: JSON.stringify({
           mode: mmode,
           ...(terminalHarness ? { harness: terminalHarness } : {}),
+          ...(terminalModel.trim() ? { model: terminalModel.trim() } : {}),
+          ...(terminalEffort.trim() ? { effort: terminalEffort.trim() } : {}),
         }),
       })
       if (!res.ok) throw new Error(`terminal launch failed: ${res.status}`)
@@ -324,7 +329,23 @@ export function WorktreeDetail({
                 variant="select"
                 allowDefault
                 value={terminalHarness}
-                onChange={setTerminalHarness}
+                onChange={(v) => { setTerminalHarness(v); setTerminalModel(""); setTerminalEffort("") }}
+              />
+            </div>
+            <div className="w-36 [&_label]:sr-only [&_select]:h-8">
+              <ModelSelect
+                idPrefix="wd-terminal"
+                harness={terminalHarness}
+                value={terminalModel}
+                onChange={setTerminalModel}
+              />
+            </div>
+            <div className="w-36 [&_label]:sr-only [&_select]:h-8">
+              <EffortSelect
+                idPrefix="wd-terminal"
+                harness={terminalHarness}
+                value={terminalEffort}
+                onChange={setTerminalEffort}
               />
             </div>
             <Button variant="outline" size="sm" disabled={launchTerminal.isPending || networkExposed} title="Open a bare AI harness in the OS terminal (no initial prompt)" onClick={() => launchMode("harness")}>

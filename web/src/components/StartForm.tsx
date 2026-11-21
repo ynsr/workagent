@@ -7,16 +7,18 @@ import { errorText } from "@/components/StatusFeedback"
 import { useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
 import { RUN_MODE_OPTIONS, REVIEW_ACTION_OPTIONS, PRODTEST_ACTION_OPTIONS, START_ACTION_OPTIONS, INITIAL, extraPromptArgs, runModeArgs } from "@/lib/launchConfig"
+import { modelEffortArgs } from "@/lib/harness"
 import type { LaunchForm, RunMode, ReviewAction, ProdtestAction, StartAction } from "@/lib/launchConfig"
 import { RelatedReposSelect } from "@/components/RelatedReposSelect"
 import { HarnessSelect } from "@/components/HarnessSelect"
+import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { loadLaunchPrefs } from "@/lib/launchPrefs"
 import { FieldHelp } from "@/components/FieldHelp"
 export interface StartFormValue extends LaunchForm {}
 
-/** Three-option segmented run-mode control (replaces the "Run agent now"
- * checkbox): Preview prints the command, Headless launches it now, Terminal
- * opens it in the OS terminal (workagent --terminal). */
+/** Four-option segmented run-mode control: Preview prints the command,
+ * Headless launches it now, ACP streams structured events to the Run page,
+ * Terminal opens it in the OS terminal (workagent --terminal). */
 export function RunModeSelect({ idPrefix, value, onChange, hidePreview = false }: {
   idPrefix: string
   value: RunMode
@@ -29,8 +31,8 @@ export function RunModeSelect({ idPrefix, value, onChange, hidePreview = false }
       <Label>
         <FieldHelp
           label="Run mode"
-          flag="--launch | --terminal"
-          description="Preview prints the harness command; Run headless launches it now (auto-approve); Run in terminal opens it in the OS terminal."
+          flag="--acp | --launch | --terminal"
+          description="Preview prints the harness command; Run headless launches it now (auto-approve); Run ACP streams structured events to the Run page; Run in terminal opens it in the OS terminal."
         />
       </Label>
       <div
@@ -333,7 +335,19 @@ export function StartFormFields({
         <HarnessSelect
           idPrefix={idPrefix}
           value={form.harness}
-          onChange={(v) => onChange("harness", v)}
+          onChange={(v) => { onChange("harness", v); onChange("model", ""); onChange("effort", "") }}
+        />
+        <ModelSelect
+          idPrefix={idPrefix}
+          harness={form.harness}
+          value={form.model}
+          onChange={(v) => onChange("model", v)}
+        />
+        <EffortSelect
+          idPrefix={idPrefix}
+          harness={form.harness}
+          value={form.effort}
+          onChange={(v) => onChange("effort", v)}
         />
         <label className="flex items-center gap-2 text-sm">
           <input
@@ -384,6 +398,7 @@ export function buildReviewArgs(form: StartFormValue): string[] {
   if (form.noStatus) args.push("--no-status")
   if (form.harness.trim()) args.push("--harness", form.harness.trim())
   args.push(...runModeArgs(form.runMode))
+  args.push(...modelEffortArgs(form))
   args.push(...extraPromptArgs(form))
   return args
 }
@@ -405,6 +420,7 @@ export function buildStartArgs(form: StartFormValue): string[] {
   if (form.noStatus) args.push("--no-status")
   if (form.harness.trim()) args.push("--harness", form.harness.trim())
   args.push(...runModeArgs(form.runMode))
+  args.push(...modelEffortArgs(form))
   args.push(...extraPromptArgs(form))
   return args
 }
@@ -415,15 +431,18 @@ export function startFlagList(form: StartFormValue): string {
   const harness = form.harness.trim()
   const related = (form.relatedRepos ?? []).filter((n) => n.trim())
   return [
-    form.runMode === "headless" ? "headless (--no-tty)" : form.runMode === "terminal" ? "terminal (--terminal)" : "tty preview (no --no-tty)",
+    form.runMode === "headless" ? "headless (--no-tty)" : form.runMode === "terminal" ? "terminal (--terminal)" : form.runMode === "acp" ? "acp (--acp)" : "tty preview (no --no-tty)",
     form.startAction === "plan" ? "plan (--plan)" : "implement",
     repo ? `--repo ${repo}` : "repo: pick a repo",
     related.length ? `--related-repo ${related.join(", ")}` : null,
     `--depth ${form.depth.trim() || "7"}`,
     form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
     harness ? `--harness ${harness}` : null,
+    form.model.trim() ? `--model ${form.model.trim()}` : null,
+    form.effort.trim() ? `--effort ${form.effort.trim()}` : null,
     form.runMode === "headless" ? "--launch (run the agent now)"
       : form.runMode === "terminal" ? "--terminal (open the agent in the OS terminal)"
+      : form.runMode === "acp" ? "--acp (stream structured events to the Run page)"
       : "preview (print command, no run)",
     extra ? `--extra-prompt ${extra}` : null,
   ].filter((v): v is string => v !== null).join(", ")

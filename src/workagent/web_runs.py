@@ -374,6 +374,58 @@ class Registry:
             return [r for r in self.runs.values() if r.state == "running"]
 
 
+def _pending_question_from_texts(texts: list[str]) -> dict | None:
+    """Newest unanswered ACP question event in log lines (None when none).
+
+    ACP agents stream `ACP: {"t": "question", ...}` lines; an `answer`
+    event (or a further `session/prompt` round-trip turn) resolves the
+    pending question. Newest question wins. A non-waiting `turn_end`
+    from the same unanswered turn (e.g. agy co-emits question +
+    end_turn) does not clear it — only the explicit `waiting: true`
+    marker emitted when the run blocks on input closes the wait.
+    """
+    import json as _json
+    pending: dict | None = None
+    answered_qids: set[str] = set()
+    parked = False
+    for ln in reversed(texts):
+        text = ln[4:] if ln.startswith("ACP:") else ln
+        try:
+            ev = _json.loads(text)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(ev, dict):
+            continue
+        t = ev.get("t")
+        if t == "answer":
+            qid = str(ev.get("qid") or ev.get("id") or "")
+            if qid:
+                answered_qids.add(qid)
+            parked = False
+            pending = None
+        elif t == "turn_end":
+            if ev.get("waiting", False):
+                parked = True
+            elif not parked:
+                pending = None
+        elif t == "question":
+            qid = str(ev.get("qid") or ev.get("id") or "")
+            if qid and qid in answered_qids:
+                answered_qids.discard(qid)
+                parked = False
+                continue
+            if pending is None:
+                raw_opts = ev.get("options") or []
+                opts = [str(o.get("label", "") if isinstance(o, dict)
+                            else o) for o in raw_opts]
+                pending = {"t": "question",
+                           "qid": qid,
+                           "text": str(ev.get("text") or ""),
+                           "options": opts,
+                           "multi": bool(ev.get("multi", False))}
+    return pending
+
+
 def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
     from . import store as _store
     worktree = run.worktree
@@ -403,6 +455,11 @@ def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
                            "last_seq": run.last_seq}
     if lines is not None:
         out["lines"] = [{"seq": s, "text": t} for s, t in lines]
+        src = [txt for _, txt in lines]
+    else:
+        with run.lock:
+            src = [txt for _, txt in run.lines]
+    out["pending_question"] = _pending_question_from_texts(src)
     return out
 
 def _persisted_lines(row: dict) -> list[dict]:
@@ -511,7 +568,9 @@ def _persisted_summary(row: dict) -> dict:
             "transcript_ready": t_ready,
             "session_type": row.get("session_type"),
             "last_seq": max((ln["seq"] for ln in _persisted_lines(row)), default=-1) + 1,
-            "validation": row.get("validation") if isinstance(row.get("validation"), dict) else {}}
+            "validation": row.get("validation") if isinstance(row.get("validation"), dict) else {},
+            "pending_question": _pending_question_from_texts(
+                [str(ln.get("text") or "") for ln in _persisted_lines(row)])}
 def _persisted_row(run_id: str) -> dict | None:
     """Fetch a runs-table row for a `db-<id>` run id (None otherwise)."""
     if not run_id.startswith("db-"):

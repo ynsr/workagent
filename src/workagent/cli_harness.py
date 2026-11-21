@@ -136,7 +136,9 @@ def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool
                         launch: bool, session_file: str | None, json_output: bool,
                         extra_prompt: str | None = None,
                         terminal: bool = False, env_file: str | None = None,
-                        plan: bool = False) -> None:
+                        plan: bool = False,
+                   acp: bool = False, run_mode: "str | None" = None,
+                   model: "str | None" = None, effort: "str | None" = None) -> None:
     """Re-launch the harness in an already-linked worktree (issue #26 rule 1)."""
     worktree = str(entry.get("worktree", ""))
     repo = str(entry.get("repo", worktree))
@@ -151,7 +153,8 @@ def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool
         _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, repo, no_tty, launch,
                  result, json_output, run_key=key, session_file=session_file,
-                 terminal=terminal, env_file=env_file)
+                 terminal=terminal, env_file=env_file,
+                 acp=acp, run_mode=run_mode, model=model, effort=effort)
 
 
 def _session_action(result: dict) -> str | None:
@@ -201,7 +204,10 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                  no_tty: bool, launch: bool, result: dict, json_output: bool,
                  run_key: str | None = None, session_file: str | None = None,
                  terminal: bool = False, env_file: str | None = None,
-                 timeout_s: "int | None" = None) -> None:
+                 timeout_s: "int | None" = None,
+                 acp: bool = False, run_mode: "str | None" = None,
+                 model: "str | None" = None,
+                 effort: "str | None" = None) -> None:
     """Launch the harness in the worktree with --launch; without it print the exact
     command instead and hand the worktree to the user (shell exec on TTY).
 
@@ -223,6 +229,34 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         session_file = None
     if not isinstance(env_file, str):
         env_file = None
+    for _k in ("run_mode", "model", "effort"):
+        _v = {"run_mode": run_mode, "model": model, "effort": effort}[_k]
+        if not isinstance(_v, (str, type(None))):
+            if _k == "run_mode":
+                run_mode = None
+            elif _k == "model":
+                model = None
+            else:
+                effort = None
+    if isinstance(acp, str):
+        acp = False
+    if acp and (launch or terminal):
+        from .cli_core import _fail as _fail_mode, EXIT_USAGE as _EXIT_USAGE
+        _fail_mode("--acp cannot be used with --launch/--terminal (pick one run mode)", _EXIT_USAGE)
+    mode = (run_mode or "").strip().lower() if isinstance(run_mode, str) else ""
+    if mode and mode not in ("preview", "headless", "acp", "terminal"):
+        from .cli_core import _fail as _fail_mode, EXIT_USAGE as _EXIT_USAGE
+        _fail_mode(f"bad --run-mode {run_mode!r}: use preview, headless, acp, or terminal", _EXIT_USAGE)
+    if not mode:
+        mode = "acp" if acp else ("terminal" if terminal else ("headless" if launch else "preview"))
+    elif mode == "acp":
+        acp = True
+    elif mode == "terminal":
+        terminal = True
+    elif mode == "headless":
+        launch = True
+    if mode in ("preview", "terminal"):
+        no_tty = False
     from . import env as _env
     # Env file for every launch path (preview included): explicit
     # --env-file wins, else the configured default (auto-created with
@@ -257,7 +291,8 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     preview_args = _HARNESS_ARGS + preview_extra if preview_extra else _HARNESS_ARGS
     preview_no_tty = no_tty and launch
     preview_cmd = " ".join(shlex.quote(a) for a in
-                           harness.command_argv(prompt, preview_no_tty, preview_args))
+                           harness.command_argv(prompt, preview_no_tty, preview_args,
+                           model=model, effort=effort))
     # Copy-paste runnable: the harness must execute inside the worktree.
     # Terminal/headless commands source the env file first; the preview
     # shows the exact same command the user (or terminal) will run.
@@ -473,6 +508,39 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             _launch_kw["timeout_s"] = timeout_s
         exit_code = 0
         validation = None
+        if no_tty and mode == "acp":
+            if not getattr(harness, "supports_acp", False):
+                from .cli_core import _fail as _fail_acp, EXIT_USAGE as _EXIT_ACP
+                _fail_acp(f"harness {harness_name!r} does not support --acp", _EXIT_ACP)
+            run_dir = ""
+            try:
+                run_dir = os.environ.get("WORKAGENT_RUN_DIR", "") or ""
+            except Exception:
+                run_dir = ""
+            code = harness.launch_acp(prompt, worktree or fallback_dir,
+                                      model=model, effort=effort,
+                                      session_file=session_path or None,
+                                      env_file=str(env_path) if env_path else None,
+                                      timeout_s=timeout_s,
+                                      input_stream=(Path(run_dir) / "input.jsonl"
+                                                    if run_dir else None),
+                                      no_tty=True)
+            if session_path:
+                result["session_file"] = session_path
+                if run_id:
+                    try:
+                        _sq.set_run_file_path(db, run_id, session_path)
+                    except Exception:
+                        pass
+            if run_id:
+                _sq.finish_run(db, run_id, "finished" if code == 0 else "failed")
+            if run_key:
+                store.clear_harness_run(run_key)
+            _print_result(result, json_output)
+            if code:
+                from .errors import HarnessError as _HE
+                raise _HE(f"acp run failed (exit {code})", exit_code=code or 1)
+            return
         if no_tty:
             import tempfile
             from . import cli_validate as _cv, harness_summary as _hs
@@ -497,6 +565,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                                       watch=None,
                                       session_file=current_path,
                                       on_conversation_id=on_cid,
+                                      model=model, effort=effort,
                                       **_launch_kw)
                 minted = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
                 if minted is not None and minted != before:
@@ -560,6 +629,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                            (_HARNESS_ARGS + extra) if extra else _HARNESS_ARGS,
                            env_file=str(env_path) if env_path else None, watch=watch,
                            session_file=session_path,
+                           model=model, effort=effort,
                            **_launch_kw)
             minted = _sq.newest_transcript(scope_dir) if scope_dir is not None else None
             if minted is not None and minted != before and run_id:
