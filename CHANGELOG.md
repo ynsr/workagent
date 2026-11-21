@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Add agent-orchestrator vs. Workagent UI/UX comparison report and 14-issue improvement roadmap [126]
 - Starting or reviewing a PR worktree no longer crashes when reusing a path from a cancelled or deleted worktree [119]
 - Add Antigravity (agy-guard) as the default AI harness, with a default harness setting and per-run harness pickers across CLI and web [113]
 - Destroying a worktree deletes its runs, flows, message links, and harness transcripts; startup sweeps leftovers [108]
