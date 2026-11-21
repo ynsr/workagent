@@ -38,6 +38,7 @@ vi.mock("@/lib/queries", async () => {
     useStatusDeleted: settled({}),
     useInfo: settled({ version: "1", host: "127.0.0.1", port: 8000, network_exposed: false }),
     useRepos: settled([]),
+    useLinks: settled({ trackers: {}, worktrees: {} }),
     useFlows: settled({ flows: [] }),
     useActions: settled({ actions: [] }),
     useFlowTemplates: settled({ templates: [] }),
@@ -116,5 +117,18 @@ describe("Dashboard bulk confirm harness", () => {
       args: ["--all", "--fix-comments", "--harness", "omp"],
       confirm: true,
     })
+  })
+
+  it("opens and closes the New Task launch drawer", async () => {
+    const user = userEvent.setup()
+    renderDashboard()
+
+    const trigger = screen.getByRole("button", { name: "New Task" })
+    await user.click(trigger)
+    expect(screen.getByRole("dialog", { name: "New Task" })).toBeInTheDocument()
+
+    await user.keyboard("{Escape}")
+    expect(screen.queryByRole("dialog", { name: "New Task" })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
   })
 })

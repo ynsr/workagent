@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Consolidate web sidebar from 15 links to 7 destinations and convert Launch pages into slide-over drawers with backward-compatible routes [135]
 - Add derived delivery stage (kanban_column, display_status, attention_reason) and Dashboard Kanban Board view with Board/Table toggle [134]
 - Add global Command Palette (Cmd+K / Ctrl+K) and keyboard navigation shortcuts across Dashboard, Runs, Messages, and Prodtests [136]
 - Add agent-orchestrator vs. Workagent UI/UX comparison report and 14-issue improvement roadmap [126]

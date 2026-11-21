@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import {
   FolderGit2,
   Kanban,
+  Plus,
   RefreshCw,
   Rocket,
   SearchX,
@@ -12,6 +13,8 @@ import {
   Table2,
 } from "lucide-react"
 import { CandidatesCard } from "@/components/CandidatesCard"
+import { LaunchDrawer } from "@/components/LaunchDrawer"
+import { Launch } from "@/pages/Launch"
 import { ReleaseCard } from "@/components/ReleaseCard"
 import { ActionsMenu } from "@/components/ActionsMenu"
 import { DashboardBulkMenu } from "@/components/DashboardBulkMenu"
@@ -176,8 +179,12 @@ function BulkConfirmExtras({
   )
 }
 
-export function Dashboard() {
+export function Dashboard({ initialLaunchOpen = false }: { initialLaunchOpen?: boolean } = {}) {
   const navigate = useNavigate()
+  const [launchOpen, setLaunchOpen] = useState(initialLaunchOpen)
+  useEffect(() => {
+    setLaunchOpen(initialLaunchOpen)
+  }, [initialLaunchOpen])
   const qc = useQueryClient()
   const confirm = useConfirm()
   const createRun = useCreateRun()
@@ -772,6 +779,9 @@ export function Dashboard() {
         description="Linked issue ↔ PR ↔ worktrees. Refreshes every 15 s while the tab is visible."
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={() => setLaunchOpen(true)}>
+              <Plus aria-hidden /> New Task
+            </Button>
             <ActionsMenu selected={selected} />
             <FlowsMenu selected={selected} />
             <span aria-hidden className="mx-1 hidden h-6 w-px self-center bg-border sm:block" />
@@ -1013,6 +1023,17 @@ export function Dashboard() {
           }}
         />
       ) : null}
+      <LaunchDrawer
+        open={launchOpen}
+        onClose={() => {
+          setLaunchOpen(false)
+          if (initialLaunchOpen) navigate("/", { replace: true })
+        }}
+        title="New Task"
+        description="Start an agent, review a PR/MR, sync a worktree, run an adhoc prompt, or launch a flow."
+      >
+        <Launch embedded />
+      </LaunchDrawer>
     </div>
   )
 }

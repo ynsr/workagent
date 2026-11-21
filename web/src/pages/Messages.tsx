@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react"
-import { useSearchParams } from "react-router-dom"
+import { useEffect, useMemo, useState } from "react"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { useListHotkeys } from "@/hooks/useHotkeys"
 import { ChevronDown, ChevronRight, Copy, Download, MessageSquare, Plus } from "lucide-react"
+import { LaunchDrawer } from "@/components/LaunchDrawer"
+import { MessageLaunch } from "@/pages/MessageLaunch"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -66,8 +68,13 @@ function groupByThread(rows: MessageRow[]): { thread: string; rows: MessageRow[]
   return [...map.entries()].map(([thread, trows]) => ({ thread, rows: trows }))
 }
 
-export function Messages() {
+export function Messages({ initialLaunchOpen = false }: { initialLaunchOpen?: boolean } = {}) {
+  const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
+  const [launchOpen, setLaunchOpen] = useState(initialLaunchOpen)
+  useEffect(() => {
+    setLaunchOpen(initialLaunchOpen)
+  }, [initialLaunchOpen])
   const threadParam = params.get("thread") ?? ""
   const [q, setQ] = useState("")
   const [sender, setSender] = useState("")
@@ -135,7 +142,10 @@ export function Messages() {
         description="Registered chat messages (message add / adhoc / validate). Runs go through POST /api/runs."
         actions={
           <>
-            <Button size="sm" onClick={() => setRegisterOpen(true)}>
+            <Button size="sm" onClick={() => setLaunchOpen(true)}>
+              <Plus aria-hidden /> Run on Message
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setRegisterOpen(true)}>
               <Plus aria-hidden /> Register
             </Button>
             <Button variant="outline" size="sm" onClick={() => void handleExportJson()}>
@@ -220,6 +230,17 @@ export function Messages() {
         </CardContent>
       </Card>
       {registerOpen ? <MessageRegisterDialog onClose={() => setRegisterOpen(false)} onDone={() => { setRegisterOpen(false); void refetch() }} /> : null}
+      <LaunchDrawer
+        open={launchOpen}
+        onClose={() => {
+          setLaunchOpen(false)
+          if (initialLaunchOpen) navigate("/messages", { replace: true })
+        }}
+        title="Run on Message"
+        description="Run an agent grounded in a registered chat message."
+      >
+        <MessageLaunch embedded />
+      </LaunchDrawer>
     </div>
   )
 }

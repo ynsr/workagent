@@ -309,7 +309,7 @@ function FlowTabFields({
   )
 }
 
-export function Launch() {
+export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const confirm = useConfirm()
@@ -596,12 +596,14 @@ export function Launch() {
 
   return (
     <div>
-      <PageHeader
-        title="Launch"
-        description="Start an agent from an issue ref/URL, review a PR/MR ref/URL, run a flow template, or sync a linked worktree. Runs headless as a child process of workagent serve."
-        actions={null}
-      />
-      <Card className="mx-auto max-w-2xl">
+      {embedded ? null : (
+        <PageHeader
+          title="Launch"
+          description="Start an agent from an issue ref/URL, review a PR/MR ref/URL, run a flow template, or sync a linked worktree. Runs headless as a child process of workagent serve."
+          actions={null}
+        />
+      )}
+      <Card className={embedded ? "border-0 shadow-none" : "mx-auto max-w-2xl"}>
         <CardHeader>
           <div>
             <CardTitle>{copy.title}</CardTitle>

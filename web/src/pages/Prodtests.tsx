@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { useListHotkeys } from "@/hooks/useHotkeys"
 import { Copy, Download, FlaskConical } from "lucide-react"
+import { LaunchDrawer } from "@/components/LaunchDrawer"
+import { ProdtestLaunch } from "@/pages/ProdtestLaunch"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -80,9 +82,13 @@ export const PRODTEST_STATUS_HELP: Record<string, string> = {
   blocked: "Run couldn't complete (timeout, version gate, unverifiable plan).",
 }
 
-export function Prodtests() {
+export function Prodtests({ initialLaunchOpen = false }: { initialLaunchOpen?: boolean } = {}) {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
+  const [launchOpen, setLaunchOpen] = useState(initialLaunchOpen)
+  useEffect(() => {
+    setLaunchOpen(initialLaunchOpen)
+  }, [initialLaunchOpen])
   const issueParam = params.get("issue") ?? ""
   const [q, setQ] = useState("")
   const [status, setStatus] = useState("")
@@ -210,8 +216,8 @@ export function Prodtests() {
             >
               Cleanup passed
             </Button>
-            <Button variant="outline" size="sm" onClick={() => navigate("/prodtest-launch")}>
-              New prodtest
+            <Button size="sm" onClick={() => setLaunchOpen(true)}>
+              Plan / Run
             </Button>
           </>
         }
@@ -341,6 +347,17 @@ export function Prodtests() {
           )}
         </CardContent>
       </Card>
+      <LaunchDrawer
+        open={launchOpen}
+        onClose={() => {
+          setLaunchOpen(false)
+          if (initialLaunchOpen) navigate("/prodtests", { replace: true })
+        }}
+        title="Plan / Run Prodtest"
+        description="Plan or run a production test for an issue ref."
+      >
+        <ProdtestLaunch embedded />
+      </LaunchDrawer>
     </div>
   )
 }
