@@ -54,10 +54,12 @@ function parentSummaryLabel(parent: RunsTableRow, children: RunsTableRow[]): str
 export function RunsTable({
   rows,
   activeIndex = -1,
+  activeKey = null,
   flat = false,
 }: {
   rows: RunsTableRow[]
   activeIndex?: number
+  activeKey?: string | null
   flat?: boolean
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
@@ -121,11 +123,12 @@ export function RunsTable({
               const children = childrenByParent.get(row.key) ?? []
               const hasChildren = children.length > 0
               const open = hasChildren && isExpanded(row)
+              const isFocused = activeKey != null ? row.key === activeKey : idx === activeIndex
               return (
                 <Fragment key={row.key}>
                   <TableRow
-                    data-focused={idx === activeIndex ? "true" : undefined}
-                    className={idx === activeIndex ? "bg-accent/50" : undefined}
+                    data-focused={isFocused ? "true" : undefined}
+                    className={isFocused ? "bg-accent/50" : undefined}
                   >
                     <TableCell className="font-mono text-[13px]">
                       <div className="flex items-center gap-1">
@@ -273,11 +276,12 @@ export function RunsTable({
           const children = childrenByParent.get(row.key) ?? []
           const hasChildren = children.length > 0
           const open = hasChildren && isExpanded(row)
+          const isFocused = activeKey != null ? row.key === activeKey : idx === activeIndex
           return (
             <div key={row.key} className="space-y-2">
               <Card
-                data-focused={idx === activeIndex ? "true" : undefined}
-                className={idx === activeIndex ? "py-4 ring-2 ring-ring" : "py-4"}
+                data-focused={isFocused ? "true" : undefined}
+                className={isFocused ? "py-4 ring-2 ring-ring" : "py-4"}
               >
                 <CardContent className="space-y-2 px-4">
                   <div className="flex items-center justify-between gap-2">
@@ -363,6 +367,14 @@ export function RunsTable({
                           <span className="font-medium">{child.command}</span>{" "}
                           <span className="font-mono text-muted-foreground">{argsText(child.args)}</span>
                         </p>
+                        <div className="flex items-center justify-between border-t pt-1.5 text-xs text-muted-foreground">
+                          <span title={child.startedTitle}>
+                            exit {child.exitCode ?? "—"} · {relativeTime(child.started)}
+                          </span>
+                          {child.actions ? (
+                            <div className="flex items-center">{child.actions}</div>
+                          ) : null}
+                        </div>
                       </CardContent>
                     </Card>
                   ))}
