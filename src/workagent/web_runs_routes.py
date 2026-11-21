@@ -475,7 +475,6 @@ def _cached_harness_options(name: str) -> tuple[dict, bool, str | None]:
                 "models": [], "efforts": [],
                 "current_model": "", "current_effort": "",
                 "warning": f"option probe failed: {exc}"}
-        _OPTIONS_CACHE[name] = (now, dict(body))
         return (body, False, str(exc))
     body = {"harness": name, "supported": True,
             "models": [{"id": str(m.get("id", "")), "name": str(m.get("name", m.get("id", "")))}

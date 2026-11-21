@@ -509,11 +509,9 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         exit_code = 0
         validation = None
         if no_tty and mode == "acp":
-            from . import env as _env_acp
             if not getattr(harness, "supports_acp", False):
                 from .cli_core import _fail as _fail_acp, EXIT_USAGE as _EXIT_ACP
                 _fail_acp(f"harness {harness_name!r} does not support --acp", _EXIT_ACP)
-            merged = _env_acp.merged_env(str(env_path) if env_path else None)
             run_dir = ""
             try:
                 run_dir = os.environ.get("WORKAGENT_RUN_DIR", "") or ""
@@ -522,7 +520,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             code = harness.launch_acp(prompt, worktree or fallback_dir,
                                       model=model, effort=effort,
                                       session_file=session_path or None,
-                                      env=merged,
+                                      env_file=str(env_path) if env_path else None,
                                       timeout_s=timeout_s,
                                       input_stream=(Path(run_dir) / "input.jsonl"
                                                     if run_dir else None),

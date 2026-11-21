@@ -413,7 +413,8 @@ def _pending_question_from_texts(texts: list[str]) -> dict | None:
             if qid and qid in answered_qids:
                 answered_qids.discard(qid)
                 parked = False
-            elif pending is None:
+                continue
+            if pending is None:
                 raw_opts = ev.get("options") or []
                 opts = [str(o.get("label", "") if isinstance(o, dict)
                             else o) for o in raw_opts]

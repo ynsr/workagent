@@ -75,6 +75,9 @@ def _mirror(session_file: str | None, event: dict) -> None:
         pass
 
 
+_DEFAULT_REQUEST_TIMEOUT_S = 300.0
+
+
 class AcpClient:
     """Stdio JSON-RPC 2.0 client for `<bin> acp` agents."""
 
@@ -109,7 +112,8 @@ class AcpClient:
         self._notify_cb = cb
 
     def _send(self, payload: dict) -> None:
-        assert self._proc.stdin is not None
+        if self._proc.stdin is None:
+            raise HarnessError("ACP agent stdin is closed")
         try:
             self._proc.stdin.write(json.dumps(payload) + "\n")
             self._proc.stdin.flush()
@@ -117,9 +121,11 @@ class AcpClient:
             raise HarnessError(f"ACP agent write failed: {e}")
 
     def _read_loop(self) -> None:
-        assert self._proc.stdout is not None
+        out = self._proc.stdout
+        if out is None:
+            return
         try:
-            for raw in self._proc.stdout:
+            for raw in out:
                 line = raw.strip()
                 if not line:
                     continue
@@ -200,6 +206,8 @@ class AcpClient:
                 self._pending.pop(rid, None)
             raise
         wait = timeout_s if timeout_s is not None else self._timeout
+        if wait is None:
+            wait = _DEFAULT_REQUEST_TIMEOUT_S
         try:
             msg = q.get(timeout=wait)
         except queue.Empty:
@@ -227,7 +235,13 @@ class AcpClient:
     def close(self) -> None:
         with self._lock:
             self._closed = True
+            pending = list(self._pending.values())
             self._pending.clear()
+        for q in pending:
+            try:
+                q.put({"error": {"code": -32000, "message": "agent exited"}})
+            except Exception:
+                pass
         self._kill()
 
     def _kill(self) -> None:
@@ -472,13 +486,15 @@ class AcpHarness(Harness, abc.ABC):
                            {"sessionId": sid, "prompt": [{"type": "text", "text": prompt}]})
             idx = 0
             while True:
-                pending = [ev for ev in list(received)[idx:]
-                           if ev.get("t") == "question"]
-                if not pending:
+                pending = None
+                for pos in range(idx, len(received)):
+                    if received[pos].get("t") == "question":
+                        pending = received[pos]
+                        idx = pos + 1
+                        break
+                if pending is None:
                     break
-                ev = pending[0]
-                idx = list(received).index(ev) + 1
-                code = self._answer_question(client, sid, ev, session_file,
+                code = self._answer_question(client, sid, pending, session_file,
                                              input_stream, no_tty)
                 if code != 0:
                     return code
@@ -518,8 +534,10 @@ class AcpHarness(Harness, abc.ABC):
             if seen is None:
                 seen = self._consumed_answers = set()
             import time
-            deadline = time.time() + 86400.0
-            while time.time() < deadline:
+            interval = 0.2
+            while True:
+                if getattr(self, "_answer_stop", False):
+                    return None
                 try:
                     if queue_path.is_file():
                         with queue_path.open("r", encoding="utf-8") as fh:
@@ -540,9 +558,29 @@ class AcpHarness(Harness, abc.ABC):
                                     return item.get("text", item.get("answer", item.get("choice", "")))
                 except OSError:
                     pass
-                time.sleep(0.2)
-            return None
+                time.sleep(interval)
         stream = input_stream
+        if stream is not None:
+            try:
+                line = stream.readline() if hasattr(stream, "readline") else None
+            except Exception:
+                line = None
+            if line:
+                line = line.strip()
+                if line:
+                    try:
+                        item = json.loads(line)
+                    except ValueError:
+                        item = None
+                    if isinstance(item, dict):
+                        if not qid or str(item.get("qid") or "") in ("", qid):
+                            return item.get("text", item.get("answer", item.get("choice", "")))
+                    else:
+                        return line
+            raise HarnessError("no answer: input stream closed without an answer line")
+        if not no_tty:
+            return None
+        raise HarnessError("no answer channel: set WORKAGENT_RUN_DIR or pipe an answer line on stdin")
 
     # Harness base defaults for ACP harnesses (concrete subclasses own argv).
     def model_effort_cli_args(self, model: str | None, effort: str | None) -> list[str]:

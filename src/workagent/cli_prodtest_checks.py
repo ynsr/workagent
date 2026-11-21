@@ -59,7 +59,9 @@ def _run_locked(store_key: str, entry: dict, plan_file: Path | None, release_sha
                 launch: bool, terminal: bool, no_tty: bool, json_output: bool,
                 harness: Optional[str], env_file: str | None,
                 extra_prompt: Optional[str], session_file: str | None,
-                item: dict | None = None, link_key: str | None = None) -> None:
+                item: dict | None = None, link_key: str | None = None,
+                acp: bool = False, run_mode: str | None = None,
+                model: str | None = None, effort: str | None = None) -> None:
     """Run body inside the per-issue lock: checkout, validate, harness, persist."""
     from . import release_worktree as _wt
     from . import prodtest_scripts as _ps
@@ -90,10 +92,11 @@ def _run_locked(store_key: str, entry: dict, plan_file: Path | None, release_sha
         if divergence:
             eprint(f"WARNING: stored plan metadata diverged for {store_key}: {divergence}")
         _run_validated(store_key, entry, plan_file, release_sha, issue_url,
-                        fix_mode, skip_version_gate, out_dir, timeout_s,
-                        launch, terminal, no_tty, json_output,
-                        harness, env_file, extra_prompt, session_file,
-                        repo, checkout)
+                       fix_mode, skip_version_gate, out_dir, timeout_s,
+                       launch, terminal, no_tty, json_output,
+                       harness, env_file, extra_prompt, session_file,
+                       repo, checkout, acp=acp, run_mode=run_mode,
+                       model=model, effort=effort)
     except BaseException:
         if headless:
             try:
@@ -239,7 +242,9 @@ def _run_validated(store_key: str, entry: dict, plan_file: Path | None, release_
                    launch: bool, terminal: bool, no_tty: bool, json_output: bool,
                    harness: Optional[str], env_file: str | None,
                    extra_prompt: Optional[str], session_file: str | None,
-                   repo: str, checkout: Path | None, item: dict | None = None) -> None:
+                   repo: str, checkout: Path | None, item: dict | None = None,
+                   acp: bool = False, run_mode: str | None = None,
+                   model: str | None = None, effort: str | None = None) -> None:
     """Validated run body: plan validation, harness dispatch, persistence.
 
     Checkout lifecycle belongs to the caller (``_run_locked``): this function
@@ -286,7 +291,8 @@ def _run_validated(store_key: str, entry: dict, plan_file: Path | None, release_
         _run_harness_guarded(harness_name, prompt, worktree, repo or worktree,
                              no_tty, launch, result, json_output, terminal,
                              env_file, session_file, timeout_s,
-                             store_key if entry else None)
+                             store_key if entry else None,
+                             acp=acp, run_mode=run_mode, model=model, effort=effort)
     except _HarnessTimeout as e:
         result["timeout"] = True
         if launch and no_tty:
@@ -302,7 +308,9 @@ def _run_validated(store_key: str, entry: dict, plan_file: Path | None, release_
 def _run_harness_guarded(harness_name: str, prompt: str, worktree: str, fallback_dir: str,
                          no_tty: bool, launch: bool, result: dict, json_output: bool,
                          terminal: bool, env_file: str | None, session_file: str | None,
-                         timeout_s: int, run_key: str | None) -> None:
+                         timeout_s: int, run_key: str | None,
+                         acp: bool = False, run_mode: str | None = None,
+                         model: str | None = None, effort: str | None = None) -> None:
     """Headless harness call with the run timeout; overrun kills the group.
 
     The harness child runs in its own process group (``start_new_session``,
@@ -315,13 +323,15 @@ def _run_harness_guarded(harness_name: str, prompt: str, worktree: str, fallback
         _run_harness(harness_name, prompt, worktree, fallback_dir,
                      no_tty, launch, result, json_output,
                      run_key=run_key, session_file=session_file,
-                     terminal=terminal, env_file=env_file)
+                     terminal=terminal, env_file=env_file,
+                     acp=acp, run_mode=run_mode, model=model, effort=effort)
         return
     _run_harness(harness_name, prompt, worktree, fallback_dir,
                  no_tty, launch, result, json_output,
                  run_key=run_key, session_file=session_file,
                  terminal=terminal, env_file=env_file,
-                 timeout_s=timeout_s)
+                 timeout_s=timeout_s,
+                 acp=acp, run_mode=run_mode, model=model, effort=effort)
 
 
 _REPORT_POST_CAP = 20000

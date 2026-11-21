@@ -388,7 +388,7 @@ def message_validate(
     """Validate the claimed issues in the message content and generate Jira issues if issue(s) confirmed."""
     row = _resolve_or_fetch(msg, repo, ref)
     default = ("Validate the claimed issues in the message content and generate Jira issues if issue(s) confirmed. Investigate each claimed issue: read the message content and linked repos, attempt reproduction, and report CONFIRMED or REFUTED with supporting file:line evidence. For each CONFIRMED claim, generate a Jira issue describing the defect, with reproduction steps and the supporting file:line evidence.")
-    _run_prompt(row, (prompt or "").strip() or default, ref, repo, launch, terminal, harness, None, None, None, dry_run, yes, json_output)
+    _run_prompt(row, (prompt or "").strip() or default, ref, repo, launch, terminal, harness, None, None, None, dry_run, yes, json_output, acp=acp, run_mode=run_mode, model=model, effort=effort)
 action_app = typer.Typer(help="Run message-scoped custom actions.", no_args_is_help=True)
 message_app.add_typer(action_app, name="action")
 
@@ -441,6 +441,7 @@ def message_action_run(
               " --ref <worktree>", EXIT_USAGE)
     header_extra = f"{_message_header(row)}\n\n{(extra_prompt or '').strip()}".strip()
     _action_run(label, found, launch=launch, terminal=terminal, harness=harness,
+                acp=acp, run_mode=run_mode, model=model, effort=effort,
                 extra_prompt=header_extra or None,
                 env_file=env_file, session_file=session_file, dry_run=dry_run,
                 yes=yes, json_output=json_output)
@@ -506,4 +507,4 @@ def message_flow_run(
             merged["extra_prompt"] = f"{header}\n\n{prev}".strip() if prev else header
             s["config"] = merged
     from . import cli_flow_run as _cfr
-    _cfr.flow_run(label, ref_opt, dry_run=dry_run, yes=yes, json_output=json_output, harness=harness)
+    _cfr.flow_run(label, ref_opt, dry_run=dry_run, yes=yes, json_output=json_output, harness=harness, acp=acp, run_mode=run_mode, model=model, effort=effort)

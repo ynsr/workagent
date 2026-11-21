@@ -60,12 +60,14 @@ def prodtest_run(
               "  Pass an issue/worktree ref, or use --all to run every released plan.", 2)
     if all_wts:
         _run_all(fix_mode, skip_version_gate, launch, terminal, no_tty,
-                 dry_run, json_output, harness, env_file, extra_prompt)
+                 dry_run, json_output, harness, env_file, extra_prompt,
+                 acp=acp, run_mode=run_mode, model=model, effort=effort)
         return
     assert ref is not None
     _run_one(ref, fix_mode, skip_version_gate, run_dir, launch, terminal,
              no_tty, dry_run, yes, json_output, harness, env_file,
-             extra_prompt, session_file)
+             extra_prompt, session_file,
+             acp=acp, run_mode=run_mode, model=model, effort=effort)
 
 
 def _prodtest_eligibility(links: dict) -> tuple[list[tuple[str, dict, str, Path | None]], list[dict]]:
@@ -115,8 +117,9 @@ def _prodtest_eligibility(links: dict) -> tuple[list[tuple[str, dict, str, Path 
 def _run_all(fix_mode: str, skip_version_gate: bool, launch: bool, terminal: bool,
              no_tty: bool, dry_run: bool, json_output: bool,
              harness: Optional[str], env_file: str | None,
-             extra_prompt: Optional[str]) -> None:
-    """Sequential in-process ``--all`` loop: one key at a time, past failures."""
+             extra_prompt: Optional[str], acp: bool = False,
+             run_mode: str | None = None, model: str | None = None,
+             effort: str | None = None) -> None:
     from . import cli_harness as _h
     links = store.load_links(include_deleted=True)
     eligible, skipped = _prodtest_eligibility(links)
@@ -151,7 +154,8 @@ def _run_all(fix_mode: str, skip_version_gate: bool, launch: bool, terminal: boo
         try:
             _run_one(store_key, fix_mode, skip_version_gate, None, launch,
                      terminal, no_tty, False, True, json_output, harness,
-                     env_file, extra_prompt, None)
+                     env_file, extra_prompt, None,
+                     acp=acp, run_mode=run_mode, model=model, effort=effort)
             rows.append({"key": key, "issue": store_key, "status": "ok"})
         except SystemExit as e:
             failures += 1
@@ -176,7 +180,9 @@ def _run_one(ref: str,
              fix_mode: str, skip_version_gate: bool, run_dir: str | None,
              launch: bool, terminal: bool, no_tty: bool, dry_run: bool, yes: bool,
              json_output: bool, harness: Optional[str], env_file: str | None,
-             extra_prompt: Optional[str], session_file: str | None) -> None:
+             extra_prompt: Optional[str], session_file: str | None,
+             acp: bool = False, run_mode: str | None = None,
+             model: str | None = None, effort: str | None = None) -> None:
     """Single-ref run body (``resolve -> out_dir -> lock -> _run_locked``)."""
     if terminal and launch:
         _fail("--terminal cannot be used with --launch (pick one run mode)", 2)
@@ -256,7 +262,8 @@ def _run_one(ref: str,
                         launch, terminal, no_tty, json_output,
                         harness, env_file, extra_prompt, session_file,
                         item=fresh_item if fresh_item is not None else item,
-                        link_key=link_key)
+                        link_key=link_key, acp=acp, run_mode=run_mode,
+                        model=model, effort=effort)
     except KeyboardInterrupt:
         _fail("interrupted; run checkout kept for inspection.", 1)
 

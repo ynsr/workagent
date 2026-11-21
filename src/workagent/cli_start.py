@@ -99,11 +99,8 @@ def start(
         return _start_from_pr(ref, parsed, repo, depth, harness, no_tty,
                               launch, dry_run, yes, json_output,
                               session_file, extra_prompt, terminal=terminal,
-                              env_file=env_file)
-    if pr_mode:
-        return _start_from_pr(ref, parsed, repo, depth, harness, no_tty,
-                              launch, dry_run, yes, json_output,
-                              session_file, extra_prompt, env_file=env_file)
+                              env_file=env_file, acp=acp, run_mode=run_mode,
+                              model=model, effort=effort)
     links = store.load_links()
     bare = refs.issue_key(parsed)
     if parsed["tool"] == "jira" and repo:

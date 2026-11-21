@@ -211,7 +211,8 @@ def test_message_validate_default_prompt_mentions_jira(tmp_path, monkeypatch):
     sm.create_message(sm_db_path(tmp_path), message_id=mid, repos=["r1"])
     seen = {}
     def _fake(msg, prompt, ref_opt, repo_opt, launch, terminal, harness,
-              extra_prompt, env_file, session_file, dry_run, yes, json_output):
+              extra_prompt, env_file, session_file, dry_run, yes, json_output,
+              acp=False, run_mode=None, model=None, effort=None):
         seen["prompt"] = prompt
     monkeypatch.setattr("workagent.cli_message._run_prompt", _fake)
     from typer.testing import CliRunner
