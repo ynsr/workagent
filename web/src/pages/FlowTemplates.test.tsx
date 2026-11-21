@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
 import { ConfirmProvider } from "@/lib/confirm"
+import { setVerbose } from "@/lib/settings"
 import { FlowTemplates } from "@/pages/FlowTemplates"
 
 const { mutateAsync, TEMPLATES } = vi.hoisted(() => ({
@@ -81,5 +82,27 @@ describe("FlowTemplates compose", () => {
     )
     expect(kinds).toEqual(["start", "review", "start", "action"])
     unmount()
+  })
+})
+
+describe("FlowTemplates UI density", () => {
+  it("gates GET /api/flow-templates behind verbose and groups trailing controls", () => {
+    localStorage.clear()
+    const { unmount } = renderPage()
+    expect(screen.queryByText("GET /api/flow-templates")).not.toBeInTheDocument()
+    expect(screen.getByRole("columnheader", { name: "Controls" })).toBeInTheDocument()
+    expect(screen.queryByRole("columnheader", { name: "Order" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("columnheader", { name: "Protected" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("columnheader", { name: "Top" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("columnheader", { name: "Overlay" })).not.toBeInTheDocument()
+    expect(screen.getByTitle("Move Ship up")).toBeInTheDocument()
+    expect(screen.getByTitle("Protect Ship")).toBeInTheDocument()
+    unmount()
+
+    setVerbose(true)
+    const { unmount: unmountVerbose } = renderPage()
+    expect(screen.getByText("GET /api/flow-templates")).toBeInTheDocument()
+    unmountVerbose()
+    localStorage.clear()
   })
 })

@@ -98,6 +98,7 @@ export function StatusTable({
   repoTabs,
   selection,
   embed,
+  focusedKey,
 }: {
   worktrees: WorktreeMap
   actions: StatusTableActions
@@ -107,6 +108,7 @@ export function StatusTable({
   repoTabs?: { repoFilter: string; setRepo: (v: string) => void; tabs: { names: string[]; counts: Map<string, number>; other: number }; repos: Repo[] }
   selection?: StatusTableSelection
   embed?: StatusTableEmbed
+  focusedKey?: string
 }) {
   const selParam = embed?.selParam === undefined ? "sel" : embed.selParam
   const [params, setParams] = useSearchParams()
@@ -413,7 +415,7 @@ export function StatusTable({
                   const invalid = entry.wt_valid === false
                   return (
                     <Fragment key={key}>
-                      <TableRow aria-selected={sel.has(key)} data-state={sel.has(key) ? "selected" : undefined} onClick={(e) => { const t = e.target as HTMLElement; if (t.closest("a,button,[role=checkbox],input")) return; setExpanded((cur) => (cur === key ? null : key)) }} className={cn("group relative cursor-pointer", sel.has(key) ? "data-[state=selected]:bg-muted/50" : undefined, invalid ? "bg-destructive/5" : undefined)}>
+                      <TableRow aria-selected={sel.has(key)} data-state={sel.has(key) ? "selected" : undefined} data-focused={focusedKey === key ? "true" : undefined} onClick={(e) => { const t = e.target as HTMLElement; if (t.closest("a,button,[role=checkbox],input")) return; setExpanded((cur) => (cur === key ? null : key)) }} className={cn("group relative cursor-pointer", sel.has(key) ? "data-[state=selected]:bg-muted/50" : undefined, invalid ? "bg-destructive/5" : undefined, focusedKey === key ? "bg-accent/50 ring-1 ring-inset ring-primary/40" : undefined)}>
                         <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
                           <Checkbox
                             checked={sel.has(key)}
@@ -576,9 +578,11 @@ export function StatusTable({
               return (
                 <div
                   key={key}
+                  data-focused={focusedKey === key ? "true" : undefined}
                   className={cn(
                     "rounded-xl border bg-card p-4",
                     invalid && "border-destructive/40 bg-destructive/5",
+                    focusedKey === key && "bg-accent/50 ring-1 ring-inset ring-primary/40",
                   )}
                 >
                   <div className="flex items-start justify-between gap-2">

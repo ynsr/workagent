@@ -34,7 +34,7 @@ export interface RunsTableRow {
   actions?: ReactNode
 }
 
-export function RunsTable({ rows }: { rows: RunsTableRow[] }) {
+export function RunsTable({ rows, activeIndex = -1 }: { rows: RunsTableRow[]; activeIndex?: number }) {
   return (
     <>
       {/* Table ≥sm */}
@@ -53,8 +53,12 @@ export function RunsTable({ rows }: { rows: RunsTableRow[] }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((row) => (
-              <TableRow key={row.key}>
+            {rows.map((row, idx) => (
+              <TableRow
+                key={row.key}
+                data-focused={idx === activeIndex ? "true" : undefined}
+                className={idx === activeIndex ? "bg-accent/50" : undefined}
+              >
                 <TableCell className="font-mono text-[13px]">
                   {row.href ? (
                     <Link
@@ -105,8 +109,12 @@ export function RunsTable({ rows }: { rows: RunsTableRow[] }) {
       </div>
       {/* Cards <sm */}
       <div className="space-y-3 sm:hidden">
-        {rows.map((row) => (
-          <Card key={row.key} className="py-4">
+        {rows.map((row, idx) => (
+          <Card
+            key={row.key}
+            data-focused={idx === activeIndex ? "true" : undefined}
+            className={idx === activeIndex ? "py-4 ring-2 ring-ring" : "py-4"}
+          >
             <CardContent className="space-y-2 px-4">
               <div className="flex items-center justify-between gap-2">
                 {row.href ? (

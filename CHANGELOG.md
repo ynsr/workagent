@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Add derived delivery stage (kanban_column, display_status, attention_reason) and Dashboard Kanban Board view with Board/Table toggle [134]
+- Add global Command Palette (Cmd+K / Ctrl+K) and keyboard navigation shortcuts across Dashboard, Runs, Messages, and Prodtests [136]
 - Add agent-orchestrator vs. Workagent UI/UX comparison report and 14-issue improvement roadmap [126]
 - Fix ACP harness runtime bugs (supervised Q&A, stderr tail, validation, env.sh, options refresh, transcript UI) [128]
 - Harden ACP follow-ups: sync stderr drain on init failure, own block for unknown events, explicit transcript styling with sticky user toggles, shared run-mode flags [128]
@@ -599,6 +600,7 @@
 - Start with an already-linked worktree accepts a registered --repo name pointing at the same path instead of failing [95]
 - Prodtests table shows what each status means on hover, Prodtest Launch explains its buttons and offers worktrees in the ref field, and Run-all moved to the Prodtests page [97]
 - Agy (agy-guard) terminals launched by Workagent show colors again, like OMP [120]
+- Hide raw API subtitles unless Verbose is on, compact Prodtests/FlowTemplates/Actions tables, and add screen-reader and reduced-motion polish [137]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

@@ -25,6 +25,7 @@ import { PageHeader } from "@/components/PageHeader"
 import { StatusTable } from "@/components/StatusTable"
 import { WorktreeBoard } from "@/components/WorktreeBoard"
 import { WorktreeFilterForm } from "@/components/WorktreeFilterForm"
+import { useListHotkeys } from "@/hooks/useHotkeys"
 import type { IssueFilter, PrStatusFilter, WorktreeFilterState } from "@/lib/worktreeFilter"
 import {
   EmptyState,
@@ -751,6 +752,15 @@ export function Dashboard() {
     onOpenFlows: (key: string) =>
       navigate("/flows?worktree=" + encodeURIComponent(key)),
   }
+  const [visibleKeys, setVisibleKeys] = useState<string[]>([])
+  const { activeItem: focusedKey } = useListHotkeys({
+    items: visibleKeys,
+    onOpen: (key) => handleOpenWorktree(key),
+    onSync: (key) => tableActions.onSync?.(key),
+    onReview: (key) => tableActions.onReview?.(key),
+    onCleanup: (key) => tableActions.onCleanup?.(key),
+    onFocusSearch: () => document.getElementById("dashboard-q")?.focus(),
+  })
   const invalidCount = worktrees
     ? Object.values(worktrees).filter((e) => e.wt_valid === false).length
     : 0
@@ -931,8 +941,9 @@ export function Dashboard() {
                   showWorktree={showWorktree}
                   networkExposed={info?.network_exposed ?? false}
                   repoTabs={repos ? { ...repoTabs, repos } : undefined}
-                  selection={{ selected, onSelectionChange: setSelected }}
+                  selection={{ selected, onSelectionChange: setSelected, onVisibleKeys: setVisibleKeys }}
                   embed={{ externalFilter: sharedFilter, onExternalFilterChange: setSharedFilter, filterParam: null, hideFilter: true }}
+                  focusedKey={focusedKey}
                 />
               </div>
             </>

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
+import { useListHotkeys } from "@/hooks/useHotkeys"
 import { Copy, Download, FlaskConical } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -25,6 +26,7 @@ import {
 import { copyToClipboard, downloadText, relativeDate, toCsv } from "@/lib/format"
 import { useCreateRun, useProdtests } from "@/lib/queries"
 import { useConfirm } from "@/lib/confirm"
+import { getVerbose } from "@/lib/settings"
 import { toast } from "sonner"
 import type { ProdtestRow } from "@/lib/api"
 
@@ -34,6 +36,12 @@ export interface ProdtestFilters {
 }
 
 export const EMPTY_PRODTEST_FILTERS: ProdtestFilters = { q: "", status: "" }
+
+/** Pure helper (unit-tested): extract filename from a full plan path. */
+export function planBasename(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] ?? path
+}
 
 /** Pure helper (unit-tested): case-insensitive substring match over issue/plan/worktree + exact status. */
 export function filterProdtests(rows: ProdtestRow[], f: ProdtestFilters): ProdtestRow[] {
@@ -85,6 +93,16 @@ export function Prodtests() {
   const rows: ProdtestRow[] = data?.prodtests ?? []
   const filters: ProdtestFilters = { q: issueParam || q, status }
   const visible = useMemo(() => filterProdtests(rows, filters), [rows, issueParam, q, status])
+  const { activeIndex } = useListHotkeys({
+    items: visible,
+    onOpen: (r) =>
+      navigate(
+        r.last_run_id
+          ? `/runs/${r.last_run_id}`
+          : `/prodtest-launch?ref=${encodeURIComponent(r.issue_key)}`,
+      ),
+    onFocusSearch: () => document.getElementById("pt-q")?.focus(),
+  })
   const statuses = useMemo(() => [...new Set(rows.map((r) => r.status).filter(Boolean))].sort(), [rows])
 
   function setIssue(issue: string) {
@@ -217,7 +235,9 @@ export function Prodtests() {
       <Card>
         <CardHeader>
           <CardTitle>Prodtests</CardTitle>
-          <CardDescription>GET /api/prodtests{issueParam ? `?issue=${issueParam} (filtered)` : ""}</CardDescription>
+          {getVerbose() ? (
+            <CardDescription>GET /api/prodtests{issueParam ? `?issue=${issueParam} (filtered)` : ""}</CardDescription>
+          ) : null}
         </CardHeader>
         <CardContent>
           {isFetching && data ? <RefreshOverlay /> : null}
@@ -245,8 +265,12 @@ export function Prodtests() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visible.map((r) => (
-                  <TableRow key={r.issue_key}>
+                {visible.map((r, idx) => (
+                  <TableRow
+                    key={r.issue_key}
+                    data-focused={idx === activeIndex ? "true" : undefined}
+                    className={idx === activeIndex ? "bg-accent/50" : undefined}
+                  >
                     <TableCell className="font-mono text-[13px]">{r.issue_key}</TableCell>
                     <TableCell>
                       <Badge
@@ -258,7 +282,33 @@ export function Prodtests() {
                       </Badge>
                     </TableCell>
                     <TableCell className="font-mono text-[13px]">
-                      {r.plan_path ? `${r.plan_path}${r.plan_revision ? ` · rev${r.plan_revision}` : ""}${r.plan_risk ? ` · ${r.plan_risk}` : ""}` : "—"}
+                      {r.plan_path ? (
+                        <div className="inline-flex max-w-full items-center gap-1">
+                          <Badge
+                            variant="secondary"
+                            className="max-w-[240px] truncate font-mono text-xs font-normal"
+                            title={r.plan_path}
+                          >
+                            {planBasename(r.plan_path)}
+                            {r.plan_revision ? ` · rev${r.plan_revision}` : ""}
+                            {r.plan_risk ? ` · ${r.plan_risk}` : ""}
+                          </Badge>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="size-6 shrink-0 p-0"
+                            title={`Copy full path: ${r.plan_path}`}
+                            aria-label={`Copy plan path for ${r.issue_key}`}
+                            onClick={() =>
+                              copyToClipboard(r.plan_path!)
+                                .then(() => toast.success("Plan path copied"))
+                                .catch((err) => toast.error(errorText(err)))
+                            }
+                          >
+                            <Copy className="size-3" aria-hidden />
+                          </Button>
+                        </div>
+                      ) : "—"}
                     </TableCell>
                     <TableCell className="font-mono text-[13px]" title={r.release_sha ?? ""}>
                       {r.release_sha ? (r.release_sha.length > 12 ? r.release_sha.slice(0, 12) : r.release_sha) : "—"}
