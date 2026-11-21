@@ -497,6 +497,13 @@ is null whenever the run is not running. A co-emitted
 non-waiting `turn_end` from the same unanswered turn does not clear it;
 only an `answer` event resolves it.
 
+### `GET /api/events` — Global CDC invalidation SSE stream (issue #147)
+Streams real-time SQLite `change_log` events (`worktrees`, `runs`, `flows`,
+`messages`, `pr_cache`, `prodtest_items`) tailed every 250 ms.
+- `event: change`, `id: <seq>`, `data: {"seq": N, "table": "worktrees", "row_key": "…", "op": "insert"|"update"|"delete", "created_at": 1700000000.123}`.
+- Replays missed events when `Last-Event-ID` header (or `?last_event_id=N`) is supplied.
+- Emits `: heartbeat` SSE comments every 15 s while idle; closes cleanly on server shutdown.
+
 ### `GET /api/runs/{id}/events` — SSE
 - `event: log`, `data: {"seq": N, "text": "…"}`, `id: N`. For `db-<id>`
   rows the stream replays the stored lines then the terminal state event.
@@ -556,3 +563,13 @@ preset as before).
 - Theme: `light | dark | system` in localStorage, follows
   `prefers-color-scheme` for `system`.
 - Launch prefs: localStorage key `launch.prefs.v1` — per-tab `{start:{runMode,base},review:{runMode,thenFix,fixAction,useReviewSession},sync:{merge}}` plus Prodtest Launch's `{prodtest:{runMode,prodtestAction}}` under the same key; only the active tab's slice persists on change, URL params (`ref`, `fixComments=1`) win for the live form and never persist. Repo tabs (`useRepoTabs`) show only repos with count > 0; a stale `?repo=` falls back to All. Candidates Review rows deep-link to `…/launch?mode=review&ref=<pr-url>` with the repo pre-selected.
+
+---
+
+## In-App Git Diff & Prodtest YAML Plan Inspection (T08)
+
+Read-only endpoints (all GET, no confirm):
+
+- `GET /api/worktrees/{ref}/files?mode=base|head` — returns `{key, mode, base_ref, files: [{path, status, additions, deletions, binary, old_path}], total_additions, total_deletions}`. `mode=base` (default) diffs against merge-base with the worktree's base branch plus untracked files; `mode=head` diffs working tree + staged changes against `HEAD` plus untracked files. `400` on invalid `mode`, `404` when the worktree ref or directory is missing.
+- `GET /api/worktrees/{ref}/diff?path=<file>&mode=base|head` — returns `{key, path, mode, base_ref, binary, truncated, additions, deletions, hunks: [{header, old_start, old_count, new_start, new_count, lines: [{type, old_line, new_line, content}]}]}`. Rejects empty/absolute/traversal (`..`)/NUL paths with `400`; caps large diffs (`truncated: true`) and skips binary bodies (`binary: true`, `hunks: []`).
+- `GET /api/prodtests/{issue_key}/plan` — returns `{issue_key, status, plan_path, plan_revision, plan_risk, plan_diff_hash, release_sha, last_run_id, updated_at, truncated, yaml, parse_error, summary, preconditions, cases, metadata}`. `404` when the prodtest item or plan file is missing; `400` when `plan_path` is not a `.yaml`/`.yml` file.

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom"
 import { useListHotkeys } from "@/hooks/useHotkeys"
 import { Copy, Download, FlaskConical } from "lucide-react"
 import { LaunchDrawer } from "@/components/LaunchDrawer"
+import { ProdtestPlanViewer } from "@/components/ProdtestPlanViewer"
 import { ProdtestLaunch } from "@/pages/ProdtestLaunch"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -86,6 +87,7 @@ export function Prodtests({ initialLaunchOpen = false }: { initialLaunchOpen?: b
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const [launchOpen, setLaunchOpen] = useState(initialLaunchOpen)
+  const [previewIssue, setPreviewIssue] = useState<string | null>(null)
   useEffect(() => {
     setLaunchOpen(initialLaunchOpen)
   }, [initialLaunchOpen])
@@ -290,15 +292,23 @@ export function Prodtests({ initialLaunchOpen = false }: { initialLaunchOpen?: b
                     <TableCell className="font-mono text-[13px]">
                       {r.plan_path ? (
                         <div className="inline-flex max-w-full items-center gap-1">
-                          <Badge
-                            variant="secondary"
-                            className="max-w-[240px] truncate font-mono text-xs font-normal"
-                            title={r.plan_path}
+                          <button
+                            type="button"
+                            onClick={() => setPreviewIssue(r.issue_key)}
+                            className="max-w-[240px] cursor-pointer text-left"
+                            title={`Preview plan: ${r.plan_path}`}
+                            aria-label={`Preview plan for ${r.issue_key}`}
                           >
-                            {planBasename(r.plan_path)}
-                            {r.plan_revision ? ` · rev${r.plan_revision}` : ""}
-                            {r.plan_risk ? ` · ${r.plan_risk}` : ""}
-                          </Badge>
+                            <Badge
+                              variant="secondary"
+                              className="max-w-[240px] truncate font-mono text-xs font-normal hover:bg-secondary/80"
+                              title={r.plan_path}
+                            >
+                              {planBasename(r.plan_path)}
+                              {r.plan_revision ? ` · rev${r.plan_revision}` : ""}
+                              {r.plan_risk ? ` · ${r.plan_risk}` : ""}
+                            </Badge>
+                          </button>
                           <Button
                             variant="ghost"
                             size="sm"
@@ -357,6 +367,14 @@ export function Prodtests({ initialLaunchOpen = false }: { initialLaunchOpen?: b
         description="Plan or run a production test for an issue ref."
       >
         <ProdtestLaunch embedded />
+      </LaunchDrawer>
+      <LaunchDrawer
+        open={previewIssue !== null}
+        onClose={() => setPreviewIssue(null)}
+        title={previewIssue ? `Prodtest Plan — ${previewIssue}` : "Prodtest Plan"}
+        description="Structured test cases and raw YAML plan."
+      >
+        {previewIssue ? <ProdtestPlanViewer issueKey={previewIssue} /> : null}
       </LaunchDrawer>
     </div>
   )
