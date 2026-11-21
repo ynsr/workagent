@@ -340,7 +340,8 @@ def test_start_terminal_runs_harness_command(client, monkeypatch):
     run.append("harness command: cd /wt && omp 'hello'\n")
     r = client.post(f"/api/runs/{run.id}/start-terminal")
     assert r.status_code == 200, r.text
-    assert opened == {"cmd": "cd /wt && omp 'hello'", "cwd": ""}
+    assert opened["cmd"].startswith("source ") and opened["cmd"].endswith("cd /wt && omp 'hello'")
+    assert opened["cwd"] == ""
 
 
 def test_start_terminal_missing_command_is_404(client):
@@ -388,9 +389,10 @@ def test_open_terminal_supports_ptyxis_and_kitty(monkeypatch, tmp_path, isolated
         got: dict = {}
         monkeypatch.setattr("subprocess.Popen",
                             lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
-        # No env.sh in the isolated config → no source prefix.
         _wr._open_terminal("/wt", str(session), harness_name="omp")
-        assert got["argv"] == [*head, "bash", "-lc", f"cd /wt && omp --approval-mode=yolo --resume {session}"], term
+        assert got["argv"][:len(head)] == head
+        assert got["argv"][len(head):len(head) + 2] == ["bash", "-lc"]
+        assert got["argv"][len(head) + 2].startswith("source ") and got["argv"][len(head) + 2].endswith(f"cd /wt && omp --approval-mode=yolo --resume {session}"), term
 
 
 def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch, tmp_path, isolated_config):
@@ -407,9 +409,9 @@ def test_open_terminal_generic_fallback_splits_bash_argv(monkeypatch, tmp_path, 
     got: dict = {}
     monkeypatch.setattr("subprocess.Popen",
                         lambda argv, **kw: (got.setdefault("argv", argv), _FakeProc())[1])
-    # No env.sh in the isolated config → no source prefix.
     _wr._open_terminal("/wt", str(session), harness_name="omp")
-    assert got["argv"] == ["xterm", "-e", "bash", "-lc", f"cd /wt && omp --approval-mode=yolo --resume {session}"]
+    assert got["argv"][:4] == ["xterm", "-e", "bash", "-lc"]
+    assert got["argv"][4].startswith("source ") and got["argv"][4].endswith(f"cd /wt && omp --approval-mode=yolo --resume {session}")
 
 def test_resume_shell_command_splits_fresh_and_real(tmp_path, isolated_config):
     """omp v18+ rejects --resume on missing/empty transcripts: fresh
@@ -417,23 +419,22 @@ def test_resume_shell_command_splits_fresh_and_real(tmp_path, isolated_config):
     agy routes via agy-guard [--conversation <id>].
     """
     from workagent import web_runs as _wr
-    # No env.sh in the isolated config → no source prefix.
     missing = str(tmp_path / "2026-10-07T10-06-39-103Z-6317.jsonl")
-    assert _wr._resume_shell_command("/wt", missing, harness_name="omp") == \
-        f"cd /wt && omp --approval-mode=yolo --session-dir {tmp_path}"
+    assert _wr._resume_shell_command("/wt", missing, harness_name="omp").endswith(
+        f"cd /wt && omp --approval-mode=yolo --session-dir {tmp_path}")
     empty = tmp_path / "empty.jsonl"
     empty.touch()
-    assert _wr._resume_shell_command("/wt", str(empty), harness_name="omp") == \
-        f"cd /wt && omp --approval-mode=yolo --session-dir {tmp_path}"
+    assert _wr._resume_shell_command("/wt", str(empty), harness_name="omp").endswith(
+        f"cd /wt && omp --approval-mode=yolo --session-dir {tmp_path}")
     real = tmp_path / "real.jsonl"
     real.write_text('{"type":"session"}\n')
-    assert _wr._resume_shell_command("/wt", str(real), harness_name="omp") == \
-        f"cd /wt && omp --approval-mode=yolo --resume {real}"
+    assert _wr._resume_shell_command("/wt", str(real), harness_name="omp").endswith(
+        f"cd /wt && omp --approval-mode=yolo --resume {real}")
 
     # agy with default harness (omitted harness_name defaults to agy)
-    assert _wr._resume_shell_command("/wt", missing) == "cd /wt && agy-guard --dangerously-skip-permissions"
-    assert _wr._resume_shell_command("/wt", str(real), metadata={"conversation_id": "c-123"}) == \
-        "cd /wt && agy-guard --dangerously-skip-permissions --conversation c-123"
+    assert _wr._resume_shell_command("/wt", missing).endswith("cd /wt && agy-guard --dangerously-skip-permissions")
+    assert _wr._resume_shell_command("/wt", str(real), metadata={"conversation_id": "c-123"}).endswith(
+        "cd /wt && agy-guard --dangerously-skip-permissions --conversation c-123")
 
 def test_specs_mirror_cli_flags():
     """Parity: webapp BOOL_FLAGS/VAL_FLAGS mirror the real Typer CLI (#25 checklist).
