@@ -50,3 +50,29 @@ def _git_tip(wt: str, ref: str) -> str | None:
         return None
 
 
+def _delivery_status(
+    key: str,
+    entry: dict,
+    active_runs: list[dict] | None = None,
+    active_flows: list[dict] | None = None,
+) -> dict:
+    """Derive kanban_column, display_status, attention_reason for a status entry.
+
+    When *active_flows* is omitted, loads flows scoped to *key* from the store
+    (soft-failing to ``[]`` if the DB is unavailable).
+    """
+    from . import delivery_status as _ds
+    from . import store as _store
+
+    flows = active_flows
+    if flows is None and key:
+        try:
+            if _store._use_sqlite():
+                flows = _store.list_flows(worktree=key)
+            else:
+                flows = []
+        except Exception:
+            flows = []
+    return _ds.derive_delivery_status(entry, active_runs=active_runs, active_flows=flows)
+
+

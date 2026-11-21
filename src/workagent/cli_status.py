@@ -47,6 +47,7 @@ def _patched(name: str):
 _complete_refs = _COMP["refs"]
 
 from .cli_status_cells import (  # noqa: F401,E402
+    _delivery_status,
     _fmt_counts,
     _fmt_pr,
     _git_tip,
@@ -441,20 +442,35 @@ def _colorize_session(row: dict) -> dict:
     return out
 
 
-def _enrich_entry(key: str, entry: dict, refresh: bool) -> dict:
+def _enrich_entry(
+    key: str,
+    entry: dict,
+    refresh: bool,
+    active_runs: list[dict] | None = None,
+    active_flows: list[dict] | None = None,
+) -> dict:
     cells = _status_cells(key, entry, refresh)
-    return {**entry, "harness": _harness_cell(key, entry.get("worktree", "")),
-            "commits": cells["commits"], "pr": cells["pr"],
-            "ci": cells["ci"], "ci_url": cells["ci_url"],
-            "reviews": cells["reviews"],
-            "issue_status": cells["issue_status"],
-            "prodtest": cells["prodtest"],
-            "prodtest_detail": cells["prodtest_detail"],
-            "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),
-            "commits_detail": cells["ab"], "pr_detail": cells["pr_data"],
-            "reviews_detail": cells["reviews_detail"]}
+    out = {**entry, "harness": _harness_cell(key, entry.get("worktree", "")),
+           "commits": cells["commits"], "pr": cells["pr"],
+           "ci": cells["ci"], "ci_url": cells["ci_url"],
+           "reviews": cells["reviews"],
+           "issue_status": cells["issue_status"],
+           "prodtest": cells["prodtest"],
+           "prodtest_detail": cells["prodtest_detail"],
+           "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),
+           "commits_detail": cells["ab"], "pr_detail": cells["pr_data"],
+           "reviews_detail": cells["reviews_detail"]}
+    out.update(_delivery_status(key, out, active_runs=active_runs, active_flows=active_flows))
+    return out
 
-def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
+
+def _session_detail(
+    key: str,
+    entry: dict,
+    refresh: bool,
+    active_runs: list[dict] | None = None,
+    active_flows: list[dict] | None = None,
+) -> dict:
     cells = _status_cells(key, entry, refresh)
     detail = {"key": key, **entry,
               "harness": _harness_cell(key, entry.get("worktree", "")),
@@ -471,6 +487,7 @@ def _session_detail(key: str, entry: dict, refresh: bool) -> dict:
               "issue_url": refs.issue_url(key, entry.get("issue"))}
     if not cells["pr_data"]:
         detail["create_hint"] = _create_hint(entry)
+    detail.update(_delivery_status(key, detail, active_runs=active_runs, active_flows=active_flows))
     return detail
 
 
