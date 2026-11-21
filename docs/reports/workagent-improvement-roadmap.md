@@ -1,7 +1,9 @@
 # Workagent Improvement Roadmap & Actionable Issue Catalog
 
 **Issue:** [ynsr/workagent#126](https://github.com/ynsr/workagent/issues/126)  
-**Companion Report:** [Agent Orchestrator vs. Workagent: Architecture, Data Modeling & UI/UX Analysis](./agent-orchestrator-vs-workagent-analysis.md)  
+**Companion Reports:**
+- [Agent Orchestrator vs. Workagent: Architecture, Data Modeling & UI/UX Analysis](./agent-orchestrator-vs-workagent-analysis.md)
+- [Improvement Tasks & Sub-Tasks Plan (Dependencies & Priorities)](./workagent-improvement-tasks.md)  
 **Baseline Verified Against `main` (`bdd1809`):** Includes the ACP harness implementation from [PR #123 (`#112`)](https://github.com/ynsr/workagent/pull/123) and the ACP fixes, validation, and transcript/UI alignment from [PR #129 (`#128`)](https://github.com/ynsr/workagent/pull/129), [PR #131 (`#130`)](https://github.com/ynsr/workagent/pull/131), and [PR #133 (`#132`)](https://github.com/ynsr/workagent/pull/133) (`AcpHarness`, `OmpAcpHarness`, `AgyAcpHarness`, 4 execution modes `preview | headless | acp | terminal` across CLI/web/flow/release/message commands, `GET /api/harnesses/{name}/options?refresh=0|1`, `POST /api/runs/{id}/input` via `WORKAGENT_RUN_DIR/input.jsonl` with strict `pending_question`/`qid` validation, `Structured / Raw` toggle in `RunDetail.tsx`, and `AcpTranscript` with chunk coalescing, `toolCallId` merging, `<details>` for thoughts & tool calls, `react-markdown` + `remark-gfm`, formatted `usage`, and `QuestionCard`).
 
 ---
