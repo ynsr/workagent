@@ -356,7 +356,7 @@ def action_run(
             from . import cli_harness as _h
             _h.record_headless_attempt(
                 key, "action",
-                [label, key] if mode == "preview" else [label, key, "--launch"],
+                [label, key] if mode == "preview" else [label, key] + (["--acp"] if mode == "acp" else ["--launch"]),
                 f"harness command: skipped: {e.reason}",
                 exit_code=10 if mode != "preview" else 0,
                 harness_name=harness_name or "",
@@ -369,7 +369,7 @@ def action_run(
             from . import cli_harness as _h
             _h.record_headless_attempt(
                 key, "action",
-                [label, key] if mode == "preview" else [label, key, "--launch"],
+                [label, key] if mode == "preview" else [label, key] + (["--acp"] if mode == "acp" else ["--launch"]),
                 f"harness command: pre-execution failed: {e}",
                 exit_code=1, harness_name=harness_name or "",
                 metadata={"action": label, "mode": mode})
@@ -380,7 +380,7 @@ def action_run(
         from . import cli_harness as _h
         _h.record_headless_attempt(
             key, "action",
-            [label, key] if mode == "preview" else [label, key, "--launch"],
+            [label, key] if mode == "preview" else [label, key] + (["--acp"] if mode == "acp" else ["--launch"]),
             "harness command: skipped: empty prompt",
             exit_code=0 if mode == "preview" else 10,
             harness_name=harness_name or "",
@@ -399,7 +399,7 @@ def action_run(
                      no_tty, use_launch, {"command": "action"}, json_output, run_key=key,
                      session_file=session_file if isinstance(session_file, str) else None,
                      terminal=use_terminal, env_file=env_file,
-                     acp=acp, run_mode=run_mode, model=model, effort=effort)
+                     acp=use_acp, run_mode=run_mode, model=model, effort=effort)
         if mode in ("preview", "terminal"):
             # Preview/terminal never run post (which gates on harness
             # success): preview prints no command side effects and terminal

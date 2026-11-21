@@ -387,7 +387,7 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
                      no_tty=bool(yes), launch=not use_acp,
                      result=result, json_output=json_output, run_key=key,
                      session_file=session_file, env_file=env_file,
-                     acp=acp, run_mode=run_mode, model=model, effort=effort)
+                     acp=use_acp, run_mode=run_mode, model=model, effort=effort)
     elif sys.stdin.isatty():
         if typer.confirm("launch the harness to resolve?"):
             result["result"] = "conflict-harness"
@@ -402,7 +402,7 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
                          no_tty=False, launch=not use_acp,
                          result=result, json_output=json_output, run_key=key,
                          session_file=session_file, env_file=env_file,
-                         acp=acp, run_mode=run_mode, model=model, effort=effort)
+                         acp=use_acp, run_mode=run_mode, model=model, effort=effort)
         else:
             _fail("aborted (merge left in progress; abort with "
                   "`git merge --abort`)", EXIT_USAGE)

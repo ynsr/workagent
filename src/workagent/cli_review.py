@@ -350,8 +350,9 @@ def _chain_fix_command(review_key: str, pr_url: str, harness_name: str,
     just-finished review (resolved inside the child via latest_review_run).
     Exit-code gating lives with the caller: only chain on review exit 0.
     """
+    _acp_mode = bool(acp) or (run_mode or "").strip().lower() == "acp"
     argv = [sys.executable, "-m", "workagent", "review", pr_url,
-            "--fix-comments", "--no-tty", "--launch"]
+            "--fix-comments", "--no-tty"] + ([] if _acp_mode else ["--launch"])
     if use_review_session:
         argv.append("--use-review-session")
     if harness_name:
