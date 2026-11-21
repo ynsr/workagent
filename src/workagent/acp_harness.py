@@ -96,6 +96,9 @@ _DEFAULT_REQUEST_TIMEOUT_S = 300.0
 _DEFAULT_REQUEST_TIMEOUT_S = 300.0
 
 
+_DEFAULT_REQUEST_TIMEOUT_S = 300.0
+
+
 class AcpClient:
     """Stdio JSON-RPC 2.0 client for `<bin> acp` agents."""
 
