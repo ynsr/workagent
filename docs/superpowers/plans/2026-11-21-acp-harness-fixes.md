@@ -15,7 +15,7 @@
 - **Stdout vs stderr:** CLI `stdout` carries ONLY data (`--json`/`--csv` or structured `ACP:` events); all warnings/logs/confirmations go to `stderr`.
 - **Exit codes:** `0` success, `1` general error, `2` usage / needs-human-input (`WAITING_USER_RESPONSE`, unsupported `--acp`).
 - **No secrets in logs:** `AcpClient` stderr capture must never log environment variables or credentials; cap line length and buffer size.
-- **Parity check:** `tests/test_webapp.py::test_specs_mirror_cli_flags` must pass after every CLI/web flag change.
+- **Parity check:** `tests/test_webapp_data.py::test_specs_mirror_cli_flags` must pass after every CLI/web flag change.
 - **Append-only `CHANGELOG.md`:** Add one new line (≤150 chars, non-technical, ending `[128]`); `git diff CHANGELOG.md` must show only `+` lines and zero `-` lines.
 - **No new Python dependencies:** Pure stdlib only on backend. Frontend adds only `react-markdown` and `remark-gfm`.
 
@@ -87,7 +87,7 @@ def test_acp_client_captures_stderr_tail_on_init_failure(tmp_path, isolated_conf
 def test_read_answer_unattended_no_tty_returns_waiting_exit_2(tmp_path, isolated_config, monkeypatch):
     """no_tty=True without WORKAGENT_RUN_DIR/input_stream returns None -> WAITING_USER_RESPONSE exit 2."""
     import io
-    from workagent.acp_harness import AgyAcpHarness
+    from workagent.agy_harness import AgyAcpHarness
 
     monkeypatch.delenv("WORKAGENT_RUN_DIR", raising=False)
     h = AgyAcpHarness()
@@ -786,7 +786,7 @@ git commit -m "[128] Fix ACP mode detection and flag forwarding across CLI comma
 - Modify: `src/workagent/cli_release.py:37-94`
 - Modify: `src/workagent/cli_release_fix.py:36-38, 285-343`
 - Modify: `src/workagent/web_args.py:86, 177, 364-377`
-- Test: `tests/test_cli_flow_util.py`, `tests/test_webapp.py`
+- Test: `tests/test_cli_flow_util.py`, `tests/test_webapp_data.py`
 
 **Interfaces:**
 - Consumes: `cli_harness._run_harness` (Task 3)
@@ -894,7 +894,7 @@ In plain `release REPO` (after line 88), reject `--acp`, `--model`, `--effort`:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `uv run pytest tests/test_cli_flow_util.py tests/test_webapp.py::test_specs_mirror_cli_flags -v`
+Run: `uv run pytest tests/test_cli_flow_util.py tests/test_webapp_data.py::test_specs_mirror_cli_flags -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1109,7 +1109,7 @@ def _cached_harness_options(name: str, refresh: bool = False) -> tuple[dict, boo
         return {**body, "cached": cached}
 ```
 
-2. **`src/workagent/web_runs_routes.py`** (`run_input` L937-974):
+2. **`src/workagent/web_runs_routes.py`** — add `_pending_question_from_texts` to the `from .web_runs import (...)` block at lines 28-35, and update `run_input` (L937-974):
 ```python
     @app.post("/api/runs/{run_id}/input")
     async def run_input(run_id: str, body: dict) -> dict:
@@ -1128,7 +1128,7 @@ def _cached_harness_options(name: str, refresh: bool = False) -> tuple[dict, boo
         with run.lock:
             if run.state != "running":
                 raise ApiError("not_running", f"run {run_id} is not running", 409)
-            pending = _wr._pending_question_from_texts([txt for _, txt in run.lines])
+            pending = _pending_question_from_texts([txt for _, txt in run.lines])
             if pending is None:
                 raise ApiError("no_pending_question",
                                f"run {run_id} has no pending question", 409)
@@ -1157,7 +1157,8 @@ def _cached_harness_options(name: str, refresh: bool = False) -> tuple[dict, boo
      `out["pending_question"] = _pending_question_from_texts(src) if run.state == "running" else None`
    - Line 572 (`_persisted_summary`):
      `"pending_question": (_pending_question_from_texts([ln["text"] for ln in lines_list]) if state == "running" else None),`
-   - Line 740 (`rehydrate`): synchronously read existing `d / "output.log"` lines into `run` before calling `_start_tailer(run, registry, backfill=False)` (storing the byte offset so the tailer continues from EOF without duplicating lines).
+   - Add `initial_offset: int | None = None` to `_start_tailer(run, registry, backfill: bool = False, initial_offset: int | None = None)` (using `offset = initial_offset` when `not backfill and initial_offset is not None`).
+   - In `rehydrate(registry)` (L740): synchronously read existing `(d / "output.log").read_bytes()`, append decoded lines into `run`, and pass `initial_offset=len(raw)` to `_start_tailer(run, registry, backfill=False, initial_offset=len(raw))` so no bytes written between backfill and tailer startup are dropped or duplicated.
 
 4. **`web/API_CONTRACT.md`**: Document `?refresh=0|1` on `GET /api/harnesses/{name}/options`, and document `409 no_pending_question` / `409 qid_mismatch` + `answer`/`choice` aliases on `POST /api/runs/{id}/input`.
 
@@ -1680,6 +1681,7 @@ git commit -m "[128] Upgrade AcpTranscript with details, Markdown, autoscroll, a
 - Modify: `web/src/components/CandidatesCard.tsx:472-477`
 - Modify: `web/src/components/ChainEditor.tsx:332-343`
 - Modify: `web/src/components/MessageRowActions.tsx:41-55, 84-88`
+- Modify: `web/src/lib/messageRunConfig.ts:150-165`
 - Modify: `web/src/pages/Dashboard.tsx:137-143`
 - Modify: `web/src/pages/Launch.tsx:77-98`
 - Modify: `web/src/components/StartForm.tsx:450-462`
@@ -1719,9 +1721,11 @@ git commit -m "[128] Upgrade AcpTranscript with details, Markdown, autoscroll, a
 ```
    And clear `model` and `effort` when `HarnessSelect`'s `onChange` fires.
 
-3. **`web/src/components/MessageRowActions.tsx`**:
-   - Line 85 (`Validate` button): pass `...messageScopeArgs({ harness, model, effort }), ...messageRunModeArgs(runMode)` before `"--yes"`.
-   - Line 47 (`handleRunClick` immediate action): pass the matched action's `default_options` (`runMode`, `harness`, `model`, `effort`) into `buildImmediateMessageActionArgs` (or append them using `actionRunModeOf`/`actionHarnessOf`/`actionModelOf`/`actionEffortOf`).
+3. **`web/src/components/MessageRowActions.tsx` & `web/src/lib/messageRunConfig.ts`**:
+   - In `web/src/lib/messageRunConfig.ts` (`buildImmediateMessageActionArgs` L155): extend signature to `buildImmediateMessageActionArgs(label: string, messageId: string, opts: { runMode?: RunMode; harness?: string; model?: string; effort?: string } = {})` (emitting `...messageRunModeArgs(opts.runMode ?? "headless")` and `...messageScopeArgs({ harness: opts.harness ?? "", model: opts.model ?? "", effort: opts.effort ?? "" })`).
+   - In `web/src/components/MessageRowActions.tsx`:
+     - Line 47 (`handleRunClick` immediate action): look up `const act = actions.find((a) => a.label === label)` and call `buildImmediateMessageActionArgs(label, row.message_id, { runMode: actionRunModeOf(act), harness: actionHarnessOf(act), model: actionModelOf(act), effort: actionEffortOf(act) })`.
+     - Line 85 (`Validate` button): pass `...messageScopeArgs({ harness, model, effort }), ...messageRunModeArgs(runMode)` before `"--yes"`.
 
 4. **`web/src/pages/Dashboard.tsx`** (L137-143):
    Add `setModel("")` and `setEffort("")` inside `HarnessSelect`'s `onChange` alongside `modelRef.current = ""` and `effortRef.current = ""`.
@@ -1735,6 +1739,7 @@ Append to `web/src/components/AcpSelectors.test.tsx`:
 
 ```tsx
 import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
+import { buildImmediateMessageActionArgs } from "@/lib/messageRunConfig"
 
 describe("UI drift fixes (#128)", () => {
   it("persists and loads model/effort in launch prefs", () => {
@@ -1746,6 +1751,22 @@ describe("UI drift fixes (#128)", () => {
     const reloaded = loadLaunchPrefs()
     expect(reloaded.start.model).toBe("gemini-pro")
     expect(reloaded.start.effort).toBe("high")
+  })
+
+  it("buildImmediateMessageActionArgs forwards runMode, harness, model, and effort", () => {
+    const args = buildImmediateMessageActionArgs("triage", "m-1", {
+      runMode: "acp",
+      harness: "omp",
+      model: "m1",
+      effort: "high",
+    })
+    expect(args).toContain("--acp")
+    expect(args).toContain("--harness")
+    expect(args).toContain("omp")
+    expect(args).toContain("--model")
+    expect(args).toContain("m1")
+    expect(args).toContain("--effort")
+    expect(args).toContain("high")
   })
 })
 ```
