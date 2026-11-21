@@ -140,4 +140,38 @@ describe("useServerEvents", () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusAll })
     expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.prodtestDetail("IPG-9") })
   })
+
+  it("invalidates core queries on reconnect after an error, but not on initial open", () => {
+    const qc = new QueryClient()
+    const spy = vi.spyOn(qc, "invalidateQueries")
+
+    render(
+      <QueryClientProvider client={qc}>
+        <Harness />
+      </QueryClientProvider>,
+    )
+    const es = MockEventSource.instances[0]!
+
+    act(() => {
+      es.emit("open")
+    })
+    expect(spy).not.toHaveBeenCalled()
+
+    act(() => {
+      es.emit("error")
+    })
+    expect(spy).not.toHaveBeenCalled()
+
+    act(() => {
+      es.emit("open")
+    })
+    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusAll })
+    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusInactive })
+    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusDeleted })
+    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.links })
+    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.runs })
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["flows"] })
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["messages"] })
+    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.prodtests })
+  })
 })

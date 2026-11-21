@@ -566,10 +566,14 @@ def create_app(static_dir: Path, host: str, port: int,
         q = cdc_hub.subscribe(loop)
 
         async def _gen():
-            last_sent = replay_after if replay_after is not None else cdc_hub.current_seq()
+            last_sent = (
+                replay_after
+                if replay_after is not None
+                else await asyncio.to_thread(cdc_hub.current_seq)
+            )
             try:
                 if replay_after is not None:
-                    for ev in cdc_hub.replay(replay_after):
+                    for ev in await asyncio.to_thread(cdc_hub.replay, replay_after):
                         seq = int(ev["seq"])
                         if seq <= last_sent:
                             continue

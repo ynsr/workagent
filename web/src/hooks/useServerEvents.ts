@@ -61,12 +61,25 @@ export function useServerEvents(): void {
     }
 
     const es = new EventSource("/api/events")
+    let hadError = false
 
     const onOpen = () => {
       setConnected(true)
+      if (hadError) {
+        hadError = false
+        void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
+        void qc.invalidateQueries({ queryKey: queryKeys.statusInactive })
+        void qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
+        void qc.invalidateQueries({ queryKey: queryKeys.links })
+        void qc.invalidateQueries({ queryKey: queryKeys.runs })
+        void qc.invalidateQueries({ queryKey: ["flows"] })
+        void qc.invalidateQueries({ queryKey: ["messages"] })
+        void qc.invalidateQueries({ queryKey: queryKeys.prodtests })
+      }
     }
 
     const onError = () => {
+      hadError = true
       setConnected(false)
     }
 

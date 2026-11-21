@@ -1106,7 +1106,6 @@ def test_change_log_triggers_and_pruning(tmp_path):
     """T10.1: change_log table + AFTER INSERT/UPDATE/DELETE triggers on all 6 tables + pruning."""
     db = tmp_path / "state.db"
     sq.init_db(db)
-    import sqlite3
     with sq.connect(db) as conn:
         triggers = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger'")}

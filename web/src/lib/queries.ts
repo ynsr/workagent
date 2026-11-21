@@ -222,14 +222,13 @@ export function useCandidatesWorktrees() {
  * background refetch only swaps in fresh data (no skeleton/block). */
 const RELEASE_POLL_MS = 30_000
 export function useReleaseStatus(name: string) {
-  const sseConnected = useServerEventsConnected()
   return useQuery({
     queryKey: queryKeys.release(name),
     queryFn: () => api.releaseStatus(name),
     staleTime: RELEASE_SWR_MS,
     gcTime: RELEASE_SWR_MS,
     enabled: !!name,
-    refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : RELEASE_POLL_MS,
+    refetchInterval: RELEASE_POLL_MS,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
   })
@@ -237,14 +236,13 @@ export function useReleaseStatus(name: string) {
 
 /** Release releasability for several repos (one query each; same poll policy). */
 export function useReleaseStatuses(names: string[]) {
-  const sseConnected = useServerEventsConnected()
   return useQueries({
     queries: names.map((name) => ({
       queryKey: queryKeys.release(name),
       queryFn: () => api.releaseStatus(name),
       staleTime: RELEASE_SWR_MS,
       gcTime: RELEASE_SWR_MS,
-      refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : RELEASE_POLL_MS,
+      refetchInterval: RELEASE_POLL_MS,
       refetchIntervalInBackground: false,
       refetchOnWindowFocus: true,
     })),
