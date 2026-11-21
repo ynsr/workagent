@@ -430,8 +430,14 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # harness-minted filename never matches its stem — then the legacy stem.
     stype = action
     chain_root: int | None = None
+    explicit_continued = result.get("continued_from_run_id")
+    if explicit_continued is not None:
+        try:
+            chain_root = int(explicit_continued)
+        except (TypeError, ValueError):
+            chain_root = None
     anchor = None
-    if db.exists() and session_path:
+    if chain_root is None and db.exists() and session_path:
         if reuse_run_id is not None:
             try:
                 anchor = _sq.get_run(db, int(reuse_run_id),
@@ -519,6 +525,15 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             _launch_kw["timeout_s"] = timeout_s
         exit_code = 0
         validation = None
+
+        def _on_acp_session_id(sid: str) -> None:
+            result["acp_session_id"] = sid
+            if run_id and db.exists():
+                try:
+                    _sq.set_run_metadata(db, run_id, {"acp_session_id": sid})
+                except Exception:
+                    pass
+
         if no_tty:
             import tempfile
             from . import cli_validate as _cv, harness_summary as _hs
@@ -536,6 +551,9 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                         timeout_s=timeout_s,
                         input_stream=None,
                         no_tty=True,
+                        resume_session_id=result.get("resume_session_id") or None,
+                        resume_context=result.get("resume_context") or None,
+                        on_session_id=_on_acp_session_id,
                     )
                     if current_path and Path(current_path).is_file():
                         result["session_file"] = current_path
@@ -629,6 +647,9 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                 timeout_s=timeout_s,
                 input_stream=sys.stdin,
                 no_tty=False,
+                resume_session_id=result.get("resume_session_id") or None,
+                resume_context=result.get("resume_context") or None,
+                on_session_id=_on_acp_session_id,
             )
             if session_path and Path(session_path).is_file():
                 result["session_file"] = session_path

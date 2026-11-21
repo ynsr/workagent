@@ -1,3 +1,4 @@
+import { Link, useInRouterContext } from "react-router-dom"
 import {
   AlertCircle,
   CheckCircle2,
@@ -66,6 +67,8 @@ export function WorktreeBoardCard({
   actions,
   column,
 }: WorktreeBoardCardProps) {
+  const inRouter = useInRouterContext()
+  const workspaceUrl = `/worktrees/${encodeURIComponent(worktreeKey)}`
   const lane = column ?? entry.kanban_column ?? "in_review"
   const isNeedsYou = lane === "needs_you"
   const isWorking = lane === "working"
@@ -83,8 +86,16 @@ export function WorktreeBoardCard({
     <article
       data-testid={`board-card-${worktreeKey}`}
       data-kanban-column={lane}
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && e.target === e.currentTarget) {
+          e.preventDefault()
+          const link = e.currentTarget.querySelector<HTMLAnchorElement>("a[data-workspace-link]")
+          link?.click()
+        }
+      }}
       className={[
-        "group relative flex flex-col gap-2.5 rounded-lg border bg-card p-3 text-card-foreground shadow-xs transition-colors hover:border-foreground/30",
+        "group relative flex flex-col gap-2.5 rounded-lg border bg-card p-3 text-card-foreground shadow-xs transition-colors hover:border-foreground/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         isNeedsYou ? "border-[#f06445]/70 ring-1 ring-[#f06445]/25" : "border-border",
       ].join(" ")}
     >
@@ -100,13 +111,39 @@ export function WorktreeBoardCard({
                 {harnessBadge}
               </span>
             ) : null}
-            <span className="truncate font-mono text-xs font-medium text-muted-foreground">
-              {worktreeKey}
-            </span>
+            {inRouter ? (
+              <Link
+                to={workspaceUrl}
+                data-workspace-link
+                className="truncate font-mono text-xs font-medium text-muted-foreground hover:text-foreground hover:underline"
+              >
+                {worktreeKey}
+              </Link>
+            ) : (
+              <a
+                href={workspaceUrl}
+                data-workspace-link
+                className="truncate font-mono text-xs font-medium text-muted-foreground hover:text-foreground hover:underline"
+              >
+                {worktreeKey}
+              </a>
+            )}
           </div>
-          <p className="mt-0.5 line-clamp-2 text-sm font-medium leading-snug text-foreground">
-            {title}
-          </p>
+          {inRouter ? (
+            <Link
+              to={workspaceUrl}
+              className="mt-0.5 line-clamp-2 block text-sm font-medium leading-snug text-foreground hover:underline"
+            >
+              {title}
+            </Link>
+          ) : (
+            <a
+              href={workspaceUrl}
+              className="mt-0.5 line-clamp-2 block text-sm font-medium leading-snug text-foreground hover:underline"
+            >
+              {title}
+            </a>
+          )}
         </div>
 
         <div className="flex shrink-0 items-center gap-0.5 opacity-80 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">

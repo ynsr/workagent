@@ -606,6 +606,7 @@
 - Hide raw API subtitles unless Verbose is on, compact Prodtests/FlowTemplates/Actions tables, and add screen-reader and reduced-motion polish [137]
 - Fold exploratory tool calls into ActivityRun bars, extract failed calls unfolded, and add settled turn headers in ACP transcripts [142]
 - Add in-app Git diff viewer with inline line annotations, prodtest YAML plan viewer, and read-only diff/plan API endpoints [145]
+- Add dedicated Worktree Workspace view (/worktrees/:ref) with collapsible inspector, ACP session/load resume, and multi-turn follow-up composer [144]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

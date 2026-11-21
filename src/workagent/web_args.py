@@ -147,7 +147,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "prodtest status": ("--json",),
     "prodtest delete": ("--json",),
     "prodtest cleanup": ("--json", "--yes", "--dry-run"),
-    "adhoc": ("--launch", "--terminal", "--acp", "--dry-run", "--yes", "--json"),
+    "adhoc": ("--launch", "--terminal", "--acp", "--follow-up", "--dry-run", "--yes", "--json"),
     "message add": ("--fetch", "--json",),
     "message list": ("--json", "--csv"),
     "message show": ("--json",),
@@ -166,7 +166,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "config set": ("--json",),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
-    "adhoc": ("--prompt", "--harness", "--run-mode", "--model", "--effort", "--extra-prompt", "--session-file", "--env-file"),
+    "adhoc": ("--prompt", "--harness", "--run-mode", "--model", "--effort", "--extra-prompt", "--session-file", "--env-file", "--continue-run"),
     "prodtest": (),
     "prodtest plan": ("--harness", "--run-mode", "--model", "--effort", "--session-file", "--env-file", "--extra-prompt"),
     "prodtest run": ("--fix-mode", "--run-dir", "--harness", "--run-mode", "--model", "--effort", "--session-file", "--env-file", "--extra-prompt"),

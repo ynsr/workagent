@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
-import { useSearchParams } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { Search, XCircle } from "lucide-react"
 import type { FlowRow, Repo, WorktreeMap } from "@/lib/api"
 import { FlowStepper } from "@/components/FlowStepper"
@@ -113,6 +113,7 @@ export function StatusTable({
   focusedKey?: string
   flows?: FlowRow[]
 }) {
+  const navigate = useNavigate()
   const selParam = embed?.selParam === undefined ? "sel" : embed.selParam
   const [params, setParams] = useSearchParams()
   const filterParam = embed?.filterParam === undefined ? "q" : embed.filterParam
@@ -418,7 +419,7 @@ export function StatusTable({
                   const invalid = entry.wt_valid === false
                   return (
                     <Fragment key={key}>
-                      <TableRow aria-selected={sel.has(key)} data-state={sel.has(key) ? "selected" : undefined} data-focused={focusedKey === key ? "true" : undefined} onClick={(e) => { const t = e.target as HTMLElement; if (t.closest("a,button,[role=checkbox],input")) return; setExpanded((cur) => (cur === key ? null : key)) }} className={cn("group relative cursor-pointer", sel.has(key) ? "data-[state=selected]:bg-muted/50" : undefined, invalid ? "bg-destructive/5" : undefined, focusedKey === key ? "bg-accent/50 ring-1 ring-inset ring-primary/40" : undefined)}>
+                      <TableRow tabIndex={0} aria-selected={sel.has(key)} data-state={sel.has(key) ? "selected" : undefined} data-focused={focusedKey === key ? "true" : undefined} onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) { e.preventDefault(); navigate(`/worktrees/${encodeURIComponent(key)}`) } }} onClick={(e) => { const t = e.target as HTMLElement; if (t.closest("a,button,[role=checkbox],input")) return; setExpanded((cur) => (cur === key ? null : key)) }} className={cn("group relative cursor-pointer", sel.has(key) ? "data-[state=selected]:bg-muted/50" : undefined, invalid ? "bg-destructive/5" : undefined, focusedKey === key ? "bg-accent/50 ring-1 ring-inset ring-primary/40" : undefined)}>
                         <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
                           <Checkbox
                             checked={sel.has(key)}
