@@ -19,6 +19,14 @@ vi.mock("@/lib/queries", () => ({
   }),
 }))
 
+vi.mock("@/hooks/useHarnessOptions", () => ({
+  useHarnessOptions: () => ({
+    data: { supported: true, models: [], efforts: [], current_model: "", current_effort: "" },
+    isPending: false,
+    isError: false,
+  }),
+}))
+
 const ACTIONS = [
   { label: "lint", name: "Lint" },
   { label: "typecheck", name: "Typecheck" },

@@ -1,4 +1,5 @@
 import type { FlowStep } from "@/lib/api"
+import type { RunMode } from "@/lib/launchConfig"
 
 /** Scope for action/flow-template rows: worktree rows surface on the
  * Dashboard, message rows on the Messages page. Missing category means
@@ -152,14 +153,33 @@ export function isRunImmediateTemplate(row: { run_immediately?: unknown }): bool
 }
 
 /** CLI argv (after `command: "message"`) for an immediate action run. */
-export function buildImmediateMessageActionArgs(label: string, messageId: string, harness = "", model = "", effort = ""): string[] {
+export function buildImmediateMessageActionArgs(
+  label: string,
+  messageId: string,
+  harnessOrOpts: string | { runMode?: RunMode; harness?: string; model?: string; effort?: string } = "",
+  model = "",
+  effort = "",
+): string[] {
   const args = ["action", "run", label, messageId]
-  const h = harness.trim()
-  if (h) args.push("--harness", h)
-  const m = model.trim()
-  if (m) args.push("--model", m)
-  const e = effort.trim()
-  if (e) args.push("--effort", e)
+  if (typeof harnessOrOpts === "string") {
+    const h = harnessOrOpts.trim()
+    if (h) args.push("--harness", h)
+    const m = model.trim()
+    if (m) args.push("--model", m)
+    const e = effort.trim()
+    if (e) args.push("--effort", e)
+  } else {
+    const mode = harnessOrOpts.runMode ?? "headless"
+    if (mode === "headless") args.push("--launch")
+    else if (mode === "terminal") args.push("--terminal")
+    else if (mode === "acp") args.push("--acp")
+    const h = (harnessOrOpts.harness ?? "").trim()
+    if (h) args.push("--harness", h)
+    const m = (harnessOrOpts.model ?? "").trim()
+    if (m) args.push("--model", m)
+    const e = (harnessOrOpts.effort ?? "").trim()
+    if (e) args.push("--effort", e)
+  }
   args.push("--yes")
   return args
 }

@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { HarnessSelect } from "@/components/HarnessSelect"
 import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { RunModeSelect } from "@/components/StartForm"
+import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
+import { buildImmediateMessageActionArgs } from "@/lib/messageRunConfig"
 
 const mockConfig = vi.hoisted(() => ({
   data: {
@@ -94,5 +96,34 @@ describe("ModelSelect/EffortSelect (issue #112)", () => {
     expect(Array.from(effort.options).map((o) => o.value)).toEqual(["", "high"])
     await user.selectOptions(effort, "high")
     expect(onEffort).toHaveBeenCalledWith("high")
+  })
+})
+
+describe("UI drift fixes (#128)", () => {
+  it("persists and loads model/effort in launch prefs", () => {
+    const prefs = loadLaunchPrefs()
+    saveLaunchPrefs({
+      ...prefs,
+      start: { ...prefs.start, model: "gemini-pro", effort: "high" },
+    })
+    const reloaded = loadLaunchPrefs()
+    expect(reloaded.start.model).toBe("gemini-pro")
+    expect(reloaded.start.effort).toBe("high")
+  })
+
+  it("buildImmediateMessageActionArgs forwards runMode, harness, model, and effort", () => {
+    const args = buildImmediateMessageActionArgs("triage", "m-1", {
+      runMode: "acp",
+      harness: "omp",
+      model: "m1",
+      effort: "high",
+    })
+    expect(args).toContain("--acp")
+    expect(args).toContain("--harness")
+    expect(args).toContain("omp")
+    expect(args).toContain("--model")
+    expect(args).toContain("m1")
+    expect(args).toContain("--effort")
+    expect(args).toContain("high")
   })
 })

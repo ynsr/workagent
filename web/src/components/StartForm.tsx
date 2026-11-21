@@ -453,7 +453,7 @@ export function useStartForm(initial?: Partial<StartFormValue>) {
     // Candidate Start dialog mirrors the Launch Start tab's stored prefs
     // (run mode + base + harness); the clicked row's ref still wins via `initial`.
     const stored = loadLaunchPrefs().start
-    return { ...INITIAL, runMode: stored.runMode, startAction: stored.startAction, base: stored.base, harness: stored.harness, ...initial }
+    return { ...INITIAL, runMode: stored.runMode, startAction: stored.startAction, base: stored.base, harness: stored.harness, model: stored.model, effort: stored.effort, ...initial }
   })
   function update<K extends keyof StartFormValue>(key: K, value: StartFormValue[K]) {
     setForm((f) => ({ ...f, [key]: value }))
