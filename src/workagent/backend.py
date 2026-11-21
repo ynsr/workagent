@@ -131,14 +131,16 @@ HARNESSES: dict[str, Harness] = {}
 def _load_harnesses() -> None:
     try:
         from .acp_harness import OmpAcpHarness as _Omp
-        HARNESSES[_Omp.name] = _Omp()
+        if _Omp.name not in HARNESSES:
+            HARNESSES[_Omp.name] = _Omp()
     except ImportError:
         # Partial init during the acp_harness import cycle: that module
         # self-registers at its bottom once its classes are defined.
         pass
     try:
         from .agy_harness import AgyAcpHarness as _Agy
-        HARNESSES[_Agy.name] = _Agy()
+        if _Agy.name not in HARNESSES:
+            HARNESSES[_Agy.name] = _Agy()
     except ImportError:
         pass
 

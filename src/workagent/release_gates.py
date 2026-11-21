@@ -52,7 +52,7 @@ def _run_group(argv: list[str], cwd: str, timeout_s: int,
     all other non-zero exits raise HarnessError exactly as before.
     """
     from . import env as _env
-    resolved = _env.resolve_env_file(env_file)
+    resolved = _env.ensure_env_file(env_file)
     eprint(f"sourcing env: {resolved}" if resolved else "sourcing env: none")
     merged = _env.merged_env(resolved)
     if extra_env:
@@ -135,9 +135,11 @@ def local_gate_path(repo_name: str) -> Path:
 def _ci_sha_status(tool: str, path: str, sha: str) -> tuple[str, str]:
     """Pinned-SHA CI status: (status, url). Statuses mirror fetch_ci_status."""
     from .refs_ci import _split_remote
+    from . import env as _env
+    merged = _env.merged_env()
     try:
         remote = subprocess.run(["git", "-C", path, "remote", "get-url", "origin"],
-                                capture_output=True, text=True, timeout=30).stdout.strip()
+                                capture_output=True, text=True, timeout=30, env=merged).stdout.strip()
     except Exception:
         remote = ""
     _, proj = _split_remote(remote)
@@ -146,7 +148,7 @@ def _ci_sha_status(tool: str, path: str, sha: str) -> tuple[str, str]:
         out = subprocess.run(["glab", "api",
                               f"projects/{proj.replace('/', '%2F')}/repository/commits/{sha}/statuses",
                               "--hostname", host],
-                             capture_output=True, text=True, timeout=60).stdout
+                             capture_output=True, text=True, timeout=60, env=merged).stdout
         try:
             rows = json.loads(out or "[]")
         except json.JSONDecodeError:
@@ -162,7 +164,7 @@ def _ci_sha_status(tool: str, path: str, sha: str) -> tuple[str, str]:
         return "running", url
     if tool == "gh":
         out = subprocess.run(["gh", "api", f"repos/{proj}/commits/{sha}/check-runs"],
-                             capture_output=True, text=True, timeout=60).stdout
+                             capture_output=True, text=True, timeout=60, env=merged).stdout
         try:
             runs = (json.loads(out or "{}") or {}).get("check_runs", [])
         except json.JSONDecodeError:

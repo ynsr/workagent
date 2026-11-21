@@ -80,18 +80,24 @@ def build_action_prompt(action: dict, entry: dict, key: str,
     return f"{base}\n\n{block}" if base else block
 
 
-def _resolve_mode(action: dict, launch: bool, terminal: bool) -> str:
+def _resolve_mode(action: dict, launch: bool, terminal: bool,
+                  acp: bool = False, run_mode: str | None = None) -> str:
     """CLI flags win, then default_options.run_mode, then preview."""
-    if launch and terminal:
-        _fail("--terminal cannot be used with --launch (pick one run mode)",
-              EXIT_USAGE)
+    if sum(bool(x) for x in (launch, terminal, acp)) > 1:
+        _fail("--launch, --terminal, and --acp are mutually exclusive", EXIT_USAGE)
+    explicit = (run_mode or "").strip().lower() if isinstance(run_mode, str) else ""
+    if explicit:
+        if explicit not in ("preview", "headless", "acp", "terminal"):
+            _fail(f"unknown run_mode {run_mode!r}", EXIT_USAGE)
+        return explicit
+    if acp:
+        return "acp"
     if launch:
         return "headless"
     if terminal:
         return "terminal"
-    mode = ((action.get("default_options") or {}).get("run_mode")
-            or "preview")
-    if mode not in ("preview", "headless", "terminal"):
+    mode = ((action.get("default_options") or {}).get("run_mode") or "preview")
+    if mode not in ("preview", "headless", "acp", "terminal"):
         _fail(f"unknown run_mode {mode!r} in default_options", EXIT_USAGE)
     return mode
 
@@ -317,9 +323,10 @@ def action_run(
     wt = str(entry.get("worktree", ""))
     if not worktrees.is_valid_worktree(wt):
         _fail(f"{key}: invalid worktree {wt}", EXIT_USAGE)
-    mode = _resolve_mode(action, launch, terminal)
-    no_tty = mode in ("headless", "terminal")
+    mode = _resolve_mode(action, launch, terminal, acp=acp, run_mode=run_mode)
+    no_tty = mode in ("headless", "acp")
     use_launch = mode == "headless"
+    use_acp = mode == "acp"
     use_terminal = mode == "terminal"
     harness_name = harness or (action.get("default_options") or {}).get("harness") or None
     if dry_run:
@@ -349,7 +356,7 @@ def action_run(
             from . import cli_harness as _h
             _h.record_headless_attempt(
                 key, "action",
-                [label, key] if mode == "preview" else [label, key, "--launch"],
+                [label, key] if mode == "preview" else [label, key] + (["--acp"] if mode == "acp" else ["--launch"]),
                 f"harness command: skipped: {e.reason}",
                 exit_code=10 if mode != "preview" else 0,
                 harness_name=harness_name or "",
@@ -362,7 +369,7 @@ def action_run(
             from . import cli_harness as _h
             _h.record_headless_attempt(
                 key, "action",
-                [label, key] if mode == "preview" else [label, key, "--launch"],
+                [label, key] if mode == "preview" else [label, key] + (["--acp"] if mode == "acp" else ["--launch"]),
                 f"harness command: pre-execution failed: {e}",
                 exit_code=1, harness_name=harness_name or "",
                 metadata={"action": label, "mode": mode})
@@ -373,13 +380,13 @@ def action_run(
         from . import cli_harness as _h
         _h.record_headless_attempt(
             key, "action",
-            [label, key] if mode == "preview" else [label, key, "--launch"],
+            [label, key] if mode == "preview" else [label, key] + (["--acp"] if mode == "acp" else ["--launch"]),
             "harness command: skipped: empty prompt",
             exit_code=0 if mode == "preview" else 10,
             harness_name=harness_name or "",
             metadata={"action": label, "mode": mode})
     else:
-        if mode != "preview":
+        if mode in ("headless", "acp"):
             _guard_harness(key, wt)
         harness_name = harness_name or store.default_harness()
         prompt = build_action_prompt(action, entry, key, links)
@@ -392,12 +399,12 @@ def action_run(
                      no_tty, use_launch, {"command": "action"}, json_output, run_key=key,
                      session_file=session_file if isinstance(session_file, str) else None,
                      terminal=use_terminal, env_file=env_file,
-                     acp=acp, run_mode=run_mode, model=model, effort=effort)
-        if mode == "preview":
-            # Preview never executes the harness, so post (which gates on
-            # harness success) is out of scope — note it and stop. This
-            # also keeps stdout to the single _run_harness result blob.
-            if (action.get("post_execution") or "").strip():
+                     acp=use_acp, run_mode=run_mode, model=model, effort=effort)
+        if mode in ("preview", "terminal"):
+            # Preview/terminal never run post (which gates on harness
+            # success): preview prints no command side effects and terminal
+            # detaches instantly with nothing to gate on.
+            if mode == "preview" and (action.get("post_execution") or "").strip():
                 eprint(f"{key}: preview — post-execution runs after a real launch only")
             return
     post = (action.get("post_execution") or "").strip()

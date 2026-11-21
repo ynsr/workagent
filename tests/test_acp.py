@@ -293,3 +293,281 @@ def test_agy_question_answer_roundtrip(isolated_config, tmp_path, monkeypatch, c
     kinds = [json.loads(ln).get("t") for ln in session.read_text().splitlines() if ln.strip()]
     assert "question" in kinds
     assert "answer" in kinds
+
+
+def test_run_supervised_exports_workagent_run_dir(tmp_path):
+    """run_supervised sets WORKAGENT_RUN_DIR=<run_dir> in child env."""
+    import sys
+    from workagent.run_supervised import run_supervised
+
+    run_dir = tmp_path / "run-128"
+    out_file = tmp_path / "seen_env.txt"
+    code_str = (
+        "import os, pathlib; "
+        f"pathlib.Path({str(out_file)!r}).write_text(os.environ.get('WORKAGENT_RUN_DIR', ''))"
+    )
+    rc = run_supervised(run_dir, [sys.executable, "-c", code_str])
+    assert rc == 0
+    assert out_file.read_text() == str(run_dir)
+
+
+def test_acp_client_captures_stderr_tail_on_init_failure(tmp_path, isolated_config):
+    """Init failure surfaces stderr tail in HarnessError (no AttributeError)."""
+    import sys
+    import pytest
+    from workagent.acp_harness import OmpAcpHarness
+    from workagent.errors import HarnessError
+
+    bad_agent = tmp_path / "bad_agent.py"
+    bad_agent.write_text(
+        "import sys\n"
+        "sys.stderr.write('boom line 1\\nboom line 2\\n')\n"
+        "sys.stderr.flush()\n"
+        "sys.exit(1)\n"
+    )
+    h = OmpAcpHarness()
+    h.acp_argv = lambda: [sys.executable, str(bad_agent)]
+    with pytest.raises(HarnessError) as exc_info:
+        h.launch_acp("hi", str(tmp_path), no_tty=True)
+    msg = str(exc_info.value)
+    assert "boom line 2" in msg
+
+
+def test_read_answer_unattended_no_tty_returns_waiting_exit_2(tmp_path, isolated_config, monkeypatch):
+    """no_tty=True without WORKAGENT_RUN_DIR/input_stream returns None -> WAITING_USER_RESPONSE exit 2."""
+    import io
+    from workagent.agy_harness import AgyAcpHarness
+
+    monkeypatch.delenv("WORKAGENT_RUN_DIR", raising=False)
+    h = AgyAcpHarness()
+    assert h._read_answer({"qid": "q1"}, input_stream=None, no_tty=True) is None
+    # no_tty=False without input_stream reads sys.stdin
+    monkeypatch.setattr("sys.stdin", io.StringIO("yes please\n"))
+    assert h._read_answer({"qid": "q1"}, input_stream=None, no_tty=False) == "yes please"
+
+
+def test_launch_acp_sigterm_kills_child_process_group(tmp_path, isolated_config):
+    """SIGTERM to child running launch_acp kills <bin> acp with no orphan."""
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    pid_file = tmp_path / "agent.pid"
+    slow_agent = tmp_path / "slow_agent.py"
+    slow_agent.write_text(
+        "import json, os, pathlib, sys, time\n"
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+        "for raw in sys.stdin:\n"
+        "    msg = json.loads(raw)\n"
+        "    m = msg.get('method')\n"
+        "    if m == 'initialize':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'protocolVersion':1}}), flush=True)\n"
+        "    elif m == 'authenticate':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{}}), flush=True)\n"
+        "    elif m == 'session/new':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'sessionId':'s1'}}), flush=True)\n"
+        "    elif m == 'session/prompt':\n"
+        "        time.sleep(30)\n"
+    )
+    runner = tmp_path / "runner.py"
+    runner.write_text(
+        "import sys\n"
+        "from workagent.acp_harness import OmpAcpHarness\n"
+        "h = OmpAcpHarness()\n"
+        f"h.acp_argv = lambda: [sys.executable, {str(slow_agent)!r}]\n"
+        f"h.launch_acp('hi', {str(tmp_path)!r}, no_tty=True)\n"
+    )
+    proc = subprocess.Popen([sys.executable, str(runner)], start_new_session=True)
+    deadline = time.time() + 5.0
+    while not pid_file.exists() and time.time() < deadline:
+        time.sleep(0.05)
+    assert pid_file.exists()
+    agent_pid = int(pid_file.read_text().strip())
+    os.kill(proc.pid, signal.SIGTERM)
+    proc.wait(timeout=5)
+    time.sleep(0.2)
+    try:
+        os.kill(agent_pid, 0)
+        alive = True
+    except ProcessLookupError:
+        alive = False
+    assert not alive, f"agent pid {agent_pid} was orphaned after SIGTERM"
+
+def test_harness_summary_parses_acp_mirrored_transcript(tmp_path):
+    """last_assistant_text and tool_error_rate parse ACP-mirrored JSONL."""
+    import json
+    from workagent import harness_summary as hs
+
+    p = tmp_path / "acp.jsonl"
+    events = [
+        {"t": "thought", "id": "s1", "text": "thinking..."},
+        {"t": "message", "id": "s1", "text": "Turn 1 question?"},
+        {"t": "question", "id": "q1", "qid": "q1", "text": "Proceed?"},
+        {"t": "turn_end", "id": "s1"},
+        {"t": "answer", "id": "s1", "qid": "q1", "text": "yes"},
+        {"t": "tool_call", "id": "tc1", "name": "read", "status": "running", "output": ""},
+        {"t": "tool_call", "id": "tc1", "name": "read", "status": "completed", "output": "ok"},
+        {"t": "tool_call", "id": "tc2", "name": "bash", "status": "failed", "output": "error: boom"},
+        {"t": "message", "id": "s1", "text": "All done.\n"},
+        {"t": "message", "id": "s1", "text": "JOB_DONE"},
+        {"t": "turn_end", "id": "s1"},
+    ]
+    p.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+    assert hs.last_assistant_text(p, max_chars=None) == "All done.\nJOB_DONE"
+    assert hs.tool_error_rate(p) == (1, 2)
+
+
+def test_run_harness_acp_no_tty_runs_validate_headless(tmp_path, isolated_config, monkeypatch):
+    """_run_harness(acp=True, launch=False, no_tty=True) does NOT preview; runs validate_headless + VERDICT_SUFFIX."""
+    from workagent import backend, cli_harness, cli_validate
+
+    calls = {}
+    h = backend.get_harness("omp")
+
+    def fake_launch_acp(prompt, workdir, **kw):
+        calls["prompt"] = prompt
+        calls["kw"] = kw
+        sf = kw.get("session_file")
+        if sf:
+            import json
+            from pathlib import Path
+            Path(sf).write_text(json.dumps({"t": "message", "text": "Done.\nJOB_DONE"}) + "\n")
+        return 0
+
+    monkeypatch.setattr(h, "launch_acp", fake_launch_acp)
+    monkeypatch.setattr(cli_validate, "validate_headless",
+                        lambda **kw: (calls.setdefault("validated", True),
+                                      {"verdict": "JOB_DONE", "attempts": 1,
+                                       "runs": [kw["run_once"](kw["prompt"])]})[1])
+    res = {"command": "start", "branch": "feat/128", "key": "github:o/r#128"}
+    cli_harness._run_harness("omp", "Fix bug", str(tmp_path), str(tmp_path),
+                             no_tty=True, launch=False, result=res, json_output=True,
+                             acp=True)
+    assert calls.get("validated") is True
+    assert backend.VERDICT_SUFFIX.strip() in calls["prompt"]
+    assert calls["kw"]["input_stream"] is None
+    assert calls["kw"]["no_tty"] is True
+
+
+def test_run_harness_acp_tty_runs_launch_acp_interactively(tmp_path, isolated_config, monkeypatch):
+    """_run_harness(acp=True, launch=False, no_tty=False) calls launch_acp with sys.stdin (no validate_headless)."""
+    import sys
+    from workagent import backend, cli_harness
+
+    calls = {}
+    h = backend.get_harness("omp")
+
+    def fake_launch_acp(prompt, workdir, **kw):
+        calls["prompt"] = prompt
+        calls["kw"] = kw
+        return 0
+
+    monkeypatch.setattr(h, "launch_acp", fake_launch_acp)
+    res = {"command": "start", "branch": "feat/128", "key": "github:o/r#128"}
+    cli_harness._run_harness("omp", "Fix bug", str(tmp_path), str(tmp_path),
+                             no_tty=False, launch=False, result=res, json_output=True,
+                             acp=True)
+    assert calls["kw"]["no_tty"] is False
+    assert calls["kw"]["input_stream"] is sys.stdin
+    assert backend.VERDICT_SUFFIX.strip() not in calls["prompt"]
+
+
+def test_cli_action_resolve_mode_accepts_acp():
+    from workagent.cli_action import _resolve_mode
+    assert _resolve_mode({}, launch=False, terminal=False, acp=True) == "acp"
+    assert _resolve_mode({"default_options": {"run_mode": "acp"}}, launch=False, terminal=False) == "acp"
+    assert _resolve_mode({}, launch=False, terminal=False, run_mode="acp") == "acp"
+
+
+def test_cli_adhoc_acp_does_not_collide_with_launch(tmp_path, isolated_config, monkeypatch):
+    from workagent import cli_adhoc, store, worktrees
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    monkeypatch.setattr(store, "load_links", lambda: {"k": {"worktree": str(wt), "repo": str(wt), "active": 1}})
+    monkeypatch.setattr(worktrees, "resolve_any", lambda ref, links: ("k", links["k"], None))
+    monkeypatch.setattr(worktrees, "is_valid_worktree", lambda p: True)
+    seen = {}
+    monkeypatch.setattr(cli_adhoc, "_guard_harness", lambda *a, **kw: None)
+    monkeypatch.setattr(cli_adhoc, "_run_harness", lambda *a, **kw: seen.update({"args": a, "kw": kw}))
+    cli_adhoc.adhoc.__wrapped__(["k"], prompt="hello", launch=False, terminal=False,
+                                harness="omp", acp=True, run_mode=None, model="m1", effort="high",
+                                extra_prompt=None, env_file=None, session_file=None,
+                                dry_run=False, yes=True, json_output=True)
+    # positional arg index 5 is `launch` — must be False when acp=True
+    assert seen["args"][5] is False
+    assert seen["kw"]["acp"] is True
+    assert seen["kw"]["model"] == "m1"
+
+
+def test_cli_review_child_argv_forwards_acp_model_effort():
+    from workagent import cli_review
+    argv = cli_review._child_argv("github:o/r#1", fix=False, harness="omp",
+                                  post_comments=False, acp=True, run_mode="acp",
+                                  model="m1", effort="high")
+    assert "--acp" in argv
+    assert "--model" in argv and "m1" in argv
+    assert "--effort" in argv and "high" in argv
+
+
+def test_acp_client_stderr_tail_includes_bytes_written_before_reader_start(tmp_path, isolated_config):
+    """Risk 1 RED: stderr drained synchronously even if reader thread never ran.
+
+    Simulates the init-failure race: process wrote stderr and exited before
+    the daemon reader consumed it. stderr_tail() must still surface it.
+    """
+    import sys
+    from workagent.acp_harness import AcpClient
+
+    agent = tmp_path / "instant_exit.py"
+    agent.write_text("import sys\nsys.stderr.write('instant boom\\n')\nsys.stderr.flush()\n")
+    client = AcpClient([sys.executable, str(agent)])
+    # Simulate worst case: reader thread did not consume before exit.
+    client._proc.wait(timeout=10)
+    client._stderr_reader.join(timeout=5)
+    # Drain whatever is left without relying on the thread having run.
+    tail = client.stderr_tail()
+    client.close()
+    assert "instant boom" in tail
+
+
+def test_acp_client_drain_fd_captures_available_pipe_bytes():
+    """_drain_fd captures available fd bytes without blocking."""
+    import os
+    from workagent.acp_harness import AcpClient
+
+    r, w = os.pipe()
+    os.write(w, b"late boom\n")
+    os.close(w)
+    lines: list = []
+    n = AcpClient._drain_fd(r, lines, None)
+    os.close(r)
+    assert n == 1
+    assert lines == ["late boom"]
+
+
+def test_run_harness_non_1_exit_marks_run_failed(tmp_path, isolated_config, monkeypatch):
+    """Non-zero ACP exit codes other than 2 (e.g. 143 on SIGTERM) must mark DB run failed."""
+    import pytest
+    from workagent import backend, cli_harness, store_sqlite as sq
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    h = backend.get_harness("omp")
+    monkeypatch.setattr(h, "launch_acp", lambda *a, **kw: 143)
+
+    res = {"command": "start", "branch": "feat/128", "key": "github:o/r#128"}
+    with pytest.raises(cli_harness.HarnessError) as exc:
+        cli_harness._run_harness(
+            "omp", "hi", str(wt), str(wt),
+            no_tty=False, launch=False, result=res, json_output=True,
+            run_key="github:o/r#128", acp=True,
+        )
+    assert exc.value.exit_code == 143
+
+    runs = sq.list_runs(db)
+    assert len(runs) == 1
+    assert runs[0]["state"] == "failed"

@@ -30,14 +30,19 @@ def adhoc(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Run an adhoc prompt on one or more linked worktrees, sequentially."""
-    if launch and terminal:
-        _fail("--terminal cannot be used with --launch (pick one run mode)", EXIT_USAGE)
     if not (refs or []):
         _fail("at least one worktree ref is required", EXIT_USAGE)
     if not (prompt or "").strip():
         _fail("--prompt is required and must not be blank", EXIT_USAGE)
-    mode = "terminal" if terminal else "headless"
-    use_launch = not terminal
+    if sum(bool(x) for x in (launch, terminal, acp)) > 1:
+        _fail("--launch, --terminal, and --acp are mutually exclusive", EXIT_USAGE)
+    rm = (run_mode or "").strip().lower() if isinstance(run_mode, str) else ""
+    mode = rm if rm in ("preview", "headless", "acp", "terminal") else (
+        "acp" if acp else ("terminal" if terminal else "headless")
+    )
+    use_launch = mode == "headless"
+    use_acp = mode == "acp"
+    use_terminal = mode == "terminal"
     links = store.load_links()
     rows: list[dict] = []
     failed = False
@@ -79,8 +84,8 @@ def adhoc(
                                         "session_metadata": {"action": "adhoc", "mode": mode}},
                      json_output, run_key=key,
                      session_file=session_file if isinstance(session_file, str) else None,
-                     terminal=terminal, env_file=env_file,
-                     acp=acp, run_mode=run_mode, model=model, effort=effort)
+                     terminal=use_terminal, env_file=env_file,
+                     acp=use_acp, run_mode=run_mode, model=model, effort=effort)
         rows.append({"key": key, "worktree": wt, "mode": mode})
     _print_result({"results": rows}, json_output)
     if failed:

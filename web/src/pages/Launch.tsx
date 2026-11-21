@@ -75,7 +75,7 @@ function TemplatePickerDialog({
  * start base, and the review fix flags. `ref`/`repo`/free text are never
  * persisted, and deep-link URL params win over stored values on mount. */
 function prefsForMode(p: LaunchPrefs, mode: Mode): Partial<LaunchForm> {
-  if (mode === "sync") return { merge: p.sync.merge, harness: p.sync.harness }
+  if (mode === "sync") return { merge: p.sync.merge, harness: p.sync.harness, model: p.sync.model, effort: p.sync.effort }
   if (mode === "review") {
     return {
       runMode: p.review.runMode as LaunchForm["runMode"],
@@ -84,16 +84,20 @@ function prefsForMode(p: LaunchPrefs, mode: Mode): Partial<LaunchForm> {
       thenFixComments: p.review.thenFix,
       useReviewSession: p.review.useReviewSession,
       harness: p.review.harness,
+      model: p.review.model,
+      effort: p.review.effort,
     }
   }
   if (mode === "adhoc") {
-    return { runMode: p.adhoc.runMode as LaunchForm["runMode"], harness: p.adhoc.harness }
+    return { runMode: p.adhoc.runMode as LaunchForm["runMode"], harness: p.adhoc.harness, model: p.adhoc.model, effort: p.adhoc.effort }
   }
   return {
     runMode: p.start.runMode as LaunchForm["runMode"],
     startAction: p.start.startAction as LaunchForm["startAction"],
     base: p.start.base,
     harness: p.start.harness,
+    model: p.start.model,
+    effort: p.start.effort,
   }
 }
 

@@ -31,10 +31,12 @@ def run_supervised(run_dir: Path, child_argv: list[str]) -> int:
         os.setsid()
     except OSError:
         pass
+    child_env = {**os.environ, "WORKAGENT_RUN_DIR": str(run_dir)}
     try:
         proc = subprocess.Popen(child_argv, stdin=subprocess.DEVNULL,
                                 stdout=log_fh,
                                 stderr=subprocess.STDOUT,
+                                env=child_env,
                                 start_new_session=True, close_fds=True)
     except OSError as e:
         try:

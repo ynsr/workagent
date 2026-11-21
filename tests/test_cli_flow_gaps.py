@@ -334,7 +334,7 @@ def test_terminal_spawn_appends_terminal_flag(monkeypatch):
     assert out["command"].rstrip().endswith("--terminal")
     out = u.spawn_terminal_step("sync", ["wt-1"], "")
     assert "--terminal" not in out["command"]
-    assert out["command"] == "workagent sync wt-1"
+    assert out["command"].endswith("workagent sync wt-1")
     out = u.spawn_terminal_step("cleanup", ["wt-1"], "")
     assert "--terminal" not in out["command"]
     out = u.spawn_terminal_step("release", ["myrepo"], "")

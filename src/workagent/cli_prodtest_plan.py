@@ -9,7 +9,7 @@ import typer
 
 from . import refs, repos, store, worktrees
 from .cli_core import _catch_harness_errors, _fail, _print_result, eprint
-from .cli_harness import _run_harness, append_extra_prompt
+from .cli_harness import _run_harness, append_extra_prompt, is_exec_mode
 from .cli_prodtest import (
     _plan_search_dirs,
     _resolve_issue_context,
@@ -159,11 +159,11 @@ def prodtest_plan(
                  run_key=(link_key or None), session_file=session_file,
                  terminal=terminal, env_file=env_file,
                  acp=acp, run_mode=run_mode, model=model, effort=effort)
-    if launch and not no_tty and not terminal:
+    if is_exec_mode(launch, acp, run_mode) and not no_tty and not terminal:
         eprint(f"warning: plan file updated but NOT persisted ({plan_file}): "
                "commit/push/DB upsert only run with --no-tty. "
                "Re-run `workagent prodtest plan " + (issue_number or store_key) + " --launch --no-tty`.")
-    if launch and no_tty:
+    if is_exec_mode(launch, acp, run_mode) and no_tty:
         _finish_plan(link_key or store_key, issue_number, work_dir, repo, branch, plan_file,
                      issue_url, result, store_key=store_key, linked=linked)
 

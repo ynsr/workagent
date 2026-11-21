@@ -179,15 +179,16 @@ def test_review_preview_tty_lands_shell_in_worktree(isolated_config, tmp_path, m
     class _Shell(Exception):
         pass
 
-    def fake_execvp(file, argv):
+    def fake_execvpe(file, argv, env):
         raise _Shell(file, argv, os.getcwd())
 
-    monkeypatch.setattr(cli.os, "execvp", fake_execvp)
+    monkeypatch.setattr(cli.os, "execvpe", fake_execvpe)
     with pytest.raises(_Shell) as excinfo:
         cli.review(ref="https://github.com/o/r/pull/33", repo=None, depth=7, harness=None,
                    no_tty=False, launch=False, dry_run=False, yes=False, json_output=False,
                    all_wts=False, sequential=False, fix=False, force_all=False, post_comments=False,
-                   fix_comments=False, then_fix_comments=False, use_review_session=False)
+                   fix_comments=False, then_fix_comments=False, use_review_session=False,
+                   acp=False, run_mode=None, terminal=False)
     assert excinfo.value.args[0] == "/bin/zsh"
     assert excinfo.value.args[2] == str(worktree)
 

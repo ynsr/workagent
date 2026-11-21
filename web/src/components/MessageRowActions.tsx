@@ -15,7 +15,7 @@ import { errorText } from "@/components/StatusFeedback"
 import { useActions, useCreateRun, useFlowTemplates } from "@/lib/queries"
 import { useConfirm } from "@/lib/confirm"
 import { VALIDATE_CLAIMED_ISSUES_PROMPT } from "@/lib/messageLaunchConfig"
-import { buildImmediateMessageActionArgs, messageScoped } from "@/lib/messageRunConfig"
+import { actionEffortOf, actionHarnessOf, actionModelOf, actionRunModeOf, buildImmediateMessageActionArgs, messageScoped } from "@/lib/messageRunConfig"
 import type { ActionRow, FlowTemplateRow, MessageRow } from "@/lib/api"
 
 /** Row overlay: Adhoc / Validate / Run action / Run flow / Delete.
@@ -42,9 +42,10 @@ export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: (
     // Immediate actions launch straight away (standard confirm; the message
     // itself is the ref). Flows always need a worktree ref, so they go
     // through the shared run form first.
-    if (kind === "action" && runsImmediately(kind, actions.find((a) => a.label === label))) {
+    const act = kind === "action" ? actions.find((a) => a.label === label) : undefined
+    if (kind === "action" && runsImmediately(kind, act)) {
       void spawn(
-        buildImmediateMessageActionArgs(label, row.message_id),
+        buildImmediateMessageActionArgs(label, row.message_id, { runMode: actionRunModeOf(act ?? {}) as RunMode, harness: actionHarnessOf(act ?? {}), model: actionModelOf(act ?? {}), effort: actionEffortOf(act ?? {}) }),
         true,
         "Message action started",
       )
@@ -82,7 +83,7 @@ export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: (
           <Play aria-hidden /> Adhoc
         </Button>
         <Button variant="outline" size="sm"
-          onClick={() => void spawn(["validate", row.message_id, "--prompt", VALIDATE_CLAIMED_ISSUES_PROMPT, "--yes"], true, "Message validate started")}>
+          onClick={() => void spawn(["validate", row.message_id, "--prompt", VALIDATE_CLAIMED_ISSUES_PROMPT, ...messageScopeArgs({ harness, model, effort }), ...messageRunModeArgs(runMode), "--yes"], true, "Message validate started")}>
           <FlaskConical aria-hidden /> Validate
         </Button>
       </div>

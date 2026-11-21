@@ -468,20 +468,26 @@ temp cwd, 10-min server TTL). 404 unknown harness (`{"error": {"code":
 200 + `warning` when the probe fails. Shape:
 `{"harness", "supported", "models": [{"id", "name"}], "efforts": [...],
 "current_model", "current_effort", "cached"}` (`warning` only on probe
-failure). The UI disables the Model/Effort selects when `supported` is
+failure). `?refresh=1` bypasses the TTL cache and re-probes the harness
+(`cached` is false on the re-probed response). The UI disables the
+Model/Effort selects when `supported` is
 false or the lists are empty.
 
 ### `POST /api/runs/{id}/input` → `{"id", "ok": true}` (issue #112)
 Append a user answer to a running run's `input.jsonl` (the ACP run loop
 tails `WORKAGENT_RUN_DIR/input.jsonl` from offset 0, consuming each line
 once, qid-correlated). 404 unknown run,
-409 finished run (`not_running`), 422 empty text (`bad_arg`). Body:
-`{"text": "...", "qid": "..."}` (the qid is persisted so the run loop can
+409 finished run (`not_running`), 409 when no question is pending
+(`no_pending_question`), 409 qid mismatch (`qid_mismatch`), 422 empty text
+(`bad_arg`). Body: `{"text": "...", "qid": "..."}` — `answer` and `choice`
+are accepted as aliases for `text` (the payload persists canonical `text`
+plus `answer`, and the qid so the run loop can
 correlate the answer). A pending ACP question surfaces as
 `pending_question` (`{"qid", "text", "options", "multi"}` — dict-shaped
 options normalized to label strings — or null) on
 `GET /api/runs` rows and `GET /api/runs/{id}` detail — parsed from the
-newest unanswered `ACP: {"t": "question", ...}` log line. A co-emitted
+newest unanswered `ACP: {"t": "question", ...}` log line. `pending_question`
+is null whenever the run is not running. A co-emitted
 non-waiting `turn_end` from the same unanswered turn does not clear it;
 only an `answer` event resolves it.
 

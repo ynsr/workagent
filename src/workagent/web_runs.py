@@ -459,7 +459,7 @@ def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
     else:
         with run.lock:
             src = [txt for _, txt in run.lines]
-    out["pending_question"] = _pending_question_from_texts(src)
+    out["pending_question"] = _pending_question_from_texts(src) if run.state == "running" else None
     return out
 
 def _persisted_lines(row: dict) -> list[dict]:
@@ -558,6 +558,7 @@ def _persisted_summary(row: dict) -> dict:
             resume_cmd = _resume_shell_command(worktree, session_file, harness_name=hname, metadata=meta)
         except Exception:
             resume_cmd = ""
+    persisted = _persisted_lines(row)
     return {"id": f"db-{row.get('id')}", "command": cmd,
             "args": argv, "state": state,
             "exit_code": exit_code, "truncated": bool(row.get("truncated")),
@@ -567,10 +568,9 @@ def _persisted_summary(row: dict) -> dict:
             "resume_command": resume_cmd,
             "transcript_ready": t_ready,
             "session_type": row.get("session_type"),
-            "last_seq": max((ln["seq"] for ln in _persisted_lines(row)), default=-1) + 1,
+            "last_seq": max((ln["seq"] for ln in persisted), default=-1) + 1,
             "validation": row.get("validation") if isinstance(row.get("validation"), dict) else {},
-            "pending_question": _pending_question_from_texts(
-                [str(ln.get("text") or "") for ln in _persisted_lines(row)])}
+            "pending_question": (_pending_question_from_texts([ln["text"] for ln in persisted]) if state == "running" else None)}
 def _persisted_row(run_id: str) -> dict | None:
     """Fetch a runs-table row for a `db-<id>` run id (None otherwise)."""
     if not run_id.startswith("db-"):
@@ -606,18 +606,23 @@ def _finish_state(code: int | None) -> str:
     return "failed"
 
 
-def _start_tailer(run: Run, registry: Registry, backfill: bool = False) -> None:
+def _start_tailer(run: Run, registry: Registry, backfill: bool = False,
+                  initial_offset: int | None = None) -> None:
     """Follow output.log into run.lines; close out when exit_code lands.
 
     Precreated rows (`_precreate_run_row`) stream the log every ~10 polls
     (~2s) so long/failed runs persist progressively — not just at finish.
+    `initial_offset` sets the tailer start when the caller already
+    backfilled synchronously (skips the stat/read race).
     """
     from . import run_store as _rs
     d = _run_dir(run)
 
     def tailer() -> None:
         offset = 0
-        if backfill:
+        if not backfill and initial_offset is not None:
+            offset = initial_offset
+        elif backfill:
             # Post-restart adopt: load the tail (≤10k lines) without OOM.
             try:
                 data = (d / "output.log").read_bytes()
@@ -737,7 +742,15 @@ def rehydrate(registry: Registry) -> dict:
             with registry.lock:
                 registry.runs[run.id] = run
                 registry.targets.setdefault(run.target, run.id)
-            _start_tailer(run, registry, backfill=True)
+            try:
+                raw = (d / "output.log").read_bytes()
+            except OSError:
+                raw = b""
+            last_nl = raw.rfind(b"\n")
+            complete_raw = raw[: last_nl + 1] if last_nl != -1 else b""
+            for ln in complete_raw.decode(errors="replace").splitlines()[-MAX_LINES:]:
+                run.append(ln + "\n")
+            _start_tailer(run, registry, backfill=False, initial_offset=len(complete_raw))
             adopted.append(d.name)
     _rs.prune_finished()
     return {"adopted": adopted, "closed": closed}
@@ -833,7 +846,7 @@ def _resume_shell_command(worktree: str, session_file: str,
     argv = harness.resume_argv(session_file, metadata=metadata)
     harness_cmd = " ".join(shlex.quote(a) for a in argv)
     cmd = f"cd {shlex.quote(worktree)} && {harness_cmd}"
-    resolved = _env.resolve_env_file(env_file)
+    resolved = _env.ensure_env_file(env_file)
     return _env.wrap_command(cmd, resolved)
 
 

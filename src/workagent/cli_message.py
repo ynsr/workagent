@@ -270,8 +270,12 @@ def _run_prompt(msg: dict, prompt: str, ref_opt: str, repo_opt: str, launch: boo
                 model: Optional[str] = None, effort: Optional[str] = None) -> None:
     """Shared adhoc/validate runner: message-header + prompt → harness."""
     from .cli_harness import _guard_harness, _run_harness, append_extra_prompt
-    if launch and terminal:
-        _fail("--terminal cannot be used with --launch (pick one run mode)", EXIT_USAGE)
+    if sum(bool(x) for x in (launch, terminal, acp)) > 1:
+        _fail("--launch, --terminal, and --acp are mutually exclusive", EXIT_USAGE)
+    rm = (run_mode or "").strip().lower() if isinstance(run_mode, str) else ""
+    mode = rm if rm in ("preview", "headless", "acp", "terminal") else (
+        "acp" if acp else ("terminal" if terminal else ("headless" if launch else "preview"))
+    )
     if not (prompt or "").strip() and not extra_prompt:
         _fail("--prompt is required and must not be blank", EXIT_USAGE)
     workdir, key = _resolve_exec(msg, ref_opt, repo_opt or "")
@@ -281,7 +285,6 @@ def _run_prompt(msg: dict, prompt: str, ref_opt: str, repo_opt: str, launch: boo
     body = f"{_message_header(msg)}\n\n{(prompt or '').strip()}"
     if (extra_prompt or "").strip():
         body = append_extra_prompt(body, extra_prompt.strip())
-    mode = "terminal" if terminal else ("headless" if launch else "preview")
     if dry_run:
         _print_result({"message": msg.get("message_id"), "workdir": workdir,
                        "key": key, "mode": mode, "dry_run": True,
@@ -295,14 +298,16 @@ def _run_prompt(msg: dict, prompt: str, ref_opt: str, repo_opt: str, launch: boo
     if mode != "preview":
         _guard_harness(key or None, workdir)
     use_launch = mode == "headless"
+    use_acp = mode == "acp"
     use_terminal = mode == "terminal"
+    no_tty_flag = mode in ("headless", "acp")
     _run_harness(harness or store.default_harness(),
-                 body, workdir, workdir, use_launch, use_launch,
+                 body, workdir, workdir, no_tty_flag, use_launch,
                  {"command": "message", "session_metadata": {"action": "message",
                   "mode": mode, "message_id": msg.get("message_id")}},
                  json_output, run_key=key or None, session_file=session_file,
                  terminal=use_terminal, env_file=env_file,
-                 acp=acp, run_mode=run_mode, model=model, effort=effort)
+                 acp=use_acp, run_mode=run_mode, model=model, effort=effort)
     _print_result({"message": msg.get("message_id"), "workdir": workdir,
                    "key": key, "mode": mode}, json_output)
 

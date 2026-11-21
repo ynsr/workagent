@@ -28,6 +28,7 @@ from .web_args import (
 from .web_runs import (
     _cancel,
     _harness_arg,
+    _pending_question_from_texts,
     _persisted_lines,
     _persisted_row,
     _persisted_summary,
@@ -405,7 +406,7 @@ def _open_terminal_watch(worktree: str, session_file: str, run_id: int | None,
         scope, model=model, effort=effort)
     harness_cmd = " ".join(_shlex.quote(a) for a in harness_argv)
     full_cmd = _env.wrap_command(f"cd {_shlex.quote(worktree)} && {harness_cmd}",
-                                 _env.resolve_env_file(env_file))
+                                 _env.ensure_env_file(env_file))
     if not run_id:
         return _spawn_term(full_cmd, worktree)
     shim_argv = [sys.executable, "-m", "workagent", "watch-and-exec",
@@ -449,7 +450,7 @@ _OPTIONS_CACHE: dict[str, tuple[float, dict]] = {}
 _OPTIONS_TTL_S = 600.0
 
 
-def _cached_harness_options(name: str) -> tuple[dict, bool, str | None]:
+def _cached_harness_options(name: str, refresh: bool = False) -> tuple[dict, bool, str | None]:
     """ACP-discovered model/effort options (10-min TTL).
 
     Returns (body, cached, warning). Unknown harness raises ApiError 404;
@@ -462,10 +463,10 @@ def _cached_harness_options(name: str) -> tuple[dict, bool, str | None]:
         raise ApiError("not_found", f"unknown harness: {name!r}", 404)
     if not getattr(harness, "supports_acp", False):
         return ({"harness": name, "supported": False,
-                 "models": [], "efforts": [],
-                 "current_model": "", "current_effort": ""}, False, None)
+                "models": [], "efforts": [],
+                "current_model": "", "current_effort": ""}, False, None)
     now = time.monotonic()
-    hit = _OPTIONS_CACHE.get(name)
+    hit = None if refresh else _OPTIONS_CACHE.get(name)
     if hit is not None and now - hit[0] < _OPTIONS_TTL_S:
         return (dict(hit[1]), True, None)
     try:
@@ -787,6 +788,9 @@ def register_runs_routes(app, registry) -> None:
         if not cmd:
             raise ApiError("no_harness_command",
                            f"run {run_id} logged no harness command", 404)
+        from . import env as _env
+        if not cmd.lstrip().startswith("source "):
+            cmd = _env.wrap_command(cmd, _env.ensure_env_file())
         if (blocker := _live_terminal_blocker(worktree, ref_key)) is not None:
             raise ApiError("conflict", _conflict_msg(worktree, blocker), 409)
         from . import store as _store
@@ -925,26 +929,30 @@ def register_runs_routes(app, registry) -> None:
         return {"id": row_id, "session_file": session_path, "worktree": worktree, "mode": mode}
 
     @app.get("/api/harnesses/{name}/options")
-    def harness_options(name: str) -> dict:
+    def harness_options(name: str, refresh: int = 0) -> dict:
         """ACP-discovered model/effort options for a harness.
 
         404 unknown harness; 200 + supported:False for non-ACP harnesses;
         200 + warning when the probe fails. 10-min TTL.
+        `?refresh=1` bypasses the cache and re-probes the harness.
         """
-        body, cached, _warning = _cached_harness_options(name)
+        body, cached, _warning = _cached_harness_options(name, refresh=bool(refresh))
         return {**body, "cached": cached}
 
     @app.post("/api/runs/{run_id}/input")
     async def run_input(run_id: str, body: dict) -> dict:
         """Append a user answer to a running run's `input.jsonl`.
 
-        404 unknown run, 409 finished run, 422 empty text. The ACP run
-        loop tails `WORKAGENT_RUN_DIR/input.jsonl` for the answer.
+        404 unknown run, 409 finished run (`not_running`), 409 no pending
+        question (`no_pending_question`), 409 qid mismatch (`qid_mismatch`),
+        422 empty text. The ACP run loop tails
+        `WORKAGENT_RUN_DIR/input.jsonl` for the answer.
         """
-        text = str((body or {}).get("text") or "")
+        raw_body = body or {}
+        text = str(raw_body.get("text") or raw_body.get("answer") or raw_body.get("choice") or "")
         if not text.strip():
             raise ApiError("bad_arg", "input text is required", 422)
-        qid = str((body or {}).get("qid") or "")
+        qid = str(raw_body.get("qid") or "").strip()
         try:
             run = registry.get(run_id)
         except ApiError:
@@ -957,15 +965,26 @@ def register_runs_routes(app, registry) -> None:
             if run.state != "running":
                 raise ApiError("not_running",
                                f"run {run_id} is not running", 409)
+            pending = _pending_question_from_texts([txt for _, txt in run.lines])
+            if pending is None:
+                raise ApiError("no_pending_question",
+                               f"run {run_id} has no pending question", 409)
+            pqid = str(pending.get("qid") or "")
+            if pqid and qid != pqid:
+                raise ApiError("qid_mismatch",
+                               f"qid {qid!r} does not match pending question {pqid!r}", 409)
             run_dir = run.run_dir or ""
         if not run_dir:
             from . import run_store as _rs
             run_dir = str(_rs.runs_root() / run.id)
         try:
             Path(run_dir).mkdir(parents=True, exist_ok=True)
+            payload = {"text": text, "answer": text}
+            if qid or pqid:
+                payload["qid"] = qid or pqid
             with open(Path(run_dir) / "input.jsonl", "a",
                       encoding="utf-8") as fh:
-                fh.write(json.dumps({"text": text, **({"qid": qid} if qid else {})}) + "\n")
+                fh.write(json.dumps(payload) + "\n")
         except OSError as exc:
             raise ApiError("io_error",
                            f"cannot write input for run {run_id}: {exc}",

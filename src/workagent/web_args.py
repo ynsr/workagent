@@ -83,7 +83,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "review": ("-L", "--no-tty", "--launch", "--terminal", "--acp", "--dry-run",
                "--yes", "--json", "--all", "--sequential", "--fix", "--fix-comments", "--then-fix-comments", "--use-review-session", "--force-all", "--post-comments", "--no-status"),
     "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--released", "--no-squash", "--hard-delete", "--merge-only", "--create-prodtest"),
-    "release": ("--yes", "--dry-run", "--json", "--no-status"),
+    "release": ("--yes", "--dry-run", "--json", "--no-status", "--acp"),
     "open": (),
     "sync": ("-m", "--merge", "--all", "--yes", "--force",
              "-y", "--dry-run", "--json", "--acp"),
@@ -174,7 +174,7 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "review": ("--repo", "--depth", "--harness", "--run-mode", "--model", "--effort", "--session-file", "--env-file", "--extra-prompt"),
     "sync": ("--session-file", "--env-file", "--extra-prompt", "--harness", "--run-mode", "--model", "--effort"),
     "register": ("--key", "--issue", "--repo"),
-    "release": ("--checks", "--diff", "--pre-release-timeout", "--ci-timeout", "--env-file", "--action", "--run-mode", "--extra-prompt", "--harness"),
+    "release": ("--checks", "--diff", "--pre-release-timeout", "--ci-timeout", "--env-file", "--action", "--run-mode", "--extra-prompt", "--harness", "--model", "--effort"),
     "repo add": ("--name", "--path", "--tracker", "--release-branch", "--pre-release"),
     "repo update": ("--default-branch", "--release-branch", "--pre-release", "--overlay-buttons"),
     "link remove": ("--repo",),
@@ -361,9 +361,9 @@ def _validate_args(command: str, args: list[str], body_force: bool = False) -> N
                        "--session-file cannot be used with --all "
                        "(one transcript per worktree — omit it and each "
                        "launch gets its own file)", 400)
-    if "--acp" in rest and ("--launch" in rest or "--terminal" in rest):
+    if "--acp" in rest and ("--launch" in rest or "-L" in rest or "--terminal" in rest):
         raise ApiError("bad_arg",
-                       "--acp cannot be used with --launch/--terminal "
+                       "--acp cannot be used with --launch/-L/--terminal "
                        "(it selects the ACP run mode itself)", 400)
     _run_mode = ""
     for _i, _a in enumerate(rest):
@@ -374,6 +374,9 @@ def _validate_args(command: str, args: list[str], body_force: bool = False) -> N
     if _run_mode and _run_mode not in ("preview", "headless", "acp", "terminal"):
         raise ApiError("bad_arg",
                        f"bad --run-mode {_run_mode!r}: use preview, headless, acp, or terminal", 400)
+    if "--acp" in rest and _run_mode and _run_mode != "acp":
+        raise ApiError("bad_arg",
+                       f"--acp conflicts with --run-mode {_run_mode!r}", 400)
     if sub == "tracker add":
         try:
             uidx = rest.index("add")

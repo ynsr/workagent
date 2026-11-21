@@ -48,10 +48,13 @@ def release(
                                    help="Timeout for the CI gate (e.g. 15m)."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before the pre-release gate command (default: env_file in config.json, auto-created)."),
     action: str = typer.Option("both", "--action", help="fix-default action: rebase, ci, or both (only with `release fix-default NAME`)."),
-    run_mode: str = typer.Option("preview", "--run-mode", help="fix-default run mode: preview, headless, or terminal (only with `release fix-default NAME`)."),
+    run_mode: str = typer.Option("preview", "--run-mode", help="fix-default run mode: preview, headless, acp, or terminal (only with `release fix-default NAME`)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the fix-default harness prompt."),
     no_status: bool = typer.Option(False, "--no-status", help="Skip automatic issue status transitions."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Coding harness name (e.g. agy; default: configured default)."),
+    acp: bool = typer.Option(False, "--acp", help="Run fix-default via ACP stdio (only with `release fix-default NAME`)."),
+    model: Optional[str] = typer.Option(None, "--model", help="Model id for fix-default harness."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="Effort level for fix-default harness."),
 ) -> None:
     """Ship default -> release via pinned-SHA MR merge (FF-only, never squash)."""
     if harness:
@@ -79,13 +82,16 @@ def release(
         _fix.run_fix_default(positionals[0], action=action,
                              run_mode=run_mode, extra_prompt=extra_prompt,
                              yes=yes, dry_run=dry_run, json_output=json_output,
-                             env_file=env_file, harness=harness)
+                             env_file=env_file, harness=harness,
+                             acp=acp, model=model, effort=effort)
         return
     if action != "both":
         _fail("--action is only valid with `release fix-default NAME`.", EXIT_USAGE)
     if run_mode != "preview":
         _fail("--run-mode is only valid with `release fix-default NAME`.",
               EXIT_USAGE)
+    if acp or model or effort:
+        _fail("--acp/--model/--effort are only valid with `release fix-default NAME`.", EXIT_USAGE)
     result = run_release(repo, yes=yes, dry_run=dry_run, json_output=json_output,
                          checks=checks, diff=diff,
                          pre_release_timeout=pre_release_timeout, ci_timeout=ci_timeout,

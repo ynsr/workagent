@@ -9,6 +9,7 @@ import typer
 
 from . import store, worktrees
 from .cli_core import _catch_harness_errors, _fail, _print_result, eprint
+from .cli_harness import is_exec_mode
 from .cli_prodtest import _resolve_issue_context, _resolve_plan_file, prodtest_app
 from .cli_prodtest_checks import _run_locked
 from .errors import HarnessError
@@ -127,7 +128,7 @@ def _run_all(fix_mode: str, skip_version_gate: bool, launch: bool, terminal: boo
     if dry_run:
         for key, entry, store_key, _plan in eligible:
             cmd = f"prodtest run {store_key} --no-tty"
-            if launch:
+            if is_exec_mode(launch, acp, run_mode):
                 cmd += " --launch"
             rows.append({"key": key, "issue": store_key, "command": cmd,
                          "status": "dry-run"})
@@ -137,7 +138,7 @@ def _run_all(fix_mode: str, skip_version_gate: bool, launch: bool, terminal: boo
         eprint("nothing to run")
         _print_result({"results": rows}, json_output)
         return
-    if not launch:
+    if not is_exec_mode(launch, acp, run_mode):
         for key, entry, store_key, _plan in eligible:
             argv = [sys.executable, "-m", "workagent", "prodtest", "run",
                     store_key, "--no-tty"]

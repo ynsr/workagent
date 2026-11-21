@@ -596,6 +596,8 @@
 - Agy (agy-guard) terminals launched by Workagent show colors again, like OMP [120]
 - Generic ACP harness layer (`--acp`/`--run-mode acp/terminal` + `--model/--effort`) with options API, run input, and question cards [112]
 - Re-running a flow after a step-0 failure now starts a fresh run instead of failing when step configs differ [132]
+- Fix ACP harness runtime bugs (supervised Q&A, stderr tail, validation, env.sh, options refresh, transcript UI) [128]
+- Harden ACP follow-ups: sync stderr drain on init failure, own block for unknown events, explicit transcript styling with sticky user toggles, shared run-mode flags [128]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

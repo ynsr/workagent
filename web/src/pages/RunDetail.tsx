@@ -17,6 +17,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox"
 import { mergeLines, useRunEvents } from "@/hooks/useRunEvents"
 import { api, type CreateRunInput, type RunDetail as RunDetailData, type RunLine } from "@/lib/api"
+import { hasAcpStructuredEvents } from "@/lib/harness"
 import { useConfirm } from "@/lib/confirm"
 import { queryKeys, useCancelRun, useRun } from "@/lib/queries"
 import { copyToClipboard, relativeTime, shortId } from "@/lib/format"
@@ -189,7 +190,8 @@ export function RunDetail() {
     () => mergeLines(sse.lines, runQ.data?.lines),
     [sse.lines, runQ.data?.lines],
   )
-
+  const hasAcp = useMemo(() => hasAcpStructuredEvents(lines), [lines])
+  const [viewMode, setViewMode] = useState<"structured" | "raw">("structured")
   // A terminal SSE event updates the cached run so lists stay in sync.
   useEffect(() => {
     if (!sse.state || !runId) return
@@ -367,9 +369,34 @@ export function RunDetail() {
         <QuestionCard runId={run.id} question={run.pending_question} />
       ) : null}
 
-      <AcpTranscript lines={lines} />
+      {hasAcp ? (
+        <div className="mb-2 flex items-center gap-1" role="tablist" aria-label="Log view mode">
+          <Button
+            size="sm"
+            variant={viewMode === "structured" ? "default" : "outline"}
+            role="tab"
+            aria-selected={viewMode === "structured"}
+            onClick={() => setViewMode("structured")}
+          >
+            Structured
+          </Button>
+          <Button
+            size="sm"
+            variant={viewMode === "raw" ? "default" : "outline"}
+            role="tab"
+            aria-selected={viewMode === "raw"}
+            onClick={() => setViewMode("raw")}
+          >
+            Raw
+          </Button>
+        </div>
+      ) : null}
 
-      <LogViewer lines={lines} connected={sse.connected} terminal={terminal} />
+      {hasAcp && viewMode === "structured" ? (
+        <AcpTranscript lines={lines} />
+      ) : (
+        <LogViewer lines={lines} connected={sse.connected} terminal={terminal} />
+      )}
 
       <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
         <SquareTerminal className="size-3.5" aria-hidden />

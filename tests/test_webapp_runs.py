@@ -1427,18 +1427,18 @@ def test_resume_shell_command_uses_harness(tmp_path, isolated_config):
     # agy with metadata conversation_id
     cmd = _resume_shell_command("/wt", str(tmp_path / "sess.jsonl"),
                                 harness_name="agy", metadata={"conversation_id": "conv-9"})
-    assert cmd == "cd /wt && agy-guard --dangerously-skip-permissions --conversation conv-9"
+    assert cmd.startswith("source ") and cmd.endswith("cd /wt && agy-guard --dangerously-skip-permissions --conversation conv-9")
     assert "omp" not in cmd
 
     # agy default without cid
     cmd_bare = _resume_shell_command("/wt", str(tmp_path / "sess.jsonl"), harness_name="agy")
-    assert cmd_bare == "cd /wt && agy-guard --dangerously-skip-permissions"
+    assert cmd_bare.startswith("source ") and cmd_bare.endswith("cd /wt && agy-guard --dangerously-skip-permissions")
 
     # omp harness with real file
     real = tmp_path / "real.jsonl"
     real.write_text("{}\n")
     cmd_omp = _resume_shell_command("/wt", str(real), harness_name="omp")
-    assert cmd_omp == f"cd /wt && omp --approval-mode=yolo --resume {real}"
+    assert cmd_omp.startswith("source ") and cmd_omp.endswith(f"cd /wt && omp --approval-mode=yolo --resume {real}")
 
 
 def test_worktree_terminal_spawns_agy_and_locks(client, monkeypatch, tmp_path):
@@ -1518,7 +1518,7 @@ def test_run_summary_json_contains_harness_and_resume_command(client, tmp_path):
     assert r.status_code == 200, r.text
     data = r.json()
     assert data["harness_name"] == "agy"
-    assert data["resume_command"] == f"cd {tmp_path} && agy-guard --dangerously-skip-permissions"
+    assert data["resume_command"].startswith("source ") and data["resume_command"].endswith(f"cd {tmp_path} && agy-guard --dangerously-skip-permissions")
 
     # When transcript not ready, resume_command must be empty string
     empty_sess = tmp_path / "empty.jsonl"

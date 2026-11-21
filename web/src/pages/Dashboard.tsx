@@ -137,6 +137,8 @@ function BulkConfirmExtras({
         onChange={(v) => {
           setHarness(v)
           harnessRef.current = v
+          setModel("")
+          setEffort("")
           modelRef.current = ""
           effortRef.current = ""
         }}
