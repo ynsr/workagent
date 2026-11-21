@@ -187,6 +187,30 @@ def _find_resumable(template_label: str, ref: str,
     return None
 
 
+def _apply_cascade(steps: list[dict], cascade: dict, default_harness: str) -> None:
+    """Apply top-level flow CLI overrides to each step's config.
+
+    When ``--harness`` is omitted, ``--model`` and ``--effort`` belong to
+    *default_harness* — do not overwrite steps that explicitly target a
+    different harness (e.g. an ``omp`` start step inside a flow whose
+    top-level model was picked for ``agy``).
+    """
+    if not cascade:
+        return
+    explicit_top_harness = "harness" in cascade
+    for s in steps:
+        cfg = s.setdefault("config", {})
+        step_harness = str(cfg.get("harness") or "").strip()
+        if (not explicit_top_harness
+                and step_harness
+                and step_harness != default_harness
+                and ("model" in cascade or "effort" in cascade)):
+            cfg.update({k: v for k, v in cascade.items()
+                        if k not in ("model", "effort")})
+        else:
+            cfg.update(cascade)
+
+
 @flow_app.command("run")
 @_catch_harness_errors
 def flow_run(
@@ -237,9 +261,8 @@ def flow_run(
                 if v is not None and v is not False}
     if run_mode == "acp":
         _cascade["acp"] = True
-    if _cascade:
-        for s in merged_steps:
-            s.setdefault("config", {}).update(_cascade)
+    _default_harness = store.default_harness()
+    _apply_cascade(merged_steps, _cascade, _default_harness)
     # Fail fast on per-run overrides (before any flow row exists): banned
     # shortcut/cleanup flags rejected via the shared keys+values scanner.
     for step in merged_steps:
@@ -296,9 +319,7 @@ def flow_run(
             merged_steps = [{**s, "config": _merge_config(
                 s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
                 for i, s in enumerate(steps)]
-            if _cascade:
-                for s in merged_steps:
-                    s.setdefault("config", {}).update(_cascade)
+            _apply_cascade(merged_steps, _cascade, _default_harness)
         elif steps_override:
             # Legacy/template-launched row: no stored chain, so the old
             # cursor cannot be trusted against a new --steps chain either.

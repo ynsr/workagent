@@ -1129,3 +1129,90 @@ def test_flow_run_unknown_harness(tmp_path, monkeypatch):
     res = runner.invoke(cli_mod.app, ["flow", "run", "t1", "jira:X-1", "--harness", "unknown-harness"])
     assert res.exit_code == 2
 
+
+def test_flow_run_model_skips_step_with_different_harness(tmp_path, monkeypatch):
+    """Issue #130: --model without --harness must not leak default-harness model into an omp step."""
+    import json as _json
+    from typer.testing import CliRunner
+    from workagent import cli_flow as cli_mod
+    tpl = {"label": "t1", "name": "T1", "steps": [{"kind": "start"}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.default_harness", lambda: "agy")
+    steps_json = _json.dumps([
+        {"kind": "start", "execution_mode": "sequential",
+         "config": {"repo": "projectx", "related_repo": ["ap-ipg"], "harness": "omp"}},
+        {"kind": "review", "execution_mode": "parallel", "config": {}},
+        {"kind": "sync", "execution_mode": "sequential", "config": {"harness": "agy"}},
+    ])
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, [
+        "flow", "run", "t1", "jira:X-1", "--dry-run", "--json",
+        "--model", "gemini-4-hydrogen-medium", "--effort", "medium",
+        "--steps", steps_json,
+    ])
+    assert res.exit_code == 0, res.output
+    chain = _json.loads(res.stdout)["chain"]
+    assert chain[0]["config"]["harness"] == "omp"
+    assert "model" not in chain[0]["config"]
+    assert "effort" not in chain[0]["config"]
+    assert chain[1]["config"]["model"] == "gemini-4-hydrogen-medium"
+    assert chain[1]["config"]["effort"] == "medium"
+    assert chain[2]["config"]["model"] == "gemini-4-hydrogen-medium"
+    # Explicit --harness overrides step harness and cascades --model/--effort.
+    res2 = runner.invoke(cli_mod.app, [
+        "flow", "run", "t1", "jira:X-1", "--dry-run", "--json",
+        "--harness", "omp", "--model", "m1", "--steps", steps_json,
+    ])
+    assert res2.exit_code == 0, res2.output
+    chain2 = _json.loads(res2.stdout)["chain"]
+    assert chain2[0]["config"]["harness"] == "omp"
+    assert chain2[0]["config"]["model"] == "m1"
+    assert chain2[2]["config"]["harness"] == "omp"
+    assert chain2[2]["config"]["model"] == "m1"
+
+
+def test_flow_run_resume_model_skips_step_with_different_harness(tmp_path, monkeypatch):
+    """Issue #130: resume path _apply_cascade also skips stored steps with a different harness."""
+    from typer.testing import CliRunner
+    from workagent import cli_flow as cli_mod
+    tpl = {"label": "t1", "name": "T1", "steps": [{"kind": "start"}, {"kind": "review"}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.default_harness", lambda: "agy")
+    existing = {
+        "id": 77,
+        "template_label": "t1",
+        "worktree_ref": "jira:X-1",
+        "repo_snapshot": {"repo": "projectx"},
+        "status": "running",
+        "current_step": 0,
+        "step_results": [],
+        "effective_steps": [
+            {"kind": "start", "execution_mode": "sequential", "config": {"harness": "omp"}},
+            {"kind": "review", "execution_mode": "parallel", "config": {}},
+        ],
+    }
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [existing])
+    monkeypatch.setattr("workagent.store.update_flow", lambda fid, **f: {**existing, **f})
+    monkeypatch.setattr(cli_mod, "_resolve_ref", lambda ref: ("jira:X-1", {"repo": "projectx"}, None))
+    seen_cfgs = {}
+    monkeypatch.setattr(
+        cli_mod, "_run_start_step",
+        lambda ref, wt, cfg, no_tty: seen_cfgs.setdefault("start", dict(cfg)) and {"status": "ok"} or {"status": "ok"},
+    )
+    monkeypatch.setattr(
+        cli_mod, "_run_review_step",
+        lambda wt, cfg, seq, no_tty: seen_cfgs.setdefault("review", dict(cfg)) and {"status": "ok"} or {"status": "ok"},
+    )
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, [
+        "flow", "run", "t1", "jira:X-1", "--yes",
+        "--model", "gemini-4-hydrogen-medium", "--effort", "medium",
+    ])
+    assert res.exit_code == 0, res.output
+    assert seen_cfgs["start"]["harness"] == "omp"
+    assert "model" not in seen_cfgs["start"]
+    assert "effort" not in seen_cfgs["start"]
+    assert seen_cfgs["review"]["model"] == "gemini-4-hydrogen-medium"
+    assert seen_cfgs["review"]["effort"] == "medium"
+
+
