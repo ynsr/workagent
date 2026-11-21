@@ -151,6 +151,35 @@ def test_discover_options_passes_mcp_servers(monkeypatch):
     assert new_call["mcpServers"] == []
 
 
+def test_launch_acp_passes_mcp_servers(isolated_config, tmp_path, monkeypatch):
+    """launch_acp session/new must include mcpServers: [] for omp acp compatibility."""
+    from workagent import acp_harness as _a
+    seen = []
+
+    class _FakeClient:
+        def set_notification_handler(self, handler):
+            pass
+
+        def request(self, method, params=None, timeout_s=None):
+            seen.append((method, params))
+            if method == "session/new":
+                return {"sessionId": "s1"}
+            if method == "session/prompt":
+                return {"stopReason": "end_turn"}
+            return {}
+
+        def close(self):
+            pass
+
+    h = _a.OmpAcpHarness()
+    monkeypatch.setattr(_a, "check_binary", lambda b: None)
+    monkeypatch.setattr(h, "_open_client", lambda *a, **k: _FakeClient())
+    code = h.launch_acp("do work", workdir=str(tmp_path), no_tty=True)
+    assert code == 0
+    new_call = next(p for m, p in seen if m == "session/new")
+    assert new_call["mcpServers"] == []
+
+
 def test_omp_argv_yolo_and_model_flags(isolated_config, tmp_path):
     """OmpAcpHarness: yolo on every argv + --model=/--thinking= mapping."""
     from workagent import acp_harness as _a
