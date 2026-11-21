@@ -736,7 +736,7 @@ export function Dashboard() {
       navigate("/flows?worktree=" + encodeURIComponent(key)),
   }
   const [visibleKeys, setVisibleKeys] = useState<string[]>([])
-  useListHotkeys({
+  const { activeItem: focusedKey } = useListHotkeys({
     items: visibleKeys,
     onOpen: (key) => handleOpenWorktree(key),
     onSync: (key) => tableActions.onSync?.(key),
@@ -873,6 +873,7 @@ export function Dashboard() {
             repoTabs={repos ? { ...repoTabs, repos } : undefined}
             selection={{ selected, onSelectionChange: setSelected, onVisibleKeys: setVisibleKeys }}
             embed={{ externalFilter: sharedFilter, onExternalFilterChange: setSharedFilter, filterParam: null, hideFilter: true }}
+            focusedKey={focusedKey}
           />
         </div>
       )}

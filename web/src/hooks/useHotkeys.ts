@@ -43,7 +43,7 @@ function parseKeySpec(spec: string): ParsedKeySpec {
     meta: mods.has("meta") || mods.has("cmd") || mods.has("command"),
     alt: mods.has("alt") || mods.has("option"),
     shift: mods.has("shift"),
-    key: rawKey.length === 1 ? rawKey.toLowerCase() : rawKey.toLowerCase(),
+    key: rawKey.toLowerCase(),
   }
 }
 

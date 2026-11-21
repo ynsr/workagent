@@ -116,11 +116,6 @@ export interface CommandPaletteProps {
 }
 
 export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
-  const navigate = useNavigate()
-  const [query, setQuery] = useState("")
-  const [activeIndex, setActiveIndex] = useState(0)
-  const inputRef = useRef<HTMLInputElement>(null)
-
   // Global Cmd+K / Ctrl+K toggle (works even when typing in an input)
   useHotkeys([
     {
@@ -129,6 +124,17 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       handler: () => onOpenChange(!open),
     },
   ])
+
+  if (!open) return null
+
+  return <CommandPaletteContent onOpenChange={onOpenChange} />
+}
+
+function CommandPaletteContent({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+  const navigate = useNavigate()
+  const [query, setQuery] = useState("")
+  const [activeIndex, setActiveIndex] = useState(0)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   const { data: activeStatus } = useStatusAll()
   const { data: inactiveStatus } = useStatusInactive()
@@ -239,26 +245,31 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
   const filtered = useMemo(() => filterPaletteItems(allItems, query), [allItems, query])
 
-  // Group filtered items preserving CATEGORY_ORDER while tracking flat index for keyboard nav
-  const grouped = useMemo(() => {
-    const byCat = new Map<PaletteCategory, { item: PaletteItem; flatIndex: number }[]>()
+  // Group filtered items preserving CATEGORY_ORDER and assign flatIndex in rendered order
+  const { grouped, flatItems } = useMemo(() => {
+    const byCat = new Map<PaletteCategory, PaletteItem[]>()
     for (const cat of CATEGORY_ORDER) byCat.set(cat, [])
-    filtered.forEach((item, idx) => {
-      byCat.get(item.category)?.push({ item, flatIndex: idx })
-    })
-    return CATEGORY_ORDER.map((cat) => ({
-      category: cat,
-      entries: byCat.get(cat) ?? [],
-    })).filter((g) => g.entries.length > 0)
+    for (const item of filtered) {
+      byCat.get(item.category)?.push(item)
+    }
+    const flat: PaletteItem[] = []
+    const groups: { category: PaletteCategory; entries: { item: PaletteItem; flatIndex: number }[] }[] = []
+    for (const cat of CATEGORY_ORDER) {
+      const catItems = byCat.get(cat) ?? []
+      if (catItems.length === 0) continue
+      const entries = catItems.map((item) => {
+        const flatIndex = flat.length
+        flat.push(item)
+        return { item, flatIndex }
+      })
+      groups.push({ category: cat, entries })
+    }
+    return { grouped: groups, flatItems: flat }
   }, [filtered])
 
   useEffect(() => {
-    if (open) {
-      setQuery("")
-      setActiveIndex(0)
-      requestAnimationFrame(() => inputRef.current?.focus())
-    }
-  }, [open])
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }, [])
 
   useEffect(() => {
     setActiveIndex(0)
@@ -267,30 +278,30 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "ArrowDown" || (e.ctrlKey && e.key.toLowerCase() === "n")) {
       e.preventDefault()
-      if (filtered.length > 0) {
-        setActiveIndex((cur) => (cur + 1) % filtered.length)
+      if (flatItems.length > 0) {
+        setActiveIndex((cur) => (cur + 1) % flatItems.length)
       }
       return
     }
     if (e.key === "ArrowUp" || (e.ctrlKey && e.key.toLowerCase() === "p")) {
       e.preventDefault()
-      if (filtered.length > 0) {
-        setActiveIndex((cur) => (cur - 1 + filtered.length) % filtered.length)
+      if (flatItems.length > 0) {
+        setActiveIndex((cur) => (cur - 1 + flatItems.length) % flatItems.length)
       }
       return
     }
     if (e.key === "Enter") {
       e.preventDefault()
-      const chosen = filtered[activeIndex]
+      const chosen = flatItems[activeIndex]
       if (chosen) chosen.onSelect()
       return
     }
   }
 
-  const activeItem = filtered[activeIndex]
+  const activeItem = flatItems[activeIndex]
 
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+    <DialogPrimitive.Root open onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[1px]" />
         <DialogPrimitive.Content
@@ -308,7 +319,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
               ref={inputRef}
               type="text"
               role="combobox"
-              aria-expanded={open}
+              aria-expanded={true}
               aria-controls="command-palette-listbox"
               aria-autocomplete="list"
               aria-activedescendant={activeItem ? `palette-item-${activeItem.id}` : undefined}

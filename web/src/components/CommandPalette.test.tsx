@@ -5,12 +5,14 @@ import { MemoryRouter, useLocation } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { CommandPalette } from "./CommandPalette"
 
+const mockUseStatusAll = vi.fn(() => ({
+  data: {
+    "jira:IPG-101": { branch: "feat/ipg-101", repo: "payments", pr: "MR #12 (open)" },
+  },
+}))
+
 vi.mock("@/lib/queries", () => ({
-  useStatusAll: () => ({
-    data: {
-      "jira:IPG-101": { branch: "feat/ipg-101", repo: "payments", pr: "MR #12 (open)" },
-    },
-  }),
+  useStatusAll: () => mockUseStatusAll(),
   useStatusInactive: () => ({
     data: {
       "jira:IPG-102": { branch: "feat/ipg-102", repo: "payments", active: 0 },
@@ -110,5 +112,30 @@ describe("CommandPalette", () => {
     fireEvent.keyDown(input, { key: "Enter" })
 
     expect(screen.getByTestId("location").textContent).toBe("/?q=jira%3AIPG-102")
+  })
+
+  it("does not invoke query hooks while closed", () => {
+    mockUseStatusAll.mockClear()
+    render(<Wrapper />)
+    expect(mockUseStatusAll).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true })
+    expect(mockUseStatusAll).toHaveBeenCalled()
+  })
+
+  it("moves ArrowDown sequentially in rendered DOM order across categories when filtered", () => {
+    render(<Wrapper />)
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true })
+    const input = screen.getByRole("combobox")
+
+    // "payments" matches Worktrees (by subtitle/keywords) and Repos (exact label match = higher score)
+    fireEvent.change(input, { target: { value: "payments" } })
+    const options = screen.getAllByRole("option")
+    expect(options.length).toBeGreaterThanOrEqual(2)
+    expect(options[0]).toHaveAttribute("aria-selected", "true")
+
+    fireEvent.keyDown(input, { key: "ArrowDown" })
+    expect(options[1]).toHaveAttribute("aria-selected", "true")
   })
 })
