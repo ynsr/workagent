@@ -140,7 +140,7 @@ function ActivityRunView({
         }}
         className="rounded border border-white/10 bg-white/[0.03] px-2.5 py-1.5"
       >
-        <summary className="flex cursor-pointer select-none items-center gap-2 text-xs text-white/75">
+        <summary className="flex cursor-pointer list-none select-none items-center gap-2 text-xs text-white/75 [&::-webkit-details-marker]:hidden">
           <span>
             {open ? "▾" : "▸"} {summary}
           </span>
@@ -152,10 +152,10 @@ function ActivityRunView({
         </summary>
         <div className="mt-2 space-y-1.5 border-l border-white/10 pl-2.5">
           {group.calls.map((call, idx) => {
-            const tkey = toolKey(call, idx)
+            const tkey = `${group.id}-${toolKey(call, idx)}`
             return (
               <BlockView
-                key={`${group.id}-${tkey}`}
+                key={tkey}
                 block={call}
                 override={overrides[tkey]}
                 onToggle={(isOpen) => onToggle(tkey, isOpen)}
@@ -170,13 +170,13 @@ function ActivityRunView({
           className="ml-3 space-y-1.5 border-l-2 border-red-500/50 pl-2.5"
         >
           {group.failedCalls.map((call, idx) => {
-            const tkey = toolKey(call, idx)
+            const fkey = `failed-${group.id}-${toolKey(call, idx)}`
             return (
               <BlockView
-                key={`failed-${group.id}-${tkey}`}
+                key={fkey}
                 block={call}
-                override={overrides[tkey]}
-                onToggle={(isOpen) => onToggle(tkey, isOpen)}
+                override={overrides[fkey]}
+                onToggle={(isOpen) => onToggle(fkey, isOpen)}
               />
             )
           })}

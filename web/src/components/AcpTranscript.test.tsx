@@ -116,6 +116,29 @@ describe("AcpTranscript ActivityRun folding & FailedCalls (T05.2)", () => {
     expect(screen.getByTestId("activity-run").textContent).toContain("Explored 3 files, 1 search, 1 command")
     expect(screen.getByTestId("failed-calls").querySelector("details")!.open).toBe(false)
   })
+
+  it("scopes override keys when call.id is absent so failedCalls does not collide with calls[0]", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event")
+    const user = userEvent.setup()
+    const lines = [
+      { seq: 1, text: 'ACP:{"t":"tool_call","name":"read","kind":"read","status":"completed","output":"ok1"}' },
+      { seq: 2, text: 'ACP:{"t":"tool_call","name":"search","kind":"search","status":"completed","output":"ok2"}' },
+      { seq: 3, text: 'ACP:{"t":"tool_call","name":"execute","kind":"execute","args":{"command":"jq \'.a > 1\'"},"status":"failed","output":"err"}' },
+    ]
+    const { container } = render(<AcpTranscript lines={lines} />)
+    const activityRun = container.querySelector('[data-testid="activity-run"]') as HTMLDetailsElement
+    const failedDetails = container.querySelector('[data-testid="failed-calls"] details') as HTMLDetailsElement
+    expect(failedDetails.open).toBe(true)
+
+    // Expand ActivityRun and collapse the extracted failed call
+    await user.click(activityRun.querySelector("summary")!)
+    await user.click(failedDetails.querySelector("summary")!)
+    expect(failedDetails.open).toBe(false)
+
+    // calls[0] inside ActivityRun should remain collapsed (not toggled by failedCalls[0])
+    const innerCalls = activityRun.querySelectorAll("details")
+    expect(innerCalls[0]!.open).toBe(false)
+  })
 })
 
 describe("AcpTranscript settled turn summary header (T05.3)", () => {

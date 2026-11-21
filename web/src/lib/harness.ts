@@ -220,7 +220,14 @@ const EXEC_NAMES = new Set(["execute", "bash", "run_command", "shell"])
 const EDIT_NAMES = new Set(["edit", "write", "edit_file", "write_file", "replace_file_content", "multi_replace_file_content"])
 
 const MUTATING_CMD_RE =
-  /(?:^|[;&|]\s*)(?:rm|mv|cp|mkdir|rmdir|touch|chmod|chown|git\s+(?:commit|push|add|reset|checkout|rebase|merge|cherry-pick|stash|apply)|npm\s+(?:install|i|ci|uninstall)|pip\s+install|uv\s+(?:add|remove|sync)|sed\s+-i|tee\b)|[^0-9]>>?\s*[^\s&]/i
+  /(?:^|[;&|]\s*)(?:rm|mv|cp|mkdir|rmdir|touch|chmod|chown|git\s+(?:commit|push|add|reset|checkout|rebase|merge|cherry-pick|stash|apply)|npm\s+(?:install|i|ci|uninstall)|pip\s+install|uv\s+(?:add|remove|sync)|sed\s+-i|tee\b)/i
+const REDIRECT_CMD_RE = /[^0-9]>>?\s*[^\s&]/
+
+function isMutatingCommand(cmd: string): boolean {
+  if (MUTATING_CMD_RE.test(cmd)) return true
+  const unquoted = cmd.replace(/'[^']*'|"[^"]*"/g, '""')
+  return REDIRECT_CMD_RE.test(unquoted)
+}
 
 function extractCommandString(args: unknown): string {
   if (typeof args === "string") return args
@@ -244,7 +251,7 @@ function classifyExploratoryTool(block: AcpBlock): ExploratoryCategory {
   if (kind === "search" || SEARCH_NAMES.has(name)) return "searches"
   if (kind === "execute" || kind === "bash" || EXEC_NAMES.has(name)) {
     const cmd = extractCommandString(block.args)
-    if (cmd && MUTATING_CMD_RE.test(cmd)) return null
+    if (cmd && isMutatingCommand(cmd)) return null
     return "commands"
   }
   return null
