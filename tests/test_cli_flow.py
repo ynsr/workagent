@@ -1216,3 +1216,97 @@ def test_flow_run_resume_model_skips_step_with_different_harness(tmp_path, monke
     assert seen_cfgs["review"]["effort"] == "medium"
 
 
+def test_flow_run_steps_starts_fresh_after_step0_failure(monkeypatch):
+    """Issue #132: a prior run that failed at step 0 must not block a new --steps run."""
+    import json as _json
+    from typer.testing import CliRunner
+    from workagent import cli_flow as cli_mod
+
+    tpl = {"label": "workagent_start_to_cleanup", "name": "E2E",
+           "steps": [{"kind": "start"}, {"kind": "review"}, {"kind": "fix_comments"},
+                     {"kind": "sync"}, {"kind": "cleanup"}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.get_action", lambda l: None)
+    monkeypatch.setattr("workagent.store.default_harness", lambda: "agy")
+    monkeypatch.setattr("workagent.store.load_links", lambda **k: {})
+    monkeypatch.setattr("workagent.store.load_repos", lambda: {})
+    monkeypatch.setattr(cli_mod, "_resolve_ref",
+                        lambda ref: ("", {}, {"tool": "jira", "number": "IPG-1098"}))
+
+    failed_step0 = {
+        "id": 106,
+        "template_label": "workagent_start_to_cleanup",
+        "worktree_ref": "",
+        "repo_snapshot": {"launch_ref": "https://tribe.jibit.cloud/browse/IPG-1098"},
+        "status": "failed",
+        "current_step": 0,
+        "step_results": [{"kind": "start", "status": "failed", "detail": "boom"}],
+        "effective_steps": [
+            {"kind": "start", "execution_mode": "sequential",
+             "config": {"repo": "projectx", "related_repo": ["sepehr-ipg", "saman-ipg"],
+                        "harness": "omp"}},
+            {"kind": "review", "execution_mode": "parallel",
+             "config": {"model": "gemini-4-hydrogen-medium"}},
+            {"kind": "fix_comments", "execution_mode": "parallel",
+             "config": {"model": "gemini-4-hydrogen-medium"}},
+            {"kind": "sync", "execution_mode": "sequential",
+             "config": {"model": "gemini-4-hydrogen-medium"}},
+            {"kind": "cleanup", "execution_mode": "sequential",
+             "config": {"model": "gemini-4-hydrogen-medium"}},
+        ],
+    }
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [failed_step0])
+    created = []
+    monkeypatch.setattr("workagent.store.create_flow",
+                        lambda **f: created.append(f) or {"id": 107, "current_step": 0,
+                                                          "step_results": [], **f})
+    monkeypatch.setattr("workagent.store.update_flow", lambda fid, **f: {"id": fid, **f})
+    monkeypatch.setattr(cli_mod, "_run_start_step",
+                        lambda *a, **k: {"key": "jira:IPG-1098@projectx", "status": "started"})
+    monkeypatch.setattr(cli_mod, "_run_review_step", lambda *a, **k: {"status": "ok"})
+    monkeypatch.setattr(cli_mod, "_run_sync_step", lambda *a, **k: {"status": "ok"})
+    monkeypatch.setattr(cli_mod, "_run_cleanup_step", lambda *a, **k: {"status": "ok"})
+
+    new_steps = _json.dumps([
+        {"kind": "start", "execution_mode": "sequential",
+         "config": {"repo": "projectx", "related_repo": ["saman-ipg", "sepehr-ipg"]}},
+        {"kind": "review", "execution_mode": "parallel", "config": {}},
+        {"kind": "fix_comments", "execution_mode": "parallel", "config": {}},
+        {"kind": "sync", "execution_mode": "sequential", "config": {}},
+        {"kind": "cleanup", "execution_mode": "sequential", "config": {}},
+    ])
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, [
+        "flow", "run", "workagent_start_to_cleanup",
+        "https://tribe.jibit.cloud/browse/IPG-1098",
+        "--harness", "omp", "--steps", new_steps, "--yes",
+    ])
+    assert res.exit_code == 0, res.output
+    assert len(created) == 1
+    assert created[0]["effective_steps"][0]["config"]["related_repo"] == ["saman-ipg", "sepehr-ipg"]
+    assert created[0]["effective_steps"][0]["config"]["harness"] == "omp"
+
+    # Legacy row (effective_steps=None) that failed at step 0 also starts fresh.
+    monkeypatch.setattr("workagent.store.list_flows",
+                        lambda **k: [{**failed_step0, "effective_steps": None}])
+    res2 = runner.invoke(cli_mod.app, [
+        "flow", "run", "workagent_start_to_cleanup",
+        "https://tribe.jibit.cloud/browse/IPG-1098",
+        "--harness", "omp", "--steps", new_steps, "--yes",
+    ])
+    assert res2.exit_code == 0, res2.output
+    assert len(created) == 2
+
+    # A paused flow at step 0 (e.g. open terminal) still protects against --steps diff.
+    monkeypatch.setattr("workagent.store.list_flows",
+                        lambda **k: [{**failed_step0, "status": "paused"}])
+    res3 = runner.invoke(cli_mod.app, [
+        "flow", "run", "workagent_start_to_cleanup",
+        "https://tribe.jibit.cloud/browse/IPG-1098",
+        "--harness", "omp", "--steps", new_steps, "--yes",
+    ])
+    assert res3.exit_code == 2, res3.output
+    assert "--step-config" in res3.output
+
+
+
