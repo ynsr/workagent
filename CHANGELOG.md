@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Fix ACP harness runtime bugs (supervised Q&A, stderr tail, validation, env.sh, options refresh, transcript UI) [128]
+- Harden ACP follow-ups: sync stderr drain on init failure, own block for unknown events, explicit transcript styling with sticky user toggles, shared run-mode flags [128]
 - Re-running a flow after a step-0 failure now starts a fresh run instead of failing when step configs differ [132]
 - Generic ACP harness layer (`--acp`/`--run-mode acp/terminal` + `--model/--effort`) with options API, run input, and question cards [112]
 - Starting or reviewing a PR worktree no longer crashes when reusing a path from a cancelled or deleted worktree [119]
@@ -988,4 +989,3 @@
 - Fix flow headless steps execing interactively: force `no_tty` in seams [no-issue]
 - Fix flow start step passing worktree key instead of issue ref [no-issue]
 - New Message Launch page with per-message agent, draft, action, and flow runs plus sidebar reorder [no-issue]
-- Harden ACP follow-ups: sync stderr drain on init failure, own block for unknown events, explicit transcript styling with sticky user toggles, shared run-mode flags [128]

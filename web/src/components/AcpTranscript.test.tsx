@@ -59,4 +59,21 @@ describe("AcpTranscript user override snap-back (risk 4 RED)", () => {
     rerender(<AcpTranscript lines={lines} />)
     expect(details().open).toBe(false)
   })
+
+  it("toggles two id-less tool_call blocks with the same name independently", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event")
+    const user = userEvent.setup()
+    const lines = [
+      { seq: 1, text: 'ACP:{"t":"tool_call","name":"read","kind":"read","status":"completed","output":"first"}' },
+      { seq: 2, text: 'ACP:{"t":"tool_call","name":"read","kind":"read","status":"completed","output":"second"}' },
+    ]
+    const { container } = render(<AcpTranscript lines={lines} />)
+    const details = Array.from(container.querySelectorAll("details"))
+    expect(details).toHaveLength(2)
+    expect(details[0]!.open).toBe(false)
+    expect(details[1]!.open).toBe(false)
+    await user.click(details[0]!.querySelector("summary")!)
+    expect(details[0]!.open).toBe(true)
+    expect(details[1]!.open).toBe(false)
+  })
 })

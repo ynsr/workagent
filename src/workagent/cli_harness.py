@@ -645,7 +645,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             if minted is not None and minted != before and run_id:
                 _sq.set_run_file_path(db, run_id, str(minted))
         if run_id:
-            _sq.finish_run(db, run_id, "failed" if exit_code == 1 else "finished")
+            _sq.finish_run(db, run_id, "failed" if exit_code not in (0, 2) else "finished")
         if no_tty and run_key:
             _publish_headless_summary(result, json_output, harness_name=harness_name)
 

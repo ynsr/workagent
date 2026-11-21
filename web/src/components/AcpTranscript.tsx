@@ -42,7 +42,7 @@ function formatArgs(args: unknown): string {
 }
 
 function toolKey(block: AcpBlock, index: number): string {
-  return `${block.kind}-${block.id ?? block.name ?? index}`
+  return `${block.kind}-${block.id ?? index}`
 }
 
 function BlockView({ block, override, onToggle }: { block: AcpBlock; override?: boolean; onToggle: (open: boolean) => void }) {

@@ -746,9 +746,11 @@ def rehydrate(registry: Registry) -> dict:
                 raw = (d / "output.log").read_bytes()
             except OSError:
                 raw = b""
-            for ln in raw.decode(errors="replace").splitlines()[-MAX_LINES:]:
+            last_nl = raw.rfind(b"\n")
+            complete_raw = raw[: last_nl + 1] if last_nl != -1 else b""
+            for ln in complete_raw.decode(errors="replace").splitlines()[-MAX_LINES:]:
                 run.append(ln + "\n")
-            _start_tailer(run, registry, backfill=False, initial_offset=len(raw))
+            _start_tailer(run, registry, backfill=False, initial_offset=len(complete_raw))
             adopted.append(d.name)
     _rs.prune_finished()
     return {"adopted": adopted, "closed": closed}

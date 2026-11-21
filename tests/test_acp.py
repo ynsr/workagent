@@ -545,3 +545,29 @@ def test_acp_client_drain_fd_captures_available_pipe_bytes():
     os.close(r)
     assert n == 1
     assert lines == ["late boom"]
+
+
+def test_run_harness_non_1_exit_marks_run_failed(tmp_path, isolated_config, monkeypatch):
+    """Non-zero ACP exit codes other than 2 (e.g. 143 on SIGTERM) must mark DB run failed."""
+    import pytest
+    from workagent import backend, cli_harness, store_sqlite as sq
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    h = backend.get_harness("omp")
+    monkeypatch.setattr(h, "launch_acp", lambda *a, **kw: 143)
+
+    res = {"command": "start", "branch": "feat/128", "key": "github:o/r#128"}
+    with pytest.raises(cli_harness.HarnessError) as exc:
+        cli_harness._run_harness(
+            "omp", "hi", str(wt), str(wt),
+            no_tty=False, launch=False, result=res, json_output=True,
+            run_key="github:o/r#128", acp=True,
+        )
+    assert exc.value.exit_code == 143
+
+    runs = sq.list_runs(db)
+    assert len(runs) == 1
+    assert runs[0]["state"] == "failed"

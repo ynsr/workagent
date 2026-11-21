@@ -94,3 +94,28 @@ def test_cancel_refuses_reused_pid(isolated_config):
     finally:
         other.kill()
         other.wait()
+
+
+def test_rehydrate_partial_trailing_line(isolated_config, monkeypatch):
+    """rehydrate() stops at the last newline so a partial trailing line is tailed whole."""
+    import os
+    from workagent import run_store, store, web_runs
+    from workagent.webapp import Registry
+
+    d = run_store.new_run_dir("partial1")
+    run_store.write_meta(d, {"command": "sync", "args": [], "target": "sync:partial1", "created": 0.0})
+    (d / "pid").write_text(f"{os.getpid()} {store._proc_start_ticks(os.getpid())}\n")
+    (d / "output.log").write_bytes(b"line1\npart")
+
+    captured: dict = {}
+
+    def fake_tailer(run, registry, backfill=False, initial_offset=None):
+        captured["initial_offset"] = initial_offset
+
+    monkeypatch.setattr(web_runs, "_start_tailer", fake_tailer)
+    reg = Registry()
+    out = web_runs.rehydrate(reg)
+    assert "partial1" in out["adopted"]
+    run = reg.get("partial1")
+    assert [txt for _, txt in run.lines] == ["line1"]
+    assert captured["initial_offset"] == len(b"line1\n")
