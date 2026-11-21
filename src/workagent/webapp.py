@@ -282,13 +282,8 @@ def create_app(static_dir: Path, host: str, port: int,
         checks = store.list_pr_checks(key)
         threads = store.list_pr_review_threads(key)
         events = store.list_worktree_events(key, limit=limit)
-        failing_checks = [
-            str(c["name"]) for c in checks
-            if str(c.get("conclusion") or "").lower() in (
-                "failure", "failed", "timed_out", "action_required",
-                "startup_failure", "cancelled", "canceled",
-            ) or str(c.get("status") or "").lower() == "failed"
-        ]
+        from . import store_timeline
+        failing_checks = store_timeline.failing_check_names(checks)
         unresolved_threads = sum(1 for t in threads if not t.get("resolved"))
         return {
             "ref": key,

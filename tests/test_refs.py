@@ -590,3 +590,171 @@ def test_pr_key():
     ) == "gitlab:git.jibit.cloud/server/projectx#1706"
     assert refs.pr_key("https://example.com/whatever") == ""
     assert refs.pr_key("") == ""
+
+
+def test_fetch_ci_details_gh(monkeypatch):
+    monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: json.dumps({
+        "statusCheckRollup": [
+            {
+                "name": "pytest",
+                "status": "COMPLETED",
+                "conclusion": "FAILURE",
+                "detailsUrl": "https://github.com/o/r/runs/1",
+            },
+            {
+                "name": "lint",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "detailsUrl": "https://github.com/o/r/runs/2",
+            },
+        ]
+    }))
+    state, url, checks = refs.fetch_ci_details("gh", "https://github.com/o/r/pull/151", "/repo")
+    assert state == "failure"
+    assert url == "https://github.com/o/r/runs/1"
+    assert len(checks) == 2
+    assert checks[0]["name"] == "pytest"
+    assert checks[0]["conclusion"] == "failure"
+    assert checks[1]["name"] == "lint"
+    assert checks[1]["conclusion"] == "success"
+
+
+def test_fetch_ci_details_glab_fallback_does_not_leak_older_checks(monkeypatch):
+    """When newest pipeline has no jobs and falls back to an older pipeline for
+    the badge URL, checks must remain [] instead of pairing stale jobs with newest."""
+    def fake(*a, **k):
+        api = a[2]
+        if api.endswith("/pipelines"):
+            return json.dumps([
+                {"id": 200, "status": "failed", "sha": "newsha", "web_url": "https://git.x/p/200"},
+                {"id": 100, "status": "success", "sha": "oldsha", "web_url": "https://git.x/p/100"},
+            ])
+        if "/pipelines/200/jobs" in api:
+            return json.dumps([])
+        if "/pipelines/100/jobs" in api:
+            return json.dumps([
+                {"id": 10, "name": "old-job", "status": "success", "web_url": "https://git.x/j/10"},
+            ])
+        return "[]"
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    state, url, checks = refs.fetch_ci_details(
+        "glab", "https://git.x/g/r/-/merge_requests/9", "/repo"
+    )
+    assert state == "failure"
+    assert url == "https://git.x/j/10"
+    assert checks == []
+
+
+def test_fetch_ci_details_glab_preserves_newest_checks_without_web_url(monkeypatch):
+    """When newest pipeline has jobs without web_url, its checks are preserved."""
+    def fake(*a, **k):
+        api = a[2]
+        if api.endswith("/pipelines"):
+            return json.dumps([
+                {"id": 200, "status": "failed", "sha": "newsha", "web_url": "https://git.x/p/200"},
+            ])
+        if "/pipelines/200/jobs" in api:
+            return json.dumps([
+                {"id": 20, "name": "unit", "status": "failed", "web_url": ""},
+            ])
+        return "[]"
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    state, url, checks = refs.fetch_ci_details(
+        "glab", "https://git.x/g/r/-/merge_requests/9", "/repo"
+    )
+    assert state == "failure"
+    assert url == "https://git.x/p/200"
+    assert len(checks) == 1
+    assert checks[0]["name"] == "unit"
+    assert checks[0]["conclusion"] == "failure"
+
+
+def test_fetch_pr_review_details_gh(monkeypatch):
+    def fake(*a, **k):
+        if a[:3] == ("gh", "pr", "view"):
+            return json.dumps({
+                "comments": [
+                    {
+                        "id": "IC_1",
+                        "body": "# Code Review\nNeeds fix",
+                        "author": {"login": "bot"},
+                    }
+                ]
+            })
+        return json.dumps({
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {"nodes": [
+                            {
+                                "id": "PRRT_1",
+                                "isResolved": False,
+                                "comments": {"nodes": [
+                                    {
+                                        "body": "Handle None",
+                                        "path": "src/a.py",
+                                        "line": 12,
+                                        "author": {"login": "alice"},
+                                    }
+                                ]},
+                            }
+                        ]},
+                    }
+                }
+            }
+        })
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    stats, threads = refs.fetch_pr_review_details(
+        "gh", "https://github.com/o/r/pull/151", "/repo"
+    )
+    assert stats == {"reviews": 1, "unresolved": 2, "resolved": 0}
+    assert len(threads) == 2
+    assert {t["thread_id"] for t in threads} == {"IC_1", "PRRT_1"}
+    inline = next(t for t in threads if t["thread_id"] == "PRRT_1")
+    assert inline["file"] == "src/a.py" and inline["line"] == 12 and not inline["resolved"]
+
+
+def test_fetch_pr_review_details_glab(monkeypatch):
+    monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: json.dumps([
+        {
+            "id": "disc-1",
+            "resolved": False,
+            "notes": [
+                {
+                    "id": 101,
+                    "body": "Check edge case",
+                    "resolved": False,
+                    "resolvable": True,
+                    "author": {"username": "bob"},
+                    "position": {"new_path": "src/b.py", "new_line": 33},
+                    "updated_at": "2026-11-22T00:02:00Z",
+                }
+            ],
+        },
+        {
+            "id": "disc-2",
+            "resolved": True,
+            "notes": [
+                {
+                    "id": 102,
+                    "body": "# Code Review\nStatus: RESOLVED",
+                    "resolved": True,
+                    "resolvable": True,
+                    "author": {"username": "review-bot"},
+                    "updated_at": "2026-11-22T00:03:00Z",
+                }
+            ],
+        },
+    ]))
+    stats, threads = refs.fetch_pr_review_details(
+        "glab", "https://git.x/g/r/-/merge_requests/7", "/repo"
+    )
+    assert stats == {"reviews": 1, "unresolved": 1, "resolved": 1}
+    assert len(threads) == 2
+    t1 = next(t for t in threads if t["thread_id"] == "disc-1")
+    assert t1["file"] == "src/b.py" and t1["line"] == 33 and not t1["resolved"]
+    t2 = next(t for t in threads if t["thread_id"] == "disc-2")
+    assert t2["is_bot"] and t2["resolved"]

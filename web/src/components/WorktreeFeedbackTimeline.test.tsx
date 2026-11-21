@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent } from "@testing-library/react"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { render, screen, fireEvent, cleanup } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { WorktreeFeedbackTimeline } from "./WorktreeFeedbackTimeline"
 import type { WorktreeEntry, WorktreeTimeline } from "@/lib/api"
@@ -22,6 +22,10 @@ function wrap(ui: React.ReactElement) {
 describe("WorktreeFeedbackTimeline", () => {
   beforeEach(() => {
     mockTimeline.mockReset()
+  })
+
+  afterEach(() => {
+    cleanup()
   })
 
   it("renders failing checks, unresolved threads, events, and inline actions", () => {
@@ -141,6 +145,47 @@ describe("WorktreeFeedbackTimeline", () => {
     )
 
     expect(screen.getByText("Merged · Ready for cleanup")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /Cleanup/i }))
+    expect(onCleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it("renders Cleanup action when PR is merged even if kanban_column is not ready_to_merge", () => {
+    mockTimeline.mockReturnValue({
+      data: {
+        ref: "jira:IPG-146",
+        checks: [],
+        threads: [],
+        events: [],
+        summary: { failing_checks: [], unresolved_threads: 0 },
+      },
+      isLoading: false,
+      isError: false,
+    })
+
+    const onCleanup = vi.fn()
+    const entry: WorktreeEntry = {
+      branch: "feat/146",
+      worktree: "/tmp/wt",
+      repo: "/tmp/repo",
+      kanban_column: "in_review",
+      pr_detail: {
+        number: 146,
+        state: "merged",
+        url: "https://github.com/o/r/pull/146",
+        title: "T09 timeline",
+        author: "alice",
+        tool: "gh",
+      },
+    }
+
+    wrap(
+      <WorktreeFeedbackTimeline
+        worktreeKey="jira:IPG-146"
+        entry={entry}
+        onCleanup={onCleanup}
+      />,
+    )
+
     fireEvent.click(screen.getByRole("button", { name: /Cleanup/i }))
     expect(onCleanup).toHaveBeenCalledTimes(1)
   })

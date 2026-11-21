@@ -238,9 +238,6 @@ def _status_cells(key: str, entry: dict, refresh_pr: bool = False) -> dict:
     return cells
 
 
-_FAILING_CONCLUSIONS = {"failure", "failed", "timed_out", "action_required", "startup_failure", "cancelled", "canceled"}
-
-
 def _failing_checks_cell(key: str) -> list[str]:
     """Names of currently failing normalized PR checks for *key*."""
     if not key:
@@ -249,13 +246,8 @@ def _failing_checks_cell(key: str) -> list[str]:
         checks = store.list_pr_checks(key)
     except Exception:
         return []
-    return [
-        str(c["name"])
-        for c in checks
-        if (str(c.get("conclusion") or "").lower() in _FAILING_CONCLUSIONS
-            or str(c.get("status") or "").lower() == "failed")
-        and c.get("name")
-    ]
+    from . import store_timeline
+    return store_timeline.failing_check_names(checks)
 
 
 def _unresolved_threads_cell(key: str, reviews_detail: dict | None) -> int:
@@ -338,11 +330,9 @@ def _ci_cell(entry: dict, cells: dict, refresh_pr: bool, key: str = "") -> tuple
             store.replace_pr_checks(key, checks)
             prior_ci = (cached or {}).get("ci")
             if ci != prior_ci and ci in ("failure", "success", "running"):
+                from . import store_timeline
                 ev_type = {"failure": "ci_failed", "success": "ci_passed", "running": "ci_running"}[ci]
-                failed_names = [
-                    c["name"] for c in checks
-                    if str(c.get("conclusion") or "").lower() in _FAILING_CONCLUSIONS
-                ]
+                failed_names = store_timeline.failing_check_names(checks)
                 if ci == "failure" and failed_names:
                     summary = f"CI failed: {', '.join(failed_names[:3])}"
                 elif ci == "failure":

@@ -165,7 +165,8 @@ export function WorktreeFeedbackTimeline({
     failingChecks.length > 0 ||
     unresolvedThreads.length > 0 ||
     events.length > 0 ||
-    isReadyToMerge
+    isReadyToMerge ||
+    isMerged
 
   if (!hasContent) {
     return (

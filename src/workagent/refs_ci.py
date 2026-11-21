@@ -106,29 +106,32 @@ def _ci_glab_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]
         return "not_started", "", []  # skipped, manual, unknown
     ordered = sorted(data, key=lambda p: p.get("id", 0),
                      reverse=True)[:_CI_PIPELINE_SCAN]
+    newest_id = newest.get("id")
+    newest_checks: list[dict] = []
     for pipeline in ordered:
         jobs = _pipeline_jobs(path, pipeline.get("id"), host, cwd, pr_url)
         if not jobs:
             continue
-        p_sha = str(pipeline.get("sha") or newest.get("sha") or "")
-        checks = [
-            {
-                "name": str(j.get("name") or f"job-{j.get('id') or idx + 1}").strip(),
-                "commit_sha": str((j.get("commit") or {}).get("id") or p_sha),
-                "status": str(j.get("status") or "").lower(),
-                "conclusion": _glab_state(str(j.get("status") or "").lower()),
-                "url": str(j.get("web_url") or ""),
-                "log_tail": "",
-            }
-            for idx, j in enumerate(jobs)
-            if isinstance(j, dict)
-        ]
+        if pipeline.get("id") == newest_id:
+            p_sha = str(pipeline.get("sha") or newest.get("sha") or "")
+            newest_checks = [
+                {
+                    "name": str(j.get("name") or f"job-{j.get('id') or idx + 1}").strip(),
+                    "commit_sha": str((j.get("commit") or {}).get("id") or p_sha),
+                    "status": str(j.get("status") or "").lower(),
+                    "conclusion": _glab_state(str(j.get("status") or "").lower()),
+                    "url": str(j.get("web_url") or ""),
+                    "log_tail": "",
+                }
+                for idx, j in enumerate(jobs)
+                if isinstance(j, dict)
+            ]
         job = max(jobs, key=lambda j: j.get("id", 0))
         url = job.get("web_url") or ""
         if url:
-            return state, url, checks
+            return state, url, newest_checks
     # No job urls anywhere: the newest pipeline page beats a dead badge.
-    return state, newest.get("web_url") or "", []
+    return state, newest.get("web_url") or "", newest_checks
 
 
 def _ci_glab(pr_url: str, cwd: str | None) -> tuple[str, str]:

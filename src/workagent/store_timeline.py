@@ -7,6 +7,35 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
+FAILING_CONCLUSIONS: frozenset[str] = frozenset(
+    {
+        "failure",
+        "failed",
+        "timed_out",
+        "action_required",
+        "startup_failure",
+        "cancelled",
+        "canceled",
+    }
+)
+
+
+def is_failing_check(check: dict[str, Any]) -> bool:
+    """Return True when a normalized PR check represents a failure."""
+    return (
+        str(check.get("conclusion") or "").lower() in FAILING_CONCLUSIONS
+        or str(check.get("status") or "").lower() == "failed"
+    )
+
+
+def failing_check_names(checks: Sequence[dict[str, Any]]) -> list[str]:
+    """Return names of failing checks from a sequence of normalized check dicts."""
+    return [
+        str(c["name"])
+        for c in checks
+        if is_failing_check(c) and c.get("name")
+    ]
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
