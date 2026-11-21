@@ -34,7 +34,7 @@ from .errors import HarnessError, run_cmd
 from .release_util import validate_unique_repo_names
 
 #: Run modes shared with the rest of the CLI (preview prints, never executes).
-RUN_MODES = ("preview", "headless", "terminal")
+RUN_MODES = ("preview", "headless", "acp", "terminal")
 #: Tail of the failing job log injected into the CI prompt (chars).
 CI_LOG_CHARS = 4000
 
@@ -290,7 +290,9 @@ def run_fix_default(name: str, *, action: str, run_mode: str = "preview",
                     extra_prompt: Optional[str] = None, yes: bool = False,
                     dry_run: bool = False, json_output: bool = False,
                     env_file: Optional[str] = None,
-                    harness: Optional[str] = None) -> None:
+                    harness: Optional[str] = None,
+                    acp: bool = False, model: Optional[str] = None,
+                    effort: Optional[str] = None) -> None:
     """Execute (or preview) the fix-default plan for one repo."""
     if run_mode not in RUN_MODES:
         _fail(f"bad --run-mode {run_mode!r}: use "
@@ -329,10 +331,13 @@ def run_fix_default(name: str, *, action: str, run_mode: str = "preview",
     prompt = append_extra_prompt("\n\n".join(prompts), extra_prompt)
     result["harness_prompt"] = prompt
     harness_name = harness or store.default_harness()
+    eff_mode = "acp" if acp else run_mode
     _run_harness(harness_name, prompt, ctx["path"], ctx["path"],
-                 run_mode in ("headless", "terminal"),
-                 run_mode == "headless", result, json_output,
-                 terminal=run_mode == "terminal", env_file=env_file)
+                 eff_mode in ("headless", "acp"),
+                 eff_mode == "headless", result, json_output,
+                 terminal=(eff_mode == "terminal"), env_file=env_file,
+                 acp=(eff_mode == "acp"), run_mode=eff_mode,
+                 model=model, effort=effort)
 
 
 def _find_or_open_mr(tool: str, path: str, default_branch: str,

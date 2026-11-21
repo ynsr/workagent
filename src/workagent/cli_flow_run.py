@@ -235,11 +235,11 @@ def flow_run(
                 "run_mode": run_mode, "model": model, "effort": effort}
     _cascade = {k: v for k, v in _cascade.items()
                 if v is not None and v is not False}
-    if run_mode == "acp":
-        _cascade["acp"] = True
     if _cascade:
         for s in merged_steps:
-            s.setdefault("config", {}).update(_cascade)
+            cfg = dict(s.get("config") or {})
+            cfg.update(_cascade)
+            s["config"] = _futil.normalize_config(cfg)
     # Fail fast on per-run overrides (before any flow row exists): banned
     # shortcut/cleanup flags rejected via the shared keys+values scanner.
     for step in merged_steps:
