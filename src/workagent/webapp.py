@@ -29,6 +29,7 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -161,7 +162,19 @@ def start_background_maintenance() -> "threading.Thread":
 
 def create_app(static_dir: Path, host: str, port: int,
                allowed_hosts: list[str]) -> FastAPI:
-    app = FastAPI(title="workagent", docs_url=None, redoc_url=None)
+    from .cdc import CdcHub
+
+    cdc_hub = CdcHub()
+
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):
+        cdc_hub.start()
+        try:
+            yield
+        finally:
+            cdc_hub.stop()
+
+    app = FastAPI(title="workagent", docs_url=None, redoc_url=None, lifespan=_lifespan)
     registry = Registry()
     try:
         from .web_runs import rehydrate as _rehydrate
@@ -592,6 +605,58 @@ def create_app(static_dir: Path, host: str, port: int,
         from . import repos as _repos
         return _repos.release_status(name, background=True)
 
+    @app.get("/api/events")
+    async def events_stream(request: Request, last_event_id: int | None = None):
+        """Global SSE invalidation stream backed by SQLite change_log (CDC)."""
+        header_id = request.headers.get("last-event-id")
+        replay_after: int | None = last_event_id
+        if replay_after is None and header_id:
+            try:
+                replay_after = int(header_id.strip())
+            except ValueError:
+                replay_after = None
+
+        loop = asyncio.get_running_loop()
+        q = cdc_hub.subscribe(loop)
+
+        async def _gen():
+            last_sent = (
+                replay_after
+                if replay_after is not None
+                else await asyncio.to_thread(cdc_hub.current_seq)
+            )
+            try:
+                if replay_after is not None:
+                    for ev in await asyncio.to_thread(cdc_hub.replay, replay_after):
+                        seq = int(ev["seq"])
+                        if seq <= last_sent:
+                            continue
+                        last_sent = seq
+                        yield f"id: {seq}\nevent: change\ndata: {json.dumps(ev)}\n\n"
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    try:
+                        ev = await asyncio.wait_for(q.get(), timeout=cdc_hub.heartbeat_interval)
+                    except asyncio.TimeoutError:
+                        yield ": heartbeat\n\n"
+                        continue
+                    if ev is None:
+                        break
+                    seq = int(ev["seq"])
+                    if seq <= last_sent:
+                        continue
+                    last_sent = seq
+                    yield f"id: {seq}\nevent: change\ndata: {json.dumps(ev)}\n\n"
+            finally:
+                cdc_hub.unsubscribe(loop, q)
+
+        return StreamingResponse(
+            _gen(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     register_runs_routes(app, registry)
 
     @app.exception_handler(ApiError)
@@ -616,6 +681,7 @@ def create_app(static_dir: Path, host: str, port: int,
         return FileResponse(index)
 
     app.state.registry = registry
+    app.state.cdc_hub = cdc_hub
     return app
 
 
@@ -640,6 +706,13 @@ def _shutdown_leave_detached_running(server: Any) -> None:
     # Killing them here defeated that: any `service restart`/reinstall
     # SIGTERM'd live flows mid-step (flow #47: exit -15 in fix_comments).
     # Explicit user cancel stays via POST /api/runs/{id}/cancel.
+    app = getattr(getattr(server, "config", None), "app", None)
+    hub = getattr(getattr(app, "state", None), "cdc_hub", None)
+    if hub is not None:
+        try:
+            hub.stop()
+        except Exception:
+            pass
     server.should_exit = True
 
 
