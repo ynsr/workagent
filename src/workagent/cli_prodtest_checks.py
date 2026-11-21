@@ -7,7 +7,7 @@ from typing import Optional
 
 from . import store, worktrees
 from .cli_core import _fail, eprint
-from .cli_harness import _run_harness, append_extra_prompt
+from .cli_harness import _run_harness, append_extra_prompt, is_exec_mode
 from .errors import HarnessError
 
 def _plan_stored_divergence(item: dict | None, plan_file: Path | None) -> str | None:
@@ -78,7 +78,7 @@ def _run_locked(store_key: str, entry: dict, plan_file: Path | None, release_sha
     else:
         eprint(f"warning: no repo checkout for {store_key}; skipping ephemeral checkout")
 
-    headless = bool(launch and no_tty)
+    headless = bool(is_exec_mode(launch, acp, run_mode) and no_tty and not terminal)
     if headless:
         try:
             store.upsert_prodtest(store_key, status="running",
@@ -295,12 +295,12 @@ def _run_validated(store_key: str, entry: dict, plan_file: Path | None, release_
                              acp=acp, run_mode=run_mode, model=model, effort=effort)
     except _HarnessTimeout as e:
         result["timeout"] = True
-        if launch and no_tty:
+        if is_exec_mode(launch, acp, run_mode) and no_tty and not terminal:
             _finish_run(store_key, entry, plan_file, release_sha, issue_url,
                         fix_mode, out_dir, timeout_s, result, timed_out=True)
         _fail(f"prodtest run timed out after {timeout_s}s (budget + gate + slack); "
               f"marked BLOCKED", 1)
-    if launch and no_tty:
+    if is_exec_mode(launch, acp, run_mode) and no_tty and not terminal:
         _finish_run(store_key, entry, plan_file, release_sha, issue_url,
                     fix_mode, out_dir, timeout_s, result)
 
@@ -319,7 +319,7 @@ def _run_harness_guarded(harness_name: str, prompt: str, worktree: str, fallback
     the ephemeral checkout stay held until the kill completes — the caller
     persists BLOCKED only after this raises.
     """
-    if not (launch and no_tty):
+    if not (is_exec_mode(launch, acp, run_mode) and no_tty and not terminal):
         _run_harness(harness_name, prompt, worktree, fallback_dir,
                      no_tty, launch, result, json_output,
                      run_key=run_key, session_file=session_file,

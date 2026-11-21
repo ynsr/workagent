@@ -26,7 +26,7 @@ from .cli_core import (
     app,
     eprint,
 )
-from .cli_harness import _guard_harness, _run_harness, append_extra_prompt
+from .cli_harness import _guard_harness, _run_harness, append_extra_prompt, is_exec_mode
 from .errors import HarnessError
 
 _COMP = _init_completions()
@@ -318,9 +318,32 @@ def _apply_fix_session(result: dict, review_key: str, fix_comments: bool,
         result["session_metadata"] = {"fixed_from_run_id": int(latest["id"])}
 
 
+def _child_argv(pr: str, fix: bool = False, harness: "str | None" = None,
+                post_comments: bool = False, acp: bool = False,
+                run_mode: "str | None" = None, model: "str | None" = None,
+                effort: "str | None" = None) -> list[str]:
+    """Child review argv for --all fan-out and then-fix chaining."""
+    argv = [sys.executable, "-m", "workagent", "review", pr, "--no-tty"]
+    if harness:
+        argv += ["--harness", harness]
+    if acp:
+        argv.append("--acp")
+    if run_mode:
+        argv += ["--run-mode", run_mode]
+    if model:
+        argv += ["--model", model]
+    if effort:
+        argv += ["--effort", effort]
+    if post_comments:
+        return argv + ["--post-comments"] + (["--fix"] if fix else [])
+    return argv
+
+
 def _chain_fix_command(review_key: str, pr_url: str, harness_name: str,
                        use_review_session: bool, env_file: str | None,
-                       extra_prompt: str | None) -> list[str]:
+                       extra_prompt: str | None, acp: bool = False,
+                       run_mode: "str | None" = None, model: "str | None" = None,
+                       effort: "str | None" = None) -> list[str]:
     """Headless follow-up argv for --then-fix-comments: a second review
     invocation in pure fix mode against the same ref. A fresh fix
     transcript is the default; --use-review-session continues the
@@ -333,12 +356,19 @@ def _chain_fix_command(review_key: str, pr_url: str, harness_name: str,
         argv.append("--use-review-session")
     if harness_name:
         argv += ["--harness", harness_name]
+    if acp:
+        argv.append("--acp")
+    if run_mode:
+        argv += ["--run-mode", run_mode]
+    if model:
+        argv += ["--model", model]
+    if effort:
+        argv += ["--effort", effort]
     if env_file:
         argv += ["--env-file", env_file]
     if extra_prompt:
         argv += ["--extra-prompt", extra_prompt]
     return argv
-
 
 def _print_then_fix_hint(pr_url: str, harness_name: str,
                          use_review_session: bool) -> None:
@@ -362,16 +392,18 @@ def _review_status(ref: str, fix_comments: bool,
 
 
 def _review_post_fix(ref: str, fix_comments: bool, launch: bool,
-                     terminal: bool, no_status: bool) -> None:
+                     terminal: bool, no_status: bool, acp: bool = False,
+                     run_mode: "str | None" = None) -> None:
     """Post status transition after a headless fix-comments run (best effort)."""
-    if no_status or not ref or not fix_comments or not launch or terminal:
+    if no_status or not ref or not fix_comments or not is_exec_mode(launch, acp, run_mode) or terminal:
         return
     from . import issue_status as _st
     _st.set_issue_status(ref, "ready to release", dry_run=False)
 
 
 def _review_verdict_settle(ref: str, pr_url: str, cwd: str, no_status: bool,
-                           fix_comments: bool, launch: bool, terminal: bool) -> None:
+                           fix_comments: bool, launch: bool, terminal: bool,
+                           acp: bool = False, run_mode: "str | None" = None) -> None:
     """Post-review verdict transition (best effort).
 
     Only for plain review runs (not --fix-comments) after headless success:
@@ -379,7 +411,7 @@ def _review_verdict_settle(ref: str, pr_url: str, cwd: str, no_status: bool,
     and only when the issue is currently in `code review`. Opt-out via
     --no-status; dry-run/preview/terminal never settle.
     """
-    if no_status or not ref or fix_comments or not launch or terminal:
+    if no_status or not ref or fix_comments or not is_exec_mode(launch, acp, run_mode) or terminal:
         return
     from . import issue_status as _st
     _st.settle_issue_post_review(ref, _st.pr_review_state(pr_url, cwd=cwd))
@@ -436,7 +468,9 @@ def _review_issue_ref(ref: str) -> str:
 def _run_then_fix(review_key: str, pr_url: str, harness_name: str,
                   use_review_session: bool, env_file: str | None,
                   extra_prompt: str | None, then_fix: bool,
-                  launch: bool, terminal: bool) -> None:
+                  launch: bool, terminal: bool, acp: bool = False,
+                  run_mode: "str | None" = None, model: "str | None" = None,
+                  effort: "str | None" = None) -> None:
     """--then-fix-comments dispatcher. No-op unless requested. Headless
     (--launch) chains the fix child in-process after review exit 0 (the
     review returning at all means success — failures raise before we get
@@ -444,11 +478,12 @@ def _run_then_fix(review_key: str, pr_url: str, harness_name: str,
     follow-up instead — they detach instantly with nothing to gate on."""
     if not then_fix:
         return
-    if not launch or terminal:
+    if not is_exec_mode(launch, acp, run_mode) or terminal:
         _print_then_fix_hint(pr_url, harness_name, use_review_session)
         return
     argv = _chain_fix_command(review_key, pr_url, harness_name,
-                              use_review_session, env_file, extra_prompt)
+                              use_review_session, env_file, extra_prompt,
+                              acp=acp, run_mode=run_mode, model=model, effort=effort)
     eprint(f"then-fix: review done, chaining: {' '.join(shlex.quote(a) for a in argv)}")
     proc = subprocess.run(argv)
     if proc.returncode != 0:
@@ -582,28 +617,31 @@ def review(
             eprint("nothing to review")
             return
 
-        def _child_argv(pr: str) -> list[str]:
-            argv = [sys.executable, "-m", "workagent", "review", pr, "--no-tty"]
+        def _all_child_argv(pr: str) -> list[str]:
+            argv = _child_argv(pr, fix=fix, harness=harness,
+                               post_comments=(not fix_comments),
+                               acp=acp, run_mode=run_mode,
+                               model=model, effort=effort)
+            # --all children always need these flags, independent of the
+            # module-level _child_argv contract used by the unit test.
             if env_file:
                 argv += ["--env-file", env_file]
             if no_status:
                 argv += ["--no-status"]
-            if harness:
-                argv += ["--harness", harness]
             if fix_comments:
                 return argv + ["--fix-comments"]
-            return argv + ["--post-comments"] + (["--fix"] if fix else [])
+            return argv
 
 
         def _child_cmd(pr: str) -> str:
-            return " ".join(shlex.quote(a) for a in _child_argv(pr))
+            return " ".join(shlex.quote(a) for a in _all_child_argv(pr))
 
         def _spawn(key: str, pr: str):
             repo = store.load_links().get(key, {}).get("repo", "")
             cwd = repo if repo and Path(repo).is_dir() else os.getcwd()
             # Child stdout/stderr inherit ours; the --post-comments child
             # appends the auto-comment segment to its review prompt.
-            return subprocess.Popen(_child_argv(pr), cwd=cwd)
+            return subprocess.Popen(_all_child_argv(pr), cwd=cwd)
 
         if dry_run:
             rows = [{"key": k, "pr_url": pr, "command": _child_cmd(pr)}
@@ -613,7 +651,7 @@ def review(
                         title="Review plan (dry-run)",
                         empty="nothing to review")
             return
-        if not launch:
+        if not is_exec_mode(launch, acp, run_mode):
             rows = [{"key": k, "pr_url": pr, "command": _child_cmd(pr),
                      "exit_code": ""} for k, pr in reviewable]
             _print_rows(rows, json_output, csv_output=False,
@@ -623,7 +661,7 @@ def review(
             h_name = harness or store.default_harness()
             for k, pr in reviewable:
                 _h.record_headless_attempt(
-                    k, "review", _child_argv(pr),
+                    k, "review", _all_child_argv(pr),
                     f"harness command: {_child_cmd(pr)}",
                     exit_code=0, harness_name=h_name,
                     fix_comments=fix_comments,
@@ -763,7 +801,7 @@ def review(
                 # below is unreachable. Print the manual follow-up up front
                 # (same text as the post-run hint) so the run log carries it.
                 _print_then_fix_hint(pr_url, harness_name, use_review_session)
-            if launch:
+            if is_exec_mode(launch, acp, run_mode):
                 # Same staleness rule as sync: review a pulled tip, never a
                 # stale local. Fast-forward/merge origin/<branch> first; a
                 # pull conflict aborts loudly (exit 1) instead of launching
@@ -788,15 +826,18 @@ def review(
                              terminal=terminal, env_file=env_file,
                              acp=acp, run_mode=run_mode, model=model, effort=effort)
             except HarnessError:
-                if launch:
+                if is_exec_mode(launch, acp, run_mode):
                     _clear_reviewed(review_key)
                 raise
-            _review_post_fix(_post_status, fix_comments, launch, terminal, no_status)
+            _review_post_fix(_post_status, fix_comments, launch, terminal, no_status,
+                             acp=acp, run_mode=run_mode)
             _review_verdict_settle(_post_status, pr_url, str(repo_dir), no_status,
-                                  fix_comments, launch, terminal)
+                                  fix_comments, launch, terminal,
+                                  acp=acp, run_mode=run_mode)
             _run_then_fix(review_key, pr_url, harness_name, use_review_session,
                           env_file, extra_prompt, then_fix_comments,
-                          launch, terminal)
+                          launch, terminal, acp=acp, run_mode=run_mode,
+                          model=model, effort=effort)
             return
     if not head_ref:
         _fail(f"could not determine the MR head branch for {pr_url}.\n"
@@ -824,7 +865,7 @@ def review(
     eprint(f"worktree: {worktree}  branch: {branch}")
     if then_fix_comments and not fix_comments and not no_tty and not terminal:
         _print_then_fix_hint(pr_url, harness_name, use_review_session)
-    if launch:
+    if is_exec_mode(launch, acp, run_mode):
         _guard_harness(review_key, worktree)
         _mark_reviewed(review_key, worktree)
     _apply_fix_session(result, review_key, fix_comments, use_review_session, session_file)
@@ -838,14 +879,17 @@ def review(
                      env_file=env_file,
                      acp=acp, run_mode=run_mode, model=model, effort=effort)
     except HarnessError:
-        if launch:
+        if is_exec_mode(launch, acp, run_mode):
             _clear_reviewed(review_key)
         raise
-    _review_post_fix(_post_ref, fix_comments, launch, terminal, no_status)
+    _review_post_fix(_post_ref, fix_comments, launch, terminal, no_status,
+                     acp=acp, run_mode=run_mode)
     _review_verdict_settle(_post_ref, pr_url, str(repo_dir), no_status,
-                           fix_comments, launch, terminal)
+                           fix_comments, launch, terminal,
+                           acp=acp, run_mode=run_mode)
     _run_then_fix(review_key, pr_url, harness_name, use_review_session,
                   env_file, extra_prompt, then_fix_comments,
-                  launch, terminal)
+                  launch, terminal, acp=acp, run_mode=run_mode,
+                  model=model, effort=effort)
 
 

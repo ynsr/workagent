@@ -405,3 +405,40 @@ def test_run_harness_acp_tty_runs_launch_acp_interactively(tmp_path, isolated_co
     assert calls["kw"]["no_tty"] is False
     assert calls["kw"]["input_stream"] is sys.stdin
     assert backend.VERDICT_SUFFIX.strip() not in calls["prompt"]
+
+
+def test_cli_action_resolve_mode_accepts_acp():
+    from workagent.cli_action import _resolve_mode
+    assert _resolve_mode({}, launch=False, terminal=False, acp=True) == "acp"
+    assert _resolve_mode({"default_options": {"run_mode": "acp"}}, launch=False, terminal=False) == "acp"
+    assert _resolve_mode({}, launch=False, terminal=False, run_mode="acp") == "acp"
+
+
+def test_cli_adhoc_acp_does_not_collide_with_launch(tmp_path, isolated_config, monkeypatch):
+    from workagent import cli_adhoc, store, worktrees
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    monkeypatch.setattr(store, "load_links", lambda: {"k": {"worktree": str(wt), "repo": str(wt), "active": 1}})
+    monkeypatch.setattr(worktrees, "resolve_any", lambda ref, links: ("k", links["k"], None))
+    monkeypatch.setattr(worktrees, "is_valid_worktree", lambda p: True)
+    seen = {}
+    monkeypatch.setattr(cli_adhoc, "_guard_harness", lambda *a, **kw: None)
+    monkeypatch.setattr(cli_adhoc, "_run_harness", lambda *a, **kw: seen.update({"args": a, "kw": kw}))
+    cli_adhoc.adhoc.__wrapped__(["k"], prompt="hello", launch=False, terminal=False,
+                                harness="omp", acp=True, run_mode=None, model="m1", effort="high",
+                                extra_prompt=None, env_file=None, session_file=None,
+                                dry_run=False, yes=True, json_output=True)
+    # positional arg index 5 is `launch` — must be False when acp=True
+    assert seen["args"][5] is False
+    assert seen["kw"]["acp"] is True
+    assert seen["kw"]["model"] == "m1"
+
+
+def test_cli_review_child_argv_forwards_acp_model_effort():
+    from workagent import cli_review
+    argv = cli_review._child_argv("github:o/r#1", fix=False, harness="omp",
+                                  post_comments=False, acp=True, run_mode="acp",
+                                  model="m1", effort="high")
+    assert "--acp" in argv
+    assert "--model" in argv and "m1" in argv
+    assert "--effort" in argv and "high" in argv
