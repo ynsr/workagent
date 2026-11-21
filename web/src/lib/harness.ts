@@ -189,3 +189,156 @@ export function parseAcpBlocks(lines: { seq: number; text: string }[]): AcpBlock
   }
   return out
 }
+
+export interface ActivityRunCounts {
+  reads: number
+  searches: number
+  commands: number
+  edits: number
+}
+
+export interface ActivityRunGroup {
+  kind: "activity_run"
+  id: string
+  counts: ActivityRunCounts
+  calls: AcpBlock[]
+  failedCalls: AcpBlock[]
+}
+
+export type AcpTranscriptItem = AcpBlock | ActivityRunGroup
+
+const FAILED_TOOL_STATUSES = new Set(["failed", "error", "errored", "cancelled", "canceled", "timeout"])
+
+export function isFailedToolCall(block: AcpBlock): boolean {
+  if (block.kind !== "tool_call") return false
+  return FAILED_TOOL_STATUSES.has((block.status ?? "").trim().toLowerCase())
+}
+
+const READ_NAMES = new Set(["read", "read_file", "view_file", "cat"])
+const SEARCH_NAMES = new Set(["search", "grep", "grep_search", "find", "find_by_name", "glob", "ripgrep", "rg", "list_dir"])
+const EXEC_NAMES = new Set(["execute", "bash", "run_command", "shell"])
+const EDIT_NAMES = new Set(["edit", "write", "edit_file", "write_file", "replace_file_content", "multi_replace_file_content"])
+
+const MUTATING_CMD_RE =
+  /(?:^|[;&|]\s*)(?:rm|mv|cp|mkdir|rmdir|touch|chmod|chown|git\s+(?:commit|push|add|reset|checkout|rebase|merge|cherry-pick|stash|apply)|npm\s+(?:install|i|ci|uninstall)|pip\s+install|uv\s+(?:add|remove|sync)|sed\s+-i|tee\b)/i
+const REDIRECT_CMD_RE = /[^0-9]>>?\s*[^\s&]/
+
+function isMutatingCommand(cmd: string): boolean {
+  if (MUTATING_CMD_RE.test(cmd)) return true
+  const unquoted = cmd.replace(/'[^']*'|"[^"]*"/g, '""')
+  return REDIRECT_CMD_RE.test(unquoted)
+}
+
+function extractCommandString(args: unknown): string {
+  if (typeof args === "string") return args
+  if (typeof args === "object" && args !== null) {
+    const rec = args as Record<string, unknown>
+    for (const k of ["command", "cmd", "CommandLine", "script"]) {
+      if (typeof rec[k] === "string") return rec[k] as string
+    }
+  }
+  return ""
+}
+
+type ExploratoryCategory = "reads" | "searches" | "commands" | null
+
+function classifyExploratoryTool(block: AcpBlock): ExploratoryCategory {
+  if (block.kind !== "tool_call") return null
+  const kind = (block.toolKind ?? "").trim().toLowerCase()
+  const name = (block.name ?? "").trim().toLowerCase()
+  if (kind === "edit" || kind === "write" || EDIT_NAMES.has(name)) return null
+  if (kind === "read" || READ_NAMES.has(name)) return "reads"
+  if (kind === "search" || SEARCH_NAMES.has(name)) return "searches"
+  if (kind === "execute" || kind === "bash" || EXEC_NAMES.has(name)) {
+    const cmd = extractCommandString(block.args)
+    if (cmd && isMutatingCommand(cmd)) return null
+    return "commands"
+  }
+  return null
+}
+
+/** Cluster 3+ consecutive exploratory tool_call blocks (read, search,
+ * non-mutating execute/bash) into a composite activity_run group. */
+export function groupActivityRuns(blocks: AcpBlock[]): AcpTranscriptItem[] {
+  const out: AcpTranscriptItem[] = []
+  let buf: { block: AcpBlock; cat: Exclude<ExploratoryCategory, null>; startIdx: number }[] = []
+
+  const flush = () => {
+    if (buf.length === 0) return
+    if (buf.length >= 3) {
+      const counts: ActivityRunCounts = { reads: 0, searches: 0, commands: 0, edits: 0 }
+      const calls: AcpBlock[] = []
+      const failedCalls: AcpBlock[] = []
+      for (const entry of buf) {
+        counts[entry.cat] += 1
+        calls.push(entry.block)
+        if (isFailedToolCall(entry.block)) failedCalls.push(entry.block)
+      }
+      const first = buf[0]!
+      out.push({
+        kind: "activity_run",
+        id: `activity-${first.block.id ?? first.startIdx}`,
+        counts,
+        calls,
+        failedCalls,
+      })
+    } else {
+      for (const entry of buf) out.push(entry.block)
+    }
+    buf = []
+  }
+
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i]!
+    const cat = classifyExploratoryTool(block)
+    if (cat) {
+      buf.push({ block, cat, startIdx: i })
+    } else {
+      flush()
+      out.push(block)
+    }
+  }
+  flush()
+  return out
+}
+
+export function formatActivityRunSummary(counts: ActivityRunCounts): string {
+  const parts: string[] = []
+  if (counts.reads > 0) parts.push(`${counts.reads} ${counts.reads === 1 ? "file" : "files"}`)
+  if (counts.searches > 0) parts.push(`${counts.searches} ${counts.searches === 1 ? "search" : "searches"}`)
+  if (counts.commands > 0) parts.push(`${counts.commands} ${counts.commands === 1 ? "command" : "commands"}`)
+  if (counts.edits > 0) parts.push(`${counts.edits} ${counts.edits === 1 ? "edit" : "edits"}`)
+  return parts.length > 0 ? `Explored ${parts.join(", ")}` : "Explored activity"
+}
+
+export function extractModelEffort(args?: string[]): { model?: string; effort?: string } {
+  if (!args || args.length === 0) return {}
+  let model: string | undefined
+  let effort: string | undefined
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? ""
+    if (a === "--model" && i + 1 < args.length) {
+      model = (args[++i] ?? "").trim() || undefined
+    } else if (a.startsWith("--model=")) {
+      model = a.slice("--model=".length).trim() || undefined
+    } else if (a === "--effort" && i + 1 < args.length) {
+      effort = (args[++i] ?? "").trim() || undefined
+    } else if (a.startsWith("--effort=")) {
+      effort = a.slice("--effort=".length).trim() || undefined
+    }
+  }
+  return { model, effort }
+}
+
+export function formatTurnDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return ""
+  const total = Math.round(seconds)
+  if (total < 1) return "<1s"
+  if (total < 60) return `${total}s`
+  const mins = Math.floor(total / 60)
+  const remSec = total % 60
+  if (mins < 60) return remSec > 0 ? `${mins}m ${remSec}s` : `${mins}m`
+  const hours = Math.floor(mins / 60)
+  const remMin = mins % 60
+  return remMin > 0 ? `${hours}h ${remMin}m` : `${hours}h`
+}

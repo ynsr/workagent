@@ -21,6 +21,8 @@ import { ReviewsCell } from "@/components/StatusCells"
 import { ActionsMenu } from "@/components/ActionsMenu"
 import { HarnessSelect } from "@/components/HarnessSelect"
 import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { WorkspaceDiffView } from "@/components/WorkspaceDiffView"
+import { ProdtestPlanViewer } from "@/components/ProdtestPlanViewer"
 import { copyToClipboard } from "@/lib/format"
 import { errorText } from "@/components/StatusFeedback"
 /** Editable subset rendered in edit mode; strings are trimmed by the caller. */
@@ -80,6 +82,8 @@ export function WorktreeDetail({
   const [terminalModel, setTerminalModel] = useState("")
   const [terminalEffort, setTerminalEffort] = useState("")
   const [pendingMode, setPendingMode] = useState<"harness" | "prodtest" | null>(null)
+  const [viewTab, setViewTab] = useState<"overview" | "diff" | "prodtest">("overview")
+  const prodtestIssueKey = entry.prodtest_detail?.issue_key ?? null
   const launchTerminal = useMutation({
     mutationFn: async (mmode: "harness" | "prodtest") => {
       const res = await fetch(`/api/worktrees/${encodeURIComponent(worktreeKey ?? "")}/terminal`, {
@@ -174,11 +178,52 @@ export function WorktreeDetail({
   return (
     <Card>
       <CardHeader className="min-w-0 overflow-hidden">
-        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+        <div className="flex min-w-0 items-center justify-between gap-2 overflow-hidden">
           <CardTitle className="min-w-0 flex-1 truncate overflow-hidden font-mono text-[13px]" title={entry.branch ?? undefined}>{entry.branch ?? "—"}</CardTitle>
+          {worktreeKey ? (
+            <div className="flex shrink-0 items-center gap-1" role="tablist" aria-label="Worktree inspector">
+              <Button
+                type="button"
+                role="tab"
+                aria-selected={viewTab === "overview"}
+                size="sm"
+                variant={viewTab === "overview" ? "default" : "ghost"}
+                onClick={() => setViewTab("overview")}
+              >
+                Overview
+              </Button>
+              <Button
+                type="button"
+                role="tab"
+                aria-selected={viewTab === "diff"}
+                size="sm"
+                variant={viewTab === "diff" ? "default" : "ghost"}
+                onClick={() => setViewTab("diff")}
+              >
+                Diff
+              </Button>
+              {prodtestIssueKey ? (
+                <Button
+                  type="button"
+                  role="tab"
+                  aria-selected={viewTab === "prodtest"}
+                  size="sm"
+                  variant={viewTab === "prodtest" ? "default" : "ghost"}
+                  onClick={() => setViewTab("prodtest")}
+                >
+                  Prodtest
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </CardHeader>
       <CardContent>
+        {viewTab === "diff" && worktreeKey ? (
+          <WorkspaceDiffView worktreeRef={worktreeKey} />
+        ) : viewTab === "prodtest" && prodtestIssueKey ? (
+          <ProdtestPlanViewer issueKey={prodtestIssueKey} />
+        ) : (
         <dl className="space-y-1.5 text-sm">
           <div className="flex items-baseline gap-2">
             <dt className="w-16 shrink-0 text-xs text-muted-foreground">Branch</dt>
@@ -250,6 +295,7 @@ export function WorktreeDetail({
             </div>
           ) : null}
         </dl>
+        )}
       </CardContent>
       <CardFooter className="flex flex-wrap items-center gap-2">
         {worktreeKey && onOpenWorktree ? (

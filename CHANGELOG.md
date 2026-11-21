@@ -603,6 +603,8 @@
 - Prodtests table shows what each status means on hover, Prodtest Launch explains its buttons and offers worktrees in the ref field, and Run-all moved to the Prodtests page [97]
 - Agy (agy-guard) terminals launched by Workagent show colors again, like OMP [120]
 - Hide raw API subtitles unless Verbose is on, compact Prodtests/FlowTemplates/Actions tables, and add screen-reader and reduced-motion polish [137]
+- Fold exploratory tool calls into ActivityRun bars, extract failed calls unfolded, and add settled turn headers in ACP transcripts [142]
+- Add in-app Git diff viewer with inline line annotations, prodtest YAML plan viewer, and read-only diff/plan API endpoints [145]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config
