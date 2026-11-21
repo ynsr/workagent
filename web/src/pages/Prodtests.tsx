@@ -26,6 +26,7 @@ import {
 import { copyToClipboard, downloadText, relativeDate, toCsv } from "@/lib/format"
 import { useCreateRun, useProdtests } from "@/lib/queries"
 import { useConfirm } from "@/lib/confirm"
+import { getVerbose } from "@/lib/settings"
 import { toast } from "sonner"
 import type { ProdtestRow } from "@/lib/api"
 
@@ -35,6 +36,12 @@ export interface ProdtestFilters {
 }
 
 export const EMPTY_PRODTEST_FILTERS: ProdtestFilters = { q: "", status: "" }
+
+/** Pure helper (unit-tested): extract filename from a full plan path. */
+export function planBasename(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] ?? path
+}
 
 /** Pure helper (unit-tested): case-insensitive substring match over issue/plan/worktree + exact status. */
 export function filterProdtests(rows: ProdtestRow[], f: ProdtestFilters): ProdtestRow[] {
@@ -228,7 +235,9 @@ export function Prodtests() {
       <Card>
         <CardHeader>
           <CardTitle>Prodtests</CardTitle>
-          <CardDescription>GET /api/prodtests{issueParam ? `?issue=${issueParam} (filtered)` : ""}</CardDescription>
+          {getVerbose() ? (
+            <CardDescription>GET /api/prodtests{issueParam ? `?issue=${issueParam} (filtered)` : ""}</CardDescription>
+          ) : null}
         </CardHeader>
         <CardContent>
           {isFetching && data ? <RefreshOverlay /> : null}
@@ -273,7 +282,33 @@ export function Prodtests() {
                       </Badge>
                     </TableCell>
                     <TableCell className="font-mono text-[13px]">
-                      {r.plan_path ? `${r.plan_path}${r.plan_revision ? ` · rev${r.plan_revision}` : ""}${r.plan_risk ? ` · ${r.plan_risk}` : ""}` : "—"}
+                      {r.plan_path ? (
+                        <div className="inline-flex max-w-full items-center gap-1">
+                          <Badge
+                            variant="secondary"
+                            className="max-w-[240px] truncate font-mono text-xs font-normal"
+                            title={r.plan_path}
+                          >
+                            {planBasename(r.plan_path)}
+                            {r.plan_revision ? ` · rev${r.plan_revision}` : ""}
+                            {r.plan_risk ? ` · ${r.plan_risk}` : ""}
+                          </Badge>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="size-6 shrink-0 p-0"
+                            title={`Copy full path: ${r.plan_path}`}
+                            aria-label={`Copy plan path for ${r.issue_key}`}
+                            onClick={() =>
+                              copyToClipboard(r.plan_path!)
+                                .then(() => toast.success("Plan path copied"))
+                                .catch((err) => toast.error(errorText(err)))
+                            }
+                          >
+                            <Copy className="size-3" aria-hidden />
+                          </Button>
+                        </div>
+                      ) : "—"}
                     </TableCell>
                     <TableCell className="font-mono text-[13px]" title={r.release_sha ?? ""}>
                       {r.release_sha ? (r.release_sha.length > 12 ? r.release_sha.slice(0, 12) : r.release_sha) : "—"}

@@ -599,6 +599,7 @@
 - Start with an already-linked worktree accepts a registered --repo name pointing at the same path instead of failing [95]
 - Prodtests table shows what each status means on hover, Prodtest Launch explains its buttons and offers worktrees in the ref field, and Run-all moved to the Prodtests page [97]
 - Agy (agy-guard) terminals launched by Workagent show colors again, like OMP [120]
+- Hide raw API subtitles unless Verbose is on, compact Prodtests/FlowTemplates/Actions tables, and add screen-reader and reduced-motion polish [137]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config
