@@ -5,6 +5,7 @@ export type Theme = "light" | "dark" | "system"
 export const THEME_KEY = "theme"
 export const VERBOSE_KEY = "workagent.verbose"
 export const SHOW_WORKTREE_KEY = "workagent.showWorktree"
+export const DASHBOARD_VIEW_KEY = "workagent.dashboardView"
 export const OPTOUT_KEY = "workagent.confirm.optout"
 export const ISSUES_FILTER_KEY = "workagent.issuesFilter"
 
@@ -102,6 +103,26 @@ export function getShowWorktree(): boolean {
 export function setShowWorktree(value: boolean): void {
   try {
     localStorage.setItem(SHOW_WORKTREE_KEY, value ? "1" : "0")
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+export type DashboardView = "board" | "table"
+
+export function getDashboardView(): DashboardView {
+  try {
+    const raw = localStorage.getItem(DASHBOARD_VIEW_KEY)
+    if (raw === "board" || raw === "table") return raw
+  } catch {
+    /* storage unavailable */
+  }
+  return "table"
+}
+
+export function setDashboardView(view: DashboardView): void {
+  try {
+    localStorage.setItem(DASHBOARD_VIEW_KEY, view)
   } catch {
     /* storage unavailable */
   }

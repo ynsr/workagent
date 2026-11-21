@@ -4,11 +4,13 @@ import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   FolderGit2,
+  Kanban,
   Plus,
   RefreshCw,
   Rocket,
   SearchX,
   SquareTerminal,
+  Table2,
 } from "lucide-react"
 import { CandidatesCard } from "@/components/CandidatesCard"
 import { LaunchDrawer } from "@/components/LaunchDrawer"
@@ -24,7 +26,9 @@ import { DeactivatedTable } from "@/components/DeactivatedTable"
 import { DeletedTable } from "@/components/DeletedTable"
 import { PageHeader } from "@/components/PageHeader"
 import { StatusTable } from "@/components/StatusTable"
+import { WorktreeBoard } from "@/components/WorktreeBoard"
 import { WorktreeFilterForm } from "@/components/WorktreeFilterForm"
+import { useListHotkeys } from "@/hooks/useHotkeys"
 import type { IssueFilter, PrStatusFilter, WorktreeFilterState } from "@/lib/worktreeFilter"
 import {
   EmptyState,
@@ -41,7 +45,13 @@ import { useConfirm } from "@/lib/confirm"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
 import { queryKeys, useCreateRun, useFlows, useInfo, useRepos, useStatusAll, useStatusDeleted, useStatusInactive, useStopTerminal } from "@/lib/queries"
 import { useRepoTabs } from "@/lib/useRepoTabs"
-import { getShowWorktree, setShowWorktree as persistShowWorktree } from "@/lib/settings"
+import {
+  type DashboardView,
+  getDashboardView,
+  getShowWorktree,
+  setDashboardView as persistDashboardView,
+  setShowWorktree as persistShowWorktree,
+} from "@/lib/settings"
 
 const CSV_HEADERS = [
   "key",
@@ -194,6 +204,14 @@ export function Dashboard({ initialLaunchOpen = false }: { initialLaunchOpen?: b
   function setShowWorktree(value: boolean): void {
     setShowWorktreeState(value)
     persistShowWorktree(value)
+  }
+  const [viewMode, setViewModeState] = useState<DashboardView>(getDashboardView)
+  function setViewMode(next: DashboardView): void {
+    setViewModeState(next)
+    persistDashboardView(next)
+    if (next === "board") {
+      setSelected(new Set())
+    }
   }
   const [refreshingPr, setRefreshingPr] = useState(false)
   const [cleanupTarget, setCleanupTarget] = useState<string | null>(null)
@@ -741,6 +759,15 @@ export function Dashboard({ initialLaunchOpen = false }: { initialLaunchOpen?: b
     onOpenFlows: (key: string) =>
       navigate("/flows?worktree=" + encodeURIComponent(key)),
   }
+  const [visibleKeys, setVisibleKeys] = useState<string[]>([])
+  const { activeItem: focusedKey } = useListHotkeys({
+    items: visibleKeys,
+    onOpen: (key) => handleOpenWorktree(key),
+    onSync: (key) => tableActions.onSync?.(key),
+    onReview: (key) => tableActions.onReview?.(key),
+    onCleanup: (key) => tableActions.onCleanup?.(key),
+    onFocusSearch: () => document.getElementById("dashboard-q")?.focus(),
+  })
   const invalidCount = worktrees
     ? Object.values(worktrees).filter((e) => e.wt_valid === false).length
     : 0
@@ -792,6 +819,40 @@ export function Dashboard({ initialLaunchOpen = false }: { initialLaunchOpen?: b
                 {scopeKeys.length > 0 ? `Close released (${scopeKeys.length})` : "Close released"}
               </Button>
             </span>
+            <div
+              role="group"
+              aria-label="Dashboard view"
+              className="inline-flex items-center rounded-md border bg-muted/40 p-0.5"
+            >
+              <button
+                type="button"
+                aria-pressed={viewMode === "board"}
+                onClick={() => setViewMode("board")}
+                className={[
+                  "inline-flex min-h-8 items-center gap-1.5 rounded-sm px-2.5 text-xs font-medium transition-colors",
+                  viewMode === "board"
+                    ? "bg-background text-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground",
+                ].join(" ")}
+              >
+                <Kanban className="size-3.5" aria-hidden />
+                Board
+              </button>
+              <button
+                type="button"
+                aria-pressed={viewMode === "table"}
+                onClick={() => setViewMode("table")}
+                className={[
+                  "inline-flex min-h-8 items-center gap-1.5 rounded-sm px-2.5 text-xs font-medium transition-colors",
+                  viewMode === "table"
+                    ? "bg-background text-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground",
+                ].join(" ")}
+              >
+                <Table2 className="size-3.5" aria-hidden />
+                Table
+              </button>
+            </div>
             <label className="flex min-h-9 items-center gap-2 rounded-md border px-3 text-sm">
               <Switch
                 checked={showWorktree}
@@ -865,15 +926,38 @@ export function Dashboard({ initialLaunchOpen = false }: { initialLaunchOpen?: b
             worktrees={{ ...(worktrees ?? {}), ...(inactiveAll ?? {}), ...(deletedAll ?? {}) }}
             idPrefix="dashboard"
           />
-          <StatusTable
-            worktrees={worktrees}
-            actions={tableActions}
-            showWorktree={showWorktree}
-            networkExposed={info?.network_exposed ?? false}
-            repoTabs={repos ? { ...repoTabs, repos } : undefined}
-            selection={{ selected, onSelectionChange: setSelected }}
-            embed={{ externalFilter: sharedFilter, onExternalFilterChange: setSharedFilter, filterParam: null, hideFilter: true }}
-          />
+          {viewMode === "board" ? (
+            <WorktreeBoard
+              worktrees={worktrees}
+              actions={tableActions}
+              filter={sharedFilter}
+              repoTabs={repos ? { ...repoTabs, repos } : undefined}
+            />
+          ) : (
+            <>
+              <div className="md:hidden">
+                <WorktreeBoard
+                  worktrees={worktrees}
+                  actions={tableActions}
+                  filter={sharedFilter}
+                  repoTabs={repos ? { ...repoTabs, repos } : undefined}
+                  stacked
+                />
+              </div>
+              <div className="hidden md:block">
+                <StatusTable
+                  worktrees={worktrees}
+                  actions={tableActions}
+                  showWorktree={showWorktree}
+                  networkExposed={info?.network_exposed ?? false}
+                  repoTabs={repos ? { ...repoTabs, repos } : undefined}
+                  selection={{ selected, onSelectionChange: setSelected, onVisibleKeys: setVisibleKeys }}
+                  embed={{ externalFilter: sharedFilter, onExternalFilterChange: setSharedFilter, filterParam: null, hideFilter: true }}
+                  focusedKey={focusedKey}
+                />
+              </div>
+            </>
+          )}
         </div>
       )}
       <DeactivatedTable

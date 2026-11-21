@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
+import { useListHotkeys } from "@/hooks/useHotkeys"
 import { ChevronDown, ChevronRight, Copy, Download, MessageSquare, Plus } from "lucide-react"
 import { LaunchDrawer } from "@/components/LaunchDrawer"
 import { MessageLaunch } from "@/pages/MessageLaunch"
@@ -29,6 +30,7 @@ import {
 import { copyToClipboard, downloadText, relativeDate, toCsv } from "@/lib/format"
 import { useCreateRun, useMessages, useRepos } from "@/lib/queries"
 import { useConfirm } from "@/lib/confirm"
+import { getVerbose } from "@/lib/settings"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { toast } from "sonner"
@@ -88,6 +90,11 @@ export function Messages({ initialLaunchOpen = false }: { initialLaunchOpen?: bo
   const rows: MessageRow[] = data?.messages ?? []
   const filters: MessageFilters = { q, sender, app, repo, thread: threadParam }
   const visible = useMemo(() => filterMessages(rows, filters), [rows, q, sender, app, repo, threadParam])
+  const { activeItem: focusedMessage } = useListHotkeys({
+    items: visible,
+    onOpen: (row) => setExpanded((cur) => (cur === row.id ? null : row.id)),
+    onFocusSearch: () => document.getElementById("msg-q")?.focus(),
+  })
 
   const senders = useMemo(() => [...new Set(rows.map((r) => r.sender_username).filter(Boolean))].sort(), [rows])
   const groups = useMemo(() => groupByThread(visible), [visible])
@@ -187,7 +194,9 @@ export function Messages({ initialLaunchOpen = false }: { initialLaunchOpen?: bo
       <Card>
         <CardHeader>
           <CardTitle>Messages</CardTitle>
-          <CardDescription>GET /api/messages{threadParam ? `?thread=${threadParam}` : ""}</CardDescription>
+          {getVerbose() ? (
+            <CardDescription>GET /api/messages{threadParam ? `?thread=${threadParam}` : ""}</CardDescription>
+          ) : null}
         </CardHeader>
         <CardContent>
           {isFetching && data ? <RefreshOverlay /> : null}
@@ -211,12 +220,12 @@ export function Messages({ initialLaunchOpen = false }: { initialLaunchOpen?: bo
                     Thread <span className="font-mono">{g.thread}</span>{" "}
                     <Badge variant="secondary">{g.rows.length}</Badge>
                   </div>
-                  <MessageTable rows={g.rows} expanded={expanded} setExpanded={setExpanded} onDelete={(r) => void handleDelete(r)} onRefetch={() => void refetch()} />
+                  <MessageTable rows={g.rows} expanded={expanded} setExpanded={setExpanded} focusedId={focusedMessage?.id ?? null} onDelete={(r) => void handleDelete(r)} onRefetch={() => void refetch()} />
                 </div>
               ))}
             </div>
           ) : (
-            <MessageTable rows={visible} expanded={expanded} setExpanded={setExpanded} onDelete={(r) => void handleDelete(r)} onRefetch={() => void refetch()} />
+            <MessageTable rows={visible} expanded={expanded} setExpanded={setExpanded} focusedId={focusedMessage?.id ?? null} onDelete={(r) => void handleDelete(r)} onRefetch={() => void refetch()} />
           )}
         </CardContent>
       </Card>
@@ -236,10 +245,11 @@ export function Messages({ initialLaunchOpen = false }: { initialLaunchOpen?: bo
   )
 }
 
-function MessageTable({ rows, expanded, setExpanded, onDelete, onRefetch }: {
+function MessageTable({ rows, expanded, setExpanded, focusedId, onDelete, onRefetch }: {
   rows: MessageRow[]
   expanded: number | null
   setExpanded: (id: number | null) => void
+  focusedId?: number | null
   onDelete: (row: MessageRow) => void
   onRefetch: () => void
 }) {
@@ -261,7 +271,11 @@ function MessageTable({ rows, expanded, setExpanded, onDelete, onRefetch }: {
       <TableBody>
         {rows.map((m) => (
           <>
-            <TableRow key={m.id}>
+            <TableRow
+              key={m.id}
+              data-focused={focusedId === m.id ? "true" : undefined}
+              className={focusedId === m.id ? "bg-accent/50" : undefined}
+            >
               <TableCell>
                 <Button variant="ghost" size="sm" aria-label={expanded === m.id ? "Collapse" : "Expand"}
                   onClick={() => setExpanded(expanded === m.id ? null : m.id)}>

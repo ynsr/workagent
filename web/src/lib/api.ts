@@ -24,6 +24,8 @@ export interface CommitsDetail {
   ahead: number
 }
 
+export type KanbanColumn = "working" | "needs_you" | "in_review" | "ready_to_merge"
+
 /** One worktree entry, as in `workagent status --json`. */
 export interface WorktreeEntry {
   issue?: string
@@ -62,6 +64,12 @@ export interface WorktreeEntry {
   prodtest?: string
   /** Stored prodtest item (status/risk/revision/last_run); null when no plan exists. */
   prodtest_detail?: ProdtestDetail | null
+  /** Derived delivery stage lane: working | needs_you | in_review | ready_to_merge. */
+  kanban_column?: KanbanColumn
+  /** Human-readable derived delivery status phrase. */
+  display_status?: string
+  /** Machine-readable attention reason when kanban_column === "needs_you", else null. */
+  attention_reason?: string | null
 }
 
 /** Prodtest row cell: stored plan/run state for one issue. */

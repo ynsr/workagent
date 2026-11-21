@@ -53,6 +53,9 @@ Jira rows are keyed `jira:KEY@repo` (e.g. `jira:IPG-932@projectx`); bare
     "pr_detail": {"number": 1706, "state": "open", "title": "…",
                    "author": "…", "url": "https://…", "tool": "glab"},
     "issue_status": "in progress",
+    "kanban_column": "working",
+    "display_status": "Working · omp",
+    "attention_reason": null
 }
 ```
 `harness` is `"<name> <pid>"` while a harness is live on the worktree,

@@ -9,10 +9,12 @@ import {
   LayoutDashboard,
   Library,
   MessageSquare,
+  Search,
   Settings2,
   ShieldAlert,
   SquareTerminal,
 } from "lucide-react"
+import { CommandPalette } from "@/components/CommandPalette"
 import { RunWatcher } from "@/components/RunWatcher"
 import { useInfo } from "@/lib/queries"
 import { cn } from "@/lib/utils"
@@ -95,9 +97,11 @@ const SIDEBAR_KEY = "workagent-sidebar-collapsed";
 function Sidebar({
   collapsed,
   onToggle,
+  onOpenPalette,
 }: {
   collapsed: boolean;
   onToggle: () => void;
+  onOpenPalette: () => void;
 }) {
   return (
     <aside className={cn("fixed inset-y-0 left-0 z-40 hidden flex-col border-r bg-sidebar text-sidebar-foreground lg:flex", collapsed ? "w-16" : "w-64")}>
@@ -111,6 +115,28 @@ function Sidebar({
             <p className="truncate text-xs text-muted-foreground">serve</p>
           </div>
         )}
+      </div>
+      <div className={cn("px-3 pb-2", collapsed && "flex justify-center")}>
+        <button
+          type="button"
+          onClick={onOpenPalette}
+          aria-label="Search (⌘K)"
+          title="Search (⌘K)"
+          className={cn(
+            "flex items-center gap-2 rounded-md border bg-background/60 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+            collapsed ? "size-9 justify-center" : "h-9 w-full px-2.5",
+          )}
+        >
+          <Search aria-hidden className="size-3.5 shrink-0" />
+          {collapsed ? null : (
+            <>
+              <span className="flex-1 text-left">Search…</span>
+              <kbd className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                ⌘K
+              </kbd>
+            </>
+          )}
+        </button>
       </div>
       <nav className="flex-1 space-y-3 overflow-y-auto px-3 py-2" aria-label="Primary">
         {NAV_TOP_GROUPS.map((group, index) => (
@@ -195,28 +221,41 @@ function BottomNav() {
   )
 }
 
-function MobileHeader() {
+function MobileHeader({ onOpenPalette }: { onOpenPalette: () => void }) {
   return (
-    <header className="sticky top-0 z-30 flex items-center gap-2.5 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:hidden">
-      <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-        <GitBranch aria-hidden className="size-4" />
-      </span>
-      <span className="text-sm font-semibold">workagent serve</span>
-      <NavLink
-        to="/settings"
-        aria-label="Settings"
-        title="Settings"
-        className={({ isActive }) =>
-          cn(
-            "ml-auto flex size-9 items-center justify-center rounded-md transition-colors",
-            isActive
-              ? "bg-sidebar-accent text-sidebar-accent-foreground"
-              : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-          )
-        }
-      >
-        <Settings2 aria-hidden className="size-4" />
-      </NavLink>
+    <header className="sticky top-0 z-30 flex items-center justify-between gap-2.5 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:hidden">
+      <div className="flex items-center gap-2.5">
+        <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <GitBranch aria-hidden className="size-4" />
+        </span>
+        <span className="text-sm font-semibold">workagent serve</span>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={onOpenPalette}
+          aria-label="Search (⌘K)"
+          className="flex h-8 items-center gap-1.5 rounded-md border bg-background px-2.5 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <Search aria-hidden className="size-3.5" />
+          <span>Search</span>
+        </button>
+        <NavLink
+          to="/settings"
+          aria-label="Settings"
+          title="Settings"
+          className={({ isActive }) =>
+            cn(
+              "flex size-9 items-center justify-center rounded-md transition-colors",
+              isActive
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+            )
+          }
+        >
+          <Settings2 aria-hidden className="size-4" />
+        </NavLink>
+      </div>
     </header>
   )
 }
@@ -249,6 +288,7 @@ function Footer() {
 }
 
 export function AppLayout() {
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_KEY) === "1";
@@ -269,9 +309,10 @@ export function AppLayout() {
   return (
     <div className="min-h-svh bg-background">
       <RunWatcher />
-      <Sidebar collapsed={collapsed} onToggle={toggle} />
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <Sidebar collapsed={collapsed} onToggle={toggle} onOpenPalette={() => setPaletteOpen(true)} />
       <div className={cn("flex min-h-svh flex-col", collapsed ? "lg:pl-16" : "lg:pl-64")}>
-        <MobileHeader />
+        <MobileHeader onOpenPalette={() => setPaletteOpen(true)} />
         <NetworkBanner />
         <main className="w-full max-w-none flex-1 min-w-0 overflow-x-clip px-4 pt-6 pb-28 lg:px-8 lg:pb-8">
           <Outlet />
