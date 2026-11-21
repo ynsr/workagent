@@ -167,11 +167,12 @@ def test_run_input_appends_input_jsonl(client, monkeypatch, tmp_path):
     run_dir = tmp_path / "rundir"
     run_dir.mkdir()
     run.run_dir = str(run_dir)
-    r = client.post(f"/api/runs/{run_id}/input", json={"text": "go on"})
+    run.append('ACP: {"t": "question", "qid": "q1", "text": "go?", "options": [], "multi": false}')
+    r = client.post(f"/api/runs/{run_id}/input", json={"text": "go on", "qid": "q1"})
     assert r.status_code == 200, r.text
     assert r.json()["ok"] is True
     payload = json.loads((run_dir / "input.jsonl").read_text().strip())
-    assert payload["text"] == "go on"
+    assert payload == {"text": "go on", "answer": "go on", "qid": "q1"}
     gate.set()
 
 
@@ -230,3 +231,64 @@ def test_rehydrate_recovers_pending_question(client, monkeypatch, tmp_path):
             break
         time.sleep(0.05)
     assert body["pending_question"]["qid"] == "q9"
+
+def test_harness_options_refresh_bypasses_cache(client, monkeypatch):
+    from workagent import backend, web_runs_routes
+    from workagent.acp_harness import HarnessOptions
+
+    web_runs_routes._OPTIONS_CACHE.clear()
+    calls = {"n": 0}
+
+    class _Acp:
+        name = "omp"
+        label = "Omp"
+        binary = "omp-bin"
+        supports_acp = True
+
+        def discover_options(self, env_file=None):
+            calls["n"] += 1
+            n = calls["n"]
+            return HarnessOptions(models=[{"id": f"m{n}", "name": f"M{n}"}],
+                                  efforts=[], current_model=f"m{n}", current_effort="")
+
+    monkeypatch.setattr(backend, "HARNESSES", {"omp": _Acp()})
+    r1 = client.get("/api/harnesses/omp/options")
+    assert r1.status_code == 200 and r1.json()["cached"] is False and r1.json()["models"][0]["id"] == "m1"
+    r2 = client.get("/api/harnesses/omp/options")
+    assert r2.status_code == 200 and r2.json()["cached"] is True and r2.json()["models"][0]["id"] == "m1"
+    r3 = client.get("/api/harnesses/omp/options?refresh=1")
+    assert r3.status_code == 200 and r3.json()["cached"] is False and r3.json()["models"][0]["id"] == "m2"
+
+
+def test_run_input_enforces_pending_question_and_qid(client, monkeypatch, tmp_path, isolated_config):
+    import json
+    from workagent import web_runs
+
+    reg = client.app.state.registry
+    run = web_runs.Run(id="r128", command="start", args=["github:o/r#1"], target="start")
+    run.run_dir = str(tmp_path / "r128")
+    reg.runs[run.id] = run
+
+    # No pending question -> 409
+    r_none = client.post("/api/runs/r128/input", json={"text": "yes", "qid": "q1"})
+    assert r_none.status_code == 409
+    assert r_none.json()["error"]["code"] == "no_pending_question"
+
+    # Emit a pending question
+    run.append('ACP:{"t":"question","qid":"q1","text":"Continue?","options":["yes","no"]}\n')
+
+    # Missing or wrong qid -> 409
+    r_bad = client.post("/api/runs/r128/input", json={"text": "yes", "qid": "wrong"})
+    assert r_bad.status_code == 409
+    assert r_bad.json()["error"]["code"] == "qid_mismatch"
+
+    # Matching qid with `answer` alias -> 200
+    r_ok = client.post("/api/runs/r128/input", json={"answer": "yes", "qid": "q1"})
+    assert r_ok.status_code == 200
+
+    # Once run exits, pending_question is cleared in summary
+    run.state = "cancelled"
+    assert web_runs._summary(run)["pending_question"] is None
+    payload = json.loads((tmp_path / "r128" / "input.jsonl").read_text().strip())
+    assert payload == {"text": "yes", "answer": "yes", "qid": "q1"}
+
