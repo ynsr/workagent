@@ -2,6 +2,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import type { QueryClient } from "@tanstack/react-query"
 import { api, type CreateRunInput } from "./api"
 import { getVerbose } from "./settings"
+import { useServerEventsConnected } from "@/hooks/useServerEvents"
 
 export const queryKeys = {
   info: ["info"] as const,
@@ -41,12 +42,15 @@ export const queryKeys = {
 const SWR_STATUS_MS = 30 * 24 * 3600 * 1000   // PR cache: 3d * 10
 const SWR_DAY_MS = 24 * 3600 * 1000           // issue/CI cache: 1h/10min * 10 → floor 1d
 const RELEASE_SWR_MS = 3600 * 1000            // release diff: 1h fresh
-/** Poll /api/status every 15 s while the tab is visible (contract). */
+/** Safety-fallback poll interval when the global SSE stream is connected. */
+const SSE_FALLBACK_POLL_MS = 60_000
+/** Poll /api/status every 15 s (or 60 s fallback when SSE is connected). */
 export function useStatusAll(refresh?: boolean) {
+  const sseConnected = useServerEventsConnected()
   return useQuery({
     queryKey: [...queryKeys.statusAll, refresh ?? false],
     queryFn: () => api.statusAll(refresh ? { refresh: true } : undefined),
-    refetchInterval: 15_000,
+    refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : 15_000,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     staleTime: SWR_STATUS_MS,
@@ -58,12 +62,13 @@ export function useStatusAll(refresh?: boolean) {
   })
 }
 
-/** Deactivated worktrees (active-only /api/status hides them). Same 15 s poll. */
+/** Deactivated worktrees (active-only /api/status hides them). Same poll policy. */
 export function useStatusInactive() {
+  const sseConnected = useServerEventsConnected()
   return useQuery({
     queryKey: queryKeys.statusInactive,
     queryFn: () => api.statusAll({ includeInactive: true }),
-    refetchInterval: 15_000,
+    refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : 15_000,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     staleTime: SWR_STATUS_MS,
@@ -71,12 +76,13 @@ export function useStatusInactive() {
   })
 }
 
-/** Soft-deleted worktrees (default /api/status hides them). Same 15 s poll. */
+/** Soft-deleted worktrees (default /api/status hides them). Same poll policy. */
 export function useStatusDeleted() {
+  const sseConnected = useServerEventsConnected()
   return useQuery({
     queryKey: queryKeys.statusDeleted,
     queryFn: () => api.statusAll({ includeInactive: true, includeDeleted: true }),
-    refetchInterval: 15_000,
+    refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : 15_000,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     staleTime: SWR_STATUS_MS,
@@ -150,12 +156,13 @@ export function useFlowTemplate(label: string | null) {
 /** Flow runs, optionally scoped to one worktree (SWR: cached rows render
  * instantly, background refetch only swaps in fresh data — never blank). */
 export function useFlows(worktree?: string) {
+  const sseConnected = useServerEventsConnected()
   return useQuery({
     queryKey: queryKeys.flows(worktree),
     queryFn: () => api.flows(worktree || undefined),
     staleTime: SWR_DAY_MS,
     gcTime: SWR_DAY_MS,
-    refetchInterval: 15_000,
+    refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : 15_000,
     refetchIntervalInBackground: false,
   })
 }
@@ -215,27 +222,29 @@ export function useCandidatesWorktrees() {
  * background refetch only swaps in fresh data (no skeleton/block). */
 const RELEASE_POLL_MS = 30_000
 export function useReleaseStatus(name: string) {
+  const sseConnected = useServerEventsConnected()
   return useQuery({
     queryKey: queryKeys.release(name),
     queryFn: () => api.releaseStatus(name),
     staleTime: RELEASE_SWR_MS,
     gcTime: RELEASE_SWR_MS,
     enabled: !!name,
-    refetchInterval: RELEASE_POLL_MS,
+    refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : RELEASE_POLL_MS,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
   })
 }
 
-/** Release releasability for several repos (one query each; same 30 s poll). */
+/** Release releasability for several repos (one query each; same poll policy). */
 export function useReleaseStatuses(names: string[]) {
+  const sseConnected = useServerEventsConnected()
   return useQueries({
     queries: names.map((name) => ({
       queryKey: queryKeys.release(name),
       queryFn: () => api.releaseStatus(name),
       staleTime: RELEASE_SWR_MS,
       gcTime: RELEASE_SWR_MS,
-      refetchInterval: RELEASE_POLL_MS,
+      refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : RELEASE_POLL_MS,
       refetchIntervalInBackground: false,
       refetchOnWindowFocus: true,
     })),
@@ -243,10 +252,11 @@ export function useReleaseStatuses(names: string[]) {
 }
 
 export function useRuns() {
+  const sseConnected = useServerEventsConnected()
   return useQuery({
     queryKey: queryKeys.runs,
     queryFn: api.runs,
-    refetchInterval: 10_000,
+    refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : 10_000,
     refetchIntervalInBackground: false,
   })
 }

@@ -16,6 +16,7 @@ import {
 } from "lucide-react"
 import { CommandPalette } from "@/components/CommandPalette"
 import { RunWatcher } from "@/components/RunWatcher"
+import { useServerEvents } from "@/hooks/useServerEvents"
 import { useInfo } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
@@ -288,6 +289,7 @@ function Footer() {
 }
 
 export function AppLayout() {
+  useServerEvents()
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => {
     try {

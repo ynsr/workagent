@@ -1100,3 +1100,75 @@ def test_insert_run_inherits_flow_id_by_file_path(tmp_path):
     other = sq.insert_run(db, "start", ["k"], 0, worktree_ref="k",
                           file_path="/f/other.jsonl")
     assert sq.get_run(db, other)["flow_id"] is None
+
+
+def test_change_log_triggers_and_pruning(tmp_path):
+    """T10.1: change_log table + AFTER INSERT/UPDATE/DELETE triggers on all 6 tables + pruning."""
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+    import sqlite3
+    with sq.connect(db) as conn:
+        triggers = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'")}
+        assert sq._CDC_TRIGGER_NAMES <= triggers
+
+        # Insert, update, delete across all 6 tracked tables
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, added_at) VALUES (?, ?, ?, ?)",
+            ("jira:IPG-1", "/tmp/wt1", "feat/1", "2026-01-01T00:00:00Z"),
+        )
+        conn.execute("UPDATE worktrees SET pr_url = 'https://pr/1' WHERE ref_key = 'jira:IPG-1'")
+
+        conn.execute(
+            "INSERT INTO runs (command, args, created_at, worktree_ref) VALUES (?, ?, ?, ?)",
+            ("start", "[]", "2026-01-01T00:00:00Z", "jira:IPG-1"),
+        )
+        conn.execute("UPDATE runs SET state = 'succeeded' WHERE id = 1")
+        conn.execute("DELETE FROM runs WHERE id = 1")
+
+        conn.execute(
+            "INSERT INTO flows (template_label, worktree_ref, created_at, modified_at) VALUES (?, ?, ?, ?)",
+            ("default", "jira:IPG-1", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+        )
+        conn.execute("UPDATE flows SET status = 'running' WHERE id = 1")
+        conn.execute("DELETE FROM flows WHERE id = 1")
+
+        conn.execute(
+            "INSERT INTO messages (message_id, added_at) VALUES (?, ?)",
+            ("msg-1", "2026-01-01T00:00:00Z"),
+        )
+        conn.execute("UPDATE messages SET content = 'hi' WHERE message_id = 'msg-1'")
+        conn.execute("DELETE FROM messages WHERE message_id = 'msg-1'")
+
+        conn.execute(
+            "INSERT INTO pr_cache (branch, payload, checked_at) VALUES (?, ?, ?)",
+            ("feat/1", "{}", "2026-01-01T00:00:00Z"),
+        )
+        conn.execute("UPDATE pr_cache SET payload = '{\"ok\":true}' WHERE branch = 'feat/1'")
+        conn.execute("DELETE FROM pr_cache WHERE branch = 'feat/1'")
+
+        conn.execute(
+            "INSERT INTO prodtest_items (issue_key, updated_at) VALUES (?, ?)",
+            ("IPG-1", "2026-01-01T00:00:00Z"),
+        )
+        conn.execute("UPDATE prodtest_items SET status = 'passed' WHERE issue_key = 'IPG-1'")
+        conn.execute("DELETE FROM prodtest_items WHERE issue_key = 'IPG-1'")
+
+        conn.execute("DELETE FROM worktrees WHERE ref_key = 'jira:IPG-1'")
+
+    events = sq.read_change_log(db, after_seq=0, limit=100)
+    assert len(events) == 18
+    by_table_op = {(e["table"], e["op"]) for e in events}
+    for tbl, _ in sq.CDC_TABLES:
+        for op in ("insert", "update", "delete"):
+            assert (tbl, op) in by_table_op
+    assert sq.latest_change_seq(db) == events[-1]["seq"]
+
+    # Pruning keeps at most max_rows newest entries
+    deleted = sq.prune_change_log(db, max_rows=5)
+    assert deleted == 13
+    remaining = sq.read_change_log(db, after_seq=0, limit=100)
+    assert len(remaining) == 5
+    assert [e["seq"] for e in remaining] == [e["seq"] for e in events[-5:]]
+    # Pruning when already <= max_rows is a no-op
+    assert sq.prune_change_log(db, max_rows=5) == 0

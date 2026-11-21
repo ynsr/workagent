@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Stream live database updates to the web UI over SSE via SQLite change-log triggers and relax background polling when connected [147]
 - Consolidate web sidebar from 15 links to 7 destinations and convert Launch pages into slide-over drawers with backward-compatible routes [135]
 - Add derived delivery stage (kanban_column, display_status, attention_reason) and Dashboard Kanban Board view with Board/Table toggle [134]
 - Add global Command Palette (Cmd+K / Ctrl+K) and keyboard navigation shortcuts across Dashboard, Runs, Messages, and Prodtests [136]

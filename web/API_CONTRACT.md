@@ -494,6 +494,13 @@ is null whenever the run is not running. A co-emitted
 non-waiting `turn_end` from the same unanswered turn does not clear it;
 only an `answer` event resolves it.
 
+### `GET /api/events` — Global CDC invalidation SSE stream (issue #147)
+Streams real-time SQLite `change_log` events (`worktrees`, `runs`, `flows`,
+`messages`, `pr_cache`, `prodtest_items`) tailed every 250 ms.
+- `event: change`, `id: <seq>`, `data: {"seq": N, "table": "worktrees", "row_key": "…", "op": "insert"|"update"|"delete", "created_at": 1700000000.123}`.
+- Replays missed events when `Last-Event-ID` header (or `?last_event_id=N`) is supplied.
+- Emits `: heartbeat` SSE comments every 15 s while idle; closes cleanly on server shutdown.
+
 ### `GET /api/runs/{id}/events` — SSE
 - `event: log`, `data: {"seq": N, "text": "…"}`, `id: N`. For `db-<id>`
   rows the stream replays the stored lines then the terminal state event.
