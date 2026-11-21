@@ -350,3 +350,58 @@ def test_harness_summary_parses_acp_mirrored_transcript(tmp_path):
     p.write_text("\n".join(json.dumps(e) for e in events) + "\n")
     assert hs.last_assistant_text(p, max_chars=None) == "All done.\nJOB_DONE"
     assert hs.tool_error_rate(p) == (1, 2)
+
+
+def test_run_harness_acp_no_tty_runs_validate_headless(tmp_path, isolated_config, monkeypatch):
+    """_run_harness(acp=True, launch=False, no_tty=True) does NOT preview; runs validate_headless + VERDICT_SUFFIX."""
+    from workagent import backend, cli_harness, cli_validate
+
+    calls = {}
+    h = backend.get_harness("omp")
+
+    def fake_launch_acp(prompt, workdir, **kw):
+        calls["prompt"] = prompt
+        calls["kw"] = kw
+        sf = kw.get("session_file")
+        if sf:
+            import json
+            from pathlib import Path
+            Path(sf).write_text(json.dumps({"t": "message", "text": "Done.\nJOB_DONE"}) + "\n")
+        return 0
+
+    monkeypatch.setattr(h, "launch_acp", fake_launch_acp)
+    monkeypatch.setattr(cli_validate, "validate_headless",
+                        lambda **kw: (calls.setdefault("validated", True),
+                                      {"verdict": "JOB_DONE", "attempts": 1,
+                                       "runs": [kw["run_once"](kw["prompt"])]})[1])
+    res = {"command": "start", "branch": "feat/128", "key": "github:o/r#128"}
+    cli_harness._run_harness("omp", "Fix bug", str(tmp_path), str(tmp_path),
+                             no_tty=True, launch=False, result=res, json_output=True,
+                             acp=True)
+    assert calls.get("validated") is True
+    assert backend.VERDICT_SUFFIX.strip() in calls["prompt"]
+    assert calls["kw"]["input_stream"] is None
+    assert calls["kw"]["no_tty"] is True
+
+
+def test_run_harness_acp_tty_runs_launch_acp_interactively(tmp_path, isolated_config, monkeypatch):
+    """_run_harness(acp=True, launch=False, no_tty=False) calls launch_acp with sys.stdin (no validate_headless)."""
+    import sys
+    from workagent import backend, cli_harness
+
+    calls = {}
+    h = backend.get_harness("omp")
+
+    def fake_launch_acp(prompt, workdir, **kw):
+        calls["prompt"] = prompt
+        calls["kw"] = kw
+        return 0
+
+    monkeypatch.setattr(h, "launch_acp", fake_launch_acp)
+    res = {"command": "start", "branch": "feat/128", "key": "github:o/r#128"}
+    cli_harness._run_harness("omp", "Fix bug", str(tmp_path), str(tmp_path),
+                             no_tty=False, launch=False, result=res, json_output=True,
+                             acp=True)
+    assert calls["kw"]["no_tty"] is False
+    assert calls["kw"]["input_stream"] is sys.stdin
+    assert backend.VERDICT_SUFFIX.strip() not in calls["prompt"]
