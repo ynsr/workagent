@@ -578,7 +578,6 @@ def test_launch_acp_session_load_and_on_session_id(tmp_path):
     import sys
     from workagent.agy_harness import AgyAcpHarness
 
-    seen_methods: list[str] = []
     fake_agent = tmp_path / "load_agent.py"
     fake_agent.write_text(
         "import json, sys\n"
@@ -641,3 +640,36 @@ def test_launch_acp_falls_back_to_session_new_with_resume_context(tmp_path):
     sent = prompt_log.read_text()
     assert "[Previous summary] built feature X" in sent
     assert "please fix tests" in sent
+
+
+def test_launch_acp_uses_resume_context_without_resume_session_id(tmp_path):
+    """T07.1: resume_context is still prepended when resume_session_id is None."""
+    import sys
+    from workagent.agy_harness import AgyAcpHarness
+
+    prompt_log = tmp_path / "prompt.txt"
+    fake_agent = tmp_path / "no_sid_agent.py"
+    fake_agent.write_text(
+        "import json, sys\n"
+        "for raw in sys.stdin:\n"
+        "    msg = json.loads(raw)\n"
+        "    m = msg.get('method')\n"
+        "    if m == 'initialize':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'protocolVersion':1}}), flush=True)\n"
+        "    elif m == 'session/new':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'sessionId':'sess-new-3'}}), flush=True)\n"
+        "    elif m == 'session/prompt':\n"
+        f"        open({str(prompt_log)!r}, 'w').write(msg['params']['prompt'][0]['text'])\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'stopReason':'end_turn'}}), flush=True)\n"
+    )
+    h = AgyAcpHarness()
+    h.acp_argv = lambda: [sys.executable, str(fake_agent)]
+    rc = h.launch_acp(
+        "continue from headless run", str(tmp_path), no_tty=True,
+        resume_session_id=None,
+        resume_context="[Previous summary] headless output",
+    )
+    assert rc == 0
+    sent = prompt_log.read_text()
+    assert "[Previous summary] headless output" in sent
+    assert "continue from headless run" in sent

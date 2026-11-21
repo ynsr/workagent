@@ -616,7 +616,7 @@ class AcpHarness(Harness, abc.ABC):
                 sid = str(session_info.get("sessionId") or "")
                 if not sid:
                     raise HarnessError(f"{self.name} ACP session/new returned no sessionId")
-                if resume_session_id and resume_context and not resumed:
+                if resume_context and not resumed:
                     effective_prompt = f"{resume_context.strip()}\n\n{prompt}"
             if on_session_id is not None:
                 try:

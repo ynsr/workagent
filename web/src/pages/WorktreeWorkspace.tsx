@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
@@ -78,6 +78,9 @@ export function WorktreeWorkspace() {
   }, [flowsQ.data, refKey])
 
   const [selectedRunId, setSelectedRunId] = useState<string>("")
+  useEffect(() => {
+    setSelectedRunId("")
+  }, [refKey])
   const activeRunId = selectedRunId || worktreeRuns[0]?.id || ""
 
   const runQ = useRun(activeRunId)

@@ -525,19 +525,20 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             _launch_kw["timeout_s"] = timeout_s
         exit_code = 0
         validation = None
+
+        def _on_acp_session_id(sid: str) -> None:
+            result["acp_session_id"] = sid
+            if run_id and db.exists():
+                try:
+                    _sq.set_run_metadata(db, run_id, {"acp_session_id": sid})
+                except Exception:
+                    pass
+
         if no_tty:
             import tempfile
             from . import cli_validate as _cv, harness_summary as _hs
 
             current_path = session_path
-
-            def _on_acp_session_id(sid: str) -> None:
-                result["acp_session_id"] = sid
-                if run_id and db.exists():
-                    try:
-                        _sq.set_run_metadata(db, run_id, {"acp_session_id": sid})
-                    except Exception:
-                        pass
 
             def run_once(attempt_prompt):
                 nonlocal current_path
@@ -638,14 +639,6 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                     except Exception as e:
                         eprint(f"warning: run record failed: {e}")
         elif mode == "acp":
-            def _on_acp_session_id_tty(sid: str) -> None:
-                result["acp_session_id"] = sid
-                if run_id and db.exists():
-                    try:
-                        _sq.set_run_metadata(db, run_id, {"acp_session_id": sid})
-                    except Exception:
-                        pass
-
             exit_code = harness.launch_acp(
                 prompt, worktree or fallback_dir,
                 model=model, effort=effort,
@@ -656,7 +649,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                 no_tty=False,
                 resume_session_id=result.get("resume_session_id") or None,
                 resume_context=result.get("resume_context") or None,
-                on_session_id=_on_acp_session_id_tty,
+                on_session_id=_on_acp_session_id,
             )
             if session_path and Path(session_path).is_file():
                 result["session_file"] = session_path
