@@ -327,3 +327,26 @@ def test_launch_acp_sigterm_kills_child_process_group(tmp_path, isolated_config)
     except ProcessLookupError:
         alive = False
     assert not alive, f"agent pid {agent_pid} was orphaned after SIGTERM"
+
+def test_harness_summary_parses_acp_mirrored_transcript(tmp_path):
+    """last_assistant_text and tool_error_rate parse ACP-mirrored JSONL."""
+    import json
+    from workagent import harness_summary as hs
+
+    p = tmp_path / "acp.jsonl"
+    events = [
+        {"t": "thought", "id": "s1", "text": "thinking..."},
+        {"t": "message", "id": "s1", "text": "Turn 1 question?"},
+        {"t": "question", "id": "q1", "qid": "q1", "text": "Proceed?"},
+        {"t": "turn_end", "id": "s1"},
+        {"t": "answer", "id": "s1", "qid": "q1", "text": "yes"},
+        {"t": "tool_call", "id": "tc1", "name": "read", "status": "running", "output": ""},
+        {"t": "tool_call", "id": "tc1", "name": "read", "status": "completed", "output": "ok"},
+        {"t": "tool_call", "id": "tc2", "name": "bash", "status": "failed", "output": "error: boom"},
+        {"t": "message", "id": "s1", "text": "All done.\n"},
+        {"t": "message", "id": "s1", "text": "JOB_DONE"},
+        {"t": "turn_end", "id": "s1"},
+    ]
+    p.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+    assert hs.last_assistant_text(p, max_chars=None) == "All done.\nJOB_DONE"
+    assert hs.tool_error_rate(p) == (1, 2)
