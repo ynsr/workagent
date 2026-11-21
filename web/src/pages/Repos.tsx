@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { useConfirm } from "@/lib/confirm"
+import { getVerbose } from "@/lib/settings"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
 import { useActions, useCreateRun, useFlowTemplates, useRepos } from "@/lib/queries"
 import type { Repo } from "@/lib/api"
@@ -295,7 +296,7 @@ export function Repos() {
         <Card className="order-2 lg:order-1">
           <CardHeader>
             <CardTitle>Registered repos</CardTitle>
-            <CardDescription>GET /api/repos</CardDescription>
+            {getVerbose() ? <CardDescription>GET /api/repos</CardDescription> : null}
           </CardHeader>
           <CardContent>
             {(isPending && !repos) ? (

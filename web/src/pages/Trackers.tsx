@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { useConfirm } from "@/lib/confirm"
+import { getVerbose } from "@/lib/settings"
 import { copyToClipboard, downloadText, toCsv } from "@/lib/format"
 import { useCreateRun, useTrackerDomains, useTrackers, queryKeys } from "@/lib/queries"
 import { api } from "@/lib/api"
@@ -241,7 +242,7 @@ export function Trackers() {
         <Card className="order-2 lg:order-1">
           <CardHeader>
             <CardTitle>Issue trackers</CardTitle>
-            <CardDescription>GET /api/trackers</CardDescription>
+            {getVerbose() ? <CardDescription>GET /api/trackers</CardDescription> : null}
           </CardHeader>
           <CardContent>
             {(isPending && !data) ? (

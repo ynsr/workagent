@@ -2,6 +2,7 @@ import { useMemo, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { CheckCircle2, Circle, Loader2, Workflow, XCircle } from "lucide-react"
 import { toast } from "sonner"
+import { getVerbose } from "@/lib/settings"
 import { PageHeader } from "@/components/PageHeader"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { SearchableSelect } from "@/components/SearchableSelect"
@@ -165,7 +166,9 @@ export function Flows() {
             <Card>
               <CardHeader>
                 <CardTitle>Flow runs</CardTitle>
-                <CardDescription>GET /api/flows{worktreeFilter ? `?worktree=${worktreeFilter}` : ""}</CardDescription>
+                {getVerbose() ? (
+                  <CardDescription>GET /api/flows{worktreeFilter ? `?worktree=${worktreeFilter}` : ""}</CardDescription>
+                ) : null}
               </CardHeader>
               <CardContent className="p-0">
                 <Table>

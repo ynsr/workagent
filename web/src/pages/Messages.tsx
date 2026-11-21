@@ -27,6 +27,7 @@ import {
 import { copyToClipboard, downloadText, relativeDate, toCsv } from "@/lib/format"
 import { useCreateRun, useMessages, useRepos } from "@/lib/queries"
 import { useConfirm } from "@/lib/confirm"
+import { getVerbose } from "@/lib/settings"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { toast } from "sonner"
@@ -177,7 +178,9 @@ export function Messages() {
       <Card>
         <CardHeader>
           <CardTitle>Messages</CardTitle>
-          <CardDescription>GET /api/messages{threadParam ? `?thread=${threadParam}` : ""}</CardDescription>
+          {getVerbose() ? (
+            <CardDescription>GET /api/messages{threadParam ? `?thread=${threadParam}` : ""}</CardDescription>
+          ) : null}
         </CardHeader>
         <CardContent>
           {isFetching && data ? <RefreshOverlay /> : null}

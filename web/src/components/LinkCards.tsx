@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/card"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { useConfirm } from "@/lib/confirm"
+import { getVerbose } from "@/lib/settings"
 import {
   EmptyState,
   ErrorState,
@@ -65,7 +66,7 @@ export function TrackerMappingsCard() {
     <Card>
       <CardHeader>
         <CardTitle>Tracker mappings</CardTitle>
-        <CardDescription>GET /api/links → trackers (link list)</CardDescription>
+        {getVerbose() ? <CardDescription>GET /api/links → trackers (link list)</CardDescription> : null}
       </CardHeader>
       <CardContent>
         {(isPending && !links) ? (

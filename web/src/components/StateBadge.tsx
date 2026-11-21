@@ -148,7 +148,8 @@ export function CiBadge({ ci, ciUrl, prUrl }: { ci?: string | null; ciUrl?: stri
   if (!href) {
     return (
       <Badge variant="outline" className={badge.className} title={tip}>
-        {badge.symbol}
+        <span className="sr-only">{CI_TOOLTIPS[state]}</span>
+        <span aria-hidden="true">{badge.symbol}</span>
       </Badge>
     )
   }
@@ -163,7 +164,8 @@ export function CiBadge({ ci, ciUrl, prUrl }: { ci?: string | null; ciUrl?: stri
       className="inline-block"
     >
       <Badge variant="outline" className={cn(badge.className, "cursor-pointer hover:opacity-80")}>
-        {badge.symbol}
+        <span className="sr-only">{CI_TOOLTIPS[state]}</span>
+        <span aria-hidden="true">{badge.symbol}</span>
       </Badge>
     </a>
   )
