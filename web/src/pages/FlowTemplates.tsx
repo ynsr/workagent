@@ -310,27 +310,27 @@ export function FlowTemplates() {
                             <span className="mr-0.5 font-mono text-xs text-muted-foreground" title={`Sort order: ${t.sort_order ?? 0}`}>
                               #{t.sort_order ?? 0}
                             </span>
-                            <Button variant="ghost" size="sm" className="size-7 px-1" title={`Move ${t.name} up`} onClick={() => void handleMove(t, -1)}>▲</Button>
-                            <Button variant="ghost" size="sm" className="size-7 px-1" title={`Move ${t.name} down`} onClick={() => void handleMove(t, 1)}>▼</Button>
-                            <Button variant="ghost" size="sm" className="size-7 px-1" title={t.protected ? `Unprotect ${t.name}` : `Protect ${t.name}`} onClick={() => void handleToggle(t, "protected")}>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={`Move ${t.name} up`} aria-label={`Move ${t.name} up`} onClick={() => void handleMove(t, -1)}>▲</Button>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={`Move ${t.name} down`} aria-label={`Move ${t.name} down`} onClick={() => void handleMove(t, 1)}>▼</Button>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={t.protected ? `Unprotect ${t.name}` : `Protect ${t.name}`} aria-label={t.protected ? `Unprotect ${t.name}` : `Protect ${t.name}`} onClick={() => void handleToggle(t, "protected")}>
                               {t.protected ? "🔒" : "🔓"}
                             </Button>
-                            <Button variant="ghost" size="sm" className="size-7 px-1" title={t.dedicated_top_bar ? `Remove top-bar button for ${t.name}` : `Add top-bar button for ${t.name}`} onClick={() => void handleToggle(t, "dedicated_top_bar")}>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={t.dedicated_top_bar ? `Remove top-bar button for ${t.name}` : `Add top-bar button for ${t.name}`} aria-label={t.dedicated_top_bar ? `Remove top-bar button for ${t.name}` : `Add top-bar button for ${t.name}`} onClick={() => void handleToggle(t, "dedicated_top_bar")}>
                               {t.dedicated_top_bar ? "★" : "☆"}
                             </Button>
-                            <Button variant="ghost" size="sm" className="size-7 px-1" title={t.dedicated_overlay ? `Remove overlay button for ${t.name}` : `Add overlay button for ${t.name}`} onClick={() => void handleToggle(t, "dedicated_overlay")}>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={t.dedicated_overlay ? `Remove overlay button for ${t.name}` : `Add overlay button for ${t.name}`} aria-label={t.dedicated_overlay ? `Remove overlay button for ${t.name}` : `Add overlay button for ${t.name}`} onClick={() => void handleToggle(t, "dedicated_overlay")}>
                               {t.dedicated_overlay ? "◉" : "○"}
                             </Button>
                             <span aria-hidden className="mx-0.5 h-4 w-px bg-border" />
-                            <Button variant="ghost" size="sm" className="size-7 px-1" title={`Clone ${t.name}`} onClick={() => handleClone(t)}>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={`Clone ${t.name}`} aria-label={`Clone ${t.name}`} onClick={() => handleClone(t)}>
                               <Copy aria-hidden />
                             </Button>
                             {t.protected ? null : (
                               <>
-                                <Button variant="ghost" size="sm" className="size-7 px-1" title={`Edit ${t.name}`} onClick={() => handleEdit(t)}>
+                                <Button variant="ghost" size="sm" className="size-7 px-1" title={`Edit ${t.name}`} aria-label={`Edit ${t.name}`} onClick={() => handleEdit(t)}>
                                   <Pencil aria-hidden />
                                 </Button>
-                                <Button variant="ghost" size="sm" className="size-7 px-1" title={`Delete ${t.name}`} onClick={() => void handleRemove(t)}>
+                                <Button variant="ghost" size="sm" className="size-7 px-1" title={`Delete ${t.name}`} aria-label={`Delete ${t.name}`} onClick={() => void handleRemove(t)}>
                                   <Trash2 aria-hidden />
                                 </Button>
                               </>

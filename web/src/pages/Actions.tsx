@@ -239,24 +239,24 @@ export function Actions() {
                             <span className="mr-0.5 font-mono text-xs text-muted-foreground" title={`Sort order: ${a.sort_order ?? 0}`}>
                               #{a.sort_order ?? 0}
                             </span>
-                            <Button variant="ghost" size="sm" className="size-7 px-1" title={`Move ${a.name} up`} onClick={() => void handleMove(a, -1)}>▲</Button>
-                            <Button variant="ghost" size="sm" className="size-7 px-1" title={`Move ${a.name} down`} onClick={() => void handleMove(a, 1)}>▼</Button>
-                            <Button variant="ghost" size="sm" className="size-7 px-1" title={a.protected ? `Unprotect ${a.name}` : `Protect ${a.name}`} onClick={() => void handleToggle(a, "protected")}>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={`Move ${a.name} up`} aria-label={`Move ${a.name} up`} onClick={() => void handleMove(a, -1)}>▲</Button>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={`Move ${a.name} down`} aria-label={`Move ${a.name} down`} onClick={() => void handleMove(a, 1)}>▼</Button>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={a.protected ? `Unprotect ${a.name}` : `Protect ${a.name}`} aria-label={a.protected ? `Unprotect ${a.name}` : `Protect ${a.name}`} onClick={() => void handleToggle(a, "protected")}>
                               {a.protected ? "🔒" : "🔓"}
                             </Button>
-                            <Button variant="ghost" size="sm" className="size-7 px-1" title={a.dedicated_top_bar ? `Remove top-bar button for ${a.name}` : `Add top-bar button for ${a.name}`} onClick={() => void handleToggle(a, "dedicated_top_bar")}>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={a.dedicated_top_bar ? `Remove top-bar button for ${a.name}` : `Add top-bar button for ${a.name}`} aria-label={a.dedicated_top_bar ? `Remove top-bar button for ${a.name}` : `Add top-bar button for ${a.name}`} onClick={() => void handleToggle(a, "dedicated_top_bar")}>
                               {a.dedicated_top_bar ? "★" : "☆"}
                             </Button>
-                            <Button variant="ghost" size="sm" className="size-7 px-1" title={a.dedicated_overlay ? `Remove overlay button for ${a.name}` : `Add overlay button for ${a.name}`} onClick={() => void handleToggle(a, "dedicated_overlay")}>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={a.dedicated_overlay ? `Remove overlay button for ${a.name}` : `Add overlay button for ${a.name}`} aria-label={a.dedicated_overlay ? `Remove overlay button for ${a.name}` : `Add overlay button for ${a.name}`} onClick={() => void handleToggle(a, "dedicated_overlay")}>
                               {a.dedicated_overlay ? "◉" : "○"}
                             </Button>
                             {a.protected ? null : (
                               <>
                                 <span aria-hidden className="mx-0.5 h-4 w-px bg-border" />
-                                <Button variant="ghost" size="sm" className="size-7 px-1" title={`Edit ${a.name}`} onClick={() => handleEdit(a)}>
+                                <Button variant="ghost" size="sm" className="size-7 px-1" title={`Edit ${a.name}`} aria-label={`Edit ${a.name}`} onClick={() => handleEdit(a)}>
                                   <Pencil aria-hidden />
                                 </Button>
-                                <Button variant="ghost" size="sm" className="size-7 px-1" title={`Delete ${a.name}`} onClick={() => void handleRemove(a)}>
+                                <Button variant="ghost" size="sm" className="size-7 px-1" title={`Delete ${a.name}`} aria-label={`Delete ${a.name}`} onClick={() => void handleRemove(a)}>
                                   <Trash2 aria-hidden />
                                 </Button>
                               </>

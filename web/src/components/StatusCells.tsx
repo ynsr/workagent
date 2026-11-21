@@ -53,7 +53,6 @@ export function ReviewsCell({ entry }: { entry: WorktreeMap[string] }) {
     <Badge
       variant="secondary"
       title={title}
-      aria-label={title}
       className="cursor-default rounded-full font-mono font-normal"
     >
       <span className="sr-only">{title}</span>
