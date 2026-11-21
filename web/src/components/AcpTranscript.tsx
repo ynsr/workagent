@@ -1,10 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { parseAcpBlocks, type AcpBlock } from "@/lib/harness"
+import {
+  extractModelEffort,
+  formatActivityRunSummary,
+  formatTurnDuration,
+  groupActivityRuns,
+  parseAcpBlocks,
+  type AcpBlock,
+  type ActivityRunGroup,
+} from "@/lib/harness"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import type { RunLine } from "@/lib/api"
+
+export interface AcpRunMeta {
+  created?: number
+  finished?: number | null
+  state?: string | null
+  args?: string[]
+  model?: string
+  effort?: string
+}
 
 const COLLAPSED_TOOL_STATUSES = new Set(["completed", "done", "success", "ok"])
 
@@ -101,16 +118,115 @@ function BlockView({ block, override, onToggle }: { block: AcpBlock; override?: 
   }
 }
 
-/** Structured ACP transcript (issues #112, #128): collapsible blocks, Markdown, rAF autoscroll. */
-export function AcpTranscript({ lines }: { lines: RunLine[] }) {
+function ActivityRunView({
+  group,
+  overrides,
+  onToggle,
+}: {
+  group: ActivityRunGroup
+  overrides: Record<string, boolean>
+  onToggle: (key: string, open: boolean) => void
+}) {
+  const open = overrides[group.id] ?? false
+  const summary = formatActivityRunSummary(group.counts)
+  return (
+    <div className="space-y-1.5">
+      <details
+        data-testid="activity-run"
+        open={open}
+        onToggle={(e) => {
+          if (e.target !== e.currentTarget) return
+          onToggle(group.id, e.currentTarget.open)
+        }}
+        className="rounded border border-white/10 bg-white/[0.03] px-2.5 py-1.5"
+      >
+        <summary className="flex cursor-pointer select-none items-center gap-2 text-xs text-white/75">
+          <span>
+            {open ? "▾" : "▸"} {summary}
+          </span>
+          {group.failedCalls.length > 0 ? (
+            <Badge variant="destructive">
+              {group.failedCalls.length} failed
+            </Badge>
+          ) : null}
+        </summary>
+        <div className="mt-2 space-y-1.5 border-l border-white/10 pl-2.5">
+          {group.calls.map((call, idx) => {
+            const tkey = toolKey(call, idx)
+            return (
+              <BlockView
+                key={`${group.id}-${tkey}`}
+                block={call}
+                override={overrides[tkey]}
+                onToggle={(isOpen) => onToggle(tkey, isOpen)}
+              />
+            )
+          })}
+        </div>
+      </details>
+      {group.failedCalls.length > 0 ? (
+        <div
+          data-testid="failed-calls"
+          className="ml-3 space-y-1.5 border-l-2 border-red-500/50 pl-2.5"
+        >
+          {group.failedCalls.map((call, idx) => {
+            const tkey = toolKey(call, idx)
+            return (
+              <BlockView
+                key={`failed-${group.id}-${tkey}`}
+                block={call}
+                override={overrides[tkey]}
+                onToggle={(isOpen) => onToggle(tkey, isOpen)}
+              />
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function buildTurnSummary(blocks: AcpBlock[], runMeta?: AcpRunMeta): string | null {
+  const hasTurnEnd = blocks.some((b) => b.kind === "turn_end")
+  const isTerminal = Boolean(runMeta?.state && runMeta.state !== "running")
+  if (!hasTurnEnd && !isTerminal) return null
+
+  const parts: string[] = []
+  if (
+    typeof runMeta?.created === "number" &&
+    typeof runMeta?.finished === "number" &&
+    runMeta.finished >= runMeta.created
+  ) {
+    const dur = formatTurnDuration(runMeta.finished - runMeta.created)
+    if (dur) parts.push(`Worked for ${dur}`)
+  }
+
+  const fromArgs = extractModelEffort(runMeta?.args)
+  const model = (runMeta?.model ?? fromArgs.model ?? "").trim()
+  const effort = (runMeta?.effort ?? fromArgs.effort ?? "").trim()
+  if (model && effort) parts.push(`${model} (${effort})`)
+  else if (model) parts.push(model)
+  else if (effort) parts.push(`(${effort})`)
+
+  return parts.length > 0 ? parts.join(" · ") : null
+}
+
+/** Structured ACP transcript (issues #112, #128, #142): ActivityRun folding,
+ * FailedCalls extraction, settled turn summaries, Markdown, rAF autoscroll. */
+export function AcpTranscript({ lines, runMeta }: { lines: RunLine[]; runMeta?: AcpRunMeta }) {
   const blocks = useMemo(() => parseAcpBlocks(lines), [lines])
+  const items = useMemo(() => groupActivityRuns(blocks), [blocks])
+  const turnSummary = useMemo(() => buildTurnSummary(blocks, runMeta), [blocks, runMeta])
   const structured = blocks.filter((b) => b.kind !== "raw").length
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const programmaticRef = useRef(false)
   const [follow, setFollow] = useState(true)
-  // Per-tool user open/close overrides (risk 4): keyed by stable tool key,
-  // status default applies only to tools the user never touched.
+  // Per-tool / per-group user open/close overrides (risk 4): keyed by stable
+  // key, status default applies only to items the user never touched.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({})
+  const setOverride = (key: string, open: boolean) => {
+    setOverrides((prev) => ({ ...prev, [key]: open }))
+  }
   useEffect(() => {
     if (!follow) return
     const el = scrollRef.current
@@ -150,22 +266,40 @@ export function AcpTranscript({ lines }: { lines: RunLine[] }) {
           Follow output
         </label>
       </div>
+      {turnSummary ? (
+        <div
+          data-testid="turn-summary-header"
+          className="border-b border-white/10 bg-white/[0.02] px-3 py-1.5 text-xs text-white/60"
+        >
+          {turnSummary}
+        </div>
+      ) : null}
       <div
         ref={scrollRef}
         onScroll={handleScroll}
         className="flex max-h-[60vh] flex-col gap-2 overflow-auto px-3 py-2.5 font-mono text-[12.5px] leading-relaxed"
       >
-        {blocks.map((b, i) => {
-          const key = b.id ? `${b.kind}-${b.id}` : i
-          const tkey = toolKey(b, typeof key === "number" ? key : i)
+        {items.map((item, i) => {
+          if (item.kind === "activity_run") {
+            return (
+              <ActivityRunView
+                key={item.id}
+                group={item}
+                overrides={overrides}
+                onToggle={setOverride}
+              />
+            )
+          }
+          const key = item.id ? `${item.kind}-${item.id}` : i
+          const tkey = toolKey(item, typeof key === "number" ? key : i)
           return (
             <BlockView
               key={key}
-              block={b}
-              override={b.kind === "tool_call" ? overrides[tkey] : undefined}
+              block={item}
+              override={item.kind === "tool_call" ? overrides[tkey] : undefined}
               onToggle={(open) => {
-                if (b.kind !== "tool_call") return
-                setOverrides((prev) => ({ ...prev, [tkey]: open }))
+                if (item.kind !== "tool_call") return
+                setOverride(tkey, open)
               }}
             />
           )

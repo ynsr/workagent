@@ -77,3 +77,79 @@ describe("AcpTranscript user override snap-back (risk 4 RED)", () => {
     expect(details[1]!.open).toBe(false)
   })
 })
+
+describe("AcpTranscript ActivityRun folding & FailedCalls (T05.2)", () => {
+  it("folds 3+ exploratory calls into an ActivityRun bar, extracts FailedCalls unfolded, and preserves sticky overrides", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event")
+    const user = userEvent.setup()
+    const lines = [
+      { seq: 1, text: 'ACP:{"t":"tool_call","id":"c1","name":"read","kind":"read","status":"completed","output":"a"}' },
+      { seq: 2, text: 'ACP:{"t":"tool_call","id":"c2","name":"grep","kind":"search","status":"completed","output":"b"}' },
+      { seq: 3, text: 'ACP:{"t":"tool_call","id":"c3","name":"bash","kind":"execute","status":"failed","args":{"command":"ls missing"},"output":"not found"}' },
+      { seq: 4, text: 'ACP:{"t":"tool_call","id":"c4","name":"read","kind":"read","status":"completed","output":"d"}' },
+    ]
+    const { rerender } = render(<AcpTranscript lines={lines} />)
+
+    const activityRun = screen.getByTestId("activity-run") as HTMLDetailsElement
+    expect(activityRun.open).toBe(false)
+    expect(activityRun.textContent).toContain("Explored 2 files, 1 search, 1 command")
+    expect(activityRun.textContent).toContain("1 failed")
+
+    // Failed call is extracted unfolded immediately below the ActivityRun bar
+    const failedCalls = screen.getByTestId("failed-calls")
+    const failedDetails = failedCalls.querySelector("details")!
+    expect(failedDetails.open).toBe(true)
+    expect(failedDetails.textContent).toContain("not found")
+
+    // Sticky user overrides survive live updates appending another exploratory call
+    await user.click(activityRun.querySelector("summary")!)
+    expect(activityRun.open).toBe(true)
+    await user.click(failedDetails.querySelector("summary")!)
+    expect(failedDetails.open).toBe(false)
+
+    const updatedLines = [
+      ...lines,
+      { seq: 5, text: 'ACP:{"t":"tool_call","id":"c5","name":"read","kind":"read","status":"completed","output":"e"}' },
+    ]
+    rerender(<AcpTranscript lines={updatedLines} />)
+    expect((screen.getByTestId("activity-run") as HTMLDetailsElement).open).toBe(true)
+    expect(screen.getByTestId("activity-run").textContent).toContain("Explored 3 files, 1 search, 1 command")
+    expect(screen.getByTestId("failed-calls").querySelector("details")!.open).toBe(false)
+  })
+})
+
+describe("AcpTranscript settled turn summary header (T05.3)", () => {
+  it("renders duration, model, and effort above completed turns and omits it while running", () => {
+    const runningLines = [{ seq: 1, text: 'ACP:{"t":"message","text":"working"}' }]
+    const { rerender } = render(
+      <AcpTranscript
+        lines={runningLines}
+        runMeta={{
+          created: 1_700_000_000,
+          finished: null,
+          state: "running",
+          args: ["start", "--model", "claude-sonnet-4", "--effort", "high"],
+        }}
+      />,
+    )
+    expect(screen.queryByTestId("turn-summary-header")).not.toBeInTheDocument()
+
+    const settledLines = [
+      ...runningLines,
+      { seq: 2, text: 'ACP:{"t":"turn_end"}' },
+    ]
+    rerender(
+      <AcpTranscript
+        lines={settledLines}
+        runMeta={{
+          created: 1_700_000_000,
+          finished: 1_700_000_075,
+          state: "succeeded",
+          args: ["start", "--model", "claude-sonnet-4", "--effort", "high"],
+        }}
+      />,
+    )
+    const header = screen.getByTestId("turn-summary-header")
+    expect(header.textContent).toBe("Worked for 1m 15s · claude-sonnet-4 (high)")
+  })
+})
