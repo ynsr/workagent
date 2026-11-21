@@ -24,6 +24,7 @@ every argv builder; `model_effort_cli_args` → `--model=<v>`,
 from __future__ import annotations
 
 import abc
+import collections
 import json
 import os
 import queue
@@ -92,7 +93,7 @@ class AcpClient:
             self._proc = subprocess.Popen(
                 argv, cwd=workdir or None, env=merged,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, text=True, bufsize=1,
+                stderr=subprocess.PIPE, text=True, bufsize=1,
                 start_new_session=True)
         except OSError as e:
             raise HarnessError(f"cannot spawn {' '.join(argv)}: {e}")
@@ -102,11 +103,16 @@ class AcpClient:
         self._pending: dict[Any, queue.Queue] = {}
         self._notify_cb = on_notification
         self._notify_queue: queue.Queue = queue.Queue()
+        self._stderr_lines: collections.deque[str] = collections.deque(maxlen=40)
+        self._stderr_lock = threading.Lock()
         self._closed = False
         self.pid = self._proc.pid
         self._reader = threading.Thread(target=self._read_loop,
                                         name="acp-reader", daemon=True)
         self._reader.start()
+        self._stderr_reader = threading.Thread(target=self._stderr_loop,
+                                               name="acp-stderr", daemon=True)
+        self._stderr_reader.start()
 
     def set_notification_handler(self, cb: Callable[[dict], None] | None) -> None:
         self._notify_cb = cb
@@ -165,6 +171,95 @@ class AcpClient:
                     q.put({"error": {"code": -32000, "message": "agent exited"}})
                 except Exception:
                     pass
+    def _stderr_loop(self) -> None:
+        err = self._proc.stderr
+        if err is None:
+            return
+        try:
+            for raw in err:
+                line = raw.rstrip("\r\n")
+                if not line:
+                    continue
+                if len(line) > 500:
+                    line = line[:500] + "…"
+                with self._stderr_lock:
+                    self._stderr_lines.append(line)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _drain_fd(fd: int, out: list, limit: int | None = None) -> int:
+        """Non-blocking drain of one fd into `out` (init-failure race fix).
+
+        Reads bytes already available without blocking: the daemon reader
+        may not have been scheduled before the child exited. Never raises.
+        """
+        import os as _os
+        import select as _select
+        count = 0
+        try:
+            while True:
+                ready, _, _ = _select.select([fd], [], [], 0)
+                if not ready:
+                    break
+                try:
+                    chunk = _os.read(fd, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                for raw in chunk.decode("utf-8", "replace").splitlines():
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    if len(line) > 500:
+                        line = line[:500] + "…"
+                    out.append(line)
+                    count += 1
+                    if limit is not None and count >= limit:
+                        return count
+        except Exception:
+            pass
+        return count
+
+    def drain_stderr(self) -> None:
+        """Pull pending stderr bytes into the ring (init-failure race fix).
+
+        Best-effort: joins the daemon reader briefly when the child already
+        exited, then non-blockingly drains the pipe fd directly. Never
+        raises, never blocks.
+        """
+        proc = getattr(self, "_proc", None)
+        try:
+            exited = proc is not None and proc.poll() is not None
+        except Exception:
+            exited = False
+        if exited:
+            reader = getattr(self, "_stderr_reader", None)
+            if reader is not None:
+                try:
+                    reader.join(timeout=2.0)
+                except Exception:
+                    pass
+            err = getattr(proc, "stderr", None)
+            fileno = None
+            try:
+                fileno = err.fileno() if err is not None else None
+            except Exception:
+                fileno = None
+            if fileno is not None:
+                buf: list = []
+                self._drain_fd(fileno, buf)
+                if buf:
+                    with self._stderr_lock:
+                        self._stderr_lines.extend(buf)
+        return None
+
+    def stderr_tail(self, max_lines: int = 20) -> str:
+        self.drain_stderr()
+        with self._stderr_lock:
+            lines = list(self._stderr_lines)[-max_lines:]
+        return "\n".join(lines)
 
     def _handle_agent_request(self, msg: dict) -> None:
         method = str(msg.get("method") or "")
@@ -459,24 +554,42 @@ class AcpHarness(Harness, abc.ABC):
                     except Exception:
                         pass
 
+        self._answer_stop = False
         client = self._open_client(env_file, workdir, timeout_s)
         client.set_notification_handler(_handle)
+
+        prev_sigterm = None
+        installed_sigterm = False
+        if threading.current_thread() is threading.main_thread():
+            def _on_sigterm(_signum, _frame):
+                self._answer_stop = True
+                client.close()
+                raise SystemExit(143)
+            try:
+                prev_sigterm = signal.signal(signal.SIGTERM, _on_sigterm)
+                installed_sigterm = True
+            except (ValueError, OSError):
+                installed_sigterm = False
+
+        def _with_stderr(msg: str) -> str:
+            tail = client.stderr_tail()
+            return f"{msg}\n{tail}" if tail else msg
+
         try:
             try:
                 client.request("initialize", {"protocolVersion": 1})
             except HarnessError as e:
-                raise HarnessError(f"{self.name} ACP init failed: {e}\n"
-                                   f"{self._stderr_tail()}")
+                raise HarnessError(_with_stderr(f"{self.name} ACP init failed: {e}"))
             auth = self.authenticate_method()
             if auth:
                 try:
                     client.request("authenticate", {"methodId": auth})
                 except HarnessError as e:
-                    raise HarnessError(f"{self.name} ACP auth failed: {e}")
+                    raise HarnessError(_with_stderr(f"{self.name} ACP auth failed: {e}"))
             try:
                 new = client.request("session/new", {"cwd": workdir or None, "mcpServers": []})
             except HarnessError as e:
-                raise HarnessError(f"{self.name} ACP session/new failed: {e}")
+                raise HarnessError(_with_stderr(f"{self.name} ACP session/new failed: {e}"))
             new = new if isinstance(new, dict) else {}
             sid = str(new.get("sessionId") or "")
             if not sid:
@@ -509,7 +622,13 @@ class AcpHarness(Harness, abc.ABC):
                 # that turn is answered next; otherwise exit.
             return 0
         finally:
+            self._answer_stop = True
             client.close()
+            if installed_sigterm and prev_sigterm is not None:
+                try:
+                    signal.signal(signal.SIGTERM, prev_sigterm)
+                except (ValueError, OSError):
+                    pass
 
     def _answer_question(self, client: AcpClient, session_id: str, ev: dict,
                          session_file: str | None,
@@ -564,10 +683,12 @@ class AcpHarness(Harness, abc.ABC):
                 except OSError:
                     pass
                 time.sleep(interval)
-        stream = input_stream
+        stream = input_stream if (input_stream is not None and hasattr(input_stream, "readline")) else (
+            sys.stdin if not no_tty else None
+        )
         if stream is not None:
             try:
-                line = stream.readline() if hasattr(stream, "readline") else None
+                line = stream.readline()
             except Exception:
                 line = None
             if line:
@@ -583,9 +704,7 @@ class AcpHarness(Harness, abc.ABC):
                     else:
                         return line
             raise HarnessError("no answer: input stream closed without an answer line")
-        if not no_tty:
-            return None
-        raise HarnessError("no answer channel: set WORKAGENT_RUN_DIR or pipe an answer line on stdin")
+        return None
 
     # Harness base defaults for ACP harnesses (concrete subclasses own argv).
     def model_effort_cli_args(self, model: str | None, effort: str | None) -> list[str]:

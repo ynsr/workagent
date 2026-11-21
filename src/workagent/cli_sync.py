@@ -381,12 +381,13 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
                   f"{db} in files: {', '.join(conflicts or ['<unknown>'])}. "
                   "Resolve them, complete the merge, commit, push to "
                   f"origin/{branch}, and stop." + _CHANGELOG_RULE + _PUSH_PROOF, extra_prompt)
+        use_acp = bool(acp or (run_mode or "").strip().lower() == "acp")
         _cli._guard_harness(key, wt)
         _cli._run_harness(selected_harness, prompt, wt, wt,
-                     no_tty=bool(yes), launch=True,
+                     no_tty=bool(yes), launch=not use_acp,
                      result=result, json_output=json_output, run_key=key,
                      session_file=session_file, env_file=env_file,
-                     acp=acp, run_mode=run_mode, model=model, effort=effort)
+                     acp=use_acp, run_mode=run_mode, model=model, effort=effort)
     elif sys.stdin.isatty():
         if typer.confirm("launch the harness to resolve?"):
             result["result"] = "conflict-harness"
@@ -395,12 +396,13 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
                       f"{db} in files: {', '.join(conflicts or ['<unknown>'])}. "
                       "Resolve them, complete the merge, commit, push to "
                       f"origin/{branch}, and stop." + _CHANGELOG_RULE + _PUSH_PROOF, extra_prompt)
+            use_acp = bool(acp or (run_mode or "").strip().lower() == "acp")
             _cli._guard_harness(key, wt)
             _cli._run_harness(selected_harness, prompt, wt, wt,
-                         no_tty=False, launch=True,
+                         no_tty=False, launch=not use_acp,
                          result=result, json_output=json_output, run_key=key,
                          session_file=session_file, env_file=env_file,
-                         acp=acp, run_mode=run_mode, model=model, effort=effort)
+                         acp=use_acp, run_mode=run_mode, model=model, effort=effort)
         else:
             _fail("aborted (merge left in progress; abort with "
                   "`git merge --abort`)", EXIT_USAGE)

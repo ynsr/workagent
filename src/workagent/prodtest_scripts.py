@@ -12,7 +12,8 @@ def script(name: str) -> Path:
 
 
 def _env() -> dict:
-    env = dict(os.environ)
+    from . import env as _wa_env
+    env = _wa_env.merged_env()
     pp = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = _SRC + (os.pathsep + pp if pp else "")
     return env

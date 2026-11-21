@@ -300,6 +300,8 @@ def flow_run(
         _cascade["acp"] = True
     _default_harness = store.default_harness()
     _apply_cascade(merged_steps, _cascade, _default_harness)
+    for s in merged_steps:
+        s["config"] = _futil.normalize_config(s.get("config") or {})
     # Fail fast on per-run overrides (before any flow row exists): banned
     # shortcut/cleanup flags rejected via the shared keys+values scanner.
     for step in merged_steps:

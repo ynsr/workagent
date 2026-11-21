@@ -237,3 +237,33 @@ def test_run_sync_step_forwards_harness_and_branch_to_spawn(tmp_path, monkeypatc
     assert spawned[0][1]["branch"] == "feat/sync-h"
 
 
+
+
+def test_flow_step_acp_does_not_pass_launch_true(monkeypatch):
+    from workagent import cli_flow_steps, cli_start
+    seen = {}
+    monkeypatch.setattr(cli_start.start, "__wrapped__", lambda *a, **kw: seen.update(kw))
+    cli_flow_steps.run_start_step("github:o/r#1", "", {"acp": True, "model": "m1"},
+                                  json_output=True, spawn=None, manual=None)
+    assert seen["acp"] is True
+    assert seen["launch"] is False
+    assert seen["model"] == "m1"
+
+
+def test_release_fix_default_accepts_acp_model_effort():
+    from workagent import cli_release_fix, web_args
+    assert "acp" in cli_release_fix.RUN_MODES
+    assert "--acp" in web_args.BOOL_FLAGS["release"]
+    assert "--model" in web_args.VAL_FLAGS["release"]
+    assert "--effort" in web_args.VAL_FLAGS["release"]
+
+
+def test_web_args_rejects_acp_with_short_L_or_conflicting_run_mode():
+    import pytest
+    from workagent.web_args import ApiError, _validate_args
+    with pytest.raises(ApiError) as e1:
+        _validate_args("start", ["github:o/r#1", "--acp", "-L"])
+    assert e1.value.status == 400
+    with pytest.raises(ApiError) as e2:
+        _validate_args("start", ["github:o/r#1", "--acp", "--run-mode", "preview"])
+    assert e2.value.status == 400

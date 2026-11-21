@@ -183,3 +183,29 @@ def test_run_cmd_ensures_proxy(monkeypatch):
     monkeypatch.setattr(subprocess, "run", _fake)
     E.run_cmd("gh", "pr", "view", "1", echo=False)
     assert seen["proxy"] == env.PROXY_ADDR
+
+def test_merged_env_and_launch_env_auto_create_default(isolated_config):
+    from workagent import env, store
+    target = store.config_dir() / "env.sh"
+    assert not target.exists()
+    out = env.merged_env(None)
+    assert target.is_file()
+    assert out.get("PI_EDIT_VARIANT") == "hashline"
+
+
+def test_prodtest_scripts_env_uses_merged_env(isolated_config, monkeypatch):
+    from workagent import prodtest_scripts, store
+    ef = store.config_dir() / "env.sh"
+    ef.write_text("export PT_SCRIPT_VAR=from_env_sh\n")
+    monkeypatch.delenv("PT_SCRIPT_VAR", raising=False)
+    got = prodtest_scripts._env()
+    assert got.get("PT_SCRIPT_VAR") == "from_env_sh"
+
+
+def test_spawn_terminal_step_wraps_with_env_sh(isolated_config, monkeypatch):
+    from workagent import cli_flow_util, cli_harness, store
+    seen = {}
+    monkeypatch.setattr(cli_harness, "spawn_in_terminal", lambda cmd, cwd="": (seen.setdefault("cmd", cmd), 42)[1])
+    cli_flow_util.spawn_terminal_step("start", ["github:o/r#1"], cwd="/tmp")
+    ef = store.config_dir() / "env.sh"
+    assert seen["cmd"].startswith(f"source {ef} && ")

@@ -29,6 +29,13 @@ def append_extra_prompt(prompt: str, extra_prompt: str | None) -> str:
     return prompt if not extra else f"{prompt}\n\n{extra}"
 
 
+def is_exec_mode(launch: bool, acp: bool = False,
+                 run_mode: str | None = None) -> bool:
+    """True when flags select an executing harness mode (headless or ACP)."""
+    mode = (run_mode or "").strip().lower() if isinstance(run_mode, str) else ""
+    return bool(launch or acp or mode in ("headless", "acp"))
+
+
 def _guard_harness(key: str | None, worktree: str) -> None:
     """Advisory pre-check: one live harness per worktree (issue #6).
 
@@ -149,7 +156,7 @@ def _launch_in_worktree(key: str, entry: dict, harness: str | None, no_tty: bool
     result = {"worktree_path": worktree, "branch": str(entry.get("branch", "")),
               "key": key, "harness": harness_name, "reused": True, "command": "start"}
     eprint(f"worktree: {worktree}  branch: {entry.get('branch', '')}")
-    if launch:
+    if is_exec_mode(launch, acp, run_mode):
         _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, repo, no_tty, launch,
                  result, json_output, run_key=key, session_file=session_file,
@@ -257,6 +264,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         launch = True
     if mode in ("preview", "terminal"):
         no_tty = False
+    is_exec = bool(launch or mode == "acp")
     from . import env as _env
     # Env file for every launch path (preview included): explicit
     # --env-file wins, else the configured default (auto-created with
@@ -265,7 +273,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # the preview shows the exact same wrapped command.
     env_path = _env.ensure_env_file(env_file)
     harness = backend.get_harness(harness_name)
-    if no_tty and launch and not terminal:
+    if no_tty and is_exec and not terminal:
         prompt += backend.VERDICT_SUFFIX
     action = _session_action(result)
     branch0 = str(result.get("branch", "") or "")
@@ -360,7 +368,10 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         eprint(f"terminal agent pid: {tpid}")
         _print_result(result, json_output)
         return
-    if not launch:
+    if mode == "acp" and not getattr(harness, "supports_acp", False):
+        from .cli_core import _fail as _fail_acp, EXIT_USAGE as _EXIT_ACP
+        _fail_acp(f"harness {harness_name!r} does not support --acp", _EXIT_ACP)
+    if not is_exec:
         eprint(f"harness command: {full_cmd}")
         result["harness_command"] = full_cmd
         rid = record_preview_run(
@@ -377,12 +388,12 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             # worktree; the printed harness command is theirs to run.
             backend.cd_worktree(worktree or fallback_dir)
             shell = os.environ.get("SHELL") or "/bin/sh"
-            os.execvp(shell, [shell])
+            os.execvpe(shell, [shell], _env.merged_env(env_path))
         return
     run_id: int | None = None
     db = _sq.db_path()
     session_path = session_file or ""
-    if run_key and launch:
+    if run_key and is_exec:
         # Atomic one-harness-per-worktree lock: claim first, inside the same
         # flock that records it; launch only when we own the slot. A live
         # record (pid alive) fails here instead of spawning a second run.
@@ -508,39 +519,6 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             _launch_kw["timeout_s"] = timeout_s
         exit_code = 0
         validation = None
-        if no_tty and mode == "acp":
-            if not getattr(harness, "supports_acp", False):
-                from .cli_core import _fail as _fail_acp, EXIT_USAGE as _EXIT_ACP
-                _fail_acp(f"harness {harness_name!r} does not support --acp", _EXIT_ACP)
-            run_dir = ""
-            try:
-                run_dir = os.environ.get("WORKAGENT_RUN_DIR", "") or ""
-            except Exception:
-                run_dir = ""
-            code = harness.launch_acp(prompt, worktree or fallback_dir,
-                                      model=model, effort=effort,
-                                      session_file=session_path or None,
-                                      env_file=str(env_path) if env_path else None,
-                                      timeout_s=timeout_s,
-                                      input_stream=(Path(run_dir) / "input.jsonl"
-                                                    if run_dir else None),
-                                      no_tty=True)
-            if session_path:
-                result["session_file"] = session_path
-                if run_id:
-                    try:
-                        _sq.set_run_file_path(db, run_id, session_path)
-                    except Exception:
-                        pass
-            if run_id:
-                _sq.finish_run(db, run_id, "finished" if code == 0 else "failed")
-            if run_key:
-                store.clear_harness_run(run_key)
-            _print_result(result, json_output)
-            if code:
-                from .errors import HarnessError as _HE
-                raise _HE(f"acp run failed (exit {code})", exit_code=code or 1)
-            return
         if no_tty:
             import tempfile
             from . import cli_validate as _cv, harness_summary as _hs
@@ -549,6 +527,24 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
 
             def run_once(attempt_prompt):
                 nonlocal current_path
+                if mode == "acp":
+                    code = harness.launch_acp(
+                        attempt_prompt, worktree or fallback_dir,
+                        model=model, effort=effort,
+                        session_file=current_path or None,
+                        env_file=str(env_path) if env_path else None,
+                        timeout_s=timeout_s,
+                        input_stream=None,
+                        no_tty=True,
+                    )
+                    if current_path and Path(current_path).is_file():
+                        result["session_file"] = current_path
+                        if run_id:
+                            _sq.set_run_file_path(db, run_id, current_path)
+                    text = (harness.extract_last_assistant_text(current_path, max_chars=None)
+                            if current_path else "")
+                    return {"exit_code": code, "transcript": text,
+                            "transcript_path": current_path}
                 flags = harness.session_file_flag(current_path) if current_path else []
 
                 def on_cid(cid: str) -> None:
@@ -624,6 +620,20 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                                        continued_from_run_id=chain_root)
                     except Exception as e:
                         eprint(f"warning: run record failed: {e}")
+        elif mode == "acp":
+            exit_code = harness.launch_acp(
+                prompt, worktree or fallback_dir,
+                model=model, effort=effort,
+                session_file=session_path or None,
+                env_file=str(env_path) if env_path else None,
+                timeout_s=timeout_s,
+                input_stream=sys.stdin,
+                no_tty=False,
+            )
+            if session_path and Path(session_path).is_file():
+                result["session_file"] = session_path
+                if run_id:
+                    _sq.set_run_file_path(db, run_id, session_path)
         else:
             backend.launch(harness_name, prompt, worktree or fallback_dir, False,
                            (_HARNESS_ARGS + extra) if extra else _HARNESS_ARGS,
@@ -635,7 +645,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             if minted is not None and minted != before and run_id:
                 _sq.set_run_file_path(db, run_id, str(minted))
         if run_id:
-            _sq.finish_run(db, run_id, "failed" if exit_code == 1 else "finished")
+            _sq.finish_run(db, run_id, "failed" if exit_code not in (0, 2) else "finished")
         if no_tty and run_key:
             _publish_headless_summary(result, json_output, harness_name=harness_name)
 
@@ -659,6 +669,8 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             raise HarnessError(
                 f"waiting for user response: worktree {worktree or fallback_dir}",
                 exit_code=2)
+        if validation is None:
+            raise HarnessError(f"acp run failed (exit {exit_code})", exit_code=exit_code)
         eprint(f"headless validation failed: {validation['verdict']} "
                f"after {validation['attempts']} attempts")
         raise HarnessError(

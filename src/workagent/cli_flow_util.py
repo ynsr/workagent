@@ -230,9 +230,10 @@ def spawn_terminal_step(kind: str, args: list[str], cwd: str = "",
     harness = harness or _store.default_harness()
     scope_file, scope_dir = mint_terminal_scope(kind, branch, harness)
     from . import cli_harness as _h
+    from . import env as _env
     argv = [*args, "--terminal"] if kind in TERMINAL_CAPABLE else args
     cmd = " ".join(shlex.quote(a) for a in [kind, *argv] if a)
-    full = f"workagent {cmd}"
+    full = _env.wrap_command(f"workagent {cmd}", _env.ensure_env_file())
     base = {"preview": True, "command": full,
             "manual_kind": kind, "manual_args": [kind, *argv]}
     if scope_file:

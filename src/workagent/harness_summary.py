@@ -77,6 +77,8 @@ def tool_error_rate(transcript, since_line: int = 0) -> tuple[int, int] | None:
                 return True
         return data.get("isError", data.get("is_error")) is True
 
+    acp_tools: dict[str, bool] = {}
+    acp_anon_seq = 0
     total = errors = 0
     stream_failed = False
     for line in lines:
@@ -88,6 +90,24 @@ def tool_error_rate(transcript, since_line: int = 0) -> tuple[int, int] | None:
         except (ValueError, TypeError):
             continue
         if not isinstance(data, dict):
+            continue
+        acp_t = data.get("t")
+        if isinstance(acp_t, str):
+            if acp_t == "tool_call":
+                st = str(data.get("status") or "").strip().lower()
+                is_err_status = st in ("error", "failed", "failure")
+                is_ok_status = st in ("completed", "done", "success", "ok")
+                has_explicit_err = (
+                    data.get("isError") is True
+                    or data.get("is_error") is True
+                    or bool(data.get("error"))
+                )
+                if is_err_status or is_ok_status or has_explicit_err:
+                    tid = str(data.get("id") or "")
+                    if not tid:
+                        acp_anon_seq += 1
+                        tid = f"__anon_{acp_anon_seq}"
+                    acp_tools[tid] = is_err_status or _part_is_error(data)
             continue
 
         if data.get("type") == "GENERIC":
@@ -142,6 +162,10 @@ def tool_error_rate(transcript, since_line: int = 0) -> tuple[int, int] | None:
         total += 1
         if _is_error(data):
             errors += 1
+    for failed in acp_tools.values():
+        total += 1
+        if failed:
+            errors += 1
     if total:
         return (errors, total)
     return (1, 1) if stream_failed else None
@@ -173,6 +197,20 @@ def last_assistant_text(transcript: str | Path, max_chars: int | None = 4000) ->
         except (json.JSONDecodeError, ValueError):
             continue
         if not isinstance(data, dict):
+            continue
+        acp_t = data.get("t")
+        if isinstance(acp_t, str):
+            if acp_t == "message":
+                chunk = data.get("text")
+                if isinstance(chunk, str) and chunk:
+                    stream_deltas.append(chunk)
+            elif acp_t == "turn_end":
+                if stream_deltas:
+                    last = "".join(stream_deltas).strip()
+                    stream_deltas.clear()
+            elif acp_t == "answer":
+                stream_deltas.clear()
+                last = ""
             continue
 
         etype = data.get("event")

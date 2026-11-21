@@ -23,7 +23,7 @@ from .cli_core import (
     app,
     eprint,
 )
-from .cli_harness import _guard_harness, _launch_in_worktree, _run_harness, append_extra_prompt
+from .cli_harness import _guard_harness, _launch_in_worktree, _run_harness, append_extra_prompt, is_exec_mode
 from .cli_review import _ensure_branch_worktree
 from .errors import HarnessError
 
@@ -162,8 +162,9 @@ def start(
         _reuse_ref = str(existing.get("issue_url", "") or existing.get("issue", "") or ref)
         _launch_in_worktree(key, existing, harness, no_tty, launch,
                             session_file, json_output, extra_prompt,
-                            terminal=terminal, env_file=env_file, plan=plan)
-        _start_post_status(_reuse_ref, launch, terminal, no_status, no_review)
+                            terminal=terminal, env_file=env_file, plan=plan,
+                            acp=acp, run_mode=run_mode, model=model, effort=effort)
+        _start_post_status(_reuse_ref, launch, terminal, no_status, no_review, acp=acp, run_mode=run_mode)
         return
     r, detected_default, tid, outcome = trackers.resolve_repo_for_ref(
         parsed, repo, Path.cwd(), depth=depth,
@@ -267,14 +268,14 @@ def start(
               "base": detected_default if branch_mode else base_branch,
               "key": key, "harness": harness_name, "command": "start"}
     eprint(f"worktree: {worktree}  branch: {branch}")
-    if launch:
+    if is_exec_mode(launch, acp, run_mode):
         _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, str(r), no_tty, launch,
                  result, json_output, run_key=key, session_file=session_file,
                  terminal=terminal, env_file=env_file,
                  acp=acp, run_mode=run_mode, model=model, effort=effort)
     _start_post_status(link_url or ref, launch, terminal, no_status, no_review,
-                       pr_url=_discover_branch_pr(str(r), branch))
+                       pr_url=_discover_branch_pr(str(r), branch), acp=acp, run_mode=run_mode)
 
 
 def _discover_branch_pr(repo: str, branch: str) -> str:
@@ -298,13 +299,14 @@ def _discover_branch_pr(repo: str, branch: str) -> str:
 
 
 def _start_post_status(issue_ref: str, launch: bool, terminal: bool,
-                       no_status: bool, no_review: bool, pr_url: str = "") -> None:
+                       no_status: bool, no_review: bool, pr_url: str = "",
+                       acp: bool = False, run_mode: "str | None" = None) -> None:
     """Post-start transition after headless harness success (best effort).
 
     Done-branch: `code review` when a PR/MR exists (or one is expected via
     no_review=False), else `done`. Opt-out via --no-status.
     """
-    if no_status or not launch or terminal:
+    if no_status or not is_exec_mode(launch, acp, run_mode) or terminal:
         return
     from . import issue_status as _st
     if no_review:
@@ -413,7 +415,7 @@ def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
               "base": base_branch, "key": key, "pr_url": pr_url,
               "harness": harness_name, "command": "start"}
     eprint(f"worktree: {worktree}  branch: {branch}")
-    if launch:
+    if is_exec_mode(launch, acp, run_mode):
         _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
                  launch, result, json_output, run_key=key,

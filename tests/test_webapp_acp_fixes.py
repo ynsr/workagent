@@ -15,11 +15,12 @@ def test_run_input_persists_qid(client, monkeypatch, tmp_path):
     run_dir = tmp_path / "rundir"
     run_dir.mkdir()
     run.run_dir = str(run_dir)
+    run.append('ACP: {"t": "question", "qid": "call-ask-1", "text": "go?", "options": [], "multi": false}')
     r = client.post(f"/api/runs/{run_id}/input",
                     json={"text": "Yes", "qid": "call-ask-1"})
     assert r.status_code == 200, r.text
     payload = json.loads((run_dir / "input.jsonl").read_text().strip())
-    assert payload == {"text": "Yes", "qid": "call-ask-1"}
+    assert payload == {"text": "Yes", "answer": "Yes", "qid": "call-ask-1"}
     gate.set()
 
 
