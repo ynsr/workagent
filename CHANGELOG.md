@@ -1,6 +1,10 @@
 # Changelog
 ## Unreleased
 - Add agent-orchestrator vs. Workagent UI/UX comparison report and 14-issue improvement roadmap [126]
+- Fix ACP harness runtime bugs (supervised Q&A, stderr tail, validation, env.sh, options refresh, transcript UI) [128]
+- Harden ACP follow-ups: sync stderr drain on init failure, own block for unknown events, explicit transcript styling with sticky user toggles, shared run-mode flags [128]
+- Re-running a flow after a step-0 failure now starts a fresh run instead of failing when step configs differ [132]
+- Generic ACP harness layer (`--acp`/`--run-mode acp/terminal` + `--model/--effort`) with options API, run input, and question cards [112]
 - Starting or reviewing a PR worktree no longer crashes when reusing a path from a cancelled or deleted worktree [119]
 - Add Antigravity (agy-guard) as the default AI harness, with a default harness setting and per-run harness pickers across CLI and web [113]
 - Destroying a worktree deletes its runs, flows, message links, and harness transcripts; startup sweeps leftovers [108]
@@ -594,10 +598,6 @@
 - Start with an already-linked worktree accepts a registered --repo name pointing at the same path instead of failing [95]
 - Prodtests table shows what each status means on hover, Prodtest Launch explains its buttons and offers worktrees in the ref field, and Run-all moved to the Prodtests page [97]
 - Agy (agy-guard) terminals launched by Workagent show colors again, like OMP [120]
-- Generic ACP harness layer (`--acp`/`--run-mode acp/terminal` + `--model/--effort`) with options API, run input, and question cards [112]
-- Re-running a flow after a step-0 failure now starts a fresh run instead of failing when step configs differ [132]
-- Fix ACP harness runtime bugs (supervised Q&A, stderr tail, validation, env.sh, options refresh, transcript UI) [128]
-- Harden ACP follow-ups: sync stderr drain on init failure, own block for unknown events, explicit transcript styling with sticky user toggles, shared run-mode flags [128]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

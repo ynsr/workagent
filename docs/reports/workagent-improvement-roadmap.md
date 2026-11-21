@@ -2,7 +2,7 @@
 
 **Issue:** [ynsr/workagent#126](https://github.com/ynsr/workagent/issues/126)  
 **Companion Report:** [Agent Orchestrator vs. Workagent: Architecture, Data Modeling & UI/UX Analysis](./agent-orchestrator-vs-workagent-analysis.md)  
-**Baseline Verified Against `main` (`ff8b1ab`):** Includes the merged ACP harness implementation from [PR #123 (`#112`)](https://github.com/ynsr/workagent/pull/123) (`AcpHarness`, `OmpAcpHarness`, `AgyAcpHarness`, 4 execution modes `preview | headless | acp | terminal`, `GET /api/harnesses/{name}/options` for `--model` and `--effort`, `POST /api/runs/{id}/input` via `input.jsonl`, and `AcpTranscript` + `QuestionCard` in `RunDetail.tsx`).
+**Baseline Verified Against `main` (`bdd1809`):** Includes the ACP harness implementation from [PR #123 (`#112`)](https://github.com/ynsr/workagent/pull/123) and the ACP fixes, validation, and transcript/UI alignment from [PR #129 (`#128`)](https://github.com/ynsr/workagent/pull/129), [PR #131 (`#130`)](https://github.com/ynsr/workagent/pull/131), and [PR #133 (`#132`)](https://github.com/ynsr/workagent/pull/133) (`AcpHarness`, `OmpAcpHarness`, `AgyAcpHarness`, 4 execution modes `preview | headless | acp | terminal` across CLI/web/flow/release/message commands, `GET /api/harnesses/{name}/options?refresh=0|1`, `POST /api/runs/{id}/input` via `WORKAGENT_RUN_DIR/input.jsonl` with strict `pending_question`/`qid` validation, `Structured / Raw` toggle in `RunDetail.tsx`, and `AcpTranscript` with chunk coalescing, `toolCallId` merging, `<details>` for thoughts & tool calls, `react-markdown` + `remark-gfm`, formatted `usage`, and `QuestionCard`).
 
 ---
 
@@ -45,9 +45,9 @@ The improvements below bring AO's best architectural and UI/UX patterns into Wor
      - Polls open PRs on active worktrees with `LastNudgeSignature` deduplication (`(head_sha, ci_status, unresolved_thread_ids)`).
      - When CI transitions to `failure` on a new SHA and no harness is currently live on the worktree, automatically dispatches an ACP/headless fix run with the failing job URL and log tail, and records a `nudge_routed` event in `worktree_events`.
      - When new unresolved review comments arrive on the PR, automatically dispatches `workagent review <ref> --fix-comments --use-review-session` in ACP/headless mode.
-3. **Multi-Turn ACP Session Continuity & Mid-Turn Steering (`POST /api/runs/{id}/input`)**:
-   - PR #123 introduces `run_dir / "input.jsonl"` so `QuestionCard` can answer an `ask_question` tool call.
-   - Extend `AcpHarness` and `POST /api/runs/{id}/input` with an optional **keep-alive / interactive follow-up mode** (or seamless `POST /api/runs/{id}/follow-up` using `session/load` / transcript resume) so users can send follow-up instructions or mid-turn **Steer** messages from the `RunDetail` / `WorktreeWorkspace` chat composer even when the agent didn't explicitly call `ask_question`.
+3. **Multi-Turn ACP Session Continuity & Mid-Turn Steering (`POST /api/runs/{id}/follow-up`)**:
+   - PR #123 and PR #129 wire `WORKAGENT_RUN_DIR/input.jsonl` so `QuestionCard` can answer an active `ask_question` tool call (`POST /api/runs/{id}/input` now strictly enforces `409 no_pending_question` / `qid_mismatch` / `not_running`).
+   - Extend `AcpHarness` with `session/load` resume (and optional keep-alive / interactive follow-up mode) plus a dedicated `POST /api/runs/{id}/follow-up` endpoint so users can send follow-up instructions or mid-turn **Steer** messages from the `RunDetail` / `WorktreeWorkspace` chat composer even when the agent didn't explicitly call `ask_question`.
 4. **In-App Git Diff & File Inspection API (`GET /api/worktrees/{ref}/diff`)**:
    - Add read-only endpoints `GET /api/worktrees/{ref}/files` (list of modified/added/deleted files with `+additions/-deletions` against `base_branch` or `HEAD`) and `GET /api/worktrees/{ref}/diff?path=<file>&mode=base|head` so the web UI can render syntax-highlighted unified/split diffs and let operators send inline line-level annotations directly to an `adhoc` or `acp` run.
 5. **Conversational Project Orchestrator Mode (`workagent orchestrate`)**:
@@ -116,7 +116,7 @@ The improvements below bring AO's best architectural and UI/UX patterns into Wor
 1. **Dedicated Worktree Workspace View (`/worktrees/:ref` or Slide-Over Split Inspector)**:
    - Currently, clicking a worktree row on the Dashboard only expands a small metadata tray (`WorktreeDetail.tsx`), while live agent output lives on a separate `/runs/:runId` page.
    - Introduce a unified **Worktree Workspace View** (modeled on AO's `SessionView` + `SessionInspectorRail`):
-     - **Left/Center Pane**: Live ACP Chat / Transcript surface (`AcpTranscript` + `QuestionCard` from PR #123) + persistent bottom **Prompt Composer** (`HarnessSelect`, `RunModeSelect`, `ModelSelect`, `EffortSelect`, and prompt input) to send follow-up instructions, run a custom action, or trigger a flow step in place without navigating away to `/launch`.
+     - **Left/Center Pane**: Live ACP Chat / Transcript surface (`AcpTranscript` + `QuestionCard` from PR #123 / PR #129) + persistent bottom **Prompt Composer** (`HarnessSelect`, `RunModeSelect`, `ModelSelect`, `EffortSelect`, and prompt input) to send follow-up instructions, run a custom action, or trigger a flow step in place without navigating away to `/launch`.
      - **Right Inspector Rail (Tabbed)**:
        1. `Summary & Timeline`: Issue/PR metadata, `Behind|Ahead` sync status, CI checks, and the chronological **Feedback & Activity Timeline** (`feedback.jpg`).
        2. `Files & Diff`: In-app Git diff viewer (`GET /api/worktrees/{ref}/diff`) with inline line-comment annotations that can be dispatched directly to the agent.
@@ -130,9 +130,9 @@ The improvements below bring AO's best architectural and UI/UX patterns into Wor
 ### F4. Visualization of Agent Interactions & Task Progress
 
 1. **Category-Aggregated Tool Call Folding (`ActivityRun` in `AcpTranscript.tsx`)**:
-   - Building directly on PR #123's `AcpTranscript`: when an ACP agent emits a sequence of 3+ consecutive exploratory tool calls (`read_file`, `grep`, `glob`, `bash` read commands), automatically group them into a single collapsible summary line:
+   - Building directly on PR #123 and PR #129 (which already landed chunk coalescing, `toolCallId` merging, `<details>` for thoughts and individual tool calls, Markdown rendering, and the `Structured / Raw` toggle): when an ACP agent emits a sequence of 3+ consecutive exploratory tool calls (`read`, `search`, non-mutating `execute`/`bash`), automatically group them into a single collapsible summary line:
      > `▸ Explored 14 files, 5 searches, 3 commands · +42 −11`
-   - Keep **failed tool calls** (`status === "failed"` or non-zero exit code) automatically extracted and visible immediately below the folded summary line (mirroring AO's `FailedCalls` component in `ActivityRun.tsx`) so errors are never hidden inside collapsed disclosures.
+   - Keep **failed tool calls** (`status === "failed"` / `"error"` or non-zero exit code) automatically extracted and visible immediately below the folded summary line (mirroring AO's `FailedCalls` component in `ActivityRun.tsx`) so errors are never hidden inside collapsed disclosures.
    - Prefix every completed agent turn/run with `"Worked for <duration> · <model> (<effort>)"` and token/cost summary pills when available.
 2. **Closed-Loop Feedback Timeline Component (`WorktreeFeedbackTimeline.tsx`)**:
    - Inspired directly by AO's `feedback.jpg`, render a vertical chronological timeline inside the Worktree Workspace / Detail view that interleaves:
@@ -234,14 +234,13 @@ flowchart LR
   2. In `Prodtests.tsx`, format `plan_path` as a compact `IPG-1069.yaml · rev3 · <risk>` badge with a tooltip and copy/preview action for the full path.
   3. In `FlowTemplates.tsx` and `Actions.tsx`, group the `Protected`, `Top`, `Overlay`, and `Order` columns into a compact trailing control cluster so the table fits comfortably without horizontal scrolling.
 
-#### Issue 5: Upgrade `AcpTranscript` with chunk coalescing, collapsible `<details>`, `ActivityRun` tool-call folding, Markdown, and a `Structured / Raw` toggle
-- **Scope**: Frontend (`web/src/components/AcpTranscript.tsx`, `web/src/lib/harness.ts`, `web/src/pages/RunDetail.tsx`) — follow-up to merged PR #123 (`ff8b1ab`).
-- **Problem**: In merged PR #123, `AcpTranscript.tsx` renders one flat `<div>` per streamed `ACP:` line (`agent_message_chunk`, `agent_thought_chunk`, and `tool_call`/`tool_call_update` are not coalesced or merged by `toolCallId`), has no collapsible `<details>` blocks, renders plain text instead of Markdown for assistant messages, prints raw JSON for `usage` blocks, and stacks simultaneously above raw `LogViewer` without a `Structured / Raw` toggle.
+#### Issue 5: Add `ActivityRun` multi-tool folding, `FailedCalls` extraction, and settled turn summaries to `AcpTranscript`
+- **Scope**: Frontend (`web/src/components/AcpTranscript.tsx`, `web/src/lib/harness.ts`, `web/src/pages/RunDetail.tsx`) — follow-up to PR #123 (`ff8b1ab`) and PR #129 (`bdd1809`).
+- **Problem**: PR #129 landed per-block chunk coalescing, `toolCallId` merging, `<details>` for thoughts and individual tool calls, Markdown rendering, formatted `usage` text, and the `Structured / Raw` toggle. However, long exploratory runs still render dozens of sequential individual tool-call `<details>` rows without category grouping, and completed turns lack a summary header showing elapsed duration and model/effort.
 - **Solution**:
-  1. Coalesce consecutive `message` and `thought` chunks and merge `tool_call` / `tool_call_update` events by `toolCallId` in `parseAcpBlocks`.
-  2. Render collapsible `<details>` for `thought` blocks, Markdown for assistant `message` blocks, formatted token summaries for `usage` blocks, and a `Structured | Raw` toggle replacing the stacked duplicate `LogViewer`.
-  3. Group consecutive exploratory tool calls (`read`, `search`, `list`, non-mutating shell commands) into a single collapsible `ActivityRun` summary bar: `"Explored N files, M searches, K commands"` with aggregate `+additions/-deletions` badges when file edits occurred, while surfacing any **failed** tool call unfolded immediately beneath (`FailedCalls`).
-  4. Show a settled turn header (`"Worked for <duration> · <model> (<effort>)"`) at the top of each completed turn.
+  1. Group 3+ consecutive exploratory tool calls (`read`, `search`, non-mutating `execute`/`bash`) into a single collapsible `ActivityRun` summary bar: `"Explored N files, M searches, K commands"` with aggregate `+additions/-deletions` badges when file edits occurred, while surfacing any **failed** tool call unfolded immediately beneath (`FailedCalls`).
+  2. Show a settled turn header (`"Worked for <duration> · <model> (<effort>)"`) at the top of each completed turn (using turn timing / run metadata).
+  3. Preserve sticky user expand/collapse overrides and `Follow output` autoscroll behavior across live updates.
 
 #### Issue 6: Hierarchical parent-child run tree in `RunsTable` and visual stepper progress bar in `Flows`
 - **Scope**: Backend (`src/workagent/store_sqlite.py`, `src/workagent/cli_flow_run.py`) + Frontend (`web/src/components/RunsTable.tsx`, `web/src/pages/Flows.tsx`, `web/src/components/StatusTableMain.tsx`).
@@ -253,7 +252,7 @@ flowchart LR
 
 #### Issue 7: Dedicated Worktree Workspace View (`/worktrees/:ref`) with multi-turn ACP follow-up composer
 - **Scope**: Backend (`src/workagent/acp_harness.py`, `src/workagent/web_runs_routes.py`) + Frontend (`web/src/pages/WorktreeWorkspace.tsx`, `web/src/components/WorktreeDetail.tsx`).
-- **Problem**: Supervising an agent on a worktree requires jumping between `Dashboard`, `Launch`, `Flows`, and `RunDetail`. Additionally, in merged PR #123 (`ff8b1ab`), `AcpHarness.launch_acp` always calls `session/new` (no `session/load` resume yet) and exits whenever no `question` event is pending (always true for `omp`), while `POST /api/runs/{id}/input` returns `409 not_running` once a run finishes.
+- **Problem**: Supervising an agent on a worktree requires jumping between `Dashboard`, `Launch`, `Flows`, and `RunDetail`. Additionally, as of `main` (`bdd1809`, PR #123 / PR #129), `AcpHarness.launch_acp` still always calls `session/new` (no `session/load` resume yet) and exits whenever no `question` event is pending (always true for `omp`), while `POST /api/runs/{id}/input` strictly requires an active `pending_question` (`409 no_pending_question` / `409 not_running`).
 - **Solution**:
   1. Persist the ACP `sessionId` in `runs.metadata`, add `session/load` resume support (and optional keep-alive mode) to `AcpHarness.launch_acp`, and expose `POST /api/runs/{id}/follow-up` so finished ACP runs can continue seamlessly in-place.
   2. Create a split-pane **Worktree Workspace View** (`/worktrees/:ref`):
@@ -292,11 +291,11 @@ flowchart LR
 
 #### Issue 12: Capture run token, cost, model, and duration telemetry and add Usage summary view
 - **Scope**: Backend (`src/workagent/store_sqlite.py`, `src/workagent/acp_harness.py`, `src/workagent/agy_harness.py`, `src/workagent/webapp.py`) + Frontend (`web/src/lib/harness.ts`, `web/src/pages/Runs.tsx`, `web/src/pages/RunDetail.tsx`).
-- **Problem**: Merged PR #123 emits `{"t": "usage", "id": ..., "usage": ...}` events on stdout (`acp_harness.py:411-413`), but does not persist `duration_ms`, `model_id`, `effort`, or token/cost metrics into `runs` in `state.db`, and `harness.ts:75` falls back to raw `JSON.stringify(obj)` when displaying `usage` blocks.
+- **Problem**: `acp_harness.py` emits `{"t": "usage", "id": ..., "usage": ...}` events on stdout (`acp_harness.py:511-513`) and PR #129 formats them inline via `formatUsage()` in `web/src/lib/harness.ts`, but the backend still does not persist `duration_ms`, `model_id`, `effort`, or token/cost metrics into `runs` in `state.db`, and `RunsTable` / `RunDetail` / `Runs.tsx` do not surface aggregated run duration, model/effort badges, or token/cost totals.
 - **Solution**:
   1. Add `duration_ms`, `model_id`, `effort`, `input_tokens`, `output_tokens`, `cached_tokens`, and `cost_usd` to `runs` in `state.db`.
   2. Populate these fields from `AcpHarness` `{"t": "usage", "usage": ...}` events and headless stream-json summaries on run completion.
-  3. Format `usage` blocks cleanly in `harness.ts` and display duration, model/effort badges, and token/cost pills on `RunsTable`, `RunDetail`, and a compact usage summary bar on `Runs.tsx`.
+  3. Display persisted duration, model/effort badges, and token/cost pills on `RunsTable`, `RunDetail`, and a compact usage summary bar on `Runs.tsx`.
 
 #### Issue 13: Add built-in recurring Cron/RRULE Schedules for Flow Templates, Custom Actions, and Maintenance commands
 - **Scope**: Backend (`src/workagent/store_sqlite.py`, `src/workagent/scheduler.py`, `src/workagent/cli_schedule.py`, `src/workagent/webapp.py`) + Frontend (`web/src/pages/FlowTemplates.tsx`).
