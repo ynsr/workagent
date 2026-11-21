@@ -292,3 +292,71 @@ def test_run_input_enforces_pending_question_and_qid(client, monkeypatch, tmp_pa
     payload = json.loads((tmp_path / "r128" / "input.jsonl").read_text().strip())
     assert payload == {"text": "yes", "answer": "yes", "qid": "q1"}
 
+
+def test_e2e_supervised_web_acp_question_answered_via_api(client, tmp_path):
+    """End-to-end: supervised child receives WORKAGENT_RUN_DIR, emits question,
+    GET /api/runs/{id} exposes pending_question, POST /input delivers answer,
+    child completes turn 2 and pending_question clears."""
+    import sys
+    import time
+    from workagent import web_runs
+
+    fake_agent = tmp_path / "e2e_agent.py"
+    fake_agent.write_text(
+        "import json, sys\n"
+        "turns = 0\n"
+        "for raw in sys.stdin:\n"
+        "    msg = json.loads(raw)\n"
+        "    m = msg.get('method')\n"
+        "    if m == 'initialize':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'protocolVersion':1}}), flush=True)\n"
+        "    elif m == 'session/new':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'sessionId':'s1'}}), flush=True)\n"
+        "    elif m == 'session/prompt':\n"
+        "        turns += 1\n"
+        "        if turns == 1:\n"
+        "            print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'s1','update':{'sessionUpdate':'tool_call','toolCallId':'q-e2e','title':'ask_question','rawInput':{'questions':[{'question':'Ship it?','options':[{'label':'Yes'},{'label':'No'}]}]}}}}), flush=True)\n"
+        "            print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'stopReason':'end_turn'}}), flush=True)\n"
+        "        else:\n"
+        "            txt = msg['params']['prompt'][0]['text']\n"
+        "            print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'s1','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':f'Got {txt}\\nJOB_DONE'}}}}), flush=True)\n"
+        "            print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'stopReason':'end_turn'}}), flush=True)\n"
+    )
+    child_script = tmp_path / "run_child.py"
+    child_script.write_text(
+        "import sys\n"
+        "from workagent.agy_harness import AgyAcpHarness\n"
+        "h = AgyAcpHarness()\n"
+        f"h.acp_argv = lambda: [sys.executable, {str(fake_agent)!r}]\n"
+        f"raise SystemExit(h.launch_acp('hello', {str(tmp_path)!r}, no_tty=True))\n"
+    )
+
+    reg = client.app.state.registry
+    run = web_runs.Run(id="e2e-q", command="start", args=["github:o/r#1", "--acp"],
+                       target="start", argv=[sys.executable, str(child_script)])
+    reg.runs[run.id] = run
+    web_runs._spawn(run, reg)
+
+    deadline = time.time() + 10.0
+    pq = None
+    while time.time() < deadline:
+        detail = client.get("/api/runs/e2e-q").json()
+        pq = detail.get("pending_question")
+        if pq:
+            break
+        time.sleep(0.1)
+    assert pq is not None and pq["qid"] == "q-e2e"
+
+    r = client.post("/api/runs/e2e-q/input", json={"qid": "q-e2e", "text": "Yes"})
+    assert r.status_code == 200
+
+    deadline = time.time() + 10.0
+    while time.time() < deadline:
+        detail = client.get("/api/runs/e2e-q").json()
+        if detail["state"] != "running":
+            break
+        time.sleep(0.1)
+    assert detail["state"] == "succeeded"
+    assert detail["pending_question"] is None
+    assert any("Got Yes" in ln["text"] for ln in detail["lines"])
+
