@@ -595,6 +595,7 @@
 - Prodtests table shows what each status means on hover, Prodtest Launch explains its buttons and offers worktrees in the ref field, and Run-all moved to the Prodtests page [97]
 - Agy (agy-guard) terminals launched by Workagent show colors again, like OMP [120]
 - Generic ACP harness layer (`--acp`/`--run-mode acp/terminal` + `--model/--effort`) with options API, run input, and question cards [112]
+- Re-running a flow after a step-0 failure now starts a fresh run instead of failing when step configs differ [132]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

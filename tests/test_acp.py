@@ -111,6 +111,73 @@ def test_option_parsers_use_recorded_payloads():
     assert [m["id"] for m in agy_opts.models] == ["gemini-3.8-flash-low", "gemini-3.8-pro-high"]
     assert agy_opts.current_model == "gemini-3.8-flash-low"
     assert [e["id"] for e in agy_opts.efforts] == ["low", "medium", "high", "xhigh"]
+    # Real omp acp payloads use "id" instead of "configId".
+    omp_id_payload = {
+        "sessionId": "s2",
+        "configOptions": [
+            {"id": "model", "currentValue": "m-omp",
+             "options": [{"value": "m-omp", "name": "OMP Model"}]},
+            {"id": "thinking", "currentValue": "high",
+             "options": [{"value": "low", "name": "low"}, {"value": "high", "name": "high"}]},
+        ],
+    }
+    omp_id_opts = _a.OmpAcpHarness().parse_options(omp_id_payload)
+    assert [m["id"] for m in omp_id_opts.models] == ["m-omp"]
+    assert omp_id_opts.current_model == "m-omp"
+    assert [e["id"] for e in omp_id_opts.efforts] == ["low", "high"]
+    assert omp_id_opts.current_effort == "high"
+
+
+def test_discover_options_passes_mcp_servers(monkeypatch):
+    """session/new must include mcpServers: [] for omp acp compatibility."""
+    from workagent import acp_harness as _a
+    seen = []
+
+    class _FakeClient:
+        def request(self, method, params=None, timeout_s=None):
+            seen.append((method, params))
+            if method == "session/new":
+                return {"sessionId": "s1", "configOptions": []}
+            return {}
+
+        def close(self):
+            pass
+
+    h = _a.OmpAcpHarness()
+    monkeypatch.setattr(_a, "check_binary", lambda b: None)
+    monkeypatch.setattr(h, "_open_client", lambda *a, **k: _FakeClient())
+    h.discover_options()
+    new_call = next(p for m, p in seen if m == "session/new")
+    assert new_call["mcpServers"] == []
+
+
+def test_launch_acp_passes_mcp_servers(isolated_config, tmp_path, monkeypatch):
+    """launch_acp session/new must include mcpServers: [] for omp acp compatibility."""
+    from workagent import acp_harness as _a
+    seen = []
+
+    class _FakeClient:
+        def set_notification_handler(self, handler):
+            pass
+
+        def request(self, method, params=None, timeout_s=None):
+            seen.append((method, params))
+            if method == "session/new":
+                return {"sessionId": "s1"}
+            if method == "session/prompt":
+                return {"stopReason": "end_turn"}
+            return {}
+
+        def close(self):
+            pass
+
+    h = _a.OmpAcpHarness()
+    monkeypatch.setattr(_a, "check_binary", lambda b: None)
+    monkeypatch.setattr(h, "_open_client", lambda *a, **k: _FakeClient())
+    code = h.launch_acp("do work", workdir=str(tmp_path), no_tty=True)
+    assert code == 0
+    new_call = next(p for m, p in seen if m == "session/new")
+    assert new_call["mcpServers"] == []
 
 
 def test_omp_argv_yolo_and_model_flags(isolated_config, tmp_path):
