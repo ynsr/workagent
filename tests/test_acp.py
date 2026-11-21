@@ -226,3 +226,104 @@ def test_agy_question_answer_roundtrip(isolated_config, tmp_path, monkeypatch, c
     kinds = [json.loads(ln).get("t") for ln in session.read_text().splitlines() if ln.strip()]
     assert "question" in kinds
     assert "answer" in kinds
+
+
+def test_run_supervised_exports_workagent_run_dir(tmp_path):
+    """run_supervised sets WORKAGENT_RUN_DIR=<run_dir> in child env."""
+    import sys
+    from workagent.run_supervised import run_supervised
+
+    run_dir = tmp_path / "run-128"
+    out_file = tmp_path / "seen_env.txt"
+    code_str = (
+        "import os, pathlib; "
+        f"pathlib.Path({str(out_file)!r}).write_text(os.environ.get('WORKAGENT_RUN_DIR', ''))"
+    )
+    rc = run_supervised(run_dir, [sys.executable, "-c", code_str])
+    assert rc == 0
+    assert out_file.read_text() == str(run_dir)
+
+
+def test_acp_client_captures_stderr_tail_on_init_failure(tmp_path, isolated_config):
+    """Init failure surfaces stderr tail in HarnessError (no AttributeError)."""
+    import sys
+    import pytest
+    from workagent.acp_harness import OmpAcpHarness
+    from workagent.errors import HarnessError
+
+    bad_agent = tmp_path / "bad_agent.py"
+    bad_agent.write_text(
+        "import sys\n"
+        "sys.stderr.write('boom line 1\\nboom line 2\\n')\n"
+        "sys.stderr.flush()\n"
+        "sys.exit(1)\n"
+    )
+    h = OmpAcpHarness()
+    h.acp_argv = lambda: [sys.executable, str(bad_agent)]
+    with pytest.raises(HarnessError) as exc_info:
+        h.launch_acp("hi", str(tmp_path), no_tty=True)
+    msg = str(exc_info.value)
+    assert "boom line 2" in msg
+
+
+def test_read_answer_unattended_no_tty_returns_waiting_exit_2(tmp_path, isolated_config, monkeypatch):
+    """no_tty=True without WORKAGENT_RUN_DIR/input_stream returns None -> WAITING_USER_RESPONSE exit 2."""
+    import io
+    from workagent.agy_harness import AgyAcpHarness
+
+    monkeypatch.delenv("WORKAGENT_RUN_DIR", raising=False)
+    h = AgyAcpHarness()
+    assert h._read_answer({"qid": "q1"}, input_stream=None, no_tty=True) is None
+    # no_tty=False without input_stream reads sys.stdin
+    monkeypatch.setattr("sys.stdin", io.StringIO("yes please\n"))
+    assert h._read_answer({"qid": "q1"}, input_stream=None, no_tty=False) == "yes please"
+
+
+def test_launch_acp_sigterm_kills_child_process_group(tmp_path, isolated_config):
+    """SIGTERM to child running launch_acp kills <bin> acp with no orphan."""
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    pid_file = tmp_path / "agent.pid"
+    slow_agent = tmp_path / "slow_agent.py"
+    slow_agent.write_text(
+        "import json, os, pathlib, sys, time\n"
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+        "for raw in sys.stdin:\n"
+        "    msg = json.loads(raw)\n"
+        "    m = msg.get('method')\n"
+        "    if m == 'initialize':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'protocolVersion':1}}), flush=True)\n"
+        "    elif m == 'authenticate':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{}}), flush=True)\n"
+        "    elif m == 'session/new':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'sessionId':'s1'}}), flush=True)\n"
+        "    elif m == 'session/prompt':\n"
+        "        time.sleep(30)\n"
+    )
+    runner = tmp_path / "runner.py"
+    runner.write_text(
+        "import sys\n"
+        "from workagent.acp_harness import OmpAcpHarness\n"
+        "h = OmpAcpHarness()\n"
+        f"h.acp_argv = lambda: [sys.executable, {str(slow_agent)!r}]\n"
+        f"h.launch_acp('hi', {str(tmp_path)!r}, no_tty=True)\n"
+    )
+    proc = subprocess.Popen([sys.executable, str(runner)], start_new_session=True)
+    deadline = time.time() + 5.0
+    while not pid_file.exists() and time.time() < deadline:
+        time.sleep(0.05)
+    assert pid_file.exists()
+    agent_pid = int(pid_file.read_text().strip())
+    os.kill(proc.pid, signal.SIGTERM)
+    proc.wait(timeout=5)
+    time.sleep(0.2)
+    try:
+        os.kill(agent_pid, 0)
+        alive = True
+    except ProcessLookupError:
+        alive = False
+    assert not alive, f"agent pid {agent_pid} was orphaned after SIGTERM"
