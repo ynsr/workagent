@@ -18,6 +18,10 @@ def adhoc(
     launch: bool = typer.Option(False, "--launch", help="Run headless (default when neither --launch nor --terminal)."),
     terminal: bool = typer.Option(False, "--terminal", help="Run in OS terminal (XOR --launch)."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run."),
+    acp: bool = typer.Option(False, "--acp", help="Run this step via ACP stdio (JSON-RPC) instead of CLI argv."),
+    run_mode: Optional[str] = typer.Option(None, "--run-mode", help="Run mode: preview|headless|acp|terminal (default: derived from --launch/--terminal/--acp)."),
+    model: Optional[str] = typer.Option(None, "--model", help="Model id (ACP-discovered; non-ACP harnesses pass --model through when supported)."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="Effort level (ACP-discovered; non-ACP harnesses pass --effort through when supported)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the prompt."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before commands."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path."),
@@ -75,7 +79,8 @@ def adhoc(
                                         "session_metadata": {"action": "adhoc", "mode": mode}},
                      json_output, run_key=key,
                      session_file=session_file if isinstance(session_file, str) else None,
-                     terminal=terminal, env_file=env_file)
+                     terminal=terminal, env_file=env_file,
+                     acp=acp, run_mode=run_mode, model=model, effort=effort)
         rows.append({"key": key, "worktree": wt, "mode": mode})
     _print_result({"results": rows}, json_output)
     if failed:

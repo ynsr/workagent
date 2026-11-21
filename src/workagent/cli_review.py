@@ -520,6 +520,10 @@ def review(
     repo: Optional[str] = typer.Option(None, "--repo", autocompletion=_complete_repos, help="Registered name, local path, or clone URL."),
     depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured)."),
+    acp: bool = typer.Option(False, "--acp", help="Run this step via ACP stdio (JSON-RPC) instead of CLI argv."),
+    run_mode: Optional[str] = typer.Option(None, "--run-mode", help="Run mode: preview|headless|acp|terminal (default: derived from --launch/--terminal/--acp)."),
+    model: Optional[str] = typer.Option(None, "--model", help="Model id (ACP-discovered; non-ACP harnesses pass --model through when supported)."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="Effort level (ACP-discovered; non-ACP harnesses pass --effort through when supported)."),
     no_tty: bool = typer.Option(False, "--no-tty", help="Run harness non-interactively."),
     launch: bool = typer.Option(False, "-L", "--launch", help="Launch the harness in the worktree (default: print the harness command and land in an interactive shell inside the worktree)."),
     terminal: bool = typer.Option(False, "--terminal", help="Open the harness command in the OS terminal instead of running headless (mutually exclusive with --launch)."),
@@ -781,7 +785,8 @@ def review(
                 _run_harness(harness_name, prompt, worktree, str(repo_dir),
                              no_tty, launch, result, json_output,
                              run_key=review_key, session_file=result.get("session_file"),
-                             terminal=terminal, env_file=env_file)
+                             terminal=terminal, env_file=env_file,
+                             acp=acp, run_mode=run_mode, model=model, effort=effort)
             except HarnessError:
                 if launch:
                     _clear_reviewed(review_key)
@@ -830,7 +835,8 @@ def review(
         _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
                      launch, result, json_output, run_key=review_key,
                      session_file=result.get("session_file"), terminal=terminal,
-                     env_file=env_file)
+                     env_file=env_file,
+                     acp=acp, run_mode=run_mode, model=model, effort=effort)
     except HarnessError:
         if launch:
             _clear_reviewed(review_key)

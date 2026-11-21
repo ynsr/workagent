@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import { SegmentedControl, SuggestIconButton } from "@/components/FormControls"
 import { HarnessSelect } from "@/components/HarnessSelect"
+import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { IconPicker } from "@/components/IconPicker"
 import { ScriptField } from "@/components/ScriptBlock"
 import { errorText } from "@/components/StatusFeedback"
@@ -15,7 +16,9 @@ import { useCreateRun } from "@/lib/queries"
 import { ACTION_PRESETS } from "@/lib/actionPresets"
 import {
   ROW_CATEGORIES,
+  actionEffortOf,
   actionHarnessOf,
+  actionModelOf,
   actionRunModeOf,
   buildActionUpsertArgs,
   isRunImmediateAction,
@@ -24,7 +27,7 @@ import {
 } from "@/lib/messageRunConfig"
 import type { ActionRow } from "@/lib/api"
 
-const RUN_MODES = ["preview", "headless", "terminal"] as const
+const RUN_MODES = ["preview", "headless", "acp", "terminal"] as const
 
 function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/_{2,}/g, "_")
@@ -51,6 +54,8 @@ export function ActionFormCard({ editing, onDone, onCancel, usedIcons }: {
   const [post, setPost] = useState(editing?.post_execution ?? "")
   const [mode, setMode] = useState<string>(editing ? actionRunModeOf(editing) : "preview")
   const [harness, setHarness] = useState<string>(editing ? actionHarnessOf(editing) : "")
+  const [model, setModel] = useState<string>(editing ? actionModelOf(editing) : "")
+  const [effort, setEffort] = useState<string>(editing ? actionEffortOf(editing) : "")
   const [category, setCategory] = useState<RowCategory>(
     (editing?.category as RowCategory | undefined) ?? "worktree",
   )
@@ -90,7 +95,7 @@ export function ActionFormCard({ editing, onDone, onCancel, usedIcons }: {
     setSaving(true)
     try {
       const form: ActionUpsertForm = {
-        name, label, icon, prompt, pre, post, runMode: mode, runImmediately, category, harness,
+        name, label, icon, prompt, pre, post, runMode: mode, runImmediately, category, harness, model, effort,
       }
       const { run_id } = await createRun.mutateAsync({
         command: "action",
@@ -199,6 +204,7 @@ export function ActionFormCard({ editing, onDone, onCancel, usedIcons }: {
           options={[
             { value: "preview", label: "Preview", hint: "Print the harness command without running" },
             { value: "headless", label: "Headless", hint: "Run the agent now with auto-approve" },
+            { value: "acp", label: "ACP", hint: "Stream structured ACP events to the Run page" },
             { value: "terminal", label: "Terminal", hint: "Open the agent in the OS terminal" },
           ]}
           value={RUN_MODES.includes(mode as (typeof RUN_MODES)[number]) ? mode as (typeof RUN_MODES)[number] : "preview"}
@@ -207,9 +213,21 @@ export function ActionFormCard({ editing, onDone, onCancel, usedIcons }: {
         <HarnessSelect
           idPrefix="action-default"
           value={harness}
-          onChange={setHarness}
+          onChange={(v) => { setHarness(v); setModel(""); setEffort("") }}
           allowDefault
           description="Default AI harness stored in default_options (defaults to Settings)."
+        />
+        <ModelSelect
+          idPrefix="action-default"
+          harness={harness}
+          value={model}
+          onChange={setModel}
+        />
+        <EffortSelect
+          idPrefix="action-default"
+          harness={harness}
+          value={effort}
+          onChange={setEffort}
         />
         <SegmentedControl
           idPrefix="action-category"

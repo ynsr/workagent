@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/popover"
 import { errorText } from "@/components/StatusFeedback"
 import { useActions, useCreateRun } from "@/lib/queries"
-import { isRunImmediateAction, messageScoped } from "@/lib/messageRunConfig"
+import { actionEffortOf, actionHarnessOf, actionModelOf, actionRunModeOf, buildImmediateActionArgs, isRunImmediateAction, messageScoped } from "@/lib/messageRunConfig"
 import type { ActionRow } from "@/lib/api"
 export function ActionsMenu({ selected, compact = false }: { selected: Set<string>; compact?: boolean }) {
   const navigate = useNavigate()
@@ -39,13 +39,13 @@ export function ActionsMenu({ selected, compact = false }: { selected: Set<strin
   async function handleRun(label: string) {
     setRunning(label)
     setOpen(false)
+    const action = data?.actions.find((r) => r.label === label)
     for (const key of [...selected].sort()) {
       try {
-        const { run_id } = await createRun.mutateAsync({
-          command: "action",
-          args: ["run", label, key, "--launch", "--yes"],
-          confirm: true,
-        })
+        const args = action
+          ? buildImmediateActionArgs(label, key, actionRunModeOf(action), actionHarnessOf(action), actionModelOf(action), actionEffortOf(action))
+          : ["run", label, key, "--launch", "--yes"]
+        const { run_id } = await createRun.mutateAsync({ command: "action", args, confirm: true })
         toast.success(`Action ${label} on ${key} started`, {
           action: { label: "View", onClick: () => navigate(`/runs/${run_id}`) },
         })

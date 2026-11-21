@@ -94,7 +94,8 @@ def run_start_step(ref: str, key: str, config: dict,
     out = _call(_mod.start.__wrapped__, target, yes=True, launch=True,
                 no_tty=True, json_output=json_output,
                 **pick(config, "repo", "related_repo", "depth",
-                       "base", "harness", "no_tty", "session_file",
+                       "base", "harness", "acp", "model", "effort",
+                       "no_tty", "session_file",
                        "env_file", "extra_prompt", "no_status",
                        "no_review", "plan"))
     if isinstance(out, dict) and out.get("preview"):
@@ -174,7 +175,8 @@ def run_review_step(key: str, config: dict, fix_comments: bool,
         return manual("review", [key, *fix_argv, *extra])
     _call(_mod.review.__wrapped__, key, yes=True, launch=True, no_tty=True,
           json_output=json_output, fix_comments=fix,
-          **pick(config, "repo", "depth", "harness", "no_tty",
+          **pick(config, "repo", "depth", "harness", "acp", "model", "effort",
+                 "no_tty",
                  "then_fix_comments", "use_review_session", "session_file",
                  "env_file", "extra_prompt", "no_status"))
     return {"key": key, "status": "reviewed", "fix_comments": fix_comments}
@@ -197,7 +199,8 @@ def run_sync_step(key: str, config: dict, json_output: bool,
             and not any(config.get(k) for k in ("preview", "dry_run", "terminal"))):
         return manual("sync", [key, *extra])
     _call(_mod.sync_cmd.__wrapped__, key, yes=True, json_output=json_output,
-          **pick(config, "merge", "harness", "session_file", "env_file",
+          **pick(config, "merge", "harness", "acp", "model", "effort",
+                 "session_file", "env_file",
                  "extra_prompt"))
     return {"key": key, "status": "synced"}
 
@@ -226,7 +229,8 @@ def run_action_step(key: str, action_label: str, config: dict,
     try:
         out = _call(_mod.action_run.__wrapped__, action_label, key,
                     launch=True, yes=True, json_output=json_output,
-                    **pick(config, "harness", "extra_prompt", "env_file",
+                    **pick(config, "harness", "acp", "model", "effort",
+                           "extra_prompt", "env_file",
                            "session_file"))
     except _gates.SkippedGate as e:
         return {"key": key, "label": action_label, "status": "skipped",
@@ -256,7 +260,8 @@ def run_prodtest_plan_step(key: str, config: dict, json_output: bool,
         return manual("prodtest", ["plan", key, *extra])
     _call(_mod.prodtest_plan.__wrapped__, key, yes=True, launch=True,
           no_tty=True, json_output=json_output,
-          **pick(config, "update", "harness", "env_file",
+          **pick(config, "update", "harness", "acp", "model", "effort",
+                 "env_file",
                  "session_file", "extra_prompt"))
     return {"key": key, "status": "prodtest-planned"}
 
@@ -326,7 +331,8 @@ def run_release_step(repo_snapshot: dict, config: dict, json_output: bool,
                            json_output=json_output,
                            **pick(config, "checks", "diff",
                                   "pre_release_timeout", "ci_timeout",
-                                  "env_file", "no_status"))
+                                  "env_file", "no_status",
+                                  "acp", "model", "effort"))
     return {"repo": repo,
             "status": str((out or {}).get("status") or "released"),
             **(out or {})}

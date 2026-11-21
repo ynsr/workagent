@@ -279,6 +279,32 @@ export interface ConfigInfo {
   supported_harnesses: string[]
   harnesses: HarnessInfo[]
 }
+/** One model/effort option from GET /api/harnesses/{name}/options. */
+export interface HarnessOption {
+  id: string
+  name: string
+}
+
+/** GET /api/harnesses/{name}/options (issue #112): ACP-discovered model/effort
+ * options. `supported` false (or empty lists) ⇒ the UI disables that input. */
+export interface HarnessOptions {
+  harness: string
+  supported: boolean
+  models: HarnessOption[]
+  efforts: HarnessOption[]
+  current_model: string
+  current_effort: string
+  warning?: string
+  cached?: boolean
+}
+
+/** Pending ACP question on a run (from ACP:{"t":"question",...} in the log). */
+export interface PendingQuestion {
+  qid: string
+  text: string
+  options: string[]
+  multi: boolean
+}
 
 export type RunState =
   | "running"
@@ -313,6 +339,8 @@ export interface Run {
   /** Shell resume command computed by the server when transcript is ready. */
   resume_command?: string
   last_seq: number
+  /** Newest unanswered ACP question (null when none) — drives QuestionCard. */
+  pending_question?: PendingQuestion | null
 }
 
 export interface RunLine {
@@ -534,6 +562,16 @@ export const api = {
     request<{ id: string; state: string }>(
       `/api/runs/${encodeURIComponent(id)}/cancel`,
       { method: "POST" },
+    ),
+  /** GET /api/harnesses/{name}/options — ACP-discovered model/effort options. */
+  harnessOptions: (name: string) =>
+    request<HarnessOptions>(`/api/harnesses/${encodeURIComponent(name)}/options`),
+
+  /** POST /api/runs/{id}/input — answer a pending ACP question. */
+  submitRunInput: (id: string, body: { text: string; qid?: string }) =>
+    request<{ id: string; ok: boolean }>(
+      `/api/runs/${encodeURIComponent(id)}/input`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
     ),
 
   /** POST /api/runs/{id}/resume — open OS terminal resumed on the run's transcript. */

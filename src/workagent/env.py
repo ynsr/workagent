@@ -264,8 +264,10 @@ def parse_env_file(path: str | Path) -> dict[str, str]:
     return out
 
 
-def launch_env(env_file: str | Path | None) -> dict[str, str]:
+def launch_env(env_file: str | Path | None = None) -> dict[str, str]:
     """Environ overlay for headless child launches (bash-sourced env file)."""
+    if env_file is None:
+        env_file = resolve_env_file(None)
     if not env_file:
         return {}
     try:
@@ -278,7 +280,7 @@ def launch_env(env_file: str | Path | None) -> dict[str, str]:
     return out
 
 
-def merged_env(env_file: str | Path | None) -> dict[str, str]:
+def merged_env(env_file: str | Path | None = None) -> dict[str, str]:
     """os.environ overlaid with the sourced env file (empty when none).
 
     Single choke point for every direct-exec child (headless harness,
@@ -288,6 +290,8 @@ def merged_env(env_file: str | Path | None) -> dict[str, str]:
     working external fetches even when the serve/CLI process env lacks it.
     Explicitly-exported vars always win (sourced values fill gaps only).
     """
+    if env_file is None:
+        env_file = resolve_env_file(None)
     merged = ensure_proxy_env(dict(os.environ))
     for k, v in launch_env(env_file).items():
         merged.setdefault(k, v)

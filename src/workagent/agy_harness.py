@@ -13,7 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .backend import Harness, check_binary, exec_tty
+from .acp_harness import AcpHarness, HarnessOptions, Question, _AgyOptionMixin
+from .backend import check_binary, exec_tty
 
 
 def antigravity_home() -> Path:
@@ -228,7 +229,7 @@ def resolve_worktree_for_run(row: dict, *extra_candidates: str) -> str:
     return ""
 
 
-class AgyHarness(Harness):
+class AgyAcpHarness(_AgyOptionMixin, AcpHarness):
     name = "agy"
     label = "Antigravity (agy-guard)"
     binary = "agy-guard"
@@ -236,36 +237,87 @@ class AgyHarness(Harness):
     judge_argv: list[str] = ["--model", "gemini-3.8-flash-low",
                              "--disable-slash-commands"]
 
+    supports_acp: bool = True
+
+    def model_config_id(self) -> str:
+        return "model"
+
+    def effort_config_id(self) -> str:
+        return "thought_level"
+
+    def model_effort_cli_args(self, model: str | None,
+                              effort: str | None) -> list[str]:
+        args: list[str] = []
+        if model:
+            args += ["--model", model]
+        if effort:
+            args += ["--effort", effort]
+        return args
+
+    def acp_argv(self) -> list[str]:
+        return ["agy-guard", "acp", "--dangerously-skip-permissions"]
+
+    def authenticate_method(self) -> str | None:
+        return None
+
+    def extract_question(self, update: dict) -> Question | None:
+        inner = update.get("update") or {}
+        if inner.get("sessionUpdate") not in ("tool_call", "tool_call_update"):
+            return None
+        raw = inner.get("rawInput") or {}
+        questions = raw.get("questions") or []
+        if not questions or not isinstance(questions, list):
+            return None
+        first = questions[0] if isinstance(questions[0], dict) else {}
+        opts = first.get("options") or []
+        return Question(
+            qid=str(inner.get("toolCallId") or "q1"),
+            text=str(first.get("question") or ""),
+            options=[{"label": str(o.get("label", ""))} if isinstance(o, dict) else {"label": str(o)} for o in opts],
+            multi=bool(first.get("is_multi_select", False)))
+
     def command_argv(self, prompt: str, no_tty: bool,
-                     extra_args: list[str] | None = None) -> list[str]:
-        extra = list(extra_args or [])
+                     extra_args: list[str] | None = None,
+                     model: str | None = None,
+                     effort: str | None = None) -> list[str]:
+        extra = list(extra_args or []) + self.model_effort_cli_args(model, effort)
         if no_tty:
             return [self.binary, "--dangerously-skip-permissions",
                     "--output-format", "stream-json", *extra, f"-p={prompt}"]
         if prompt:
-            return [self.binary, *extra, f"-i={prompt}"]
-        return [self.binary, *extra]
+            return [self.binary, "--dangerously-skip-permissions",
+                    *extra, f"-i={prompt}"]
+        return [self.binary, "--dangerously-skip-permissions", *extra]
 
     def session_file_flag(self, path: str, metadata: dict | None = None) -> list[str]:
         cid = resolve_conversation_id(path, metadata)
         return ["--conversation", cid] if cid else []
 
-    def resume_argv(self, session_file: str, metadata: dict | None = None) -> list[str]:
+    def resume_argv(self, session_file: str, metadata: dict | None = None,
+                    model: str | None = None,
+                    effort: str | None = None) -> list[str]:
         cid = resolve_conversation_id(session_file, metadata)
-        return [self.binary, "--conversation", cid] if cid else [self.binary]
+        base = [self.binary, "--dangerously-skip-permissions",
+                *self.model_effort_cli_args(model, effort)]
+        return [*base, "--conversation", cid] if cid else base
 
-    def bare_terminal_argv(self, scope_dir: str = "") -> list[str]:
-        return [self.binary]
+    def bare_terminal_argv(self, scope_dir: str = "",
+                           model: str | None = None,
+                           effort: str | None = None) -> list[str]:
+        return [self.binary, "--dangerously-skip-permissions",
+                *self.model_effort_cli_args(model, effort)]
 
     def launch(self, prompt: str, workdir: str, no_tty: bool,
                extra_args: list[str] | None = None,
                env_file: str | None = None,
                timeout_s: int | None = None,
                session_file: str | None = None,
-               on_conversation_id: Callable[[str], None] | None = None) -> int:
+               on_conversation_id: Callable[[str], None] | None = None,
+               model: str | None = None,
+               effort: str | None = None) -> int:
         from . import env as _env
         from .errors import HarnessTimeout as _HarnessTimeout
-        argv = self.command_argv(prompt, no_tty, extra_args)
+        argv = self.command_argv(prompt, no_tty, extra_args, model, effort)
         check_binary(argv[0])
         if not no_tty:
             return exec_tty(argv, workdir, env_file)
@@ -454,5 +506,5 @@ class AgyHarness(Harness):
 
 
 from .backend import HARNESSES  # noqa: E402
-HARNESSES["agy"] = AgyHarness()
+HARNESSES[AgyAcpHarness.name] = AgyAcpHarness()
 

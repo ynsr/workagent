@@ -265,7 +265,9 @@ def _resolve_exec(msg: dict, ref_opt: str = "", repo_opt: str = "") -> tuple[str
 def _run_prompt(msg: dict, prompt: str, ref_opt: str, repo_opt: str, launch: bool,
                 terminal: bool, harness: Optional[str], extra_prompt: Optional[str],
                 env_file: Optional[str], session_file: Optional[str],
-                dry_run: bool, yes: bool, json_output: bool) -> None:
+                dry_run: bool, yes: bool, json_output: bool,
+                acp: bool = False, run_mode: Optional[str] = None,
+                model: Optional[str] = None, effort: Optional[str] = None) -> None:
     """Shared adhoc/validate runner: message-header + prompt → harness."""
     from .cli_harness import _guard_harness, _run_harness, append_extra_prompt
     if launch and terminal:
@@ -299,7 +301,8 @@ def _run_prompt(msg: dict, prompt: str, ref_opt: str, repo_opt: str, launch: boo
                  {"command": "message", "session_metadata": {"action": "message",
                   "mode": mode, "message_id": msg.get("message_id")}},
                  json_output, run_key=key or None, session_file=session_file,
-                 terminal=use_terminal, env_file=env_file)
+                 terminal=use_terminal, env_file=env_file,
+                 acp=acp, run_mode=run_mode, model=model, effort=effort)
     _print_result({"message": msg.get("message_id"), "workdir": workdir,
                    "key": key, "mode": mode}, json_output)
 
@@ -312,6 +315,10 @@ def message_draft_reply(
     launch: bool = typer.Option(False, "--launch", help="Run headless (default: preview)."),
     terminal: bool = typer.Option(False, "--terminal", help="Run in OS terminal (XOR --launch)."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured)."),
+    acp: bool = typer.Option(False, "--acp", help="Run via ACP stdio (JSON-RPC) instead of CLI argv."),
+    run_mode: Optional[str] = typer.Option(None, "--run-mode", help="Run mode: preview|headless|acp|terminal."),
+    model: Optional[str] = typer.Option(None, "--model", help="Model id (ACP-discovered)."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="Effort level (ACP-discovered)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before commands."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path."),
@@ -328,7 +335,8 @@ def message_draft_reply(
     row = _resolve_or_fetch(msg, repo, ref)
     from .message_draft_reply_prompt import DRAFT_REPLY_PROMPT
     _run_prompt(row, DRAFT_REPLY_PROMPT, ref, repo, launch, terminal, harness, extra_prompt,
-                env_file, session_file, dry_run, yes, json_output)
+                env_file, session_file, dry_run, yes, json_output,
+                acp=acp, run_mode=run_mode, model=model, effort=effort)
 
 
 @message_app.command("adhoc")
@@ -341,6 +349,10 @@ def message_adhoc(
     launch: bool = typer.Option(False, "--launch", help="Run headless."),
     terminal: bool = typer.Option(False, "--terminal", help="Run in OS terminal."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run."),
+    acp: bool = typer.Option(False, "--acp", help="Run via ACP stdio (JSON-RPC) instead of CLI argv."),
+    run_mode: Optional[str] = typer.Option(None, "--run-mode", help="Run mode: preview|headless|acp|terminal."),
+    model: Optional[str] = typer.Option(None, "--model", help="Model id (ACP-discovered)."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="Effort level (ACP-discovered)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before commands."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path."),
@@ -351,7 +363,8 @@ def message_adhoc(
     """Run an adhoc prompt grounded in one registered message."""
     row = _resolve_or_fetch(msg, repo, ref)
     _run_prompt(row, prompt, ref, repo, launch, terminal, harness, extra_prompt,
-                env_file, session_file, dry_run, yes, json_output)
+                env_file, session_file, dry_run, yes, json_output,
+                acp=acp, run_mode=run_mode, model=model, effort=effort)
 
 
 @message_app.command("validate")
@@ -364,6 +377,10 @@ def message_validate(
     launch: bool = typer.Option(False, "--launch", help="Run headless (default: preview)."),
     terminal: bool = typer.Option(False, "--terminal", help="Run in OS terminal (XOR --launch)."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured)."),
+    acp: bool = typer.Option(False, "--acp", help="Run via ACP stdio (JSON-RPC) instead of CLI argv."),
+    run_mode: Optional[str] = typer.Option(None, "--run-mode", help="Run mode: preview|headless|acp|terminal."),
+    model: Optional[str] = typer.Option(None, "--model", help="Model id (ACP-discovered)."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="Effort level (ACP-discovered)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
@@ -371,7 +388,7 @@ def message_validate(
     """Validate the claimed issues in the message content and generate Jira issues if issue(s) confirmed."""
     row = _resolve_or_fetch(msg, repo, ref)
     default = ("Validate the claimed issues in the message content and generate Jira issues if issue(s) confirmed. Investigate each claimed issue: read the message content and linked repos, attempt reproduction, and report CONFIRMED or REFUTED with supporting file:line evidence. For each CONFIRMED claim, generate a Jira issue describing the defect, with reproduction steps and the supporting file:line evidence.")
-    _run_prompt(row, (prompt or "").strip() or default, ref, repo, launch, terminal, harness, None, None, None, dry_run, yes, json_output)
+    _run_prompt(row, (prompt or "").strip() or default, ref, repo, launch, terminal, harness, None, None, None, dry_run, yes, json_output, acp=acp, run_mode=run_mode, model=model, effort=effort)
 action_app = typer.Typer(help="Run message-scoped custom actions.", no_args_is_help=True)
 message_app.add_typer(action_app, name="action")
 
@@ -386,6 +403,10 @@ def message_action_run(
     launch: bool = typer.Option(False, "--launch", help="Run headless."),
     terminal: bool = typer.Option(False, "--terminal", help="Run in OS terminal."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run."),
+    acp: bool = typer.Option(False, "--acp", help="Run via ACP stdio (JSON-RPC) instead of CLI argv."),
+    run_mode: Optional[str] = typer.Option(None, "--run-mode", help="Run mode: preview|headless|acp|terminal."),
+    model: Optional[str] = typer.Option(None, "--model", help="Model id (ACP-discovered)."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="Effort level (ACP-discovered)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before commands."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path."),
@@ -420,6 +441,7 @@ def message_action_run(
               " --ref <worktree>", EXIT_USAGE)
     header_extra = f"{_message_header(row)}\n\n{(extra_prompt or '').strip()}".strip()
     _action_run(label, found, launch=launch, terminal=terminal, harness=harness,
+                acp=acp, run_mode=run_mode, model=model, effort=effort,
                 extra_prompt=header_extra or None,
                 env_file=env_file, session_file=session_file, dry_run=dry_run,
                 yes=yes, json_output=json_output)
@@ -439,6 +461,10 @@ def message_flow_run(
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Coding harness name (e.g. agy; default: configured default)."),
+    acp: bool = typer.Option(False, "--acp", help="Run via ACP stdio (JSON-RPC) instead of CLI argv."),
+    run_mode: Optional[str] = typer.Option(None, "--run-mode", help="Run mode: preview|headless|acp|terminal."),
+    model: Optional[str] = typer.Option(None, "--model", help="Model id (ACP-discovered)."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="Effort level (ACP-discovered)."),
 ) -> None:
     """Run a message-category flow template grounded in one message."""
     from .store_flows import validate_template
@@ -481,4 +507,4 @@ def message_flow_run(
             merged["extra_prompt"] = f"{header}\n\n{prev}".strip() if prev else header
             s["config"] = merged
     from . import cli_flow_run as _cfr
-    _cfr.flow_run(label, ref_opt, dry_run=dry_run, yes=yes, json_output=json_output, harness=harness)
+    _cfr.flow_run(label, ref_opt, dry_run=dry_run, yes=yes, json_output=json_output, harness=harness, acp=acp, run_mode=run_mode, model=model, effort=effort)

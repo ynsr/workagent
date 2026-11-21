@@ -31,6 +31,7 @@ const { mutateAsync, TEMPLATES } = vi.hoisted(() => ({
 }))
 
 vi.mock("@/lib/queries", () => ({
+  queryKeys: { harnessOptions: (name: string) => ["harnesses", "options", name] },
   useFlowTemplates: () => ({
     data: { templates: TEMPLATES },
     isPending: false,
