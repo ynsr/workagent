@@ -104,8 +104,14 @@ export function Runs() {
   const repoTabs = useRepoTabs((runs ?? []).map((r) => r.worktree || r.target), repos)
   const repoOf = (r: Run) => repoKeyForPath(r.worktree || r.target, repos ?? [])
   const filtered = useMemo(() => filterRuns(runs, filter, flowRow, flowMissing, target, repoOf, repoTabs.repoFilter), [runs, filter, flowRow, flowMissing, target, repoTabs.repoFilter, repos])
-  const { activeIndex } = useListHotkeys({
-    items: filtered,
+  const flat = filter !== "all" || Boolean(target)
+  const navigableRuns = useMemo(() => {
+    if (flat) return filtered
+    const ids = new Set(filtered.map((r) => r.id))
+    return filtered.filter((r) => !(r.parent_run_id && r.parent_run_id !== r.id && ids.has(r.parent_run_id)))
+  }, [filtered, flat])
+  const { activeItem: activeRun } = useListHotkeys({
+    items: navigableRuns,
     onOpen: (run) => navigate(`/runs/${run.id}`),
   })
 
@@ -224,7 +230,8 @@ export function Runs() {
             </EmptyState>
           ) : (
             <RunsTable
-              activeIndex={activeIndex}
+              activeKey={activeRun?.id ?? null}
+              flat={flat}
               rows={filtered.map(
                 (run): RunsTableRow => ({
                   key: run.id,
@@ -237,6 +244,8 @@ export function Runs() {
                   state: run.state,
                   exitCode: run.exit_code,
                   started: run.created,
+                  parentRunId: run.parent_run_id,
+                  stepIndex: run.step_index,
                   actions: (
                     <>
                       {run.session_file ? (

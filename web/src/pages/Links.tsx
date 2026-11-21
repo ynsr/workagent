@@ -25,7 +25,7 @@ import { CheckRow } from "@/components/FieldHelp"
 import { Switch } from "@/components/ui/switch"
 import { useConfirmedRun } from "@/components/RunActions"
 import { getShowWorktree, getVerbose, setShowWorktree as persistShowWorktree } from "@/lib/settings"
-import { useInfo, useRepos, useStatusAll } from "@/lib/queries"
+import { useFlows, useInfo, useRepos, useStatusAll } from "@/lib/queries"
 import {
   LinkRemoveDialog,
   LinkSetDialog,
@@ -39,6 +39,7 @@ export function Links() {
   const { data: worktrees, isPending, isFetching, isError, error, refetch } = useStatusAll()
   const { data: info } = useInfo()
   const { data: repos } = useRepos()
+  const { data: flowsData } = useFlows()
   const repoTabs = useRepoTabs(
     Object.values(worktrees ?? {}),
     repos,
@@ -235,6 +236,7 @@ export function Links() {
                 showWorktree={showWorktree}
                 networkExposed={info?.network_exposed ?? false}
                 repoTabs={repos ? { ...repoTabs, repos } : undefined}
+                flows={flowsData?.flows}
               />
             </div>
           )}

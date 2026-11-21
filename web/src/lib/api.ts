@@ -435,6 +435,10 @@ export interface Run {
   /** Shell resume command computed by the server when transcript is ready. */
   resume_command?: string
   last_seq: number
+  /** Parent run ID (`db-<id>` or live run id) when spawned by a parent run (flow / review --all / --then-fix-comments). */
+  parent_run_id?: string | null
+  /** 0-based step index within the parent run (null when unindexed). */
+  step_index?: number | null
   /** Newest unanswered ACP question (null when none) — drives QuestionCard. */
   pending_question?: PendingQuestion | null
 }

@@ -61,7 +61,9 @@ CREATE TABLE IF NOT EXISTS runs (
   session_type TEXT,
   metadata TEXT NOT NULL DEFAULT '{}',
   state TEXT NOT NULL DEFAULT 'finished',
-  continued_from_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL);
+  continued_from_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+  parent_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+  step_index INTEGER);
 CREATE TABLE IF NOT EXISTS issue_cache (
   source TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL,
   fetched_at TEXT NOT NULL);
@@ -212,6 +214,21 @@ def _migrate_runs_validation(conn) -> None:
         return
     if "validation" not in cols:
         conn.execute("ALTER TABLE runs ADD COLUMN validation TEXT NOT NULL DEFAULT '{}'")
+
+
+def _migrate_runs_parent(conn) -> None:
+    """Schema v27: runs gains parent_run_id and step_index (run hierarchy).
+
+    Both columns are nullable, so ALTER TABLE is enough and idempotent.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+    if not cols:
+        return
+    if "parent_run_id" not in cols:
+        conn.execute(
+            "ALTER TABLE runs ADD COLUMN parent_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL")
+    if "step_index" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN step_index INTEGER")
 
 
 def _migrate_display_cols(conn) -> None:
@@ -1189,6 +1206,8 @@ def insert_run(path: Path, command: str, args: list[str],
                metadata: dict | None = None,
                state: str = "finished",
                continued_from_run_id: int | None = None,
+               parent_run_id: int | None = None,
+               step_index: int | None = None,
                output: list[str] | None = None,
                truncated: bool = False,
                validation: dict | None = None,
@@ -1217,17 +1236,41 @@ def insert_run(path: Path, command: str, args: list[str],
     out_lines = list(output or [])
     lines = out_lines[-MAX_RUN_OUTPUT_LINES:]
     truncated = bool(truncated) or len(out_lines) > len(lines)
+    import os as _os
+    env_parent = False
+    if parent_run_id is None:
+        raw_pid = (_os.environ.get("WORKAGENT_PARENT_RUN_ID") or "").strip()
+        if raw_pid:
+            try:
+                pid_val = int(raw_pid)
+                if pid_val > 0:
+                    parent_run_id = pid_val
+                    env_parent = True
+            except ValueError:
+                pass
+    if step_index is None:
+        raw_step = (_os.environ.get("WORKAGENT_STEP_INDEX") or "").strip()
+        if raw_step:
+            try:
+                step_index = int(raw_step)
+            except ValueError:
+                pass
     names = ["command", "args", "exit_code", "created_at",
              "output", "truncated", "validation", "worktree_ref",
              "harness_name", "initiator_command", "prompt", "file_path",
-             "session_type", "metadata", "state", "continued_from_run_id"]
+             "session_type", "metadata", "state", "continued_from_run_id",
+             "parent_run_id", "step_index"]
     vals: list = [command, json.dumps(args), exit_code, created,
                   "\n".join(lines), 1 if truncated else 0,
                   json.dumps(validation or {}), worktree_ref or None,
                   harness_name, initiator_command, prompt, file_path,
                   session_type, json.dumps(metadata or {}), state,
-                  continued_from_run_id]
+                  continued_from_run_id, parent_run_id, step_index]
     with connect(path) as conn:
+        if env_parent and parent_run_id is not None:
+            if conn.execute("SELECT 1 FROM runs WHERE id = ?",
+                            (parent_run_id,)).fetchone() is None:
+                vals[names.index("parent_run_id")] = None
         if flow_id is not None:
             names.append("flow_id")
             vals.append(flow_id)
@@ -1432,7 +1475,8 @@ def list_runs(path: Path, limit: int = 200,
              " r.created_at, r.output, r.truncated, r.validation, r.flow_id,"
              " r.file_path, r.worktree_ref,"
              " r.session_type, r.state, r.harness_name, r.initiator_command,"
-             " r.metadata, r.continued_from_run_id"
+             " r.metadata, r.continued_from_run_id,"
+             " r.parent_run_id, r.step_index"
              " FROM runs r LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref")
         if not include_deleted_worktrees:
             q += " WHERE " + _NOT_DELETED
@@ -1663,7 +1707,7 @@ def _schema_current(path: Path) -> bool:
         if not {"output", "truncated", "validation", "flow_id", "worktree_ref",
                 "harness_name", "initiator_command", "prompt", "file_path",
                 "session_type", "metadata", "state",
-                "continued_from_run_id"} <= cols:
+                "continued_from_run_id", "parent_run_id", "step_index"} <= cols:
             return False
         fks = list(conn.execute("PRAGMA foreign_key_list(runs)"))
         if any(r[2] == "sessions" for r in fks):
@@ -1799,6 +1843,7 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
                 migrate_sessions_into_runs(conn, path.parent)
                 _migrate_prodtest_cols(conn)
                 _migrate_runs_worktree_fk(conn)
+                _migrate_runs_parent(conn)
                 _migrate_change_log(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():

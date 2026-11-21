@@ -318,6 +318,8 @@ class Run:
     db_worktree_ref: str = ""
     harness_name: str = ""
     resume_command: str = ""
+    parent_run_id: int | None = None
+    step_index: int | None = None
 
     def append(self, text: str) -> None:
         with self.lock:
@@ -452,7 +454,10 @@ def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
                            "worktree": worktree,
                            "harness_name": hname,
                            "resume_command": resume_cmd,
-                           "last_seq": run.last_seq}
+                           "last_seq": run.last_seq,
+                           "parent_run_id": (f"db-{run.parent_run_id}"
+                                             if run.parent_run_id is not None else None),
+                           "step_index": run.step_index}
     if lines is not None:
         out["lines"] = [{"seq": s, "text": t} for s, t in lines]
         src = [txt for _, txt in lines]
@@ -569,6 +574,9 @@ def _persisted_summary(row: dict) -> dict:
             "transcript_ready": t_ready,
             "session_type": row.get("session_type"),
             "last_seq": max((ln["seq"] for ln in persisted), default=-1) + 1,
+            "parent_run_id": (f"db-{row['parent_run_id']}"
+                              if row.get("parent_run_id") is not None else None),
+            "step_index": row.get("step_index"),
             "validation": row.get("validation") if isinstance(row.get("validation"), dict) else {},
             "pending_question": (_pending_question_from_texts([ln["text"] for ln in persisted]) if state == "running" else None)}
 def _persisted_row(run_id: str) -> dict | None:
@@ -697,10 +705,14 @@ def _spawn(run: Run, registry: Registry) -> None:
     except Exception:
         pass
     try:
+        spawn_env = None
+        if run.db_run_id:
+            spawn_env = {**os.environ, "WORKAGENT_RUN_ID": str(run.db_run_id)}
         subprocess.Popen(
             supervisor_argv(d, run.argv), stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            shell=False, start_new_session=True, close_fds=True)
+            shell=False, start_new_session=True, close_fds=True,
+            env=spawn_env)
     except OSError as e:  # spawn failure — surface in the buffer
         run.append(f"[web] spawn failed: {e}\n")
         with run.lock:
