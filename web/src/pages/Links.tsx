@@ -24,7 +24,7 @@ import {
 import { CheckRow } from "@/components/FieldHelp"
 import { Switch } from "@/components/ui/switch"
 import { useConfirmedRun } from "@/components/RunActions"
-import { getShowWorktree, setShowWorktree as persistShowWorktree } from "@/lib/settings"
+import { getShowWorktree, getVerbose, setShowWorktree as persistShowWorktree } from "@/lib/settings"
 import { useInfo, useRepos, useStatusAll } from "@/lib/queries"
 import {
   LinkRemoveDialog,
@@ -201,9 +201,11 @@ export function Links() {
       <Card>
         <CardHeader>
           <CardTitle>Linked worktrees</CardTitle>
-          <CardDescription>
-            Same table as the Dashboard, from GET /api/status (link list shape).
-          </CardDescription>
+          {getVerbose() ? (
+            <CardDescription>
+              Same table as the Dashboard, from GET /api/status (link list shape).
+            </CardDescription>
+          ) : null}
         </CardHeader>
         <CardContent>
           {(isPending && !worktrees) ? (

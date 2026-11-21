@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { useConfirm } from "@/lib/confirm"
+import { getVerbose } from "@/lib/settings"
 import { copyToClipboard, downloadText, exactDateTime, relativeDate, toCsv } from "@/lib/format"
 import { useActions, useCreateRun, useFlowTemplates } from "@/lib/queries"
 import type { ActionRow } from "@/lib/api"
@@ -173,7 +174,7 @@ export function Actions() {
         <Card className="order-2 lg:order-1">
           <CardHeader>
             <CardTitle>Custom actions</CardTitle>
-            <CardDescription>GET /api/actions</CardDescription>
+            {getVerbose() ? <CardDescription>GET /api/actions</CardDescription> : null}
           </CardHeader>
           <CardContent>
             {(isPending && !data) ? (
@@ -198,11 +199,8 @@ export function Actions() {
                       <TableHead>Mode</TableHead>
                       <TableHead>Run</TableHead>
                       <TableHead>Category</TableHead>
-                      <TableHead>Order</TableHead>
-                      <TableHead>Protected</TableHead>
-                      <TableHead>Top</TableHead>
-                      <TableHead>Overlay</TableHead>
                       <TableHead>Updated</TableHead>
+                      <TableHead className="text-right">Controls</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -220,7 +218,7 @@ export function Actions() {
                             {a.name}
                           </button>
                         </TableCell>
-                        <TableCell className="font-mono text-xs">{a.label}</TableCell>
+                        <TableCell className="max-w-[140px] truncate font-mono text-xs" title={a.label}>{a.label}</TableCell>
                         <TableCell>
                           <Badge variant="secondary">{actionRunModeOf(a)}</Badge>
                           {isRunImmediateAction(a) ? (
@@ -233,39 +231,32 @@ export function Actions() {
                           </Button>
                         </TableCell>
                         <TableCell className="font-mono text-xs">{a.category ?? "worktree"}</TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {a.sort_order ?? 0}
-                          <span className="ml-1 inline-flex gap-0.5">
-                            <Button variant="ghost" size="sm" title={`Move ${a.name} up`} onClick={() => void handleMove(a, -1)}>▲</Button>
-                            <Button variant="ghost" size="sm" title={`Move ${a.name} down`} onClick={() => void handleMove(a, 1)}>▼</Button>
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <Button variant="ghost" size="sm" title={a.protected ? `Unprotect ${a.name}` : `Protect ${a.name}`} onClick={() => void handleToggle(a, "protected")}>
-                            {a.protected ? "🔒" : "🔓"}
-                          </Button>
-                        </TableCell>
-                        <TableCell>
-                          <Button variant="ghost" size="sm" title={a.dedicated_top_bar ? `Remove top-bar button for ${a.name}` : `Add top-bar button for ${a.name}`} onClick={() => void handleToggle(a, "dedicated_top_bar")}>
-                            {a.dedicated_top_bar ? "★" : "☆"}
-                          </Button>
-                        </TableCell>
-                        <TableCell>
-                          <Button variant="ghost" size="sm" title={a.dedicated_overlay ? `Remove overlay button for ${a.name}` : `Add overlay button for ${a.name}`} onClick={() => void handleToggle(a, "dedicated_overlay")}>
-                            {a.dedicated_overlay ? "◉" : "○"}
-                          </Button>
-                        </TableCell>
                         <TableCell title={exactDateTime(a.modified_at)}>
                           {relativeDate(a.modified_at)}
                         </TableCell>
-                        <TableCell>
-                          <div className="flex gap-1">
+                        <TableCell className="text-right">
+                          <div className="inline-flex items-center justify-end gap-0.5">
+                            <span className="mr-0.5 font-mono text-xs text-muted-foreground" title={`Sort order: ${a.sort_order ?? 0}`}>
+                              #{a.sort_order ?? 0}
+                            </span>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={`Move ${a.name} up`} onClick={() => void handleMove(a, -1)}>▲</Button>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={`Move ${a.name} down`} onClick={() => void handleMove(a, 1)}>▼</Button>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={a.protected ? `Unprotect ${a.name}` : `Protect ${a.name}`} onClick={() => void handleToggle(a, "protected")}>
+                              {a.protected ? "🔒" : "🔓"}
+                            </Button>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={a.dedicated_top_bar ? `Remove top-bar button for ${a.name}` : `Add top-bar button for ${a.name}`} onClick={() => void handleToggle(a, "dedicated_top_bar")}>
+                              {a.dedicated_top_bar ? "★" : "☆"}
+                            </Button>
+                            <Button variant="ghost" size="sm" className="size-7 px-1" title={a.dedicated_overlay ? `Remove overlay button for ${a.name}` : `Add overlay button for ${a.name}`} onClick={() => void handleToggle(a, "dedicated_overlay")}>
+                              {a.dedicated_overlay ? "◉" : "○"}
+                            </Button>
                             {a.protected ? null : (
                               <>
-                                <Button variant="ghost" size="sm" title={`Edit ${a.name}`} onClick={() => handleEdit(a)}>
+                                <span aria-hidden className="mx-0.5 h-4 w-px bg-border" />
+                                <Button variant="ghost" size="sm" className="size-7 px-1" title={`Edit ${a.name}`} onClick={() => handleEdit(a)}>
                                   <Pencil aria-hidden />
                                 </Button>
-                                <Button variant="ghost" size="sm" title={`Delete ${a.name}`} onClick={() => void handleRemove(a)}>
+                                <Button variant="ghost" size="sm" className="size-7 px-1" title={`Delete ${a.name}`} onClick={() => void handleRemove(a)}>
                                   <Trash2 aria-hidden />
                                 </Button>
                               </>

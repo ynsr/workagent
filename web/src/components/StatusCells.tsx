@@ -7,31 +7,45 @@ import { cn } from "@/lib/utils"
 export function CommitsCell({ entry }: { entry: WorktreeMap[string] }) {
   const behind = entry.commits_detail?.behind
   const ahead = entry.commits_detail?.ahead
+  const srText =
+    typeof behind === "number" || typeof ahead === "number"
+      ? `${typeof behind === "number" ? behind : "unknown"} commits behind, ${typeof ahead === "number" ? ahead : "unknown"} commits ahead of base branch`
+      : "Commit divergence unknown"
   return (
     <span
       className="font-mono text-[13px]"
       title="commits behind|ahead vs the base branch"
     >
-      {typeof behind === "number" ? (
-        <span className={behind > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}>
-          {behind}
-        </span>
-      ) : (
-        <span className="text-muted-foreground">—</span>
-      )}
-      <span className="text-muted-foreground">|</span>
-      {typeof ahead === "number" ? (
-        <span className={ahead > 0 ? "text-sky-600 dark:text-sky-400" : "text-muted-foreground"}>
-          {ahead}
-        </span>
-      ) : null}
+      <span className="sr-only">{srText}</span>
+      <span aria-hidden="true">
+        {typeof behind === "number" ? (
+          <span className={behind > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}>
+            {behind}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+        <span className="text-muted-foreground">|</span>
+        {typeof ahead === "number" ? (
+          <span className={ahead > 0 ? "text-sky-600 dark:text-sky-400" : "text-muted-foreground"}>
+            {ahead}
+          </span>
+        ) : null}
+      </span>
     </span>
   )
 }
 /** Reviews badge `<reviews> · <resolved> of <total threads>`; "—" when no PR or lookup failed. */
 export function ReviewsCell({ entry }: { entry: WorktreeMap[string] }) {
   const rd = entry.reviews_detail
-  if (!rd) return <span className="font-mono text-[13px] text-muted-foreground">—</span>
+  if (!rd) {
+    return (
+      <span className="font-mono text-[13px] text-muted-foreground">
+        <span className="sr-only">No reviews</span>
+        <span aria-hidden="true">—</span>
+      </span>
+    )
+  }
   const total = rd.resolved + rd.unresolved
   const label = `${rd.resolved} of ${total}`
   const title = `${rd.reviews} completed review passes, ${label} threads resolved`
@@ -42,10 +56,11 @@ export function ReviewsCell({ entry }: { entry: WorktreeMap[string] }) {
       aria-label={title}
       className="cursor-default rounded-full font-mono font-normal"
     >
+      <span className="sr-only">{title}</span>
       <MessagesSquare data-testid="comments-icon" aria-hidden className="size-3" />
-      <span className="text-muted-foreground">{rd.reviews}</span>
-      <span aria-hidden className="text-muted-foreground/60">·</span>
-      <span>
+      <span aria-hidden="true" className="text-muted-foreground">{rd.reviews}</span>
+      <span aria-hidden="true" className="text-muted-foreground/60">·</span>
+      <span aria-hidden="true">
         <span className="text-emerald-600 dark:text-emerald-400">{rd.resolved}</span>
         <span className="text-muted-foreground"> of {total}</span>
       </span>
