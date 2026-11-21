@@ -19,6 +19,7 @@ import asyncio
 import ipaddress
 import itertools
 import json
+import logging
 import os
 import shutil
 import signal
@@ -38,6 +39,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import __version__, backend, store, worktrees
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -225,8 +228,8 @@ def create_app(static_dir: Path, host: str, port: int,
                     runs_by_key.setdefault(wref, []).append(r)
                 elif is_latest and state == "failed":
                     runs_by_key.setdefault(wref, []).append(r)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to list runs for status enrichment: %s", exc)
         flows_by_key: dict[str, list[dict]] = {}
         try:
             if store._use_sqlite():
@@ -235,8 +238,8 @@ def create_app(static_dir: Path, host: str, port: int,
                     if not wref:
                         continue
                     flows_by_key.setdefault(wref, []).append(fl)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to list flows for status enrichment: %s", exc)
         return runs_by_key, flows_by_key
 
     @app.get("/api/status")

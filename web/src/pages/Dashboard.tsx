@@ -201,6 +201,9 @@ export function Dashboard() {
   function setViewMode(next: DashboardView): void {
     setViewModeState(next)
     persistDashboardView(next)
+    if (next === "board") {
+      setSelected(new Set())
+    }
   }
   const [refreshingPr, setRefreshingPr] = useState(false)
   const [cleanupTarget, setCleanupTarget] = useState<string | null>(null)

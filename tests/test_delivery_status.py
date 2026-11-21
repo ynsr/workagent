@@ -186,3 +186,53 @@ def test_in_review_variants():
         "display_status": "No PR yet",
         "attention_reason": None,
     }
+
+
+def test_flow_step_label_uses_effective_steps():
+    paused = derive_delivery_status(
+        {},
+        active_flows=[{"status": "paused", "current_step": 1, "effective_steps": ["a", "b", "c"]}],
+    )
+    assert paused == {
+        "kanban_column": "needs_you",
+        "display_status": "Flow paused at step 2/3",
+        "attention_reason": "flow_paused",
+    }
+
+    running = derive_delivery_status(
+        {},
+        active_flows=[{"status": "running", "current_step": 0, "effective_steps": ["a", "b"]}],
+    )
+    assert running == {
+        "kanban_column": "working",
+        "display_status": "Flow step 1/2",
+        "attention_reason": None,
+    }
+
+
+def test_merged_and_closed_prs_ignore_ci_failure_and_unresolved_comments():
+    merged_ci_fail = derive_delivery_status(
+        {
+            "pr_detail": {"state": "merged"},
+            "ci": "failure",
+            "reviews_detail": {"unresolved": 2},
+        }
+    )
+    assert merged_ci_fail == {
+        "kanban_column": "ready_to_merge",
+        "display_status": "Merged · Ready for cleanup",
+        "attention_reason": None,
+    }
+
+    closed_unresolved = derive_delivery_status(
+        {
+            "pr_detail": {"state": "closed"},
+            "ci": "failure",
+            "reviews_detail": {"unresolved": 1},
+        }
+    )
+    assert closed_unresolved == {
+        "kanban_column": "in_review",
+        "display_status": "PR closed",
+        "attention_reason": None,
+    }

@@ -1,8 +1,12 @@
 """status display cells (split from cli_status; re-exported via facade)."""
 from __future__ import annotations
 
+import logging
+
 from . import refs
 from .errors import HarnessError
+
+logger = logging.getLogger(__name__)
 
 
 def _patched(name: str):
@@ -71,7 +75,8 @@ def _delivery_status(
                 flows = _store.list_flows(worktree=key)
             else:
                 flows = []
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to load flows for worktree %s: %s", key, exc)
             flows = []
     return _ds.derive_delivery_status(entry, active_runs=active_runs, active_flows=flows)
 

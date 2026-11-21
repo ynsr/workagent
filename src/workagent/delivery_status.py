@@ -19,7 +19,7 @@ def _flow_step_label(flow: dict[str, Any]) -> str:
     step = flow.get("current_step")
     if step is None:
         step = flow.get("step_index")
-    steps = flow.get("steps")
+    steps = flow.get("steps") or flow.get("effective_steps")
     total = len(steps) if isinstance(steps, (list, tuple)) and steps else None
     if isinstance(step, int) and step >= 0:
         if total:
@@ -97,20 +97,21 @@ def derive_delivery_status(
                 "attention_reason": "run_failed",
             }
 
-    if ci == "failure":
-        return {
-            "kanban_column": "needs_you",
-            "display_status": "CI failed",
-            "attention_reason": "ci_failed",
-        }
+    if pr_state not in ("merged", "closed"):
+        if ci == "failure":
+            return {
+                "kanban_column": "needs_you",
+                "display_status": "CI failed",
+                "attention_reason": "ci_failed",
+            }
 
-    if unresolved > 0:
-        noun = "comment" if unresolved == 1 else "comments"
-        return {
-            "kanban_column": "needs_you",
-            "display_status": f"{unresolved} unresolved {noun}",
-            "attention_reason": "unresolved_comments",
-        }
+        if unresolved > 0:
+            noun = "comment" if unresolved == 1 else "comments"
+            return {
+                "kanban_column": "needs_you",
+                "display_status": f"{unresolved} unresolved {noun}",
+                "attention_reason": "unresolved_comments",
+            }
 
     # ── 2. working ────────────────────────────────────────────────────
     for flow in flows:
