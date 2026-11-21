@@ -79,7 +79,7 @@ export function Prodtests({ initialLaunchOpen = false }: { initialLaunchOpen?: b
   const [params, setParams] = useSearchParams()
   const [launchOpen, setLaunchOpen] = useState(initialLaunchOpen)
   useEffect(() => {
-    if (initialLaunchOpen) setLaunchOpen(true)
+    setLaunchOpen(initialLaunchOpen)
   }, [initialLaunchOpen])
   const issueParam = params.get("issue") ?? ""
   const [q, setQ] = useState("")

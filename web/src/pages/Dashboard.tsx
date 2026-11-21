@@ -173,7 +173,7 @@ export function Dashboard({ initialLaunchOpen = false }: { initialLaunchOpen?: b
   const navigate = useNavigate()
   const [launchOpen, setLaunchOpen] = useState(initialLaunchOpen)
   useEffect(() => {
-    if (initialLaunchOpen) setLaunchOpen(true)
+    setLaunchOpen(initialLaunchOpen)
   }, [initialLaunchOpen])
   const qc = useQueryClient()
   const confirm = useConfirm()

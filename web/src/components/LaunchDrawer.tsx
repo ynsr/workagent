@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from "react"
+import { useEffect, useId, useRef, useState, type ReactNode } from "react"
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -44,8 +44,24 @@ export function LaunchDrawer({
   const panelRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLElement | null>(null)
   const wasOpenRef = useRef(false)
+  const [entered, setEntered] = useState(false)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
+
+  // Trigger slide-in transition on the next frame after mount and lock body scroll while open.
+  useEffect(() => {
+    if (!open) {
+      setEntered(false)
+      return
+    }
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    const raf = requestAnimationFrame(() => setEntered(true))
+    return () => {
+      cancelAnimationFrame(raf)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [open])
 
   // Capture trigger element on open, focus inside drawer, and restore focus on close.
   useEffect(() => {
@@ -142,7 +158,10 @@ export function LaunchDrawer({
         data-testid="launch-drawer-backdrop"
         aria-hidden="true"
         onClick={onClose}
-        className="fixed inset-0 bg-black/50 backdrop-blur-[1px] motion-safe:transition-opacity motion-safe:duration-200 motion-reduce:transition-none"
+        className={cn(
+          "fixed inset-0 bg-black/50 backdrop-blur-[1px] motion-safe:transition-opacity motion-safe:duration-200 motion-reduce:transition-none",
+          entered ? "opacity-100" : "motion-safe:opacity-0",
+        )}
       />
       <div
         ref={panelRef}
@@ -154,6 +173,7 @@ export function LaunchDrawer({
         className={cn(
           "relative z-10 flex h-full w-full max-w-2xl flex-col border-l bg-background text-foreground shadow-xl outline-none",
           "motion-safe:transition-transform motion-safe:duration-200 motion-reduce:transition-none",
+          entered ? "translate-x-0" : "motion-safe:translate-x-full",
           className,
         )}
       >

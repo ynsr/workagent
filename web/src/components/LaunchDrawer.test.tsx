@@ -97,4 +97,18 @@ describe("LaunchDrawer", () => {
     await user.tab({ shift: true })
     expect(submitBtn).toHaveFocus()
   })
+
+  it("locks body scroll while open and restores it on close", async () => {
+    const user = userEvent.setup()
+    document.body.style.overflow = "auto"
+    render(<Harness />)
+
+    expect(document.body.style.overflow).toBe("auto")
+    await user.click(screen.getByRole("button", { name: "Open Drawer" }))
+    expect(document.body.style.overflow).toBe("hidden")
+
+    await user.keyboard("{Escape}")
+    expect(document.body.style.overflow).toBe("auto")
+    document.body.style.overflow = ""
+  })
 })

@@ -202,6 +202,21 @@ function MobileHeader() {
         <GitBranch aria-hidden className="size-4" />
       </span>
       <span className="text-sm font-semibold">workagent serve</span>
+      <NavLink
+        to="/settings"
+        aria-label="Settings"
+        title="Settings"
+        className={({ isActive }) =>
+          cn(
+            "ml-auto flex size-9 items-center justify-center rounded-md transition-colors",
+            isActive
+              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+              : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+          )
+        }
+      >
+        <Settings2 aria-hidden className="size-4" />
+      </NavLink>
     </header>
   )
 }

@@ -71,7 +71,7 @@ export function Messages({ initialLaunchOpen = false }: { initialLaunchOpen?: bo
   const [params, setParams] = useSearchParams()
   const [launchOpen, setLaunchOpen] = useState(initialLaunchOpen)
   useEffect(() => {
-    if (initialLaunchOpen) setLaunchOpen(true)
+    setLaunchOpen(initialLaunchOpen)
   }, [initialLaunchOpen])
   const threadParam = params.get("thread") ?? ""
   const [q, setQ] = useState("")
