@@ -41,7 +41,11 @@ function formatArgs(args: unknown): string {
   }
 }
 
-function BlockView({ block }: { block: AcpBlock }) {
+function toolKey(block: AcpBlock, index: number): string {
+  return `${block.kind}-${block.id ?? block.name ?? index}`
+}
+
+function BlockView({ block, override, onToggle }: { block: AcpBlock; override?: boolean; onToggle: (open: boolean) => void }) {
   switch (block.kind) {
     case "thought":
       return (
@@ -53,10 +57,11 @@ function BlockView({ block }: { block: AcpBlock }) {
     case "tool_call": {
       const argsText = formatArgs(block.args)
       const outText = block.output || block.text || ""
+      const open = override ?? isToolExpanded(block.status)
       return (
         <details
-          open={isToolExpanded(block.status)}
-          className="rounded border border-white/10 bg-white/5 px-2.5 py-1.5"
+          open={open}
+          onToggle={(e) => onToggle((e.target as HTMLDetailsElement).open)}
         >
           <summary className="flex cursor-pointer select-none items-center gap-2 text-xs text-sky-300">
             <span>
@@ -87,7 +92,7 @@ function BlockView({ block }: { block: AcpBlock }) {
       return <div className="text-xs text-white/30">— turn end —</div>
     case "message":
       return (
-        <div className="prose prose-sm prose-invert max-w-none break-words font-sans text-sm leading-relaxed">
+        <div className="max-w-none break-words font-sans text-sm leading-relaxed text-white/85 [&_a]:text-sky-300 [&_a]:underline [&_code]:rounded [&_code]:bg-black/30 [&_code]:px-1 [&_code]:font-mono [&_code]:text-[12.5px] [&_h1]:text-base [&_h1]:font-semibold [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_p]:my-1 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-black/30 [&_pre]:p-2 [&_strong]:font-semibold">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.text}</ReactMarkdown>
         </div>
       )
@@ -103,7 +108,9 @@ export function AcpTranscript({ lines }: { lines: RunLine[] }) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const programmaticRef = useRef(false)
   const [follow, setFollow] = useState(true)
-
+  // Per-tool user open/close overrides (risk 4): keyed by stable tool key,
+  // status default applies only to tools the user never touched.
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({})
   useEffect(() => {
     if (!follow) return
     const el = scrollRef.current
@@ -148,9 +155,21 @@ export function AcpTranscript({ lines }: { lines: RunLine[] }) {
         onScroll={handleScroll}
         className="flex max-h-[60vh] flex-col gap-2 overflow-auto px-3 py-2.5 font-mono text-[12.5px] leading-relaxed"
       >
-        {blocks.map((b, i) => (
-          <BlockView key={b.id ? `${b.kind}-${b.id}` : i} block={b} />
-        ))}
+        {blocks.map((b, i) => {
+          const key = b.id ? `${b.kind}-${b.id}` : i
+          const tkey = toolKey(b, typeof key === "number" ? key : i)
+          return (
+            <BlockView
+              key={key}
+              block={b}
+              override={b.kind === "tool_call" ? overrides[tkey] : undefined}
+              onToggle={(open) => {
+                if (b.kind !== "tool_call") return
+                setOverrides((prev) => ({ ...prev, [tkey]: open }))
+              }}
+            />
+          )
+        })}
       </div>
     </div>
   )

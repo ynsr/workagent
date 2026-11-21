@@ -442,3 +442,39 @@ def test_cli_review_child_argv_forwards_acp_model_effort():
     assert "--acp" in argv
     assert "--model" in argv and "m1" in argv
     assert "--effort" in argv and "high" in argv
+
+
+def test_acp_client_stderr_tail_includes_bytes_written_before_reader_start(tmp_path, isolated_config):
+    """Risk 1 RED: stderr drained synchronously even if reader thread never ran.
+
+    Simulates the init-failure race: process wrote stderr and exited before
+    the daemon reader consumed it. stderr_tail() must still surface it.
+    """
+    import sys
+    from workagent.acp_harness import AcpClient
+
+    agent = tmp_path / "instant_exit.py"
+    agent.write_text("import sys\nsys.stderr.write('instant boom\\n')\nsys.stderr.flush()\n")
+    client = AcpClient([sys.executable, str(agent)])
+    # Simulate worst case: reader thread did not consume before exit.
+    client._proc.wait(timeout=10)
+    client._stderr_reader.join(timeout=5)
+    # Drain whatever is left without relying on the thread having run.
+    tail = client.stderr_tail()
+    client.close()
+    assert "instant boom" in tail
+
+
+def test_acp_client_drain_fd_captures_available_pipe_bytes():
+    """_drain_fd captures available fd bytes without blocking."""
+    import os
+    from workagent.acp_harness import AcpClient
+
+    r, w = os.pipe()
+    os.write(w, b"late boom\n")
+    os.close(w)
+    lines: list = []
+    n = AcpClient._drain_fd(r, lines, None)
+    os.close(r)
+    assert n == 1
+    assert lines == ["late boom"]

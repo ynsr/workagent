@@ -171,7 +171,6 @@ class AcpClient:
                     q.put({"error": {"code": -32000, "message": "agent exited"}})
                 except Exception:
                     pass
-
     def _stderr_loop(self) -> None:
         err = self._proc.stderr
         if err is None:
@@ -188,7 +187,76 @@ class AcpClient:
         except Exception:
             pass
 
+    @staticmethod
+    def _drain_fd(fd: int, out: list, limit: int | None = None) -> int:
+        """Non-blocking drain of one fd into `out` (init-failure race fix).
+
+        Reads bytes already available without blocking: the daemon reader
+        may not have been scheduled before the child exited. Never raises.
+        """
+        import os as _os
+        import select as _select
+        count = 0
+        try:
+            while True:
+                ready, _, _ = _select.select([fd], [], [], 0)
+                if not ready:
+                    break
+                try:
+                    chunk = _os.read(fd, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                for raw in chunk.decode("utf-8", "replace").splitlines():
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    if len(line) > 500:
+                        line = line[:500] + "…"
+                    out.append(line)
+                    count += 1
+                    if limit is not None and count >= limit:
+                        return count
+        except Exception:
+            pass
+        return count
+
+    def drain_stderr(self) -> None:
+        """Pull pending stderr bytes into the ring (init-failure race fix).
+
+        Best-effort: joins the daemon reader briefly when the child already
+        exited, then non-blockingly drains the pipe fd directly. Never
+        raises, never blocks.
+        """
+        proc = getattr(self, "_proc", None)
+        try:
+            exited = proc is not None and proc.poll() is not None
+        except Exception:
+            exited = False
+        if exited:
+            reader = getattr(self, "_stderr_reader", None)
+            if reader is not None:
+                try:
+                    reader.join(timeout=2.0)
+                except Exception:
+                    pass
+            err = getattr(proc, "stderr", None)
+            fileno = None
+            try:
+                fileno = err.fileno() if err is not None else None
+            except Exception:
+                fileno = None
+            if fileno is not None:
+                buf: list = []
+                self._drain_fd(fileno, buf)
+                if buf:
+                    with self._stderr_lock:
+                        self._stderr_lines.extend(buf)
+        return None
+
     def stderr_tail(self, max_lines: int = 20) -> str:
+        self.drain_stderr()
         with self._stderr_lock:
             lines = list(self._stderr_lines)[-max_lines:]
         return "\n".join(lines)

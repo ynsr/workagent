@@ -1,5 +1,6 @@
 import type { FlowStep } from "@/lib/api"
 import type { RunMode } from "@/lib/launchConfig"
+import { messageRunModeArgs } from "@/lib/messageLaunchConfig"
 
 /** Scope for action/flow-template rows: worktree rows surface on the
  * Dashboard, message rows on the Messages page. Missing category means
@@ -170,9 +171,7 @@ export function buildImmediateMessageActionArgs(
     if (e) args.push("--effort", e)
   } else {
     const mode = harnessOrOpts.runMode ?? "headless"
-    if (mode === "headless") args.push("--launch")
-    else if (mode === "terminal") args.push("--terminal")
-    else if (mode === "acp") args.push("--acp")
+    args.push(...messageRunModeArgs(mode))
     const h = (harnessOrOpts.harness ?? "").trim()
     if (h) args.push("--harness", h)
     const m = (harnessOrOpts.model ?? "").trim()

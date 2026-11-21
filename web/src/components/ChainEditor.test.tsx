@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 import { ChainEditor, startRepoState, validateChain } from "@/components/ChainEditor"
-import type { FlowStep } from "@/lib/api"
+import type { FlowStep, HarnessOptions } from "@/lib/api"
 import { summarizeExecution } from "@/lib/flowExecution"
 
 vi.mock("@/lib/queries", () => ({
@@ -19,9 +19,19 @@ vi.mock("@/lib/queries", () => ({
   }),
 }))
 
+// Type-anchored to HarnessOptions: if the hook's data shape changes, the
+// satisfies check fails at typecheck time instead of drifting silently.
+const harnessOptionsData = {
+  supported: true,
+  models: [],
+  efforts: [],
+  current_model: "",
+  current_effort: "",
+} satisfies Pick<HarnessOptions, "supported" | "models" | "efforts" | "current_model" | "current_effort">
+
 vi.mock("@/hooks/useHarnessOptions", () => ({
   useHarnessOptions: () => ({
-    data: { supported: true, models: [], efforts: [], current_model: "", current_effort: "" },
+    data: { harness: "agy", ...harnessOptionsData },
     isPending: false,
     isError: false,
   }),

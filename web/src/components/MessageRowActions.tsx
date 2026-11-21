@@ -42,8 +42,8 @@ export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: (
     // Immediate actions launch straight away (standard confirm; the message
     // itself is the ref). Flows always need a worktree ref, so they go
     // through the shared run form first.
-    if (kind === "action" && runsImmediately(kind, actions.find((a) => a.label === label))) {
-      const act = actions.find((a) => a.label === label)
+    const act = kind === "action" ? actions.find((a) => a.label === label) : undefined
+    if (kind === "action" && runsImmediately(kind, act)) {
       void spawn(
         buildImmediateMessageActionArgs(label, row.message_id, { runMode: actionRunModeOf(act ?? {}) as RunMode, harness: actionHarnessOf(act ?? {}), model: actionModelOf(act ?? {}), effort: actionEffortOf(act ?? {}) }),
         true,

@@ -179,13 +179,10 @@ export function parseAcpBlocks(lines: { seq: number; text: string }[]): AcpBlock
         out.push({ kind: "turn_end", text: "" })
         break
       default: {
+        // Unknown future event type: own block, never merged into a
+        // preceding message (hides the event boundary otherwise).
         const text = String(obj.text ?? payload)
-        const last = out[out.length - 1]
-        if (last?.kind === "message") {
-          last.text += text
-        } else {
-          out.push({ kind: "message", text })
-        }
+        out.push({ kind: "message", text })
         break
       }
     }

@@ -25,3 +25,38 @@ describe("AcpTranscript", () => {
     expect(container.querySelector("strong")?.textContent).toBe("bold")
   })
 })
+
+describe("AcpTranscript user override (risk 4 RED)", () => {
+  it("keeps a manually expanded completed tool open across re-renders", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event")
+    const user = userEvent.setup()
+    const lines = [
+      { seq: 1, text: 'ACP:{"t":"tool_call","id":"t1","name":"read","kind":"read","status":"completed","output":"ok"}' },
+    ]
+    const { container, rerender } = render(<AcpTranscript lines={lines} />)
+    const details = container.querySelector("details")!
+    expect(details.open).toBe(false)
+    await user.click(details.querySelector("summary")!)
+    expect(details.open).toBe(true)
+    // Status unchanged re-render must not snap it back shut.
+    rerender(<AcpTranscript lines={lines} />)
+    expect(container.querySelector("details")!.open).toBe(true)
+  })
+})
+
+describe("AcpTranscript user override snap-back (risk 4 RED)", () => {
+  it("does not snap a manually collapsed failed tool back open on re-render", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event")
+    const user = userEvent.setup()
+    const lines = [
+      { seq: 1, text: 'ACP:{"t":"tool_call","id":"t9","name":"bash","kind":"execute","status":"failed","output":"boom"}' },
+    ]
+    const { container, rerender } = render(<AcpTranscript lines={lines} />)
+    const details = () => container.querySelector("details")!
+    expect(details().open).toBe(true)
+    await user.click(details().querySelector("summary")!)
+    expect(details().open).toBe(false)
+    rerender(<AcpTranscript lines={lines} />)
+    expect(details().open).toBe(false)
+  })
+})

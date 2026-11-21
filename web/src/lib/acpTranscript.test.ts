@@ -47,3 +47,16 @@ describe("parseAcpBlocks coalescing and normalization", () => {
     expect(blocks[2]).toMatchObject({ kind: "question", qid: "q1", options: ["Yes", "No"] })
   })
 })
+
+describe("parseAcpBlocks unknown event types (risk 2 RED)", () => {
+  it("pushes unknown t as its own block instead of merging into a message", async () => {
+    const { parseAcpBlocks } = await import("./harness")
+    const blocks = parseAcpBlocks([
+      { seq: 1, text: 'ACP:{"t":"message","text":"hello"}' },
+      { seq: 2, text: 'ACP:{"t":"future_type","text":"from the future"}' },
+    ])
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0]).toMatchObject({ kind: "message", text: "hello" })
+    expect(blocks[1]).toMatchObject({ kind: "message", text: "from the future" })
+  })
+})
