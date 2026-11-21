@@ -49,6 +49,7 @@ export function WorktreeFilterForm({
       <div className="relative min-w-52 flex-1 sm:max-w-xs">
         <Search aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
+          id={`${idPrefix}-q`}
           value={filter.q}
           onChange={(e) => onChange({ ...filter, q: e.target.value })}
           placeholder="Filter by key, branch, PR, path…"

@@ -1,5 +1,6 @@
 import { useMemo } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
+import { useListHotkeys } from "@/hooks/useHotkeys"
 import { toast } from "sonner"
 import { Copy, SquareTerminal, XCircle } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
@@ -86,6 +87,7 @@ function CancelButton({ run }: { run: Run }) {
 }
 
 export function Runs() {
+  const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const { data: runs, isPending, isFetching, isError, error, refetch } = useRuns()
   const { data: repos } = useRepos()
@@ -102,6 +104,10 @@ export function Runs() {
   const repoTabs = useRepoTabs((runs ?? []).map((r) => r.worktree || r.target), repos)
   const repoOf = (r: Run) => repoKeyForPath(r.worktree || r.target, repos ?? [])
   const filtered = useMemo(() => filterRuns(runs, filter, flowRow, flowMissing, target, repoOf, repoTabs.repoFilter), [runs, filter, flowRow, flowMissing, target, repoTabs.repoFilter, repos])
+  const { activeIndex } = useListHotkeys({
+    items: filtered,
+    onOpen: (run) => navigate(`/runs/${run.id}`),
+  })
 
   function setFilter(next: Filter) {
     const p = new URLSearchParams(params)
@@ -218,6 +224,7 @@ export function Runs() {
             </EmptyState>
           ) : (
             <RunsTable
+              activeIndex={activeIndex}
               rows={filtered.map(
                 (run): RunsTableRow => ({
                   key: run.id,

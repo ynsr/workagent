@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react"
 import { useSearchParams } from "react-router-dom"
+import { useListHotkeys } from "@/hooks/useHotkeys"
 import { ChevronDown, ChevronRight, Copy, Download, MessageSquare, Plus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -82,6 +83,11 @@ export function Messages() {
   const rows: MessageRow[] = data?.messages ?? []
   const filters: MessageFilters = { q, sender, app, repo, thread: threadParam }
   const visible = useMemo(() => filterMessages(rows, filters), [rows, q, sender, app, repo, threadParam])
+  const { activeItem: focusedMessage } = useListHotkeys({
+    items: visible,
+    onOpen: (row) => setExpanded((cur) => (cur === row.id ? null : row.id)),
+    onFocusSearch: () => document.getElementById("msg-q")?.focus(),
+  })
 
   const senders = useMemo(() => [...new Set(rows.map((r) => r.sender_username).filter(Boolean))].sort(), [rows])
   const groups = useMemo(() => groupByThread(visible), [visible])
@@ -204,12 +210,12 @@ export function Messages() {
                     Thread <span className="font-mono">{g.thread}</span>{" "}
                     <Badge variant="secondary">{g.rows.length}</Badge>
                   </div>
-                  <MessageTable rows={g.rows} expanded={expanded} setExpanded={setExpanded} onDelete={(r) => void handleDelete(r)} onRefetch={() => void refetch()} />
+                  <MessageTable rows={g.rows} expanded={expanded} setExpanded={setExpanded} focusedId={focusedMessage?.id ?? null} onDelete={(r) => void handleDelete(r)} onRefetch={() => void refetch()} />
                 </div>
               ))}
             </div>
           ) : (
-            <MessageTable rows={visible} expanded={expanded} setExpanded={setExpanded} onDelete={(r) => void handleDelete(r)} onRefetch={() => void refetch()} />
+            <MessageTable rows={visible} expanded={expanded} setExpanded={setExpanded} focusedId={focusedMessage?.id ?? null} onDelete={(r) => void handleDelete(r)} onRefetch={() => void refetch()} />
           )}
         </CardContent>
       </Card>
@@ -218,10 +224,11 @@ export function Messages() {
   )
 }
 
-function MessageTable({ rows, expanded, setExpanded, onDelete, onRefetch }: {
+function MessageTable({ rows, expanded, setExpanded, focusedId, onDelete, onRefetch }: {
   rows: MessageRow[]
   expanded: number | null
   setExpanded: (id: number | null) => void
+  focusedId?: number | null
   onDelete: (row: MessageRow) => void
   onRefetch: () => void
 }) {
@@ -243,7 +250,11 @@ function MessageTable({ rows, expanded, setExpanded, onDelete, onRefetch }: {
       <TableBody>
         {rows.map((m) => (
           <>
-            <TableRow key={m.id}>
+            <TableRow
+              key={m.id}
+              data-focused={focusedId === m.id ? "true" : undefined}
+              className={focusedId === m.id ? "bg-accent/50" : undefined}
+            >
               <TableCell>
                 <Button variant="ghost" size="sm" aria-label={expanded === m.id ? "Collapse" : "Expand"}
                   onClick={() => setExpanded(expanded === m.id ? null : m.id)}>
