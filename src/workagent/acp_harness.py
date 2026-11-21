@@ -367,6 +367,11 @@ class AcpClient:
                     pass
 
 
+def _find_cfg_opt(cfg: list, key: str) -> dict | None:
+    """Match an ACP configOptions entry by ``configId`` or ``id``."""
+    return next((o for o in cfg if (o.get("configId") or o.get("id")) == key), None)
+
+
 class _AgyOptionMixin:
     """Shared agy `session/new` payload parser (used by AgyAcpHarness)."""
 
@@ -377,7 +382,7 @@ class _AgyOptionMixin:
         avail = models.get("availableModels") or []
         current = str(models.get("currentModelId") or "")
         cfg = result.get("configOptions") or []
-        model_opt = next((o for o in cfg if o.get("configId") == "model"), None)
+        model_opt = _find_cfg_opt(cfg, "model")
         if model_opt:
             for o in model_opt.get("options") or []:
                 opts.models.append({"id": str(o.get("value", "")),
@@ -388,7 +393,7 @@ class _AgyOptionMixin:
                 opts.models.append({"id": str(m.get("modelId", "")),
                                     "name": str(m.get("name", m.get("modelId", "")))})
             opts.current_model = current
-        effort_opt = next((o for o in cfg if o.get("configId") == "thought_level"), None)
+        effort_opt = _find_cfg_opt(cfg, "thought_level")
         if effort_opt:
             for o in effort_opt.get("options") or []:
                 opts.efforts.append({"id": str(o.get("value", "")),
@@ -403,13 +408,13 @@ class _OmpOptionMixin:
     def parse_options(self, session_new_result: dict) -> HarnessOptions:
         opts = HarnessOptions()
         cfg = (session_new_result or {}).get("configOptions") or []
-        model_opt = next((o for o in cfg if o.get("configId") == "model"), None)
+        model_opt = _find_cfg_opt(cfg, "model")
         if model_opt:
             for o in model_opt.get("options") or []:
                 opts.models.append({"id": str(o.get("value", "")),
                                     "name": str(o.get("name", o.get("value", "")))})
             opts.current_model = str(model_opt.get("currentValue") or "")
-        effort_opt = next((o for o in cfg if o.get("configId") == "thinking"), None)
+        effort_opt = _find_cfg_opt(cfg, "thinking")
         if effort_opt:
             for o in effort_opt.get("options") or []:
                 opts.efforts.append({"id": str(o.get("value", "")),
@@ -454,7 +459,7 @@ class AcpHarness(Harness, abc.ABC):
                 auth = self.authenticate_method()
                 if auth:
                     client.request("authenticate", {"methodId": auth}, timeout_s=5)
-                result = client.request("session/new", {"cwd": directory}, timeout_s=5)
+                result = client.request("session/new", {"cwd": directory, "mcpServers": []}, timeout_s=5)
                 return self.parse_options(result if isinstance(result, dict) else {})
             finally:
                 client.close()
@@ -582,7 +587,7 @@ class AcpHarness(Harness, abc.ABC):
                 except HarnessError as e:
                     raise HarnessError(_with_stderr(f"{self.name} ACP auth failed: {e}"))
             try:
-                new = client.request("session/new", {"cwd": workdir or None})
+                new = client.request("session/new", {"cwd": workdir or None, "mcpServers": []})
             except HarnessError as e:
                 raise HarnessError(_with_stderr(f"{self.name} ACP session/new failed: {e}"))
             new = new if isinstance(new, dict) else {}
