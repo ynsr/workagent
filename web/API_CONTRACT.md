@@ -421,7 +421,9 @@ stale plans.
   "session_type": "sync", "worktree": "/home/x/wt",
   "harness_name": "agy",
   "resume_command": "cd /home/x/wt && agy-guard --conversation …",
-  "last_seq": 42}]
+  "last_seq": 42,
+  "parent_run_id": null,
+  "step_index": null}]
 ```
 `session_file`/`worktree` are non-empty only for runs that executed a
 harness transcript (`start`/`review`, or `sync` with an explicit

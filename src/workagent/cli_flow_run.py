@@ -153,7 +153,9 @@ def _check_steps_override_mismatch(
           f"without --steps to resume", EXIT_USAGE)
 
 
-def _begin_step_run(fid: int, flow_key: str, kind: str, banner: str) -> int:
+def _begin_step_run(fid: int, flow_key: str, kind: str, banner: str, *,
+                    parent_run_id: int | None = None,
+                    step_index: int | None = None) -> int:
     """Create the step's run row at step start (0 = not begun).
 
     The row holds the banner plus one tail line at finish (`_finish_step_run`);
@@ -177,7 +179,9 @@ def _begin_step_run(fid: int, flow_key: str, kind: str, banner: str) -> int:
                               session_type="flow",
                               metadata={"origin": "flow-step", "flow_id": fid,
                                         "step": kind},
-                              output=[banner], flow_id=fid)
+                              output=[banner], flow_id=fid,
+                              parent_run_id=parent_run_id,
+                              step_index=step_index)
     except Exception:
         return 0
 
@@ -453,6 +457,17 @@ def flow_run(
                                       "status": "failed", "detail": str(e)}])
                 _fail(f"pre-execution failed: {e}", EXIT_GENERAL)
         # No worktree yet for issue flows: skip pre until step 0 lands
+    import os as _os
+    _flow_parent_rid: int | None = None
+    _raw_run_id = (_os.environ.get("WORKAGENT_RUN_ID")
+                   or _os.environ.get("WORKAGENT_PARENT_RUN_ID") or "").strip()
+    if _raw_run_id:
+        try:
+            _v = int(_raw_run_id)
+            if _v > 0:
+                _flow_parent_rid = _v
+        except ValueError:
+            pass
     for idx in range(current, len(merged_steps)):
         step = merged_steps[idx]
         kind = step["kind"]
@@ -464,7 +479,15 @@ def flow_run(
         child_key = _flow_child_key(key, ref, entry)
         banner = _step_title(idx, kind, label)
         eprint(banner)
-        child_rid = _begin_step_run(fid, child_key, kind, banner)
+        child_rid = _begin_step_run(fid, child_key, kind, banner,
+                                    parent_run_id=_flow_parent_rid,
+                                    step_index=idx)
+        _prev_parent_env = _os.environ.get("WORKAGENT_PARENT_RUN_ID")
+        _prev_step_env = _os.environ.get("WORKAGENT_STEP_INDEX")
+        _step_parent_id = _flow_parent_rid or child_rid
+        if _step_parent_id:
+            _os.environ["WORKAGENT_PARENT_RUN_ID"] = str(_step_parent_id)
+        _os.environ["WORKAGENT_STEP_INDEX"] = str(idx)
         try:
             if kind == "start":
                 outcome = _run_start_step(ref, key, config, json_output)
@@ -518,6 +541,15 @@ def flow_run(
             store.update_flow(fid, status="failed", current_step=idx,
                               step_results=results)
             raise typer.Exit(e.exit_code)
+        finally:
+            if _prev_parent_env is None:
+                _os.environ.pop("WORKAGENT_PARENT_RUN_ID", None)
+            else:
+                _os.environ["WORKAGENT_PARENT_RUN_ID"] = _prev_parent_env
+            if _prev_step_env is None:
+                _os.environ.pop("WORKAGENT_STEP_INDEX", None)
+            else:
+                _os.environ["WORKAGENT_STEP_INDEX"] = _prev_step_env
         if outcome.get("status") == "skipped":
             _finish_step_run(child_rid, 0,
                              [f"{kind} step skipped: {outcome.get('detail', '')}"])

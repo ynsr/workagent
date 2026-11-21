@@ -573,6 +573,7 @@ def register_runs_routes(app, registry) -> None:
         runs = sorted(registry.runs.values(), key=lambda r: r.created)
         live = [_summary(r) for r in runs]
         live_ids = {str(r["id"]) for r in live}
+        live_by_db_id = {f"db-{r.db_run_id}": r.id for r in runs if r.db_run_id}
         persisted: list[dict] = []
         try:
             from . import store_sqlite as _sq
@@ -580,7 +581,11 @@ def register_runs_routes(app, registry) -> None:
             for row in _sq.list_runs(db):
                 if str(row["id"]) in live_ids:
                     continue
-                persisted.append(_persisted_summary(row))
+                summary = _persisted_summary(row)
+                pid = summary.get("parent_run_id")
+                if pid and pid in live_by_db_id:
+                    summary["parent_run_id"] = live_by_db_id[pid]
+                persisted.append(summary)
         except Exception:
             persisted = []
         return live + persisted

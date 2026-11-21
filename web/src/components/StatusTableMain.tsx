@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { Search, XCircle } from "lucide-react"
-import type { Repo, WorktreeMap } from "@/lib/api"
+import type { FlowRow, Repo, WorktreeMap } from "@/lib/api"
+import { FlowStepper } from "@/components/FlowStepper"
 import { repoKeyForItem } from "@/lib/useRepoTabs"
 import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -99,6 +100,7 @@ export function StatusTable({
   selection,
   embed,
   focusedKey,
+  flows,
 }: {
   worktrees: WorktreeMap
   actions: StatusTableActions
@@ -109,6 +111,7 @@ export function StatusTable({
   selection?: StatusTableSelection
   embed?: StatusTableEmbed
   focusedKey?: string
+  flows?: FlowRow[]
 }) {
   const selParam = embed?.selParam === undefined ? "sel" : embed.selParam
   const [params, setParams] = useSearchParams()
@@ -538,6 +541,16 @@ export function StatusTable({
                         >
                           <DetailReveal open={detailOpen}>
                             <div className="mx-auto w-full max-w-2xl py-1">
+                              {(() => {
+                                const activeFlow = (flows ?? []).find(
+                                  (f) => f.worktree_ref === key && (f.status === "running" || f.status === "paused"),
+                                )
+                                return activeFlow ? (
+                                  <div className="mb-2 rounded-md border bg-muted/30 px-3 py-1.5">
+                                    <FlowStepper flow={activeFlow} compact />
+                                  </div>
+                                ) : null
+                              })()}
                               <WorktreeDetail
                                 entry={entry}
                                 worktreeKey={key}

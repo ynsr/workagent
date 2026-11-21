@@ -225,6 +225,7 @@ export function Runs() {
           ) : (
             <RunsTable
               activeIndex={activeIndex}
+              flat={filter !== "all" || Boolean(target)}
               rows={filtered.map(
                 (run): RunsTableRow => ({
                   key: run.id,
@@ -237,6 +238,8 @@ export function Runs() {
                   state: run.state,
                   exitCode: run.exit_code,
                   started: run.created,
+                  parentRunId: run.parent_run_id,
+                  stepIndex: run.step_index,
                   actions: (
                     <>
                       {run.session_file ? (
