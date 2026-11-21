@@ -9,6 +9,7 @@ import { ReposAndTrackers } from "@/pages/ReposAndTrackers"
 import { RunDetail } from "@/pages/RunDetail"
 import { RunsAndFlows } from "@/pages/RunsAndFlows"
 import { SettingsHub } from "@/pages/SettingsHub"
+import { WorktreeWorkspace } from "@/pages/WorktreeWorkspace"
 
 function LegacyTabRedirect({ to, tab }: { to: string; tab: string }) {
   const { search } = useLocation()
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="prodtest-launch" element={<Prodtests initialLaunchOpen />} />
         <Route path="runs" element={<RunsAndFlows />} />
         <Route path="runs/:runId" element={<RunDetail />} />
+        <Route path="worktrees/:ref" element={<WorktreeWorkspace />} />
         <Route path="flows" element={<LegacyTabRedirect to="/runs" tab="flows" />} />
         <Route path="library" element={<AutomationLibrary />} />
         <Route path="flow-templates" element={<LegacyTabRedirect to="/library" tab="templates" />} />

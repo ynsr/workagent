@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
-import { useSearchParams } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { Search, XCircle } from "lucide-react"
-import type { Repo, WorktreeMap } from "@/lib/api"
+import type { FlowRow, Repo, WorktreeMap } from "@/lib/api"
+import { FlowStepper } from "@/components/FlowStepper"
 import { repoKeyForItem } from "@/lib/useRepoTabs"
 import { prLabel, prUrl } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -99,6 +100,7 @@ export function StatusTable({
   selection,
   embed,
   focusedKey,
+  flows,
 }: {
   worktrees: WorktreeMap
   actions: StatusTableActions
@@ -109,7 +111,9 @@ export function StatusTable({
   selection?: StatusTableSelection
   embed?: StatusTableEmbed
   focusedKey?: string
+  flows?: FlowRow[]
 }) {
+  const navigate = useNavigate()
   const selParam = embed?.selParam === undefined ? "sel" : embed.selParam
   const [params, setParams] = useSearchParams()
   const filterParam = embed?.filterParam === undefined ? "q" : embed.filterParam
@@ -415,7 +419,7 @@ export function StatusTable({
                   const invalid = entry.wt_valid === false
                   return (
                     <Fragment key={key}>
-                      <TableRow aria-selected={sel.has(key)} data-state={sel.has(key) ? "selected" : undefined} data-focused={focusedKey === key ? "true" : undefined} onClick={(e) => { const t = e.target as HTMLElement; if (t.closest("a,button,[role=checkbox],input")) return; setExpanded((cur) => (cur === key ? null : key)) }} className={cn("group relative cursor-pointer", sel.has(key) ? "data-[state=selected]:bg-muted/50" : undefined, invalid ? "bg-destructive/5" : undefined, focusedKey === key ? "bg-accent/50 ring-1 ring-inset ring-primary/40" : undefined)}>
+                      <TableRow tabIndex={0} aria-selected={sel.has(key)} data-state={sel.has(key) ? "selected" : undefined} data-focused={focusedKey === key ? "true" : undefined} onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) { e.preventDefault(); navigate(`/worktrees/${encodeURIComponent(key)}`) } }} onClick={(e) => { const t = e.target as HTMLElement; if (t.closest("a,button,[role=checkbox],input")) return; setExpanded((cur) => (cur === key ? null : key)) }} className={cn("group relative cursor-pointer", sel.has(key) ? "data-[state=selected]:bg-muted/50" : undefined, invalid ? "bg-destructive/5" : undefined, focusedKey === key ? "bg-accent/50 ring-1 ring-inset ring-primary/40" : undefined)}>
                         <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
                           <Checkbox
                             checked={sel.has(key)}
@@ -538,6 +542,16 @@ export function StatusTable({
                         >
                           <DetailReveal open={detailOpen}>
                             <div className="mx-auto w-full max-w-2xl py-1">
+                              {(() => {
+                                const activeFlow = (flows ?? []).find(
+                                  (f) => f.worktree_ref === key && (f.status === "running" || f.status === "paused"),
+                                )
+                                return activeFlow ? (
+                                  <div className="mb-2 rounded-md border bg-muted/30 px-3 py-1.5">
+                                    <FlowStepper flow={activeFlow} compact />
+                                  </div>
+                                ) : null
+                              })()}
                               <WorktreeDetail
                                 entry={entry}
                                 worktreeKey={key}

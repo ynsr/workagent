@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { getVerbose } from "@/lib/settings"
 import { PageHeader } from "@/components/PageHeader"
 import { ActionDialog } from "@/components/LinkDialogs"
+import { FlowStepper } from "@/components/FlowStepper"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import {
   EmptyState,
@@ -66,23 +67,23 @@ export function Flows() {
   const [resuming, setResuming] = useState(false)
   const pausedCmd = (detail?.step_results ?? []).find((r) => r.status === "paused")?.detail ?? ""
 
-  async function handleResume(skipStep = false) {
-    if (!detail || resuming) return
-    const ref = detail.worktree_ref || detail.repo_snapshot?.launch_ref || ""
+  async function handleResumeFor(flow: FlowRow, skipStep = false) {
+    if (resuming) return
+    const ref = flow.worktree_ref || flow.repo_snapshot?.launch_ref || ""
     if (!ref) {
       toast.error("No worktree or launch ref to resume from")
       return
     }
     setResuming(true)
     try {
-      const args = ["run", detail.template_label, ref, "--yes"]
-      if (skipStep) args.push("--skip-steps", String(detail.current_step))
+      const args = ["run", flow.template_label, ref, "--yes"]
+      if (skipStep) args.push("--skip-steps", String(flow.current_step))
       const { run_id } = await createRun.mutateAsync({
         command: "flow",
         args,
         confirm: true,
       })
-      toast.success(skipStep ? `Step ${detail.current_step} marked done — flow resumed` : `Flow ${detail.template_label} resumed`, {
+      toast.success(skipStep ? `Step ${flow.current_step} marked done — flow resumed` : `Flow ${flow.template_label} resumed`, {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
       })
       setDetail(null)
@@ -92,6 +93,11 @@ export function Flows() {
     } finally {
       setResuming(false)
     }
+  }
+
+  async function handleResume(skipStep = false) {
+    if (!detail) return
+    await handleResumeFor(detail, skipStep)
   }
   const allRows: FlowRow[] = useMemo(() => {
     const rows: FlowRow[] = data?.flows ?? []
@@ -202,10 +208,13 @@ export function Flows() {
                           <StatusBadge status={f.status} />
                         </TableCell>
                         <TableCell
-                          className="font-mono text-[13px]"
                           title={`${f.step_results?.length ?? 0} step result${(f.step_results?.length ?? 0) === 1 ? "" : "s"} recorded`}
                         >
-                          step {f.current_step}
+                          <FlowStepper
+                            flow={f}
+                            onResume={(flow, skip) => void handleResumeFor(flow, skip)}
+                            resuming={resuming}
+                          />
                         </TableCell>
                         <TableCell title={exactDateTime(f.modified_at)}>
                           {relativeDate(f.modified_at)}

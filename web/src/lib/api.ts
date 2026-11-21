@@ -155,6 +155,94 @@ export interface ProdtestRow {
   updated_at?: string
 }
 
+export type DiffMode = "base" | "head"
+
+export interface WorktreeDiffFile {
+  path: string
+  status: string
+  additions: number
+  deletions: number
+  binary: boolean
+  old_path?: string | null
+}
+
+export interface WorktreeFilesResponse {
+  key: string
+  mode: DiffMode
+  base_ref: string
+  files: WorktreeDiffFile[]
+  total_additions: number
+  total_deletions: number
+}
+
+export interface DiffLine {
+  type: "context" | "add" | "del" | "meta"
+  old_line: number | null
+  new_line: number | null
+  content: string
+}
+
+export interface DiffHunk {
+  header: string
+  old_start: number
+  old_count: number
+  new_start: number
+  new_count: number
+  lines: DiffLine[]
+}
+
+export interface WorktreeDiffResponse {
+  key: string
+  path: string
+  mode: DiffMode
+  base_ref: string
+  binary: boolean
+  truncated: boolean
+  additions: number
+  deletions: number
+  hunks: DiffHunk[]
+}
+
+export interface ProdtestPlanCase {
+  id?: string
+  title?: string
+  kind?: string
+  priority?: string
+  safety?: string
+  severity?: string
+  tool?: string
+  description?: string
+  steps?: unknown[]
+  expect?: unknown[]
+  [key: string]: unknown
+}
+
+export interface ProdtestPlanPrecondition {
+  id?: string
+  title?: string
+  description?: string
+  [key: string]: unknown
+}
+
+export interface ProdtestPlanResponse {
+  issue_key: string
+  status: string
+  plan_path: string
+  plan_revision?: number | null
+  plan_risk: string
+  plan_diff_hash: string
+  release_sha: string
+  last_run_id: string
+  updated_at: string
+  truncated: boolean
+  yaml: string
+  parse_error: string | null
+  summary: string
+  preconditions: ProdtestPlanPrecondition[]
+  cases: ProdtestPlanCase[]
+  metadata: Record<string, unknown>
+}
+
 /** Review-comment stats: done reviews + thread resolution. */
 export interface ReviewsDetail {
   reviews: number
@@ -400,6 +488,10 @@ export interface Run {
   /** Shell resume command computed by the server when transcript is ready. */
   resume_command?: string
   last_seq: number
+  /** Parent run ID (`db-<id>` or live run id) when spawned by a parent run (flow / review --all / --then-fix-comments). */
+  parent_run_id?: string | null
+  /** 0-based step index within the parent run (null when unindexed). */
+  step_index?: number | null
   /** Newest unanswered ACP question (null when none) — drives QuestionCard. */
   pending_question?: PendingQuestion | null
 }
@@ -641,6 +733,16 @@ export const api = {
       { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
     ),
 
+  /** POST /api/runs/{id}/follow-up — spawn a linked continuation run on the same worktree/session. */
+  followUpRun: (
+    id: string,
+    body: { prompt: string; harness?: string; run_mode?: string; model?: string; effort?: string },
+  ) =>
+    request<{ run_id: string; continued_from_run_id: number | null; worktree_ref: string }>(
+      `/api/runs/${encodeURIComponent(id)}/follow-up`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+    ),
+
   /** POST /api/runs/{id}/resume — open OS terminal resumed on the run's transcript. */
   resumeRun: (id: string) =>
     request<{ id: string; session_file: string; worktree: string }>(
@@ -661,5 +763,23 @@ export const api = {
       "/api/terminal/stop",
       { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ worktree_ref: worktreeRef }) },
+    ),
+
+  /** GET /api/worktrees/{ref}/files?mode=base|head — changed files in a worktree. */
+  worktreeFiles: (ref: string, mode: DiffMode = "base") =>
+    request<WorktreeFilesResponse>(
+      `/api/worktrees/${encodeURIComponent(ref)}/files${qs({ mode })}`,
+    ),
+
+  /** GET /api/worktrees/{ref}/diff?path=<file>&mode=base|head — unified diff hunks. */
+  worktreeDiff: (ref: string, path: string, mode: DiffMode = "base") =>
+    request<WorktreeDiffResponse>(
+      `/api/worktrees/${encodeURIComponent(ref)}/diff${qs({ path, mode })}`,
+    ),
+
+  /** GET /api/prodtests/{issue_key}/plan — validated YAML plan content + metadata. */
+  prodtestPlan: (issueKey: string) =>
+    request<ProdtestPlanResponse>(
+      `/api/prodtests/${encodeURIComponent(issueKey)}/plan`,
     ),
 }

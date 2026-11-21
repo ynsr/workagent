@@ -442,7 +442,9 @@ stale plans.
   "session_type": "sync", "worktree": "/home/x/wt",
   "harness_name": "agy",
   "resume_command": "cd /home/x/wt && agy-guard --conversation …",
-  "last_seq": 42}]
+  "last_seq": 42,
+  "parent_run_id": null,
+  "step_index": null}]
 ```
 `session_file`/`worktree` are non-empty only for runs that executed a
 harness transcript (`start`/`review`, or `sync` with an explicit
@@ -497,6 +499,9 @@ failure). `?refresh=1` bypasses the TTL cache and re-probes the harness
 Model/Effort selects when `supported` is
 false or the lists are empty.
 
+### `POST /api/runs/{id}/follow-up` → `202 {"run_id", "continued_from_run_id", "worktree_ref"}` (issue #144)
+Spawns a linked continuation run (`workagent adhoc <ref> --prompt <prompt> --follow-up --continue-run <id> --run-mode <mode> --yes`) on the same worktree/session without weakening `POST /api/runs/{id}/input`'s strict `pending_question` guard. Body: `{"prompt": str, "harness"?: str, "run_mode"?: "preview"|"headless"|"acp"|"terminal", "model"?: str, "effort"?: str}`. Errors: `422` blank prompt, `404` unknown run or no associated worktree, `409` active run on target `adhoc:<ref>`.
+
 ### `POST /api/runs/{id}/input` → `{"id", "ok": true}` (issue #112)
 Append a user answer to a running run's `input.jsonl` (the ACP run loop
 tails `WORKAGENT_RUN_DIR/input.jsonl` from offset 0, consuming each line
@@ -514,6 +519,13 @@ newest unanswered `ACP: {"t": "question", ...}` log line. `pending_question`
 is null whenever the run is not running. A co-emitted
 non-waiting `turn_end` from the same unanswered turn does not clear it;
 only an `answer` event resolves it.
+
+### `GET /api/events` — Global CDC invalidation SSE stream (issue #147)
+Streams real-time SQLite `change_log` events (`worktrees`, `runs`, `flows`,
+`messages`, `pr_cache`, `prodtest_items`) tailed every 250 ms.
+- `event: change`, `id: <seq>`, `data: {"seq": N, "table": "worktrees", "row_key": "…", "op": "insert"|"update"|"delete", "created_at": 1700000000.123}`.
+- Replays missed events when `Last-Event-ID` header (or `?last_event_id=N`) is supplied.
+- Emits `: heartbeat` SSE comments every 15 s while idle; closes cleanly on server shutdown.
 
 ### `GET /api/runs/{id}/events` — SSE
 - `event: log`, `data: {"seq": N, "text": "…"}`, `id: N`. For `db-<id>`
@@ -574,3 +586,13 @@ preset as before).
 - Theme: `light | dark | system` in localStorage, follows
   `prefers-color-scheme` for `system`.
 - Launch prefs: localStorage key `launch.prefs.v1` — per-tab `{start:{runMode,base},review:{runMode,thenFix,fixAction,useReviewSession},sync:{merge}}` plus Prodtest Launch's `{prodtest:{runMode,prodtestAction}}` under the same key; only the active tab's slice persists on change, URL params (`ref`, `fixComments=1`) win for the live form and never persist. Repo tabs (`useRepoTabs`) show only repos with count > 0; a stale `?repo=` falls back to All. Candidates Review rows deep-link to `…/launch?mode=review&ref=<pr-url>` with the repo pre-selected.
+
+---
+
+## In-App Git Diff & Prodtest YAML Plan Inspection (T08)
+
+Read-only endpoints (all GET, no confirm):
+
+- `GET /api/worktrees/{ref}/files?mode=base|head` — returns `{key, mode, base_ref, files: [{path, status, additions, deletions, binary, old_path}], total_additions, total_deletions}`. `mode=base` (default) diffs against merge-base with the worktree's base branch plus untracked files; `mode=head` diffs working tree + staged changes against `HEAD` plus untracked files. `400` on invalid `mode`, `404` when the worktree ref or directory is missing.
+- `GET /api/worktrees/{ref}/diff?path=<file>&mode=base|head` — returns `{key, path, mode, base_ref, binary, truncated, additions, deletions, hunks: [{header, old_start, old_count, new_start, new_count, lines: [{type, old_line, new_line, content}]}]}`. Rejects empty/absolute/traversal (`..`)/NUL paths with `400`; caps large diffs (`truncated: true`) and skips binary bodies (`binary: true`, `hunks: []`).
+- `GET /api/prodtests/{issue_key}/plan` — returns `{issue_key, status, plan_path, plan_revision, plan_risk, plan_diff_hash, release_sha, last_run_id, updated_at, truncated, yaml, parse_error, summary, preconditions, cases, metadata}`. `404` when the prodtest item or plan file is missing; `400` when `plan_path` is not a `.yaml`/`.yml` file.

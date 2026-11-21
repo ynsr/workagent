@@ -192,9 +192,20 @@ export function RunDetail() {
   )
   const hasAcp = useMemo(() => hasAcpStructuredEvents(lines), [lines])
   const [viewMode, setViewMode] = useState<"structured" | "raw">("structured")
+  const [finishedAt, setFinishedAt] = useState<number | null>(null)
+  const wasRunningRef = useRef(false)
+  useEffect(() => {
+    setFinishedAt(null)
+    wasRunningRef.current = false
+  }, [runId])
   // A terminal SSE event updates the cached run so lists stay in sync.
   useEffect(() => {
     if (!sse.state || !runId) return
+    if (sse.state === "running") {
+      wasRunningRef.current = true
+    } else if (wasRunningRef.current) {
+      setFinishedAt((prev) => prev ?? Math.floor(Date.now() / 1000))
+    }
     qc.setQueryData<RunDetailData>(queryKeys.run(runId), (prev) =>
       prev
         ? {
@@ -393,7 +404,15 @@ export function RunDetail() {
       ) : null}
 
       {hasAcp && viewMode === "structured" ? (
-        <AcpTranscript lines={lines} />
+        <AcpTranscript
+          lines={lines}
+          runMeta={{
+            created: run.created,
+            finished: (run as RunDetailData & { finished?: number | null }).finished ?? finishedAt,
+            state,
+            args: run.args,
+          }}
+        />
       ) : (
         <LogViewer lines={lines} connected={sse.connected} terminal={terminal} />
       )}

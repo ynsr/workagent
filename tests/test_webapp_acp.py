@@ -360,3 +360,53 @@ def test_e2e_supervised_web_acp_question_answered_via_api(client, tmp_path):
     assert detail["pending_question"] is None
     assert any("Got Yes" in ln["text"] for ln in detail["lines"])
 
+
+def test_run_follow_up_spawns_linked_continuation_run(client, monkeypatch, tmp_path, isolated_config):
+    """T07.2: POST /api/runs/{id}/follow-up spawns adhoc --follow-up --continue-run."""
+    from workagent import store, store_sqlite as sq, webapp
+
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / ".git").mkdir()
+    key = "jira:IPG-42"
+    db = sq.db_path()
+    sq.init_db(db)
+    store.record_link(key, {"worktree": str(wt), "branch": "feat/42", "repo": str(wt), "issue": "https://x/IPG-42"})
+    rid = sq.insert_run(
+        db, "start", [key], 0,
+        worktree_ref=key, harness_name="agy",
+        initiator_command="start", prompt="initial",
+        metadata={"acp_session_id": "sess-42"},
+        state="finished",
+    )
+
+    spawned: list = []
+    monkeypatch.setattr(webapp, "_spawn", lambda run, reg: spawned.append(run))
+
+    # Blank prompt -> 422
+    r_blank = client.post(f"/api/runs/db-{rid}/follow-up", json={"prompt": "   "})
+    assert r_blank.status_code == 422
+
+    # Valid follow-up -> 202
+    r = client.post(
+        f"/api/runs/db-{rid}/follow-up",
+        json={"prompt": "add unit tests", "model": "m1", "effort": "high"},
+    )
+    assert r.status_code == 202, r.text
+    body = r.json()
+    assert body["continued_from_run_id"] == rid
+    assert body["worktree_ref"] == key
+    assert len(spawned) == 1
+    argv = spawned[0].argv
+    assert "adhoc" in argv
+    assert "--follow-up" in argv
+    assert "--continue-run" in argv and str(rid) in argv
+    assert "--prompt" in argv and "add unit tests" in argv
+    assert "--run-mode" in argv and "acp" in argv
+    assert "--model" in argv and "m1" in argv
+    assert "--effort" in argv and "high" in argv
+
+    # Unknown run -> 404
+    r_missing = client.post("/api/runs/does-not-exist/follow-up", json={"prompt": "hi"})
+    assert r_missing.status_code == 404
+

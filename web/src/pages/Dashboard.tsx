@@ -954,6 +954,7 @@ export function Dashboard({ initialLaunchOpen = false }: { initialLaunchOpen?: b
                   selection={{ selected, onSelectionChange: setSelected, onVisibleKeys: setVisibleKeys }}
                   embed={{ externalFilter: sharedFilter, onExternalFilterChange: setSharedFilter, filterParam: null, hideFilter: true }}
                   focusedKey={focusedKey}
+                  flows={flowsData?.flows}
                 />
               </div>
             </>

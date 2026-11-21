@@ -29,6 +29,7 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -161,7 +162,19 @@ def start_background_maintenance() -> "threading.Thread":
 
 def create_app(static_dir: Path, host: str, port: int,
                allowed_hosts: list[str]) -> FastAPI:
-    app = FastAPI(title="workagent", docs_url=None, redoc_url=None)
+    from .cdc import CdcHub
+
+    cdc_hub = CdcHub()
+
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):
+        cdc_hub.start()
+        try:
+            yield
+        finally:
+            cdc_hub.stop()
+
+    app = FastAPI(title="workagent", docs_url=None, redoc_url=None, lifespan=_lifespan)
     registry = Registry()
     try:
         from .web_runs import rehydrate as _rehydrate
@@ -331,6 +344,49 @@ def create_app(static_dir: Path, host: str, port: int,
             raise HTTPException(404, f"worktree missing for {key}: {wt}")
         return {"key": key, "worktree": wt}
 
+    @app.get("/api/worktrees/{ref}/files")
+    def worktree_files(ref: str, mode: str = "base") -> dict:
+        """Read-only list of changed files (+additions/-deletions, status) in a worktree."""
+        from . import git_diff
+        links = store.load_links(include_inactive=True)
+        resolved = worktrees.resolve_worktree(ref, links)
+        if resolved is None:
+            raise HTTPException(404, f"no linked state for {ref}")
+        key = worktrees.pick_worktree(ref, resolved, links)
+        entry = links[key]
+        wt = entry.get("worktree", "")
+        if not wt or not Path(wt).is_dir():
+            raise HTTPException(404, f"worktree missing for {key}: {wt}")
+        try:
+            out = git_diff.list_changed_files(Path(wt), mode=mode, base_branch=entry.get("base_branch"))
+        except git_diff.DiffModeError as exc:
+            raise HTTPException(400, str(exc))
+        return {"key": key, **out}
+
+    @app.get("/api/worktrees/{ref}/diff")
+    def worktree_diff(ref: str, path: str = "", mode: str = "base") -> dict:
+        """Read-only structured unified diff hunks for one file in a worktree."""
+        from . import git_diff
+        links = store.load_links(include_inactive=True)
+        resolved = worktrees.resolve_worktree(ref, links)
+        if resolved is None:
+            raise HTTPException(404, f"no linked state for {ref}")
+        key = worktrees.pick_worktree(ref, resolved, links)
+        entry = links[key]
+        wt = entry.get("worktree", "")
+        if not wt or not Path(wt).is_dir():
+            raise HTTPException(404, f"worktree missing for {key}: {wt}")
+        try:
+            out = git_diff.get_file_diff(
+                Path(wt),
+                path,
+                mode=mode,
+                base_branch=entry.get("base_branch"),
+            )
+        except (git_diff.DiffModeError, git_diff.DiffPathError) as exc:
+            raise HTTPException(400, str(exc))
+        return {"key": key, **out}
+
     @app.get("/api/repos")
     def repos_list() -> list[dict]:
         return [{"name": n, "path": v.get("path", ""),
@@ -389,6 +445,17 @@ def create_app(static_dir: Path, host: str, port: int,
         """All prodtest items, newest first (Prodtests page source). Always 200."""
         return {"prodtests": store.list_prodtests()}
 
+
+    @app.get("/api/prodtests/{issue_key}/plan")
+    def prodtest_plan_view(issue_key: str) -> dict:
+        """Read-only prodtest YAML plan content + parsed cases/metadata."""
+        from . import git_diff
+        try:
+            return git_diff.read_prodtest_plan(issue_key)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except git_diff.DiffPathError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     @app.get("/api/prodtests/{ref}")
     def prodtest_detail(ref: str) -> dict:
@@ -562,6 +629,58 @@ def create_app(static_dir: Path, host: str, port: int,
         from . import repos as _repos
         return _repos.release_status(name, background=True)
 
+    @app.get("/api/events")
+    async def events_stream(request: Request, last_event_id: int | None = None):
+        """Global SSE invalidation stream backed by SQLite change_log (CDC)."""
+        header_id = request.headers.get("last-event-id")
+        replay_after: int | None = last_event_id
+        if replay_after is None and header_id:
+            try:
+                replay_after = int(header_id.strip())
+            except ValueError:
+                replay_after = None
+
+        loop = asyncio.get_running_loop()
+        q = cdc_hub.subscribe(loop)
+
+        async def _gen():
+            last_sent = (
+                replay_after
+                if replay_after is not None
+                else await asyncio.to_thread(cdc_hub.current_seq)
+            )
+            try:
+                if replay_after is not None:
+                    for ev in await asyncio.to_thread(cdc_hub.replay, replay_after):
+                        seq = int(ev["seq"])
+                        if seq <= last_sent:
+                            continue
+                        last_sent = seq
+                        yield f"id: {seq}\nevent: change\ndata: {json.dumps(ev)}\n\n"
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    try:
+                        ev = await asyncio.wait_for(q.get(), timeout=cdc_hub.heartbeat_interval)
+                    except asyncio.TimeoutError:
+                        yield ": heartbeat\n\n"
+                        continue
+                    if ev is None:
+                        break
+                    seq = int(ev["seq"])
+                    if seq <= last_sent:
+                        continue
+                    last_sent = seq
+                    yield f"id: {seq}\nevent: change\ndata: {json.dumps(ev)}\n\n"
+            finally:
+                cdc_hub.unsubscribe(loop, q)
+
+        return StreamingResponse(
+            _gen(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     register_runs_routes(app, registry)
 
     @app.exception_handler(ApiError)
@@ -586,6 +705,7 @@ def create_app(static_dir: Path, host: str, port: int,
         return FileResponse(index)
 
     app.state.registry = registry
+    app.state.cdc_hub = cdc_hub
     return app
 
 
@@ -610,6 +730,13 @@ def _shutdown_leave_detached_running(server: Any) -> None:
     # Killing them here defeated that: any `service restart`/reinstall
     # SIGTERM'd live flows mid-step (flow #47: exit -15 in fix_comments).
     # Explicit user cancel stays via POST /api/runs/{id}/cancel.
+    app = getattr(getattr(server, "config", None), "app", None)
+    hub = getattr(getattr(app, "state", None), "cdc_hub", None)
+    if hub is not None:
+        try:
+            hub.stop()
+        except Exception:
+            pass
     server.should_exit = True
 
 

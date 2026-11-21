@@ -486,7 +486,15 @@ def _run_then_fix(review_key: str, pr_url: str, harness_name: str,
                               use_review_session, env_file, extra_prompt,
                               acp=acp, run_mode=run_mode, model=model, effort=effort)
     eprint(f"then-fix: review done, chaining: {' '.join(shlex.quote(a) for a in argv)}")
-    proc = subprocess.run(argv)
+    child_env = None
+    parent_rid = (os.environ.get("WORKAGENT_RUN_ID")
+                  or os.environ.get("WORKAGENT_PARENT_RUN_ID") or "").strip()
+    if parent_rid:
+        child_env = {**os.environ, "WORKAGENT_PARENT_RUN_ID": parent_rid}
+    if child_env is not None:
+        proc = subprocess.run(argv, env=child_env)
+    else:
+        proc = subprocess.run(argv)
     if proc.returncode != 0:
         _fail(f"then-fix child exited {proc.returncode}", proc.returncode)
 
@@ -637,11 +645,22 @@ def review(
         def _child_cmd(pr: str) -> str:
             return " ".join(shlex.quote(a) for a in _all_child_argv(pr))
 
-        def _spawn(key: str, pr: str):
+        def _spawn(key: str, pr: str, step_index: int | None = None):
             repo = store.load_links().get(key, {}).get("repo", "")
             cwd = repo if repo and Path(repo).is_dir() else os.getcwd()
+            child_env = None
+            parent_rid = (os.environ.get("WORKAGENT_RUN_ID")
+                          or os.environ.get("WORKAGENT_PARENT_RUN_ID") or "").strip()
+            if parent_rid or step_index is not None:
+                child_env = dict(os.environ)
+                if parent_rid:
+                    child_env["WORKAGENT_PARENT_RUN_ID"] = parent_rid
+                if step_index is not None:
+                    child_env["WORKAGENT_STEP_INDEX"] = str(step_index)
             # Child stdout/stderr inherit ours; the --post-comments child
             # appends the auto-comment segment to its review prompt.
+            if child_env is not None:
+                return subprocess.Popen(_all_child_argv(pr), cwd=cwd, env=child_env)
             return subprocess.Popen(_all_child_argv(pr), cwd=cwd)
 
         if dry_run:
@@ -671,11 +690,12 @@ def review(
         rows: list[dict] = []
 
         if sequential:
-            for key, pr in reviewable:
-                proc = _spawn(key, pr)
+            for idx, (key, pr) in enumerate(reviewable):
+                proc = _spawn(key, pr, step_index=idx)
                 rows.append({"key": key, "pr_url": pr, "exit_code": proc.wait()})
         else:
-            procs = [(key, pr, _spawn(key, pr)) for key, pr in reviewable]
+            procs = [(key, pr, _spawn(key, pr, step_index=idx))
+                     for idx, (key, pr) in enumerate(reviewable)]
             for key, pr, proc in procs:
                 rows.append({"key": key, "pr_url": pr, "exit_code": proc.wait()})
         if not json_output:

@@ -573,6 +573,7 @@ def register_runs_routes(app, registry) -> None:
         runs = sorted(registry.runs.values(), key=lambda r: r.created)
         live = [_summary(r) for r in runs]
         live_ids = {str(r["id"]) for r in live}
+        live_by_db_id = {f"db-{r.db_run_id}": r.id for r in runs if r.db_run_id}
         persisted: list[dict] = []
         try:
             from . import store_sqlite as _sq
@@ -580,7 +581,11 @@ def register_runs_routes(app, registry) -> None:
             for row in _sq.list_runs(db):
                 if str(row["id"]) in live_ids:
                     continue
-                persisted.append(_persisted_summary(row))
+                summary = _persisted_summary(row)
+                pid = summary.get("parent_run_id")
+                if pid and pid in live_by_db_id:
+                    summary["parent_run_id"] = live_by_db_id[pid]
+                persisted.append(summary)
         except Exception:
             persisted = []
         return live + persisted
@@ -990,4 +995,67 @@ def register_runs_routes(app, registry) -> None:
                            f"cannot write input for run {run_id}: {exc}",
                            500)
         return {"id": run_id, "ok": True}
+
+    @app.post("/api/runs/{run_id}/follow-up", status_code=202)
+    async def run_follow_up(run_id: str, body: dict) -> dict:
+        """Spawn a linked continuation run (`continued_from_run_id`) on the same worktree/session.
+
+        Unlike `POST /api/runs/{id}/input`, this does not require a pending question or
+        active run; it launches `workagent adhoc --follow-up --continue-run <id>` on the
+        worktree so multi-turn follow-up prompts work after any turn finishes.
+        """
+        raw_body = body or {}
+        prompt = str(raw_body.get("prompt") or raw_body.get("text") or "").strip()
+        if not prompt:
+            raise ApiError("bad_arg", "prompt is required", 422)
+        db_run_id: int | None = None
+        worktree_ref = ""
+        default_harness = ""
+        try:
+            live = registry.get(run_id)
+            db_run_id = live.db_run_id
+            worktree_ref = _target_ref_key(live) or _ref_key_for_worktree(live.worktree)
+            default_harness = live.harness_name or _harness_arg(list(live.args or []))
+        except ApiError:
+            row = _persisted_row(run_id)
+            if row is None:
+                raise
+            db_run_id = row.get("id")
+            worktree_ref = str(row.get("worktree_ref") or "")
+            if not worktree_ref:
+                wt = _persisted_summary(row).get("worktree") or ""
+                if wt:
+                    worktree_ref = _ref_key_for_worktree(wt)
+            default_harness = str(row.get("harness_name") or "")
+        if not worktree_ref:
+            raise ApiError("no_worktree", f"no worktree associated with run {run_id!r}", 404)
+
+        run_mode = str(raw_body.get("run_mode") or "acp").strip().lower()
+        if run_mode not in ("preview", "headless", "acp", "terminal"):
+            raise ApiError("bad_arg", f"bad run_mode {run_mode!r}: use preview, headless, acp, or terminal", 400)
+        harness = str(raw_body.get("harness") or default_harness or "").strip()
+        model = str(raw_body.get("model") or "").strip()
+        effort = str(raw_body.get("effort") or "").strip()
+
+        args: list[str] = [worktree_ref, "--prompt", prompt, "--follow-up", "--run-mode", run_mode, "--yes"]
+        if db_run_id is not None:
+            args += ["--continue-run", str(db_run_id)]
+        if harness:
+            args += ["--harness", harness]
+        if model:
+            args += ["--model", model]
+        if effort:
+            args += ["--effort", effort]
+
+        _validate_args("adhoc", args)
+        target = _target_for("adhoc", args)
+        new_run = registry.create("adhoc", args, target)
+        new_run.worktree = _worktree_for_target(target) or ""
+        new_run.argv = _build_argv("adhoc", args)
+        _spawn(new_run, registry)
+        return {
+            "run_id": new_run.id,
+            "continued_from_run_id": db_run_id,
+            "worktree_ref": worktree_ref,
+        }
 
