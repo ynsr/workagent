@@ -22,7 +22,7 @@ import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
 
 
 /** Standalone Prod Test launch (moved off the Launch page's Prodtest tab, issue #50). */
-export function ProdtestLaunch() {
+export function ProdtestLaunch({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const confirm = useConfirm()
@@ -121,12 +121,14 @@ export function ProdtestLaunch() {
 
   return (
     <div>
-      <PageHeader
-        title="Prodtest Launch"
-        description="Plan or run a production test for an issue ref — decoupled from the worktree dev flow."
-        actions={null}
-      />
-      <Card className="mx-auto max-w-2xl">
+      {embedded ? null : (
+        <PageHeader
+          title="Prodtest Launch"
+          description="Plan or run a production test for an issue ref — decoupled from the worktree dev flow."
+          actions={null}
+        />
+      )}
+      <Card className={embedded ? "border-0 shadow-none" : "mx-auto max-w-2xl"}>
         <CardHeader>
           <CardTitle>Plan or run the prodtest</CardTitle>
           <CardDescription>Issue key, OWNER/REPO#22, or a worktree ref — generate the plan or run it at its release SHA. Empty ref + Run = run --all.</CardDescription>

@@ -63,7 +63,7 @@ const NEEDS_RUN_MODE: Record<MessageLaunchMode, boolean> = {
 }
 
 
-export function MessageLaunch() {
+export function MessageLaunch({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const confirm = useConfirm()
@@ -178,12 +178,14 @@ export function MessageLaunch() {
 
   return (
     <div>
-      <PageHeader
-        title="Message Launch"
-        description="Run an agent grounded in a registered chat message — adhoc, validate claimed issues, or run a message action/flow. Runs headless as a child process of workagent serve."
-        actions={null}
-      />
-      <Card className="mx-auto max-w-2xl">
+      {embedded ? null : (
+        <PageHeader
+          title="Message Launch"
+          description="Run an agent grounded in a registered chat message — adhoc, validate claimed issues, or run a message action/flow. Runs headless as a child process of workagent serve."
+          actions={null}
+        />
+      )}
+      <Card className={embedded ? "border-0 shadow-none" : "mx-auto max-w-2xl"}>
         <CardHeader>
           <div>
             <CardTitle>{MESSAGE_LAUNCH_LABELS[tab]}</CardTitle>

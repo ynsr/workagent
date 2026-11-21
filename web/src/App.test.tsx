@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, render, screen } from "@testing-library/react"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { ConfirmProvider } from "@/lib/confirm"
 import App from "./App"
 import type * as QueriesModule from "@/lib/queries"
 
@@ -39,8 +40,10 @@ function renderAt(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <QueryClientProvider client={client}>
-        <App />
-        <LocationProbe />
+        <ConfirmProvider>
+          <App />
+          <LocationProbe />
+        </ConfirmProvider>
       </QueryClientProvider>
     </MemoryRouter>,
   )
@@ -62,5 +65,61 @@ describe("App sessions routes", () => {
   it("has no Sessions nav entry", () => {
     renderAt("/runs")
     expect(screen.queryByRole("link", { name: "Sessions" })).toBeNull()
+  })
+})
+
+describe("App consolidated navigation and backward-compatible routes", () => {
+  it("renders 7 sidebar destinations", () => {
+    renderAt("/")
+    const aside = document.querySelector("aside")
+    expect(aside).not.toBeNull()
+    const links = Array.from(aside!.querySelectorAll("a")).map((a) => a.textContent?.trim())
+    expect(links).toEqual([
+      "Dashboard",
+      "Messages",
+      "Runs & Flows",
+      "Prodtests",
+      "Automation Library",
+      "Repos & Trackers",
+      "Settings",
+    ])
+  })
+
+  it("opens drawers on legacy /launch, /message-launch, and /prodtest-launch routes", () => {
+    renderAt("/launch")
+    expect(screen.getByRole("dialog", { name: "New Task" })).toBeInTheDocument()
+    cleanup()
+
+    renderAt("/message-launch")
+    expect(screen.getByRole("dialog", { name: "Run on Message" })).toBeInTheDocument()
+    cleanup()
+
+    renderAt("/prodtest-launch")
+    expect(screen.getByRole("dialog", { name: "Plan / Run Prodtest" })).toBeInTheDocument()
+  })
+
+  it("pre-selects the matching tab on legacy routes", () => {
+    renderAt("/flows")
+    expect(screen.getByRole("tab", { name: "Flows" })).toHaveAttribute("aria-selected", "true")
+    cleanup()
+
+    renderAt("/flow-templates")
+    expect(screen.getByRole("tab", { name: "Flow Templates" })).toHaveAttribute("aria-selected", "true")
+    cleanup()
+
+    renderAt("/actions")
+    expect(screen.getByRole("tab", { name: "Actions" })).toHaveAttribute("aria-selected", "true")
+    cleanup()
+
+    renderAt("/trackers")
+    expect(screen.getByRole("tab", { name: "Trackers" })).toHaveAttribute("aria-selected", "true")
+    cleanup()
+
+    renderAt("/links")
+    expect(screen.getByRole("tab", { name: "Mappings" })).toHaveAttribute("aria-selected", "true")
+    cleanup()
+
+    renderAt("/doctor")
+    expect(screen.getByRole("tab", { name: "Doctor" })).toHaveAttribute("aria-selected", "true")
   })
 })

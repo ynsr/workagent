@@ -3,22 +3,15 @@ import { NavLink, Outlet } from "react-router-dom"
 import {
   ChevronsLeft,
   ChevronsRight,
+  FlaskConical,
   FolderGit2,
-  Library,
-  Tags,
   GitBranch,
   LayoutDashboard,
-  Link2,
+  Library,
   MessageSquare,
-  MessageSquarePlus,
-  Rocket,
   Settings2,
   ShieldAlert,
   SquareTerminal,
-  Stethoscope,
-  Workflow,
-  FlaskConical,
-  Zap,
 } from "lucide-react"
 import { RunWatcher } from "@/components/RunWatcher"
 import { useInfo } from "@/lib/queries"
@@ -27,40 +20,22 @@ import { cn } from "@/lib/utils"
 const NAV_TOP_GROUPS = [
   [
     { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-    { to: "/launch", label: "Launch", icon: Rocket },
-  ],
-  [
     { to: "/messages", label: "Messages", icon: MessageSquare },
-    { to: "/message-launch", label: "Message Launch", icon: MessageSquarePlus },
-  ],
-  [
-    { to: "/flows", label: "Flows", icon: Workflow },
-    { to: "/runs", label: "Runs", icon: SquareTerminal },
-  ],
-  [
+    { to: "/runs", label: "Runs & Flows", icon: SquareTerminal },
     { to: "/prodtests", label: "Prodtests", icon: FlaskConical },
-    { to: "/prodtest-launch", label: "Prodtest Launch", icon: Rocket },
-  ],
-  [
-    { to: "/flow-templates", label: "Flow Templates", icon: Library },
-    { to: "/actions", label: "Actions", icon: Zap },
+    { to: "/library", label: "Automation Library", icon: Library },
   ],
 ] as const
 
 const NAV_BOTTOM_GROUPS = [
   [
-    { to: "/repos", label: "Repos", icon: FolderGit2 },
-    { to: "/trackers", label: "Trackers", icon: Tags },
-    { to: "/links", label: "Links", icon: Link2 },
-  ],
-  [
-    { to: "/doctor", label: "Doctor", icon: Stethoscope },
+    { to: "/repos", label: "Repos & Trackers", icon: FolderGit2 },
     { to: "/settings", label: "Settings", icon: Settings2 },
   ],
 ] as const
 
 
-function NavLinkContent({ label, icon: Icon }: { label: string; icon: typeof Rocket }) {
+function NavLinkContent({ label, icon: Icon }: { label: string; icon: typeof LayoutDashboard }) {
   return (
     <>
       <Icon aria-hidden className="size-4 shrink-0" />
@@ -68,7 +43,7 @@ function NavLinkContent({ label, icon: Icon }: { label: string; icon: typeof Roc
     </>
   )
 }
-type SidebarNavItem = { to: string; label: string; icon: typeof Rocket; end?: boolean }
+type SidebarNavItem = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean }
 
 function SidebarNavLink({ item, collapsed }: { item: SidebarNavItem; collapsed: boolean }) {
   return (
@@ -184,11 +159,11 @@ function SidebarMeta() {
  * NAV_ITEMS would spill onto a third row and cover page content). */
 const BOTTOM_NAV_ITEMS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-  { to: "/launch", label: "Launch", icon: Rocket },
   { to: "/messages", label: "Messages", icon: MessageSquare },
-  { to: "/message-launch", label: "Msg Launch", icon: MessageSquarePlus },
-  { to: "/flows", label: "Flows", icon: Workflow },
   { to: "/runs", label: "Runs", icon: SquareTerminal },
+  { to: "/prodtests", label: "Prodtests", icon: FlaskConical },
+  { to: "/library", label: "Library", icon: Library },
+  { to: "/repos", label: "Repos", icon: FolderGit2 },
 ] as const
 
 
