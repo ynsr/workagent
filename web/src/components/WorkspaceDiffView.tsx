@@ -108,6 +108,12 @@ export function WorkspaceDiffView({
   } | null>(null)
   const [draftText, setDraftText] = useState("")
 
+  useEffect(() => {
+    setAnnotations([])
+    setDraftTarget(null)
+    setDraftText("")
+  }, [worktreeRef])
+
   const filesQuery = useWorktreeFiles(worktreeRef, mode)
   const files: WorktreeDiffFile[] = filesQuery.data?.files ?? []
 
@@ -516,8 +522,6 @@ function HunkSplitRows(props: HunkRowsProps) {
       {rows.map((row, idx) => {
         const rightLine = row.right?.new_line ?? null
         const leftLine = row.left?.old_line ?? null
-        const activeSide: "old" | "new" = rightLine != null ? "new" : "old"
-        const activeLine = rightLine ?? leftLine
         const notes = [
           ...props.lineAnnotations(path, leftLine, "old"),
           ...props.lineAnnotations(path, rightLine, "new"),
@@ -537,24 +541,18 @@ function HunkSplitRows(props: HunkRowsProps) {
             onRemoveAnnotation={props.onRemoveAnnotation}
           >
             <tr>
-              <td className={`w-10 select-none border-r px-1.5 text-right text-muted-foreground ${row.left ? lineBg(row.left.type) : "bg-muted/20"}`}>
-                {row.left?.old_line ?? ""}
-              </td>
-              <td className={`w-1/2 whitespace-pre-wrap break-all border-r px-2 py-0.5 ${row.left ? lineBg(row.left.type) : "bg-muted/20"}`}>
-                {row.left ? <HighlightedLine text={row.left.content} path={path} /> : null}
-              </td>
-              <td className={`w-12 select-none border-r px-1 text-right text-muted-foreground ${row.right ? lineBg(row.right.type) : "bg-muted/20"}`}>
+              <td className={`w-12 select-none border-r px-1 text-right text-muted-foreground ${row.left ? lineBg(row.left.type) : "bg-muted/20"}`}>
                 <span className="inline-flex items-center gap-1">
-                  {activeLine != null ? (
+                  {leftLine != null ? (
                     <button
                       type="button"
-                      aria-label={`Comment on ${path} line ${activeLine}`}
+                      aria-label={`Comment on ${path} old line ${leftLine}`}
                       onClick={() =>
                         props.onOpenComposer(
                           path,
-                          activeLine,
-                          activeSide,
-                          (activeSide === "new" ? row.right?.content : row.left?.content) ?? "",
+                          leftLine,
+                          "old",
+                          row.left?.content ?? "",
                         )
                       }
                       className="inline-flex size-4 items-center justify-center rounded text-muted-foreground opacity-60 hover:bg-primary/15 hover:text-primary hover:opacity-100"
@@ -562,7 +560,32 @@ function HunkSplitRows(props: HunkRowsProps) {
                       +
                     </button>
                   ) : null}
-                  <span>{row.right?.new_line ?? ""}</span>
+                  <span>{leftLine ?? ""}</span>
+                </span>
+              </td>
+              <td className={`w-1/2 whitespace-pre-wrap break-all border-r px-2 py-0.5 ${row.left ? lineBg(row.left.type) : "bg-muted/20"}`}>
+                {row.left ? <HighlightedLine text={row.left.content} path={path} /> : null}
+              </td>
+              <td className={`w-12 select-none border-r px-1 text-right text-muted-foreground ${row.right ? lineBg(row.right.type) : "bg-muted/20"}`}>
+                <span className="inline-flex items-center gap-1">
+                  {rightLine != null ? (
+                    <button
+                      type="button"
+                      aria-label={`Comment on ${path} line ${rightLine}`}
+                      onClick={() =>
+                        props.onOpenComposer(
+                          path,
+                          rightLine,
+                          "new",
+                          row.right?.content ?? "",
+                        )
+                      }
+                      className="inline-flex size-4 items-center justify-center rounded text-muted-foreground opacity-60 hover:bg-primary/15 hover:text-primary hover:opacity-100"
+                    >
+                      +
+                    </button>
+                  ) : null}
+                  <span>{rightLine ?? ""}</span>
                 </span>
               </td>
               <td className={`w-1/2 whitespace-pre-wrap break-all px-2 py-0.5 ${row.right ? lineBg(row.right.type) : "bg-muted/20"}`}>

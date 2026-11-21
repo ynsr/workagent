@@ -11,7 +11,6 @@ Guards:
 from __future__ import annotations
 
 import logging
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -429,21 +428,23 @@ def read_prodtest_plan(
     if not plan_path.is_file():
         raise FileNotFoundError(f"plan file not found on disk: {plan_path_str}")
 
-    raw_bytes = plan_path.read_bytes()
+    with plan_path.open("rb") as fh:
+        raw_bytes = fh.read(max_bytes + 1)
     truncated = len(raw_bytes) > max_bytes
     yaml_text = raw_bytes[:max_bytes].decode("utf-8", errors="replace")
 
     parsed: dict[str, Any] | None = None
     parse_error: str | None = None
-    try:
-        import yaml  # type: ignore[import-untyped]
-        loaded = yaml.safe_load(yaml_text)
-        if isinstance(loaded, dict):
-            parsed = loaded
-        elif loaded is not None:
-            parse_error = "plan YAML root must be a mapping"
-    except Exception as exc:
-        parse_error = str(exc)
+    if not truncated:
+        try:
+            import yaml  # type: ignore[import-untyped]
+            loaded = yaml.safe_load(yaml_text)
+            if isinstance(loaded, dict):
+                parsed = loaded
+            elif loaded is not None:
+                parse_error = "plan YAML root must be a mapping"
+        except Exception as exc:
+            parse_error = str(exc)
 
     cases_raw = (parsed or {}).get("cases") if isinstance((parsed or {}).get("cases"), list) else []
     pre_raw = (parsed or {}).get("preconditions") if isinstance((parsed or {}).get("preconditions"), list) else []

@@ -51,8 +51,39 @@ export function tokenizeYamlLine(line: string): SyntaxToken[] {
   return tokenizeYamlValue(line)
 }
 
+function findYamlCommentIndex(val: string): number {
+  let quote: '"' | "'" | null = null
+  for (let i = 0; i < val.length; i++) {
+    const ch = val[i]
+    if (quote === '"') {
+      if (ch === "\\") {
+        i++
+      } else if (ch === '"') {
+        quote = null
+      }
+    } else if (quote === "'") {
+      if (ch === "'") {
+        if (val[i + 1] === "'") {
+          i++
+        } else {
+          quote = null
+        }
+      }
+    } else if (ch === '"' || ch === "'") {
+      quote = ch
+    } else if (ch === "#" && i > 0 && /\s/.test(val[i - 1] ?? "")) {
+      let start = i - 1
+      while (start > 0 && /\s/.test(val[start - 1] ?? "")) {
+        start--
+      }
+      return start
+    }
+  }
+  return -1
+}
+
 function tokenizeYamlValue(val: string): SyntaxToken[] {
-  const commentIdx = val.search(/\s+#/)
+  const commentIdx = findYamlCommentIndex(val)
   const main = commentIdx >= 0 ? val.slice(0, commentIdx) : val
   const comment = commentIdx >= 0 ? val.slice(commentIdx) : ""
   const out: SyntaxToken[] = []

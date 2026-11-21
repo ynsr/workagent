@@ -184,6 +184,8 @@ export function WorktreeDetail({
             <div className="flex shrink-0 items-center gap-1" role="tablist" aria-label="Worktree inspector">
               <Button
                 type="button"
+                role="tab"
+                aria-selected={viewTab === "overview"}
                 size="sm"
                 variant={viewTab === "overview" ? "default" : "ghost"}
                 onClick={() => setViewTab("overview")}
@@ -192,6 +194,8 @@ export function WorktreeDetail({
               </Button>
               <Button
                 type="button"
+                role="tab"
+                aria-selected={viewTab === "diff"}
                 size="sm"
                 variant={viewTab === "diff" ? "default" : "ghost"}
                 onClick={() => setViewTab("diff")}
@@ -201,6 +205,8 @@ export function WorktreeDetail({
               {prodtestIssueKey ? (
                 <Button
                   type="button"
+                  role="tab"
+                  aria-selected={viewTab === "prodtest"}
                   size="sm"
                   variant={viewTab === "prodtest" ? "default" : "ghost"}
                   onClick={() => setViewTab("prodtest")}
