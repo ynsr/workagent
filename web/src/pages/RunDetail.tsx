@@ -22,6 +22,8 @@ import { queryKeys, useCancelRun, useRun } from "@/lib/queries"
 import { copyToClipboard, relativeTime, shortId } from "@/lib/format"
 import { commandAction, commandLabel, needsConfirm, runKind } from "@/lib/runs"
 import { RunResumeActions } from "@/components/RunActions"
+import { AcpTranscript } from "@/components/AcpTranscript"
+import { QuestionCard } from "@/components/QuestionCard"
 import { Badge } from "@/components/ui/badge"
 
 function LogViewer({
@@ -360,6 +362,12 @@ export function RunDetail() {
           </CardHeader>
         </Card>
       ) : null}
+
+      {run.pending_question ? (
+        <QuestionCard runId={run.id} question={run.pending_question} />
+      ) : null}
+
+      <AcpTranscript lines={lines} />
 
       <LogViewer lines={lines} connected={sse.connected} terminal={terminal} />
 

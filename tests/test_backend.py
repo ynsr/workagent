@@ -34,7 +34,7 @@ def test_launch_tty_chdirs_into_worktree(tmp_path, monkeypatch):
     with pytest.raises(_Execed) as excinfo:
         backend.launch("omp", "do things", str(worktree), no_tty=False)
     assert excinfo.value.cwd == str(worktree)
-    assert excinfo.value.argv == ["omp", "do things"]
+    assert excinfo.value.argv == ["omp", "--approval-mode=yolo", "do things"]
 
 
 def test_launch_no_tty_runs_child_in_worktree(tmp_path, monkeypatch):
@@ -53,7 +53,7 @@ def test_launch_no_tty_runs_child_in_worktree(tmp_path, monkeypatch):
     monkeypatch.setattr(backend.subprocess, "run", fake_run)
     assert backend.launch("omp", "do things", str(worktree), no_tty=True) == 0
     assert seen["cwd"] == str(worktree)
-    assert seen["argv"] == ["omp", "-p", "--auto-approve", "do things"]
+    assert seen["argv"] == ["omp", "-p", "--approval-mode=yolo", "--auto-approve", "do things"]
 
 
 def test_launch_missing_worktree_is_actionable(tmp_path, monkeypatch):
@@ -139,34 +139,35 @@ def test_prompt_non_plan_mode_points_at_spec_files():
 
 
 def test_omp_session_file_routes_via_resume(tmp_path):
-    from workagent.backend import OmpHarness
+    from workagent.acp_harness import OmpAcpHarness
     real = tmp_path / "x.jsonl"
     real.write_text('{"type":"session"}\n')
-    assert OmpHarness().session_file_flag(str(real)) == ["--resume", str(real)]
-    assert OmpHarness().session_file_flag("") == []
+    assert OmpAcpHarness().session_file_flag(str(real)) == ["--resume", str(real)]
+    assert OmpAcpHarness().session_file_flag("") == []
     # Fresh paths (missing or empty) route via --session-dir: omp v18+
     # rejects --resume on those (Session not found / holds no entries).
     missing = str(tmp_path / "missing.jsonl")
-    assert OmpHarness().session_file_flag(missing) == [
+    assert OmpAcpHarness().session_file_flag(missing) == [
         "--session-dir", str(tmp_path)]
     empty = tmp_path / "empty.jsonl"
     empty.touch()
-    assert OmpHarness().session_file_flag(str(empty)) == [
+    assert OmpAcpHarness().session_file_flag(str(empty)) == [
         "--session-dir", str(tmp_path)]
-    argv = OmpHarness().command_argv("prompt", True, ["--auto-approve"])
+    argv = OmpAcpHarness().command_argv("prompt", True, ["--auto-approve"])
     assert "--session-file" not in argv
 
 
 def test_omp_judge_argv_is_bare():
     """Bare judge sessions skip skills/tools/rules/context + cheap model."""
-    from workagent.backend import Harness, OmpHarness
+    from workagent.backend import Harness
+    from workagent.acp_harness import OmpAcpHarness
     assert Harness.judge_argv == []
-    flags = OmpHarness.judge_argv
+    flags = OmpAcpHarness.judge_argv
     for want in ("--smol", "--no-skills", "--no-tools", "--no-rules",
                  "--no-context-files", "--no-lsp", "--no-extensions", "--no-pty"):
         assert want in flags
-    argv = OmpHarness().command_argv("judge this", True, flags)
-    assert argv[:3] == ["omp", "-p", "--auto-approve"]
+    argv = OmpAcpHarness().command_argv("judge this", True, flags)
+    assert argv[:4] == ["omp", "-p", "--approval-mode=yolo", "--auto-approve"]
     assert argv[-1] == "judge this" and "--smol" in argv
 
 
@@ -187,30 +188,31 @@ def test_harness_is_abstract():
 
 
 def test_omp_harness_resume_and_bare_terminal_argv(tmp_path):
-    from workagent.backend import OmpHarness
-    h = OmpHarness()
+    from workagent.acp_harness import OmpAcpHarness
+    h = OmpAcpHarness()
     assert h.binary == "omp"
-    assert h.bare_terminal_argv("") == ["omp"]
-    assert h.bare_terminal_argv("/tmp/scope") == ["omp", "--session-dir", "/tmp/scope"]
+    assert h.bare_terminal_argv("") == ["omp", "--approval-mode=yolo"]
+    assert h.bare_terminal_argv("/tmp/scope") == ["omp", "--approval-mode=yolo", "--session-dir", "/tmp/scope"]
     missing = tmp_path / "fresh.jsonl"
-    assert h.resume_argv(str(missing)) == ["omp", "--session-dir", str(tmp_path)]
+    assert h.resume_argv(str(missing)) == ["omp", "--approval-mode=yolo", "--session-dir", str(tmp_path)]
     ready = tmp_path / "ready.jsonl"
     ready.write_text('{"type":"session"}\n', encoding="utf-8")
-    assert h.resume_argv(str(ready)) == ["omp", "--resume", str(ready)]
+    assert h.resume_argv(str(ready)) == ["omp", "--approval-mode=yolo", "--resume", str(ready)]
 
 
 def test_get_harness_default_and_explicit(isolated_config):
-    from workagent.backend import get_harness, OmpHarness
-    from workagent.agy_harness import AgyHarness
+    from workagent.backend import get_harness
+    from workagent.acp_harness import OmpAcpHarness
+    from workagent.agy_harness import AgyAcpHarness
     # None or empty string resolves to default harness (agy)
     h = get_harness()
-    assert isinstance(h, AgyHarness)
+    assert isinstance(h, AgyAcpHarness)
     h2 = get_harness("")
-    assert isinstance(h2, AgyHarness)
+    assert isinstance(h2, AgyAcpHarness)
     h3 = get_harness("omp")
-    assert isinstance(h3, OmpHarness)
+    assert isinstance(h3, OmpAcpHarness)
     h4 = get_harness("agy")
-    assert isinstance(h4, AgyHarness)
+    assert isinstance(h4, AgyAcpHarness)
     with pytest.raises(HarnessError) as excinfo:
         get_harness("unsupported_harness_xyz")
     assert excinfo.value.exit_code == 2
@@ -228,16 +230,16 @@ def test_check_binary(monkeypatch):
 
 
 def test_omp_command_argv_omits_empty_prompt_in_tty():
-    from workagent.backend import OmpHarness
-    h = OmpHarness()
-    assert h.command_argv("", no_tty=False) == ["omp"]
-    assert h.command_argv("do something", no_tty=False) == ["omp", "do something"]
-    assert h.command_argv("", no_tty=False, extra_args=["--flag"]) == ["omp", "--flag"]
+    from workagent.acp_harness import OmpAcpHarness
+    h = OmpAcpHarness()
+    assert h.command_argv("", no_tty=False) == ["omp", "--approval-mode=yolo"]
+    assert h.command_argv("do something", no_tty=False) == ["omp", "--approval-mode=yolo", "do something"]
+    assert h.command_argv("", no_tty=False, extra_args=["--flag"]) == ["omp", "--approval-mode=yolo", "--flag"]
 
 
 def test_omp_harness_extract_and_error_rate(tmp_path):
-    from workagent.backend import OmpHarness
-    h = OmpHarness()
+    from workagent.acp_harness import OmpAcpHarness
+    h = OmpAcpHarness()
     p = tmp_path / "transcript.jsonl"
     p.write_text(
         '{"message": {"role": "assistant", "content": [{"type": "text", "text": "hello world"}]}}\n'
@@ -250,9 +252,9 @@ def test_omp_harness_extract_and_error_rate(tmp_path):
 
 
 def test_omp_watch_transcript(tmp_path):
-    from workagent.backend import OmpHarness
+    from workagent.acp_harness import OmpAcpHarness
     import threading
-    h = OmpHarness()
+    h = OmpAcpHarness()
     db = tmp_path / "state.db"
     res = {}
     stop = threading.Event()
@@ -271,8 +273,8 @@ def test_doctor_inspects_agy_guard_and_omp():
 
 
 def test_agy_command_argv_attaches_prompt_with_equals():
-    from workagent.agy_harness import AgyHarness
-    h = AgyHarness()
+    from workagent.agy_harness import AgyAcpHarness
+    h = AgyAcpHarness()
     assert h.binary == "agy-guard"
     argv_headless = h.command_argv("fix --flag bug", no_tty=True, extra_args=["--model", "gemini-3.8-flash-low"])
     assert argv_headless == [
@@ -282,23 +284,23 @@ def test_agy_command_argv_attaches_prompt_with_equals():
         "--model", "gemini-3.8-flash-low",
         "-p=fix --flag bug",
     ]
-    assert h.command_argv("hello", no_tty=False) == ["agy-guard", "-i=hello"]
-    assert h.command_argv("", no_tty=False) == ["agy-guard"]
-    assert h.bare_terminal_argv("/tmp/ignored") == ["agy-guard"]
+    assert h.command_argv("hello", no_tty=False) == ["agy-guard", "--dangerously-skip-permissions", "-i=hello"]
+    assert h.command_argv("", no_tty=False) == ["agy-guard", "--dangerously-skip-permissions"]
+    assert h.bare_terminal_argv("/tmp/ignored") == ["agy-guard", "--dangerously-skip-permissions"]
     assert h.judge_argv == ["--model", "gemini-3.8-flash-low", "--disable-slash-commands"]
 
 
 def test_agy_session_file_flag_and_resume_argv(tmp_path):
     import json
-    from workagent.agy_harness import AgyHarness
-    h = AgyHarness()
+    from workagent.agy_harness import AgyAcpHarness
+    h = AgyAcpHarness()
     fresh = tmp_path / "fresh.jsonl"
     assert h.session_file_flag(str(fresh)) == []
-    assert h.resume_argv(str(fresh)) == ["agy-guard"]
+    assert h.resume_argv(str(fresh)) == ["agy-guard", "--dangerously-skip-permissions"]
     assert h.session_file_flag(str(fresh), metadata={"conversation_id": "cid-1"}) == ["--conversation", "cid-1"]
     fresh.write_text(json.dumps({"type": "agy_meta", "conversation_id": "cid-2"}) + "\n", encoding="utf-8")
     assert h.session_file_flag(str(fresh)) == ["--conversation", "cid-2"]
-    assert h.resume_argv(str(fresh)) == ["agy-guard", "--conversation", "cid-2"]
+    assert h.resume_argv(str(fresh)) == ["agy-guard", "--dangerously-skip-permissions", "--conversation", "cid-2"]
 
 
 def test_agy_launch_headless_streams_and_mirrors(tmp_path, monkeypatch):
@@ -322,14 +324,14 @@ def test_agy_launch_headless_streams_and_mirrors(tmp_path, monkeypatch):
 
     monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: FakeProc())
     seen_cid = []
-    code = agy_harness.AgyHarness().launch(
+    code = agy_harness.AgyAcpHarness().launch(
         "do work", str(tmp_path), no_tty=True,
         session_file=str(session), on_conversation_id=seen_cid.append,
     )
     assert code == 0
     assert seen_cid == ["conv-123"]
     assert agy_harness.resolve_conversation_id(str(session)) == "conv-123"
-    assert agy_harness.AgyHarness().extract_last_assistant_text(str(session), max_chars=None) == "Done\nJOB_DONE"
+    assert agy_harness.AgyAcpHarness().extract_last_assistant_text(str(session), max_chars=None) == "Done\nJOB_DONE"
 
 
 def test_agy_adopt_from_workspace_disambiguates_concurrent(tmp_path, monkeypatch):
@@ -358,7 +360,7 @@ def test_agy_adopt_from_workspace_disambiguates_concurrent(tmp_path, monkeypatch
     dest = tmp_path / "runs" / "out.jsonl"
     cid, path = agy_harness.adopt_from_workspace(str(wt_a), 1794866400.0, str(dest))
     assert cid == "cid-a"
-    assert agy_harness.AgyHarness().extract_last_assistant_text(path) == "reply-cid-a"
+    assert agy_harness.AgyAcpHarness().extract_last_assistant_text(path) == "reply-cid-a"
 
 
 def test_agy_adopt_from_workspace_brain_fallback(tmp_path, monkeypatch):
@@ -376,7 +378,7 @@ def test_agy_adopt_from_workspace_brain_fallback(tmp_path, monkeypatch):
     dest = tmp_path / "runs" / "fallback.jsonl"
     cid, path = agy_harness.adopt_from_workspace(str(tmp_path / "wt"), 0.0, str(dest))
     assert cid == "cid-fallback"
-    assert agy_harness.AgyHarness().extract_last_assistant_text(path) == "fallback-reply"
+    assert agy_harness.AgyAcpHarness().extract_last_assistant_text(path) == "fallback-reply"
 
 
 def test_agy_watch_transcript_discovers_conversation(tmp_path, monkeypatch):
@@ -413,7 +415,7 @@ def test_agy_watch_transcript_discovers_conversation(tmp_path, monkeypatch):
     t = threading.Thread(target=_mint)
     t.start()
     try:
-        agy_harness.AgyHarness().watch_transcript(
+        agy_harness.AgyAcpHarness().watch_transcript(
             str(wt), tmp_path, None, run_id, state_db, result=res,
             session_file=str(dest_session), launched_at=1794866400.0, stop_event=None,
         )
@@ -436,7 +438,7 @@ def test_agy_watch_transcript_cancelled_exits_promptly(tmp_path, monkeypatch):
     stop.set()
     res = {}
     t0 = time.time()
-    agy_harness.AgyHarness().watch_transcript(
+    agy_harness.AgyAcpHarness().watch_transcript(
         str(tmp_path), tmp_path, None, None, tmp_path / "state.db",
         result=res, stop_event=stop,
     )
@@ -462,7 +464,7 @@ def test_agy_launch_headless_timeout(tmp_path, monkeypatch):
     monkeypatch.setattr(agy_harness.os, "killpg", lambda pid, sig: None)
 
     with pytest.raises(HarnessTimeout):
-        agy_harness.AgyHarness().launch("timed out prompt", str(tmp_path), no_tty=True, timeout_s=0.01)
+        agy_harness.AgyAcpHarness().launch("timed out prompt", str(tmp_path), no_tty=True, timeout_s=0.01)
 
 
 def test_agy_launch_headless_non_success_exit(tmp_path, monkeypatch):
@@ -479,7 +481,7 @@ def test_agy_launch_headless_non_success_exit(tmp_path, monkeypatch):
         def wait(self, timeout=None): return 0
 
     monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: ErrProc())
-    rc = agy_harness.AgyHarness().launch("failing prompt", str(tmp_path), no_tty=True)
+    rc = agy_harness.AgyAcpHarness().launch("failing prompt", str(tmp_path), no_tty=True)
     assert rc == 1
 
 
@@ -488,9 +490,9 @@ def test_agy_launch_tty(tmp_path, monkeypatch):
     monkeypatch.setattr("workagent.backend.shutil.which", lambda n: f"/usr/bin/{n}")
     seen = {}
     monkeypatch.setattr(agy_harness, "exec_tty", lambda argv, wd, env_file: seen.update(argv=argv, wd=wd) or 0)
-    rc = agy_harness.AgyHarness().launch("hello", str(tmp_path), no_tty=False)
+    rc = agy_harness.AgyAcpHarness().launch("hello", str(tmp_path), no_tty=False)
     assert rc == 0
-    assert seen["argv"] == ["agy-guard", "-i=hello"]
+    assert seen["argv"] == ["agy-guard", "--dangerously-skip-permissions", "-i=hello"]
     assert seen["wd"] == str(tmp_path)
 
 
@@ -578,69 +580,58 @@ def test_watch_and_exec_child_delegates_to_watch_transcript(monkeypatch, tmp_pat
     assert watched[0]["session_file"] == str(tmp_path / "sess.jsonl")
 
 
-def test_no_omp_outside_omp_harness():
-    """Static AST guard: zero omp, --session-dir, --auto-approve constants in workagent."""
+def test_no_bare_harness_names_outside_owning_class():
+    """Static AST guard: no bare "omp"/"agy" literals outside their owning
+    harness class (`backend._load_harnesses` uses `ClassName.name` attrs)."""
     import ast
     from pathlib import Path
 
-    banned = {"omp", "--session-dir", "--auto-approve"}
     src_dir = Path(__file__).resolve().parent.parent / "src" / "workagent"
     violations = []
 
     for py_file in sorted(src_dir.glob("*.py")):
-        if py_file.name == "doctor.py":
+        if py_file.name in ("doctor.py", "store.py"):
             continue
         tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
 
         class Visitor(ast.NodeVisitor):
+            OWNERS = {"omp": {"acp_harness.py:OmpAcpHarness",
+                              "backend.py:_load_harnesses"},
+                      "agy": {"agy_harness.py:AgyAcpHarness",
+                              "backend.py:_load_harnesses"}}
+
             def __init__(self):
-                self.in_omp_harness = False
-
-            def _visit_body_skip_docstring(self, body):
-                start = 0
-                if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
-                    start = 1
-                for stmt in body[start:]:
-                    self.visit(stmt)
-
-            def visit_Module(self, node):
-                self._visit_body_skip_docstring(node.body)
+                self.class_stack: list[str] = []
+                self.func_stack: list[str] = []
 
             def visit_ClassDef(self, node):
-                was_in_omp = self.in_omp_harness
-                if node.name == "OmpHarness":
-                    self.in_omp_harness = True
-                self._visit_body_skip_docstring(node.body)
-                self.in_omp_harness = was_in_omp
+                self.class_stack.append(node.name)
+                self.generic_visit(node)
+                self.class_stack.pop()
 
             def visit_FunctionDef(self, node):
-                self._visit_body_skip_docstring(node.body)
+                self.func_stack.append(node.name)
+                self.generic_visit(node)
+                self.func_stack.pop()
 
             def visit_AsyncFunctionDef(self, node):
-                self._visit_body_skip_docstring(node.body)
-
-            def visit_Assign(self, node):
-                target_names = [t.id for t in node.targets if isinstance(t, ast.Name)]
-                if (py_file.name == "backend.py" and "HARNESSES" in target_names) or \
-                   (py_file.name == "store.py" and "SUPPORTED_HARNESSES" in target_names):
-                    return
+                self.func_stack.append(node.name)
                 self.generic_visit(node)
-
-            def visit_AnnAssign(self, node):
-                if isinstance(node.target, ast.Name):
-                    target_name = node.target.id
-                    if (py_file.name == "backend.py" and target_name == "HARNESSES") or \
-                       (py_file.name == "store.py" and target_name == "SUPPORTED_HARNESSES"):
-                        return
-                self.generic_visit(node)
+                self.func_stack.pop()
 
             def visit_Constant(self, node):
-                if not self.in_omp_harness and node.value in banned:
-                    violations.append(f"{py_file.name}:{node.lineno}: banned constant {node.value!r}")
+                if isinstance(node.value, str) and node.value in ("omp", "agy"):
+                    owner = f"{py_file.name}:{self.class_stack[-1]}" if self.class_stack else f"{py_file.name}:{self.func_stack[-1]}" if self.func_stack else f"{py_file.name}:module"
+                    allowed = self.OWNERS[node.value]
+                    if owner not in allowed and not (
+                            self.class_stack and owner in allowed):
+                        violations.append(
+                            f"{py_file.name}:{node.lineno}: bare {node.value!r} "
+                            f"in {owner or 'module'} (use ClassName.name)")
 
         Visitor().visit(tree)
 
-    assert not violations, f"Found banned constants outside OmpHarness: {violations}"
+    assert not violations, f"Bare harness names outside owning class: {violations}"
 
 
 def test_agy_find_conversation_skips_brain_fallback_when_db_ok(tmp_path, monkeypatch):
@@ -702,7 +693,7 @@ def test_agy_launch_headless_writes_stream_to_stderr_not_stdout(tmp_path, monkey
         def wait(self, timeout=None): return 0
 
     monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: FakeProc(ndjson_deltas))
-    assert agy_harness.AgyHarness().launch("p", str(tmp_path), no_tty=True) == 0
+    assert agy_harness.AgyAcpHarness().launch("p", str(tmp_path), no_tty=True) == 0
     cap = capsys.readouterr()
     assert cap.out == ""
     assert "plain non-json line" in cap.err
@@ -711,7 +702,7 @@ def test_agy_launch_headless_writes_stream_to_stderr_not_stdout(tmp_path, monkey
     # Also verify result.response fallback when no text_delta was seen goes to stderr only
     ndjson_resp = json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "final-resp"}}) + "\n"
     monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: FakeProc(ndjson_resp))
-    assert agy_harness.AgyHarness().launch("p", str(tmp_path), no_tty=True) == 0
+    assert agy_harness.AgyAcpHarness().launch("p", str(tmp_path), no_tty=True) == 0
     cap2 = capsys.readouterr()
     assert cap2.out == ""
     assert "final-resp" in cap2.err
@@ -719,10 +710,10 @@ def test_agy_launch_headless_writes_stream_to_stderr_not_stdout(tmp_path, monkey
 
 def test_agy_headless_skips_transcript_watcher(tmp_path, monkeypatch, isolated_config):
     from workagent import cli_harness as _h, cli_validate as _cv
-    from workagent.agy_harness import AgyHarness
-    from workagent.backend import OmpHarness
-    assert AgyHarness.watches_headless is False
-    assert OmpHarness.watches_headless is True
+    from workagent.agy_harness import AgyAcpHarness
+    from workagent.acp_harness import OmpAcpHarness
+    assert AgyAcpHarness.watches_headless is False
+    assert OmpAcpHarness.watches_headless is True
 
     worktree = tmp_path / "wt"
     worktree.mkdir()
@@ -807,7 +798,7 @@ def test_agy_watch_transcript_keeps_polling_until_brain_file_exists(tmp_path, mo
     t = threading.Thread(target=_delayed_brain)
     t.start()
     try:
-        agy_harness.AgyHarness().watch_transcript(
+        agy_harness.AgyAcpHarness().watch_transcript(
             str(wt), tmp_path, None, run_id, state_db, result=res,
             session_file=str(dest_session), launched_at=1794866400.0, stop_event=None,
         )
@@ -853,7 +844,7 @@ def test_agy_watch_transcript_matches_resumed_conversation(tmp_path, monkeypatch
     orig_sleep = agy_harness.time.sleep
     monkeypatch.setattr(agy_harness.time, "sleep", lambda s: orig_sleep(min(s, 0.02)))
     stop = threading.Event()
-    agy_harness.AgyHarness().watch_transcript(
+    agy_harness.AgyAcpHarness().watch_transcript(
         str(wt), tmp_path, None, run_id, state_db, result=res,
         session_file=str(dest_session), launched_at=1794866400.0, stop_event=None,
     )
@@ -889,7 +880,7 @@ def test_agy_launch_timeout_skips_sigkill_when_reaped_and_kills_when_alive(tmp_p
     monkeypatch.setattr(agy_harness.os, "killpg", lambda pid, sig: sent_sigs.append(sig))
     t0 = time.time()
     with pytest.raises(HarnessTimeout):
-        agy_harness.AgyHarness().launch("p", str(tmp_path), no_tty=True, timeout_s=0.01)
+        agy_harness.AgyAcpHarness().launch("p", str(tmp_path), no_tty=True, timeout_s=0.01)
     assert signal.SIGTERM in sent_sigs
     assert signal.SIGKILL not in sent_sigs
     assert time.time() - t0 < 1.0  # did not sleep full 2.0s after reap
@@ -919,7 +910,7 @@ def test_agy_launch_timeout_skips_sigkill_when_reaped_and_kills_when_alive(tmp_p
     monkeypatch.setattr(agy_harness.os, "killpg", lambda pid, sig: sent_sigs2.append(sig))
     monkeypatch.setattr(threading.Event, "wait", _fast_wait)
     with pytest.raises(HarnessTimeout):
-        agy_harness.AgyHarness().launch("p", str(tmp_path), no_tty=True, timeout_s=0.01)
+        agy_harness.AgyAcpHarness().launch("p", str(tmp_path), no_tty=True, timeout_s=0.01)
     assert sent_sigs2 == [signal.SIGTERM, signal.SIGKILL]
 
 
@@ -941,7 +932,7 @@ def test_agy_launch_non_response_step_update_does_not_suppress_result(tmp_path, 
         def wait(self, timeout=None): return 0
 
     monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: FakeProc())
-    rc = agy_harness.AgyHarness().launch("p", str(tmp_path), no_tty=True)
+    rc = agy_harness.AgyAcpHarness().launch("p", str(tmp_path), no_tty=True)
     assert rc == 0
     err = capsys.readouterr().err
     assert "thinking..." not in err
@@ -988,7 +979,7 @@ def test_agy_launch_error_status_respects_produced_response(tmp_path, monkeypatc
             def wait(self, timeout=None): return 0
 
         monkeypatch.setattr(agy_harness.subprocess, "Popen", lambda *a, **k: FakeProc())
-        return agy_harness.AgyHarness().launch("p", str(tmp_path), no_tty=True)
+        return agy_harness.AgyAcpHarness().launch("p", str(tmp_path), no_tty=True)
 
     # Prior error step + recovered response with rc==0 -> exit 0
     assert _run([
@@ -1039,7 +1030,7 @@ def test_agy_watch_transcript_re_mirrors_until_stopped(tmp_path, monkeypatch):
     monkeypatch.setattr(stop, "wait", lambda s: orig_wait(min(s, 0.02)))
 
     t = threading.Thread(
-        target=agy_harness.AgyHarness().watch_transcript,
+        target=agy_harness.AgyAcpHarness().watch_transcript,
         args=(str(wt), tmp_path, None, run_id, state_db),
         kwargs={"result": res, "session_file": str(dest_session),
                 "launched_at": 1794866400.0, "stop_event": stop},

@@ -178,15 +178,15 @@ def _resolve_session_file(session_file: str, run_id: int | str = "") -> str:
                 hname = _store.default_harness()
             except Exception:
                 hname = ""
-        if hname == "agy" and row:
+        from . import agy_harness as _agy
+        if hname == _agy.AgyAcpHarness.name and row:
             try:
-                from . import agy_harness as _agy
                 meta = row.get("metadata") or {}
                 if not isinstance(meta, dict):
                     meta = {}
                 dest = session_file or db_file
                 if not dest:
-                    dest = str(_sq.session_file_path(_sq.gen_session_id(), "agy", session_type=row.get("session_type")))
+                    dest = str(_sq.session_file_path(_sq.gen_session_id(), _agy.AgyAcpHarness.name, session_type=row.get("session_type")))
                 cid = str(meta.get("conversation_id") or "")
                 if cid:
                     if _agy.mirror_brain_transcript(cid, dest) and _transcript_ready(dest):
@@ -380,7 +380,9 @@ def _open_terminal(worktree: str, session_file: str,
 def _open_terminal_watch(worktree: str, session_file: str, run_id: int | None,
                          scope_dir: str, before: str,
                          env_file: str | None = None,
-                         harness_name: str = "") -> int | None:
+                         harness_name: str = "",
+                         model: str | None = None,
+                         effort: str | None = None) -> int | None:
     """Spawn the OS terminal on a bare session file via the watch shim.
 
     A bare terminal launch has no prompt/command for the harness: build the
@@ -399,7 +401,8 @@ def _open_terminal_watch(worktree: str, session_file: str, run_id: int | None,
     from .cli_harness import spawn_in_terminal as _spawn_term
     hname = harness_name or _store.default_harness()
     scope = scope_dir or (str(_Path(session_file).parent) if session_file else "")
-    harness_argv = _backend.get_harness(hname).bare_terminal_argv(scope)
+    harness_argv = _backend.get_harness(hname).bare_terminal_argv(
+        scope, model=model, effort=effort)
     harness_cmd = " ".join(_shlex.quote(a) for a in harness_argv)
     full_cmd = _env.wrap_command(f"cd {_shlex.quote(worktree)} && {harness_cmd}",
                                  _env.resolve_env_file(env_file))
@@ -441,6 +444,49 @@ def _spawn(run, registry) -> None:
     """Spawn via the webapp namespace so tests patching workagent.webapp._spawn apply."""
     from . import webapp as _w
     return _w._spawn(run, registry)
+
+_OPTIONS_CACHE: dict[str, tuple[float, dict]] = {}
+_OPTIONS_TTL_S = 600.0
+
+
+def _cached_harness_options(name: str) -> tuple[dict, bool, str | None]:
+    """ACP-discovered model/effort options (10-min TTL).
+
+    Returns (body, cached, warning). Unknown harness raises ApiError 404;
+    non-ACP harnesses return supported:False without probing.
+    """
+    from . import backend as _backend
+    _backend._load_harnesses()
+    harness = _backend.HARNESSES.get(name)
+    if harness is None:
+        raise ApiError("not_found", f"unknown harness: {name!r}", 404)
+    if not getattr(harness, "supports_acp", False):
+        return ({"harness": name, "supported": False,
+                 "models": [], "efforts": [],
+                 "current_model": "", "current_effort": ""}, False, None)
+    now = time.monotonic()
+    hit = _OPTIONS_CACHE.get(name)
+    if hit is not None and now - hit[0] < _OPTIONS_TTL_S:
+        return (dict(hit[1]), True, None)
+    try:
+        opts = harness.discover_options()
+    except Exception as exc:
+        body = {"harness": name, "supported": True,
+                "models": [], "efforts": [],
+                "current_model": "", "current_effort": "",
+                "warning": f"option probe failed: {exc}"}
+        _OPTIONS_CACHE[name] = (now, dict(body))
+        return (body, False, str(exc))
+    body = {"harness": name, "supported": True,
+            "models": [{"id": str(m.get("id", "")), "name": str(m.get("name", m.get("id", "")))}
+                       for m in (opts.models or [])],
+            "efforts": [{"id": str(e.get("id", "")), "name": str(e.get("name", e.get("id", "")))}
+                        for e in (opts.efforts or [])],
+            "current_model": str(opts.current_model or ""),
+            "current_effort": str(opts.current_effort or "")}
+    _OPTIONS_CACHE[name] = (now, dict(body))
+    return (body, False, None)
+
 
 
 def register_runs_routes(app, registry) -> None:
@@ -853,10 +899,13 @@ def register_runs_routes(app, registry) -> None:
             before = _sq.newest_transcript(Path(scope_dir)) if scope_dir else None
         except Exception:
             before = None
+        model = str((body or {}).get("model") or "") or None
+        effort = str((body or {}).get("effort") or "") or None
         try:
             pid = _open_terminal_watch(worktree, session_path, row_id, scope_dir,
                                        str(before) if before else "",
-                                       harness_name=harness_name)
+                                       harness_name=harness_name,
+                                       model=model, effort=effort)
         except Exception as exc:
             from . import store as _store2
             try:
@@ -875,4 +924,52 @@ def register_runs_routes(app, registry) -> None:
         if row_id:
             _sq.update_run(db, row_id, output=[f"terminal pid: {pid}"])
         return {"id": row_id, "session_file": session_path, "worktree": worktree, "mode": mode}
+
+    @app.get("/api/harnesses/{name}/options")
+    def harness_options(name: str) -> dict:
+        """ACP-discovered model/effort options for a harness.
+
+        404 unknown harness; 200 + supported:False for non-ACP harnesses;
+        200 + warning when the probe fails. 10-min TTL.
+        """
+        body, cached, _warning = _cached_harness_options(name)
+        return {**body, "cached": cached}
+
+    @app.post("/api/runs/{run_id}/input")
+    async def run_input(run_id: str, body: dict) -> dict:
+        """Append a user answer to a running run's `input.jsonl`.
+
+        404 unknown run, 409 finished run, 422 empty text. The ACP run
+        loop tails `WORKAGENT_RUN_DIR/input.jsonl` for the answer.
+        """
+        text = str((body or {}).get("text") or "")
+        if not text.strip():
+            raise ApiError("bad_arg", "input text is required", 422)
+        qid = str((body or {}).get("qid") or "")
+        try:
+            run = registry.get(run_id)
+        except ApiError:
+            row = _persisted_row(run_id)
+            if row is None:
+                raise
+            raise ApiError("not_running",
+                           f"run {run_id} is not running", 409)
+        with run.lock:
+            if run.state != "running":
+                raise ApiError("not_running",
+                               f"run {run_id} is not running", 409)
+            run_dir = run.run_dir or ""
+        if not run_dir:
+            from . import run_store as _rs
+            run_dir = str(_rs.runs_root() / run.id)
+        try:
+            Path(run_dir).mkdir(parents=True, exist_ok=True)
+            with open(Path(run_dir) / "input.jsonl", "a",
+                      encoding="utf-8") as fh:
+                fh.write(json.dumps({"text": text, **({"qid": qid} if qid else {})}) + "\n")
+        except OSError as exc:
+            raise ApiError("io_error",
+                           f"cannot write input for run {run_id}: {exc}",
+                           500)
+        return {"id": run_id, "ok": True}
 

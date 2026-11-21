@@ -94,6 +94,10 @@ export interface LaunchForm {
   prodtestAction: ProdtestAction
   adhocPrompt: string
   harness: string
+  /** Harness model override (empty = default); all 4 modes (issue #112). */
+  model: string
+  /** Reasoning effort override (empty = default); all 4 modes (issue #112). */
+  effort: string
 }
 export const INITIAL: LaunchForm = {
   ref: "",
@@ -115,6 +119,8 @@ export const INITIAL: LaunchForm = {
   prodtestAction: "run",
   adhocPrompt: "",
   harness: "",
+  model: "",
+  effort: "",
 }
 
 
@@ -136,20 +142,26 @@ export function splitAdhocRefs(ref: string): string[] {
     .filter((r) => r.length > 0)
 }
 
-/** CLI args for `adhoc REF… --prompt TEXT` (Preview emits neither --launch nor --terminal: no -p flag). */
-export function adhocArgs(form: Pick<LaunchForm, "adhocPrompt" | "extraPrompt">): string[] {
+/** CLI args for `adhoc REF… --prompt TEXT` (+ --model/--effort when set; Preview emits neither --launch nor --terminal: no -p flag). */
+export function adhocArgs(form: Pick<LaunchForm, "adhocPrompt" | "extraPrompt"> & Partial<Pick<LaunchForm, "model" | "effort">>): string[] {
   const prompt = form.adhocPrompt.trim()
-  return [`--prompt=${prompt}`, ...extraPromptArgs(form)]
+  const m = (form.model ?? "").trim()
+  const e = (form.effort ?? "").trim()
+  return [`--prompt=${prompt}`, ...(m ? ["--model", m] : []), ...(e ? ["--effort", e] : []), ...extraPromptArgs(form)]
 }
 /** CLI args for the selected run mode (Preview emits none: no -p flag). */
 export function runModeArgs(mode: RunMode): string[] {
-  return mode === "headless" ? ["--launch"] : mode === "terminal" ? ["--terminal"] : []
+  if (mode === "headless") return ["--launch"]
+  if (mode === "terminal") return ["--terminal"]
+  if (mode === "acp") return ["--acp"]
+  return []
 }
 
 /** Options for the run-mode segmented control (Launch + StartDialog). */
 export const RUN_MODE_OPTIONS: readonly { value: RunMode; label: string; hint: string }[] = [
   { value: "preview", label: "Preview", hint: "print the harness command (no -p flag), don't run" },
   { value: "headless", label: "Run headless", hint: "--launch — run now with auto-approve (--no-tty)" },
+  { value: "acp", label: "Run ACP", hint: "--acp — stream structured ACP events to the Run page" },
   { value: "terminal", label: "Run in terminal", hint: "--terminal — open the command in the OS terminal" },
 ]
 
@@ -167,5 +179,5 @@ export function isPrShaped(ref: string): boolean {
   return /\/pull\/\d+\/*$/.test(t) || /\/-\/merge_requests\/\d+\/*$/.test(t) || /^[^/\s]+\/[^/\s#]+#\d+$/.test(t)
 }
 
-export type RunMode = "preview" | "headless" | "terminal"
+export type RunMode = "preview" | "headless" | "acp" | "terminal"
 

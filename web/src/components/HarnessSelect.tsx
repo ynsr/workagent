@@ -27,10 +27,12 @@ export function HarnessSelect({
 }: HarnessSelectProps) {
   const { data: cfg } = useConfig()
   const def = (cfg?.default_harness ?? "") || "agy"
-  const list = cfg?.harnesses ?? [
+  const raw = cfg?.harnesses ?? [
     { name: "agy", label: "Antigravity (agy-guard)", binary: "agy-guard", available: true },
     { name: "omp", label: "OMP (omp)", binary: "omp", available: true },
   ]
+  // Issue #112: the AI harness split button contains only OMP and AGY.
+  const list = raw.filter((h) => h.name === "omp" || h.name === "agy")
   const options = [
     ...(allowDefault ? [{ value: "", label: defaultLabel ?? `Default (${def})`, hint: `Use configured default (${def})` }] : []),
     ...list.map((h) => ({

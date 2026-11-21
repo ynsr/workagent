@@ -6,6 +6,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ImmediateRunDialog, runsImmediately } from "@/components/ImmediateRunForm"
+import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { RunModeSelect } from "@/components/StartForm"
+import { HarnessSelect } from "@/components/HarnessSelect"
+import type { RunMode } from "@/lib/launchConfig"
+import { messageRunModeArgs, messageScopeArgs } from "@/lib/messageLaunchConfig"
 import { errorText } from "@/components/StatusFeedback"
 import { useActions, useCreateRun, useFlowTemplates } from "@/lib/queries"
 import { useConfirm } from "@/lib/confirm"
@@ -25,6 +30,10 @@ export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: (
   const actions: ActionRow[] = messageScoped(actionsData?.actions ?? [], "message")
   const templates: FlowTemplateRow[] = messageScoped(templatesData?.templates ?? [], "message")
   const [prompt, setPrompt] = useState("")
+  const [runMode, setRunMode] = useState<RunMode>("headless")
+  const [harness, setHarness] = useState("")
+  const [model, setModel] = useState("")
+  const [effort, setEffort] = useState("")
   const [actionLabel, setActionLabel] = useState("")
   const [templateLabel, setTemplateLabel] = useState("")
   const [runForm, setRunForm] = useState<{ kind: "action" | "flow"; label: string } | null>(null)
@@ -64,8 +73,12 @@ export function MessageRowActions({ row, onDone }: { row: MessageRow; onDone?: (
     <div className="flex flex-wrap items-center gap-2">
       <div className="flex items-center gap-1">
         <Input className="h-8 w-44" placeholder="Adhoc prompt…" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+        <RunModeSelect idPrefix="msg-adhoc-mode" value={runMode} onChange={setRunMode} hidePreview />
+        <HarnessSelect idPrefix="msg-adhoc-harness" value={harness} onChange={(v) => { setHarness(v); setModel(""); setEffort("") }} allowDefault variant="select" />
+        <ModelSelect idPrefix="msg-adhoc-model" harness={harness} value={model} onChange={setModel} />
+        <EffortSelect idPrefix="msg-adhoc-effort" harness={harness} value={effort} onChange={setEffort} />
         <Button variant="outline" size="sm" disabled={!prompt.trim()}
-          onClick={() => void spawn(["adhoc", row.message_id, "--prompt", prompt.trim(), "--yes"], true, "Message adhoc started")}>
+          onClick={() => void spawn(["adhoc", row.message_id, "--prompt", prompt.trim(), ...messageScopeArgs({ harness, model, effort }), ...messageRunModeArgs(runMode), "--yes"], true, "Message adhoc started")}>
           <Play aria-hidden /> Adhoc
         </Button>
         <Button variant="outline" size="sm"

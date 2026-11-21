@@ -61,11 +61,11 @@ def test_resume_shell_command_sources_env(tmp_path, isolated_config, monkeypatch
     real = tmp_path / "r.jsonl"
     real.write_text("{}\n")
     cmd = _resume_shell_command("/wt", str(real), harness_name="omp")
-    assert cmd.startswith(f"source {env_file} && cd /wt && omp --resume")
+    assert cmd.startswith(f"source {env_file} && cd /wt && omp --approval-mode=yolo --resume")
     fresh = _resume_shell_command("/wt", str(tmp_path / "missing.jsonl"), harness_name="omp")
-    assert fresh.startswith(f"source {env_file} && cd /wt && omp --session-dir")
+    assert fresh.startswith(f"source {env_file} && cd /wt && omp --approval-mode=yolo --session-dir")
     cmd_agy = _resume_shell_command("/wt", str(real))
-    assert cmd_agy.startswith(f"source {env_file} && cd /wt && agy-guard")
+    assert cmd_agy.startswith(f"source {env_file} && cd /wt && agy-guard --dangerously-skip-permissions")
 
 
 def test_headless_launch_gets_parsed_env(tmp_path, isolated_config, monkeypatch):

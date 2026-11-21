@@ -18,7 +18,7 @@ const { mockConfig } = vi.hoisted(() => ({
 }))
 
 vi.mock("@/lib/queries", () => ({
-  queryKeys: { runs: ["runs"] },
+  queryKeys: { runs: ["runs"], harnessOptions: (name: string) => ["harnesses", "options", name] },
   useActions: () => ({ data: { actions: [] } }),
   useConfig: () => ({ data: mockConfig }),
   useCreateRun: () => ({ mutateAsync: vi.fn() }),

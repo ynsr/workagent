@@ -12,6 +12,25 @@ def test_normalize_run_mode_preview_and_terminal():
     # no run_mode: passthrough
     assert u.normalize_config({"preview": True}) == {"preview": True}
 
+def test_normalize_run_mode_acp_stays_headless():
+    from workagent import cli_flow_util as u
+    out = u.normalize_config({"run_mode": "acp", "acp": True,
+                              "model": "m1", "effort": "high"})
+    assert out.get("acp") is True
+    assert out.get("model") == "m1"
+    assert out.get("effort") == "high"
+    assert "terminal" not in out and "preview" not in out
+
+
+def test_flag_tables_include_acp_model_effort():
+    from workagent import cli_flow_util as u
+    for table in (u.START_FLAGS, u.REVIEW_FLAGS, u.SYNC_FLAGS,
+                  u.ACTION_FLAGS, u.PRODTEST_PLAN_FLAGS, u.RELEASE_FLAGS):
+        keys = {k for k, _, _ in table}
+        assert {"acp", "model", "effort"} <= keys
+        kinds = {k: kind for k, _, kind in table}
+        assert kinds["acp"] == "bool"
+
 
 def test_normalize_extra_flags_parses_kv_and_boolean():
     from workagent import cli_flow_util as u

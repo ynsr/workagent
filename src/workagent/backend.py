@@ -72,7 +72,9 @@ class Harness(abc.ABC):
 
     @abc.abstractmethod
     def command_argv(self, prompt: str, no_tty: bool,
-                     extra_args: list[str] | None = None) -> list[str]: ...
+                     extra_args: list[str] | None = None,
+                     model: str | None = None,
+                     effort: str | None = None) -> list[str]: ...
 
     @abc.abstractmethod
     def launch(self, prompt: str, workdir: str, no_tty: bool,
@@ -80,16 +82,22 @@ class Harness(abc.ABC):
                env_file: str | None = None,
                timeout_s: int | None = None,
                session_file: str | None = None,
-               on_conversation_id: Callable[[str], None] | None = None) -> int: ...
+               on_conversation_id: Callable[[str], None] | None = None,
+               model: str | None = None,
+               effort: str | None = None) -> int: ...
 
     @abc.abstractmethod
     def session_file_flag(self, path: str, metadata: dict | None = None) -> list[str]: ...
 
     @abc.abstractmethod
-    def resume_argv(self, session_file: str, metadata: dict | None = None) -> list[str]: ...
+    def resume_argv(self, session_file: str, metadata: dict | None = None,
+                    model: str | None = None,
+                    effort: str | None = None) -> list[str]: ...
 
     @abc.abstractmethod
-    def bare_terminal_argv(self, scope_dir: str = "") -> list[str]: ...
+    def bare_terminal_argv(self, scope_dir: str = "",
+                           model: str | None = None,
+                           effort: str | None = None) -> list[str]: ...
 
     @abc.abstractmethod
     def watch_transcript(self, workdir: str, scope_dir: Path | None,
@@ -106,118 +114,33 @@ class Harness(abc.ABC):
     def tool_error_rate(self, transcript_path: str,
                         since_line: int = 0) -> tuple[int, int] | None: ...
 
+    def discover_options(self, env_file: str | None = None):
+        """ACP-discovered model/effort selection (empty for non-ACP)."""
+        from .acp_harness import HarnessOptions as _Options
+        return _Options()
 
-class OmpHarness(Harness):
-    name = "omp"
-    label = "OMP (omp)"
-    binary = "omp"
-
-    # Bare judge sessions: cheap model, no repo-touching surface. Verified
-    # against `omp -h`: each flag exists (--smol bare selects the configured
-    # cheap model). Judge prompts carry task + transcript + gates inline.
-    judge_argv: list[str] = ["--smol", "--no-skills", "--no-tools",
-                             "--no-rules", "--no-context-files",
-                             "--no-lsp", "--no-extensions", "--no-pty"]
-
-    def command_argv(self, prompt: str, no_tty: bool,
-                     extra_args: list[str] | None = None) -> list[str]:
-        if no_tty:
-            return ["omp", "-p", "--auto-approve", *(extra_args or []), prompt]
-        args = ["omp", *(extra_args or [])]
-        if prompt:
-            args.append(prompt)
-        return args
-
-    def launch(self, prompt: str, workdir: str, no_tty: bool,
-               extra_args: list[str] | None = None,
-               env_file: str | None = None,
-               timeout_s: int | None = None,
-               session_file: str | None = None,
-               on_conversation_id: Callable[[str], None] | None = None) -> int:
-        check_binary(self.binary)
-        argv = self.command_argv(prompt, no_tty, extra_args)
-        if no_tty:
-            return run_blocking_cmd(argv, workdir, env_file=env_file, timeout_s=timeout_s)
-        return exec_tty(argv, workdir, env_file=env_file)
-
-    def session_file_flag(self, path: str, metadata: dict | None = None) -> list[str]:
-        """Argv fragment routing a transcript path to the harness.
-
-        Fresh (missing/empty) paths MUST NOT use --resume: omp v18+
-        requires an existing non-empty transcript there and errors
-        (`Session ... not found` / `holds no entries`). Use
-        --session-dir on the parent dir instead; omp mints the file.
-        Only a non-empty existing transcript resumes via --resume.
-        """
-        if not path:
-            return []
-        try:
-            p = Path(path)
-            if p.is_file() and p.stat().st_size > 0:
-                return ["--resume", path]
-        except OSError:
-            pass
-        return ["--session-dir", str(Path(path).parent)]
-
-    def resume_argv(self, session_file: str, metadata: dict | None = None) -> list[str]:
-        return ["omp", *self.session_file_flag(session_file, metadata)]
-
-    def bare_terminal_argv(self, scope_dir: str = "") -> list[str]:
-        if scope_dir:
-            return ["omp", "--session-dir", scope_dir]
-        return ["omp"]
-
-    def watch_transcript(self, workdir: str, scope_dir: Path | None,
-                         before: Path | None, run_id: int | None,
-                         db: Path, result: dict | None = None,
-                         session_file: str = "", launched_at: float = 0.0,
-                         stop_event=None) -> None:
-        if not scope_dir:
-            return
-        import time
-        from . import store_sqlite as _sq
-        time.sleep(1.0)
-        while stop_event is None or not stop_event.is_set():
-            try:
-                minted = _sq.newest_transcript(scope_dir)
-            except Exception:
-                return
-            if minted is not None and minted != before:
-                if result is not None:
-                    result["session_file"] = str(minted)
-                if run_id is not None and db is not None:
-                    try:
-                        _sq.set_run_file_path(db, run_id, str(minted))
-                    except Exception:
-                        pass
-                return
-            if stop_event is not None:
-                if stop_event.wait(2.0):
-                    return
-            else:
-                time.sleep(2.0)
-
-    def extract_last_assistant_text(self, transcript_path: str,
-                                    max_chars: int | None = 4000) -> str:
-        from . import harness_summary as _hs
-        return _hs.last_assistant_text(transcript_path, max_chars=max_chars)
-
-    def tool_error_rate(self, transcript_path: str,
-                        since_line: int = 0) -> tuple[int, int] | None:
-        from . import harness_summary as _hs
-        return _hs.tool_error_rate(transcript_path, since_line=since_line)
+    def model_effort_cli_args(self, model: str | None,
+                              effort: str | None) -> list[str]:
+        """Non-ACP CLI flags for --model/--effort (default: none)."""
+        return []
 
 
-HARNESSES: dict[str, Harness] = {"omp": OmpHarness()}
+HARNESSES: dict[str, Harness] = {}
 
 
 def _load_harnesses() -> None:
-    if "agy" not in HARNESSES:
-        try:
-            from .agy_harness import AgyHarness
-            HARNESSES["agy"] = AgyHarness()
-        except ImportError:
-            pass
+    try:
+        from .acp_harness import OmpAcpHarness as _Omp
+        HARNESSES[_Omp.name] = _Omp()
+    except ImportError:
+        # Partial init during the acp_harness import cycle: that module
+        # self-registers at its bottom once its classes are defined.
+        pass
+    try:
+        from .agy_harness import AgyAcpHarness as _Agy
+        HARNESSES[_Agy.name] = _Agy()
+    except ImportError:
+        pass
 
 
 _load_harnesses()
@@ -235,9 +158,11 @@ def get_harness(name: str | None = None) -> Harness:
 
 
 def command_argv(harness: str | None = None, prompt: str = "", no_tty: bool = False,
-                 extra_args: list[str] | None = None) -> list[str]:
+                 extra_args: list[str] | None = None,
+                 model: str | None = None, effort: str | None = None) -> list[str]:
     """Full harness argv — shared by launch() and the preview (no --launch)."""
-    return get_harness(harness).command_argv(prompt, no_tty, extra_args)
+    return get_harness(harness).command_argv(prompt, no_tty, extra_args,
+                                             model=model, effort=effort)
 
 
 def cd_worktree(workdir: str) -> None:
@@ -253,7 +178,8 @@ def cd_worktree(workdir: str) -> None:
 
 
 def launch(harness: str | None = None, prompt: str = "", workdir: str = "", no_tty: bool = False,
-           extra_args: list[str] | None = None,
+           extra_args: list[str] | None = None, model: str | None = None,
+           effort: str | None = None,
            env_file: str | None = None,
            watch: dict | None = None,
            timeout_s: int | None = None,
@@ -272,7 +198,8 @@ def launch(harness: str | None = None, prompt: str = "", workdir: str = "", no_t
     the env file parsed into the child environment.
     The full argv is echoed to stderr first so run logs capture it.
     """
-    argv = get_harness(harness).command_argv(prompt, no_tty, extra_args)
+    argv = get_harness(harness).command_argv(prompt, no_tty, extra_args,
+                                                model=model, effort=effort)
     print(f"$ {' '.join(argv)}", file=sys.stderr, flush=True)
     if watch and not no_tty:
         h_name = get_harness(harness).name
@@ -290,7 +217,8 @@ def launch(harness: str | None = None, prompt: str = "", workdir: str = "", no_t
     return get_harness(harness).launch(prompt, workdir, no_tty, extra_args,
                                        env_file=env_file, timeout_s=timeout_s,
                                        session_file=session_file,
-                                       on_conversation_id=on_conversation_id)
+                                       on_conversation_id=on_conversation_id,
+                                       model=model, effort=effort)
 
 
 

@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import { Rocket } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
 import { HarnessSelect } from "@/components/HarnessSelect"
+import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { RunModeSelect } from "@/components/StartForm"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { Button } from "@/components/ui/button"
@@ -34,7 +35,7 @@ function messageScoped<T extends { category?: string }>(rows: T[]): T[] {
 const CONFIRM_COPY: Record<MessageLaunchMode, { title: string; description: string }> = {
   adhoc: {
     title: "Launch message adhoc",
-    description: "The agent runs now with auto-approve — headless (--launch) or in an OS terminal (--terminal). The server appends --yes.",
+    description: "The agent runs now with auto-approve — headless (--launch), ACP (--acp), or in an OS terminal (--terminal). The server appends --yes.",
   },
   validate: {
     title: "Launch validate claimed issues",
@@ -386,7 +387,19 @@ export function MessageLaunch() {
             <HarnessSelect
               idPrefix="message-launch"
               value={form.harness}
-              onChange={(v) => update("harness", v)}
+              onChange={(v) => { update("harness", v); update("model", ""); update("effort", "") }}
+            />
+            <ModelSelect
+              idPrefix="message-launch"
+              harness={form.harness}
+              value={form.model}
+              onChange={(v) => update("model", v)}
+            />
+            <EffortSelect
+              idPrefix="message-launch"
+              harness={form.harness}
+              value={form.effort}
+              onChange={(v) => update("effort", v)}
             />
           </div>
 

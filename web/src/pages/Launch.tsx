@@ -19,10 +19,12 @@ import { cn } from "@/lib/utils"
 
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
 import { HarnessSelect } from "@/components/HarnessSelect"
+import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { ReviewActionSelect, RunModeSelect, StartFormFields, buildReviewArgs, buildStartArgs } from "@/components/StartForm"
 import { COPY, INITIAL, MODES, adhocArgs, extraPromptArgs, isPrShaped, runModeArgs, splitAdhocRefs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
+import { modelEffortArgs } from "@/lib/harness"
 import type { LaunchPrefs } from "@/lib/launchPrefs"
 
 /** Template picker for the Launch page: picks a flow template, then the
@@ -440,7 +442,7 @@ export function Launch() {
   useEffect(() => {
     const prev = loadLaunchPrefs()
     if (mode === "start") {
-      saveLaunchPrefs({ ...prev, start: { runMode: form.runMode, startAction: form.startAction, base: form.base, harness: form.harness } })
+      saveLaunchPrefs({ ...prev, start: { runMode: form.runMode, startAction: form.startAction, base: form.base, harness: form.harness, model: form.model, effort: form.effort } })
     } else if (mode === "review") {
       saveLaunchPrefs({
         ...prev,
@@ -450,15 +452,17 @@ export function Launch() {
           fixAction: urlForcedFix.current ? prev.review.fixAction : form.reviewAction,
           useReviewSession: form.useReviewSession,
           harness: form.harness,
+          model: form.model,
+          effort: form.effort,
         },
       })
     } else if (mode === "adhoc") {
-      saveLaunchPrefs({ ...prev, adhoc: { runMode: form.runMode, harness: form.harness } })
+      saveLaunchPrefs({ ...prev, adhoc: { runMode: form.runMode, harness: form.harness, model: form.model, effort: form.effort } })
     } else if (mode === "sync") {
-      saveLaunchPrefs({ ...prev, sync: { merge: form.merge, harness: form.harness } })
+      saveLaunchPrefs({ ...prev, sync: { merge: form.merge, harness: form.harness, model: form.model, effort: form.effort } })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, form.runMode, form.startAction, form.base, form.reviewAction, form.thenFixComments, form.useReviewSession, form.merge, form.harness])
+  }, [mode, form.runMode, form.startAction, form.base, form.reviewAction, form.thenFixComments, form.useReviewSession, form.merge, form.harness, form.model, form.effort])
 
   function switchMode(next: Mode) {
     setMode(next)
@@ -479,6 +483,7 @@ export function Launch() {
         refValue,
         ...(form.merge ? ["--merge"] : []),
         ...(harness ? ["--harness", harness] : []),
+        ...modelEffortArgs(form),
         ...extraPromptArgs(form),
       ]
     }
@@ -489,6 +494,7 @@ export function Launch() {
         ...adhocArgs(form),
         ...(harness ? ["--harness", harness] : []),
         ...runModeArgs(form.runMode),
+        ...modelEffortArgs(form),
       ]
     }
     return buildReviewArgs(form)
@@ -498,17 +504,20 @@ export function Launch() {
   const effectiveHarness = harnessFlag || cfg?.default_harness || "agy"
   const adhocRefs = splitAdhocRefs(form.ref)
   const flagList = mode === "sync"
-    ? [form.merge ? "--merge (local merge)" : "remote rebase (default)", harnessFlag ? `--harness ${harnessFlag}` : null, extra ? `--extra-prompt ${extra}` : null].filter((v): v is string => v !== null)
+    ? [form.merge ? "--merge (local merge)" : "remote rebase (default)", harnessFlag ? `--harness ${harnessFlag}` : null, form.model.trim() ? `--model ${form.model.trim()}` : null, form.effort.trim() ? `--effort ${form.effort.trim()}` : null, extra ? `--extra-prompt ${extra}` : null].filter((v): v is string => v !== null)
     : mode === "adhoc"
       ? [
           form.adhocPrompt.trim() ? `--prompt ${form.adhocPrompt.trim().slice(0, 80)}` : "prompt: required",
           harnessFlag ? `--harness ${harnessFlag}` : null,
+          form.model.trim() ? `--model ${form.model.trim()}` : null,
+          form.effort.trim() ? `--effort ${form.effort.trim()}` : null,
           form.runMode === "terminal" ? "--terminal (open the agent in the OS terminal)"
+            : form.runMode === "acp" ? "--acp (stream structured events to the Run page)"
             : "--launch (run the agent now)",
           extra ? `--extra-prompt ${extra}` : null,
         ].filter((v): v is string => v !== null)
     : [
-        form.runMode === "headless" ? "headless (--no-tty)" : form.runMode === "terminal" ? "terminal (--terminal)" : "tty preview (no --no-tty)",
+        form.runMode === "headless" ? "headless (--no-tty)" : form.runMode === "terminal" ? "terminal (--terminal)" : form.runMode === "acp" ? "acp (--acp)" : "tty preview (no --no-tty)",
         mode === "start" ? (form.startAction === "plan" ? "--plan (plan only, no implementation)" : "implement") : null,
         mode === "review" && form.reviewAction === "fix" ? "--fix-comments (fix open review comments)" : null,
         mode === "review" && form.reviewAction === "review" && form.thenFixComments ? "--then-fix-comments (chain fix after review)" : null,
@@ -516,8 +525,11 @@ export function Launch() {
         `--depth ${form.depth.trim() || "7"}`,
         mode === "start" && form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
         harnessFlag ? `--harness ${harnessFlag}` : null,
+        form.model.trim() ? `--model ${form.model.trim()}` : null,
+        form.effort.trim() ? `--effort ${form.effort.trim()}` : null,
         form.runMode === "headless" ? "--launch (run the agent now)"
           : form.runMode === "terminal" ? "--terminal (open the agent in the OS terminal)"
+          : form.runMode === "acp" ? "--acp (stream structured events to the Run page)"
           : "preview (print command, no run)",
         extra ? `--extra-prompt ${extra}` : null,
       ].filter((v): v is string => v !== null)
@@ -691,7 +703,23 @@ export function Launch() {
               <HarnessSelect
                 idPrefix="launch"
                 value={form.harness}
-                onChange={(v) => update("harness", v)}
+                onChange={(v) => { update("harness", v); update("model", ""); update("effort", "") }}
+              />
+            ) : null}
+            {mode !== "start" ? (
+              <ModelSelect
+                idPrefix="launch"
+                harness={form.harness}
+                value={form.model}
+                onChange={(v) => update("model", v)}
+              />
+            ) : null}
+            {mode !== "start" ? (
+              <EffortSelect
+                idPrefix="launch"
+                harness={form.harness}
+                value={form.effort}
+                onChange={(v) => update("effort", v)}
               />
             ) : null}
           </div>
@@ -703,7 +731,8 @@ export function Launch() {
                 {mode === "adhoc" ? (
                   <>
                     The web server appends <span className="font-mono text-[13px]">--yes</span>, so the agent runs
-                    now with auto-approve — headless (<span className="font-mono text-[13px]">--launch</span>) or in an OS
+                    now with auto-approve — headless (<span className="font-mono text-[13px]">--launch</span>), ACP
+                    (<span className="font-mono text-[13px]">--acp</span>), or in an OS
                     terminal (<span className="font-mono text-[13px]">--terminal</span>).
                   </>
                 ) : mode === "sync" ? (
@@ -727,6 +756,12 @@ export function Launch() {
                     The web server opens an OS terminal running the agent command
                     (<span className="font-mono text-[13px]">--terminal</span>); the
                     agent runs with your desktop's environment.
+                  </>
+                ) : form.runMode === "acp" ? (
+                  <>
+                    The web server runs the agent with{" "}
+                    <span className="font-mono text-[13px]">--acp</span>; structured
+                    events stream to the Run page.
                   </>
                 ) : (
                   <>

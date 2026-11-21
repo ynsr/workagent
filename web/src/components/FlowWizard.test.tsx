@@ -9,6 +9,7 @@ import type { FlowTemplateRow } from "@/lib/api"
 
 const { mutateAsync } = vi.hoisted(() => ({ mutateAsync: vi.fn(async () => ({ run_id: "run-1" })) }))
 vi.mock("@/lib/queries", () => ({
+  queryKeys: { harnessOptions: (name: string) => ["harnesses", "options", name] },
   useActions: () => ({
     data: { actions: [{ label: "lint", name: "Lint" }, { label: "typecheck", name: "Typecheck" }] },
   }),

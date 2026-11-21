@@ -63,6 +63,10 @@ def start(
     depth: int = typer.Option(7, "--depth", help="Clone depth for repo URLs."),
     base: Optional[str] = typer.Option(None, "--base", autocompletion=_complete_branches, help="Base branch (default: repo default). A non-default branch runs on that branch instead of creating a new one."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured)."),
+    acp: bool = typer.Option(False, "--acp", help="Run this step via ACP stdio (JSON-RPC) instead of CLI argv."),
+    run_mode: Optional[str] = typer.Option(None, "--run-mode", help="Run mode: preview|headless|acp|terminal (default: derived from --launch/--terminal/--acp)."),
+    model: Optional[str] = typer.Option(None, "--model", help="Model id (ACP-discovered; non-ACP harnesses pass --model through when supported)."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="Effort level (ACP-discovered; non-ACP harnesses pass --effort through when supported)."),
     no_tty: bool = typer.Option(False, "--no-tty", help="Run harness non-interactively (auto commit/push/MR prompt suffix)."),
     launch: bool = typer.Option(False, "-L", "--launch", help="Launch the harness in the worktree (default: print the harness command and land in an interactive shell inside the worktree)."),
     terminal: bool = typer.Option(False, "--terminal", help="Open the harness command in the OS terminal instead of running headless (mutually exclusive with --launch)."),
@@ -270,7 +274,8 @@ def start(
         _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, str(r), no_tty, launch,
                  result, json_output, run_key=key, session_file=session_file,
-                 terminal=terminal, env_file=env_file)
+                 terminal=terminal, env_file=env_file,
+                 acp=acp, run_mode=run_mode, model=model, effort=effort)
     _start_post_status(link_url or ref, launch, terminal, no_status, no_review,
                        pr_url=_discover_branch_pr(str(r), branch))
 
@@ -382,7 +387,9 @@ def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
                    harness: str | None, no_tty: bool, launch: bool,
                    dry_run: bool, yes: bool, json_output: bool,
                    session_file: str | None, extra_prompt: str | None = None,
-                   terminal: bool = False, env_file: str | None = None) -> None:
+                   terminal: bool = False, env_file: str | None = None,
+                   acp: bool = False, run_mode: "str | None" = None,
+                   model: "str | None" = None, effort: "str | None" = None) -> None:
     """Start a coding session on a PR/MR source branch (branch-keyed row)."""
     repo_dir, base_branch, tid, outcome = trackers.resolve_repo_for_ref(
         parsed, repo, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
@@ -414,6 +421,7 @@ def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
     _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,
                  launch, result, json_output, run_key=key,
                  session_file=session_file, terminal=terminal,
-                 env_file=env_file)
+                 env_file=env_file,
+                 acp=acp, run_mode=run_mode, model=model, effort=effort)
 
 

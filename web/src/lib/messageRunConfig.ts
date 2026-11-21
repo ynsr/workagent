@@ -22,15 +22,21 @@ export interface ActionUpsertForm {
   runImmediately: boolean
   category: RowCategory
   harness?: string
+  model?: string
+  effort?: string
 }
 
 /** CLI argv (after `command: "action"`) for the add/update form.
  * run_immediately is a first-class backend column (v20). */
 export function buildActionUpsertArgs(editingLabel: string | null, f: ActionUpsertForm): string[] {
   const harness = f.harness?.trim()
+  const model = f.model?.trim()
+  const effort = f.effort?.trim()
   const opts = JSON.stringify({
     run_mode: f.runMode,
     ...(harness ? { harness } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
   })
   const flag = f.runImmediately ? "--run-immediately" : "--no-run-immediately"
   if (editingLabel !== null) {
@@ -61,7 +67,7 @@ export function buildActionUpsertArgs(editingLabel: string | null, f: ActionUpse
   ]
 }
 
-const RUN_MODES = ["preview", "headless", "terminal"] as const
+const RUN_MODES = ["preview", "headless", "acp", "terminal"] as const
 
 /** Row's default run mode (default_options.run_mode, preview fallback). */
 export function actionRunModeOf(row: { default_options?: unknown }): string {
@@ -75,6 +81,20 @@ export function actionHarnessOf(row: { default_options?: unknown }): string {
   const opts = row.default_options
   const h = opts && typeof opts === "object" ? (opts as Record<string, unknown>).harness : undefined
   return typeof h === "string" ? h.trim() : ""
+}
+
+/** Row's default model override (default_options.model, "" when unset). */
+export function actionModelOf(row: { default_options?: unknown }): string {
+  const opts = row.default_options
+  const m = opts && typeof opts === "object" ? (opts as Record<string, unknown>).model : undefined
+  return typeof m === "string" ? m.trim() : ""
+}
+
+/** Row's default effort override (default_options.effort, "" when unset). */
+export function actionEffortOf(row: { default_options?: unknown }): string {
+  const opts = row.default_options
+  const e = opts && typeof opts === "object" ? (opts as Record<string, unknown>).effort : undefined
+  return typeof e === "string" ? e.trim() : ""
 }
 
 export interface FlowTemplateUpsertForm {
@@ -132,41 +152,58 @@ export function isRunImmediateTemplate(row: { run_immediately?: unknown }): bool
 }
 
 /** CLI argv (after `command: "message"`) for an immediate action run. */
-export function buildImmediateMessageActionArgs(label: string, messageId: string, harness = ""): string[] {
+export function buildImmediateMessageActionArgs(label: string, messageId: string, harness = "", model = "", effort = ""): string[] {
   const args = ["action", "run", label, messageId]
   const h = harness.trim()
   if (h) args.push("--harness", h)
+  const m = model.trim()
+  if (m) args.push("--model", m)
+  const e = effort.trim()
+  if (e) args.push("--effort", e)
   args.push("--yes")
   return args
 }
 
 /** CLI argv (after `command: "message"`) for an immediate flow run. */
-export function buildImmediateFlowArgs(label: string, messageId: string, worktreeRef: string, harness = ""): string[] {
+export function buildImmediateFlowArgs(label: string, messageId: string, worktreeRef: string, harness = "", model = "", effort = ""): string[] {
   const args = ["flow", "run", label, messageId]
   const ref = worktreeRef.trim()
   if (ref) args.push("--ref", ref)
   const h = harness.trim()
   if (h) args.push("--harness", h)
+  const m = model.trim()
+  if (m) args.push("--model", m)
+  const e = effort.trim()
+  if (e) args.push("--effort", e)
   args.push("--yes")
   return args
 }
 
 /** CLI argv (after `command: "action"`) for a worktree-scope immediate run. */
-export function buildImmediateActionArgs(label: string, ref: string, runMode: string, harness = ""): string[] {
+export function buildImmediateActionArgs(label: string, ref: string, runMode: string, harness = "", model = "", effort = ""): string[] {
   const args = ["run", label, ref]
   if (runMode === "headless") args.push("--launch")
   else if (runMode === "terminal") args.push("--terminal")
+  else if (runMode === "acp") args.push("--acp")
   const h = harness.trim()
   if (h) args.push("--harness", h)
+  const m = model.trim()
+  if (m) args.push("--model", m)
+  const e = effort.trim()
+  if (e) args.push("--effort", e)
   args.push("--yes")
   return args
 }
 
 /** CLI argv (after `command: "flow"`) for a worktree-scope immediate run. */
-export function buildImmediateWorktreeFlowArgs(label: string, ref: string, harness = ""): string[] {
+export function buildImmediateWorktreeFlowArgs(label: string, ref: string, harness = "", model = "", effort = ""): string[] {
   const args = ["run", label, ref]
   const h = harness.trim()
   if (h) args.push("--harness", h)
+  const m = model.trim()
+  if (m) args.push("--model", m)
+  const e = effort.trim()
+  if (e) args.push("--effort", e)
   args.push("--yes")
   return args
 }

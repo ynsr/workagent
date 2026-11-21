@@ -36,6 +36,10 @@ def prodtest_plan(
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Harness to run (default: configured)."),
+    acp: bool = typer.Option(False, "--acp", help="Run this step via ACP stdio (JSON-RPC) instead of CLI argv."),
+    run_mode: Optional[str] = typer.Option(None, "--run-mode", help="Run mode: preview|headless|acp|terminal (default: derived from --launch/--terminal/--acp)."),
+    model: Optional[str] = typer.Option(None, "--model", help="Model id (ACP-discovered; non-ACP harnesses pass --model through when supported)."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="Effort level (ACP-discovered; non-ACP harnesses pass --effort through when supported)."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before harness commands."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the harness prompt."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path for the harness session."),
@@ -153,7 +157,8 @@ def prodtest_plan(
     _run_harness(harness_name, prompt, work_dir, repo or work_dir,
                  no_tty, launch, result, json_output,
                  run_key=(link_key or None), session_file=session_file,
-                 terminal=terminal, env_file=env_file)
+                 terminal=terminal, env_file=env_file,
+                 acp=acp, run_mode=run_mode, model=model, effort=effort)
     if launch and not no_tty and not terminal:
         eprint(f"warning: plan file updated but NOT persisted ({plan_file}): "
                "commit/push/DB upsert only run with --no-tty. "

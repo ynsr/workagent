@@ -377,7 +377,7 @@ def test_message_adhoc_terminal_reaches_harness(tmp_path, monkeypatch):
     calls = {}
     def _fake(name, prompt, wt, fb, no_tty, launch, result, json_output,
               run_key=None, session_file=None, terminal=False, env_file=None,
-              timeout_s=None):
+              timeout_s=None, **kw):
         calls.update(no_tty=no_tty, launch=launch, terminal=terminal)
     monkeypatch.setattr("workagent.cli_harness._run_harness", _fake)
     monkeypatch.setattr("workagent.cli_harness._guard_harness", lambda *a, **k: None)
@@ -396,7 +396,7 @@ def test_message_adhoc_headless_reaches_harness(tmp_path, monkeypatch):
     calls = {}
     def _fake(name, prompt, wt, fb, no_tty, launch, result, json_output,
               run_key=None, session_file=None, terminal=False, env_file=None,
-              timeout_s=None):
+              timeout_s=None, **kw):
         calls.update(no_tty=no_tty, launch=launch, terminal=terminal)
     monkeypatch.setattr("workagent.cli_harness._run_harness", _fake)
     monkeypatch.setattr("workagent.cli_harness._guard_harness", lambda *a, **k: None)

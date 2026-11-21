@@ -33,6 +33,7 @@ export const queryKeys = {
     ["candidates", "issues", force ? "force" : "cached", days ?? 90, mine ?? true] as const,
   candidatesWorktrees: ["candidates", "worktrees"] as const,
   release: (name: string) => ["release", name] as const,
+  harnessOptions: (name: string) => ["harnesses", "options", name] as const,
 }
 
 /** Stale-while-revalidate: cached rows render instantly; a background
