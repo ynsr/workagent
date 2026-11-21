@@ -518,6 +518,7 @@ from .refs_ci import (  # noqa: F401,E402
     _ci_gh,
     _ci_glab,
     fetch_ci,
+    fetch_ci_details,
     fetch_ci_status,
 )
 
@@ -527,4 +528,5 @@ from .refs_reviews import (  # noqa: F401,E402
     _review_comments_gh,
     _review_comments_glab,
     fetch_pr_comment_stats,
+    fetch_pr_review_details,
 )

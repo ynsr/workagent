@@ -55,7 +55,28 @@ Jira rows are keyed `jira:KEY@repo` (e.g. `jira:IPG-932@projectx`); bare
     "issue_status": "in progress",
     "kanban_column": "working",
     "display_status": "Working · omp",
-    "attention_reason": null
+    "attention_reason": null,
+    "failing_checks": [],
+    "unresolved_threads": 0
+}
+```
+`failing_checks` lists names of currently failing normalized PR checks (`pr_checks`); `unresolved_threads` is the count of unresolved review threads.
+
+### `GET /api/worktrees/{ref}/timeline?limit=100` → normalized PR checks, review threads & feedback timeline
+Returns `404` when `ref` does not match any linked worktree.
+```json
+{
+  "ref": "jira:IPG-123",
+  "checks": [
+    {"id": 1, "worktree_ref": "jira:IPG-123", "name": "pytest", "commit_sha": "abc", "status": "completed", "conclusion": "failure", "url": "https://...", "log_tail": "", "updated_at": "..."}
+  ],
+  "threads": [
+    {"id": 1, "worktree_ref": "jira:IPG-123", "thread_id": "t1", "author": "alice", "file": "a.py", "line": 12, "body": "Fix null check", "resolved": false, "is_bot": false, "updated_at": "..."}
+  ],
+  "events": [
+    {"id": 1, "worktree_ref": "jira:IPG-123", "event_type": "ci_failed", "summary": "CI failed: pytest", "details": {}, "created_at": "..."}
+  ],
+  "summary": {"failing_checks": ["pytest"], "unresolved_threads": 1}
 }
 ```
 `harness` is `"<name> <pid>"` while a harness is live on the worktree,

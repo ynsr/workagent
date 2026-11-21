@@ -21,6 +21,7 @@ import { ReviewsCell } from "@/components/StatusCells"
 import { ActionsMenu } from "@/components/ActionsMenu"
 import { HarnessSelect } from "@/components/HarnessSelect"
 import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { WorktreeFeedbackTimeline } from "@/components/WorktreeFeedbackTimeline"
 import { copyToClipboard } from "@/lib/format"
 import { errorText } from "@/components/StatusFeedback"
 /** Editable subset rendered in edit mode; strings are trimmed by the caller. */
@@ -250,6 +251,11 @@ export function WorktreeDetail({
             </div>
           ) : null}
         </dl>
+        {worktreeKey ? (
+          <div className="mt-4">
+            <WorktreeFeedbackTimeline worktreeKey={worktreeKey} entry={entry} />
+          </div>
+        ) : null}
       </CardContent>
       <CardFooter className="flex flex-wrap items-center gap-2">
         {worktreeKey && onOpenWorktree ? (

@@ -70,6 +70,59 @@ export interface WorktreeEntry {
   display_status?: string
   /** Machine-readable attention reason when kanban_column === "needs_you", else null. */
   attention_reason?: string | null
+  /** Names of currently failing normalized PR checks. */
+  failing_checks?: string[]
+  /** Count of unresolved review threads. */
+  unresolved_threads?: number
+}
+
+/** One normalized PR check row (GET /api/worktrees/{ref}/timeline). */
+export interface PrCheckRow {
+  id: number
+  worktree_ref: string
+  name: string
+  commit_sha: string
+  status: string
+  conclusion: string
+  url: string
+  log_tail: string
+  updated_at: string
+}
+
+/** One normalized PR review thread row (GET /api/worktrees/{ref}/timeline). */
+export interface PrReviewThreadRow {
+  id: number
+  worktree_ref: string
+  thread_id: string
+  author: string
+  file: string
+  line: number | null
+  body: string
+  resolved: boolean
+  is_bot: boolean
+  updated_at: string
+}
+
+/** One chronological feedback event (GET /api/worktrees/{ref}/timeline). */
+export interface WorktreeEventRow {
+  id: number
+  worktree_ref: string
+  event_type: string
+  summary: string
+  details: Record<string, unknown>
+  created_at: string
+}
+
+/** GET /api/worktrees/{ref}/timeline response payload. */
+export interface WorktreeTimeline {
+  ref: string
+  checks: PrCheckRow[]
+  threads: PrReviewThreadRow[]
+  events: WorktreeEventRow[]
+  summary: {
+    failing_checks: string[]
+    unresolved_threads: number
+  }
 }
 
 /** Prodtest row cell: stored plan/run state for one issue. */
@@ -480,6 +533,12 @@ export const api = {
   /** GET /api/status?ref=… — single worktree detail. */
   statusDetail: (ref: string) =>
     request<WorktreeDetail>(`/api/status${qs({ ref })}`),
+
+  /** GET /api/worktrees/{ref}/timeline — normalized PR checks, review threads, and events. */
+  worktreeTimeline: (ref: string, limit?: number) =>
+    request<WorktreeTimeline>(
+      `/api/worktrees/${encodeURIComponent(ref)}/timeline${qs({ limit: limit != null ? String(limit) : undefined })}`,
+    ),
 
   /** GET /api/path?ref=… — resolved worktree path. */
   path: (ref: string) => request<PathInfo>(`/api/path${qs({ ref })}`),

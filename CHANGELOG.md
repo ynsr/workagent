@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Store normalized PR checks, review threads, and worktree feedback timeline events with inline Fix CI, Fix comments, and Cleanup actions [146]
 - Consolidate web sidebar from 15 links to 7 destinations and convert Launch pages into slide-over drawers with backward-compatible routes [135]
 - Add derived delivery stage (kanban_column, display_status, attention_reason) and Dashboard Kanban Board view with Board/Table toggle [134]
 - Add global Command Palette (Cmd+K / Ctrl+K) and keyboard navigation shortcuts across Dashboard, Runs, Messages, and Prodtests [136]

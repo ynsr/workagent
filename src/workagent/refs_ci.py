@@ -26,12 +26,8 @@ _GLAB_RUNNING = {"running", "pending", "created", "waiting_for_resource",
 _CI_PIPELINE_SCAN = 5
 
 
-def _ci_gh(pr_url: str, cwd: str | None) -> tuple[str, str]:
-    """(status, url): url is the worst check's details page (latest CI job).
-
-    The worst check's page is preferred; when it carries no URL, any other
-    check's page is used so the badge still links somewhere real.
-    """
+def _ci_gh_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]]:
+    """(status, url, checks) for a GitHub PR's statusCheckRollup."""
     out = run_cmd("gh", "pr", "view", pr_url, "--json", "statusCheckRollup",
                   cwd=cwd)
     try:
@@ -41,13 +37,17 @@ def _ci_gh(pr_url: str, cwd: str | None) -> tuple[str, str]:
     worst = "not_started"
     worst_url = ""
     any_url = ""
-    for check in rollup:
-        concl = (check.get("conclusion") or "").upper()
-        if concl in _GH_FAILURE:
+    checks: list[dict] = []
+    for idx, check in enumerate(rollup):
+        if not isinstance(check, dict):
+            continue
+        concl_raw = (check.get("conclusion") or "").upper()
+        status_raw = (check.get("status") or check.get("state") or "").upper()
+        if concl_raw in _GH_FAILURE or status_raw in _GH_FAILURE:
             state = "failure"
-        elif concl in _GH_SUCCESS:
+        elif concl_raw in _GH_SUCCESS or status_raw in _GH_SUCCESS:
             state = "success"
-        elif concl in _GH_RUNNING:
+        elif concl_raw in _GH_RUNNING or status_raw in _GH_RUNNING:
             state = "running"
         else:
             state = "not_started"
@@ -58,7 +58,26 @@ def _ci_gh(pr_url: str, cwd: str | None) -> tuple[str, str]:
             worst = state
             if url:
                 worst_url = url
-    return worst, worst_url or any_url
+        name = str(check.get("name") or check.get("context") or f"check-{idx + 1}").strip()
+        checks.append({
+            "name": name,
+            "commit_sha": str(check.get("commitSha") or check.get("headSha") or ""),
+            "status": (status_raw or state).lower(),
+            "conclusion": (concl_raw or state).lower(),
+            "url": url,
+            "log_tail": str(check.get("log_tail") or ""),
+        })
+    return worst, worst_url or any_url, checks
+
+
+def _ci_gh(pr_url: str, cwd: str | None) -> tuple[str, str]:
+    """(status, url): url is the worst check's details page (latest CI job).
+
+    The worst check's page is preferred; when it carries no URL, any other
+    check's page is used so the badge still links somewhere real.
+    """
+    worst, url, _ = _ci_gh_details(pr_url, cwd)
+    return worst, url
 def _api_glab(api: str, host: str, cwd: str | None) -> str:
     """glab api with --hostname, falling back to no-hostname on error."""
     try:
@@ -67,15 +86,8 @@ def _api_glab(api: str, host: str, cwd: str | None) -> str:
         return run_cmd("glab", "api", api, cwd=cwd)
 
 
-def _ci_glab(pr_url: str, cwd: str | None) -> tuple[str, str]:
-    """(status, url): url is the latest job's page (e.g. .../-/jobs/194493).
-
-    Status comes from the newest pipeline. The URL is the newest *job* of
-    that pipeline; when it has no jobs (a ``merge_request_event`` pipeline
-    that failed before any job started), earlier pipelines of the same MR
-    are walked back so the badge still points at a real job, and the
-    newest pipeline page is the last resort.
-    """
+def _ci_glab_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]]:
+    """(status, url, checks) for a GitLab MR's newest pipeline."""
     m = _GITLAB_MR.match(pr_url or "")
     if not m:
         raise HarnessError(f"not a GitLab MR URL: {pr_url}")
@@ -87,23 +99,49 @@ def _ci_glab(pr_url: str, cwd: str | None) -> tuple[str, str]:
     except json.JSONDecodeError:
         raise HarnessError(f"cannot parse glab output for {pr_url}")
     if not data:
-        return "not_started", ""
+        return "not_started", "", []
     newest = max(data, key=lambda p: p.get("id", 0))
     state = _glab_state((newest.get("status") or "").lower())
     if state == "not_started":
-        return "not_started", ""  # skipped, manual, unknown
+        return "not_started", "", []  # skipped, manual, unknown
     ordered = sorted(data, key=lambda p: p.get("id", 0),
                      reverse=True)[:_CI_PIPELINE_SCAN]
     for pipeline in ordered:
         jobs = _pipeline_jobs(path, pipeline.get("id"), host, cwd, pr_url)
         if not jobs:
             continue
+        p_sha = str(pipeline.get("sha") or newest.get("sha") or "")
+        checks = [
+            {
+                "name": str(j.get("name") or f"job-{j.get('id') or idx + 1}").strip(),
+                "commit_sha": str((j.get("commit") or {}).get("id") or p_sha),
+                "status": str(j.get("status") or "").lower(),
+                "conclusion": _glab_state(str(j.get("status") or "").lower()),
+                "url": str(j.get("web_url") or ""),
+                "log_tail": "",
+            }
+            for idx, j in enumerate(jobs)
+            if isinstance(j, dict)
+        ]
         job = max(jobs, key=lambda j: j.get("id", 0))
         url = job.get("web_url") or ""
         if url:
-            return state, url
+            return state, url, checks
     # No job urls anywhere: the newest pipeline page beats a dead badge.
-    return state, newest.get("web_url") or ""
+    return state, newest.get("web_url") or "", []
+
+
+def _ci_glab(pr_url: str, cwd: str | None) -> tuple[str, str]:
+    """(status, url): url is the latest job's page (e.g. .../-/jobs/194493).
+
+    Status comes from the newest pipeline. The URL is the newest *job* of
+    that pipeline; when it has no jobs (a ``merge_request_event`` pipeline
+    that failed before any job started), earlier pipelines of the same MR
+    are walked back so the badge still points at a real job, and the
+    newest pipeline page is the last resort.
+    """
+    state, url, _ = _ci_glab_details(pr_url, cwd)
+    return state, url
 
 
 def _glab_state(status: str) -> str:
@@ -172,6 +210,28 @@ def _pipeline_jobs(path: str, pipeline_id: int | None, host: str,
     except json.JSONDecodeError:
         raise HarnessError(f"cannot parse glab jobs for {pr_url}")
     return jobs if isinstance(jobs, list) else []
+
+
+def fetch_ci_details(tool: str, pr_url: str,
+                     cwd: str | None = None, branch: str | None = None) -> tuple[str | None, str, list[dict]]:
+    """(status, job_url, checks) for the latest CI pipeline of a PR/MR.
+
+    ``checks`` is a list of normalized check dicts
+    ``{name, commit_sha, status, conclusion, url, log_tail}`` (empty for
+    branch-scoped lookups or on soft failure).
+    """
+    try:
+        if branch:
+            st, url = fetch_ci(tool, pr_url, cwd, branch)
+            return st, url, []
+        if tool == "gh":
+            return _ci_gh_details(pr_url, cwd)
+        if tool == "glab":
+            return _ci_glab_details(pr_url, cwd)
+        raise HarnessError(f"unknown host CLI: {tool}")
+    except HarnessError as e:
+        print(f"warning: ci lookup failed for {pr_url}: {e}", file=sys.stderr)
+        return None, "", []
 
 
 def fetch_ci(tool: str, pr_url: str,
