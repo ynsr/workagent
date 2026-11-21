@@ -35,16 +35,8 @@ def _bot_comment_resolved(body: str) -> bool:
 _gh_bot_comment_resolved = _bot_comment_resolved
 
 
-def _review_comments_gh(pr_url: str, cwd: str | None) -> dict:
-    """{reviews, unresolved, resolved} for a GitHub PR.
-
-    reviews = issue comments whose body starts with `# Code Review`
-    (each one marks a completed harness review). Inline reviewThreads carry
-    a native isResolved flag; plain (non-inline) bot comments have no
-    resolution state, so a bot comment counts as resolved only when its
-    second non-empty line (below the header) matches `Status:\\s+RESOLVED`
-    (case-insensitive).
-    """
+def _review_comments_gh_details(pr_url: str, cwd: str | None) -> tuple[dict, list[dict]]:
+    """({reviews, unresolved, resolved}, threads) for a GitHub PR."""
     m = _GITHUB_PR.match(pr_url or "")
     if not m:
         raise HarnessError(f"not a GitHub PR URL: {pr_url}")
@@ -54,11 +46,27 @@ def _review_comments_gh(pr_url: str, cwd: str | None) -> dict:
         comments = json.loads(out or "{}").get("comments") or []
     except json.JSONDecodeError:
         raise HarnessError(f"cannot parse gh output for {pr_url}")
-    bot_comments = [str((c or {}).get("body") or "")
-                    for c in comments
-                    if str((c or {}).get("body") or "").lstrip().startswith("# Code Review")]
-    reviews = len(bot_comments)
-    bot_resolved = sum(1 for b in bot_comments if _bot_comment_resolved(b))
+    bot_objs = [c for c in comments
+                if isinstance(c, dict)
+                and str(c.get("body") or "").lstrip().startswith("# Code Review")]
+    reviews = len(bot_objs)
+    threads: list[dict] = []
+    bot_resolved = 0
+    for idx, c in enumerate(bot_objs):
+        body = str(c.get("body") or "")
+        is_res = _bot_comment_resolved(body)
+        if is_res:
+            bot_resolved += 1
+        author = (c.get("author") or {}).get("login") if isinstance(c.get("author"), dict) else str(c.get("author") or "")
+        threads.append({
+            "thread_id": str(c.get("id") or f"gh-bot-{idx + 1}"),
+            "author": str(author or ""),
+            "file": "",
+            "line": None,
+            "body": body[:2000],
+            "resolved": is_res,
+            "is_bot": True,
+        })
     bot_unresolved = reviews - bot_resolved
     owner, name = m.group(1).split("/", 1)
     try:
@@ -66,30 +74,50 @@ def _review_comments_gh(pr_url: str, cwd: str | None) -> dict:
     except ValueError:
         raise HarnessError(f"not a GitHub PR URL: {pr_url}")
     query = ('{repository(owner:"%s",name:"%s"){pullRequest(number:%d)'
-             '{reviewThreads(first:100){nodes{isResolved}}}}}' % (owner, name, number))
+             '{reviewThreads(first:100){nodes{id isResolved '
+             'comments(first:1){nodes{body path line author{login}}}}}}}}'
+             % (owner, name, number))
     tout = run_cmd("gh", "api", "graphql", "-f", f"query={query}", cwd=cwd)
     try:
         nodes = (json.loads(tout or "{}").get("data", {}).get("repository", {})
                  .get("pullRequest", {}).get("reviewThreads", {}).get("nodes") or [])
     except json.JSONDecodeError:
         raise HarnessError(f"cannot parse gh output for {pr_url}")
-    thread_unresolved = sum(1 for n in nodes if not (n or {}).get("isResolved"))
-    thread_resolved = sum(1 for n in nodes if (n or {}).get("isResolved"))
-    return {"reviews": reviews,
-            "unresolved": thread_unresolved + bot_unresolved,
-            "resolved": thread_resolved + bot_resolved}
+    thread_unresolved = 0
+    thread_resolved = 0
+    for idx, n in enumerate(nodes):
+        if not isinstance(n, dict):
+            continue
+        is_res = bool(n.get("isResolved"))
+        if is_res:
+            thread_resolved += 1
+        else:
+            thread_unresolved += 1
+        cnodes = ((n.get("comments") or {}).get("nodes") or [])
+        first = cnodes[0] if cnodes and isinstance(cnodes[0], dict) else {}
+        author = (first.get("author") or {}).get("login") if isinstance(first.get("author"), dict) else ""
+        threads.append({
+            "thread_id": str(n.get("id") or f"gh-thread-{idx + 1}"),
+            "author": str(author or ""),
+            "file": str(first.get("path") or ""),
+            "line": first.get("line"),
+            "body": str(first.get("body") or "")[:2000],
+            "resolved": is_res,
+            "is_bot": False,
+        })
+    stats = {"reviews": reviews,
+             "unresolved": thread_unresolved + bot_unresolved,
+             "resolved": thread_resolved + bot_resolved}
+    return stats, threads
 
 
-def _review_comments_glab(pr_url: str, cwd: str | None) -> dict:
-    """{reviews, unresolved, resolved} for a GitLab MR via discussions API.
+def _review_comments_gh(pr_url: str, cwd: str | None) -> dict:
+    """{reviews, unresolved, resolved} for a GitHub PR."""
+    return _review_comments_gh_details(pr_url, cwd)[0]
 
-    reviews = notes whose body starts with `# Code Review`. A bot note
-    counts as resolved when it is natively resolved (discussion
-    resolved=True, or every resolvable note resolved) OR its second
-    non-empty line (below the header) matches `Status:\\s+RESOLVED`
-    (case-insensitive). A bot discussion is resolved only when every bot
-    note in it is resolved. Non-bot review threads keep native resolution.
-    """
+
+def _review_comments_glab_details(pr_url: str, cwd: str | None) -> tuple[dict, list[dict]]:
+    """({reviews, unresolved, resolved}, threads) for a GitLab MR via discussions API."""
     m = _GITLAB_MR.match(pr_url or "")
     if not m:
         raise HarnessError(f"not a GitLab MR URL: {pr_url}")
@@ -107,37 +135,80 @@ def _review_comments_glab(pr_url: str, cwd: str | None) -> dict:
     reviews = 0
     unresolved = 0
     resolved = 0
-    for disc in data or []:
-        notes = (disc or {}).get("notes") or []
+    threads: list[dict] = []
+    for idx, disc in enumerate(data or []):
+        if not isinstance(disc, dict):
+            continue
+        notes = disc.get("notes") or []
         bot = [n for n in notes
                if str((n or {}).get("body") or "").lstrip().startswith("# Code Review")]
         reviews += len(bot)
         if bot:
-            # Bot threads: resolved when natively resolved OR marker present.
-            # Native mirrors the non-bot path: discussion resolved=True, or
-            # every resolvable bot note resolved (vacuous when none are).
             bot_resolvable = [n for n in bot if (n or {}).get("resolvable")]
-            native = (disc or {}).get("resolved") is True or all(
+            native = disc.get("resolved") is True or all(
                 (n or {}).get("resolved") for n in bot_resolvable)
             bodies = [str((n or {}).get("body") or "") for n in bot]
-            if native or all(_bot_comment_resolved(b) for b in bodies):
+            is_res = bool(native or all(_bot_comment_resolved(b) for b in bodies))
+            if is_res:
                 resolved += 1
             else:
                 unresolved += 1
+            first = bot[0] if isinstance(bot[0], dict) else {}
+            author = (first.get("author") or {}).get("username") if isinstance(first.get("author"), dict) else ""
+            threads.append({
+                "thread_id": str(disc.get("id") or f"glab-bot-{idx + 1}"),
+                "author": str(author or ""),
+                "file": "",
+                "line": None,
+                "body": str(first.get("body") or "")[:2000],
+                "resolved": is_res,
+                "is_bot": True,
+            })
             continue
-        # Only review threads are resolvable; system/activity notes
-        # ("added N commits", "marked as draft", …) are individual
-        # discussions GitLab's UI never counts as unresolved.
         resolvable = [n for n in notes if (n or {}).get("resolvable")]
         if not resolvable:
             continue
-        if (disc or {}).get("resolved") is True:
-            resolved += 1
-        elif all((n or {}).get("resolved") for n in resolvable):
+        if disc.get("resolved") is True or all((n or {}).get("resolved") for n in resolvable):
+            is_res = True
             resolved += 1
         else:
+            is_res = False
             unresolved += 1
-    return {"reviews": reviews, "unresolved": unresolved, "resolved": resolved}
+        first = resolvable[0] if isinstance(resolvable[0], dict) else {}
+        author = (first.get("author") or {}).get("username") if isinstance(first.get("author"), dict) else ""
+        pos = first.get("position") if isinstance(first.get("position"), dict) else {}
+        threads.append({
+            "thread_id": str(disc.get("id") or f"glab-thread-{idx + 1}"),
+            "author": str(author or ""),
+            "file": str(pos.get("new_path") or pos.get("old_path") or ""),
+            "line": pos.get("new_line") or pos.get("old_line"),
+            "body": str(first.get("body") or "")[:2000],
+            "resolved": is_res,
+            "is_bot": False,
+        })
+    return {"reviews": reviews, "unresolved": unresolved, "resolved": resolved}, threads
+
+
+def _review_comments_glab(pr_url: str, cwd: str | None) -> dict:
+    """{reviews, unresolved, resolved} for a GitLab MR via discussions API."""
+    return _review_comments_glab_details(pr_url, cwd)[0]
+
+
+def fetch_pr_review_details(tool: str, pr_url: str,
+                            cwd: str | None = None) -> tuple[dict | None, list[dict]]:
+    """({reviews, unresolved, resolved} | None, threads) for a PR/MR URL.
+
+    Soft-failing like fetch_pr_comment_stats: (None, []) on any lookup error.
+    """
+    try:
+        if tool == "gh":
+            return _review_comments_gh_details(pr_url, cwd)
+        if tool == "glab":
+            return _review_comments_glab_details(pr_url, cwd)
+        raise HarnessError(f"unknown host CLI: {tool}")
+    except HarnessError as e:
+        print(f"warning: review-comment lookup failed for {pr_url}: {e}", file=sys.stderr)
+        return None, []
 
 
 def fetch_pr_comment_stats(tool: str, pr_url: str, cwd: str | None = None) -> dict | None:
@@ -146,12 +217,4 @@ def fetch_pr_comment_stats(tool: str, pr_url: str, cwd: str | None = None) -> di
     Soft-failing like fetch_ci_status: None on any lookup error (warning
     to stderr) so status rendering never breaks on an unhappy host CLI.
     """
-    try:
-        if tool == "gh":
-            return _review_comments_gh(pr_url, cwd)
-        if tool == "glab":
-            return _review_comments_glab(pr_url, cwd)
-        raise HarnessError(f"unknown host CLI: {tool}")
-    except HarnessError as e:
-        print(f"warning: review-comment lookup failed for {pr_url}: {e}", file=sys.stderr)
-        return None
+    return fetch_pr_review_details(tool, pr_url, cwd)[0]

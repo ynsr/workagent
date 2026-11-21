@@ -227,13 +227,42 @@ def _status_cells(key: str, entry: dict, refresh_pr: bool = False) -> dict:
     --refresh-pr.
     """
     cells = _pr_cells(entry, refresh_pr)
-    cells["ci"], cells["ci_url"] = _ci_cell(entry, cells, refresh_pr)
-    cells["reviews_detail"] = _reviews_cell(entry, cells, refresh_pr)
+    cells["ci"], cells["ci_url"] = _ci_cell(entry, cells, refresh_pr, key=key)
+    cells["reviews_detail"] = _reviews_cell(entry, cells, refresh_pr, key=key)
     cells["reviews"] = _fmt_reviews(cells["reviews_detail"])
     cells["issue_status"] = _issue_cell(key, entry, refresh_pr)
     cells["prodtest_detail"] = _prodtest_cell(entry)
     cells["prodtest"] = _fmt_prodtest(cells["prodtest_detail"])
+    cells["failing_checks"] = _failing_checks_cell(key)
+    cells["unresolved_threads"] = _unresolved_threads_cell(key, cells["reviews_detail"])
     return cells
+
+
+def _failing_checks_cell(key: str) -> list[str]:
+    """Names of currently failing normalized PR checks for *key*."""
+    if not key:
+        return []
+    try:
+        checks = store.list_pr_checks(key)
+    except Exception:
+        return []
+    from . import store_timeline
+    return store_timeline.failing_check_names(checks)
+
+
+def _unresolved_threads_cell(key: str, reviews_detail: dict | None) -> int:
+    """Count of unresolved review threads for *key*."""
+    if isinstance(reviews_detail, dict) and "unresolved" in reviews_detail:
+        try:
+            return int(reviews_detail.get("unresolved") or 0)
+        except (TypeError, ValueError):
+            pass
+    if not key:
+        return 0
+    try:
+        return len(store.list_pr_review_threads(key, unresolved_only=True))
+    except Exception:
+        return 0
 
 
 def _prodtest_cell(entry: dict) -> dict | None:
@@ -261,7 +290,7 @@ def _fmt_prodtest(item: dict | None) -> str:
     return str(item.get("status", "") or "-")
 
 
-def _ci_cell(entry: dict, cells: dict, refresh_pr: bool) -> tuple[str | None, str]:
+def _ci_cell(entry: dict, cells: dict, refresh_pr: bool, key: str = "") -> tuple[str | None, str]:
     """(status, job_url) for the resolved PR's latest CI pipeline.
 
     Status is success|failure|running|not_started; None when there is no PR
@@ -285,9 +314,39 @@ def _ci_cell(entry: dict, cells: dict, refresh_pr: bool) -> tuple[str | None, st
     url = pr["url"]
     tool = ((cached or {}).get("tool")
             or ("gh" if "github.com" in url else "glab"))
-    ci, ci_url = refs.fetch_ci(tool, url, entry.get("repo", ""))
+    from . import refs_ci as _refs_ci
+    if refs.fetch_ci is _refs_ci.fetch_ci:
+        ci, ci_url, checks = refs.fetch_ci_details(tool, url, entry.get("repo", ""))
+    else:
+        ci, ci_url = refs.fetch_ci(tool, url, entry.get("repo", ""))
+        checks = []
     if branch:
         store.cache_ci_status(branch, ci, sha=branch_tip or "", ci_url=ci_url, repo=repo)
+    if key and ci is not None:
+        try:
+            for c in checks:
+                if not c.get("commit_sha") and branch_tip:
+                    c["commit_sha"] = branch_tip
+            store.replace_pr_checks(key, checks)
+            prior_ci = (cached or {}).get("ci")
+            if ci != prior_ci and ci in ("failure", "success", "running"):
+                from . import store_timeline
+                ev_type = {"failure": "ci_failed", "success": "ci_passed", "running": "ci_running"}[ci]
+                failed_names = store_timeline.failing_check_names(checks)
+                if ci == "failure" and failed_names:
+                    summary = f"CI failed: {', '.join(failed_names[:3])}"
+                elif ci == "failure":
+                    summary = "CI failed"
+                elif ci == "success":
+                    summary = "CI passed"
+                else:
+                    summary = "CI running"
+                store.append_worktree_event(
+                    key, ev_type, summary,
+                    {"ci": ci, "prior_ci": prior_ci, "ci_url": ci_url, "failing_checks": failed_names},
+                )
+        except Exception:
+            pass
     return ci, ci_url
 
 def _reviews_usable(cached: dict) -> bool:
@@ -303,7 +362,7 @@ def _reviews_usable(cached: dict) -> bool:
     return age < timedelta(seconds=_ci_swr())
 
 
-def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool) -> dict | None:
+def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool, key: str = "") -> dict | None:
     """{reviews, unresolved, resolved} for the resolved PR (issue #28).
 
     None when there is no PR (no url) or the lookup failed (soft failure —
@@ -329,9 +388,34 @@ def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool) -> dict | None:
     url = pr["url"]
     tool = ((cached or {}).get("tool")
             or ("gh" if "github.com" in url else "glab"))
-    stats = refs.fetch_pr_comment_stats(tool, url, entry.get("repo", ""))
+    from . import refs_reviews as _refs_reviews
+    if refs.fetch_pr_comment_stats is _refs_reviews.fetch_pr_comment_stats:
+        stats, threads = refs.fetch_pr_review_details(tool, url, entry.get("repo", ""))
+    else:
+        stats = refs.fetch_pr_comment_stats(tool, url, entry.get("repo", ""))
+        threads = []
     if branch:
         store.cache_review_stats(branch, stats, sha=branch_tip or "", repo=repo)
+    if key and stats is not None:
+        try:
+            store.replace_pr_review_threads(key, threads)
+            prior_unres = int((cached or {}).get("unresolved") or 0)
+            new_unres = int(stats.get("unresolved") or 0)
+            if new_unres > prior_unres:
+                noun = "comment" if new_unres == 1 else "comments"
+                store.append_worktree_event(
+                    key, "review_comments_arrived",
+                    f"{new_unres} unresolved review {noun}",
+                    {"unresolved": new_unres, "prior_unresolved": prior_unres},
+                )
+            elif prior_unres > 0 and new_unres == 0:
+                store.append_worktree_event(
+                    key, "review_comments_resolved",
+                    "All review comments resolved",
+                    {"unresolved": 0, "prior_unresolved": prior_unres},
+                )
+        except Exception:
+            pass
     return stats
 
 def _issue_usable(cached: dict) -> bool:
@@ -459,7 +543,9 @@ def _enrich_entry(
            "prodtest_detail": cells["prodtest_detail"],
            "wt_valid": worktrees.is_valid_worktree(entry.get("worktree", "")),
            "commits_detail": cells["ab"], "pr_detail": cells["pr_data"],
-           "reviews_detail": cells["reviews_detail"]}
+           "reviews_detail": cells["reviews_detail"],
+           "failing_checks": cells["failing_checks"],
+           "unresolved_threads": cells["unresolved_threads"]}
     out.update(_delivery_status(key, out, active_runs=active_runs, active_flows=active_flows))
     return out
 
@@ -480,6 +566,8 @@ def _session_detail(
               "ci": cells["ci"], "ci_url": cells["ci_url"],
               "reviews": cells["reviews"],
               "reviews_detail": cells["reviews_detail"],
+              "failing_checks": cells["failing_checks"],
+              "unresolved_threads": cells["unresolved_threads"],
               "issue_status": cells["issue_status"],
               "prodtest": cells["prodtest"],
               "prodtest_detail": cells["prodtest_detail"],

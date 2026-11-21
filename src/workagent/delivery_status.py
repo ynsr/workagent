@@ -99,9 +99,16 @@ def derive_delivery_status(
 
     if pr_state not in ("merged", "closed"):
         if ci == "failure":
+            failing = [str(c).strip() for c in (entry.get("failing_checks") or []) if str(c).strip()]
+            if len(failing) == 1:
+                status_text = f"CI failed · {failing[0]}"
+            elif len(failing) > 1:
+                status_text = f"CI failed · {failing[0]} +{len(failing) - 1}"
+            else:
+                status_text = "CI failed"
             return {
                 "kanban_column": "needs_you",
-                "display_status": "CI failed",
+                "display_status": status_text,
                 "attention_reason": "ci_failed",
             }
 

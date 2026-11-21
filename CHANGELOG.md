@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Store normalized PR checks, review threads, and worktree feedback timeline events with inline Fix CI, Fix comments, and Cleanup actions [146]
 - Nest child runs under parent flow and batch runs in RunsTable and add a visual FlowStepper with inline Resume and Skip step controls [143]
 - Stream live database updates to the web UI over SSE via SQLite change-log triggers and relax background polling when connected [147]
 - Consolidate web sidebar from 15 links to 7 destinations and convert Launch pages into slide-over drawers with backward-compatible routes [135]

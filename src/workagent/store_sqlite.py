@@ -123,12 +123,44 @@ CREATE TABLE IF NOT EXISTS messages (
    released_at TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending',
    last_run_id TEXT NOT NULL DEFAULT '', worktree_ref TEXT NOT NULL DEFAULT '',
    run_results TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS change_log (
-   seq INTEGER PRIMARY KEY AUTOINCREMENT,
-   table_name TEXT NOT NULL,
-   row_key TEXT NOT NULL,
-   op TEXT NOT NULL,
-   created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS pr_checks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  worktree_ref TEXT NOT NULL REFERENCES worktrees(ref_key) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  commit_sha TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT '',
+  conclusion TEXT NOT NULL DEFAULT '',
+  url TEXT NOT NULL DEFAULT '',
+  log_tail TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_pr_checks_worktree ON pr_checks(worktree_ref);
+CREATE TABLE IF NOT EXISTS pr_review_threads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  worktree_ref TEXT NOT NULL REFERENCES worktrees(ref_key) ON DELETE CASCADE,
+  thread_id TEXT NOT NULL,
+  author TEXT NOT NULL DEFAULT '',
+  file TEXT NOT NULL DEFAULT '',
+  line INTEGER,
+  body TEXT NOT NULL DEFAULT '',
+  resolved INTEGER NOT NULL DEFAULT 0,
+  is_bot INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  UNIQUE (worktree_ref, thread_id));
+CREATE INDEX IF NOT EXISTS idx_pr_review_threads_worktree ON pr_review_threads(worktree_ref);
+CREATE TABLE IF NOT EXISTS worktree_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  worktree_ref TEXT NOT NULL REFERENCES worktrees(ref_key) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  details TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_worktree_events_worktree ON worktree_events(worktree_ref, created_at);
+CREATE TABLE IF NOT EXISTS change_log (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  table_name TEXT NOT NULL,
+  row_key TEXT NOT NULL,
+  op TEXT NOT NULL,
+  created_at REAL NOT NULL);
 """
 
 
@@ -1776,6 +1808,8 @@ def _schema_current(path: Path) -> bool:
         if mcols and "worktrees" not in mcols:
             return False
         if mcols and "related_repos" not in mcols:
+            return False
+        if not {"pr_checks", "pr_review_threads", "worktree_events"} <= tables:
             return False
         if "change_log" not in tables:
             return False

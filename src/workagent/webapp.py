@@ -285,6 +285,30 @@ def create_app(static_dir: Path, host: str, port: int,
             active_flows=flows_by_key.get(key, []),
         )
 
+    @app.get("/api/worktrees/{ref:path}/timeline")
+    def worktree_timeline(ref: str, limit: int = 100):
+        links = store.load_links(include_inactive=True, include_deleted=True)
+        resolved = worktrees.resolve_worktree(ref, links)
+        if resolved is None:
+            raise HTTPException(404, f"no linked state for {ref}")
+        key = worktrees.pick_worktree(ref, resolved, links)
+        checks = store.list_pr_checks(key)
+        threads = store.list_pr_review_threads(key)
+        events = store.list_worktree_events(key, limit=limit)
+        from . import store_timeline
+        failing_checks = store_timeline.failing_check_names(checks)
+        unresolved_threads = sum(1 for t in threads if not t.get("resolved"))
+        return {
+            "ref": key,
+            "checks": checks,
+            "threads": threads,
+            "events": events,
+            "summary": {
+                "failing_checks": failing_checks,
+                "unresolved_threads": unresolved_threads,
+            },
+        }
+
     @app.get("/api/info")
     def info() -> dict:
         return {"version": __version__, "host": host, "port": port,

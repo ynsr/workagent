@@ -10,6 +10,7 @@ export const queryKeys = {
   statusAll: ["status", "all"] as const,
   statusInactive: ["status", "inactive"] as const,
   statusDeleted: ["status", "deleted"] as const,
+  worktreeTimeline: (ref: string) => ["worktree", "timeline", ref] as const,
   path: (ref: string) => ["path", ref] as const,
   repos: ["repos"] as const,
   trackers: ["trackers"] as const,
@@ -95,6 +96,16 @@ export function useStatusDeleted() {
 
 export function useInfo() {
   return useQuery({ queryKey: queryKeys.info, queryFn: api.info, staleTime: 60_000 })
+}
+
+export function useWorktreeTimeline(ref: string | undefined, limit = 100) {
+  return useQuery({
+    queryKey: queryKeys.worktreeTimeline(ref ?? ""),
+    queryFn: () => api.worktreeTimeline(ref ?? "", limit),
+    enabled: !!ref,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+  })
 }
 export function useConfig() {
   return useQuery({ queryKey: queryKeys.config, queryFn: api.config, staleTime: 60_000 })

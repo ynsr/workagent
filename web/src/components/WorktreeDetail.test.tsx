@@ -21,7 +21,12 @@ vi.mock("@/lib/queries", () => ({
   queryKeys: { runs: ["runs"], harnessOptions: (name: string) => ["harnesses", "options", name] },
   useActions: () => ({ data: { actions: [] } }),
   useConfig: () => ({ data: mockConfig }),
-  useCreateRun: () => ({ mutateAsync: vi.fn() }),
+  useCreateRun: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
+  useWorktreeTimeline: () => ({
+    data: { ref: "jira:IPG-1", checks: [], threads: [], events: [], summary: { failing_checks: [], unresolved_threads: 0 } },
+    isLoading: false,
+    isError: false,
+  }),
 }))
 
 const ENTRY: WorktreeEntry = {

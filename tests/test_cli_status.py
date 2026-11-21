@@ -516,3 +516,79 @@ def test_status_cells_failed_issue_lookup_preserves_cache(isolated_config, tmp_p
     c2 = cli_status._status_cells("github:o/r#23", entry, refresh_pr=True)
     assert c2["issue_status"] == "in progress"
     assert len(fetches) == 2
+
+
+def test_ci_and_review_cells_emit_worktree_events(isolated_config, tmp_path, monkeypatch):
+    """CI and review state transitions persist normalized rows and emit worktree_events."""
+    from workagent import cli_status, refs, store, store_sqlite
+
+    store_sqlite.init_db(isolated_config / "state.db")
+    wt_dir = tmp_path / "wt"
+    wt_dir.mkdir()
+    key = "github:o/r#151"
+    entry = {"worktree": str(wt_dir), "branch": "feat/151", "repo": "/repo"}
+    store.record_link(key, entry)
+    cells = {"pr_data": {"url": "https://github.com/o/r/pull/151"}, "_tip": "abc123"}
+
+    # 1. CI fails with a check that has status=="failed" (empty conclusion)
+    monkeypatch.setattr(
+        refs,
+        "fetch_ci_details",
+        lambda tool, url, repo: (
+            "failure",
+            "https://ci/1",
+            [{"name": "unit-tests", "status": "failed", "conclusion": "", "url": "https://ci/1"}],
+        ),
+    )
+    ci, ci_url = cli_status._ci_cell(entry, cells, refresh_pr=True, key=key)
+    assert ci == "failure" and ci_url == "https://ci/1"
+    events = store.list_worktree_events(key)
+    assert any(
+        e["event_type"] == "ci_failed"
+        and e["summary"] == "CI failed: unit-tests"
+        and e["details"]["failing_checks"] == ["unit-tests"]
+        for e in events
+    )
+
+    # 2. CI transitions to passed
+    monkeypatch.setattr(
+        refs,
+        "fetch_ci_details",
+        lambda tool, url, repo: (
+            "success",
+            "https://ci/2",
+            [{"name": "unit-tests", "status": "completed", "conclusion": "success", "url": "https://ci/2"}],
+        ),
+    )
+    cli_status._ci_cell(entry, cells, refresh_pr=True, key=key)
+    events = store.list_worktree_events(key)
+    assert any(e["event_type"] == "ci_passed" for e in events)
+
+    # 3. Unresolved review comments arrive, then resolve
+    monkeypatch.setattr(
+        refs,
+        "fetch_pr_review_details",
+        lambda tool, url, repo: (
+            {"reviews": 1, "unresolved": 2, "resolved": 0},
+            [
+                {"thread_id": "t1", "author": "alice", "body": "fix 1", "resolved": False},
+                {"thread_id": "t2", "author": "bob", "body": "fix 2", "resolved": False},
+            ],
+        ),
+    )
+    cli_status._reviews_cell(entry, cells, refresh_pr=True, key=key)
+    monkeypatch.setattr(
+        refs,
+        "fetch_pr_review_details",
+        lambda tool, url, repo: (
+            {"reviews": 1, "unresolved": 0, "resolved": 2},
+            [
+                {"thread_id": "t1", "author": "alice", "body": "fix 1", "resolved": True},
+                {"thread_id": "t2", "author": "bob", "body": "fix 2", "resolved": True},
+            ],
+        ),
+    )
+    cli_status._reviews_cell(entry, cells, refresh_pr=True, key=key)
+    ev_types = [e["event_type"] for e in store.list_worktree_events(key)]
+    assert "review_comments_arrived" in ev_types
+    assert "review_comments_resolved" in ev_types

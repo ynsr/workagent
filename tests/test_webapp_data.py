@@ -724,6 +724,48 @@ def test_api_message_detail_ambiguous_is_404(client):
     assert client.get("/api/messages/abc").status_code == 404
 
 
+def test_api_worktree_timeline_and_status_fields(client, tmp_path):
+    """T09.3: GET /api/worktrees/{ref}/timeline returns checks, threads, events & summary."""
+    from workagent import store_sqlite as sq
+    from workagent import store_timeline as tl
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt_dir = tmp_path / "wt-146"
+    wt_dir.mkdir()
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO worktrees (ref_key, path, branch, added_at, payload)"
+            " VALUES ('jira:IPG-146', ?, 'feat/146', '2026-01-01', '{}')",
+            (str(wt_dir),),
+        )
+    tl.replace_pr_checks(db, "jira:IPG-146", [
+        {"name": "pytest", "commit_sha": "abc", "status": "completed",
+         "conclusion": "failure", "url": "https://ci/1", "log_tail": "AssertionError"},
+        {"name": "lint", "commit_sha": "abc", "status": "completed",
+         "conclusion": "success", "url": "https://ci/2", "log_tail": ""},
+    ])
+    tl.replace_pr_review_threads(db, "jira:IPG-146", [
+        {"thread_id": "t1", "author": "alice", "file": "src/a.py", "line": 42,
+         "body": "Handle empty list", "resolved": False, "is_bot": False},
+        {"thread_id": "t2", "author": "bot", "file": "", "line": None,
+         "body": "# Code Review\nStatus: RESOLVED", "resolved": True, "is_bot": True},
+    ])
+    tl.append_worktree_event(db, "jira:IPG-146", "ci_failed", "CI failed: pytest", {"failing_checks": ["pytest"]})
+
+    r = client.get("/api/worktrees/jira:IPG-146/timeline")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ref"] == "jira:IPG-146"
+    assert len(body["checks"]) == 2
+    assert len(body["threads"]) == 2
+    assert len(body["events"]) == 1
+    assert body["summary"] == {"failing_checks": ["pytest"], "unresolved_threads": 1}
+
+    miss = client.get("/api/worktrees/missing-ref/timeline")
+    assert miss.status_code == 404
+
+
 def test_api_worktree_files_and_diff(client, tmp_path, monkeypatch):
     """GET /api/worktrees/{ref}/files and /diff return structured diffs and guard traversal."""
     import subprocess

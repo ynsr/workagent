@@ -262,3 +262,45 @@ def test_link_purge_orphans_cli_deletes_rows_and_transcripts(isolated_config):
     assert not transcript.parent.exists()  # emptied branch dirs pruned
     with sq.connect(db) as conn:
         assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
+
+
+def test_hard_delete_cascades_pr_checks_threads_and_events(tmp_path):
+    """T09.1: ON DELETE CASCADE cleans pr_checks, pr_review_threads, worktree_events."""
+    from workagent import store_links as sl
+    from workagent import store_timeline as tl
+
+    db = tmp_path / "state.db"
+    sq = _init(db)
+    _seed_link(db, "wt-a")
+    _seed_link(db, "wt-b")
+
+    assert tl.replace_pr_checks(db, "wt-a", [
+        {"name": "pytest", "commit_sha": "abc", "status": "completed",
+         "conclusion": "failure", "url": "https://ci/1", "log_tail": "AssertionError"},
+    ]) == 1
+    assert tl.replace_pr_checks(db, "wt-b", [
+        {"name": "lint", "commit_sha": "def", "status": "completed",
+         "conclusion": "success", "url": "https://ci/2", "log_tail": ""},
+    ]) == 1
+    assert tl.replace_pr_review_threads(db, "wt-a", [
+        {"thread_id": "t1", "author": "alice", "file": "a.py", "line": 12,
+         "body": "Fix null check", "resolved": False, "is_bot": False},
+    ]) == 1
+    assert tl.replace_pr_review_threads(db, "wt-b", [
+        {"thread_id": "t2", "author": "bob", "file": "b.py", "line": 3,
+         "body": "Looks good", "resolved": True, "is_bot": False},
+    ]) == 1
+    assert tl.append_worktree_event(db, "wt-a", "ci_failed", "pytest failed", {"check": "pytest"}) is not None
+    assert tl.append_worktree_event(db, "wt-b", "ci_passed", "lint passed") is not None
+
+    sl.delete_worktree_row(db, "wt-a")
+
+    assert tl.list_pr_checks(db, "wt-a") == []
+    assert tl.list_pr_review_threads(db, "wt-a") == []
+    assert tl.list_worktree_events(db, "wt-a") == []
+
+    # Unrelated worktree rows remain intact.
+    assert len(tl.list_pr_checks(db, "wt-b")) == 1
+    assert len(tl.list_pr_review_threads(db, "wt-b")) == 1
+    assert len(tl.list_worktree_events(db, "wt-b")) == 1
+

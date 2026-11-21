@@ -236,3 +236,31 @@ def test_merged_and_closed_prs_ignore_ci_failure_and_unresolved_comments():
         "display_status": "PR closed",
         "attention_reason": None,
     }
+
+
+def test_ci_failed_formats_failing_check_names():
+    single = derive_delivery_status(
+        {
+            "pr_detail": {"state": "open"},
+            "ci": "failure",
+            "failing_checks": ["pytest"],
+        }
+    )
+    assert single == {
+        "kanban_column": "needs_you",
+        "display_status": "CI failed · pytest",
+        "attention_reason": "ci_failed",
+    }
+
+    multiple = derive_delivery_status(
+        {
+            "pr_detail": {"state": "open"},
+            "ci": "failure",
+            "failing_checks": ["pytest", "lint", "typecheck"],
+        }
+    )
+    assert multiple == {
+        "kanban_column": "needs_you",
+        "display_status": "CI failed · pytest +2",
+        "attention_reason": "ci_failed",
+    }

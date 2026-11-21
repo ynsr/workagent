@@ -1011,3 +1011,68 @@ def gc_blocked_by_prodtest(key: str) -> bool:
         return bool(_sq.gc_blocked_by_prodtest(_sq.db_path(), key))
     except Exception:
         return False
+
+
+def replace_pr_checks(worktree_ref: str, checks: list[dict]) -> int:
+    """Replace normalized PR check rows for *worktree_ref*."""
+    db = _sqlite_path()
+    if db is None:
+        return 0
+    from . import store_timeline as _tl
+    return _tl.replace_pr_checks(db, worktree_ref, checks)
+
+
+def list_pr_checks(worktree_ref: str) -> list[dict]:
+    """List normalized PR check rows for *worktree_ref*."""
+    db = _sqlite_path()
+    if db is None:
+        return []
+    from . import store_timeline as _tl
+    return _tl.list_pr_checks(db, worktree_ref)
+
+
+def replace_pr_review_threads(worktree_ref: str, threads: list[dict]) -> int:
+    """Replace normalized PR review thread rows for *worktree_ref*."""
+    db = _sqlite_path()
+    if db is None:
+        return 0
+    from . import store_timeline as _tl
+    return _tl.replace_pr_review_threads(db, worktree_ref, threads)
+
+
+def list_pr_review_threads(worktree_ref: str, *, unresolved_only: bool = False) -> list[dict]:
+    """List normalized PR review thread rows for *worktree_ref*."""
+    db = _sqlite_path()
+    if db is None:
+        return []
+    from . import store_timeline as _tl
+    return _tl.list_pr_review_threads(
+        db, worktree_ref, unresolved_only=unresolved_only
+    )
+
+
+def append_worktree_event(
+    worktree_ref: str,
+    event_type: str,
+    summary: str = "",
+    details: dict | None = None,
+    created_at: str | None = None,
+) -> int | None:
+    """Append a chronological event for *worktree_ref*."""
+    db = _sqlite_path()
+    if db is None:
+        return None
+    from . import store_timeline as _tl
+    return _tl.append_worktree_event(
+        db, worktree_ref, event_type, summary, details, created_at
+    )
+
+
+def list_worktree_events(worktree_ref: str, *, limit: int = 100) -> list[dict]:
+    """List chronological events for *worktree_ref* (oldest->newest)."""
+    db = _sqlite_path()
+    if db is None:
+        return []
+    from . import store_timeline as _tl
+    return _tl.list_worktree_events(db, worktree_ref, limit=limit)
+
