@@ -533,7 +533,10 @@ class AcpHarness(Harness, abc.ABC):
                    session_file: str | None = None,
                    input_stream=None,
                    no_tty: bool = False,
-                   on_event: Callable[[dict], None] | None = None) -> int:
+                   on_event: Callable[[dict], None] | None = None,
+                   resume_session_id: str | None = None,
+                   resume_context: str | None = None,
+                   on_session_id: Callable[[str], None] | None = None) -> int:
         """Run one ACP session to end_turn; stream `ACP:` events to stdout.
 
         Input channel: `WORKAGENT_RUN_DIR/input.jsonl` tail when set, else
@@ -577,31 +580,57 @@ class AcpHarness(Harness, abc.ABC):
 
         try:
             try:
-                client.request("initialize", {"protocolVersion": 1})
+                init_res = client.request("initialize", {"protocolVersion": 1})
             except HarnessError as e:
                 raise HarnessError(_with_stderr(f"{self.name} ACP init failed: {e}"))
+            caps = (init_res.get("agentCapabilities") or {}) if isinstance(init_res, dict) else {}
+            can_load = bool(caps.get("loadSession")) if isinstance(caps, dict) else False
             auth = self.authenticate_method()
             if auth:
                 try:
                     client.request("authenticate", {"methodId": auth})
                 except HarnessError as e:
                     raise HarnessError(_with_stderr(f"{self.name} ACP auth failed: {e}"))
-            try:
-                new = client.request("session/new", {"cwd": workdir or None, "mcpServers": []})
-            except HarnessError as e:
-                raise HarnessError(_with_stderr(f"{self.name} ACP session/new failed: {e}"))
-            new = new if isinstance(new, dict) else {}
-            sid = str(new.get("sessionId") or "")
+            resumed = False
+            session_info: dict = {}
+            sid = ""
+            effective_prompt = prompt
+            if resume_session_id and can_load:
+                try:
+                    loaded = client.request(
+                        "session/load",
+                        {"sessionId": resume_session_id, "cwd": workdir or None, "mcpServers": []},
+                    )
+                    session_info = loaded if isinstance(loaded, dict) else {}
+                    sid = str(session_info.get("sessionId") or resume_session_id)
+                    resumed = True
+                except HarnessError as e:
+                    print(f"warning: {self.name} ACP session/load failed ({e}); "
+                          f"falling back to session/new", file=sys.stderr)
             if not sid:
-                raise HarnessError(f"{self.name} ACP session/new returned no sessionId")
+                try:
+                    new = client.request("session/new", {"cwd": workdir or None, "mcpServers": []})
+                except HarnessError as e:
+                    raise HarnessError(_with_stderr(f"{self.name} ACP session/new failed: {e}"))
+                session_info = new if isinstance(new, dict) else {}
+                sid = str(session_info.get("sessionId") or "")
+                if not sid:
+                    raise HarnessError(f"{self.name} ACP session/new returned no sessionId")
+                if resume_context and not resumed:
+                    effective_prompt = f"{resume_context.strip()}\n\n{prompt}"
+            if on_session_id is not None:
+                try:
+                    on_session_id(sid)
+                except Exception:
+                    pass
             known: HarnessOptions | None = None
             try:
-                known = self.parse_options(new)
+                known = self.parse_options(session_info)
             except Exception:
                 known = None
             self._apply_model_effort(client, sid, model, effort, known)
             client.request("session/prompt",
-                           {"sessionId": sid, "prompt": [{"type": "text", "text": prompt}]})
+                           {"sessionId": sid, "prompt": [{"type": "text", "text": effective_prompt}]})
             idx = 0
             while True:
                 pending = None
