@@ -49,9 +49,10 @@ def current_prodtest_diff(repo_dir: str, default_branch: str) -> str:
         return ""
     script = Path(__file__).parent / "prodtest_files" / "diff_hash.sh"
     try:
+        from . import env as _env
         proc = subprocess.run(["bash", str(script), default_branch or "main"],
                               cwd=repo_dir, capture_output=True,
-                              text=True, timeout=60)
+                              text=True, timeout=60, env=_env.merged_env())
     except Exception:
         return ""
     return (proc.stdout or "").strip() if proc.returncode == 0 else ""

@@ -833,7 +833,7 @@ def _resume_shell_command(worktree: str, session_file: str,
     argv = harness.resume_argv(session_file, metadata=metadata)
     harness_cmd = " ".join(shlex.quote(a) for a in argv)
     cmd = f"cd {shlex.quote(worktree)} && {harness_cmd}"
-    resolved = _env.resolve_env_file(env_file)
+    resolved = _env.ensure_env_file(env_file)
     return _env.wrap_command(cmd, resolved)
 
 

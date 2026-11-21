@@ -405,7 +405,7 @@ def _open_terminal_watch(worktree: str, session_file: str, run_id: int | None,
         scope, model=model, effort=effort)
     harness_cmd = " ".join(_shlex.quote(a) for a in harness_argv)
     full_cmd = _env.wrap_command(f"cd {_shlex.quote(worktree)} && {harness_cmd}",
-                                 _env.resolve_env_file(env_file))
+                                 _env.ensure_env_file(env_file))
     if not run_id:
         return _spawn_term(full_cmd, worktree)
     shim_argv = [sys.executable, "-m", "workagent", "watch-and-exec",
@@ -787,6 +787,9 @@ def register_runs_routes(app, registry) -> None:
         if not cmd:
             raise ApiError("no_harness_command",
                            f"run {run_id} logged no harness command", 404)
+        from . import env as _env
+        if not cmd.lstrip().startswith("source "):
+            cmd = _env.wrap_command(cmd, _env.ensure_env_file())
         if (blocker := _live_terminal_blocker(worktree, ref_key)) is not None:
             raise ApiError("conflict", _conflict_msg(worktree, blocker), 409)
         from . import store as _store

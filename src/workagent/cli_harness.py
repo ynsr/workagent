@@ -388,7 +388,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             # worktree; the printed harness command is theirs to run.
             backend.cd_worktree(worktree or fallback_dir)
             shell = os.environ.get("SHELL") or "/bin/sh"
-            os.execvp(shell, [shell])
+            os.execvpe(shell, [shell], _env.merged_env(env_path))
         return
     run_id: int | None = None
     db = _sq.db_path()
