@@ -60,6 +60,7 @@ from .web_args import (  # noqa: F401
     _build_argv,
     _first_positional,
     _has_session_file,
+    _needs_confirm,
     _session_file_arg,
     _session_file_for,
     _sub_of,
@@ -166,12 +167,46 @@ class WatcherOverrideIn(BaseModel):
     auto_fix_reviews: bool | None = None
 
 
+def _schedule_dispatcher(registry: Registry):  # type: ignore[valid-type]
+    """Build a scheduler dispatcher that launches runs through the run registry.
+
+    Unlike scheduler._default_dispatcher (detached Popen used by the CLI),
+    serve-loop dispatches create a registry Run so they appear in /api/runs
+    with logs and failure state. Returns run.db_run_id (None when the row
+    insert was skipped).
+    """
+    def _dispatch(schedule: dict, argv: list[str]) -> int | None:
+        from . import scheduler as _sched
+        from .web_runs import _spawn as _spawn_run
+        cmd, rest = argv[0], argv[1:]
+        if cmd not in SPECS:
+            return _sched._default_dispatcher(schedule, argv)
+        _validate_args(cmd, rest)
+        target = _target_for(cmd, rest)
+        run = registry.create(cmd, rest, target)
+        full_argv = _build_argv(cmd, rest)
+        if "--dry-run" not in rest:
+            _sync_yes = {"--yes", "-y", "--force"}
+            _has_yes = ("--yes" in rest or (cmd == "sync"
+                                            and not _sync_yes.isdisjoint(rest)))
+            if not _has_yes and cmd in ("start", "review", "cleanup", "sync",
+                                        "release"):
+                full_argv = [*full_argv, "--yes"]
+        run.argv = full_argv
+        if cmd in ("start", "review", "sync"):
+            run.worktree = _worktree_for_target(target) or ""
+        _spawn_run(run, registry)
+        return run.db_run_id or None
+    return _dispatch
+
+
 def create_app(static_dir: Path, host: str, port: int,
                allowed_hosts: list[str],
                enable_watcher: bool | None = None,
                watch_interval: float = 60.0) -> FastAPI:
     from .cdc import CdcHub
     from . import watcher as _watcher
+    from .scheduler import SchedulerLoop
 
     cdc_hub = CdcHub()
     if enable_watcher is None:
@@ -180,10 +215,12 @@ def create_app(static_dir: Path, host: str, port: int,
         )
     else:
         watch_enabled = bool(enable_watcher)
+    scheduler_loop = SchedulerLoop()
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
         cdc_hub.start()
+        scheduler_loop.start()
         watcher_stop: asyncio.Event | None = None
         watcher_task: asyncio.Task | None = None
         if watch_enabled:
@@ -195,6 +232,7 @@ def create_app(static_dir: Path, host: str, port: int,
         try:
             yield
         finally:
+            scheduler_loop.stop()
             if watcher_stop is not None:
                 watcher_stop.set()
             if watcher_task is not None:
@@ -207,6 +245,7 @@ def create_app(static_dir: Path, host: str, port: int,
 
     app = FastAPI(title="workagent", docs_url=None, redoc_url=None, lifespan=_lifespan)
     registry = Registry()
+    scheduler_loop._dispatcher = _schedule_dispatcher(registry)
     try:
         from .web_runs import rehydrate as _rehydrate
         _rehydrate(registry)
@@ -578,6 +617,169 @@ def create_app(static_dir: Path, host: str, port: int,
     def flows_list(worktree: str = "") -> dict:
         """Flow runs, optionally scoped to one worktree. Always 200."""
         return {"flows": store.list_flows(worktree=worktree)}
+
+    @app.get("/api/schedules")
+    def schedules_list() -> dict:
+        """All recurring schedules plus built-in starter templates. Always 200."""
+        from . import scheduler as _sched
+        from . import store_sqlite as _sq
+        return {
+            "schedules": _sq.list_schedules(_sq.db_path()),
+            "starters": _sched.STARTER_TEMPLATES,
+        }
+
+    @app.post("/api/schedules/preview")
+    def schedules_preview(payload: dict) -> dict:
+        """Preview the next N run timestamps for a cron/RRULE expression."""
+        from . import scheduler as _sched
+        expr = str(payload.get("cron_expr") or "").strip() if isinstance(payload, dict) else ""
+        tz_name = str(payload.get("timezone") or "UTC").strip() if isinstance(payload, dict) else "UTC"
+        count = int(payload.get("count") or 5) if isinstance(payload, dict) else 5
+        try:
+            runs = _sched.preview_next_runs(expr, tz_name, count=count)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"cron_expr": expr, "timezone": tz_name, "next_runs": runs}
+
+    @app.get("/api/schedules/{schedule_id}")
+    def schedule_detail(schedule_id: str) -> dict:
+        """One schedule by id or name; 404 when unknown."""
+        from . import store_sqlite as _sq
+        row = _sq.get_schedule(_sq.db_path(), schedule_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"unknown schedule: {schedule_id!r}")
+        return row
+
+    @app.post("/api/schedules")
+    def schedule_create(payload: dict) -> dict:
+        """Create a new recurring schedule."""
+        from . import scheduler as _sched
+        from . import store_sqlite as _sq
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="payload must be an object")
+        name = str(payload.get("name") or "").strip()
+        cron_expr = str(payload.get("cron_expr") or "").strip()
+        tz_name = str(payload.get("timezone") or "UTC").strip() or "UTC"
+        target_kind = str(payload.get("target_kind") or "").strip()
+        target_label = str(payload.get("target_label") or "").strip()
+        args_json = payload.get("args_json", "{}")
+        enabled = bool(payload.get("enabled", True))
+        try:
+            nxt = _sched.next_run_after(cron_expr, tz_name).isoformat()
+            row = _sq.add_schedule(
+                _sq.db_path(),
+                name=name,
+                cron_expr=cron_expr,
+                timezone_name=tz_name,
+                target_kind=target_kind,
+                target_label=target_label,
+                args_json=args_json,
+                enabled=enabled,
+                next_run_at=nxt,
+            )
+        except (ValueError, json.JSONDecodeError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return row
+
+    @app.patch("/api/schedules/{schedule_id}")
+    def schedule_patch(schedule_id: str, payload: dict) -> dict:
+        """Update an existing schedule."""
+        from . import scheduler as _sched
+        from . import store_sqlite as _sq
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="payload must be an object")
+        db = _sq.db_path()
+        existing = _sq.get_schedule(db, schedule_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"unknown schedule: {schedule_id!r}")
+        eff_cron = str(payload["cron_expr"]).strip() if "cron_expr" in payload and payload["cron_expr"] is not None else existing["cron_expr"]
+        eff_tz = str(payload["timezone"]).strip() if "timezone" in payload and payload["timezone"] is not None else existing["timezone"]
+        next_run_at: str | None = None
+        if "cron_expr" in payload or "timezone" in payload or (payload.get("enabled") is True and not existing.get("next_run_at")):
+            try:
+                next_run_at = _sched.next_run_after(eff_cron, eff_tz).isoformat()
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+        try:
+            row = _sq.update_schedule(
+                db,
+                existing["id"],
+                name=payload.get("name"),
+                cron_expr=payload.get("cron_expr"),
+                timezone=payload.get("timezone"),
+                target_kind=payload.get("target_kind"),
+                target_label=payload.get("target_label"),
+                args_json=payload.get("args_json"),
+                enabled=payload.get("enabled"),
+                next_run_at=next_run_at,
+            )
+        except (ValueError, json.JSONDecodeError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return row
+
+    @app.delete("/api/schedules/{schedule_id}")
+    def schedule_delete(schedule_id: str) -> dict:
+        """Delete a schedule by id or name; 404 when unknown."""
+        from . import store_sqlite as _sq
+        if not _sq.remove_schedule(_sq.db_path(), schedule_id):
+            raise HTTPException(status_code=404, detail=f"unknown schedule: {schedule_id!r}")
+        return {"removed": True, "id": schedule_id}
+
+    @app.post("/api/schedules/{schedule_id}/run")
+    def schedule_run_now(schedule_id: str, payload: dict | None = None) -> dict:
+        """Trigger a schedule immediately via the run registry.
+
+        Destructive targets (cleanup --merged, review --all --fix, sync,
+        start, release, ...) require {"confirm": true} — the same gate as
+        POST /api/runs — so a stored schedule cannot be fired by a bodyless
+        CSRF-able POST.
+        """
+        from datetime import datetime, timezone
+        from . import scheduler as _sched
+        from . import store_sqlite as _sq
+        from .web_runs import _spawn as _spawn_run
+        db = _sq.db_path()
+        row = _sq.get_schedule(db, schedule_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"unknown schedule: {schedule_id!r}")
+        argv = _sched.build_schedule_argv(row)
+        if not argv:
+            raise HTTPException(status_code=400, detail="schedule produced empty command")
+        cmd, rest = argv[0], argv[1:]
+        confirmed = bool(isinstance(payload, dict) and payload.get("confirm"))
+        if cmd in SPECS and _needs_confirm(cmd, rest) and not confirmed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{cmd} is destructive \u2014 pass confirm: true")
+        now_dt = datetime.now(timezone.utc)
+        run_id: int | None = None
+        if cmd in SPECS:
+            _validate_args(cmd, rest)
+            target = _target_for(cmd, rest)
+            run = registry.create(cmd, rest, target)
+            full_argv = _build_argv(cmd, rest)
+            _sync_yes = {"--yes", "-y", "--force"}
+            _has_yes = ("--yes" in rest or (cmd == "sync"
+                                            and not _sync_yes.isdisjoint(rest)))
+            if confirmed and "--dry-run" not in rest and not _has_yes \
+                    and cmd in ("start", "review", "cleanup", "sync", "release"):
+                full_argv = [*full_argv, "--yes"]
+            run.argv = full_argv
+            if cmd in ("start", "review", "sync"):
+                run.worktree = _worktree_for_target(target) or ""
+            _spawn_run(run, registry)
+            run_id = run.db_run_id or None
+        else:
+            _sched._default_dispatcher(row, argv)
+        nxt = _sched.next_run_after(row["cron_expr"], row["timezone"], after=now_dt).isoformat()
+        updated = _sq.record_schedule_run(
+            db,
+            row["id"],
+            last_run_at=now_dt.isoformat(),
+            next_run_at=nxt,
+            last_run_id=run_id,
+        )
+        return {"schedule": updated, "argv": argv, "run_id": run_id}
 
     @app.get("/api/tracker-domains")
     def tracker_domains() -> dict:

@@ -65,7 +65,15 @@ CREATE TABLE IF NOT EXISTS runs (
   state TEXT NOT NULL DEFAULT 'finished',
   continued_from_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
   parent_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
-  step_index INTEGER);
+  step_index INTEGER,
+  finished_at TEXT NOT NULL DEFAULT '',
+  duration_ms INTEGER,
+  model_id TEXT NOT NULL DEFAULT '',
+  effort TEXT NOT NULL DEFAULT '',
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  cached_tokens INTEGER,
+  cost_usd REAL);
 CREATE TABLE IF NOT EXISTS issue_cache (
   source TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL,
   fetched_at TEXT NOT NULL);
@@ -163,6 +171,22 @@ CREATE TABLE IF NOT EXISTS change_log (
   row_key TEXT NOT NULL,
   op TEXT NOT NULL,
   created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS schedules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL,
+  cron_expr TEXT NOT NULL,
+  timezone TEXT NOT NULL DEFAULT 'UTC',
+  target_kind TEXT NOT NULL,
+  target_label TEXT NOT NULL,
+  args_json TEXT NOT NULL DEFAULT '{}',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_run_at TEXT NOT NULL DEFAULT '',
+  next_run_at TEXT NOT NULL DEFAULT '',
+  last_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+  lease_until TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  modified_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at);
 """
 
 
@@ -265,6 +289,29 @@ def _migrate_runs_parent(conn) -> None:
         conn.execute("ALTER TABLE runs ADD COLUMN step_index INTEGER")
 
 
+def _migrate_runs_telemetry(conn) -> None:
+    """Schema v28: runs gains finished_at, duration_ms, model_id, effort,
+    input_tokens, output_tokens, cached_tokens, and cost_usd (run telemetry).
+
+    All columns are nullable or have safe defaults, so ALTER TABLE is idempotent.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+    if not cols:
+        return
+    for name, decl in (
+        ("finished_at", "TEXT NOT NULL DEFAULT ''"),
+        ("duration_ms", "INTEGER"),
+        ("model_id", "TEXT NOT NULL DEFAULT ''"),
+        ("effort", "TEXT NOT NULL DEFAULT ''"),
+        ("input_tokens", "INTEGER"),
+        ("output_tokens", "INTEGER"),
+        ("cached_tokens", "INTEGER"),
+        ("cost_usd", "REAL"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {name} {decl}")
+
+
 def _migrate_display_cols(conn) -> None:
     """Schema v18: flow_templates/custom_actions gain protected/sort_order/
     dedicated_top_bar/dedicated_overlay (management-table display flags).
@@ -353,6 +400,7 @@ CDC_TABLES: tuple[tuple[str, str], ...] = (
     ("messages", "message_id"),
     ("pr_cache", "branch"),
     ("prodtest_items", "issue_key"),
+    ("schedules", "id"),
 )
 
 _CDC_TRIGGER_NAMES: frozenset[str] = frozenset(
@@ -360,6 +408,30 @@ _CDC_TRIGGER_NAMES: frozenset[str] = frozenset(
     for table, _ in CDC_TABLES
     for op in ("insert", "update", "delete")
 )
+
+
+def _migrate_schedules(conn) -> None:
+    """Schema v29: recurring schedules table for flows, actions, and commands."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schedules ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "name TEXT UNIQUE NOT NULL, "
+        "cron_expr TEXT NOT NULL, "
+        "timezone TEXT NOT NULL DEFAULT 'UTC', "
+        "target_kind TEXT NOT NULL, "
+        "target_label TEXT NOT NULL, "
+        "args_json TEXT NOT NULL DEFAULT '{}', "
+        "enabled INTEGER NOT NULL DEFAULT 1, "
+        "last_run_at TEXT NOT NULL DEFAULT '', "
+        "next_run_at TEXT NOT NULL DEFAULT '', "
+        "last_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL, "
+        "lease_until TEXT NOT NULL DEFAULT '', "
+        "created_at TEXT NOT NULL, "
+        "modified_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at)"
+    )
 
 
 def _migrate_change_log(conn) -> None:
@@ -1259,7 +1331,15 @@ def insert_run(path: Path, command: str, args: list[str],
                output: list[str] | None = None,
                truncated: bool = False,
                validation: dict | None = None,
-               flow_id: int | None = None) -> int:
+               flow_id: int | None = None,
+               finished_at: str = "",
+               duration_ms: int | None = None,
+               model_id: str = "",
+               effort: str = "",
+               input_tokens: int | None = None,
+               output_tokens: int | None = None,
+               cached_tokens: int | None = None,
+               cost_usd: float | None = None) -> int:
     """Insert one execution row; returns its id.
 
     A run owns its transcript identity (``worktree_ref``, harness,
@@ -1307,13 +1387,17 @@ def insert_run(path: Path, command: str, args: list[str],
              "output", "truncated", "validation", "worktree_ref",
              "harness_name", "initiator_command", "prompt", "file_path",
              "session_type", "metadata", "state", "continued_from_run_id",
-             "parent_run_id", "step_index"]
+             "parent_run_id", "step_index",
+             "finished_at", "duration_ms", "model_id", "effort",
+             "input_tokens", "output_tokens", "cached_tokens", "cost_usd"]
     vals: list = [command, json.dumps(args), exit_code, created,
                   "\n".join(lines), 1 if truncated else 0,
                   json.dumps(validation or {}), worktree_ref or None,
                   harness_name, initiator_command, prompt, file_path,
                   session_type, json.dumps(metadata or {}), state,
-                  continued_from_run_id, parent_run_id, step_index]
+                  continued_from_run_id, parent_run_id, step_index,
+                  finished_at or "", duration_ms, model_id or "", effort or "",
+                  input_tokens, output_tokens, cached_tokens, cost_usd]
     with connect(path) as conn:
         if env_parent and parent_run_id is not None:
             if conn.execute("SELECT 1 FROM runs WHERE id = ?",
@@ -1352,12 +1436,56 @@ def get_run(path: Path, run_id: int,
     return _run_dict(row) if row is not None else None
 
 
-def finish_run(path: Path, run_id: int, state: str) -> None:
-    """Set a run's terminal state (finished/failed/preview)."""
+def finish_run(path: Path, run_id: int, state: str, *,
+               duration_ms: int | None = None,
+               model_id: str | None = None,
+               effort: str | None = None,
+               input_tokens: int | None = None,
+               output_tokens: int | None = None,
+               cached_tokens: int | None = None,
+               cost_usd: float | None = None) -> None:
+    """Set a run's terminal state (finished/failed/preview) and optional telemetry."""
     if state not in ("finished", "failed", "preview"):
         raise ValueError(f"unknown run state: {state!r}")
+    now = datetime.now(timezone.utc)
+    finished_iso = now.isoformat()
     with connect(path) as conn:
-        conn.execute("UPDATE runs SET state = ? WHERE id = ?", (state, run_id))
+        if duration_ms is None:
+            row = conn.execute("SELECT created_at FROM runs WHERE id = ?",
+                               (run_id,)).fetchone()
+            if row and row[0]:
+                try:
+                    created_dt = datetime.fromisoformat(str(row[0]))
+                    if created_dt.tzinfo is None:
+                        created_dt = created_dt.replace(tzinfo=timezone.utc)
+                    duration_ms = max(0, int((now - created_dt).total_seconds() * 1000))
+                except Exception:
+                    duration_ms = None
+        sets = ["state = ?", "finished_at = ?"]
+        vals: list = [state, finished_iso]
+        if duration_ms is not None:
+            sets.append("duration_ms = ?")
+            vals.append(int(duration_ms))
+        if model_id:
+            sets.append("model_id = ?")
+            vals.append(str(model_id))
+        if effort:
+            sets.append("effort = ?")
+            vals.append(str(effort))
+        if input_tokens is not None:
+            sets.append("input_tokens = ?")
+            vals.append(int(input_tokens))
+        if output_tokens is not None:
+            sets.append("output_tokens = ?")
+            vals.append(int(output_tokens))
+        if cached_tokens is not None:
+            sets.append("cached_tokens = ?")
+            vals.append(int(cached_tokens))
+        if cost_usd is not None:
+            sets.append("cost_usd = ?")
+            vals.append(float(cost_usd))
+        conn.execute(f"UPDATE runs SET {', '.join(sets)} WHERE id = ?",
+                     (*vals, run_id))
 
 
 def set_run_file_path(path: Path, run_id: int, file_path: str) -> None:
@@ -1524,7 +1652,9 @@ def list_runs(path: Path, limit: int = 200,
              " r.file_path, r.worktree_ref,"
              " r.session_type, r.state, r.harness_name, r.initiator_command,"
              " r.metadata, r.continued_from_run_id,"
-             " r.parent_run_id, r.step_index"
+             " r.parent_run_id, r.step_index,"
+             " r.finished_at, r.duration_ms, r.model_id, r.effort,"
+             " r.input_tokens, r.output_tokens, r.cached_tokens, r.cost_usd"
              " FROM runs r LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref")
         if not include_deleted_worktrees:
             q += " WHERE " + _NOT_DELETED
@@ -1755,7 +1885,9 @@ def _schema_current(path: Path) -> bool:
         if not {"output", "truncated", "validation", "flow_id", "worktree_ref",
                 "harness_name", "initiator_command", "prompt", "file_path",
                 "session_type", "metadata", "state",
-                "continued_from_run_id", "parent_run_id", "step_index"} <= cols:
+                "continued_from_run_id", "parent_run_id", "step_index",
+                "finished_at", "duration_ms", "model_id", "effort",
+                "input_tokens", "output_tokens", "cached_tokens", "cost_usd"} <= cols:
             return False
         fks = list(conn.execute("PRAGMA foreign_key_list(runs)"))
         if any(r[2] == "sessions" for r in fks):
@@ -1829,6 +1961,8 @@ def _schema_current(path: Path) -> bool:
             return False
         if "change_log" not in tables:
             return False
+        if "schedules" not in tables:
+            return False
         triggers = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'trigger'")}
         if not (_CDC_TRIGGER_NAMES <= triggers):
@@ -1895,6 +2029,8 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
                 _migrate_prodtest_cols(conn)
                 _migrate_runs_worktree_fk(conn)
                 _migrate_runs_parent(conn)
+                _migrate_schedules(conn)
+                _migrate_runs_telemetry(conn)
                 _migrate_change_log(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():
@@ -2318,3 +2454,230 @@ def gc_blocked_by_prodtest(path: Path, key: str) -> bool:
         return False
     row = get_prodtest(path, key)
     return bool(row) and row.get("status") in ("pending_prodtest", "running")
+
+
+# ── Schedules (T13) ──────────────────────────────────────────────────
+
+SCHEDULE_TARGET_KINDS: tuple[str, ...] = ("flow", "action", "command")
+
+
+def _schedule_row_to_dict(row: sqlite3.Row) -> dict:
+    d = dict(row)
+    d["enabled"] = bool(d.get("enabled"))
+    try:
+        d["args"] = json.loads(d.get("args_json") or "{}")
+    except Exception:
+        d["args"] = {}
+    return d
+
+
+def _normalize_schedule_args(args_json: str | dict | list | None) -> str:
+    if args_json is None:
+        return "{}"
+    if isinstance(args_json, str):
+        raw = args_json.strip() or "{}"
+        json.loads(raw)  # validate JSON
+        return raw
+    return json.dumps(args_json)
+
+
+def list_schedules(path: Path) -> list[dict]:
+    """Return all schedules ordered by id asc."""
+    if not Path(path).exists():
+        return []
+    init_db(path)
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM schedules ORDER BY id ASC").fetchall()
+    return [_schedule_row_to_dict(r) for r in rows]
+
+
+def get_schedule(path: Path, schedule_id: int | str) -> dict | None:
+    """Look up a schedule by integer id or unique name."""
+    if not Path(path).exists():
+        return None
+    init_db(path)
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        if isinstance(schedule_id, int) or (isinstance(schedule_id, str) and schedule_id.isdigit()):
+            row = conn.execute("SELECT * FROM schedules WHERE id = ?", (int(schedule_id),)).fetchone()
+            if row is not None:
+                return _schedule_row_to_dict(row)
+        row = conn.execute("SELECT * FROM schedules WHERE name = ?", (str(schedule_id),)).fetchone()
+        return _schedule_row_to_dict(row) if row is not None else None
+
+
+def add_schedule(
+    path: Path,
+    *,
+    name: str,
+    cron_expr: str,
+    target_kind: str,
+    target_label: str,
+    timezone_name: str = "UTC",
+    args_json: str | dict | list | None = "{}",
+    enabled: bool = True,
+    next_run_at: str = "",
+) -> dict:
+    """Insert a new schedule row and return it."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("schedule name is required")
+    if target_kind not in SCHEDULE_TARGET_KINDS:
+        raise ValueError(f"target_kind must be one of {', '.join(SCHEDULE_TARGET_KINDS)}")
+    target_label = (target_label or "").strip()
+    if not target_label:
+        raise ValueError("target_label is required")
+    norm_args = _normalize_schedule_args(args_json)
+    now = datetime.now(timezone.utc).isoformat()
+    init_db(path)
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.execute(
+                "INSERT INTO schedules "
+                "(name, cron_expr, timezone, target_kind, target_label, args_json, "
+                "enabled, last_run_at, next_run_at, last_run_id, lease_until, created_at, modified_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, NULL, '', ?, ?)",
+                (
+                    name,
+                    cron_expr.strip(),
+                    (timezone_name or "UTC").strip(),
+                    target_kind,
+                    target_label,
+                    norm_args,
+                    1 if enabled else 0,
+                    next_run_at or "",
+                    now,
+                    now,
+                ),
+            )
+        except sqlite3.IntegrityError as e:
+            raise ValueError(f"schedule {name!r} already exists") from e
+        row = conn.execute("SELECT * FROM schedules WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _schedule_row_to_dict(row)
+
+
+def update_schedule(path: Path, schedule_id: int | str, **fields) -> dict | None:
+    """Update mutable fields on a schedule; returns updated dict or None if not found."""
+    existing = get_schedule(path, schedule_id)
+    if existing is None:
+        return None
+    allowed = {
+        "name",
+        "cron_expr",
+        "timezone",
+        "target_kind",
+        "target_label",
+        "args_json",
+        "enabled",
+        "last_run_at",
+        "next_run_at",
+        "last_run_id",
+        "lease_until",
+    }
+    updates: list[str] = []
+    params: list = []
+    for k, v in fields.items():
+        if k not in allowed or v is None:
+            continue
+        if k == "target_kind" and v not in SCHEDULE_TARGET_KINDS:
+            raise ValueError(f"target_kind must be one of {', '.join(SCHEDULE_TARGET_KINDS)}")
+        if k == "args_json":
+            v = _normalize_schedule_args(v)
+        elif k == "enabled":
+            v = 1 if bool(v) else 0
+        elif isinstance(v, str) and k in ("name", "cron_expr", "timezone", "target_label"):
+            v = v.strip()
+        updates.append(f"{k} = ?")
+        params.append(v)
+    if not updates:
+        return existing
+    updates.append("modified_at = ?")
+    params.append(datetime.now(timezone.utc).isoformat())
+    params.append(existing["id"])
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute(f"UPDATE schedules SET {', '.join(updates)} WHERE id = ?", params)
+        except sqlite3.IntegrityError as e:
+            raise ValueError(f"schedule name conflict: {e}") from e
+        row = conn.execute("SELECT * FROM schedules WHERE id = ?", (existing["id"],)).fetchone()
+    return _schedule_row_to_dict(row) if row is not None else None
+
+
+def remove_schedule(path: Path, schedule_id: int | str) -> bool:
+    """Delete a schedule by id or name; True if a row was deleted."""
+    existing = get_schedule(path, schedule_id)
+    if existing is None:
+        return False
+    with connect(path) as conn:
+        cur = conn.execute("DELETE FROM schedules WHERE id = ?", (existing["id"],))
+        return cur.rowcount > 0
+
+
+def claim_due_schedules(
+    path: Path,
+    *,
+    now_iso: str,
+    lease_until_iso: str,
+) -> list[dict]:
+    """Atomically claim enabled schedules due at or before *now_iso* whose lease has expired."""
+    if not Path(path).exists():
+        return []
+    init_db(path)
+    conn = connect(path)
+    conn.isolation_level = None  # explicit transaction for BEGIN IMMEDIATE
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute(
+            "SELECT * FROM schedules "
+            "WHERE enabled = 1 AND next_run_at != '' AND next_run_at <= ? "
+            "AND (lease_until = '' OR lease_until <= ?) "
+            "ORDER BY next_run_at ASC, id ASC",
+            (now_iso, now_iso),
+        ).fetchall()
+        claimed: list[dict] = []
+        for r in rows:
+            conn.execute(
+                "UPDATE schedules SET lease_until = ?, modified_at = ? WHERE id = ?",
+                (lease_until_iso, now_iso, r["id"]),
+            )
+            d = _schedule_row_to_dict(r)
+            d["lease_until"] = lease_until_iso
+            claimed.append(d)
+        conn.execute("COMMIT")
+        return claimed
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+def record_schedule_run(
+    path: Path,
+    schedule_id: int,
+    *,
+    last_run_at: str,
+    next_run_at: str,
+    last_run_id: int | None = None,
+) -> dict | None:
+    """Record a completed/dispatched schedule run and release its lease."""
+    if not Path(path).exists():
+        return None
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "UPDATE schedules SET last_run_at = ?, next_run_at = ?, "
+            "last_run_id = COALESCE(?, last_run_id), lease_until = '', modified_at = ? "
+            "WHERE id = ?",
+            (last_run_at, next_run_at, last_run_id, now, int(schedule_id)),
+        )
+        row = conn.execute("SELECT * FROM schedules WHERE id = ?", (int(schedule_id),)).fetchone()
+    return _schedule_row_to_dict(row) if row is not None else None

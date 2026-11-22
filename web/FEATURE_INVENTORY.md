@@ -189,3 +189,6 @@ API passes `--yes` only when the request carries `confirm: true`
 ### Background PR & CI Auto-Watchers (T11 / #154)
 - CLI: `workagent repo update <name> --auto-fix-ci/--no-auto-fix-ci --auto-fix-reviews/--no-auto-fix-reviews`; `workagent watch [--once] [--dry-run] [--interval N] [--repo R] [--json]`.
 - Web: `Repos.tsx` (`Auto-fix CI` / `Auto-fix reviews` toggles); `WorktreeDetail.tsx` & `WorktreeWorkspace.tsx` (`WorktreeWatcherOverrides` per-worktree Inherit/On/Off overrides); opt-in `webapp.py` lifespan background watcher (`WORKAGENT_WATCH=1`).
+
+## Recurring Schedules (T13)
+- `schedule` (`add|list|update|remove|run-due`) — `run-due` requires `confirm: true` (`schedule:run-due` target key); CRUD endpoints live under `/api/schedules` and the `Schedules` tab of Automation Library (`/library`).

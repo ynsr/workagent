@@ -73,6 +73,7 @@ export function useServerEvents(): void {
         void qc.invalidateQueries({ queryKey: queryKeys.links })
         void qc.invalidateQueries({ queryKey: queryKeys.runs })
         void qc.invalidateQueries({ queryKey: ["flows"] })
+        void qc.invalidateQueries({ queryKey: queryKeys.schedules })
         void qc.invalidateQueries({ queryKey: ["messages"] })
         void qc.invalidateQueries({ queryKey: queryKeys.prodtests })
       }
@@ -113,6 +114,9 @@ export function useServerEvents(): void {
         case "flows":
           void qc.invalidateQueries({ queryKey: ["flows"] })
           void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
+          break
+        case "schedules":
+          void qc.invalidateQueries({ queryKey: queryKeys.schedules })
           break
         case "messages":
           void qc.invalidateQueries({ queryKey: ["messages"] })

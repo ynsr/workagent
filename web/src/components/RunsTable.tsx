@@ -13,7 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import type { RunState } from "@/lib/api"
-import { argsText, relativeTime } from "@/lib/format"
+import { argsText, formatCostUsd, formatDurationMs, formatTokens, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 /** One table row: live runs link to /runs/:id, persisted rows
@@ -38,6 +38,62 @@ export interface RunsTableRow {
   parentRunId?: string | null
   /** 0-based step index within the parent run. */
   stepIndex?: number | null
+  durationMs?: number | null
+  modelId?: string
+  effort?: string
+  inputTokens?: number | null
+  outputTokens?: number | null
+  cachedTokens?: number | null
+  costUsd?: number | null
+}
+
+function TelemetryPills({ row }: { row: RunsTableRow }) {
+  const dur = formatDurationMs(row.durationMs)
+  const totalTok =
+    row.inputTokens != null || row.outputTokens != null
+      ? (row.inputTokens ?? 0) + (row.outputTokens ?? 0)
+      : null
+  const tokLabel = formatTokens(totalTok)
+  const costLabel = formatCostUsd(row.costUsd)
+  const hasAny = Boolean(dur || row.modelId || row.effort || tokLabel || costLabel)
+  if (!hasAny) return <span className="text-muted-foreground">—</span>
+  const tokTitle = [
+    row.inputTokens != null ? `in: ${row.inputTokens.toLocaleString()}` : "",
+    row.outputTokens != null ? `out: ${row.outputTokens.toLocaleString()}` : "",
+    row.cachedTokens != null ? `cached: ${row.cachedTokens.toLocaleString()}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ")
+  return (
+    <div className="flex flex-wrap items-center gap-1 text-xs">
+      {dur ? (
+        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+          {dur}
+        </span>
+      ) : null}
+      {row.modelId ? (
+        <span
+          className="max-w-32 truncate rounded border bg-background px-1.5 py-0.5 font-mono text-[11px]"
+          title={row.effort ? `${row.modelId} (${row.effort})` : row.modelId}
+        >
+          {row.modelId}
+          {row.effort ? ` · ${row.effort}` : ""}
+        </span>
+      ) : row.effort ? (
+        <span className="rounded border bg-background px-1.5 py-0.5 font-mono text-[11px]">
+          {row.effort}
+        </span>
+      ) : null}
+      {tokLabel || costLabel ? (
+        <span
+          className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+          title={tokTitle || undefined}
+        >
+          {[tokLabel ? `${tokLabel} tok` : "", costLabel].filter(Boolean).join(" · ")}
+        </span>
+      ) : null}
+    </div>
+  )
 }
 
 function parentSummaryLabel(parent: RunsTableRow, children: RunsTableRow[]): string {
@@ -113,6 +169,7 @@ export function RunsTable({
               <TableHead>Kind</TableHead>
               <TableHead>Target</TableHead>
               <TableHead>State</TableHead>
+              <TableHead>Usage</TableHead>
               <TableHead className="text-right">Exit</TableHead>
               <TableHead>Started</TableHead>
               <TableHead className="w-12" aria-label="Cancel" />
@@ -189,6 +246,9 @@ export function RunsTable({
                     <TableCell>
                       {row.state ? <RunStateBadge state={row.state} /> : "—"}
                     </TableCell>
+                    <TableCell className="max-w-56">
+                      <TelemetryPills row={row} />
+                    </TableCell>
                     <TableCell className="text-right font-mono text-[13px]">
                       {row.exitCode ?? "—"}
                     </TableCell>
@@ -246,6 +306,9 @@ export function RunsTable({
                           </TableCell>
                           <TableCell>
                             {child.state ? <RunStateBadge state={child.state} /> : "—"}
+                          </TableCell>
+                          <TableCell className="max-w-56">
+                            <TelemetryPills row={child} />
                           </TableCell>
                           <TableCell className="text-right font-mono text-[13px]">
                             {child.exitCode ?? "—"}

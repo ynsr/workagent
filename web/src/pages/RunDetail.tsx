@@ -20,7 +20,7 @@ import { api, type CreateRunInput, type RunDetail as RunDetailData, type RunLine
 import { hasAcpStructuredEvents } from "@/lib/harness"
 import { useConfirm } from "@/lib/confirm"
 import { queryKeys, useCancelRun, useRun } from "@/lib/queries"
-import { copyToClipboard, relativeTime, shortId } from "@/lib/format"
+import { copyToClipboard, formatCostUsd, formatDurationMs, formatTokens, relativeTime, shortId } from "@/lib/format"
 import { commandAction, commandLabel, needsConfirm, runKind } from "@/lib/runs"
 import { RunResumeActions } from "@/components/RunActions"
 import { AcpTranscript } from "@/components/AcpTranscript"
@@ -341,6 +341,43 @@ export function RunDetail() {
       <div className="mb-4 flex flex-wrap items-center gap-3">
         {state ? <RunStateBadge state={state} /> : null}
         <Badge>{runKind(run.command, run.args, run.session_type)}</Badge>
+        {formatDurationMs(run.duration_ms) ? (
+          <Badge variant="secondary" className="font-mono">
+            {formatDurationMs(run.duration_ms)}
+          </Badge>
+        ) : null}
+        {run.model_id ? (
+          <Badge variant="outline" className="font-mono">
+            {run.model_id}
+            {run.effort ? ` (${run.effort})` : ""}
+          </Badge>
+        ) : run.effort ? (
+          <Badge variant="outline" className="font-mono">
+            {run.effort}
+          </Badge>
+        ) : null}
+        {run.input_tokens != null || run.output_tokens != null || run.cost_usd != null ? (
+          <Badge
+            variant="secondary"
+            className="font-mono"
+            title={[
+              run.input_tokens != null ? `in: ${run.input_tokens.toLocaleString()}` : "",
+              run.output_tokens != null ? `out: ${run.output_tokens.toLocaleString()}` : "",
+              run.cached_tokens != null ? `cached: ${run.cached_tokens.toLocaleString()}` : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          >
+            {[
+              run.input_tokens != null || run.output_tokens != null
+                ? `${formatTokens((run.input_tokens ?? 0) + (run.output_tokens ?? 0))} tok`
+                : "",
+              formatCostUsd(run.cost_usd),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </Badge>
+        ) : null}
         <span className="text-sm text-muted-foreground">
           exit code: <span className="font-mono">{exitCode ?? "—"}</span>
         </span>
@@ -408,7 +445,7 @@ export function RunDetail() {
           lines={lines}
           runMeta={{
             created: run.created,
-            finished: (run as RunDetailData & { finished?: number | null }).finished ?? finishedAt,
+            finished: run.finished ?? finishedAt,
             state,
             args: run.args,
           }}
