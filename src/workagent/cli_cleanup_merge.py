@@ -12,8 +12,19 @@ def _pr_missing(msg: str) -> bool:
             or "couldn't find" in msg or "could not find" in msg)
 
 
+def _remote_branch_gone(msg: str) -> bool:
+    """True when `git push origin --delete` failed only because the remote
+    ref is already gone (issue #124: host-side --delete-branch won the race,
+    or the branch was deleted outside workagent). Callers treat this as
+    success — the desired end state (no remote ref) already holds."""
+    msg = (msg or "").lower()
+    return ("remote ref does not exist" in msg
+            or "couldn't find remote ref" in msg
+            or "could not find remote ref" in msg
+            or "remote branch not found" in msg)
+
+
 def _pr_conflicted(fresh: dict | None) -> bool:
-    """True when fresh merge state reports destination-branch conflicts."""
     if not fresh:
         return False
     vals = " ".join(str(fresh.get(k) or "") for k in
@@ -151,13 +162,19 @@ def _merge_pr(pr_url: str, squash: bool = True, cwd: str | None = None,
               "dev/develop/main/master).", EXIT_USAGE)
     else:
         squash = True
+    # Issue #124: delete the remote head ref on merge for feature branches;
+    # long-lived sources (dev/develop/main/master) are standing refs.
+    # Fail closed on unknown/empty source: merge without host-side delete;
+    # the cleanup backstop still covers verified merged feature branches.
+    delete_remote = bool(source_branch) and _source_needs_squash(source_branch)
     from . import cli as _cli  # shim: tests patch workagent.cli.run_cmd
     try:
         if "github.com" in pr_url:
             # gh requires an explicit strategy non-interactively; squash
             # default, merge commit for long-lived sources (--merge).
             _cli.run_cmd("gh", "pr", "merge", pr_url,
-                    "--squash" if squash else "--merge", cwd=cwd)
+                    "--squash" if squash else "--merge",
+                    *([] if not delete_remote else ["--delete-branch"]), cwd=cwd)
         else:
             # glab defaults to a merge commit; pass --squash explicitly,
             # omit the flag (no --no-squash exists) for merge commits.
@@ -165,8 +182,10 @@ def _merge_pr(pr_url: str, squash: bool = True, cwd: str | None = None,
             # pipeline is running (same quirk as release, IPG-1017): without
             # it glab can exit 0 while the MR stays opened, and the caller
             # would go on to delete the remote branch before the host merges.
+            # --remove-source-branch mirrors gh --delete-branch (issue #124).
             _cli.run_cmd("glab", "mr", "merge", pr_url,
                     *([] if not squash else ["--squash"]),
+                    *([] if not delete_remote else ["--remove-source-branch"]),
                     "--auto-merge=false", cwd=cwd)
     except HarnessError as e:
         msg = str(e).lower()

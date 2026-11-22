@@ -39,6 +39,7 @@ from .cli_cleanup_merge import (  # noqa: F401 (re-export: moved helpers keep im
     _merge_pr,
     _pr_conflicted,
     _pr_missing,
+    _remote_branch_gone,
     _resolve_branch_pr,
     _source_needs_squash,
 )
@@ -391,9 +392,14 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
     resolution and prompts; this only acts. Returns a summary row with
     "status": "cleaned" or "dry-run".
 
-    Soft-delete (default): the MR merge-or-close still runs, but all local
-    and remote teardown is skipped and the row is stamped deleted_at
-    instead of dropped — recoverable for 7 days via `link undelete`.
+    Soft-delete (default): the MR merge-or-close still runs, local teardown
+    is skipped and the row is stamped deleted_at instead of dropped —
+    recoverable for 7 days via `link undelete`. The one exception (issue
+    #124): a merged feature branch's REMOTE ref is deleted before the stamp
+    (host-side `--delete-branch`/`--remove-source-branch` on merge, or a
+    `git push origin --delete` backstop when the merge happened outside
+    workagent). Local files/branch survive for recovery; stale remote refs
+    don't. Long-lived sources (dev/develop/main/master) keep their remote.
     `hard_delete` restores the immediate full teardown.
     """
     from . import cli as _cli  # shim: tests patch cli.*
@@ -509,24 +515,47 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
     # git-wt only removes the local branch (delete_branch=False below):
     # remote deletion is workagent's call. Rule 1: delete the remote branch
     # iff the PR/MR merged with this branch as its source (merged here, or
-    # already-merged for this branch, verified via head_ref). Unmerged PRs —
-    # closed, open, conflicted, or left open after a failed --force merge —
-    # keep their remote branch.
+    # already-merged for this branch, verified via head_ref) AND the source
+    # is a feature branch (issue #124: long-lived dev/develop/main/master
+    # are standing refs, never deleted). Unmerged PRs — closed, open,
+    # conflicted, or left open after a failed --force merge — keep theirs.
+    deletable_remote = bool(branch) and _source_needs_squash(branch)
     head_ref = ""
-    if pr_url and (merged_now or fresh_state == "merged"):
+    head_verified = False
+    if pr_url and (merged_now or fresh_state == "merged") and deletable_remote:
         try:
             head_ref = (refs.fetch_pr_info(refs.parse_ref(pr_url),
                                            cwd=host_cwd).get("head_ref") or "")
+            head_verified = bool(head_ref)
         except HarnessError as e:
-            eprint(f"warning: cannot verify PR head branch for {pr_url}: {e}")
-            head_ref = branch if merged_now else ""
-    delete_remote = bool(branch) and (merged_now or fresh_state == "merged") \
-        and (not head_ref or head_ref == branch)
+            eprint(f"warning: cannot verify PR head branch for {pr_url}: {e}; "
+                   f"remote branch {branch!r} kept.")
+            head_verified = False
+    delete_remote = (deletable_remote
+        and (merged_now or fresh_state == "merged")
+        and head_verified and head_ref == branch)
     if not hard_delete:
-        # Soft-delete: no local/remote teardown — worktree files, branch
-        # (local + remote) all survive. Only the row is stamped.
+        # Issue #124: a merged feature PR must not leave its remote branch
+        # behind — delete it BEFORE the soft-delete stamp so recovery only
+        # restores local files, never a stale remote ref. Long-lived
+        # sources (dev/develop/main/master) are standing refs: kept.
+        if delete_remote:
+            try:
+                _cli.run_cmd("git", "-C", str(repo), "push", "origin",
+                        "--delete", branch)
+                remote_deleted = True
+            except HarnessError as e:
+                if _remote_branch_gone(str(e)):
+                    remote_deleted = True  # host-side delete won the race
+                else:
+                    eprint(f"warning: remote branch delete failed: {e}")
+        # Soft-delete: no local teardown — worktree files and the local
+        # branch survive. Only the row is stamped (plus the merged remote
+        # delete above).
         deleted_at = store.soft_delete_worktree(key)
-        tail = " (soft-deleted; recover within 7 days via `link undelete`)"
+        tail = (" (soft-deleted; remote branch deleted; local state recoverable "
+                "within 7 days via `link undelete`)") if delete_remote else \
+               " (soft-deleted; recover within 7 days via `link undelete`)"
         if not json_output:
             eprint(f"{key}: cleaned{tail}")
         try:
@@ -540,7 +569,7 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
         except Exception:
             pass
         return {"key": key, "branch": branch, "status": "cleaned",
-                "deleted_at": deleted_at}
+                "deleted_at": deleted_at, "remote_deleted": remote_deleted}
     cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=False,
                                      force=force, yes=yes)
     try:
@@ -555,7 +584,10 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
                     "--delete", branch)
             remote_deleted = True
         except HarnessError as e:
-            eprint(f"warning: remote branch delete failed: {e}")
+            if _remote_branch_gone(str(e)):
+                remote_deleted = True  # host-side delete won the race
+            else:
+                eprint(f"warning: remote branch delete failed: {e}")
     # Snapshot the transcript targets before the row (and via FK its runs)
     # goes: cleanup --hard-delete cascades to the AI harness sessions too.
     from .cli_cleanup_gc import _harness_run_targets, _remove_transcripts
