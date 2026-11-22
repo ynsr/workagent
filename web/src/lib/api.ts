@@ -501,8 +501,23 @@ export interface RunLine {
   text: string
 }
 
+export interface SpawnedRunSummary {
+  id: string
+  command: string
+  state: RunState
+  exit_code: number | null
+  created: number
+  target: string
+  harness_name?: string
+  worktree?: string
+  worktree_ref?: string
+  branch?: string
+}
+
 export interface RunDetail extends Run {
   lines: RunLine[]
+  /** Child worker run summaries spawned by this run (e.g. orchestrator runs). */
+  spawned_runs?: SpawnedRunSummary[]
 }
 
 export type RunCommand =
@@ -518,6 +533,7 @@ export type RunCommand =
   | "tracker"
   | "action"
   | "message"
+  | "orchestrate"
   | "flow"
   | "prodtest"
   | "backup"

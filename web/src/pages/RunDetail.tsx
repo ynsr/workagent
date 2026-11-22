@@ -24,6 +24,7 @@ import { copyToClipboard, relativeTime, shortId } from "@/lib/format"
 import { commandAction, commandLabel, needsConfirm, runKind } from "@/lib/runs"
 import { RunResumeActions } from "@/components/RunActions"
 import { AcpTranscript } from "@/components/AcpTranscript"
+import { SpawnedWorkersCard } from "@/components/SpawnedWorkersCard"
 import { QuestionCard } from "@/components/QuestionCard"
 import { Badge } from "@/components/ui/badge"
 
@@ -406,6 +407,7 @@ export function RunDetail() {
       {hasAcp && viewMode === "structured" ? (
         <AcpTranscript
           lines={lines}
+          spawnedRuns={run.spawned_runs}
           runMeta={{
             created: run.created,
             finished: (run as RunDetailData & { finished?: number | null }).finished ?? finishedAt,
@@ -414,7 +416,12 @@ export function RunDetail() {
           }}
         />
       ) : (
-        <LogViewer lines={lines} connected={sse.connected} terminal={terminal} />
+        <div className="space-y-3">
+          {run.spawned_runs && run.spawned_runs.length > 0 ? (
+            <SpawnedWorkersCard workers={run.spawned_runs} />
+          ) : null}
+          <LogViewer lines={lines} connected={sse.connected} terminal={terminal} />
+        </div>
       )}
 
       <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">

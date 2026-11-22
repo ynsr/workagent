@@ -74,6 +74,7 @@ SPECS: dict[str, dict[str, Any]] = {
                        else (f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest run'])}" if args[:1] == ["run"] else "config")))},
     "adhoc": {"confirm": True, "force": False,
               "key": lambda args: f"adhoc:{_first_positional(args, VAL_FLAGS['adhoc'])}"},
+    "orchestrate": {"confirm": True, "force": False, "key": "orchestrate"},
     "config": {"confirm": False, "force": False, "key": "config"},
 }
 
@@ -148,6 +149,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "prodtest delete": ("--json",),
     "prodtest cleanup": ("--json", "--yes", "--dry-run"),
     "adhoc": ("--launch", "--terminal", "--acp", "--follow-up", "--dry-run", "--yes", "--json"),
+    "orchestrate": ("--acp", "--launch", "--terminal", "--dry-run", "--yes", "--json"),
     "message add": ("--fetch", "--json",),
     "message list": ("--json", "--csv"),
     "message show": ("--json",),
@@ -167,6 +169,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "adhoc": ("--prompt", "--harness", "--run-mode", "--model", "--effort", "--extra-prompt", "--session-file", "--env-file", "--continue-run"),
+    "orchestrate": ("--repo", "--prompt", "--harness", "--run-mode", "--model", "--effort", "--extra-prompt", "--env-file", "--session-file"),
     "prodtest": (),
     "prodtest plan": ("--harness", "--run-mode", "--model", "--effort", "--session-file", "--env-file", "--extra-prompt"),
     "prodtest run": ("--fix-mode", "--run-dir", "--harness", "--run-mode", "--model", "--effort", "--session-file", "--env-file", "--extra-prompt"),

@@ -518,6 +518,13 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
               "before": str(before) if before else "",
               "session_file": session_path}
              if not no_tty and run_id else None)
+    _prev_parent_env = os.environ.get("WORKAGENT_PARENT_RUN_ID")
+    _set_parent_env = False
+    if result.get("propagate_parent_run_id"):
+        _parent_rid = str(run_id or os.environ.get("WORKAGENT_RUN_ID") or "").strip()
+        if _parent_rid:
+            os.environ["WORKAGENT_PARENT_RUN_ID"] = _parent_rid
+            _set_parent_env = True
     try:
         extra = harness.session_file_flag(session_path) if session_path else None
         _launch_kw: dict = {}
@@ -678,6 +685,11 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                 pass
         raise
     finally:
+        if _set_parent_env:
+            if _prev_parent_env is None:
+                os.environ.pop("WORKAGENT_PARENT_RUN_ID", None)
+            else:
+                os.environ["WORKAGENT_PARENT_RUN_ID"] = _prev_parent_env
         if stop_watch is not None:
             stop_watch.set()
         if run_key:

@@ -15,6 +15,7 @@ import {
   Workflow,
 } from "lucide-react"
 import { AcpTranscript } from "@/components/AcpTranscript"
+import { SpawnedWorkersCard } from "@/components/SpawnedWorkersCard"
 import { HarnessSelect } from "@/components/HarnessSelect"
 import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { QuestionCard } from "@/components/QuestionCard"
@@ -235,9 +236,13 @@ export function WorktreeWorkspace() {
                 description="Send a follow-up prompt below to start an ACP session on this worktree."
               />
             ) : hasAcp ? (
-              <AcpTranscript lines={mergedLines} />
+              <AcpTranscript lines={mergedLines} spawnedRuns={runQ.data?.spawned_runs} />
             ) : (
-              <div className="log-shell overflow-hidden rounded-lg border">
+              <div className="space-y-3">
+                {runQ.data?.spawned_runs && runQ.data.spawned_runs.length > 0 ? (
+                  <SpawnedWorkersCard workers={runQ.data.spawned_runs} />
+                ) : null}
+                <div className="log-shell overflow-hidden rounded-lg border">
                 <div className="flex items-center justify-between border-b border-white/10 px-3 py-2 text-xs text-white/70">
                   <span>{isRunning ? "Live" : "Finished"}</span>
                   <span>{mergedLines.length} lines</span>
@@ -252,6 +257,7 @@ export function WorktreeWorkspace() {
                       </div>
                     ))
                   )}
+                </div>
                 </div>
               </div>
             )}
