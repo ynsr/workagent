@@ -321,8 +321,9 @@ def _judge_may_skip(token: str | None, mode: str, gates: dict,
                     session_type: str | None = None) -> bool:
     """Cost-cap: skip the LLM judge when evidence is already conclusive.
 
-    Skip only when ALL hold: gates pass, the worker self-attests JOB_DONE
-    as an exact token, the diff check shows real delivered work (never a
+    Skip when ALL hold: gates pass, the worker self-attests a terminal
+    success token (JOB_DONE or INTENTIONALLY_UNCOMMITTED_CHANGES) as an
+    exact last line, the diff check shows real delivered work (never a
     bare clean tree, never an unverifiable no-upstream state), and the
     session has a task-specific gate (reviews have none — always judge).
     WORKAGENT_ALWAYS_JUDGE=1 forces the old always-judge behavior.
@@ -331,7 +332,9 @@ def _judge_may_skip(token: str | None, mode: str, gates: dict,
     import os as _os
     if _os.environ.get("WORKAGENT_ALWAYS_JUDGE") == "1":
         return False
-    if token != "JOB_DONE" or mode != "exact":
+    if token not in ("JOB_DONE", "INTENTIONALLY_UNCOMMITTED_CHANGES"):
+        return False
+    if mode != "exact":
         return False
     if not gates.get("passed", False):
         return False
@@ -647,8 +650,8 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                 f"End your reply with only JOB_DONE as the last line.")
             continue
         if _judge_may_skip(token, mode, gates, expect_changes, session_type):
-            _decide("judge-skipped", "JOB_DONE", mode, transcript)
-            return _finish("JOB_DONE")
+            _decide("judge-skipped", token, mode, transcript)
+            return _finish(token)
         try:
             checks = gates.get("checks", {}) or {}
             diff_detail = (checks.get("diff", {}) or {}).get("detail", "")

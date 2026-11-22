@@ -838,3 +838,63 @@ def test_validate_headless_uses_harness_tool_error_rate(monkeypatch):
     assert res["passed"] is False
     assert any("tool error rate" in r for r in res["reasons"])
 
+
+def test_intentional_skips_judge_for_action_session(monkeypatch):
+    """Issue #162: INTENTIONALLY_UNCOMMITTED_CHANGES on a non-start
+    session (e.g. flow action step) skips the judge but still runs the
+    deterministic gates first — no judge spent."""
+    from workagent import cli_validate as cv
+    gates_calls = []
+    monkeypatch.setattr(cv, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(cv, "run_deterministic_gates",
+                        lambda *a, **k: (gates_calls.append(True),
+                                         {"passed": True, "checks": {},
+                                          "reasons": []})[1])
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it",
+        session_type="action",
+        run_once=lambda p: {"exit_code": 0,
+                            "transcript": "left uncommitted on purpose\nINTENTIONALLY_UNCOMMITTED_CHANGES"},
+        run_judge=lambda p: (_ for _ in ()).throw(AssertionError("judge must not run")))
+    assert res["verdict"] == "INTENTIONALLY_UNCOMMITTED_CHANGES" and res["attempts"] == 1
+    assert gates_calls, "deterministic gates must run before the judge skip"
+    assert res["runs"][0]["trace"]["phase"] == "judge-skipped"
+
+
+def test_intentional_action_session_failing_gates_retries(monkeypatch):
+    """Issue #162: a failing tool-error-rate gate still retries even when
+    the harness self-attests INTENTIONALLY_UNCOMMITTED_CHANGES."""
+    from workagent import cli_validate as cv
+    monkeypatch.setattr(cv, "dirty_gate",
+                        lambda wt, br: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(cv, "run_deterministic_gates",
+                        lambda *a, **k: {"passed": False, "checks": {},
+                                         "reasons": ["tool error rate 80%"]})
+    calls = {"judge": 0}
+    def _run_once(prompt):
+        calls["n"] = calls.get("n", 0) + 1
+        if calls["n"] == 1:
+            return {"exit_code": 0,
+                    "transcript": "left uncommitted on purpose\nINTENTIONALLY_UNCOMMITTED_CHANGES"}
+        return {"exit_code": 0, "transcript": "fixed\nJOB_DONE"}
+    def _judge(prompt):
+        calls["judge"] += 1
+        return "looks complete\nJOB_DONE"
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it",
+        session_type="action", max_retries=3,
+        run_once=_run_once, run_judge=_judge)
+    assert calls.get("n", 0) >= 2, "failing gates must trigger a retry"
+    assert res["runs"][0]["trace"]["phase"] == "gates"
+
+
+def test_intentional_skips_judge_when_gates_pass(monkeypatch):
+    """Issue #162: exact INTENTIONALLY_UNCOMMITTED_CHANGES with passing
+    gates skips the LLM judge (judge-skipped, verdict preserved)."""
+    from workagent import cli_validate as cv
+    gates = {"passed": True, "checks": {}, "reasons": []}
+    assert cv._judge_may_skip("INTENTIONALLY_UNCOMMITTED_CHANGES", "exact",
+                              gates, False) is True
+    assert cv._judge_may_skip("INTENTIONALLY_UNCOMMITTED_CHANGES", "tolerant",
+                              gates, False) is False

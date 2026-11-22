@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Add conversational multi-worktree orchestrator mode (`workagent orchestrate`) with `spawned_runs` API and live `SpawnedWorkersCard` UI [157]
+- Skip the LLM validation judge when the harness self-attests JOB_DONE or INTENTIONALLY_UNCOMMITTED_CHANGES and gates pass [162]
 - Add opt-in background PR & CI auto-watchers (auto_fix_ci, auto_fix_reviews) with signature deduplication, watch CLI, and web toggles [154]
 - Refresh watcher snapshots each pass, harden dispatch errors, and guard rapid watcher toggles [154]
 - Add built-in recurring Cron/RRULE schedules for flows, actions, and maintenance commands with CLI, REST API, and Automation Library tab [156]
