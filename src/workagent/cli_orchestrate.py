@@ -47,8 +47,18 @@ def build_orchestrator_prompt(
 
 
 def _resolve_target_repos(repo_args: Optional[list[str]]) -> list[tuple[str, str]]:
-    """Resolve requested --repo values (or all registered repos if omitted)."""
-    reg = store.load_config().get("repos", {})
+    """Resolve requested --repo values (or all registered repos if omitted).
+
+    A bare `--repo NAME` must name a registered repo or an existing local
+    path; anything else is rejected instead of being treated as a clone
+    URL — a typo in the orchestrator scope must fail fast rather than kick
+    off a real `git clone`. Explicit URLs (scheme or scp-like `host:path`
+    or `host/path.git` forms) still clone on purpose.
+    """
+    try:
+        reg = store.load_repos()
+    except Exception:
+        reg = {}
     if not isinstance(reg, dict):
         reg = {}
     resolved: list[tuple[str, str]] = []
@@ -57,10 +67,28 @@ def _resolve_target_repos(repo_args: Optional[list[str]]) -> list[tuple[str, str
             r = (raw or "").strip()
             if not r:
                 continue
-            path = repos.resolve_repo(r, Path.cwd())
+            if r in reg:
+                p = Path(str(reg[r].get("path", ""))).expanduser() if isinstance(reg[r], dict) else None
+                if p is None or not p.is_dir():
+                    _fail(f"registered repo {r!r} path missing: {p}", EXIT_USAGE)
+                path = p
+            elif Path(r).expanduser().is_dir():
+                path = Path(r).expanduser()
+            elif _looks_like_url(r):
+                path = repos.resolve_repo(r, Path.cwd())
+            else:
+                names = ", ".join(sorted(reg)) or "none registered"
+                _fail(f"unknown --repo {r!r} (registered: {names}); pass a name, path, or clone URL", EXIT_USAGE)
             name = r
             for reg_name, reg_info in reg.items():
-                if isinstance(reg_info, dict) and str(reg_info.get("path") or "") == str(path):
+                if not isinstance(reg_info, dict):
+                    continue
+                try:
+                    same = (str(Path(str(reg_info.get("path") or "")).expanduser().resolve())
+                            == str(Path(str(path)).expanduser().resolve()))
+                except Exception:
+                    same = str(reg_info.get("path") or "") == str(path)
+                if same:
                     name = reg_name
                     break
             resolved.append((name, str(path)))
@@ -70,6 +98,19 @@ def _resolve_target_repos(repo_args: Optional[list[str]]) -> list[tuple[str, str
             resolved.append((reg_name, str(reg_info["path"])))
     return resolved
 
+
+def _looks_like_url(raw: str) -> bool:
+    """True when *raw* is plausibly a clone URL (not a typo'd repo name)."""
+    r = (raw or "").strip()
+    if "://" in r:
+        return True
+    if r.startswith("git@"):
+        return True
+    if "@" in r and ":" in r.split("@", 1)[1]:
+        return True
+    if "/" in r and (r.endswith(".git") or r.count("/") >= 3):
+        return True
+    return False
 
 @app.command("orchestrate")
 @_catch_harness_errors
@@ -91,6 +132,7 @@ def orchestrate(
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before commands."),
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without launching."),
+    continue_run: Optional[int] = typer.Option(None, "--continue-run", help="Continue from a previous run id (links continued_from_run_id and resumes ACP session when supported)."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
@@ -143,6 +185,28 @@ def orchestrate(
         "session_metadata": run_meta,
         "propagate_parent_run_id": True,
     }
+    if isinstance(continue_run, int) and continue_run > 0:
+        run_result["continued_from_run_id"] = continue_run
+        run_meta["continued_from_run_id"] = continue_run
+        try:
+            from . import backend as _backend, store_sqlite as _sq
+            db = _sq.db_path()
+            prev = _sq.get_run(db, continue_run, include_deleted_worktrees=True) if db.exists() else None
+            if prev:
+                prev_meta = prev.get("metadata") if isinstance(prev.get("metadata"), dict) else {}
+                prev_sid = str(prev_meta.get("acp_session_id") or "")
+                if prev_sid:
+                    run_result["resume_session_id"] = prev_sid
+                prev_path = str(prev.get("file_path") or "")
+                if prev_path:
+                    h = _backend.get_harness(harness_name)
+                    summary = h.extract_last_assistant_text(prev_path, max_chars=2000)
+                    if summary:
+                        run_result["resume_context"] = (
+                            f"[Continuing from run #{continue_run} — previous assistant summary]\n{summary}"
+                        )
+        except Exception:
+            pass
     _run_harness(
         harness_name,
         body,

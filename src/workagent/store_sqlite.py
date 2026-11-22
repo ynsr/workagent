@@ -1271,7 +1271,14 @@ def insert_run(path: Path, command: str, args: list[str],
     import os as _os
     env_parent = False
     if parent_run_id is None:
-        raw_pid = (_os.environ.get("WORKAGENT_PARENT_RUN_ID") or "").strip()
+        # WORKAGENT_PARENT_RUN_ID is the explicit propagation channel
+        # (harness sessions set it for descendant work; see cli_harness).
+        # WORKAGENT_RUN_ID is the web supervisor's spawn identity
+        # (web_runs._spawn sets only it), so accept it as a fallback: this
+        # keeps web-launched orchestrator grandchildren linked. A stale
+        # value that names no live row is dropped by the guard below.
+        raw_pid = ((_os.environ.get("WORKAGENT_PARENT_RUN_ID") or "").strip()
+                   or (_os.environ.get("WORKAGENT_RUN_ID") or "").strip())
         if raw_pid:
             try:
                 pid_val = int(raw_pid)
@@ -1514,6 +1521,28 @@ def list_runs(path: Path, limit: int = 200,
             q += " WHERE " + _NOT_DELETED
         q += " ORDER BY r.id DESC LIMIT ?"
         return [_run_dict(r) for r in conn.execute(q, (limit,)).fetchall()]
+
+
+def runs_by_parent(path: Path, parent_run_id: int,
+                   include_deleted_worktrees: bool = False) -> list[dict]:
+    """Child runs whose parent_run_id matches (targeted WHERE lookup)."""
+    if not path.exists():
+        return []
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        q = ("SELECT r.id, r.command, r.args, r.exit_code,"
+             " r.created_at, r.output, r.truncated, r.validation, r.flow_id,"
+             " r.file_path, r.worktree_ref,"
+             " r.session_type, r.state, r.harness_name, r.initiator_command,"
+             " r.metadata, r.continued_from_run_id,"
+             " r.parent_run_id, r.step_index"
+             " FROM runs r LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref")
+        if not include_deleted_worktrees:
+            q += " WHERE " + _NOT_DELETED + " AND r.parent_run_id = ?"
+        else:
+            q += " WHERE r.parent_run_id = ?"
+        q += " ORDER BY r.id DESC"
+        return [_run_dict(r) for r in conn.execute(q, (parent_run_id,)).fetchall()]
 
 
 def update_run(path: Path, run_id: int, *,

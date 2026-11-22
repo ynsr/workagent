@@ -656,9 +656,7 @@ def _spawned_runs_for(parent_db_id: int | None, registry: Any = None) -> list[di
         from . import store_sqlite as _sq
         db = _sq.db_path()
         if db.exists():
-            for row in _sq.list_runs(db, limit=1000, include_deleted_worktrees=True):
-                if row.get("parent_run_id") != parent_db_id:
-                    continue
+            for row in _sq.runs_by_parent(db, parent_db_id, include_deleted_worktrees=True):
                 rid = int(row["id"])
                 if rid in by_db_id:
                     continue

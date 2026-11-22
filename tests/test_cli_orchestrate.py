@@ -121,3 +121,41 @@ def test_orchestrate_launches_acp_and_propagates_parent_run_id(isolated_config, 
     assert seen["parent_env"] and seen["parent_env"].isdigit()
     # Env var must be cleaned up after launch
     assert "WORKAGENT_PARENT_RUN_ID" not in os.environ
+
+
+def test_orchestrate_unknown_repo_fails_fast_without_cloning(isolated_config):
+    res = runner.invoke(
+        cli.app,
+        ["orchestrate", "--repo", "typo-repo", "--prompt", "x", "--dry-run", "--json"],
+    )
+    assert res.exit_code == 2
+    assert "unknown --repo 'typo-repo'" in res.output
+
+
+def test_orchestrate_key_varies_by_repo_set_and_prompt():
+    from workagent.web_args import _target_for
+    a = _target_for("orchestrate", ["--repo", "a", "--prompt", "x"])
+    b = _target_for("orchestrate", ["--repo", "b", "--prompt", "x"])
+    c = _target_for("orchestrate", ["--repo", "a", "--prompt", "y"])
+    assert a != b and a != c
+
+
+def test_orchestrate_web_validator_parity(isolated_config):
+    from workagent.web_args import _validate_args
+    _validate_args("orchestrate", ["--repo", "a", "--prompt", "-fix it"])
+    _validate_args("orchestrate", ["--prompt", "x", "--continue-run", "3"])
+
+
+def test_insert_run_falls_back_to_run_id_env(isolated_config, monkeypatch):
+    import os
+    db = store_sqlite.db_path()
+    store_sqlite.init_db(db)
+    parent = store_sqlite.insert_run(db, "orchestrate", ["--prompt", "x"], 0, harness_name="omp", state="finished")
+    monkeypatch.delenv("WORKAGENT_PARENT_RUN_ID", raising=False)
+    monkeypatch.setenv("WORKAGENT_RUN_ID", str(parent))
+    child = store_sqlite.insert_run(db, "start", ["R"], None, harness_name="omp", state="running")
+    assert store_sqlite.get_run(db, child)["parent_run_id"] == parent
+    assert [r["id"] for r in store_sqlite.runs_by_parent(db, parent)] == [child]
+    monkeypatch.setenv("WORKAGENT_RUN_ID", str(child + 999))
+    orphan = store_sqlite.insert_run(db, "start", ["R"], None, harness_name="omp", state="running")
+    assert store_sqlite.get_run(db, orphan)["parent_run_id"] is None

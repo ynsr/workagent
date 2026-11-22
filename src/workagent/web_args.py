@@ -35,6 +35,34 @@ def _message_key(args: list[str]) -> str:
         return "config"
     return f"message:{_first_positional(args[1:], vals)}"
 
+
+def _orchestrate_key(args: list[str]) -> str:
+    """Target key for `orchestrate` runs: per (repo set, prompt hash).
+
+    A constant key would 409 a second orchestrator even for disjoint repo
+    sets; like `adhoc:<prompt>` this keys concurrent runs by their actual
+    target so disjoint orchestrators don't serialize. The prompt hash is
+    truncated to keep the 409 message readable.
+    """
+    repos: list[str] = []
+    for i, a in enumerate(args):
+        if a == "--repo" and i + 1 < len(args):
+            repos.append(args[i + 1])
+        elif a.startswith("--repo="):
+            repos.append(a.split("=", 1)[1])
+    prompt = ""
+    for i, a in enumerate(args):
+        if a == "--prompt" and i + 1 < len(args):
+            prompt = args[i + 1]
+            break
+        if a.startswith("--prompt="):
+            prompt = a.split("=", 1)[1]
+            break
+    import hashlib as _hashlib
+    scope = ",".join(sorted(r for r in repos if r)) or "all"
+    digest = _hashlib.sha1(prompt.encode()).hexdigest()[:12] if prompt else "noprompt"
+    return f"orchestrate:{scope}:{digest}"
+
 SPECS: dict[str, dict[str, Any]] = {
     "start": {"confirm": True, "force": False, "key": "start"},
     "review": {"confirm": True, "force": False,
@@ -74,7 +102,7 @@ SPECS: dict[str, dict[str, Any]] = {
                        else (f"prodtest:{_first_positional(args[1:], VAL_FLAGS['prodtest run'])}" if args[:1] == ["run"] else "config")))},
     "adhoc": {"confirm": True, "force": False,
               "key": lambda args: f"adhoc:{_first_positional(args, VAL_FLAGS['adhoc'])}"},
-    "orchestrate": {"confirm": True, "force": False, "key": "orchestrate"},
+    "orchestrate": {"confirm": True, "force": False, "key": _orchestrate_key},
     "config": {"confirm": False, "force": False, "key": "config"},
 }
 
@@ -169,7 +197,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "adhoc": ("--prompt", "--harness", "--run-mode", "--model", "--effort", "--extra-prompt", "--session-file", "--env-file", "--continue-run"),
-    "orchestrate": ("--repo", "--prompt", "--harness", "--run-mode", "--model", "--effort", "--extra-prompt", "--env-file", "--session-file"),
+    "orchestrate": ("--repo", "--prompt", "--harness", "--run-mode", "--model", "--effort", "--extra-prompt", "--env-file", "--session-file", "--continue-run"),
     "prodtest": (),
     "prodtest plan": ("--harness", "--run-mode", "--model", "--effort", "--session-file", "--env-file", "--extra-prompt"),
     "prodtest run": ("--fix-mode", "--run-dir", "--harness", "--run-mode", "--model", "--effort", "--session-file", "--env-file", "--extra-prompt"),
@@ -343,11 +371,11 @@ def _validate_args(command: str, args: list[str], body_force: bool = False) -> N
                 if i + 1 >= len(rest):
                     raise ApiError("bad_arg", f"{a} needs a value", 400)
                 value = rest[i + 1]
-                # Free-text prompt may start with '-'; the = form is required
+                # Free-text prompts may start with '-'; the = form is required
                 # so the value can't be mistaken for the next flag. Same for
                 # --overlay-buttons: hide-only values (`-adhoc`) and the empty
                 # reset (`""`) are legal CLI values.
-                if value.startswith("-") and a not in ("--extra-prompt", "--overlay-buttons"):
+                if value.startswith("-") and a not in ("--prompt", "--extra-prompt", "--overlay-buttons"):
                     raise ApiError(
                         "bad_arg",
                         f"value for {a} must not start with '-': {value!r}", 400)
