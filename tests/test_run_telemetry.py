@@ -94,3 +94,40 @@ def test_api_runs_exposes_telemetry_and_finished(isolated_config, tmp_path):
     assert detail["output_tokens"] == 200
     assert detail["cached_tokens"] == 100
     assert detail["cost_usd"] == 0.025
+
+
+def test_resolve_usage_prefers_session_file_when_truncated(tmp_path):
+    """Truncated buffers hold only the tail: prefer the full file (issue #158)."""
+    import json
+
+    from workagent import web_runs as wr
+
+    full = tmp_path / "session.jsonl"
+    full.write_text("\n".join([
+        json.dumps({"t": "usage", "id": "s1",
+                    "usage": {"input_tokens": 1000, "output_tokens": 400,
+                              "cost_usd": 0.01}}),
+        json.dumps({"t": "usage", "id": "s1",
+                    "usage": {"input_tokens": 500, "output_tokens": 200,
+                              "cost_usd": 0.005}}),
+    ]) + "\n")
+    # Tail buffer retains only the second (partial) event.
+    tail = [json.dumps({"t": "usage", "id": "s1",
+                         "usage": {"input_tokens": 500, "output_tokens": 200,
+                                   "cost_usd": 0.005}})]
+    usage = wr._resolve_usage(tail, True, str(full))
+    assert usage["input_tokens"] == 1500
+    assert usage["output_tokens"] == 600
+    assert usage["cost_usd"] == 0.015
+
+
+def test_resolve_usage_falls_back_to_buffer_when_untruncated(tmp_path):
+    import json
+
+    from workagent import web_runs as wr
+
+    tail = [json.dumps({"t": "usage", "id": "s1",
+                         "usage": {"input_tokens": 7, "output_tokens": 3}})]
+    usage = wr._resolve_usage(tail, False, "")
+    assert usage["input_tokens"] == 7
+    assert usage["output_tokens"] == 3

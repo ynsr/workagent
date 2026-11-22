@@ -664,6 +664,32 @@ def _finish_state(code: int | None) -> str:
     return "failed"
 
 
+def _resolve_usage(line_texts: list[str], truncated: bool, sfile: str) -> dict:
+    """Usage telemetry honoring buffer truncation.
+
+    A buffer capped at MAX_LINES holds only the tail for long runs, so a
+    partial total there undercounts even when it contains a usage event.
+    When the buffer was truncated and the full session file exists, parse
+    the file first and fall back to the buffer only when the file yields
+    nothing; otherwise parse the buffer and use the file as the fallback.
+    """
+    from . import harness_summary as _hs
+    if truncated and sfile:
+        usage = _hs.extract_usage(sfile)
+        if (usage.get("input_tokens") is None
+                and usage.get("output_tokens") is None
+                and usage.get("cost_usd") is None):
+            usage = _hs.extract_usage_from_lines(line_texts)
+        return usage
+    usage = _hs.extract_usage_from_lines(line_texts)
+    if (usage.get("input_tokens") is None
+            and usage.get("output_tokens") is None
+            and usage.get("cost_usd") is None
+            and sfile):
+        usage = _hs.extract_usage(sfile)
+    return usage
+
+
 def _start_tailer(run: Run, registry: Registry, backfill: bool = False,
                   initial_offset: int | None = None) -> None:
     """Follow output.log into run.lines; close out when exit_code lands.
@@ -682,10 +708,15 @@ def _start_tailer(run: Run, registry: Registry, backfill: bool = False,
             offset = initial_offset
         elif backfill:
             # Post-restart adopt: load the tail (≤10k lines) without OOM.
+            # When the file exceeds the buffer the tail is incomplete, so
+            # mark truncation — the finish path then prefers the session
+            # file for usage telemetry over the partial buffer.
             try:
                 data = (d / "output.log").read_bytes()
-                lines = data.decode(errors="replace").splitlines()[-MAX_LINES:]
-                for ln in lines:
+                all_lines = data.decode(errors="replace").splitlines()
+                if len(all_lines) > MAX_LINES:
+                    run.truncated = True
+                for ln in all_lines[-MAX_LINES:]:
                     run.append(ln + "\n")
                 offset = len(data)
             except OSError:
@@ -723,15 +754,10 @@ def _start_tailer(run: Run, registry: Registry, backfill: bool = False,
                     if run.duration_ms is None:
                         run.duration_ms = max(0, int((run.finished - run.created) * 1000))
                     line_texts = [t for _, t in run.lines]
+                    truncated = run.truncated
                     sfile = run.session_file
                 try:
-                    from . import harness_summary as _hs
-                    usage = _hs.extract_usage_from_lines(line_texts)
-                    if (usage.get("input_tokens") is None
-                            and usage.get("output_tokens") is None
-                            and usage.get("cost_usd") is None
-                            and sfile):
-                        usage = _hs.extract_usage(sfile)
+                    usage = _resolve_usage(line_texts, truncated, sfile)
                     with run.lock:
                         if usage.get("input_tokens") is not None:
                             run.input_tokens = int(usage["input_tokens"])

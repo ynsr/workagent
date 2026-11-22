@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import backend, store
@@ -520,8 +521,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
               "before": str(before) if before else "",
               "session_file": session_path}
              if not no_tty and run_id else None)
-    import time as _time
-    started_mono = _time.monotonic()
+    started_mono = time.monotonic()
     try:
         extra = harness.session_file_flag(session_path) if session_path else None
         _launch_kw: dict = {}
@@ -670,7 +670,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             if minted is not None and minted != before and run_id:
                 _sq.set_run_file_path(db, run_id, str(minted))
         if run_id:
-            duration_ms = max(0, int((_time.monotonic() - started_mono) * 1000))
+            duration_ms = max(0, int((time.monotonic() - started_mono) * 1000))
             usage: dict = {}
             try:
                 from . import harness_summary as _hs_fin
@@ -693,7 +693,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     except Exception:
         if run_id:
             try:
-                duration_ms = max(0, int((_time.monotonic() - started_mono) * 1000))
+                duration_ms = max(0, int((time.monotonic() - started_mono) * 1000))
                 _sq.finish_run(
                     db, run_id, "failed",
                     duration_ms=duration_ms,
