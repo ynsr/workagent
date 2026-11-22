@@ -23,7 +23,7 @@ import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { ReviewActionSelect, RunModeSelect, StartFormFields, buildReviewArgs, buildStartArgs } from "@/components/StartForm"
 import { COPY, INITIAL, MODES, adhocArgs, extraPromptArgs, isPrShaped, runModeArgs, splitAdhocRefs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
-import { loadLaunchPrefs, loadStartPrefsByRepo, saveLaunchPrefs, saveStartPrefsForRepo } from "@/lib/launchPrefs"
+import { loadLaunchPrefs, lookupStartPrefsByRepo, saveLaunchPrefs, saveStartPrefsForRepo } from "@/lib/launchPrefs"
 import type { LaunchPrefs } from "@/lib/launchPrefs"
 import { modelEffortArgs } from "@/lib/harness"
 
@@ -418,7 +418,20 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
         merged.reviewAction = f.reviewAction
         merged.fixComments = f.fixComments
       }
-      merged.base = next === "start" ? stored.start.base : ""
+      if (next === "start") {
+        // Issue #114: a selected repo's saved base/action/run-mode win over
+        // the legacy slice; repos never saved fall back to it.
+        const saved = lookupStartPrefsByRepo(f.repo)[1]
+        if (saved) {
+          merged.runMode = saved.runMode
+          merged.startAction = saved.startAction
+          merged.base = saved.base
+        } else {
+          merged.base = stored.start.base
+        }
+      } else {
+        merged.base = ""
+      }
       return merged
     })
   }
@@ -434,10 +447,19 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
       return
     }
     // Issue #114: picking a repo reloads that repo's saved Start
-    // base/action/run-mode (when present).
+    // base/action/run-mode (when present) and prunes a stale related
+    // selection in the same state update so the writes can't diverge.
     if (mode === "start" && key === "repo" && typeof value === "string") {
-      const saved = loadStartPrefsByRepo()[value.trim()]
-      setForm((f) => ({ ...f, [key]: value, ...(saved ? { runMode: saved.runMode, startAction: saved.startAction, base: saved.base } : {}) }))
+      const saved = lookupStartPrefsByRepo(value)[1]
+      const repo = value
+      setForm((f) => ({
+        ...f,
+        [key]: repo,
+        relatedRepos: (f.relatedRepos ?? []).filter(
+          (n) => n.trim() && n.trim().toLowerCase() !== repo.trim().toLowerCase(),
+        ),
+        ...(saved ? { runMode: saved.runMode, startAction: saved.startAction, base: saved.base } : {}),
+      }))
       return
     }
     setForm((f) => ({ ...f, [key]: value }))

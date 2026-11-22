@@ -99,12 +99,28 @@ export function loadStartPrefsByRepo(): Record<string, LaunchStartRepoPrefs> {
   }
 }
 
+/** Case-insensitive lookup into the per-repo map: custom-typed names that
+ * differ only by case from a saved entry still reload its Start prefs.
+ * Returns the stored key (canonical casing for future saves) + the entry. */
+export function lookupStartPrefsByRepo(repo: string): [string, LaunchStartRepoPrefs] | [] {
+  const name = repo.trim()
+  if (!name) return []
+  const all = loadStartPrefsByRepo()
+  if (all[name]) return [name, all[name]]
+  const lower = name.toLowerCase()
+  for (const [key, entry] of Object.entries(all)) {
+    if (key.toLowerCase() === lower) return [key, entry]
+  }
+  return []
+}
+
 export function saveStartPrefsForRepo(repo: string, prefs: LaunchStartRepoPrefs): void {
   const name = repo.trim()
   if (!name) return
   try {
     const all = loadStartPrefsByRepo()
-    all[name] = prefs
+    const existing = lookupStartPrefsByRepo(name)[0]
+    all[existing ?? name] = prefs
     localStorage.setItem(START_BY_REPO_KEY, JSON.stringify(all))
   } catch {
     /* storage unavailable */

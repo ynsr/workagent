@@ -125,6 +125,29 @@ export function startRepoState(
   return typeof eff === "string" && eff.trim() ? "ok" : "missing"
 }
 
+/** Next start-step config for a repo pick: repo change + stale related prune
+ * in one object so sequential onChange writes can't clobber each other
+ * (empty/hint deletion semantics preserved). Pure for testability. */
+export function nextStartConfigForRepo(
+  config: Record<string, unknown>,
+  repo: string,
+  related: string[],
+  hintRelated: string[],
+  hints?: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = { ...config }
+  const repoHint = hints?.repo
+  if (repo === "" || repo === undefined || (hints && repo === repoHint)) delete next.repo
+  else next.repo = repo
+  const pruned = related.filter(
+    (n) => n.trim() && n.trim().toLowerCase() !== repo.trim().toLowerCase(),
+  )
+  const hinted = hints && JSON.stringify(pruned) === JSON.stringify(hintRelated)
+  if (pruned.length === 0 || hinted) delete next.related_repo
+  else next.related_repo = pruned
+  return next
+}
+
 /** Per-step config editor: run_mode select + extra-flags text (+ raw JSON add-on).
  * In launch mode pass `hints` (template defaults): the form edits DELTAS —
  * empty config shows template values as placeholder hints, and re-selecting
@@ -222,11 +245,9 @@ function StepConfigForm({
             value={repo || hintRepo}
             options={repoNames}
             onChange={(v) => {
-              patch("repo", v)
-              const pruned = related.filter(
-                (n) => n.trim() && n.trim().toLowerCase() !== String(v).trim().toLowerCase(),
-              )
-              if (pruned.length !== related.length) patchList(pruned)
+              // Single onChange: repo + related prune off the same snapshot
+              // so the second write can't clobber the first.
+              onChange(nextStartConfigForRepo(config, String(v), related, hintRelated, hints))
             }}
             placeholder={hintRepo || (requiredRepo ? "Select a repo… (required)" : "Select a repo… (optional)")}
             allowCustom

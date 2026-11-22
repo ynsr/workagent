@@ -5,8 +5,9 @@ import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { HarnessSelect } from "@/components/HarnessSelect"
 import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
-import { RunModeSelect } from "@/components/StartForm"
-import { loadLaunchPrefs, loadStartPrefsByRepo, saveLaunchPrefs, saveStartPrefsForRepo } from "@/lib/launchPrefs"
+import { RunModeSelect, useStartForm } from "@/components/StartForm"
+import { act, renderHook } from "@testing-library/react"
+import { loadLaunchPrefs, loadStartPrefsByRepo, lookupStartPrefsByRepo, saveLaunchPrefs, saveStartPrefsForRepo } from "@/lib/launchPrefs"
 import { buildImmediateMessageActionArgs } from "@/lib/messageRunConfig"
 
 const mockConfig = vi.hoisted(() => ({
@@ -120,6 +121,30 @@ describe("UI drift fixes (#128)", () => {
     // Corrupt entries are dropped, valid ones survive.
     localStorage.setItem("launch.startByRepo.v1", JSON.stringify({ ok: all["proj-a"], bad: { runMode: "nope" } }))
     expect(loadStartPrefsByRepo()).toEqual({ ok: { runMode: "acp", startAction: "plan", base: "develop" } })
+  })
+  it("looks up saved per-repo prefs case-insensitively (issue #114)", () => {
+    localStorage.clear()
+    saveStartPrefsForRepo("Proj-A", { runMode: "acp", startAction: "plan", base: "develop" })
+    expect(lookupStartPrefsByRepo("proj-a")[1]).toEqual({ runMode: "acp", startAction: "plan", base: "develop" })
+    // Saving under a different case reuses the stored key (no dup entries).
+    saveStartPrefsForRepo("PROJ-a", { runMode: "headless", startAction: "implement", base: "main" })
+    expect(Object.keys(loadStartPrefsByRepo())).toEqual(["Proj-A"])
+    expect(lookupStartPrefsByRepo("proj-a")[1]?.base).toBe("main")
+  })
+
+  it("useStartForm reloads saved prefs on repo pick and prunes stale related (issue #114)", () => {
+    localStorage.clear()
+    saveStartPrefsForRepo("proj-a", { runMode: "acp", startAction: "plan", base: "develop" })
+    const { result } = renderHook(() => useStartForm({ ref: "IPG-1", relatedRepos: ["proj-a", "other"] }))
+    act(() => {
+      result.current.update("repo", "proj-a")
+    })
+    expect(result.current.form.repo).toBe("proj-a")
+    expect(result.current.form.runMode).toBe("acp")
+    expect(result.current.form.startAction).toBe("plan")
+    expect(result.current.form.base).toBe("develop")
+    // Stale self-selection pruned in the same update.
+    expect(result.current.form.relatedRepos).toEqual(["other"])
   })
   it("buildImmediateMessageActionArgs forwards runMode, harness, model, and effort", () => {
     const args = buildImmediateMessageActionArgs("triage", "m-1", {
