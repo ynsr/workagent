@@ -102,3 +102,31 @@ def test_tool_error_rate_scores_stream_json_events(tmp_path):
     assert hs.tool_error_rate(p_ok) is None
 
 
+def test_extract_usage_acp_and_stream_json(tmp_path):
+    p = tmp_path / "acp.jsonl"
+    p.write_text("\n".join([
+        "not json",
+        'ACP: {"t": "usage", "id": "s1", "usage": {"input_tokens": 100, "output_tokens": 40, "cached_tokens": 20, "cost_usd": 0.002, "model": "claude-sonnet-4"}}',
+        '{"t": "usage", "id": "s1", "usage": {"inputTokens": 50, "outputTokens": 10, "cacheReadInputTokens": 5, "costUsd": 0.001}}',
+        '{"event": "result", "result": {"usage": {"prompt_tokens": 25, "completion_tokens": 15}, "total_cost_usd": 0.0005}}',
+        '{"message": {"role": "assistant", "model": "gpt-5", "usage": {"input": 10, "output": 5, "cacheRead": 2, "cost": {"total": 0.0005}}}}',
+    ]))
+    u = hs.extract_usage(p)
+    assert u["input_tokens"] == 185
+    assert u["output_tokens"] == 70
+    assert u["cached_tokens"] == 27
+    assert u["cost_usd"] == 0.004
+    assert u["model_id"] == "gpt-5"
+
+
+def test_extract_usage_missing_file_returns_empty(tmp_path):
+    u = hs.extract_usage(tmp_path / "missing.jsonl")
+    assert u == {
+        "input_tokens": None,
+        "output_tokens": None,
+        "cached_tokens": None,
+        "cost_usd": None,
+        "model_id": "",
+    }
+
+

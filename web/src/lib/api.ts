@@ -494,6 +494,22 @@ export interface Run {
   step_index?: number | null
   /** Newest unanswered ACP question (null when none) — drives QuestionCard. */
   pending_question?: PendingQuestion | null
+  /** Epoch seconds when the run finished (null while running). */
+  finished?: number | null
+  /** Elapsed run duration in milliseconds (null while running). */
+  duration_ms?: number | null
+  /** Model identifier used for the run ("" when unset). */
+  model_id?: string
+  /** Reasoning effort level used for the run ("" when unset). */
+  effort?: string
+  /** Aggregated input tokens across turns (null when unreported). */
+  input_tokens?: number | null
+  /** Aggregated output tokens across turns (null when unreported). */
+  output_tokens?: number | null
+  /** Aggregated cached/read tokens across turns (null when unreported). */
+  cached_tokens?: number | null
+  /** Aggregated USD cost across turns (null when unreported). */
+  cost_usd?: number | null
 }
 
 export interface RunLine {

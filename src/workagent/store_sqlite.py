@@ -63,7 +63,15 @@ CREATE TABLE IF NOT EXISTS runs (
   state TEXT NOT NULL DEFAULT 'finished',
   continued_from_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
   parent_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
-  step_index INTEGER);
+  step_index INTEGER,
+  finished_at TEXT NOT NULL DEFAULT '',
+  duration_ms INTEGER,
+  model_id TEXT NOT NULL DEFAULT '',
+  effort TEXT NOT NULL DEFAULT '',
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  cached_tokens INTEGER,
+  cost_usd REAL);
 CREATE TABLE IF NOT EXISTS issue_cache (
   source TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL,
   fetched_at TEXT NOT NULL);
@@ -261,6 +269,29 @@ def _migrate_runs_parent(conn) -> None:
             "ALTER TABLE runs ADD COLUMN parent_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL")
     if "step_index" not in cols:
         conn.execute("ALTER TABLE runs ADD COLUMN step_index INTEGER")
+
+
+def _migrate_runs_telemetry(conn) -> None:
+    """Schema v28: runs gains finished_at, duration_ms, model_id, effort,
+    input_tokens, output_tokens, cached_tokens, and cost_usd (run telemetry).
+
+    All columns are nullable or have safe defaults, so ALTER TABLE is idempotent.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+    if not cols:
+        return
+    for name, decl in (
+        ("finished_at", "TEXT NOT NULL DEFAULT ''"),
+        ("duration_ms", "INTEGER"),
+        ("model_id", "TEXT NOT NULL DEFAULT ''"),
+        ("effort", "TEXT NOT NULL DEFAULT ''"),
+        ("input_tokens", "INTEGER"),
+        ("output_tokens", "INTEGER"),
+        ("cached_tokens", "INTEGER"),
+        ("cost_usd", "REAL"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {name} {decl}")
 
 
 def _migrate_display_cols(conn) -> None:
@@ -1243,7 +1274,15 @@ def insert_run(path: Path, command: str, args: list[str],
                output: list[str] | None = None,
                truncated: bool = False,
                validation: dict | None = None,
-               flow_id: int | None = None) -> int:
+               flow_id: int | None = None,
+               finished_at: str = "",
+               duration_ms: int | None = None,
+               model_id: str = "",
+               effort: str = "",
+               input_tokens: int | None = None,
+               output_tokens: int | None = None,
+               cached_tokens: int | None = None,
+               cost_usd: float | None = None) -> int:
     """Insert one execution row; returns its id.
 
     A run owns its transcript identity (``worktree_ref``, harness,
@@ -1291,13 +1330,17 @@ def insert_run(path: Path, command: str, args: list[str],
              "output", "truncated", "validation", "worktree_ref",
              "harness_name", "initiator_command", "prompt", "file_path",
              "session_type", "metadata", "state", "continued_from_run_id",
-             "parent_run_id", "step_index"]
+             "parent_run_id", "step_index",
+             "finished_at", "duration_ms", "model_id", "effort",
+             "input_tokens", "output_tokens", "cached_tokens", "cost_usd"]
     vals: list = [command, json.dumps(args), exit_code, created,
                   "\n".join(lines), 1 if truncated else 0,
                   json.dumps(validation or {}), worktree_ref or None,
                   harness_name, initiator_command, prompt, file_path,
                   session_type, json.dumps(metadata or {}), state,
-                  continued_from_run_id, parent_run_id, step_index]
+                  continued_from_run_id, parent_run_id, step_index,
+                  finished_at or "", duration_ms, model_id or "", effort or "",
+                  input_tokens, output_tokens, cached_tokens, cost_usd]
     with connect(path) as conn:
         if env_parent and parent_run_id is not None:
             if conn.execute("SELECT 1 FROM runs WHERE id = ?",
@@ -1336,12 +1379,56 @@ def get_run(path: Path, run_id: int,
     return _run_dict(row) if row is not None else None
 
 
-def finish_run(path: Path, run_id: int, state: str) -> None:
-    """Set a run's terminal state (finished/failed/preview)."""
+def finish_run(path: Path, run_id: int, state: str, *,
+               duration_ms: int | None = None,
+               model_id: str | None = None,
+               effort: str | None = None,
+               input_tokens: int | None = None,
+               output_tokens: int | None = None,
+               cached_tokens: int | None = None,
+               cost_usd: float | None = None) -> None:
+    """Set a run's terminal state (finished/failed/preview) and optional telemetry."""
     if state not in ("finished", "failed", "preview"):
         raise ValueError(f"unknown run state: {state!r}")
+    now = datetime.now(timezone.utc)
+    finished_iso = now.isoformat()
     with connect(path) as conn:
-        conn.execute("UPDATE runs SET state = ? WHERE id = ?", (state, run_id))
+        if duration_ms is None:
+            row = conn.execute("SELECT created_at FROM runs WHERE id = ?",
+                               (run_id,)).fetchone()
+            if row and row[0]:
+                try:
+                    created_dt = datetime.fromisoformat(str(row[0]))
+                    if created_dt.tzinfo is None:
+                        created_dt = created_dt.replace(tzinfo=timezone.utc)
+                    duration_ms = max(0, int((now - created_dt).total_seconds() * 1000))
+                except Exception:
+                    duration_ms = None
+        sets = ["state = ?", "finished_at = ?"]
+        vals: list = [state, finished_iso]
+        if duration_ms is not None:
+            sets.append("duration_ms = ?")
+            vals.append(int(duration_ms))
+        if model_id:
+            sets.append("model_id = ?")
+            vals.append(str(model_id))
+        if effort:
+            sets.append("effort = ?")
+            vals.append(str(effort))
+        if input_tokens is not None:
+            sets.append("input_tokens = ?")
+            vals.append(int(input_tokens))
+        if output_tokens is not None:
+            sets.append("output_tokens = ?")
+            vals.append(int(output_tokens))
+        if cached_tokens is not None:
+            sets.append("cached_tokens = ?")
+            vals.append(int(cached_tokens))
+        if cost_usd is not None:
+            sets.append("cost_usd = ?")
+            vals.append(float(cost_usd))
+        conn.execute(f"UPDATE runs SET {', '.join(sets)} WHERE id = ?",
+                     (*vals, run_id))
 
 
 def set_run_file_path(path: Path, run_id: int, file_path: str) -> None:
@@ -1508,7 +1595,9 @@ def list_runs(path: Path, limit: int = 200,
              " r.file_path, r.worktree_ref,"
              " r.session_type, r.state, r.harness_name, r.initiator_command,"
              " r.metadata, r.continued_from_run_id,"
-             " r.parent_run_id, r.step_index"
+             " r.parent_run_id, r.step_index,"
+             " r.finished_at, r.duration_ms, r.model_id, r.effort,"
+             " r.input_tokens, r.output_tokens, r.cached_tokens, r.cost_usd"
              " FROM runs r LEFT JOIN worktrees w ON w.ref_key = r.worktree_ref")
         if not include_deleted_worktrees:
             q += " WHERE " + _NOT_DELETED
@@ -1739,7 +1828,9 @@ def _schema_current(path: Path) -> bool:
         if not {"output", "truncated", "validation", "flow_id", "worktree_ref",
                 "harness_name", "initiator_command", "prompt", "file_path",
                 "session_type", "metadata", "state",
-                "continued_from_run_id", "parent_run_id", "step_index"} <= cols:
+                "continued_from_run_id", "parent_run_id", "step_index",
+                "finished_at", "duration_ms", "model_id", "effort",
+                "input_tokens", "output_tokens", "cached_tokens", "cost_usd"} <= cols:
             return False
         fks = list(conn.execute("PRAGMA foreign_key_list(runs)"))
         if any(r[2] == "sessions" for r in fks):
@@ -1878,6 +1969,7 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
                 _migrate_prodtest_cols(conn)
                 _migrate_runs_worktree_fk(conn)
                 _migrate_runs_parent(conn)
+                _migrate_runs_telemetry(conn)
                 _migrate_change_log(conn)
         except sqlite3.OperationalError as e:
             if "locked" not in str(e).lower():
