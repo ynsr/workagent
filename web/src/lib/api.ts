@@ -782,4 +782,98 @@ export const api = {
     request<ProdtestPlanResponse>(
       `/api/prodtests/${encodeURIComponent(issueKey)}/plan`,
     ),
+
+  /** GET /api/schedules — all schedules plus built-in starter templates. */
+  schedules: () => request<SchedulesResponse>("/api/schedules"),
+
+  /** POST /api/schedules/preview — preview next N run timestamps. */
+  previewSchedule: (cron_expr: string, timezone = "UTC", count = 5) =>
+    request<SchedulePreviewResponse>("/api/schedules/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cron_expr, timezone, count }),
+    }),
+
+  /** POST /api/schedules — create a new schedule. */
+  createSchedule: (body: CreateScheduleInput) =>
+    request<ScheduleRecord>("/api/schedules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  /** PATCH /api/schedules/{id} — update an existing schedule. */
+  updateSchedule: (id: number | string, body: UpdateScheduleInput) =>
+    request<ScheduleRecord>(`/api/schedules/${encodeURIComponent(String(id))}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  /** DELETE /api/schedules/{id} — delete a schedule. */
+  deleteSchedule: (id: number | string) =>
+    request<{ removed: boolean; id: string }>(`/api/schedules/${encodeURIComponent(String(id))}`, {
+      method: "DELETE",
+    }),
+
+  /** POST /api/schedules/{id}/run — trigger a schedule immediately. */
+  runScheduleNow: (id: number | string) =>
+    request<{ schedule: ScheduleRecord; argv: string[]; run_id: number | null }>(
+      `/api/schedules/${encodeURIComponent(String(id))}/run`,
+      { method: "POST" },
+    ),
 }
+
+export type ScheduleTargetKind = "flow" | "action" | "command"
+
+export interface ScheduleRecord {
+  id: number
+  name: string
+  cron_expr: string
+  timezone: string
+  target_kind: ScheduleTargetKind
+  target_label: string
+  args_json: string
+  args: Record<string, unknown> | unknown[]
+  enabled: boolean
+  last_run_at: string
+  next_run_at: string
+  last_run_id: number | null
+  lease_until: string
+  created_at: string
+  modified_at: string
+}
+
+export interface ScheduleStarterTemplate {
+  id: string
+  name: string
+  description: string
+  cron_expr: string
+  timezone: string
+  target_kind: ScheduleTargetKind
+  target_label: string
+  args_json: string
+}
+
+export interface SchedulesResponse {
+  schedules: ScheduleRecord[]
+  starters: ScheduleStarterTemplate[]
+}
+
+export interface SchedulePreviewResponse {
+  cron_expr: string
+  timezone: string
+  next_runs: string[]
+}
+
+export interface CreateScheduleInput {
+  name: string
+  cron_expr: string
+  timezone: string
+  target_kind: ScheduleTargetKind
+  target_label: string
+  args_json?: string
+  enabled?: boolean
+}
+
+export type UpdateScheduleInput = Partial<CreateScheduleInput>
