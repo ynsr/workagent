@@ -156,7 +156,16 @@ def _ci_sha_status(tool: str, path: str, sha: str) -> tuple[str, str]:
         if not rows:
             return "not_started", ""
         states = {str(r.get("status", "")).lower() for r in rows}
-        url = str((rows[0] or {}).get("target_url", "") or "")
+        # Failed-first (#116): prefer a failing status' URL over rows[0]
+        # (a later success must not shadow the real failure).
+        url = ""
+        for r in rows:
+            if str((r or {}).get("status", "")).lower() in ("failed", "canceled"):
+                url = str((r or {}).get("target_url", "") or "")
+                if url:
+                    break
+        if not url:
+            url = str((rows[0] or {}).get("target_url", "") or "")
         if states <= {"success"}:
             return "success", url
         if states & {"failed", "canceled"}:
@@ -173,7 +182,16 @@ def _ci_sha_status(tool: str, path: str, sha: str) -> tuple[str, str]:
             return "not_started", ""
         conclusions = {str(r.get("conclusion", "") or "").lower() for r in runs}
         statuses = {str(r.get("status", "") or "").lower() for r in runs}
-        url = str((runs[0] or {}).get("html_url", "") or "")
+        # Failed-first (#116): prefer a failing check's URL over runs[0].
+        url = ""
+        for r in runs:
+            if str((r or {}).get("conclusion", "") or "").lower() in (
+                    "failure", "cancelled", "timed_out", "action_required"):
+                url = str((r or {}).get("html_url", "") or "")
+                if url:
+                    break
+        if not url:
+            url = str((runs[0] or {}).get("html_url", "") or "")
         if conclusions and conclusions <= {"success"}:
             return "success", url
         if conclusions & {"failure", "cancelled", "timed_out", "action_required"}:

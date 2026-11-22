@@ -108,6 +108,7 @@ def _ci_glab_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]
                      reverse=True)[:_CI_PIPELINE_SCAN]
     newest_id = newest.get("id")
     newest_checks: list[dict] = []
+    fallback = ""
     for pipeline in ordered:
         jobs = _pipeline_jobs(path, pipeline.get("id"), host, cwd, pr_url)
         if not jobs:
@@ -126,22 +127,32 @@ def _ci_glab_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]
                 for idx, j in enumerate(jobs)
                 if isinstance(j, dict)
             ]
-        job = max(jobs, key=lambda j: j.get("id", 0))
-        url = job.get("web_url") or ""
-        if url:
-            return state, url, newest_checks
+            # Failed-first (#116): the URL must be a failing job of the
+            # newest pipeline, not max(id) (a later success like .../203730
+            # must not shadow the real failure .../203729).
+            url = _pick_job_url(jobs)
+            if url:
+                return state, url, newest_checks
+            continue
+        # Older pipelines are only a fallback when the newest has no job
+        # URL (e.g. merge_request_event that failed before any job started).
+        if not fallback:
+            fallback = _pick_job_url(jobs)
+    if fallback:
+        return state, fallback, newest_checks
     # No job urls anywhere: the newest pipeline page beats a dead badge.
     return state, newest.get("web_url") or "", newest_checks
 
 
 def _ci_glab(pr_url: str, cwd: str | None) -> tuple[str, str]:
-    """(status, url): url is the latest job's page (e.g. .../-/jobs/194493).
+    """(status, url): url is the newest failed job's page (e.g. .../jobs/194493).
 
-    Status comes from the newest pipeline. The URL is the newest *job* of
-    that pipeline; when it has no jobs (a ``merge_request_event`` pipeline
-    that failed before any job started), earlier pipelines of the same MR
-    are walked back so the badge still points at a real job, and the
-    newest pipeline page is the last resort.
+    Status comes from the newest pipeline. The URL is the newest *failed*
+    job of that pipeline (newest running when none failed, else newest);
+    when it has no jobs (a ``merge_request_event`` pipeline that failed
+    before any job started), earlier pipelines of the same MR are walked
+    back so the badge still points at a real job, and the newest pipeline
+    page is the last resort.
     """
     state, url, _ = _ci_glab_details(pr_url, cwd)
     return state, url
@@ -156,6 +167,28 @@ def _glab_state(status: str) -> str:
     if status in _GLAB_RUNNING:
         return "running"
     return "not_started"
+
+
+def _pick_job_url(jobs: list) -> str:
+    """Newest failed job's page; newest running when none failed, else newest.
+
+    Issue #116: picking max(job id) linked a successful job (e.g. .../203730)
+    while the real failure (e.g. .../203729) sat earlier in the same
+    pipeline. Only jobs carrying a web_url compete.
+    """
+    dicts = [j for j in jobs if isinstance(j, dict) and j.get("web_url")]
+    if not dicts:
+        return ""
+    failed = [j for j in dicts
+              if _glab_state(str(j.get("status") or "").lower()) == "failure"]
+    if failed:
+        return str(max(failed, key=lambda j: j.get("id", 0)).get("web_url"))
+    running = [j for j in dicts
+               if _glab_state(str(j.get("status") or "").lower()) == "running"]
+    if running:
+        return str(max(running, key=lambda j: j.get("id", 0)).get("web_url"))
+    return str(max(dicts, key=lambda j: j.get("id", 0)).get("web_url"))
+
 
 def _ci_branch_glab(host: str, path: str, branch: str,
                     cwd: str | None) -> tuple[str, str]:
@@ -174,10 +207,9 @@ def _ci_branch_glab(host: str, path: str, branch: str,
     if state == "not_started":
         return "not_started", ""
     jobs = _pipeline_jobs(path, newest.get("id"), host, cwd, branch)
-    if jobs:
-        job = max(jobs, key=lambda j: j.get("id", 0))
-        if job.get("web_url"):
-            return state, job["web_url"]
+    url = _pick_job_url(jobs)
+    if url:
+        return state, url
     return state, newest.get("web_url") or ""
 
 
@@ -241,10 +273,11 @@ def fetch_ci(tool: str, pr_url: str,
              cwd: str | None = None, branch: str | None = None) -> tuple[str | None, str]:
     """(status, job_url) for the latest CI pipeline of a PR/MR.
 
-    job_url is the latest job's page (GitLab `.../-/jobs/<id>`, GitHub check
-    details URL); "" when unknown. Soft-failing like fetch_ci_status.
-    ``branch`` scopes the lookup to a branch's newest pipeline instead of
-    the PR/MR (used by the release card); None preserves PR/MR behavior.
+    job_url is the newest failed job's page (GitLab `.../-/jobs/<id>`,
+    GitHub check details URL); "" when unknown. Soft-failing like
+    fetch_ci_status. ``branch`` scopes the lookup to a branch's newest
+    pipeline instead of the PR/MR (used by the release card); None
+    preserves PR/MR behavior.
     """
     try:
         if branch:
