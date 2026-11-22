@@ -186,3 +186,6 @@ API passes `--yes` only when the request carries `confirm: true`
 (`force: true` additionally passes `--force` for cleanup/register, whose
 `--force` skips state validation / link overwrite — verified in
 `cleanup_cmd` and `link_wt`).
+
+## Recurring Schedules (T13)
+- `schedule` (`add|list|update|remove|run-due`) — `run-due` requires `confirm: true` (`schedule:run-due` target key); CRUD endpoints live under `/api/schedules` and the `Schedules` tab of Automation Library (`/library`).

@@ -104,6 +104,8 @@ SPECS: dict[str, dict[str, Any]] = {
               "key": lambda args: f"adhoc:{_first_positional(args, VAL_FLAGS['adhoc'])}"},
     "orchestrate": {"confirm": True, "force": False, "key": _orchestrate_key},
     "config": {"confirm": False, "force": False, "key": "config"},
+    "schedule": {"confirm": False, "force": False, "confirm_subs": ("run-due",),
+                 "key": lambda args: "schedule:run-due" if args[:1] == ["run-due"] else "config"},
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
@@ -194,6 +196,12 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "config": (),
     "config show": ("--json",),
     "config set": ("--json",),
+    "schedule": (),
+    "schedule list": ("--json", "--csv"),
+    "schedule add": ("--enabled", "--disabled", "--json"),
+    "schedule update": ("--enabled", "--disabled", "--json"),
+    "schedule remove": ("--json",),
+    "schedule run-due": ("--dry-run", "--json"),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "adhoc": ("--prompt", "--harness", "--run-mode", "--model", "--effort", "--extra-prompt", "--session-file", "--env-file", "--continue-run"),
@@ -237,6 +245,12 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "config": (),
     "config show": (),
     "config set": (),
+    "schedule": (),
+    "schedule list": (),
+    "schedule add": ("--name", "--cron", "--target-kind", "--target-label", "--timezone", "--args"),
+    "schedule update": ("--name", "--cron", "--target-kind", "--target-label", "--timezone", "--args"),
+    "schedule remove": (),
+    "schedule run-due": (),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "link": {"list", "set", "remove", "deactivate", "reactivate", "undelete", "destroy-deleted"},
@@ -246,7 +260,8 @@ SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "backup": {"export", "import", "run-scheduled"},
                                     "message": {"add", "list", "show", "update", "remove", "adhoc", "validate", "draft-reply", "action", "flow"},
                                     "prodtest": {"plan", "run", "list", "status", "delete", "cleanup"},
-                                    "config": {"show", "set"}}
+                                    "config": {"show", "set"},
+                                    "schedule": {"add", "list", "update", "remove", "run-due"}}
 TEMPLATE_SUBCOMMANDS: set[str] = {"add", "list", "show", "update", "clone", "compose", "delete", "suggest-icon"}
 def _needs_confirm(command: str, args: list[str]) -> bool:
     """True when the (sub)command needs confirm:true (destructive only).

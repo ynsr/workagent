@@ -20,6 +20,7 @@ export const queryKeys = {
   flowTemplates: ["flow-templates"] as const,
   flowTemplate: (label: string) => ["flow-templates", "detail", label] as const,
   flows: (worktree?: string) => ["flows", worktree ?? ""] as const,
+  schedules: ["schedules"] as const,
   links: ["links"] as const,
   doctor: ["doctor"] as const,
   messages: (thread?: string) => ["messages", thread ?? ""] as const,

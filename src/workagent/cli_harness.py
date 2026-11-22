@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import backend, store
@@ -487,7 +488,9 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                 session_type=stype,
                 metadata=result.get("session_metadata"),
                 state="running",
-                continued_from_run_id=chain_root)
+                continued_from_run_id=chain_root,
+                model_id=model or "",
+                effort=effort or "")
         except Exception as e:
             # Post-cutover insert failure: launch continues, warn only.
             # No transcript file is pre-created, so there is nothing to clean up.
@@ -525,6 +528,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         if _parent_rid:
             os.environ["WORKAGENT_PARENT_RUN_ID"] = _parent_rid
             _set_parent_env = True
+    started_mono = time.monotonic()
     try:
         extra = harness.session_file_flag(session_path) if session_path else None
         _launch_kw: dict = {}
@@ -673,14 +677,36 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             if minted is not None and minted != before and run_id:
                 _sq.set_run_file_path(db, run_id, str(minted))
         if run_id:
-            _sq.finish_run(db, run_id, "failed" if exit_code not in (0, 2) else "finished")
+            duration_ms = max(0, int((time.monotonic() - started_mono) * 1000))
+            usage: dict = {}
+            try:
+                from . import harness_summary as _hs_fin
+                usage = _hs_fin.extract_usage(result.get("session_file") or session_path)
+            except Exception:
+                usage = {}
+            _sq.finish_run(
+                db, run_id, "failed" if exit_code not in (0, 2) else "finished",
+                duration_ms=duration_ms,
+                model_id=model or str(usage.get("model_id") or "") or None,
+                effort=effort or None,
+                input_tokens=usage.get("input_tokens"),
+                output_tokens=usage.get("output_tokens"),
+                cached_tokens=usage.get("cached_tokens"),
+                cost_usd=usage.get("cost_usd"),
+            )
         if no_tty and run_key:
             _publish_headless_summary(result, json_output, harness_name=harness_name)
 
     except Exception:
         if run_id:
             try:
-                _sq.finish_run(db, run_id, "failed")
+                duration_ms = max(0, int((time.monotonic() - started_mono) * 1000))
+                _sq.finish_run(
+                    db, run_id, "failed",
+                    duration_ms=duration_ms,
+                    model_id=model or None,
+                    effort=effort or None,
+                )
             except Exception:
                 pass
         raise
