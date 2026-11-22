@@ -160,18 +160,49 @@ def start_background_maintenance() -> "threading.Thread":
     return t
 
 
+class WatcherOverrideIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    auto_fix_ci: bool | None = None
+    auto_fix_reviews: bool | None = None
+
+
 def create_app(static_dir: Path, host: str, port: int,
-               allowed_hosts: list[str]) -> FastAPI:
+               allowed_hosts: list[str],
+               enable_watcher: bool | None = None,
+               watch_interval: float = 60.0) -> FastAPI:
     from .cdc import CdcHub
+    from . import watcher as _watcher
 
     cdc_hub = CdcHub()
+    if enable_watcher is None:
+        watch_enabled = os.environ.get("WORKAGENT_WATCH", "").strip().lower() in (
+            "1", "true", "yes", "on",
+        )
+    else:
+        watch_enabled = bool(enable_watcher)
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
         cdc_hub.start()
+        watcher_stop: asyncio.Event | None = None
+        watcher_task: asyncio.Task | None = None
+        if watch_enabled:
+            watcher_stop = asyncio.Event()
+            watcher_task = asyncio.create_task(
+                _watcher.watch_loop_async(watcher_stop, interval=watch_interval)
+            )
+            _app.state.watcher_task = watcher_task
         try:
             yield
         finally:
+            if watcher_stop is not None:
+                watcher_stop.set()
+            if watcher_task is not None:
+                watcher_task.cancel()
+                try:
+                    await watcher_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             cdc_hub.stop()
 
     app = FastAPI(title="workagent", docs_url=None, redoc_url=None, lifespan=_lifespan)
@@ -386,6 +417,52 @@ def create_app(static_dir: Path, host: str, port: int,
         except (git_diff.DiffModeError, git_diff.DiffPathError) as exc:
             raise HTTPException(400, str(exc))
         return {"key": key, **out}
+
+    @app.get("/api/worktrees/{ref:path}/watcher")
+    def worktree_watcher_get(ref: str) -> dict:
+        """Read per-worktree watcher overrides and effective values."""
+        links = store.load_links(include_inactive=True)
+        resolved = worktrees.resolve_worktree(ref, links)
+        if resolved is None:
+            raise HTTPException(404, f"no linked state for {ref}")
+        key = worktrees.pick_worktree(ref, resolved, links)
+        entry = links[key]
+        _, repo_entry = _watcher._repo_for_entry(entry, store.load_repos())
+        eff_ci, eff_rev = _watcher.effective_auto_fix(entry, repo_entry)
+        return {
+            "key": key,
+            "auto_fix_ci": entry.get("auto_fix_ci") if isinstance(entry.get("auto_fix_ci"), bool) else None,
+            "auto_fix_reviews": entry.get("auto_fix_reviews") if isinstance(entry.get("auto_fix_reviews"), bool) else None,
+            "effective_auto_fix_ci": eff_ci,
+            "effective_auto_fix_reviews": eff_rev,
+            "last_nudge_signature": str(entry.get("last_nudge_signature") or ""),
+        }
+
+    @app.post("/api/worktrees/{ref:path}/watcher")
+    def worktree_watcher_set(ref: str, body: WatcherOverrideIn) -> dict:
+        """Set or clear per-worktree watcher overrides (null = inherit from repo)."""
+        links = store.load_links(include_inactive=True)
+        resolved = worktrees.resolve_worktree(ref, links)
+        if resolved is None:
+            raise HTTPException(404, f"no linked state for {ref}")
+        key = worktrees.pick_worktree(ref, resolved, links)
+        fields_set = body.model_fields_set
+        kwargs: dict[str, Any] = {}
+        if "auto_fix_ci" in fields_set:
+            kwargs["auto_fix_ci"] = body.auto_fix_ci
+        if "auto_fix_reviews" in fields_set:
+            kwargs["auto_fix_reviews"] = body.auto_fix_reviews
+        entry = _watcher.update_worktree_watcher_fields(key, **kwargs)
+        _, repo_entry = _watcher._repo_for_entry(entry, store.load_repos())
+        eff_ci, eff_rev = _watcher.effective_auto_fix(entry, repo_entry)
+        return {
+            "key": key,
+            "auto_fix_ci": entry.get("auto_fix_ci") if isinstance(entry.get("auto_fix_ci"), bool) else None,
+            "auto_fix_reviews": entry.get("auto_fix_reviews") if isinstance(entry.get("auto_fix_reviews"), bool) else None,
+            "effective_auto_fix_ci": eff_ci,
+            "effective_auto_fix_reviews": eff_rev,
+            "last_nudge_signature": str(entry.get("last_nudge_signature") or ""),
+        }
 
     @app.get("/api/repos")
     def repos_list() -> list[dict]:

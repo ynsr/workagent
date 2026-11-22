@@ -185,3 +185,7 @@ API passes `--yes` only when the request carries `confirm: true`
 (`force: true` additionally passes `--force` for cleanup/register, whose
 `--force` skips state validation / link overwrite — verified in
 `cleanup_cmd` and `link_wt`).
+
+### Background PR & CI Auto-Watchers (T11 / #154)
+- CLI: `workagent repo update <name> --auto-fix-ci/--no-auto-fix-ci --auto-fix-reviews/--no-auto-fix-reviews`; `workagent watch [--once] [--dry-run] [--interval N] [--repo R] [--json]`.
+- Web: `Repos.tsx` (`Auto-fix CI` / `Auto-fix reviews` toggles); `WorktreeDetail.tsx` & `WorktreeWorkspace.tsx` (`WorktreeWatcherOverrides` per-worktree Inherit/On/Off overrides); opt-in `webapp.py` lifespan background watcher (`WORKAGENT_WATCH=1`).

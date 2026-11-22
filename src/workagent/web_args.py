@@ -75,6 +75,7 @@ SPECS: dict[str, dict[str, Any]] = {
     "adhoc": {"confirm": True, "force": False,
               "key": lambda args: f"adhoc:{_first_positional(args, VAL_FLAGS['adhoc'])}"},
     "config": {"confirm": False, "force": False, "key": "config"},
+    "watch": {"confirm": False, "force": False, "key": "watch"},
 }
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
@@ -91,7 +92,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "repo add": ("--json", "--fetch", "--no-fetch"),
     "repo list": ("--json", "--csv"),
     "repo remove": ("--json", "--force"),
-    "repo update": ("--json",),
+    "repo update": ("--json", "--auto-fix-ci", "--no-auto-fix-ci", "--auto-fix-reviews", "--no-auto-fix-reviews"),
     "link set": ("--json",),
     "link remove": ("--json", "--hard-delete"),
     "link deactivate": ("--json",),
@@ -164,6 +165,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "config": (),
     "config show": ("--json",),
     "config set": ("--json",),
+    "watch": ("--once", "--dry-run", "--json"),
 }
 VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "adhoc": ("--prompt", "--harness", "--run-mode", "--model", "--effort", "--extra-prompt", "--session-file", "--env-file", "--continue-run"),
@@ -206,6 +208,7 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "config": (),
     "config show": (),
     "config set": (),
+    "watch": ("--interval", "--repo"),
 }
 SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
                                     "link": {"list", "set", "remove", "deactivate", "reactivate", "undelete", "destroy-deleted"},

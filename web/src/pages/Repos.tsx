@@ -112,6 +112,26 @@ export function Repos() {
     }
   }
 
+  async function handleToggleWatcher(
+    repo: Repo,
+    field: "auto_fix_ci" | "auto_fix_reviews",
+    next: boolean,
+  ) {
+    const flag = field === "auto_fix_ci"
+      ? (next ? "--auto-fix-ci" : "--no-auto-fix-ci")
+      : (next ? "--auto-fix-reviews" : "--no-auto-fix-reviews")
+    try {
+      await createRun.mutateAsync({
+        command: "repo",
+        args: ["update", repo.name, flag],
+      })
+      toast.success(`${repo.name}: ${field === "auto_fix_ci" ? "Auto-fix CI" : "Auto-fix reviews"} ${next ? "enabled" : "disabled"}`)
+      void refetch()
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
   async function handleEditBranches(repo: Repo) {
     const ok = await confirm({
       title: `Edit branches for ${repo.name}`,
@@ -331,6 +351,7 @@ export function Repos() {
                         <TableHead>Branches</TableHead>
                         <TableHead>Pre-release</TableHead>
                         <TableHead>Overlay</TableHead>
+                        <TableHead>Watchers</TableHead>
                         <TableHead className="w-12" aria-label="Release" />
                         <TableHead className="w-12" aria-label="Remove" />
                       </TableRow>
@@ -393,6 +414,28 @@ export function Repos() {
                             >
                               {overlaySummary(r)}
                             </button>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-col gap-1 text-xs">
+                              <label className="flex items-center gap-1.5 whitespace-nowrap">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(r.auto_fix_ci)}
+                                  onChange={(e) => void handleToggleWatcher(r, "auto_fix_ci", e.target.checked)}
+                                  aria-label={`Auto-fix CI for ${r.name}`}
+                                />
+                                <span>Auto-fix CI</span>
+                              </label>
+                              <label className="flex items-center gap-1.5 whitespace-nowrap">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(r.auto_fix_reviews)}
+                                  onChange={(e) => void handleToggleWatcher(r, "auto_fix_reviews", e.target.checked)}
+                                  aria-label={`Auto-fix reviews for ${r.name}`}
+                                />
+                                <span>Auto-fix reviews</span>
+                              </label>
+                            </div>
                           </TableCell>
                           <TableCell>
                             <ReleaseButton repo={r.name} compact />

@@ -279,6 +279,20 @@ export interface Repo {
   commands?: { "pre-release"?: string | null }
   /** Per-repo StatusTable overlay visibility: {button_id: bool} (missing = all visible). */
   overlay_buttons?: Record<string, boolean>
+  /** Opt-in background watcher: auto-fix failing PR CI checks. */
+  auto_fix_ci?: boolean
+  /** Opt-in background watcher: auto-fix unresolved PR review comments. */
+  auto_fix_reviews?: boolean
+}
+
+/** GET/POST /api/worktrees/{ref}/watcher response payload. */
+export interface WorktreeWatcherSettings {
+  key: string
+  auto_fix_ci: boolean | null
+  auto_fix_reviews: boolean | null
+  effective_auto_fix_ci: boolean
+  effective_auto_fix_reviews: boolean
+  last_nudge_signature: string
 }
 
 export interface TrackerRow {
@@ -630,6 +644,22 @@ export const api = {
   worktreeTimeline: (ref: string, limit?: number) =>
     request<WorktreeTimeline>(
       `/api/worktrees/${encodeURIComponent(ref)}/timeline${qs({ limit: limit != null ? String(limit) : undefined })}`,
+    ),
+
+  /** GET /api/worktrees/{ref}/watcher — per-worktree watcher overrides & effective state. */
+  worktreeWatcher: (ref: string) =>
+    request<WorktreeWatcherSettings>(
+      `/api/worktrees/${encodeURIComponent(ref)}/watcher`,
+    ),
+
+  /** POST /api/worktrees/{ref}/watcher — set/clear per-worktree watcher overrides. */
+  setWorktreeWatcher: (
+    ref: string,
+    body: { auto_fix_ci?: boolean | null; auto_fix_reviews?: boolean | null },
+  ) =>
+    request<WorktreeWatcherSettings>(
+      `/api/worktrees/${encodeURIComponent(ref)}/watcher`,
+      { method: "POST", body: JSON.stringify(body) },
     ),
 
   /** GET /api/path?ref=… — resolved worktree path. */
