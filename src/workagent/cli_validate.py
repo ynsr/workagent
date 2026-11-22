@@ -537,7 +537,7 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                 return done
             current_prompt = _exit_prompt(code, transcript)
             continue
-        if token == "INTENTIONALLY_UNCOMMITTED_CHANGES":
+        if expect_changes and token == "INTENTIONALLY_UNCOMMITTED_CHANGES":
             _decide("dirty-gate", token, mode, transcript)
             return _finish(token)
         if expect_changes:
