@@ -73,6 +73,36 @@ export function argsText(args: string[] | undefined): string {
   return args.join(" ")
 }
 
+/** Format milliseconds as a compact duration ("420ms", "12s", "2m 15s", "1h 4m"). */
+export function formatDurationMs(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return ""
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  const totalSec = Math.round(ms / 1000)
+  if (totalSec < 60) return `${totalSec}s`
+  const mins = Math.floor(totalSec / 60)
+  const secs = totalSec % 60
+  if (mins < 60) return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`
+  const hrs = Math.floor(mins / 60)
+  const remMins = mins % 60
+  return remMins > 0 ? `${hrs}h ${remMins}m` : `${hrs}h`
+}
+
+/** Format a token count compactly ("842", "1.4k", "2.3M"). */
+export function formatTokens(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n) || n < 0) return ""
+  if (n < 1000) return String(Math.round(n))
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`
+  return `${(n / 1_000_000).toFixed(2)}M`
+}
+
+/** Format USD cost compactly ("$0.0042", "$0.15", "$1.24"). */
+export function formatCostUsd(cost: number | null | undefined): string {
+  if (cost == null || !Number.isFinite(cost) || cost < 0) return ""
+  if (cost === 0) return "$0.00"
+  if (cost < 0.01) return `$${cost.toFixed(4)}`
+  return `$${cost.toFixed(2)}`
+}
+
 /** Shell command that cds to the worktree then resumes the transcript.
  * Fallback when `run.resume_command` is absent; prefers agy-guard unless `harnessName === "omp"`. */
 export function resumeCommand(worktree: string, sessionFile: string, harnessName?: string): string {

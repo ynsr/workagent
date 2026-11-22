@@ -444,8 +444,24 @@ stale plans.
   "resume_command": "cd /home/x/wt && agy-guard --conversation …",
   "last_seq": 42,
   "parent_run_id": null,
-  "step_index": null}]
+  "step_index": null,
+  "finished": 1730000012.5,
+  "duration_ms": 12500,
+  "model_id": "claude-sonnet-4",
+  "effort": "high",
+  "input_tokens": 1200,
+  "output_tokens": 450,
+  "cached_tokens": 300,
+  "cost_usd": 0.0145}]
 ```
+Run telemetry fields (`finished`, `duration_ms`, `model_id`, `effort`,
+`input_tokens`, `output_tokens`, `cached_tokens`, `cost_usd`) are persisted
+on `runs` in `state.db` when a run finishes (issue #155): `finished` is the
+epoch-second completion timestamp (`null` while running), `duration_ms` is
+elapsed milliseconds (`null` while running), `model_id`/`effort` record the
+selected or reported model/effort (`""` when unset), and token/cost fields
+aggregate `usage` events from ACP JSONL and headless stream-json transcripts
+(`null` when unreported).
 `session_file`/`worktree` are non-empty only for runs that executed a
 harness transcript (`start`/`review`, or `sync` with an explicit
 `--session-file`); the web server injects `--session-file` for
