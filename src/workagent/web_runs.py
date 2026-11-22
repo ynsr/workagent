@@ -105,7 +105,9 @@ def _precreate_run_row(run: Run) -> None:
                                  state="running",
                                  output=[f"$ workagent {' '.join([run.command, *args])}".strip()],
                                  validation={"web_run_id": run.id,
-                                             "target": run.target or ""})
+                                             "target": run.target or ""},
+                                 model_id=run.model_id or _flag_arg(args, "--model"),
+                                 effort=run.effort or _flag_arg(args, "--effort"))
         except Exception:
             return
         with run.lock:
@@ -213,7 +215,16 @@ def _mirror_run(run: Run) -> None:
             rid = int(getattr(run, "db_run_id"))
             _sq.update_run(db, rid, exit_code=run.exit_code, output=output,
                            truncated=truncated)
-            _sq.finish_run(db, rid, "finished" if run.exit_code == 0 else "failed")
+            _sq.finish_run(
+                db, rid, "finished" if run.exit_code == 0 else "failed",
+                duration_ms=run.duration_ms,
+                model_id=run.model_id or _flag_arg(run.args, "--model") or None,
+                effort=run.effort or _flag_arg(run.args, "--effort") or None,
+                input_tokens=run.input_tokens,
+                output_tokens=run.output_tokens,
+                cached_tokens=run.cached_tokens,
+                cost_usd=run.cost_usd,
+            )
             _stamp_fixed_review(db, run)
         except Exception as e:
             print(f"[web] run mirror failed: {e}", file=sys.stderr, flush=True)
@@ -286,13 +297,17 @@ def _worktree_for_target(target: str) -> str:
     return ""
 
 
-def _harness_arg(args: list[str]) -> str:
+def _flag_arg(args: list[str], flag: str) -> str:
     for i, a in enumerate(args):
-        if a == "--harness" and i + 1 < len(args):
+        if a == flag and i + 1 < len(args):
             return args[i + 1]
-        if a.startswith("--harness="):
+        if a.startswith(f"{flag}="):
             return a.split("=", 1)[1]
     return ""
+
+
+def _harness_arg(args: list[str]) -> str:
+    return _flag_arg(args, "--harness")
 
 
 @dataclass
@@ -320,6 +335,14 @@ class Run:
     resume_command: str = ""
     parent_run_id: int | None = None
     step_index: int | None = None
+    finished: float | None = None
+    duration_ms: int | None = None
+    model_id: str = ""
+    effort: str = ""
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cached_tokens: int | None = None
+    cost_usd: float | None = None
 
     def append(self, text: str) -> None:
         with self.lock:
@@ -355,7 +378,9 @@ class Registry:
                     f"({self.targets[target]})", 409)
             hname = _harness_arg(args)
             run = Run(id=uuid.uuid4().hex[:12], command=command, args=args,
-                      target=target, harness_name=hname)
+                      target=target, harness_name=hname,
+                      model_id=_flag_arg(args, "--model"),
+                      effort=_flag_arg(args, "--effort"))
             self.runs[run.id] = run
             self.targets[target] = run.id
             return run
@@ -457,7 +482,15 @@ def _summary(run: Run, lines: list[tuple[int, str]] | None = None) -> dict:
                            "last_seq": run.last_seq,
                            "parent_run_id": (f"db-{run.parent_run_id}"
                                              if run.parent_run_id is not None else None),
-                           "step_index": run.step_index}
+                           "step_index": run.step_index,
+                           "finished": run.finished,
+                           "duration_ms": run.duration_ms,
+                           "model_id": run.model_id or _flag_arg(run.args, "--model"),
+                           "effort": run.effort or _flag_arg(run.args, "--effort"),
+                           "input_tokens": run.input_tokens,
+                           "output_tokens": run.output_tokens,
+                           "cached_tokens": run.cached_tokens,
+                           "cost_usd": run.cost_usd}
     if lines is not None:
         out["lines"] = [{"seq": s, "text": t} for s, t in lines]
         src = [txt for _, txt in lines]
@@ -564,10 +597,20 @@ def _persisted_summary(row: dict) -> dict:
         except Exception:
             resume_cmd = ""
     persisted = _persisted_lines(row)
+    finished: float | None = None
+    finished_raw = str(row.get("finished_at") or "")
+    if finished_raw:
+        try:
+            finished = datetime.fromisoformat(finished_raw).timestamp()
+        except Exception:
+            finished = None
+    duration_ms = row.get("duration_ms")
+    if duration_ms is None and finished is not None and created > 0:
+        duration_ms = max(0, int((finished - created) * 1000))
     return {"id": f"db-{row.get('id')}", "command": cmd,
             "args": argv, "state": state,
             "exit_code": exit_code, "truncated": bool(row.get("truncated")),
-            "created": created, "target": target,
+            "created": created, "finished": finished, "target": target,
             "session_file": session_file, "worktree": worktree,
             "harness_name": hname,
             "resume_command": resume_cmd,
@@ -577,6 +620,13 @@ def _persisted_summary(row: dict) -> dict:
             "parent_run_id": (f"db-{row['parent_run_id']}"
                               if row.get("parent_run_id") is not None else None),
             "step_index": row.get("step_index"),
+            "duration_ms": duration_ms,
+            "model_id": str(row.get("model_id") or "") or _flag_arg(argv, "--model"),
+            "effort": str(row.get("effort") or "") or _flag_arg(argv, "--effort"),
+            "input_tokens": row.get("input_tokens"),
+            "output_tokens": row.get("output_tokens"),
+            "cached_tokens": row.get("cached_tokens"),
+            "cost_usd": row.get("cost_usd"),
             "validation": row.get("validation") if isinstance(row.get("validation"), dict) else {},
             "pending_question": (_pending_question_from_texts([ln["text"] for ln in persisted]) if state == "running" else None)}
 def _persisted_row(run_id: str) -> dict | None:
@@ -614,6 +664,32 @@ def _finish_state(code: int | None) -> str:
     return "failed"
 
 
+def _resolve_usage(line_texts: list[str], truncated: bool, sfile: str) -> dict:
+    """Usage telemetry honoring buffer truncation.
+
+    A buffer capped at MAX_LINES holds only the tail for long runs, so a
+    partial total there undercounts even when it contains a usage event.
+    When the buffer was truncated and the full session file exists, parse
+    the file first and fall back to the buffer only when the file yields
+    nothing; otherwise parse the buffer and use the file as the fallback.
+    """
+    from . import harness_summary as _hs
+    if truncated and sfile:
+        usage = _hs.extract_usage(sfile)
+        if (usage.get("input_tokens") is None
+                and usage.get("output_tokens") is None
+                and usage.get("cost_usd") is None):
+            usage = _hs.extract_usage_from_lines(line_texts)
+        return usage
+    usage = _hs.extract_usage_from_lines(line_texts)
+    if (usage.get("input_tokens") is None
+            and usage.get("output_tokens") is None
+            and usage.get("cost_usd") is None
+            and sfile):
+        usage = _hs.extract_usage(sfile)
+    return usage
+
+
 def _start_tailer(run: Run, registry: Registry, backfill: bool = False,
                   initial_offset: int | None = None) -> None:
     """Follow output.log into run.lines; close out when exit_code lands.
@@ -632,10 +708,15 @@ def _start_tailer(run: Run, registry: Registry, backfill: bool = False,
             offset = initial_offset
         elif backfill:
             # Post-restart adopt: load the tail (≤10k lines) without OOM.
+            # When the file exceeds the buffer the tail is incomplete, so
+            # mark truncation — the finish path then prefers the session
+            # file for usage telemetry over the partial buffer.
             try:
                 data = (d / "output.log").read_bytes()
-                lines = data.decode(errors="replace").splitlines()[-MAX_LINES:]
-                for ln in lines:
+                all_lines = data.decode(errors="replace").splitlines()
+                if len(all_lines) > MAX_LINES:
+                    run.truncated = True
+                for ln in all_lines[-MAX_LINES:]:
                     run.append(ln + "\n")
                 offset = len(data)
             except OSError:
@@ -663,10 +744,33 @@ def _start_tailer(run: Run, registry: Registry, backfill: bool = False,
                 _push_run_row(run)
             code = _rs.read_exit(d)
             if code is not None:
+                now = time.time()
                 with run.lock:
                     run.exit_code = code
                     if run.state == "running":
                         run.state = _finish_state(code)
+                    if run.finished is None:
+                        run.finished = now
+                    if run.duration_ms is None:
+                        run.duration_ms = max(0, int((run.finished - run.created) * 1000))
+                    line_texts = [t for _, t in run.lines]
+                    truncated = run.truncated
+                    sfile = run.session_file
+                try:
+                    usage = _resolve_usage(line_texts, truncated, sfile)
+                    with run.lock:
+                        if usage.get("input_tokens") is not None:
+                            run.input_tokens = int(usage["input_tokens"])
+                        if usage.get("output_tokens") is not None:
+                            run.output_tokens = int(usage["output_tokens"])
+                        if usage.get("cached_tokens") is not None:
+                            run.cached_tokens = int(usage["cached_tokens"])
+                        if usage.get("cost_usd") is not None:
+                            run.cost_usd = float(usage["cost_usd"])
+                        if usage.get("model_id") and not run.model_id:
+                            run.model_id = str(usage["model_id"])
+                except Exception:
+                    pass
                 registry.release_target(run)
                 _mirror_run(run)
                 return

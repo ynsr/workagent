@@ -509,8 +509,12 @@ class AcpHarness(Harness, abc.ABC):
                            "args": inner.get("rawInput") or inner.get("args") or {},
                            "output": inner.get("content") or ""})
         elif kind == "usage_update":
+            usage_payload = dict(inner.get("tokens")) if isinstance(inner.get("tokens"), dict) else dict(inner)
+            for k in ("cost_usd", "costUsd", "cost", "model", "model_id", "modelId"):
+                if k in inner and k not in usage_payload:
+                    usage_payload[k] = inner[k]
             events.append({"t": "usage", "id": session_id,
-                           "usage": inner.get("tokens") or inner})
+                           "usage": usage_payload})
         elif kind == "end_turn":
             events.append({"t": "turn_end", "id": session_id})
         elif kind in ("available_commands_update", "session_info_update"):

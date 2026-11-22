@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button"
 import { type Run } from "@/lib/api"
 import { useCancelRun, useFlows, useRepos, useRuns } from "@/lib/queries"
 import { repoKeyForPath, useRepoTabs } from "@/lib/useRepoTabs"
-import { shortId } from "@/lib/format"
+import { formatCostUsd, formatDurationMs, formatTokens, shortId } from "@/lib/format"
 import { runKind } from "@/lib/runs"
 
 const FILTERS = [
@@ -83,6 +83,113 @@ function CancelButton({ run }: { run: Run }) {
     >
       <XCircle aria-hidden />
     </Button>
+  )
+}
+
+function UsageSummaryBar({ runs }: { runs: Run[] }) {
+  const summary = useMemo(() => {
+    let totalDurationMs = 0
+    let hasDuration = false
+    let totalTokens = 0
+    let hasTokens = false
+    let totalCost = 0
+    let hasCost = false
+    const byGroup = new Map<string, { count: number; tokens: number; cost: number; hasCost: boolean }>()
+
+    for (const r of runs) {
+      if (r.duration_ms != null && r.duration_ms >= 0) {
+        totalDurationMs += r.duration_ms
+        hasDuration = true
+      }
+      const tok =
+        r.input_tokens != null || r.output_tokens != null
+          ? (r.input_tokens ?? 0) + (r.output_tokens ?? 0)
+          : null
+      if (tok != null) {
+        totalTokens += tok
+        hasTokens = true
+      }
+      if (r.cost_usd != null && r.cost_usd >= 0) {
+        totalCost += r.cost_usd
+        hasCost = true
+      }
+      const key = r.model_id
+        ? `${r.harness_name || "harness"}/${r.model_id}`
+        : r.harness_name || "other"
+      const cur = byGroup.get(key) ?? { count: 0, tokens: 0, cost: 0, hasCost: false }
+      cur.count += 1
+      if (tok != null) cur.tokens += tok
+      if (r.cost_usd != null) {
+        cur.cost += r.cost_usd
+        cur.hasCost = true
+      }
+      byGroup.set(key, cur)
+    }
+
+    const groups = [...byGroup.entries()]
+      .sort((a, b) => b[1].cost - a[1].cost || b[1].tokens - a[1].tokens || b[1].count - a[1].count)
+      .slice(0, 4)
+
+    return {
+      count: runs.length,
+      totalDurationMs: hasDuration ? totalDurationMs : null,
+      totalTokens: hasTokens ? totalTokens : null,
+      totalCost: hasCost ? totalCost : null,
+      groups,
+    }
+  }, [runs])
+
+  if (summary.count === 0) return null
+
+  return (
+    <div
+      data-testid="usage-summary-bar"
+      className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-muted/30 px-3.5 py-2 text-xs"
+    >
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="font-medium text-foreground">
+          {summary.count} {summary.count === 1 ? "run" : "runs"}
+        </span>
+        {summary.totalDurationMs != null ? (
+          <span className="text-muted-foreground">
+            Duration:{" "}
+            <span className="font-mono text-foreground">
+              {formatDurationMs(summary.totalDurationMs)}
+            </span>
+          </span>
+        ) : null}
+        {summary.totalTokens != null ? (
+          <span className="text-muted-foreground">
+            Tokens:{" "}
+            <span className="font-mono text-foreground">
+              {formatTokens(summary.totalTokens)}
+            </span>
+          </span>
+        ) : null}
+        {summary.totalCost != null ? (
+          <span className="text-muted-foreground">
+            Cost:{" "}
+            <span className="font-mono text-foreground">
+              {formatCostUsd(summary.totalCost)}
+            </span>
+          </span>
+        ) : null}
+      </div>
+      {summary.groups.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {summary.groups.map(([label, stats]) => (
+            <span
+              key={label}
+              className="rounded-md border bg-background px-2 py-0.5 font-mono text-[11px] text-muted-foreground"
+            >
+              {label} · {stats.count}
+              {stats.tokens > 0 ? ` · ${formatTokens(stats.tokens)} tok` : ""}
+              {stats.hasCost ? ` · ${formatCostUsd(stats.cost)}` : ""}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -229,23 +336,32 @@ export function Runs() {
               </Button>
             </EmptyState>
           ) : (
-            <RunsTable
-              activeKey={activeRun?.id ?? null}
-              flat={flat}
-              rows={filtered.map(
-                (run): RunsTableRow => ({
-                  key: run.id,
-                  href: `/runs/${run.id}`,
-                  label: shortId(run.id),
-                  command: run.command,
-                  args: run.args,
-                  kind: runKind(run.command, run.args, run.session_type),
-                  target: run.target,
-                  state: run.state,
-                  exitCode: run.exit_code,
-                  started: run.created,
-                  parentRunId: run.parent_run_id,
-                  stepIndex: run.step_index,
+            <>
+              <UsageSummaryBar runs={filtered} />
+              <RunsTable
+                activeKey={activeRun?.id ?? null}
+                flat={flat}
+                rows={filtered.map(
+                  (run): RunsTableRow => ({
+                    key: run.id,
+                    href: `/runs/${run.id}`,
+                    label: shortId(run.id),
+                    command: run.command,
+                    args: run.args,
+                    kind: runKind(run.command, run.args, run.session_type),
+                    target: run.target,
+                    state: run.state,
+                    exitCode: run.exit_code,
+                    started: run.created,
+                    parentRunId: run.parent_run_id,
+                    stepIndex: run.step_index,
+                    durationMs: run.duration_ms,
+                    modelId: run.model_id,
+                    effort: run.effort,
+                    inputTokens: run.input_tokens,
+                    outputTokens: run.output_tokens,
+                    cachedTokens: run.cached_tokens,
+                    costUsd: run.cost_usd,
                   actions: (
                     <>
                       {run.session_file ? (
@@ -265,6 +381,7 @@ export function Runs() {
                 }),
               )}
             />
+            </>
           )}
         </div>
       )}
