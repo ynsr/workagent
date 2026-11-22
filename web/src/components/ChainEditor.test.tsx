@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
-import { ChainEditor, startRepoState, validateChain } from "@/components/ChainEditor"
+import { ChainEditor, nextStartConfigForRepo, startRepoState, validateChain } from "@/components/ChainEditor"
 import type { FlowStep, HarnessOptions } from "@/lib/api"
 import { summarizeExecution } from "@/lib/flowExecution"
 
@@ -138,6 +138,21 @@ describe("ChainEditor plan checkbox", () => {
     expect(box).not.toBeChecked()
     await user.click(box)
     expect(next[0]?.config?.plan).toBe(true)
+  })
+})
+
+describe("ChainEditor start repo switch (issue #114)", () => {
+  it("applies repo + related prune in one object (no stale overwrite)", () => {
+    // Regression: the old two-onChange sequence built the second object off
+    // the pre-pick snapshot, dropping the repo change when pruning fired.
+    const next = nextStartConfigForRepo({ repo: "old", related_repo: ["new-repo", "keep"] }, "new-repo", ["new-repo", "keep"], [])
+    expect(next.repo).toBe("new-repo")
+    expect(next.related_repo).toEqual(["keep"])
+  })
+  it("drops related_repo when the prune empties it", () => {
+    const next = nextStartConfigForRepo({ repo: "old", related_repo: ["new-repo"] }, "new-repo", ["new-repo"], [])
+    expect(next.repo).toBe("new-repo")
+    expect(next).not.toHaveProperty("related_repo")
   })
 })
 

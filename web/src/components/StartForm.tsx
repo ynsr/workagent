@@ -12,7 +12,7 @@ import type { LaunchForm, RunMode, ReviewAction, ProdtestAction, StartAction } f
 import { RelatedReposSelect } from "@/components/RelatedReposSelect"
 import { HarnessSelect } from "@/components/HarnessSelect"
 import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
-import { loadLaunchPrefs } from "@/lib/launchPrefs"
+import { loadLaunchPrefs, lookupStartPrefsByRepo, saveStartPrefsForRepo } from "@/lib/launchPrefs"
 import { FieldHelp } from "@/components/FieldHelp"
 export interface StartFormValue extends LaunchForm {}
 
@@ -32,7 +32,7 @@ export function RunModeSelect({ idPrefix, value, onChange, hidePreview = false }
         <FieldHelp
           label="Run mode"
           flag="--acp | --launch | --terminal"
-          description="Preview prints the harness command; Run headless launches it now (auto-approve); Run ACP streams structured events to the Run page; Run in terminal opens it in the OS terminal."
+          description="Preview prints the harness command; Headless launches it now (auto-approve); ACP streams structured events to the Run page; In terminal opens it in the OS terminal."
         />
       </Label>
       <div
@@ -291,6 +291,9 @@ export function StartFormFields({
         <SearchableSelect
           value={form.repo}
           options={options}
+          // Single update: repo-change reload + related prune both live in
+          // `update("repo", …)`; a second onChange from this stale `form`
+          // snapshot would overwrite the first.
           onChange={(v) => onChange("repo", v)}
           placeholder="Select a repo…"
           allowCustom
@@ -453,11 +456,43 @@ export function useStartForm(initial?: Partial<StartFormValue>) {
     // Candidate Start dialog mirrors the Launch Start tab's stored prefs
     // (run mode + base + harness); the clicked row's ref still wins via `initial`.
     const stored = loadLaunchPrefs().start
-    return { ...INITIAL, runMode: stored.runMode, startAction: stored.startAction, base: stored.base, harness: stored.harness, model: stored.model, effort: stored.effort, ...initial }
+    const seeded: StartFormValue = { ...INITIAL, runMode: stored.runMode, startAction: stored.startAction, base: stored.base, harness: stored.harness, model: stored.model, effort: stored.effort, ...initial }
+    // Issue #114: when launched with a repo already known, that repo's saved
+    // Start base/action/run-mode win over the legacy slice (case-insensitive,
+    // like the prune/filter paths).
+    const repoName = (initial?.repo ?? "").trim()
+    const saved = repoName ? lookupStartPrefsByRepo(repoName)[1] : undefined
+    if (saved) {
+      seeded.runMode = saved.runMode
+      seeded.startAction = saved.startAction
+      seeded.base = saved.base
+    }
+    return seeded
   })
   function update<K extends keyof StartFormValue>(key: K, value: StartFormValue[K]) {
+    if (key === "repo" && typeof value === "string") {
+      // Issue #114: picking a repo reloads that repo's saved Start
+      // base/action/run-mode (when present) and prunes a stale related
+      // selection in the same state update so the writes can't diverge.
+      const saved = lookupStartPrefsByRepo(value)[1]
+      setForm((f) => ({
+        ...f,
+        [key]: value,
+        relatedRepos: (f.relatedRepos ?? []).filter(
+          (n) => n.trim() && n.trim().toLowerCase() !== value.trim().toLowerCase(),
+        ),
+        ...(saved ? { runMode: saved.runMode, startAction: saved.startAction, base: saved.base } : {}),
+      }))
+      return
+    }
     setForm((f) => ({ ...f, [key]: value }))
   }
+  // Issue #114: Start base/action/run-mode stick to the chosen repo.
+  useEffect(() => {
+    if (form.repo.trim()) {
+      saveStartPrefsForRepo(form.repo, { runMode: form.runMode, startAction: form.startAction, base: form.base })
+    }
+  }, [form.repo, form.runMode, form.startAction, form.base])
   async function prefillRepo(ref: string, field: keyof StartFormValue = "repo") {
     if (!ref.trim()) return
     try {

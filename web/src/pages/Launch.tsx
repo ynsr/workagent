@@ -23,9 +23,9 @@ import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { ReviewActionSelect, RunModeSelect, StartFormFields, buildReviewArgs, buildStartArgs } from "@/components/StartForm"
 import { COPY, INITIAL, MODES, adhocArgs, extraPromptArgs, isPrShaped, runModeArgs, splitAdhocRefs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
-import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
-import { modelEffortArgs } from "@/lib/harness"
+import { loadLaunchPrefs, lookupStartPrefsByRepo, saveLaunchPrefs, saveStartPrefsForRepo } from "@/lib/launchPrefs"
 import type { LaunchPrefs } from "@/lib/launchPrefs"
+import { modelEffortArgs } from "@/lib/harness"
 
 /** Template picker for the Launch page: picks a flow template, then the
  * shared FlowWizard scopes it to the issue ref input. */
@@ -418,7 +418,20 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
         merged.reviewAction = f.reviewAction
         merged.fixComments = f.fixComments
       }
-      merged.base = next === "start" ? stored.start.base : ""
+      if (next === "start") {
+        // Issue #114: a selected repo's saved base/action/run-mode win over
+        // the legacy slice; repos never saved fall back to it.
+        const saved = lookupStartPrefsByRepo(f.repo)[1]
+        if (saved) {
+          merged.runMode = saved.runMode
+          merged.startAction = saved.startAction
+          merged.base = saved.base
+        } else {
+          merged.base = stored.start.base
+        }
+      } else {
+        merged.base = ""
+      }
       return merged
     })
   }
@@ -431,6 +444,22 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
       applyModeSlice("review")
       setForm((f) => ({ ...f, [key]: value }))
       toast.info("PR/MR ref detected — switched to Review")
+      return
+    }
+    // Issue #114: picking a repo reloads that repo's saved Start
+    // base/action/run-mode (when present) and prunes a stale related
+    // selection in the same state update so the writes can't diverge.
+    if (mode === "start" && key === "repo" && typeof value === "string") {
+      const saved = lookupStartPrefsByRepo(value)[1]
+      const repo = value
+      setForm((f) => ({
+        ...f,
+        [key]: repo,
+        relatedRepos: (f.relatedRepos ?? []).filter(
+          (n) => n.trim() && n.trim().toLowerCase() !== repo.trim().toLowerCase(),
+        ),
+        ...(saved ? { runMode: saved.runMode, startAction: saved.startAction, base: saved.base } : {}),
+      }))
       return
     }
     setForm((f) => ({ ...f, [key]: value }))
@@ -447,6 +476,10 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
     const prev = loadLaunchPrefs()
     if (mode === "start") {
       saveLaunchPrefs({ ...prev, start: { runMode: form.runMode, startAction: form.startAction, base: form.base, harness: form.harness, model: form.model, effort: form.effort } })
+      // Issue #114: Start base/action/run-mode stick to the chosen repo.
+      if (form.repo.trim()) {
+        saveStartPrefsForRepo(form.repo, { runMode: form.runMode, startAction: form.startAction, base: form.base })
+      }
     } else if (mode === "review") {
       saveLaunchPrefs({
         ...prev,
@@ -773,7 +806,7 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
                   <>
                     Preview only: prints the TTY harness command (no{" "}
                     <span className="font-mono text-[13px]">-p</span> flag) without running the agent.
-                    Pick “Run headless” to run now with{" "}
+                    Pick “Headless” to run now with{" "}
                     <span className="font-mono text-[13px]">--no-tty</span>.
                   </>
                 )}
