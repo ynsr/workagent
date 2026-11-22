@@ -1733,3 +1733,54 @@ def test_resolve_session_file_resolves_inactive_link_from_issue_url_target(isola
     assert "web_inact_88" in Path(resolved).read_text(encoding="utf-8")
 
 
+
+
+def test_get_run_includes_spawned_runs_for_orchestrator(isolated_config, tmp_path):
+    from fastapi.testclient import TestClient
+    from workagent import store as _store, store_sqlite as sq, webapp
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt1 = tmp_path / "wt-1"
+    wt2 = tmp_path / "wt-2"
+    wt1.mkdir()
+    wt2.mkdir()
+    _store.record_link(
+        "github:o/r#201",
+        {"worktree": str(wt1), "branch": "feat/201-auth", "repo": "/tmp/r"},
+    )
+    _store.record_link(
+        "github:o/r#202",
+        {"worktree": str(wt2), "branch": "feat/202-billing", "repo": "/tmp/r"},
+    )
+
+    parent_id = sq.insert_run(
+        db, "orchestrate", ["--prompt", "split auth and billing"], 0,
+        harness_name="omp", state="finished",
+    )
+    child1_id = sq.insert_run(
+        db, "start", ["github:o/r#201"], None,
+        worktree_ref="github:o/r#201", harness_name="omp", state="running",
+        parent_run_id=parent_id,
+    )
+    child2_id = sq.insert_run(
+        db, "start", ["github:o/r#202"], 0,
+        worktree_ref="github:o/r#202", harness_name="agy", state="finished",
+        parent_run_id=parent_id,
+    )
+
+    client = TestClient(webapp.create_app(tmp_path, "127.0.0.1", 8000, {"127.0.0.1", "testserver"}))
+    res = client.get(f"/api/runs/db-{parent_id}")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    spawned = body.get("spawned_runs")
+    assert isinstance(spawned, list) and len(spawned) == 2
+    by_id = {item["id"]: item for item in spawned}
+    assert by_id[f"db-{child1_id}"]["worktree_ref"] == "github:o/r#201"
+    assert by_id[f"db-{child1_id}"]["branch"] == "feat/201-auth"
+    assert by_id[f"db-{child1_id}"]["state"] == "running"
+    assert by_id[f"db-{child1_id}"]["harness_name"] == "omp"
+    assert by_id[f"db-{child2_id}"]["worktree_ref"] == "github:o/r#202"
+    assert by_id[f"db-{child2_id}"]["branch"] == "feat/202-billing"
+    assert by_id[f"db-{child2_id}"]["state"] == "succeeded"
+    assert by_id[f"db-{child2_id}"]["harness_name"] == "agy"

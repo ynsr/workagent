@@ -32,6 +32,7 @@ from .web_runs import (
     _persisted_lines,
     _persisted_row,
     _persisted_summary,
+    _spawned_runs_for,
     _summary,
     _transcript_ready,
     _worktree_for_target,
@@ -517,12 +518,12 @@ def register_runs_routes(app, registry) -> None:
                                              and not _sync_yes.isdisjoint(body.args)))
         if body.confirm and "--dry-run" not in body.args and not _has_yes \
                 and (body.command in ("start", "review", "cleanup", "sync",
-                                      "release") or (body.command == "message"
-                                                      and _message_needs_yes(body.args))):
+                                      "release", "orchestrate") or (body.command == "message"
+                                                                    and _message_needs_yes(body.args))):
             tail.append("--yes")
         if body.force and spec["force"]:
             tail.append("--force")
-        if body.command in ("start", "review", "sync") \
+        if body.command in ("start", "review", "sync", "orchestrate") \
                 and "--dry-run" not in body.args \
                 and "--all" not in body.args \
                 and not _has_session_file(body.command, body.args):
@@ -599,9 +600,12 @@ def register_runs_routes(app, registry) -> None:
                 raise
             out = _persisted_summary(row)
             out["lines"] = _persisted_lines(row)
+            out["spawned_runs"] = _spawned_runs_for(int(row["id"]), registry)
             return out
         with run.lock:
-            return _summary(run, lines=list(run.lines))
+            out = _summary(run, lines=list(run.lines))
+        out["spawned_runs"] = _spawned_runs_for(run.db_run_id, registry)
+        return out
     @app.get("/api/runs/{run_id}/events")
     async def events(run_id: str, request: Request) -> StreamingResponse:
         try:

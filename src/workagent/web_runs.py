@@ -644,6 +644,81 @@ def _persisted_row(run_id: str) -> dict | None:
     return None
 
 
+def _spawned_runs_for(parent_db_id: int | None, registry: Any = None) -> list[dict]:
+    """Return child worker run summaries whose parent_run_id == parent_db_id.
+
+    Merges live in-memory registry runs with persisted SQLite rows (live wins on
+    duplicate db_run_id) and enriches each entry with `worktree_ref` and `branch`
+    for direct `/worktrees/:ref` workspace links in `SpawnedWorkersCard`.
+    """
+    if not parent_db_id:
+        return []
+    links: dict[str, Any] = {}
+    wt_to_ref: dict[str, str] = {}
+    try:
+        from . import store as _store
+        links = _store.load_links(include_inactive=True)
+        for k, v in links.items():
+            if isinstance(v, dict) and v.get("worktree"):
+                wt_to_ref[str(v["worktree"])] = k
+    except Exception:
+        links = {}
+        wt_to_ref = {}
+
+    def _enrich(summary: dict, wt_ref: str = "") -> dict:
+        wt_path = str(summary.get("worktree") or "")
+        ref = wt_ref or wt_to_ref.get(wt_path, "")
+        if not ref:
+            target = str(summary.get("target") or "")
+            if ":" in target:
+                cand = target.split(":", 1)[1]
+                if cand in links:
+                    ref = cand
+        branch = ""
+        if ref and isinstance(links.get(ref), dict):
+            branch = str(links[ref].get("branch") or "")
+            if not wt_path:
+                wt_path = str(links[ref].get("worktree") or "")
+        return {
+            "id": summary["id"],
+            "command": summary["command"],
+            "state": summary["state"],
+            "exit_code": summary.get("exit_code"),
+            "created": summary.get("created", 0.0),
+            "target": summary.get("target", ""),
+            "harness_name": summary.get("harness_name", ""),
+            "worktree": wt_path,
+            "worktree_ref": ref,
+            "branch": branch,
+        }
+
+    by_db_id: dict[int, dict] = {}
+    live_list: list[dict] = []
+    if registry is not None:
+        for r in list(registry.runs.values()):
+            if r.parent_run_id == parent_db_id:
+                item = _enrich(_summary(r))
+                if r.db_run_id:
+                    by_db_id[int(r.db_run_id)] = item
+                else:
+                    live_list.append(item)
+    try:
+        from . import store_sqlite as _sq
+        db = _sq.db_path()
+        if db.exists():
+            for row in _sq.runs_by_parent(db, parent_db_id, include_deleted_worktrees=True):
+                rid = int(row["id"])
+                if rid in by_db_id:
+                    continue
+                wt_ref = str(row.get("worktree_ref") or "")
+                by_db_id[rid] = _enrich(_persisted_summary(row), wt_ref=wt_ref)
+    except Exception:
+        pass
+    out = list(by_db_id.values()) + live_list
+    out.sort(key=lambda item: float(item.get("created") or 0.0))
+    return out
+
+
 
 
 def _run_dir(run: Run) -> Path:

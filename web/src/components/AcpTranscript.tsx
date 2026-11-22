@@ -12,7 +12,8 @@ import {
 } from "@/lib/harness"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
-import type { RunLine } from "@/lib/api"
+import { SpawnedWorkersCard } from "@/components/SpawnedWorkersCard"
+import type { RunLine, SpawnedRunSummary } from "@/lib/api"
 
 export interface AcpRunMeta {
   created?: number
@@ -213,7 +214,15 @@ function buildTurnSummary(blocks: AcpBlock[], runMeta?: AcpRunMeta): string | nu
 
 /** Structured ACP transcript (issues #112, #128, #142): ActivityRun folding,
  * FailedCalls extraction, settled turn summaries, Markdown, rAF autoscroll. */
-export function AcpTranscript({ lines, runMeta }: { lines: RunLine[]; runMeta?: AcpRunMeta }) {
+export function AcpTranscript({
+  lines,
+  runMeta,
+  spawnedRuns,
+}: {
+  lines: RunLine[]
+  runMeta?: AcpRunMeta
+  spawnedRuns?: SpawnedRunSummary[]
+}) {
   const blocks = useMemo(() => parseAcpBlocks(lines), [lines])
   const items = useMemo(() => groupActivityRuns(blocks), [blocks])
   const turnSummary = useMemo(() => buildTurnSummary(blocks, runMeta), [blocks, runMeta])
@@ -272,6 +281,11 @@ export function AcpTranscript({ lines, runMeta }: { lines: RunLine[]; runMeta?: 
           className="border-b border-white/10 bg-white/[0.02] px-3 py-1.5 text-xs text-white/60"
         >
           {turnSummary}
+        </div>
+      ) : null}
+      {spawnedRuns && spawnedRuns.length > 0 ? (
+        <div className="border-b border-white/10 p-2.5">
+          <SpawnedWorkersCard workers={spawnedRuns} />
         </div>
       ) : null}
       <div
