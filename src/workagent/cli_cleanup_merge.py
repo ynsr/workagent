@@ -164,7 +164,9 @@ def _merge_pr(pr_url: str, squash: bool = True, cwd: str | None = None,
         squash = True
     # Issue #124: delete the remote head ref on merge for feature branches;
     # long-lived sources (dev/develop/main/master) are standing refs.
-    delete_remote = (not source_branch) or _source_needs_squash(source_branch)
+    # Fail closed on unknown/empty source: merge without host-side delete;
+    # the cleanup backstop still covers verified merged feature branches.
+    delete_remote = bool(source_branch) and _source_needs_squash(source_branch)
     from . import cli as _cli  # shim: tests patch workagent.cli.run_cmd
     try:
         if "github.com" in pr_url:

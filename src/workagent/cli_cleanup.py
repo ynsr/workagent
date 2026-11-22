@@ -521,15 +521,19 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
     # conflicted, or left open after a failed --force merge — keep theirs.
     deletable_remote = bool(branch) and _source_needs_squash(branch)
     head_ref = ""
+    head_verified = False
     if pr_url and (merged_now or fresh_state == "merged") and deletable_remote:
         try:
             head_ref = (refs.fetch_pr_info(refs.parse_ref(pr_url),
                                            cwd=host_cwd).get("head_ref") or "")
+            head_verified = bool(head_ref)
         except HarnessError as e:
-            eprint(f"warning: cannot verify PR head branch for {pr_url}: {e}")
-            head_ref = branch if merged_now else ""
-    delete_remote = deletable_remote and (merged_now or fresh_state == "merged") \
-        and (not head_ref or head_ref == branch)
+            eprint(f"warning: cannot verify PR head branch for {pr_url}: {e}; "
+                   f"remote branch {branch!r} kept.")
+            head_verified = False
+    delete_remote = (deletable_remote
+        and (merged_now or fresh_state == "merged")
+        and head_verified and head_ref == branch)
     if not hard_delete:
         # Issue #124: a merged feature PR must not leave its remote branch
         # behind — delete it BEFORE the soft-delete stamp so recovery only
@@ -549,7 +553,9 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
         # branch survive. Only the row is stamped (plus the merged remote
         # delete above).
         deleted_at = store.soft_delete_worktree(key)
-        tail = " (soft-deleted; recover within 7 days via `link undelete`)"
+        tail = (" (soft-deleted; remote branch deleted; local state recoverable "
+                "within 7 days via `link undelete`)") if delete_remote else \
+               " (soft-deleted; recover within 7 days via `link undelete`)"
         if not json_output:
             eprint(f"{key}: cleaned{tail}")
         try:

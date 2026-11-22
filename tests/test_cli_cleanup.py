@@ -997,3 +997,98 @@ def test_cleanup_push_failure_still_stamps_soft_delete(isolated_config, monkeypa
     assert "remote branch delete failed" in capsys.readouterr().err
     row = store.load_links(include_deleted=True)["jira:IPG-128"]
     assert row["deleted_at"]
+
+
+def test_merge_pr_empty_source_skips_host_delete(isolated_config, monkeypatch):
+    """PR #166 review: unknown/empty source fails closed — no host-side delete."""
+    import workagent.cli_cleanup as _cc
+    seen = []
+    monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    monkeypatch.setattr(_cc, "_fresh_pr_state",
+                        lambda url, cwd: {"state": "merged", "mergeable": "",
+                                          "merge_state": ""})
+    cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp")
+    assert "--delete-branch" not in seen[0]
+
+
+def test_cleanup_head_verify_failure_keeps_remote(isolated_config, monkeypatch, capsys):
+    """PR #166 review: unverified head (fetch failure after same-run merge)
+    skips the backstop — stale ref beats a wrong delete."""
+    from workagent.errors import HarnessError
+    store.record_link("jira:IPG-129", {"issue": "IPG-129", "worktree": "/tmp/wt",
+                                       "branch": "feat/129--x", "repo": "/tmp/proj",
+                                       "pr_url": "https://github.com/o/r/pull/129"})
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "merged"}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (
+                            url, {"state": "MERGED", "mergeable": "",
+                                  "merge_state": ""}, False))
+
+    def boom(parsed, cwd=None):
+        raise HarnessError("network is unreachable")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info", boom)
+    pushes = []
+    monkeypatch.setattr("workagent.cli.run_cmd",
+                        lambda *a, **k: pushes.append(a) or "")
+    out = cli._cleanup_one("jira:IPG-129", dict(store.load_links()["jira:IPG-129"]),
+                           force=False, yes=True, dry_run=False, json_output=True,
+                           hard_delete=True)
+    assert out["remote_deleted"] is False
+    assert not any("--delete" in str(p) for p in pushes)
+    err = capsys.readouterr().err
+    assert "remote branch" in err and "kept" in err
+
+
+def test_cleanup_head_mismatch_keeps_remote(isolated_config, monkeypatch):
+    """PR #166 review: PR head != local branch (retargeted/re-picked) skips the backstop."""
+    store.record_link("jira:IPG-130", {"issue": "IPG-130", "worktree": "/tmp/wt",
+                                       "branch": "feat/130--x", "repo": "/tmp/proj",
+                                       "pr_url": "https://github.com/o/r/pull/130"})
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "merged"}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (
+                            url, {"state": "MERGED", "mergeable": "",
+                                  "merge_state": ""}, True))  # re-picked for the branch
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "other/branch"})
+    pushes = []
+    monkeypatch.setattr("workagent.cli.run_cmd",
+                        lambda *a, **k: pushes.append(a) or "")
+    out = cli._cleanup_one("jira:IPG-130", dict(store.load_links()["jira:IPG-130"]),
+                           force=False, yes=True, dry_run=False, json_output=True,
+                           hard_delete=True)
+    assert out["remote_deleted"] is False
+    assert not any("--delete" in str(p) for p in pushes)
+
+
+def test_cleanup_soft_delete_message_names_remote_delete(
+        isolated_config, monkeypatch, capsys):
+    """PR #166 review: soft-delete message discloses the remote branch delete."""
+    store.record_link("jira:IPG-131", {"issue": "IPG-131", "worktree": "/tmp/wt",
+                                       "branch": "feat/131--x", "repo": "/tmp/proj",
+                                       "pr_url": "https://github.com/o/r/pull/131"})
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "merged"}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (
+                            url, {"state": "MERGED", "mergeable": "",
+                                  "merge_state": ""}, False))
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"head_ref": "feat/131--x"})
+    monkeypatch.setattr("workagent.cli.run_cmd", lambda *a, **k: "")
+    cli._cleanup_one("jira:IPG-131", dict(store.load_links()["jira:IPG-131"]),
+                       force=False, yes=True, dry_run=False, json_output=False)
+    err = capsys.readouterr().err
+    assert "remote branch deleted" in err
+    assert "link undelete" in err
