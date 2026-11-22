@@ -1153,10 +1153,18 @@ def test_change_log_triggers_and_pruning(tmp_path):
         conn.execute("UPDATE prodtest_items SET status = 'passed' WHERE issue_key = 'IPG-1'")
         conn.execute("DELETE FROM prodtest_items WHERE issue_key = 'IPG-1'")
 
+        conn.execute(
+            "INSERT INTO schedules (name, cron_expr, timezone, target_kind, target_label, created_at, modified_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("nightly", "0 2 * * *", "UTC", "command", "review --all", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+        )
+        conn.execute("UPDATE schedules SET enabled = 0 WHERE name = 'nightly'")
+        conn.execute("DELETE FROM schedules WHERE name = 'nightly'")
+
         conn.execute("DELETE FROM worktrees WHERE ref_key = 'jira:IPG-1'")
 
     events = sq.read_change_log(db, after_seq=0, limit=100)
-    assert len(events) == 18
+    assert len(events) == 21
     by_table_op = {(e["table"], e["op"]) for e in events}
     for tbl, _ in sq.CDC_TABLES:
         for op in ("insert", "update", "delete"):
@@ -1165,9 +1173,67 @@ def test_change_log_triggers_and_pruning(tmp_path):
 
     # Pruning keeps at most max_rows newest entries
     deleted = sq.prune_change_log(db, max_rows=5)
-    assert deleted == 13
+    assert deleted == 16
     remaining = sq.read_change_log(db, after_seq=0, limit=100)
     assert len(remaining) == 5
     assert [e["seq"] for e in remaining] == [e["seq"] for e in events[-5:]]
     # Pruning when already <= max_rows is a no-op
     assert sq.prune_change_log(db, max_rows=5) == 0
+
+
+def test_schedules_table_crud_and_lease(tmp_path):
+    """T13.1: schedules table CRUD, unique name, and atomic lease claiming."""
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+
+    created = sq.add_schedule(
+        db,
+        name="Daily PR review",
+        cron_expr="0 9 * * 1-5",
+        timezone_name="UTC",
+        target_kind="command",
+        target_label="review --all",
+        args_json={"yes": True},
+        enabled=True,
+        next_run_at="2026-01-01T09:00:00+00:00",
+    )
+    assert created["id"] >= 1
+    assert created["name"] == "Daily PR review"
+    assert created["enabled"] is True
+    assert created["args"] == {"yes": True}
+
+    assert sq.get_schedule(db, created["id"])["name"] == "Daily PR review"
+    assert sq.get_schedule(db, "Daily PR review")["id"] == created["id"]
+    assert len(sq.list_schedules(db)) == 1
+
+    # Lease claim: due at 09:00, second claim within lease returns empty
+    claimed = sq.claim_due_schedules(
+        db,
+        now_iso="2026-01-01T09:00:00+00:00",
+        lease_until_iso="2026-01-01T09:01:00+00:00",
+    )
+    assert len(claimed) == 1
+    assert claimed[0]["id"] == created["id"]
+    assert sq.claim_due_schedules(
+        db,
+        now_iso="2026-01-01T09:00:30+00:00",
+        lease_until_iso="2026-01-01T09:01:30+00:00",
+    ) == []
+
+    # Record run clears lease and advances next_run_at
+    updated = sq.record_schedule_run(
+        db,
+        created["id"],
+        last_run_at="2026-01-01T09:00:05+00:00",
+        next_run_at="2026-01-02T09:00:00+00:00",
+        last_run_id=None,
+    )
+    assert updated["last_run_at"] == "2026-01-01T09:00:05+00:00"
+    assert updated["next_run_at"] == "2026-01-02T09:00:00+00:00"
+    assert updated["lease_until"] == ""
+
+    # Update & remove
+    toggled = sq.update_schedule(db, created["id"], enabled=False)
+    assert toggled["enabled"] is False
+    assert sq.remove_schedule(db, created["id"]) is True
+    assert sq.list_schedules(db) == []

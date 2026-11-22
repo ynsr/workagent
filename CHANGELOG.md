@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Add built-in recurring Cron/RRULE schedules for flows, actions, and maintenance commands with CLI, REST API, and Automation Library tab [156]
 - Persist run duration, model, effort, token, and cost telemetry in state.db and display badges, pills, and a Usage summary bar on Runs [155]
 - Store normalized PR checks, review threads, and worktree feedback timeline events with inline Fix CI, Fix comments, and Cleanup actions [146]
 - Nest child runs under parent flow and batch runs in RunsTable and add a visual FlowStepper with inline Resume and Skip step controls [143]

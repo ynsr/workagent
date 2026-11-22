@@ -169,6 +169,22 @@ CREATE TABLE IF NOT EXISTS change_log (
   row_key TEXT NOT NULL,
   op TEXT NOT NULL,
   created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS schedules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL,
+  cron_expr TEXT NOT NULL,
+  timezone TEXT NOT NULL DEFAULT 'UTC',
+  target_kind TEXT NOT NULL,
+  target_label TEXT NOT NULL,
+  args_json TEXT NOT NULL DEFAULT '{}',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_run_at TEXT NOT NULL DEFAULT '',
+  next_run_at TEXT NOT NULL DEFAULT '',
+  last_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+  lease_until TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  modified_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at);
 """
 
 
@@ -382,6 +398,7 @@ CDC_TABLES: tuple[tuple[str, str], ...] = (
     ("messages", "message_id"),
     ("pr_cache", "branch"),
     ("prodtest_items", "issue_key"),
+    ("schedules", "id"),
 )
 
 _CDC_TRIGGER_NAMES: frozenset[str] = frozenset(
@@ -389,6 +406,30 @@ _CDC_TRIGGER_NAMES: frozenset[str] = frozenset(
     for table, _ in CDC_TABLES
     for op in ("insert", "update", "delete")
 )
+
+
+def _migrate_schedules(conn) -> None:
+    """Schema v29: recurring schedules table for flows, actions, and commands."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schedules ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "name TEXT UNIQUE NOT NULL, "
+        "cron_expr TEXT NOT NULL, "
+        "timezone TEXT NOT NULL DEFAULT 'UTC', "
+        "target_kind TEXT NOT NULL, "
+        "target_label TEXT NOT NULL, "
+        "args_json TEXT NOT NULL DEFAULT '{}', "
+        "enabled INTEGER NOT NULL DEFAULT 1, "
+        "last_run_at TEXT NOT NULL DEFAULT '', "
+        "next_run_at TEXT NOT NULL DEFAULT '', "
+        "last_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL, "
+        "lease_until TEXT NOT NULL DEFAULT '', "
+        "created_at TEXT NOT NULL, "
+        "modified_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at)"
+    )
 
 
 def _migrate_change_log(conn) -> None:
@@ -1904,6 +1945,8 @@ def _schema_current(path: Path) -> bool:
             return False
         if "change_log" not in tables:
             return False
+        if "schedules" not in tables:
+            return False
         triggers = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'trigger'")}
         if not (_CDC_TRIGGER_NAMES <= triggers):
@@ -1969,6 +2012,7 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
                 _migrate_prodtest_cols(conn)
                 _migrate_runs_worktree_fk(conn)
                 _migrate_runs_parent(conn)
+                _migrate_schedules(conn)
                 _migrate_runs_telemetry(conn)
                 _migrate_change_log(conn)
         except sqlite3.OperationalError as e:
@@ -2393,3 +2437,230 @@ def gc_blocked_by_prodtest(path: Path, key: str) -> bool:
         return False
     row = get_prodtest(path, key)
     return bool(row) and row.get("status") in ("pending_prodtest", "running")
+
+
+# ── Schedules (T13) ──────────────────────────────────────────────────
+
+SCHEDULE_TARGET_KINDS: tuple[str, ...] = ("flow", "action", "command")
+
+
+def _schedule_row_to_dict(row: sqlite3.Row) -> dict:
+    d = dict(row)
+    d["enabled"] = bool(d.get("enabled"))
+    try:
+        d["args"] = json.loads(d.get("args_json") or "{}")
+    except Exception:
+        d["args"] = {}
+    return d
+
+
+def _normalize_schedule_args(args_json: str | dict | list | None) -> str:
+    if args_json is None:
+        return "{}"
+    if isinstance(args_json, str):
+        raw = args_json.strip() or "{}"
+        json.loads(raw)  # validate JSON
+        return raw
+    return json.dumps(args_json)
+
+
+def list_schedules(path: Path) -> list[dict]:
+    """Return all schedules ordered by id asc."""
+    if not Path(path).exists():
+        return []
+    init_db(path)
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM schedules ORDER BY id ASC").fetchall()
+    return [_schedule_row_to_dict(r) for r in rows]
+
+
+def get_schedule(path: Path, schedule_id: int | str) -> dict | None:
+    """Look up a schedule by integer id or unique name."""
+    if not Path(path).exists():
+        return None
+    init_db(path)
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        if isinstance(schedule_id, int) or (isinstance(schedule_id, str) and schedule_id.isdigit()):
+            row = conn.execute("SELECT * FROM schedules WHERE id = ?", (int(schedule_id),)).fetchone()
+            if row is not None:
+                return _schedule_row_to_dict(row)
+        row = conn.execute("SELECT * FROM schedules WHERE name = ?", (str(schedule_id),)).fetchone()
+        return _schedule_row_to_dict(row) if row is not None else None
+
+
+def add_schedule(
+    path: Path,
+    *,
+    name: str,
+    cron_expr: str,
+    target_kind: str,
+    target_label: str,
+    timezone_name: str = "UTC",
+    args_json: str | dict | list | None = "{}",
+    enabled: bool = True,
+    next_run_at: str = "",
+) -> dict:
+    """Insert a new schedule row and return it."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("schedule name is required")
+    if target_kind not in SCHEDULE_TARGET_KINDS:
+        raise ValueError(f"target_kind must be one of {', '.join(SCHEDULE_TARGET_KINDS)}")
+    target_label = (target_label or "").strip()
+    if not target_label:
+        raise ValueError("target_label is required")
+    norm_args = _normalize_schedule_args(args_json)
+    now = datetime.now(timezone.utc).isoformat()
+    init_db(path)
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.execute(
+                "INSERT INTO schedules "
+                "(name, cron_expr, timezone, target_kind, target_label, args_json, "
+                "enabled, last_run_at, next_run_at, last_run_id, lease_until, created_at, modified_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, NULL, '', ?, ?)",
+                (
+                    name,
+                    cron_expr.strip(),
+                    (timezone_name or "UTC").strip(),
+                    target_kind,
+                    target_label,
+                    norm_args,
+                    1 if enabled else 0,
+                    next_run_at or "",
+                    now,
+                    now,
+                ),
+            )
+        except sqlite3.IntegrityError as e:
+            raise ValueError(f"schedule {name!r} already exists") from e
+        row = conn.execute("SELECT * FROM schedules WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _schedule_row_to_dict(row)
+
+
+def update_schedule(path: Path, schedule_id: int | str, **fields) -> dict | None:
+    """Update mutable fields on a schedule; returns updated dict or None if not found."""
+    existing = get_schedule(path, schedule_id)
+    if existing is None:
+        return None
+    allowed = {
+        "name",
+        "cron_expr",
+        "timezone",
+        "target_kind",
+        "target_label",
+        "args_json",
+        "enabled",
+        "last_run_at",
+        "next_run_at",
+        "last_run_id",
+        "lease_until",
+    }
+    updates: list[str] = []
+    params: list = []
+    for k, v in fields.items():
+        if k not in allowed or v is None:
+            continue
+        if k == "target_kind" and v not in SCHEDULE_TARGET_KINDS:
+            raise ValueError(f"target_kind must be one of {', '.join(SCHEDULE_TARGET_KINDS)}")
+        if k == "args_json":
+            v = _normalize_schedule_args(v)
+        elif k == "enabled":
+            v = 1 if bool(v) else 0
+        elif isinstance(v, str) and k in ("name", "cron_expr", "timezone", "target_label"):
+            v = v.strip()
+        updates.append(f"{k} = ?")
+        params.append(v)
+    if not updates:
+        return existing
+    updates.append("modified_at = ?")
+    params.append(datetime.now(timezone.utc).isoformat())
+    params.append(existing["id"])
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute(f"UPDATE schedules SET {', '.join(updates)} WHERE id = ?", params)
+        except sqlite3.IntegrityError as e:
+            raise ValueError(f"schedule name conflict: {e}") from e
+        row = conn.execute("SELECT * FROM schedules WHERE id = ?", (existing["id"],)).fetchone()
+    return _schedule_row_to_dict(row) if row is not None else None
+
+
+def remove_schedule(path: Path, schedule_id: int | str) -> bool:
+    """Delete a schedule by id or name; True if a row was deleted."""
+    existing = get_schedule(path, schedule_id)
+    if existing is None:
+        return False
+    with connect(path) as conn:
+        cur = conn.execute("DELETE FROM schedules WHERE id = ?", (existing["id"],))
+        return cur.rowcount > 0
+
+
+def claim_due_schedules(
+    path: Path,
+    *,
+    now_iso: str,
+    lease_until_iso: str,
+) -> list[dict]:
+    """Atomically claim enabled schedules due at or before *now_iso* whose lease has expired."""
+    if not Path(path).exists():
+        return []
+    init_db(path)
+    conn = connect(path)
+    conn.isolation_level = None  # explicit transaction for BEGIN IMMEDIATE
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute(
+            "SELECT * FROM schedules "
+            "WHERE enabled = 1 AND next_run_at != '' AND next_run_at <= ? "
+            "AND (lease_until = '' OR lease_until <= ?) "
+            "ORDER BY next_run_at ASC, id ASC",
+            (now_iso, now_iso),
+        ).fetchall()
+        claimed: list[dict] = []
+        for r in rows:
+            conn.execute(
+                "UPDATE schedules SET lease_until = ?, modified_at = ? WHERE id = ?",
+                (lease_until_iso, now_iso, r["id"]),
+            )
+            d = _schedule_row_to_dict(r)
+            d["lease_until"] = lease_until_iso
+            claimed.append(d)
+        conn.execute("COMMIT")
+        return claimed
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+def record_schedule_run(
+    path: Path,
+    schedule_id: int,
+    *,
+    last_run_at: str,
+    next_run_at: str,
+    last_run_id: int | None = None,
+) -> dict | None:
+    """Record a completed/dispatched schedule run and release its lease."""
+    if not Path(path).exists():
+        return None
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "UPDATE schedules SET last_run_at = ?, next_run_at = ?, "
+            "last_run_id = COALESCE(?, last_run_id), lease_until = '', modified_at = ? "
+            "WHERE id = ?",
+            (last_run_at, next_run_at, last_run_id, now, int(schedule_id)),
+        )
+        row = conn.execute("SELECT * FROM schedules WHERE id = ?", (int(schedule_id),)).fetchone()
+    return _schedule_row_to_dict(row) if row is not None else None

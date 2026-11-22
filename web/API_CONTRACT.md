@@ -612,3 +612,17 @@ Read-only endpoints (all GET, no confirm):
 - `GET /api/worktrees/{ref}/files?mode=base|head` — returns `{key, mode, base_ref, files: [{path, status, additions, deletions, binary, old_path}], total_additions, total_deletions}`. `mode=base` (default) diffs against merge-base with the worktree's base branch plus untracked files; `mode=head` diffs working tree + staged changes against `HEAD` plus untracked files. `400` on invalid `mode`, `404` when the worktree ref or directory is missing.
 - `GET /api/worktrees/{ref}/diff?path=<file>&mode=base|head` — returns `{key, path, mode, base_ref, binary, truncated, additions, deletions, hunks: [{header, old_start, old_count, new_start, new_count, lines: [{type, old_line, new_line, content}]}]}`. Rejects empty/absolute/traversal (`..`)/NUL paths with `400`; caps large diffs (`truncated: true`) and skips binary bodies (`binary: true`, `hunks: []`).
 - `GET /api/prodtests/{issue_key}/plan` — returns `{issue_key, status, plan_path, plan_revision, plan_risk, plan_diff_hash, release_sha, last_run_id, updated_at, truncated, yaml, parse_error, summary, preconditions, cases, metadata}`. `404` when the prodtest item or plan file is missing; `400` when `plan_path` is not a `.yaml`/`.yml` file.
+
+---
+
+## Recurring Cron/RRULE Schedules (T13)
+
+- `GET /api/schedules` — returns `{"schedules": [...], "starters": [...]}` (all persisted schedules plus built-in starter templates).
+- `POST /api/schedules/preview` — body `{"cron_expr": string, "timezone"?: string, "count"?: number}` → `{"cron_expr", "timezone", "next_runs": string[]}` (`400` on invalid cron/RRULE or timezone).
+- `GET /api/schedules/{id}` — one schedule by id or name (`404` when unknown).
+- `POST /api/schedules` — create a schedule (`name`, `cron_expr`, `timezone`, `target_kind`: `flow|action|command`, `target_label`, `args_json`, `enabled`).
+- `PATCH /api/schedules/{id}` — update mutable fields and recompute `next_run_at` when `cron_expr`/`timezone` changes.
+- `DELETE /api/schedules/{id}` — delete a schedule (`{"removed": true, "id": ...}`).
+- `POST /api/schedules/{id}/run` — trigger a schedule immediately via the run registry and record `last_run_at`, `next_run_at`, and `last_run_id`. Destructive targets require `{"confirm": true}` (`400 confirm_required` otherwise); serve-loop dispatches launch through the run registry (`--yes` appended for `start/review/cleanup/sync/release` unless already present).
+- RRULE subset: `FREQ` (`HOURLY/DAILY/WEEKLY/MONTHLY`), `INTERVAL` (`=1` for non-`HOURLY`), `BYMINUTE`/`BYHOUR`/`BYDAY` (weekly)/`BYMONTHDAY` (monthly). `INTERVAL>1` for `DAILY/WEEKLY/MONTHLY` and any other key (`COUNT`/`UNTIL`/`DTSTART`/…) are `400` — bounded/anchored rules must not silently run forever. A failed `next_run_after` recompute keeps the old `next_run_at` and surfaces `status: error` (no silent wedge).
+- CLI parity: `workagent schedule add|list|update|remove|run-due` mirrored in `web_args.py` (`schedule:run-due` target key, `confirm_subs: ("run-due",)`).

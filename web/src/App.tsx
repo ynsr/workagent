@@ -35,6 +35,7 @@ export default function App() {
         <Route path="library" element={<AutomationLibrary />} />
         <Route path="flow-templates" element={<LegacyTabRedirect to="/library" tab="templates" />} />
         <Route path="actions" element={<LegacyTabRedirect to="/library" tab="actions" />} />
+        <Route path="schedules" element={<LegacyTabRedirect to="/library" tab="schedules" />} />
         <Route path="repos" element={<ReposAndTrackers />} />
         <Route path="trackers" element={<LegacyTabRedirect to="/repos" tab="trackers" />} />
         <Route path="links" element={<LegacyTabRedirect to="/repos" tab="mappings" />} />

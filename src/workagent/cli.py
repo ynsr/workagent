@@ -125,6 +125,7 @@ from .cli_cleanup import (  # noqa: F401  (test compatibility)
     cleanup,
 )
 from . import cli_message  # noqa: F401  (registers `message`)
+from . import cli_schedule  # noqa: F401  (registers `schedule`)
 
 from . import cli_manage  # noqa: F401  (registers repo/tracker/link)
 from .cli_manage import (  # noqa: F401
