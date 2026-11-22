@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
+import { ConfirmProvider } from "@/lib/confirm"
 import { Schedules } from "./Schedules"
 import { api } from "@/lib/api"
 
@@ -29,7 +30,9 @@ function renderSchedules() {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <Schedules />
+        <ConfirmProvider>
+          <Schedules />
+        </ConfirmProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   )

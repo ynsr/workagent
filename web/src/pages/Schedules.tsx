@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
+import { toast } from "sonner"
 import { CalendarClock, Play, Plus, Sparkles, Trash2, Edit2 } from "lucide-react"
 import {
   api,
@@ -11,6 +12,8 @@ import {
 } from "@/lib/api"
 import { queryKeys } from "@/lib/queries"
 import { getVerbose } from "@/lib/settings"
+import { useConfirm } from "@/lib/confirm"
+import { errorText } from "@/components/StatusFeedback"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -43,6 +46,7 @@ function formatTs(iso: string): string {
 export function Schedules() {
   const qc = useQueryClient()
   const verbose = getVerbose()
+  const confirm = useConfirm()
 
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.schedules,
@@ -81,20 +85,45 @@ export function Schedules() {
   const toggleMut = useMutation({
     mutationFn: (s: ScheduleRecord) => api.updateSchedule(s.id, { enabled: !s.enabled }),
     onSuccess: invalidate,
+    onError: (err: unknown) => {
+      toast.error(errorText(err))
+    },
   })
 
   const deleteMut = useMutation({
     mutationFn: (id: number) => api.deleteSchedule(id),
     onSuccess: invalidate,
+    onError: (err: unknown) => {
+      toast.error(errorText(err))
+    },
   })
 
   const runNowMut = useMutation({
-    mutationFn: (id: number) => api.runScheduleNow(id),
+    mutationFn: (id: number) => api.runScheduleNow(id, { confirm: true }),
     onSuccess: () => {
       invalidate()
       void qc.invalidateQueries({ queryKey: queryKeys.runs })
     },
+    onError: (err: unknown) => {
+      toast.error(errorText(err))
+    },
   })
+
+  const handleDelete = async (s: ScheduleRecord) => {
+    const ok = await confirm({
+      title: `Delete schedule ${s.name}`,
+      description: "Deletes the schedule row. Already-dispatched runs are untouched.",
+      destructive: true,
+      confirmLabel: "Delete schedule",
+      details: [
+        { label: "Name", value: s.name },
+        { label: "Schedule", value: s.cron_expr, mono: true },
+        { label: "Target", value: `${s.target_kind} ${s.target_label}`, mono: true },
+      ],
+    })
+    if (!ok) return
+    deleteMut.mutate(s.id)
+  }
 
   const previewMut = useMutation({
     mutationFn: ({ cron_expr, timezone }: { cron_expr: string; timezone: string }) =>
@@ -452,7 +481,7 @@ export function Schedules() {
                           size="sm"
                           variant="ghost"
                           title="Delete"
-                          onClick={() => deleteMut.mutate(s.id)}
+                          onClick={() => void handleDelete(s)}
                         >
                           <Trash2 className="h-3.5 w-3.5 text-destructive" />
                         </Button>

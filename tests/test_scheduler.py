@@ -196,3 +196,116 @@ def test_webapp_schedule_endpoints(isolated_config, tmp_path):
     r = client.delete(f"/api/schedules/{sid}", headers=headers)
     assert r.status_code == 200
     assert r.json()["removed"] is True
+
+
+def test_rrule_rejects_interval_gt1_non_hourly_and_unknown_keys():
+    for expr in (
+        "RRULE:FREQ=DAILY;INTERVAL=2;BYHOUR=10;BYMINUTE=0",
+        "RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO;BYHOUR=10;BYMINUTE=0",
+        "RRULE:FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=1;BYHOUR=10;BYMINUTE=0",
+    ):
+        with pytest.raises(ValueError, match="INTERVAL"):
+            scheduler.next_run_after(expr, "UTC")
+    # Unknown keys (COUNT/UNTIL/DTSTART/...) must not silently run forever.
+    for expr in (
+        "RRULE:FREQ=DAILY;COUNT=5;BYHOUR=10;BYMINUTE=0",
+        "RRULE:FREQ=DAILY;UNTIL=20270101T000000Z;BYHOUR=10;BYMINUTE=0",
+        "RRULE:FREQ=DAILY;DTSTART=20260601T000000Z;BYHOUR=10;BYMINUTE=0",
+    ):
+        with pytest.raises(ValueError, match="unsupported RRULE key"):
+            scheduler.next_run_after(expr, "UTC")
+    # HOURLY INTERVAL>1 stays valid; plain INTERVAL=1 RRULEs still convert.
+    assert scheduler._rrule_to_cron("RRULE:FREQ=HOURLY;INTERVAL=2;BYMINUTE=15") == "15 */2 * * *"
+    assert scheduler._rrule_to_cron("RRULE:FREQ=DAILY;BYHOUR=10;BYMINUTE=15") == "15 10 * * *"
+
+
+def test_run_due_keeps_next_run_on_next_run_failure(isolated_config):
+    db = sq.db_path()
+    sq.init_db(db)
+    now = datetime(2026, 6, 1, 9, 0, 0, tzinfo=timezone.utc)
+    row = sq.add_schedule(
+        db,
+        name="bad-cron",
+        cron_expr="0 9 * * *",
+        timezone_name="UTC",
+        target_kind="command",
+        target_label="cleanup --merged --yes",
+        next_run_at="2026-06-01T09:00:00+00:00",
+    )
+    # Corrupt the stored expr after the fact (writes bypass validation).
+    from workagent.store_sqlite import connect
+    conn = connect(db)
+    conn.execute("UPDATE schedules SET cron_expr = ? WHERE id = ?", ("not a cron", row["id"]))
+    conn.commit()
+    conn.close()
+    res = scheduler.run_due_schedules(db, now=now, dispatcher=lambda s, a: None)
+    assert len(res) == 1
+    assert res[0]["status"] == "error"
+    assert "next-run" in (res[0]["error"] or "")
+    kept = sq.get_schedule(db, row["id"])
+    assert kept["next_run_at"] == "2026-06-01T09:00:00+00:00"
+
+
+def test_webapp_schedule_patch_recompute_and_invalid_cron(isolated_config, tmp_path):
+    app = create_app(tmp_path / "static", "127.0.0.1", 8765, [])
+    client = TestClient(app, base_url="http://localhost")
+    headers = {"Origin": "http://localhost"}
+    r = client.post(
+        "/api/schedules",
+        json={
+            "name": "Morning review",
+            "cron_expr": "0 9 * * *",
+            "timezone": "UTC",
+            "target_kind": "command",
+            "target_label": "review --all",
+        },
+        headers=headers,
+    )
+    assert r.status_code == 200
+    sid = r.json()["id"]
+    before = r.json()["next_run_at"]
+
+    # Patching cron_expr recomputes next_run_at.
+    r = client.patch(f"/api/schedules/{sid}", json={"cron_expr": "0 10 * * *"}, headers=headers)
+    assert r.status_code == 200
+    assert r.json()["next_run_at"] != before
+
+    # Patching an unrelated field preserves next_run_at.
+    nxt = r.json()["next_run_at"]
+    r = client.patch(f"/api/schedules/{sid}", json={"name": "Renamed"}, headers=headers)
+    assert r.status_code == 200
+    assert r.json()["name"] == "Renamed"
+    assert r.json()["next_run_at"] == nxt
+
+    # Invalid cron_expr PATCH is a 400, not a 500/store of garbage.
+    r = client.patch(f"/api/schedules/{sid}", json={"cron_expr": "not a cron"}, headers=headers)
+    assert r.status_code == 400
+
+    # run-now on a destructive target requires confirm:true.
+    r = client.post(f"/api/schedules/{sid}", headers=headers)
+    assert r.status_code in (404, 405)  # routes are /api/schedules/{id}/run only
+    r = client.post(f"/api/schedules/{sid}/run", headers=headers)
+    assert r.status_code == 400
+    assert "confirm" in r.json()["detail"].lower()
+
+
+def test_webapp_schedule_rrule_validation(isolated_config, tmp_path):
+    app = create_app(tmp_path / "static", "127.0.0.1", 8765, [])
+    client = TestClient(app, base_url="http://localhost")
+    headers = {"Origin": "http://localhost"}
+    for expr in (
+        "RRULE:FREQ=DAILY;INTERVAL=2;BYHOUR=10;BYMINUTE=0",
+        "RRULE:FREQ=DAILY;COUNT=5;BYHOUR=10;BYMINUTE=0",
+    ):
+        r = client.post(
+            "/api/schedules",
+            json={
+                "name": "bad rrule",
+                "cron_expr": expr,
+                "timezone": "UTC",
+                "target_kind": "command",
+                "target_label": "cleanup --merged --yes",
+            },
+            headers=headers,
+        )
+        assert r.status_code == 400

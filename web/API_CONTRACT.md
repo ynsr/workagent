@@ -607,5 +607,6 @@ Read-only endpoints (all GET, no confirm):
 - `POST /api/schedules` — create a schedule (`name`, `cron_expr`, `timezone`, `target_kind`: `flow|action|command`, `target_label`, `args_json`, `enabled`).
 - `PATCH /api/schedules/{id}` — update mutable fields and recompute `next_run_at` when `cron_expr`/`timezone` changes.
 - `DELETE /api/schedules/{id}` — delete a schedule (`{"removed": true, "id": ...}`).
-- `POST /api/schedules/{id}/run` — trigger a schedule immediately via the run registry and record `last_run_at`, `next_run_at`, and `last_run_id`.
+- `POST /api/schedules/{id}/run` — trigger a schedule immediately via the run registry and record `last_run_at`, `next_run_at`, and `last_run_id`. Destructive targets require `{"confirm": true}` (`400 confirm_required` otherwise); serve-loop dispatches launch through the run registry (`--yes` appended for `start/review/cleanup/sync/release` unless already present).
+- RRULE subset: `FREQ` (`HOURLY/DAILY/WEEKLY/MONTHLY`), `INTERVAL` (`=1` for non-`HOURLY`), `BYMINUTE`/`BYHOUR`/`BYDAY` (weekly)/`BYMONTHDAY` (monthly). `INTERVAL>1` for `DAILY/WEEKLY/MONTHLY` and any other key (`COUNT`/`UNTIL`/`DTSTART`/…) are `400` — bounded/anchored rules must not silently run forever. A failed `next_run_after` recompute keeps the old `next_run_at` and surfaces `status: error` (no silent wedge).
 - CLI parity: `workagent schedule add|list|update|remove|run-due` mirrored in `web_args.py` (`schedule:run-due` target key, `confirm_subs: ("run-due",)`).

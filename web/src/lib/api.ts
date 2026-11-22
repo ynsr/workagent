@@ -817,10 +817,16 @@ export const api = {
     }),
 
   /** POST /api/schedules/{id}/run — trigger a schedule immediately. */
-  runScheduleNow: (id: number | string) =>
+  runScheduleNow: (id: number | string, body?: { confirm?: boolean }) =>
     request<{ schedule: ScheduleRecord; argv: string[]; run_id: number | null }>(
       `/api/schedules/${encodeURIComponent(String(id))}/run`,
-      { method: "POST" },
+      body === undefined
+        ? { method: "POST" }
+        : {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          },
     ),
 }
 
