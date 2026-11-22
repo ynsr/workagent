@@ -221,7 +221,13 @@ function StepConfigForm({
             id={`${idPrefix}-repo`}
             value={repo || hintRepo}
             options={repoNames}
-            onChange={(v) => patch("repo", v)}
+            onChange={(v) => {
+              patch("repo", v)
+              const pruned = related.filter(
+                (n) => n.trim() && n.trim().toLowerCase() !== String(v).trim().toLowerCase(),
+              )
+              if (pruned.length !== related.length) patchList(pruned)
+            }}
             placeholder={hintRepo || (requiredRepo ? "Select a repo… (required)" : "Select a repo… (optional)")}
             allowCustom
           />
@@ -245,7 +251,7 @@ function StepConfigForm({
           </Label>
           <RelatedReposSelect
             idPrefix={idPrefix}
-            mainRepo=""
+            mainRepo={repo || hintRepo}
             value={related}
             onChange={patchList}
             variant="dropdown"

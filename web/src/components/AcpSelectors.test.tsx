@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { HarnessSelect } from "@/components/HarnessSelect"
 import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { RunModeSelect } from "@/components/StartForm"
-import { loadLaunchPrefs, saveLaunchPrefs } from "@/lib/launchPrefs"
+import { loadLaunchPrefs, loadStartPrefsByRepo, saveLaunchPrefs, saveStartPrefsForRepo } from "@/lib/launchPrefs"
 import { buildImmediateMessageActionArgs } from "@/lib/messageRunConfig"
 
 const mockConfig = vi.hoisted(() => ({
@@ -55,8 +55,8 @@ describe("RunModeSelect (issue #112)", () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
     renderWithClient(<RunModeSelect idPrefix="t" value="preview" onChange={onChange} />)
-    expect(screen.getByRole("radio", { name: "Run ACP" })).toBeInTheDocument()
-    await user.click(screen.getByRole("radio", { name: "Run ACP" }))
+    expect(screen.getByRole("radio", { name: "ACP" })).toBeInTheDocument()
+    await user.click(screen.getByRole("radio", { name: "ACP" }))
     expect(onChange).toHaveBeenCalledWith("acp")
   })
 })
@@ -111,6 +111,16 @@ describe("UI drift fixes (#128)", () => {
     expect(reloaded.start.effort).toBe("high")
   })
 
+  it("sticks Start base/action/run-mode per repo (issue #114)", () => {
+    saveStartPrefsForRepo("proj-a", { runMode: "acp", startAction: "plan", base: "develop" })
+    saveStartPrefsForRepo("proj-b", { runMode: "headless", startAction: "implement", base: "main" })
+    const all = loadStartPrefsByRepo()
+    expect(all["proj-a"]).toEqual({ runMode: "acp", startAction: "plan", base: "develop" })
+    expect(all["proj-b"]).toEqual({ runMode: "headless", startAction: "implement", base: "main" })
+    // Corrupt entries are dropped, valid ones survive.
+    localStorage.setItem("launch.startByRepo.v1", JSON.stringify({ ok: all["proj-a"], bad: { runMode: "nope" } }))
+    expect(loadStartPrefsByRepo()).toEqual({ ok: { runMode: "acp", startAction: "plan", base: "develop" } })
+  })
   it("buildImmediateMessageActionArgs forwards runMode, harness, model, and effort", () => {
     const args = buildImmediateMessageActionArgs("triage", "m-1", {
       runMode: "acp",

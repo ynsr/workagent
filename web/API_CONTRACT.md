@@ -601,7 +601,7 @@ preset as before).
   reconnect is built into EventSource).
 - Theme: `light | dark | system` in localStorage, follows
   `prefers-color-scheme` for `system`.
-- Launch prefs: localStorage key `launch.prefs.v1` — per-tab `{start:{runMode,base},review:{runMode,thenFix,fixAction,useReviewSession},sync:{merge}}` plus Prodtest Launch's `{prodtest:{runMode,prodtestAction}}` under the same key; only the active tab's slice persists on change, URL params (`ref`, `fixComments=1`) win for the live form and never persist. Repo tabs (`useRepoTabs`) show only repos with count > 0; a stale `?repo=` falls back to All. Candidates Review rows deep-link to `…/launch?mode=review&ref=<pr-url>` with the repo pre-selected.
+- Launch prefs: localStorage key `launch.prefs.v1` — per-tab `{start:{runMode,base},review:{runMode,thenFix,fixAction,useReviewSession},sync:{merge}}` plus Prodtest Launch's `{prodtest:{runMode,prodtestAction}}` under the same key; only the active tab's slice persists on change, URL params (`ref`, `fixComments=1`) win for the live form and never persist. Start base/action/run-mode additionally stick per repo under `launch.startByRepo.v1` — picking a repo reloads its saved values. Repo tabs (`useRepoTabs`) show only repos with count > 0; a stale `?repo=` falls back to All. Candidates Review rows deep-link to `…/launch?mode=review&ref=<pr-url>` with the repo pre-selected. The run-mode segmented control labels are `Preview | Headless | ACP | In terminal` (no `Run` prefix).
 
 ---
 

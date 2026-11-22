@@ -160,9 +160,9 @@ export function runModeArgs(mode: RunMode): string[] {
 /** Options for the run-mode segmented control (Launch + StartDialog). */
 export const RUN_MODE_OPTIONS: readonly { value: RunMode; label: string; hint: string }[] = [
   { value: "preview", label: "Preview", hint: "print the harness command (no -p flag), don't run" },
-  { value: "headless", label: "Run headless", hint: "--launch — run now with auto-approve (--no-tty)" },
-  { value: "acp", label: "Run ACP", hint: "--acp — stream structured ACP events to the Run page" },
-  { value: "terminal", label: "Run in terminal", hint: "--terminal — open the command in the OS terminal" },
+  { value: "headless", label: "Headless", hint: "--launch — run now with auto-approve (--no-tty)" },
+  { value: "acp", label: "ACP", hint: "--acp — stream structured ACP events to the Run page" },
+  { value: "terminal", label: "In terminal", hint: "--terminal — open the command in the OS terminal" },
 ]
 
 /** Review-tab action selector: Review vs Fix comments. Fix maps to the

@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Cleanup deletes merged feature branches from the remote, including external merges and soft-deletes; long-lived branches are kept [124]
+- New Task Start form sticks base branch, Implement/Plan action, and run mode per repo; related repos hide the selected repo [114]
 - Add conversational multi-worktree orchestrator mode (`workagent orchestrate`) with `spawned_runs` API and live `SpawnedWorkersCard` UI [157]
 - Skip the LLM validation judge when the harness self-attests JOB_DONE or INTENTIONALLY_UNCOMMITTED_CHANGES and gates pass [162]
 - Add opt-in background PR & CI auto-watchers (auto_fix_ci, auto_fix_reviews) with signature deduplication, watch CLI, and web toggles [154]

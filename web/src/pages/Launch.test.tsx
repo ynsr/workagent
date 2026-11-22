@@ -54,7 +54,7 @@ describe("Launch harness integration", () => {
     const user = userEvent.setup()
     renderLaunch("/launch?mode=start")
 
-    await user.click(screen.getByRole("radio", { name: "Run headless" }))
+    await user.click(screen.getByRole("radio", { name: "Headless" }))
     expect(screen.getByText("agy-guard --dangerously-skip-permissions -p=…")).toBeInTheDocument()
 
     await user.click(screen.getByRole("radio", { name: "omp" }))
