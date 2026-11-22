@@ -1,10 +1,12 @@
 """Closed-loop background PR & CI auto-watcher (issue #154 / T11).
 
 Observes active worktrees with opt-in ``auto_fix_ci`` or ``auto_fix_reviews``,
-computes a deduplication signature ``sha256(head_sha + ci_state +
-sorted(unresolved_thread_ids))``, skips worktrees with an active harness lock,
-paused flow, or matching ``last_nudge_signature``, dispatches a headless/ACP fix
-run, and records a ``nudge_routed`` event in ``worktree_events``.
+refreshes per-worktree CI + review-thread snapshots each pass, computes a
+deduplication signature ``sha256(head_sha + ci_state +
+sorted(unresolved_thread_ids) + sorted(failing_check_names))``, skips worktrees
+with an active harness lock, paused flow, or matching ``last_nudge_signature``,
+dispatches a detached/headless fix run, and records a ``nudge_routed`` event
+(``nudge_failed`` on spawn errors) in ``worktree_events``.
 """
 from __future__ import annotations
 
@@ -24,14 +26,89 @@ _UNSET: Any = object()
 DEFAULT_WATCH_INTERVAL = 60.0
 
 
+def _tool_for_pr_url(pr_url: str, cached: dict[str, Any] | None = None) -> str | None:
+    """Derive the host CLI (gh/glab) for a PR/MR URL, preferring cached tool."""
+    tool = str((cached or {}).get("tool") or "").strip()
+    if tool in ("gh", "glab"):
+        return tool
+    url = (pr_url or "").strip()
+    if "github.com" in url:
+        return "gh"
+    if url:
+        return "glab"
+    return None
+
+
+def _refresh_worktree_inputs(
+    ref_key: str,
+    entry: dict[str, Any],
+    branch: str,
+    cached: dict[str, Any] | None,
+    head_sha: str,
+    *,
+    refresh_fn: Callable[..., tuple[str | None, str, list[dict[str, Any]], dict | None, list[dict[str, Any]]]] | None = None,
+) -> tuple[str | None, str, list[dict[str, Any]], dict | None, list[dict[str, Any]]]:
+    """Refresh CI + review-thread snapshots for one worktree (soft-fail).
+
+    Returns ``(ci_state, ci_url, checks, review_stats, threads)``. By default
+    fetches via ``refs.fetch_ci_details`` / ``refs.fetch_pr_review_details``
+    and persists through ``store.cache_ci_status`` / ``store.cache_review_stats``
+    / ``store.replace_pr_checks`` / ``store.replace_pr_review_threads``; a
+    caller-supplied *refresh_fn* may replace the fetch step (tests). Any
+    lookup failure keeps the last-known snapshots — nothing is cached and the
+    pass proceeds on stale data with a logged warning.
+    """
+    if refresh_fn is not None:
+        return refresh_fn(ref_key, entry, branch, cached, head_sha)
+    pr_url = str(entry.get("pr_url") or "").strip()
+    if not pr_url.startswith("http"):
+        pr_url = str((cached or {}).get("url") or (cached or {}).get("pr_url") or "").strip()
+    tool = _tool_for_pr_url(pr_url, cached)
+    if not pr_url or not tool:
+        return None, "", [], None, []
+    cwd = str(entry.get("repo") or entry.get("worktree") or "").strip() or None
+    try:
+        from . import refs as _refs
+        ci_state, ci_url, checks = _refs.fetch_ci_details(tool, pr_url, cwd)
+        stats, threads = _refs.fetch_pr_review_details(tool, pr_url, cwd)
+    except Exception as exc:
+        logger.warning("watcher refresh failed for %s (%s): %s", ref_key, pr_url, exc)
+        return None, "", [], None, []
+    try:
+        if ci_state is not None and branch:
+            for c in checks:
+                if not c.get("commit_sha") and head_sha:
+                    c["commit_sha"] = head_sha
+            store.cache_ci_status(branch, ci_state, sha=head_sha or "", ci_url=ci_url,
+                                  repo=str(entry.get("repo") or ""))
+            store.replace_pr_checks(ref_key, checks)
+        if stats is not None and branch:
+            store.cache_review_stats(branch, stats, sha=head_sha or "",
+                                     repo=str(entry.get("repo") or ""))
+            store.replace_pr_review_threads(ref_key, threads)
+    except Exception as exc:
+        logger.warning("watcher refresh persist failed for %s: %s", ref_key, exc)
+    return ci_state, ci_url, checks, stats, threads
+
+
 def compute_nudge_signature(
     head_sha: str,
     ci_state: str,
     unresolved_thread_ids: Sequence[str],
+    failing_checks: Sequence[str | dict[str, Any]] | None = None,
 ) -> str:
     """Return deterministic sha256 signature for deduplicating watcher nudges."""
     ids = ",".join(sorted(str(tid).strip() for tid in unresolved_thread_ids if str(tid).strip()))
-    raw = f"{(head_sha or '').strip()}|{(ci_state or '').strip().lower()}|{ids}"
+    fails: list[str] = []
+    for fc in failing_checks or ():
+        if isinstance(fc, dict):
+            name = str(fc.get("name") or "").strip()
+            concl = str(fc.get("conclusion") or fc.get("status") or "").strip().lower()
+            fails.append(f"{name}:{concl}" if concl else name)
+        else:
+            fails.append(str(fc).strip())
+    fail_part = ",".join(sorted(f for f in fails if f))
+    raw = f"{(head_sha or '').strip()}|{(ci_state or '').strip().lower()}|{ids}|{fail_part}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -150,9 +227,13 @@ def _build_ci_fix_prompt(failing_checks: Sequence[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _default_dispatch(ref_key: str, kind: str, argv: list[str], entry: dict[str, Any]) -> None:
-    """Spawn a detached workagent CLI child process for the watcher fix run."""
-    subprocess.Popen(
+def _default_dispatch(ref_key: str, kind: str, argv: list[str], entry: dict[str, Any]) -> subprocess.Popen:
+    """Spawn a detached workagent CLI child process for the watcher fix run.
+
+    Returns the ``Popen`` handle; raises on spawn failure so the pass records
+    an ``error`` row (and never persists ``last_nudge_signature`` for it).
+    """
+    return subprocess.Popen(
         argv,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -164,11 +245,18 @@ def run_watch_once(
     *,
     dry_run: bool = False,
     repo_filter: str | None = None,
+    refresh: bool = True,
     dispatch_fn: Callable[[str, str, list[str], dict[str, Any]], Any] | None = None,
+    refresh_fn: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """Execute one observer pass across all active worktrees.
 
-    Returns ``{"checked": int, "dispatched": int, "skipped": int, "results": [...]}``.
+    With ``refresh=True`` (default) each opted-in worktree refreshes its CI
+    + review-thread snapshots before deciding; ``refresh=False`` reuses the
+    last-known snapshots (offline/tests). A failed refresh keeps last-known
+    snapshots and flags the row ``stale_inputs=True``.
+
+    Returns ``{"checked": int, "dispatched": int, "skipped": int, "errors": int, "results": [...]}``.
     """
     links = store.load_links()
     repos_map = store.load_repos()
@@ -179,6 +267,7 @@ def run_watch_once(
     results: list[dict[str, Any]] = []
     dispatched = 0
     skipped = 0
+    errors = 0
 
     for ref_key, entry in sorted(links.items()):
         repo_name, repo_entry = _repo_for_entry(entry, repos_map)
@@ -211,6 +300,18 @@ def run_watch_once(
         cached = pr_cache.get(branch) if branch else None
         head_sha = _head_sha_for_entry(entry, cached)
 
+        stale_inputs = False
+        if refresh and (auto_ci or auto_rev):
+            fresh = _refresh_worktree_inputs(ref_key, entry, branch, cached,
+                                             head_sha, refresh_fn=refresh_fn)
+            fresh_ci, _fresh_url, fresh_checks, fresh_stats, _fresh_threads = fresh
+            if fresh_ci is None and not fresh_checks and fresh_stats is None:
+                # Refresh fetched nothing new: stay on last-known snapshots.
+                stale_inputs = True
+            else:
+                # Re-read the persisted snapshots updated by the refresh.
+                cached = store.load_pr_cache().get(branch) if branch else cached
+
         checks = store_timeline.list_pr_checks(db_path, ref_key) if db_path else []
         failing = [c for c in checks if store_timeline.is_failing_check(c)]
         ci_state = str((cached or {}).get("ci") or "").lower()
@@ -224,7 +325,8 @@ def run_watch_once(
         )
         thread_ids = [str(t["thread_id"]) for t in unresolved if t.get("thread_id")]
 
-        signature = compute_nudge_signature(head_sha, ci_state, thread_ids)
+        failing_names = [str(c.get("name")) for c in failing if c.get("name")]
+        signature = compute_nudge_signature(head_sha, ci_state, thread_ids, failing_names)
 
         # Guard 3: deduplication via last_nudge_signature
         if signature and signature == str(entry.get("last_nudge_signature") or ""):
@@ -264,6 +366,7 @@ def run_watch_once(
                 "action": "skip",
                 "reason": "clean",
                 "signature": signature,
+                "stale_inputs": stale_inputs,
             })
             continue
 
@@ -279,15 +382,25 @@ def run_watch_once(
             continue
 
         try:
-            dispatcher(ref_key, kind, argv, entry)
+            proc = dispatcher(ref_key, kind, argv, entry)
+            pid = getattr(proc, "pid", None) if proc is not None else None
         except Exception as exc:
             logger.warning("watcher dispatch failed for %s (%s): %s", ref_key, kind, exc)
+            errors += 1
             results.append({
                 "ref": ref_key,
                 "action": "error",
                 "kind": kind,
                 "error": str(exc),
             })
+            if db_path:
+                try:
+                    store_timeline.append_worktree_event(
+                        db_path, ref_key, "nudge_failed", summary=str(exc)[:300],
+                        details={"kind": kind, "signature": signature, "head_sha": head_sha},
+                    )
+                except Exception:
+                    pass
             continue
 
         update_worktree_watcher_fields(ref_key, last_nudge_signature=signature)
@@ -304,6 +417,8 @@ def run_watch_once(
                     "ci_state": ci_state,
                     "unresolved_threads": len(thread_ids),
                     "failing_checks": [str(c.get("name")) for c in failing if c.get("name")],
+                    "stale_inputs": stale_inputs,
+                    "dispatch_pid": pid,
                 },
             )
         dispatched += 1
@@ -313,12 +428,15 @@ def run_watch_once(
             "kind": kind,
             "signature": signature,
             "summary": summary,
+            "pid": pid,
+            "stale_inputs": stale_inputs,
         })
 
     return {
         "checked": len(results),
         "dispatched": dispatched,
         "skipped": skipped,
+        "errors": errors,
         "results": results,
     }
 

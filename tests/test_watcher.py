@@ -69,6 +69,24 @@ def test_compute_nudge_signature_is_deterministic_and_order_independent():
     assert s1 != s3
 
 
+def test_compute_nudge_signature_distinguishes_failing_check_sets():
+    base = watcher.compute_nudge_signature("deadbeef", "failure", [], ["lint"])
+    changed = watcher.compute_nudge_signature("deadbeef", "failure", [], ["unit"])
+    assert base != changed
+    # Order of failing names does not matter; conclusions do.
+    reordered = watcher.compute_nudge_signature(
+        "deadbeef", "failure", [], ["unit", "lint"]
+    )
+    ab = watcher.compute_nudge_signature("deadbeef", "failure", [], ["lint", "unit"])
+    assert reordered == ab
+    concl = watcher.compute_nudge_signature(
+        "deadbeef", "failure", [],
+        [{"name": "lint", "conclusion": "failure"}],
+    )
+    assert concl == watcher.compute_nudge_signature("deadbeef", "failure", [], ["lint:failure"])
+    assert concl != watcher.compute_nudge_signature("deadbeef", "failure", [], ["lint:success"])
+
+
 def test_ci_failure_dispatch_dedup_and_nudge_event(tmp_path):
     db = _seed_worktree(tmp_path, auto_fix_ci=True, ci_state="failure")
     store_timeline.replace_pr_checks(
@@ -90,7 +108,7 @@ def test_ci_failure_dispatch_dedup_and_nudge_event(tmp_path):
     def _fake_dispatch(ref_key, kind, argv, _entry):
         dispatched.append((ref_key, kind, argv))
 
-    res1 = watcher.run_watch_once(dispatch_fn=_fake_dispatch)
+    res1 = watcher.run_watch_once(refresh=False, dispatch_fn=_fake_dispatch)
     assert res1["dispatched"] == 1
     assert len(dispatched) == 1
     ref_key, kind, argv = dispatched[0]
@@ -104,7 +122,7 @@ def test_ci_failure_dispatch_dedup_and_nudge_event(tmp_path):
     assert any(e["event_type"] == "nudge_routed" and e["details"]["kind"] == "ci_failure" for e in events)
 
     # Second pass with identical state is deduplicated via last_nudge_signature
-    res2 = watcher.run_watch_once(dispatch_fn=_fake_dispatch)
+    res2 = watcher.run_watch_once(refresh=False, dispatch_fn=_fake_dispatch)
     assert res2["dispatched"] == 0
     assert res2["results"][0]["reason"] == "already_nudged"
     assert len(dispatched) == 1
@@ -137,6 +155,7 @@ def test_review_comment_dispatch_and_worktree_override(tmp_path):
     dispatched: list[tuple[str, str, list[str]]] = []
 
     res = watcher.run_watch_once(
+        refresh=False,
         dispatch_fn=lambda k, kind, argv, _e: dispatched.append((k, kind, argv))
     )
     assert res["dispatched"] == 1
@@ -156,14 +175,14 @@ def test_lock_skip_and_paused_flow_skip(tmp_path, monkeypatch):
 
     # Active harness lock skips
     monkeypatch.setattr(store, "active_harness", lambda _k: {"harness": "omp", "pid": 99999})
-    res_lock = watcher.run_watch_once(dispatch_fn=lambda *a: dispatched.append(a))
+    res_lock = watcher.run_watch_once(refresh=False, dispatch_fn=lambda *a: dispatched.append(a))
     assert res_lock["dispatched"] == 0
     assert res_lock["results"][0]["reason"] == "active_harness"
 
     # Paused flow skips
     monkeypatch.setattr(store, "active_harness", lambda _k: None)
     monkeypatch.setattr(store, "list_flows", lambda worktree="": [{"id": 1, "status": "paused"}])
-    res_flow = watcher.run_watch_once(dispatch_fn=lambda *a: dispatched.append(a))
+    res_flow = watcher.run_watch_once(refresh=False, dispatch_fn=lambda *a: dispatched.append(a))
     assert res_flow["dispatched"] == 0
     assert res_flow["results"][0]["reason"] == "paused_flow"
     assert dispatched == []
@@ -177,7 +196,7 @@ def test_dry_run_does_not_dispatch_or_persist_signature(tmp_path):
         [{"name": "unit", "status": "completed", "conclusion": "failure"}],
     )
     dispatched: list = []
-    res = watcher.run_watch_once(dry_run=True, dispatch_fn=lambda *a: dispatched.append(a))
+    res = watcher.run_watch_once(refresh=False, dry_run=True, dispatch_fn=lambda *a: dispatched.append(a))
     assert res["dispatched"] == 0
     assert res["results"][0]["action"] == "dry_run"
     assert res["results"][0]["kind"] == "ci_failure"
@@ -185,6 +204,89 @@ def test_dry_run_does_not_dispatch_or_persist_signature(tmp_path):
     # Signature not persisted on dry-run
     links = store.load_links()
     assert not links["gh:demo#1"].get("last_nudge_signature")
+
+def test_refresh_updates_snapshots_before_deciding(tmp_path):
+    _seed_worktree(tmp_path, auto_fix_ci=True, ci_state="")
+
+    def _fake_refresh(ref_key, entry, branch, cached, head_sha):
+        store.cache_ci_status(branch, "failure", sha=head_sha or "abc1234",
+                              ci_url="https://ci.example/9",
+                              repo=str(entry.get("repo") or ""))
+        store.replace_pr_checks(ref_key, [
+            {"name": "lint", "status": "completed", "conclusion": "failure"},
+        ])
+        store.cache_review_stats(branch, {"reviews": 0, "unresolved": 0, "resolved": 0},
+                                 sha=head_sha or "abc1234",
+                                 repo=str(entry.get("repo") or ""))
+        store.replace_pr_review_threads(ref_key, [])
+        stats = {"reviews": 0, "unresolved": 0, "resolved": 0}
+        return ("failure", "https://ci.example/9",
+                [{"name": "lint", "status": "completed", "conclusion": "failure"}],
+                stats, [])
+
+    dispatched: list = []
+    res = watcher.run_watch_once(
+        refresh_fn=_fake_refresh,
+        dispatch_fn=lambda *a: dispatched.append(a),
+    )
+    assert res["dispatched"] == 1
+    assert res["results"][0]["kind"] == "ci_failure"
+    assert res["results"][0]["stale_inputs"] is False
+
+
+def test_refresh_failure_falls_back_to_last_known_snapshots(tmp_path):
+    _seed_worktree(tmp_path, auto_fix_ci=True, ci_state="failure")
+
+    def _dead_refresh(*_a):
+        return (None, "", [], None, [])
+
+    dispatched: list = []
+    res = watcher.run_watch_once(
+        refresh_fn=_dead_refresh, dispatch_fn=lambda *a: dispatched.append(a),
+    )
+    assert res["dispatched"] == 0
+    assert res["results"][0]["reason"] == "clean"
+    assert res["results"][0]["stale_inputs"] is True
+
+
+def test_changed_failing_set_redispatches_on_same_sha(tmp_path):
+    db = _seed_worktree(tmp_path, auto_fix_ci=True, ci_state="failure")
+    store_timeline.replace_pr_checks(
+        db, "gh:demo#1",
+        [{"name": "lint", "status": "completed", "conclusion": "failure"}],
+    )
+    dispatched: list = []
+    res1 = watcher.run_watch_once(refresh=False, dispatch_fn=lambda *a: dispatched.append(a))
+    assert res1["dispatched"] == 1
+    # Same head SHA, different failing check -> new signature -> dispatch again.
+    store_timeline.replace_pr_checks(
+        db, "gh:demo#1",
+        [{"name": "unit", "status": "completed", "conclusion": "failure"}],
+    )
+    res2 = watcher.run_watch_once(refresh=False, dispatch_fn=lambda *a: dispatched.append(a))
+    assert res2["dispatched"] == 1
+    assert len(dispatched) == 2
+
+
+def test_dispatch_failure_records_error_and_keeps_signature_clear(tmp_path):
+    db = _seed_worktree(tmp_path, auto_fix_ci=True, ci_state="failure")
+    store_timeline.replace_pr_checks(
+        db, "gh:demo#1",
+        [{"name": "lint", "status": "completed", "conclusion": "failure"}],
+    )
+
+    def _boom(*_a):
+        raise RuntimeError("spawn exploded")
+
+    res = watcher.run_watch_once(refresh=False, dispatch_fn=_boom)
+    assert res["dispatched"] == 0
+    assert res["errors"] == 1
+    assert res["results"][0]["action"] == "error"
+    links = store.load_links()
+    assert not links["gh:demo#1"].get("last_nudge_signature")
+    events = store_timeline.list_worktree_events(db, "gh:demo#1")
+    assert any(e["event_type"] == "nudge_failed" for e in events)
+
 
 
 def test_webapp_lifespan_watcher_starts_and_cancels_cleanly(tmp_path, monkeypatch):
@@ -250,3 +352,79 @@ def test_webapp_worktree_watcher_override_endpoints(tmp_path):
         assert p2.status_code == 200
         assert p2.json()["auto_fix_ci"] is None
         assert p2.json()["effective_auto_fix_ci"] is True
+
+
+def test_cli_repo_update_persists_and_clears_auto_fix_flags(tmp_path, monkeypatch):
+    import json
+
+    from typer.testing import CliRunner
+
+    from workagent import cli
+
+    from tests.cli_helpers import _invoke
+
+    _seed_worktree(tmp_path, repo_name="watchrepo", ref_key="gh:watchrepo#1",
+                   branch="feat/watch", auto_fix_ci=False, auto_fix_reviews=False)
+    monkeypatch.setattr(cli.repos, "repo_names", lambda: ["watchrepo"])
+
+    r = _invoke("repo", "update", "watchrepo", "--auto-fix-ci", "--auto-fix-reviews", "--json")
+    assert r.exit_code == 0, r.output
+    data = json.loads(r.stdout)
+    assert data["auto_fix_ci"] is True
+    assert data["auto_fix_reviews"] is True
+
+    r2 = _invoke("repo", "update", "watchrepo", "--no-auto-fix-ci", "--json")
+    assert r2.exit_code == 0, r2.output
+    assert json.loads(r2.stdout)["auto_fix_ci"] is False
+
+    runner = CliRunner()
+    r3 = runner.invoke(cli.app, ["repo", "update", "nope", "--auto-fix-ci"])
+    assert r3.exit_code != 0
+
+
+def test_cli_watch_once_json_and_repo_filter(tmp_path, monkeypatch):
+    import json
+
+    from workagent import cli
+
+    from tests.cli_helpers import _invoke
+
+    _seed_worktree(tmp_path, repo_name="watchrepo", ref_key="gh:watchrepo#1",
+                   branch="feat/watch", auto_fix_ci=True)
+    monkeypatch.setattr(cli.repos, "repo_names", lambda: ["watchrepo"])
+    monkeypatch.setattr("workagent.cli_watch.watcher.run_watch_once",
+                        lambda **kw: {"checked": 1, "dispatched": 0, "skipped": 1,
+                                      "errors": 0, "results": [],
+                                      "echo": {"dry_run": kw.get("dry_run"),
+                                               "repo_filter": kw.get("repo_filter")}})
+
+    r = _invoke("watch", "--once", "--dry-run", "--json")
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.stdout)
+    assert payload["echo"]["dry_run"] is True
+    assert payload["echo"]["repo_filter"] is None
+
+    r2 = _invoke("watch", "--once", "--repo", "watchrepo", "--json")
+    assert r2.exit_code == 0, r2.output
+    assert json.loads(r2.stdout)["echo"]["repo_filter"] == "watchrepo"
+
+
+def test_cli_watch_dry_run_implies_once_without_loop(tmp_path, monkeypatch):
+    from workagent import cli
+
+    from tests.cli_helpers import _invoke
+
+    _seed_worktree(tmp_path, auto_fix_ci=True)
+    monkeypatch.setattr(cli.repos, "repo_names", lambda: ["demo"])
+    calls: list = []
+
+    def _fake_pass(**kw):
+        calls.append(kw)
+        return {"checked": 0, "dispatched": 0, "skipped": 0, "errors": 0, "results": []}
+
+    monkeypatch.setattr("workagent.cli_watch.watcher.run_watch_once", _fake_pass)
+    r = _invoke("watch", "--dry-run")
+    assert r.exit_code == 0, r.output
+    assert len(calls) == 1
+    assert calls[0].get("dry_run") is True
+

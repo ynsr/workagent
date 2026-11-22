@@ -28,6 +28,10 @@ def watch(
     """
     if once or dry_run:
         res = watcher.run_watch_once(dry_run=dry_run, repo_filter=repo)
+        if not json_output and res.get("errors"):
+            for row in res.get("results", []):
+                if row.get("action") == "error":
+                    eprint(f"watch: error on {row.get('ref')}: {row.get('error')}")
         _print_result(res, json_output)
         return
 
@@ -38,8 +42,12 @@ def watch(
             res = watcher.run_watch_once(dry_run=False, repo_filter=repo)
             if json_output:
                 _print_result(res, True)
-            elif res["dispatched"]:
-                eprint(f"watch: dispatched {res['dispatched']} fix run(s) across {res['checked']} worktree(s)")
+            else:
+                if res["dispatched"]:
+                    eprint(f"watch: dispatched {res['dispatched']} fix run(s) across {res['checked']} worktree(s)")
+                for row in res.get("results", []):
+                    if row.get("action") == "error":
+                        eprint(f"watch: error on {row.get('ref')}: {row.get('error')}")
             time.sleep(poll)
     except KeyboardInterrupt:
         eprint("watch: stopped.")
