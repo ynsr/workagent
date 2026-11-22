@@ -138,6 +138,8 @@ def _ci_glab_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]
         # URL (e.g. merge_request_event that failed before any job started).
         if not fallback:
             fallback = _pick_job_url(jobs)
+            if fallback:
+                break  # one banked fallback is enough; skip older pipelines
     if fallback:
         return state, fallback, newest_checks
     # No job urls anywhere: the newest pipeline page beats a dead badge.
@@ -162,7 +164,7 @@ def _glab_state(status: str) -> str:
     """Map a GitLab pipeline/job status onto the CI cell vocabulary."""
     if status in ("success", "passed"):
         return "success"
-    if status in ("failed", "canceled"):
+    if status in ("failed", "canceled", "cancelled"):
         return "failure"
     if status in _GLAB_RUNNING:
         return "running"
@@ -174,7 +176,10 @@ def _pick_job_url(jobs: list) -> str:
 
     Issue #116: picking max(job id) linked a successful job (e.g. .../203730)
     while the real failure (e.g. .../203729) sat earlier in the same
-    pipeline. Only jobs carrying a web_url compete.
+    pipeline. Only jobs carrying a web_url compete. Cancelled jobs rank in
+    the failure tier (both ``canceled``/``cancelled`` spellings), so a
+    cancelled pipeline links the cancelled job, not an adjacent
+    skipped/manual one.
     """
     dicts = [j for j in jobs if isinstance(j, dict) and j.get("web_url")]
     if not dicts:

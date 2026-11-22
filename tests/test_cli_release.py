@@ -92,6 +92,7 @@ def test_fetch_branch_ci_gh_remote(monkeypatch):
     monkeypatch.setattr(_ci, "run_cmd", _fake)
     st, url = _ci.fetch_branch_ci("gh", "git@github.com:o/r.git", "master")
     assert st == "success"
+    assert "--repo" in seen["argv"] and "o/r" in seen["argv"]
 
 def test_fetch_branch_ci_glab_prefers_failed_job(monkeypatch):
     """Issue #116 branch path (used by `release fix-default --action ci`):
