@@ -613,6 +613,12 @@ Read-only endpoints (all GET, no confirm):
 - `GET /api/worktrees/{ref}/diff?path=<file>&mode=base|head` — returns `{key, path, mode, base_ref, binary, truncated, additions, deletions, hunks: [{header, old_start, old_count, new_start, new_count, lines: [{type, old_line, new_line, content}]}]}`. Rejects empty/absolute/traversal (`..`)/NUL paths with `400`; caps large diffs (`truncated: true`) and skips binary bodies (`binary: true`, `hunks: []`).
 - `GET /api/prodtests/{issue_key}/plan` — returns `{issue_key, status, plan_path, plan_revision, plan_risk, plan_diff_hash, release_sha, last_run_id, updated_at, truncated, yaml, parse_error, summary, preconditions, cases, metadata}`. `404` when the prodtest item or plan file is missing; `400` when `plan_path` is not a `.yaml`/`.yml` file.
 
+### Worktree Watcher Overrides (`GET` / `POST /api/worktrees/{ref}/watcher`)
+- `GET /api/worktrees/{ref}/watcher` → `{ key, auto_fix_ci, auto_fix_reviews, effective_auto_fix_ci, effective_auto_fix_reviews, last_nudge_signature }` (`auto_fix_*` is `true | false | null`, where `null` inherits from the repo).
+- `POST /api/worktrees/{ref}/watcher` with JSON `{ "auto_fix_ci"?: bool | null, "auto_fix_reviews"?: bool | null }` persists or clears per-worktree overrides.
+- `GET /api/repos` includes `auto_fix_ci` and `auto_fix_reviews` booleans; `repo update` accepts `--auto-fix-ci/--no-auto-fix-ci` and `--auto-fix-reviews/--no-auto-fix-reviews`.
+- `watch` command accepts `--once`, `--dry-run`, `--json`, `--interval`, `--repo`.
+
 ---
 
 ## Recurring Cron/RRULE Schedules (T13)

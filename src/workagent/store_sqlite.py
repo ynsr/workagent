@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS repos (
   fetch_enabled INTEGER NOT NULL DEFAULT 1,
   default_branch TEXT NOT NULL DEFAULT '', release_branch TEXT NOT NULL DEFAULT '',
   commands TEXT NOT NULL DEFAULT '{}',
-  overlay_buttons TEXT NOT NULL DEFAULT '{}');
+  overlay_buttons TEXT NOT NULL DEFAULT '{}',
+  auto_fix_ci INTEGER NOT NULL DEFAULT 0,
+  auto_fix_reviews INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS tracker_repos (
   tracker_key TEXT NOT NULL REFERENCES trackers(key_ref) ON DELETE CASCADE,
   repo_key TEXT NOT NULL REFERENCES repos(key_ref) ON DELETE CASCADE,
@@ -853,6 +855,20 @@ def _migrate_repos_overlay_buttons(conn) -> None:
         return
     if "overlay_buttons" not in cols:
         conn.execute("ALTER TABLE repos ADD COLUMN overlay_buttons TEXT NOT NULL DEFAULT '{}'")
+
+
+def _migrate_repos_auto_fix(conn) -> None:
+    """Add opt-in auto_fix_ci and auto_fix_reviews columns to repos (issue #154).
+
+    Idempotent: skipped when present.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
+    if not cols:
+        return
+    if "auto_fix_ci" not in cols:
+        conn.execute("ALTER TABLE repos ADD COLUMN auto_fix_ci INTEGER NOT NULL DEFAULT 0")
+    if "auto_fix_reviews" not in cols:
+        conn.execute("ALTER TABLE repos ADD COLUMN auto_fix_reviews INTEGER NOT NULL DEFAULT 0")
 
 
 
@@ -1914,7 +1930,7 @@ def _schema_current(path: Path) -> bool:
         if "is_enabled" not in tcols:
             return False
         rcols = {r[1] for r in conn.execute("PRAGMA table_info(repos)")}
-        if not {"default_branch", "release_branch", "overlay_buttons"} <= rcols:
+        if not {"default_branch", "release_branch", "overlay_buttons", "auto_fix_ci", "auto_fix_reviews"} <= rcols:
             return False
         if "idx_repos_name" not in {r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'repos'")}:
@@ -1996,6 +2012,7 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
                 _migrate_repos_release(conn)
                 _migrate_repos_commands(conn)
                 _migrate_repos_overlay_buttons(conn)
+                _migrate_repos_auto_fix(conn)
                 _migrate_repos_unique_name(conn)
                 _migrate_worktrees_deleted_at(conn)
                 _migrate_worktrees_related(conn)

@@ -96,6 +96,7 @@ shlex = _shlex
 subprocess = _subprocess
 
 from . import cli_start  # noqa: F401  (registers `start`)
+from . import cli_watch  # noqa: F401  (registers `watch`)
 from .cli_start import _start_from_pr, start  # noqa: F401
 
 from . import cli_review  # noqa: F401  (registers `review`)

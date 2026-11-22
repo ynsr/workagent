@@ -193,7 +193,7 @@ def load_repos(path: Path) -> dict:
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         out: dict = {}
-        for r in conn.execute("SELECT key_ref, name, path, remote, tool, fetch_enabled, default_branch, release_branch, commands, overlay_buttons FROM repos ORDER BY name"):
+        for r in conn.execute("SELECT key_ref, name, path, remote, tool, fetch_enabled, default_branch, release_branch, commands, overlay_buttons, auto_fix_ci, auto_fix_reviews FROM repos ORDER BY name"):
             d = dict(r)
             tids = [x["tracker_key"] for x in conn.execute(
                 "SELECT tracker_key FROM tracker_repos WHERE repo_key = ? ORDER BY tracker_key",
@@ -205,7 +205,9 @@ def load_repos(path: Path) -> dict:
                 "default_branch": d.get("default_branch") or "",
                 "release_branch": d.get("release_branch") or "",
                 "commands": _parse_commands(d.get("commands")),
-                "overlay_buttons": _parse_overlay_buttons(d.get("overlay_buttons"))}
+                "overlay_buttons": _parse_overlay_buttons(d.get("overlay_buttons")),
+                "auto_fix_ci": bool(d.get("auto_fix_ci", 0)),
+                "auto_fix_reviews": bool(d.get("auto_fix_reviews", 0))}
         return out
 
 
@@ -318,7 +320,9 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
                       default_branch: str | None = None,
                       release_branch: str | None = None,
                       commands: dict | None = None,
-                      overlay_buttons: dict | None = None) -> None:
+                      overlay_buttons: dict | None = None,
+                      auto_fix_ci: bool | None = None,
+                      auto_fix_reviews: bool | None = None) -> None:
     """Upsert a named registry row and link it to *tracker_key* (join-only).
 
     tracker_key stays mandatory: an explicit key wins, else the caller
@@ -360,7 +364,7 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
             conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
                          " WHERE key_ref = ?",
                          (name, name, remote or "", tool or "", hit[0]))
-        fe_cur = conn.execute("SELECT fetch_enabled, default_branch, release_branch, commands, overlay_buttons FROM repos WHERE key_ref = ? OR path = ?",
+        fe_cur = conn.execute("SELECT fetch_enabled, default_branch, release_branch, commands, overlay_buttons, auto_fix_ci, auto_fix_reviews FROM repos WHERE key_ref = ? OR path = ?",
                               (name, norm)).fetchone()
         from .store_sqlite import _default_fetch_enabled
         fe = fe_cur[0] if fe_cur is not None else _default_fetch_enabled(tool=tool or "")
@@ -375,13 +379,18 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
         new_commands = stored_commands if commands is None else (commands or {})
         stored_overlay = _parse_overlay_buttons(fe_cur[4] if fe_cur is not None else None)
         new_overlay = stored_overlay if overlay_buttons is None else (overlay_buttons or {})
-        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, fetch_enabled, default_branch, release_branch, commands, overlay_buttons)"
-                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        stored_auto_ci = int(fe_cur[5]) if fe_cur is not None and fe_cur[5] is not None else 0
+        stored_auto_rev = int(fe_cur[6]) if fe_cur is not None and fe_cur[6] is not None else 0
+        new_auto_ci = stored_auto_ci if auto_fix_ci is None else (1 if auto_fix_ci else 0)
+        new_auto_rev = stored_auto_rev if auto_fix_reviews is None else (1 if auto_fix_reviews else 0)
+        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, fetch_enabled, default_branch, release_branch, commands, overlay_buttons, auto_fix_ci, auto_fix_reviews)"
+                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                      " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"
                      " remote=excluded.remote, tool=excluded.tool, fetch_enabled=excluded.fetch_enabled,"
                      " default_branch=excluded.default_branch, release_branch=excluded.release_branch,"
-                     " commands=excluded.commands, overlay_buttons=excluded.overlay_buttons",
-                     (name, norm, name, remote or "", tool or "", fe, new_default or "", new_release or "", _json.dumps(new_commands), _json.dumps(new_overlay)))
+                     " commands=excluded.commands, overlay_buttons=excluded.overlay_buttons,"
+                     " auto_fix_ci=excluded.auto_fix_ci, auto_fix_reviews=excluded.auto_fix_reviews",
+                     (name, norm, name, remote or "", tool or "", fe, new_default or "", new_release or "", _json.dumps(new_commands), _json.dumps(new_overlay), new_auto_ci, new_auto_rev))
         conn.execute("INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
                      (tracker_key, name))
 

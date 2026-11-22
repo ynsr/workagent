@@ -15,6 +15,7 @@ import {
   Workflow,
 } from "lucide-react"
 import { AcpTranscript } from "@/components/AcpTranscript"
+import { WorktreeWatcherOverrides } from "@/components/WorktreeWatcherOverrides"
 import { HarnessSelect } from "@/components/HarnessSelect"
 import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { QuestionCard } from "@/components/QuestionCard"
@@ -377,6 +378,7 @@ export function WorktreeWorkspace() {
 
             {inspectorTab === "summary" ? (
               <div className="space-y-3 text-xs" data-testid="inspector-summary">
+                <WorktreeWatcherOverrides worktreeKey={refKey} />
                 <dl className="space-y-1.5">
                   <div className="flex justify-between gap-2">
                     <dt className="text-muted-foreground">Key</dt>

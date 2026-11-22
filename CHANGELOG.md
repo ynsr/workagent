@@ -1,5 +1,7 @@
 # Changelog
 ## Unreleased
+- Add opt-in background PR & CI auto-watchers (auto_fix_ci, auto_fix_reviews) with signature deduplication, watch CLI, and web toggles [154]
+- Refresh watcher snapshots each pass, harden dispatch errors, and guard rapid watcher toggles [154]
 - Add built-in recurring Cron/RRULE schedules for flows, actions, and maintenance commands with CLI, REST API, and Automation Library tab [156]
 - Persist run duration, model, effort, token, and cost telemetry in state.db and display badges, pills, and a Usage summary bar on Runs [155]
 - Store normalized PR checks, review threads, and worktree feedback timeline events with inline Fix CI, Fix comments, and Cleanup actions [146]

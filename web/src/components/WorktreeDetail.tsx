@@ -23,6 +23,7 @@ import { ActionsMenu } from "@/components/ActionsMenu"
 import { HarnessSelect } from "@/components/HarnessSelect"
 import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { WorktreeFeedbackTimeline } from "@/components/WorktreeFeedbackTimeline"
+import { WorktreeWatcherOverrides } from "@/components/WorktreeWatcherOverrides"
 import { WorkspaceDiffView } from "@/components/WorkspaceDiffView"
 import { ProdtestPlanViewer } from "@/components/ProdtestPlanViewer"
 import { copyToClipboard } from "@/lib/format"
@@ -299,7 +300,8 @@ export function WorktreeDetail({
           ) : null}
         </dl>
         {worktreeKey ? (
-          <div className="mt-4">
+          <div className="mt-4 space-y-3">
+            <WorktreeWatcherOverrides worktreeKey={worktreeKey} />
             <WorktreeFeedbackTimeline worktreeKey={worktreeKey} entry={entry} />
           </div>
         ) : null}

@@ -115,6 +115,8 @@ def repo_update(
     release_branch: Optional[str] = typer.Option(None, "--release-branch", help="Release branch (empty string clears release support)."),
     pre_release: Optional[str] = typer.Option(None, "--pre-release", help="Pre-release gate command (empty string clears)."),
     overlay_buttons: Optional[str] = typer.Option(None, "--overlay-buttons", help="StatusTable overlay visibility: comma list of button ids, `-id` hides (e.g. 'sync,review,-adhoc'; flow:<label>/action:<label> for dedicated buttons; empty string resets to all visible)."),
+    auto_fix_ci: Optional[bool] = typer.Option(None, "--auto-fix-ci/--no-auto-fix-ci", help="Opt-in background watcher to auto-fix failing PR CI checks."),
+    auto_fix_reviews: Optional[bool] = typer.Option(None, "--auto-fix-reviews/--no-auto-fix-reviews", help="Opt-in background watcher to auto-fix unresolved PR review comments."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
 ) -> None:
     """Update a registered repo's default/release branches.
@@ -124,8 +126,9 @@ def repo_update(
     registry = store.load_repos()
     if name not in registry:
         _fail(f"unknown repo: {name}", EXIT_USAGE)
-    if default_branch is None and release_branch is None and pre_release is None and overlay_buttons is None:
-        _fail("nothing to update: pass --default-branch and/or --release-branch and/or --pre-release and/or --overlay-buttons.", EXIT_USAGE)
+    if (default_branch is None and release_branch is None and pre_release is None
+            and overlay_buttons is None and auto_fix_ci is None and auto_fix_reviews is None):
+        _fail("nothing to update: pass --default-branch, --release-branch, --pre-release, --overlay-buttons, --auto-fix-ci/--no-auto-fix-ci, or --auto-fix-reviews/--no-auto-fix-reviews.", EXIT_USAGE)
     overlay_reset = overlay_buttons is not None and overlay_buttons.strip() == ""
     overlay_map = repos.parse_overlay_buttons(overlay_buttons) if overlay_buttons and overlay_buttons.strip() else ({} if overlay_reset else None)
     if store._sqlite_path() is None:
@@ -151,11 +154,17 @@ def repo_update(
                 merged = dict(entry.get("overlay_buttons") or {})
                 merged.update(overlay_map)
                 entry["overlay_buttons"] = merged
+        if auto_fix_ci is not None:
+            entry["auto_fix_ci"] = bool(auto_fix_ci)
+        if auto_fix_reviews is not None:
+            entry["auto_fix_reviews"] = bool(auto_fix_reviews)
         store.save_config(cfg)
         _print_result({"updated": name, "default_branch": entry.get("default_branch", ""),
                        "release_branch": entry.get("release_branch", ""),
                        "pre-release": (entry.get("commands") or {}).get("pre-release", ""),
-                       "overlay_buttons": entry.get("overlay_buttons", {})}, json_output)
+                       "overlay_buttons": entry.get("overlay_buttons", {}),
+                       "auto_fix_ci": bool(entry.get("auto_fix_ci", False)),
+                       "auto_fix_reviews": bool(entry.get("auto_fix_reviews", False))}, json_output)
         return
     from . import store_sqlite as _sq
     db = _sq.db_path()
@@ -190,14 +199,22 @@ def repo_update(
                 stored_ov.update(overlay_map)
                 conn.execute("UPDATE repos SET overlay_buttons = ? WHERE key_ref = ?",
                              (_json2.dumps(stored_ov), name))
-        row = conn.execute("SELECT default_branch, release_branch, commands, overlay_buttons FROM repos WHERE key_ref = ?",
+        if auto_fix_ci is not None:
+            conn.execute("UPDATE repos SET auto_fix_ci = ? WHERE key_ref = ?",
+                         (1 if auto_fix_ci else 0, name))
+        if auto_fix_reviews is not None:
+            conn.execute("UPDATE repos SET auto_fix_reviews = ? WHERE key_ref = ?",
+                         (1 if auto_fix_reviews else 0, name))
+        row = conn.execute("SELECT default_branch, release_branch, commands, overlay_buttons, auto_fix_ci, auto_fix_reviews FROM repos WHERE key_ref = ?",
                            (name,)).fetchone()
     from .store_trackers import _parse_commands as _pc2
     from .store_trackers import _parse_overlay_buttons as _po2
     stored = {"updated": name, "default_branch": (row[0] if row else "") or "",
               "release_branch": (row[1] if row else "") or "",
               "pre-release": _pc2(row[2] if row else None).get("pre-release", ""),
-              "overlay_buttons": _po2(row[3] if row else None)}
+              "overlay_buttons": _po2(row[3] if row else None),
+              "auto_fix_ci": bool(row[4]) if row and row[4] is not None else False,
+              "auto_fix_reviews": bool(row[5]) if row and row[5] is not None else False}
     _print_result(stored, json_output)
 
 
