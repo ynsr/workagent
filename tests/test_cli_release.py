@@ -93,6 +93,28 @@ def test_fetch_branch_ci_gh_remote(monkeypatch):
     st, url = _ci.fetch_branch_ci("gh", "git@github.com:o/r.git", "master")
     assert st == "success"
     assert "--repo" in seen["argv"] and "o/r" in seen["argv"]
+
+def test_fetch_branch_ci_glab_prefers_failed_job(monkeypatch):
+    """Issue #116 branch path (used by `release fix-default --action ci`):
+    jobs [failed 203729, success 203730] must link 203729, not max(id)."""
+    import json
+    from workagent import refs_ci as _ci
+    def _fake(*a, **k):
+        api = a[2] if len(a) > 2 else ""
+        if "/jobs" in api:
+            return json.dumps([
+                {"id": 203729, "status": "failed",
+                 "web_url": "https://git.jibit.cloud/server/ipg-commons/-/jobs/203729"},
+                {"id": 203730, "status": "success",
+                 "web_url": "https://git.jibit.cloud/server/ipg-commons/-/jobs/203730"},
+            ])
+        return json.dumps([{"id": 81409, "status": "failed",
+                            "web_url": "https://git.jibit.cloud/server/ipg-commons/-/pipelines/81409"}])
+    monkeypatch.setattr(_ci, "run_cmd", _fake)
+    st, url = _ci.fetch_branch_ci("glab", "https://git.jibit.cloud/server/ipg-commons.git",
+                                  "develop")
+    assert st == "failure"
+    assert url == "https://git.jibit.cloud/server/ipg-commons/-/jobs/203729"
 def test_repo_update_roundtrip(isolated_config, tmp_path):
     from typer.testing import CliRunner
     from workagent import cli as _cli

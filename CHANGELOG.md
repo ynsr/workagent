@@ -18,6 +18,7 @@
 - Re-running a flow after a step-0 failure now starts a fresh run instead of failing when step configs differ [132]
 - Generic ACP harness layer (`--acp`/`--run-mode acp/terminal` + `--model/--effort`) with options API, run input, and question cards [112]
 - Starting or reviewing a PR worktree no longer crashes when reusing a path from a cancelled or deleted worktree [119]
+- Failing CI links now point at the failed job instead of a newer successful one [116]
 - Add Antigravity (agy-guard) as the default AI harness, with a default harness setting and per-run harness pickers across CLI and web [113]
 - Destroying a worktree deletes its runs, flows, message links, and harness transcripts; startup sweeps leftovers [108]
 - Flow templates accept multiple Start steps anywhere in the chain, including a Plan-mode start; compose keeps every start [109]

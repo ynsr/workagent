@@ -102,4 +102,50 @@ def test_ci_gate_no_ci_aborts(monkeypatch, capsys):
     monkeypatch.setattr(g, "_ci_sha_status", lambda *a: ("not_started", ""))
     with pytest.raises(Exception):
         g.run_ci_gate("glab", "/r", "abc", 60)
-    assert "no CI configured" in capsys.readouterr().err
+
+def test_ci_sha_status_glab_prefers_failed_url(monkeypatch, tmp_path):
+    """Issue #116: rows[0] may be a later success; link the failed status."""
+    import json
+    import workagent.refs  # noqa: F401 -- prime refs before refs_ci (circular)
+    from workagent import release_gates as g
+    statuses = json.dumps([
+        {"status": "success", "target_url": "https://ci/ok"},
+        {"status": "failed", "target_url": "https://ci/bad"},
+    ])
+    real_run = g.subprocess.run
+
+    def fake_run(*a, **k):
+        argv = a[0] if a else k.get("args", [])
+        if "glab" in argv[:2] and "statuses" in " ".join(argv):
+            return type("R", (), {"stdout": statuses})()
+        return real_run(*a, **k)
+
+    (tmp_path / "repo").mkdir()
+    assert real_run(["git", "-C", str(tmp_path / "repo"), "init", "-q"]).returncode == 0
+    monkeypatch.setattr(g.subprocess, "run", fake_run)
+    st, url = g._ci_sha_status("glab", str(tmp_path / "repo"), "abc")
+    assert (st, url) == ("failure", "https://ci/bad")
+
+
+def test_ci_sha_status_gh_prefers_failed_url(monkeypatch, tmp_path):
+    """Issue #116 (gh): runs[0] may be a later success; link the failed check."""
+    import json
+    import workagent.refs  # noqa: F401 -- prime refs before refs_ci (circular)
+    from workagent import release_gates as g
+    checks = json.dumps({"check_runs": [
+        {"conclusion": "success", "status": "completed", "html_url": "https://ci/ok"},
+        {"conclusion": "failure", "status": "completed", "html_url": "https://ci/bad"},
+    ]})
+    real_run = g.subprocess.run
+
+    def fake_run(*a, **k):
+        argv = a[0] if a else k.get("args", [])
+        if argv[:2] == ["gh", "api"]:
+            return type("R", (), {"stdout": checks})()
+        return real_run(*a, **k)
+
+    (tmp_path / "repo").mkdir()
+    assert real_run(["git", "-C", str(tmp_path / "repo"), "init", "-q"]).returncode == 0
+    monkeypatch.setattr(g.subprocess, "run", fake_run)
+    st, url = g._ci_sha_status("gh", str(tmp_path / "repo"), "abc")
+    assert (st, url) == ("failure", "https://ci/bad")

@@ -645,6 +645,39 @@ def test_fetch_ci_details_glab_fallback_does_not_leak_older_checks(monkeypatch):
     assert url == "https://git.x/j/10"
     assert checks == []
 
+def test_fetch_ci_details_glab_fallback_stops_after_first_hit(monkeypatch):
+    """Once an older pipeline banks a fallback URL, remaining pipelines are
+    not fetched (saves one glab API call per older pipeline)."""
+    calls = []
+    def fake(*a, **k):
+        api = a[2]
+        if api.endswith("/pipelines"):
+            return json.dumps([
+                {"id": 300, "status": "failed", "sha": "newsha", "web_url": "https://git.x/p/300"},
+                {"id": 200, "status": "success", "sha": "midsha", "web_url": "https://git.x/p/200"},
+                {"id": 100, "status": "success", "sha": "oldsha", "web_url": "https://git.x/p/100"},
+            ])
+        if "/jobs" in api:
+            calls.append(api)
+            if "/pipelines/300/jobs" in api:
+                return json.dumps([])
+            if "/pipelines/200/jobs" in api:
+                return json.dumps([
+                    {"id": 10, "name": "mid-job", "status": "success", "web_url": "https://git.x/j/10"},
+                ])
+            return json.dumps([
+                {"id": 9, "name": "old-job", "status": "success", "web_url": "https://git.x/j/9"},
+            ])
+        return "[]"
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    state, url, _ = refs.fetch_ci_details(
+        "glab", "https://git.x/g/r/-/merge_requests/9", "/repo"
+    )
+    assert state == "failure"
+    assert url == "https://git.x/j/10"
+    assert not any("/pipelines/100/jobs" in c for c in calls)
+
 
 def test_fetch_ci_details_glab_preserves_newest_checks_without_web_url(monkeypatch):
     """When newest pipeline has jobs without web_url, its checks are preserved."""
@@ -670,6 +703,51 @@ def test_fetch_ci_details_glab_preserves_newest_checks_without_web_url(monkeypat
     assert checks[0]["name"] == "unit"
     assert checks[0]["conclusion"] == "failure"
 
+def test_fetch_ci_glab_prefers_failed_job_over_newer_success(monkeypatch):
+    """Issue #116: pipeline listing jobs [..., failed 203729, success 203730]
+    must link the failed job, not max(id)."""
+    def fake(*a, **k):
+        api = a[2]
+        if "/pipelines/81409/jobs" in api:
+            return json.dumps([
+                {"id": 203729, "name": "test", "status": "failed",
+                 "web_url": "https://git.jibit.cloud/server/ipg-commons/-/jobs/203729"},
+                {"id": 203730, "name": "test", "status": "success",
+                 "web_url": "https://git.jibit.cloud/server/ipg-commons/-/jobs/203730"},
+            ])
+        return json.dumps([{"id": 81409, "status": "failed",
+                            "sha": "abc",
+                            "web_url": "https://git.jibit.cloud/server/ipg-commons/-/pipelines/81409"}])
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    state, url, checks = refs.fetch_ci_details(
+        "glab", "https://git.jibit.cloud/server/ipg-commons/-/merge_requests/1", "/repo"
+    )
+    assert state == "failure"
+    assert url == "https://git.jibit.cloud/server/ipg-commons/-/jobs/203729"
+    assert {c["conclusion"] for c in checks} == {"failure", "success"}
+
+
+def test_pick_job_url_prefers_running_over_success():
+    from workagent.refs_ci import _pick_job_url
+    jobs = [
+        {"id": 1, "status": "success", "web_url": "https://x/j/1"},
+        {"id": 2, "status": "running", "web_url": "https://x/j/2"},
+    ]
+    assert _pick_job_url(jobs) == "https://x/j/2"
+    assert _pick_job_url([]) == ""
+    # Jobs without web_url never compete.
+    assert _pick_job_url([{"id": 3, "status": "failed", "web_url": ""}]) == ""
+    # Cancelled jobs (either spelling) rank in the failure tier, above
+    # skipped/manual leftovers.
+    assert _pick_job_url([
+        {"id": 1, "status": "skipped", "web_url": "https://x/j/1"},
+        {"id": 2, "status": "canceled", "web_url": "https://x/j/2"},
+    ]) == "https://x/j/2"
+    assert _pick_job_url([
+        {"id": 1, "status": "skipped", "web_url": "https://x/j/1"},
+        {"id": 2, "status": "cancelled", "web_url": "https://x/j/2"},
+    ]) == "https://x/j/2"
 
 def test_fetch_pr_review_details_gh(monkeypatch):
     def fake(*a, **k):
