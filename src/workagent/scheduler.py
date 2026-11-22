@@ -156,7 +156,16 @@ def _parse_atom(
 
 
 def _rrule_to_cron(expr: str) -> str:
-    """Convert basic RRULE:FREQ=... into an equivalent 5-field cron expression."""
+    """Convert basic RRULE:FREQ=... into an equivalent 5-field cron expression.
+
+    Supported subset: FREQ (HOURLY/DAILY/WEEKLY/MONTHLY), INTERVAL (=1 for
+    non-HOURLY), BYMINUTE, BYHOUR, BYDAY (WEEKLY), BYMONTHDAY (MONTHLY).
+    Unsupported keys (COUNT/UNTIL/DTSTART and anything else) raise ValueError:
+    bounded/recurrence-anchored rules cannot be expressed as cron and must
+    not silently run forever. INTERVAL>1 for DAILY/WEEKLY/MONTHLY is rejected
+    (cron */N on dom/month is not every-N-days; true interval iteration is
+    not implemented yet).
+    """
     body = expr.strip()
     if body.upper().startswith("RRULE:"):
         body = body[6:]
@@ -170,10 +179,21 @@ def _rrule_to_cron(expr: str) -> str:
         k, v = item.split("=", 1)
         parts[k.strip().upper()] = v.strip().upper()
 
+    allowed = {"FREQ", "INTERVAL", "BYMINUTE", "BYHOUR", "BYDAY", "BYMONTHDAY"}
+    unknown = sorted(k for k in parts if k not in allowed)
+    if unknown:
+        raise ValueError(
+            f"unsupported RRULE key(s) {', '.join(unknown)} in {expr!r} "
+            "(supported: FREQ, INTERVAL, BYMINUTE, BYHOUR, BYDAY, BYMONTHDAY)")
+
     freq = parts.get("FREQ", "")
     interval = int(parts.get("INTERVAL", "1")) if parts.get("INTERVAL", "1").isdigit() else 0
     if interval <= 0:
         raise ValueError(f"invalid RRULE INTERVAL in {expr!r}")
+    if interval > 1 and freq in ("DAILY", "WEEKLY", "MONTHLY"):
+        raise ValueError(
+            f"RRULE INTERVAL={interval} not supported for FREQ={freq} "
+            "(cron */N narrows the schedule instead of spacing occurrences)")
 
     byminute = parts.get("BYMINUTE", "0")
     byhour = parts.get("BYHOUR", "0")
@@ -184,8 +204,7 @@ def _rrule_to_cron(expr: str) -> str:
         hr = "*" if interval == 1 else f"*/{interval}"
         return f"{byminute} {hr} * * *"
     if freq == "DAILY":
-        dom = "*" if interval == 1 else f"*/{interval}"
-        return f"{byminute} {byhour} {dom} * *"
+        return f"{byminute} {byhour} * * *"
     if freq == "WEEKLY":
         if byday:
             days = []
@@ -199,8 +218,7 @@ def _rrule_to_cron(expr: str) -> str:
             dow = "1"
         return f"{byminute} {byhour} * * {dow}"
     if freq == "MONTHLY":
-        mon = "*" if interval == 1 else f"*/{interval}"
-        return f"{byminute} {byhour} {bymonthday} {mon} *"
+        return f"{byminute} {byhour} {bymonthday} * *"
     raise ValueError(f"unsupported RRULE FREQ {freq!r} (supported: HOURLY, DAILY, WEEKLY, MONTHLY)")
 
 
@@ -410,8 +428,14 @@ def run_due_schedules(
             logger.warning("schedule %s (%s) dispatch failed: %s", s["id"], s["name"], e)
         try:
             nxt = next_run_after(s["cron_expr"], s["timezone"], after=now_dt).isoformat()
-        except Exception:
-            nxt = ""
+        except Exception as e:
+            # Keep the old next_run_at so the row stays due and visible (no
+            # silent wedge); surfacing the cron error beats persisting "".
+            nxt = s.get("next_run_at") or ""
+            if status == "dispatched":
+                status = "error"
+            err = "; ".join(x for x in (err, f"next-run recompute failed: {e}") if x)
+            logger.warning("schedule %s (%s) next-run failed: %s", s["id"], s["name"], e)
         _sq.record_schedule_run(
             path,
             s["id"],

@@ -160,6 +160,39 @@ def start_background_maintenance() -> "threading.Thread":
     return t
 
 
+def _schedule_dispatcher(registry: Registry):  # type: ignore[valid-type]
+    """Build a scheduler dispatcher that launches runs through the run registry.
+
+    Unlike scheduler._default_dispatcher (detached Popen used by the CLI),
+    serve-loop dispatches create a registry Run so they appear in /api/runs
+    with logs and failure state. Returns run.db_run_id (None when the row
+    insert was skipped).
+    """
+    def _dispatch(schedule: dict, argv: list[str]) -> int | None:
+        from . import scheduler as _sched
+        from .web_runs import _spawn as _spawn_run
+        cmd, rest = argv[0], argv[1:]
+        if cmd not in SPECS:
+            return _sched._default_dispatcher(schedule, argv)
+        _validate_args(cmd, rest)
+        target = _target_for(cmd, rest)
+        run = registry.create(cmd, rest, target)
+        full_argv = _build_argv(cmd, rest)
+        if "--dry-run" not in rest:
+            _sync_yes = {"--yes", "-y", "--force"}
+            _has_yes = ("--yes" in rest or (cmd == "sync"
+                                            and not _sync_yes.isdisjoint(rest)))
+            if not _has_yes and cmd in ("start", "review", "cleanup", "sync",
+                                        "release"):
+                full_argv = [*full_argv, "--yes"]
+        run.argv = full_argv
+        if cmd in ("start", "review", "sync"):
+            run.worktree = _worktree_for_target(target) or ""
+        _spawn_run(run, registry)
+        return run.db_run_id or None
+    return _dispatch
+
+
 def create_app(static_dir: Path, host: str, port: int,
                allowed_hosts: list[str]) -> FastAPI:
     from .cdc import CdcHub
@@ -180,6 +213,7 @@ def create_app(static_dir: Path, host: str, port: int,
 
     app = FastAPI(title="workagent", docs_url=None, redoc_url=None, lifespan=_lifespan)
     registry = Registry()
+    scheduler_loop._dispatcher = _schedule_dispatcher(registry)
     try:
         from .web_runs import rehydrate as _rehydrate
         _rehydrate(registry)
