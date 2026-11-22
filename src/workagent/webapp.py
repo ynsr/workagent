@@ -60,6 +60,7 @@ from .web_args import (  # noqa: F401
     _build_argv,
     _first_positional,
     _has_session_file,
+    _needs_confirm,
     _session_file_arg,
     _session_file_for,
     _sub_of,
@@ -648,11 +649,18 @@ def create_app(static_dir: Path, host: str, port: int,
         return {"removed": True, "id": schedule_id}
 
     @app.post("/api/schedules/{schedule_id}/run")
-    def schedule_run_now(schedule_id: str) -> dict:
-        """Trigger a schedule immediately via the run registry."""
+    def schedule_run_now(schedule_id: str, payload: dict | None = None) -> dict:
+        """Trigger a schedule immediately via the run registry.
+
+        Destructive targets (cleanup --merged, review --all --fix, sync,
+        start, release, ...) require {"confirm": true} — the same gate as
+        POST /api/runs — so a stored schedule cannot be fired by a bodyless
+        CSRF-able POST.
+        """
         from datetime import datetime, timezone
         from . import scheduler as _sched
         from . import store_sqlite as _sq
+        from .web_runs import _spawn as _spawn_run
         db = _sq.db_path()
         row = _sq.get_schedule(db, schedule_id)
         if row is None:
@@ -661,12 +669,29 @@ def create_app(static_dir: Path, host: str, port: int,
         if not argv:
             raise HTTPException(status_code=400, detail="schedule produced empty command")
         cmd, rest = argv[0], argv[1:]
+        confirmed = bool(isinstance(payload, dict) and payload.get("confirm"))
+        if cmd in SPECS and _needs_confirm(cmd, rest) and not confirmed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{cmd} is destructive \u2014 pass confirm: true")
         now_dt = datetime.now(timezone.utc)
         run_id: int | None = None
         if cmd in SPECS:
-            run = registry.start(cmd, rest, _target_for(cmd, rest), _build_argv(cmd, rest))
-            if run.db_id is not None:
-                run_id = run.db_id
+            _validate_args(cmd, rest)
+            target = _target_for(cmd, rest)
+            run = registry.create(cmd, rest, target)
+            full_argv = _build_argv(cmd, rest)
+            _sync_yes = {"--yes", "-y", "--force"}
+            _has_yes = ("--yes" in rest or (cmd == "sync"
+                                            and not _sync_yes.isdisjoint(rest)))
+            if confirmed and "--dry-run" not in rest and not _has_yes \
+                    and cmd in ("start", "review", "cleanup", "sync", "release"):
+                full_argv = [*full_argv, "--yes"]
+            run.argv = full_argv
+            if cmd in ("start", "review", "sync"):
+                run.worktree = _worktree_for_target(target) or ""
+            _spawn_run(run, registry)
+            run_id = run.db_run_id or None
         else:
             _sched._default_dispatcher(row, argv)
         nxt = _sched.next_run_after(row["cron_expr"], row["timezone"], after=now_dt).isoformat()
