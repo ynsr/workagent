@@ -142,4 +142,24 @@ describe("Launch harness integration", () => {
     // ?mode=flow mount writes nothing back — the legacy seed stays untouched.
     expect(stored.sync).toEqual({ merge: true, harness: "omp" })
   })
+
+  it("renders Register tab without AI harness controls and submits --register-only", async () => {
+    const user = userEvent.setup()
+    renderLaunch("/launch?mode=register&ref=IPG-42")
+
+    expect(screen.getByRole("tab", { name: "Register" })).toHaveAttribute("aria-selected", "true")
+    expect(screen.queryByRole("radiogroup", { name: "Run mode" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("radiogroup", { name: "Start action" })).not.toBeInTheDocument()
+
+    await user.click(screen.getByText("Select a repo…"))
+    await user.click(screen.getAllByText("proj").at(-1)!)
+    await user.click(screen.getByRole("button", { name: "Register" }))
+    await user.click(screen.getByRole("button", { name: "Register" }))
+
+    expect(mutateAsync).toHaveBeenCalledWith({
+      command: "start",
+      args: ["IPG-42", "--register-only", "--repo", "proj", "--depth", "7"],
+      confirm: true,
+    })
+  })
 })

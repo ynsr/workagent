@@ -3,12 +3,13 @@ import { cleanup, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { FixDefaultDialog } from "@/components/ReleaseCard"
+import { FixDefaultDialog, ReleaseCard } from "@/components/ReleaseCard"
 import { ConfirmProvider } from "@/lib/confirm"
 import type { ReleaseStatus } from "@/lib/api"
 
-const { mutateAsync, mockConfig } = vi.hoisted(() => ({
+const { mutateAsync, mockRun, mockConfig, mockRepos, mockStatuses } = vi.hoisted(() => ({
   mutateAsync: vi.fn(() => Promise.resolve({ run_id: "run-1" })),
+  mockRun: vi.fn(() => Promise.resolve({ state: "succeeded", lines: [] })),
   mockConfig: {
     default_harness: "agy",
     supported_harnesses: ["agy", "omp"],
@@ -17,15 +18,26 @@ const { mutateAsync, mockConfig } = vi.hoisted(() => ({
       { name: "omp", label: "OMP (omp)", binary: "omp", available: true },
     ],
   },
+  mockRepos: { value: [] as { name: string; path: string; release_branch?: string }[] },
+  mockStatuses: { value: {} as Record<string, ReleaseStatus> },
 }))
 
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api")
+  return { ...actual, api: { ...actual.api, run: mockRun } }
+})
+
 vi.mock("@/lib/queries", () => ({
-  queryKeys: { harnessOptions: (name: string) => ["harnesses", "options", name] },
+  queryKeys: {
+    harnessOptions: (name: string) => ["harnesses", "options", name],
+    release: (name: string) => ["release", name],
+    repos: ["repos"],
+  },
   useConfig: () => ({ data: mockConfig }),
   useCreateRun: () => ({ mutateAsync }),
-  useRepos: () => ({ data: [] }),
-  useReleaseStatus: () => ({ data: undefined }),
-  useReleaseStatuses: () => [],
+  useRepos: () => ({ data: mockRepos.value, isPending: false, isError: false, isFetching: false }),
+  useReleaseStatus: (name: string) => ({ data: mockStatuses.value[name], isPending: false, isError: false, isFetching: false }),
+  useReleaseStatuses: (names: string[]) => names.map((n) => ({ data: mockStatuses.value[n] })),
 }))
 
 const STATUS: ReleaseStatus = {
@@ -73,5 +85,49 @@ describe("FixDefaultDialog harness", () => {
       args: ["fix-default", "proj", "--action", "both", "--run-mode", "preview", "--harness", "omp"],
       confirm: true,
     })
+  })
+})
+
+function renderCard() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <ConfirmProvider>
+          <ReleaseCard />
+        </ConfirmProvider>
+      </QueryClientProvider>
+    </MemoryRouter>,
+  )
+}
+
+describe("ReleaseRow Pull button", () => {
+  it("pulls remote changes when local repo is clean", async () => {
+    const user = userEvent.setup()
+    mockRepos.value = [{ name: "proj", path: "/repos/proj", release_branch: "release" }]
+    mockStatuses.value = { proj: { ...STATUS, dirty: false, dirty_files: [] } }
+    renderCard()
+
+    const pullBtn = screen.getByRole("button", { name: "Pull proj from remote" })
+    expect(pullBtn).toBeEnabled()
+    await user.click(pullBtn)
+
+    expect(mutateAsync).toHaveBeenCalledWith({
+      command: "repo",
+      args: ["pull", "proj"],
+      confirm: false,
+    })
+    expect(mockRun).toHaveBeenCalledWith("run-1")
+  })
+
+  it("disables Pull with (!) tooltip when local repo has uncommitted changes", () => {
+    mockRepos.value = [{ name: "proj", path: "/repos/proj", release_branch: "release" }]
+    mockStatuses.value = { proj: { ...STATUS, dirty: true, dirty_files: ["M README.md", "?? tmp.txt"] } }
+    renderCard()
+
+    const pullBtn = screen.getByRole("button", { name: "Pull proj from remote" })
+    expect(pullBtn).toBeDisabled()
+    expect(pullBtn.getAttribute("title")).toContain("uncommitted changes")
+    expect(pullBtn.getAttribute("title")).toContain("M README.md")
   })
 })

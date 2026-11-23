@@ -192,12 +192,15 @@ export function StartFormFields({
   onChange,
   idPrefix,
   issuesNonce,
+  registerOnly = false,
 }: {
   form: StartFormValue
   onChange: <K extends keyof LaunchForm>(key: K, value: LaunchForm[K]) => void
   idPrefix: string
   /** Remount key for the issue dropdown (Launch refresh button). */
   issuesNonce?: number
+  /** Omit AI harness/run-mode/prompt controls (Register mode). */
+  registerOnly?: boolean
 }) {
   const { data: repos } = useRepos()
   const repoNames = useMemo(() => (repos ?? []).map((r) => r.name), [repos])
@@ -325,33 +328,37 @@ export function StartFormFields({
         />
       </div>
       <div className="flex flex-wrap gap-x-6 gap-y-3">
-        <StartActionSelect
-          idPrefix={idPrefix}
-          value={form.startAction}
-          onChange={(v) => onChange("startAction", v)}
-        />
-        <RunModeSelect
-          idPrefix={idPrefix}
-          value={form.runMode}
-          onChange={(v) => onChange("runMode", v)}
-        />
-        <HarnessSelect
-          idPrefix={idPrefix}
-          value={form.harness}
-          onChange={(v) => { onChange("harness", v); onChange("model", ""); onChange("effort", "") }}
-        />
-        <ModelSelect
-          idPrefix={idPrefix}
-          harness={form.harness}
-          value={form.model}
-          onChange={(v) => onChange("model", v)}
-        />
-        <EffortSelect
-          idPrefix={idPrefix}
-          harness={form.harness}
-          value={form.effort}
-          onChange={(v) => onChange("effort", v)}
-        />
+        {registerOnly ? null : (
+          <>
+            <StartActionSelect
+              idPrefix={idPrefix}
+              value={form.startAction}
+              onChange={(v) => onChange("startAction", v)}
+            />
+            <RunModeSelect
+              idPrefix={idPrefix}
+              value={form.runMode}
+              onChange={(v) => onChange("runMode", v)}
+            />
+            <HarnessSelect
+              idPrefix={idPrefix}
+              value={form.harness}
+              onChange={(v) => { onChange("harness", v); onChange("model", ""); onChange("effort", "") }}
+            />
+            <ModelSelect
+              idPrefix={idPrefix}
+              harness={form.harness}
+              value={form.model}
+              onChange={(v) => onChange("model", v)}
+            />
+            <EffortSelect
+              idPrefix={idPrefix}
+              harness={form.harness}
+              value={form.effort}
+              onChange={(v) => onChange("effort", v)}
+            />
+          </>
+        )}
         <label className="flex items-center gap-2 text-sm">
           <input
             id={`${idPrefix}-no-status`}
@@ -363,19 +370,21 @@ export function StartFormFields({
           Skip status updates
         </label>
       </div>
-      <div className="grid gap-2">
-        <Label htmlFor={`${idPrefix}-extra-prompt`}>
-          <FieldHelp label="Extra prompt" flag="--extra-prompt" description="Extra instructions appended to the agent prompt." />
-        </Label>
-        <Input
-          id={`${idPrefix}-extra-prompt`}
-          value={form.extraPrompt}
-          onChange={(e) => onChange("extraPrompt", e.target.value)}
-          placeholder="e.g. keep the diff minimal"
-          autoComplete="off"
-          spellCheck={false}
-        />
-      </div>
+      {registerOnly ? null : (
+        <div className="grid gap-2">
+          <Label htmlFor={`${idPrefix}-extra-prompt`}>
+            <FieldHelp label="Extra prompt" flag="--extra-prompt" description="Extra instructions appended to the agent prompt." />
+          </Label>
+          <Input
+            id={`${idPrefix}-extra-prompt`}
+            value={form.extraPrompt}
+            onChange={(e) => onChange("extraPrompt", e.target.value)}
+            placeholder="e.g. keep the diff minimal"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+      )}
     </>
   )
 }
@@ -426,6 +435,33 @@ export function buildStartArgs(form: StartFormValue): string[] {
   args.push(...modelEffortArgs(form))
   args.push(...extraPromptArgs(form))
   return args
+}
+/** Build `start --register-only` args from the shared form (no AI harness). */
+export function buildRegisterArgs(form: StartFormValue): string[] {
+  const ref = form.ref.trim()
+  const repo = form.repo.trim()
+  const args = [ref, "--register-only"]
+  if (repo) args.push("--repo", repo)
+  for (const n of form.relatedRepos ?? []) {
+    if (n.trim()) args.push("--related-repo", n.trim())
+  }
+  if (form.depth.trim()) args.push("--depth", form.depth.trim())
+  if (form.base.trim()) args.push("--base", form.base.trim())
+  if (form.noStatus) args.push("--no-status")
+  return args
+}
+/** Confirm-dialog detail rows for a register-only run. */
+export function registerFlagList(form: StartFormValue): string {
+  const repo = form.repo.trim()
+  const related = (form.relatedRepos ?? []).filter((n) => n.trim())
+  return [
+    "--register-only (no AI harness)",
+    repo ? `--repo ${repo}` : "repo: pick a repo",
+    related.length ? `--related-repo ${related.join(", ")}` : null,
+    `--depth ${form.depth.trim() || "7"}`,
+    form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
+    form.noStatus ? "--no-status" : null,
+  ].filter((v): v is string => v !== null).join(", ")
 }
  /** Confirm-dialog detail rows for a start run. */
 export function startFlagList(form: StartFormValue): string {

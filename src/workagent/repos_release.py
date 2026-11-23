@@ -220,6 +220,49 @@ def backfill_release_branches() -> None:
             print(f"warning: cannot persist branches for {name}: {e}", file=sys.stderr)
 
 
+def _dirty_files(path: str) -> list[str]:
+    """Uncommitted status lines for *path* (empty when clean or unreadable)."""
+    if not path or not Path(path).expanduser().is_dir():
+        return []
+    try:
+        out = run_cmd("git", "-C", str(Path(path).expanduser()), "status", "--porcelain", echo=False) or ""
+    except (HarnessError, OSError):
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def pull_repo(repo_name: str) -> dict:
+    """Fast-forward pull *repo_name*'s local checkout from origin."""
+    info = store.load_repos().get(repo_name)
+    if not info:
+        raise HarnessError(f"unknown repo: {repo_name}", exit_code=2)
+    path = Path(str(info.get("path", "") or "")).expanduser()
+    if not path.is_dir():
+        raise HarnessError(f"repo path missing: {path}", exit_code=1)
+    dirty = _dirty_files(str(path))
+    if dirty:
+        preview = ", ".join(dirty[:5])
+        more = f" (+{len(dirty) - 5} more)" if len(dirty) > 5 else ""
+        raise HarnessError(f"repo {repo_name} has uncommitted changes: {preview}{more}", exit_code=1)
+    run_cmd("git", "-C", str(path), "fetch", "origin")
+    branch = (run_cmd("git", "-C", str(path), "branch", "--show-current", echo=False) or "").strip()
+    try:
+        out = run_cmd("git", "-C", str(path), "pull", "--ff-only") or ""
+    except HarnessError as exc:
+        if branch and ("no tracking information" in str(exc).lower() or "set-upstream" in str(exc).lower()):
+            out = run_cmd("git", "-C", str(path), "pull", "--ff-only", "origin", branch) or ""
+        else:
+            raise
+    from . import store_sqlite as _sq
+    try:
+        db = _sq.db_path()
+        with _sq.connect(db) as conn:
+            conn.execute("DELETE FROM release_diff_cache WHERE repo_key = ?", (repo_name,))
+    except Exception:
+        pass
+    return {"pulled": repo_name, "path": str(path), "branch": branch, "output": out.strip()}
+
+
 def release_status(repo_name: str, force: bool = False, background: bool = False) -> dict:
     """Read-only releasability for *repo_name* (SWR over release_diff_cache).
 
@@ -242,7 +285,8 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
         base_dir = ""
     base = {"repo": repo_name, "path": "", "default_branch": "", "release_branch": "",
             "diff_count": 0, "behind": 0, "releasable": False, "reason": "", "stale": False,
-            "ci": "", "ci_url": "", "fetched_at": None, "releasing": False}
+            "ci": "", "ci_url": "", "fetched_at": None, "releasing": False,
+            "dirty": False, "dirty_files": []}
     if base_dir:
         try:
             base["releasing"] = _lock.locked(_lock.lock_path(base_dir, repo_name))
@@ -253,7 +297,9 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
         return base
     default = str(info.get("default_branch", "") or "")
     release = str(info.get("release_branch", "") or "")
-    base.update(path=str(info.get("path", "")), default_branch=default, release_branch=release)
+    dirty = _dirty_files(str(info.get("path", "")))
+    base.update(path=str(info.get("path", "")), default_branch=default, release_branch=release,
+                dirty=bool(dirty), dirty_files=dirty)
     if not release:
         base["reason"] = "no release branch"
         return base

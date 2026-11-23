@@ -92,3 +92,52 @@ def test_ahead_behind_no_remote_returns_none(tmp_path):
     _git("init", "-q", "-b", "main", cwd=repo)
     _git("commit", "-q", "--allow-empty", "-m", "i", cwd=repo)
     assert repos.ahead_behind(repo, "main") is None
+
+
+def test_release_status_dirty_and_pull_repo(tmp_path, isolated_config):
+    import pytest
+    from workagent import repos_release, store_sqlite as sq
+    from workagent.errors import HarnessError
+
+    sq.init_db(sq.db_path())
+
+    origin = _bare_origin(tmp_path / "origin.git")
+    seed = tmp_path / "seed"
+    subprocess.run(["git", "clone", "-q", str(origin), str(seed)], check=True, capture_output=True)
+    _git("config", "user.email", "t@t", cwd=seed)
+    _git("config", "user.name", "t", cwd=seed)
+    _git("checkout", "-q", "-b", "main", cwd=seed)
+    _git("commit", "-q", "--allow-empty", "-m", "init", cwd=seed)
+    _git("push", "-q", "origin", "main", cwd=seed)
+    _git("push", "-q", "origin", "main:release", cwd=seed)
+
+    work = tmp_path / "work"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(origin), str(work)], check=True, capture_output=True)
+    _git("config", "user.email", "t@t", cwd=work)
+    _git("config", "user.name", "t", cwd=work)
+
+    repos.register_repo("proj", work, tracker_key="jira:PROJ", default_branch_name="main", release_branch="release")
+
+    # Clean repo: dirty=False, dirty_files=[]
+    st_clean = repos_release.release_status("proj")
+    assert st_clean["dirty"] is False
+    assert st_clean["dirty_files"] == []
+
+    # Advance origin/main from seed, then pull into work
+    (seed / "new.txt").write_text("hi\n")
+    _git("add", "new.txt", cwd=seed)
+    _git("commit", "-q", "-m", "remote commit", cwd=seed)
+    _git("push", "-q", "origin", "main", cwd=seed)
+
+    pulled = repos_release.pull_repo("proj")
+    assert pulled["pulled"] == "proj"
+    assert (work / "new.txt").read_text() == "hi\n"
+
+    # Dirty repo: release_status reports dirty_files and pull_repo refuses
+    (work / "dirty.txt").write_text("uncommitted\n")
+    st_dirty = repos_release.release_status("proj")
+    assert st_dirty["dirty"] is True
+    assert any("dirty.txt" in line for line in st_dirty["dirty_files"])
+    with pytest.raises(HarnessError, match="uncommitted changes"):
+        repos_release.pull_repo("proj")
+

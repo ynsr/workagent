@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { useConfirmedRun, useCopyFeedback } from "@/components/RunActions"
 import { CopyCell } from "@/components/CopyCell"
 import { ActionDialog } from "@/components/LinkDialogs"
-import { StartFormFields, buildStartArgs, startFlagList, useStartForm } from "@/components/StartForm"
+import { StartFormFields, buildRegisterArgs, buildStartArgs, registerFlagList, startFlagList, useStartForm } from "@/components/StartForm"
 import { Label } from "@/components/ui/label"
 import { useQueryClient } from "@tanstack/react-query"
 import { Copy, GitPullRequest, Play, RefreshCw, Ticket, UserPlus } from "lucide-react"
@@ -133,6 +133,7 @@ export function CandidatesCard() {
   }
 
   const [startKey, setStartKey] = useState<string | null>(null)
+  const [registerKey, setRegisterKey] = useState<string | null>(null)
 
   async function handleAction(input: {
     command: "start" | "review" | "register"
@@ -140,7 +141,7 @@ export function CandidatesCard() {
     label: string
     confirmText: string
   }) {
-    if (input.command === "start") {
+    if (input.command === "start" && !input.args.includes("--register-only")) {
       // Repo picker dialog: single linked repo auto-selects, multi linked
       // repos offer the dropdown, zero linked repos leave it blank.
       setStartKey(input.args[0] ?? "")
@@ -259,6 +260,19 @@ export function CandidatesCard() {
                       <Button
                         variant="ghost"
                         size="sm"
+                        onClick={() => void handleAction({
+                          command: "start",
+                          args: [pr.url, "--register-only", ...(pr.repo_name ? ["--repo", pr.repo_name] : [])],
+                          label: `Register #${pr.number}`,
+                          confirmText: `Create and register a worktree for ${pr.url} without launching an AI harness.`,
+                        })}
+                        title={`Register ${pr.url}`}
+                      >
+                        <UserPlus aria-hidden /> Register
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => navigate(`/launch?mode=review&ref=${encodeURIComponent(pr.url)}`)}
                         title={`Review ${pr.url}`}
                       >
@@ -280,6 +294,7 @@ export function CandidatesCard() {
               label: `Start ${issue.key}`,
               confirmText: `Start a worktree for ${issue.key}.`,
             })}
+            onRegister={(issue) => setRegisterKey(issue.key)}
             onCopyRef={(key) => void handleCopyRef(key)}
             copied={copied}
           />
@@ -342,6 +357,9 @@ export function CandidatesCard() {
       {startKey !== null ? (
         <StartDialog issueKey={startKey} onClose={() => setStartKey(null)} />
       ) : null}
+      {registerKey !== null ? (
+        <StartDialog issueKey={registerKey} registerOnly onClose={() => setRegisterKey(null)} />
+      ) : null}
     </Card>
   )
 }
@@ -350,6 +368,7 @@ function IssuesTab({
   issues,
   filter: f,
   onStart,
+  onRegister,
   onCopyRef,
   copied,
 }: {
@@ -357,6 +376,7 @@ function IssuesTab({
   issues: IssueRow[]
   filter: IssuesFilterState
   onStart: (issue: IssueRow) => void
+  onRegister: (issue: IssueRow) => void
   onCopyRef: (key: string) => void
   copied: boolean
 }) {
@@ -421,6 +441,14 @@ function IssuesTab({
               <Button
                 variant="ghost"
                 size="sm"
+                onClick={() => onRegister(issue)}
+                title={`Register ${issue.key}`}
+              >
+                <UserPlus aria-hidden /> Register
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => onStart(issue)}
                 title={`Start ${issue.key}`}
               >
@@ -447,7 +475,7 @@ function IssuesTab({
  * wins, else the single linked repo); an ambiguous tracker leaves it blank
  * until the user picks one of the linked repos. Submits through the shared
  * confirm → createRun pipeline, so no repo_ambiguous 400 can escape. */
-function StartDialog({ issueKey, onClose }: { issueKey: string; onClose: () => void }) {
+function StartDialog({ issueKey, registerOnly = false, onClose }: { issueKey: string; registerOnly?: boolean; onClose: () => void }) {
   const runConfirmed = useConfirmedRun()
   const { form, setForm, update } = useStartForm({ ref: issueKey })
   const refValue = form.ref.trim()
@@ -463,39 +491,45 @@ function StartDialog({ issueKey, onClose }: { issueKey: string; onClose: () => v
       toast.error("Pick a repo — this tracker is linked to multiple repos.")
       return
     }
-    const args = buildStartArgs(form)
+    const args = registerOnly ? buildRegisterArgs(form) : buildStartArgs(form)
     onClose()
     await runConfirmed({
       action: "start",
-      title: `Start ${refValue}`,
-      description: "Creates a worktree from the issue and launches the coding agent.",
-      warning: form.runMode === "headless"
+      title: registerOnly ? `Register ${refValue}` : `Start ${refValue}`,
+      description: registerOnly
+        ? "Checks preconditions and creates/registers the worktree without launching an AI harness."
+        : "Creates a worktree from the issue and launches the coding agent.",
+      warning: registerOnly
+        ? "Creates and registers the worktree without launching any AI harness. The server appends --yes."
+        : form.runMode === "headless"
         ? "The agent runs headless with auto-approve (--no-tty): it can commit, push and open MRs/PRs without further prompts. The server appends --yes."
         : form.runMode === "acp"
           ? "The agent runs via ACP stdio (--acp) with structured streaming and inline question answering. The server appends --yes."
           : form.runMode === "terminal"
             ? "The agent runs in an OS terminal opened on your desktop (workagent --terminal). The server appends --yes."
             : "Preview only: prints the TTY harness command (no -p flag) without running the agent. The server appends --yes.",
-      confirmLabel: "Start",
+      confirmLabel: registerOnly ? "Register" : "Start",
       details: [
         { label: "Ref", value: refValue, mono: true },
         { label: "Repo", value: repoValue, mono: true },
-        { label: "Flags", value: startFlagList(form) },
+        { label: "Flags", value: registerOnly ? registerFlagList(form) : startFlagList(form) },
       ],
       command: "start",
       args,
-      successLabel: "started",
+      successLabel: registerOnly ? "registered" : "started",
     })
   }
 
   return (
     <ActionDialog
-      title={`Start ${issueKey}`}
-      description="Pick the repo for this issue, then confirm to create the worktree."
+      title={registerOnly ? `Register ${issueKey}` : `Start ${issueKey}`}
+      description={registerOnly
+        ? "Pick the repo for this issue, then confirm to create and register the worktree without launching a harness."
+        : "Pick the repo for this issue, then confirm to create the worktree."}
       onClose={onClose}
       footer={
         <Button type="button" onClick={() => void handleStart()} disabled={!refValue || !repoValue}>
-          <Play aria-hidden /> Start
+          {registerOnly ? <UserPlus aria-hidden /> : <Play aria-hidden />} {registerOnly ? "Register" : "Start"}
         </Button>
       }
     >
@@ -503,7 +537,7 @@ function StartDialog({ issueKey, onClose }: { issueKey: string; onClose: () => v
         <Label>Ref</Label>
         <p className="font-mono text-sm">{issueKey}</p>
       </div>
-      <StartFormFields form={form} onChange={update} idPrefix="candidate-start" />
+      <StartFormFields form={form} onChange={update} idPrefix={registerOnly ? "candidate-register" : "candidate-start"} registerOnly={registerOnly} />
     </ActionDialog>
   )
 }
