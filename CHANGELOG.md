@@ -619,6 +619,7 @@
 - Fold exploratory tool calls into ActivityRun bars, extract failed calls unfolded, and add settled turn headers in ACP transcripts [142]
 - Add in-app Git diff viewer with inline line annotations, prodtest YAML plan viewer, and read-only diff/plan API endpoints [145]
 - Add dedicated Worktree Workspace view (/worktrees/:ref) with collapsible inspector, ACP session/load resume, and multi-turn follow-up composer [144]
+- Serialize sequential flow steps per repo with a cross-process lock held across contiguous steps to prevent PR merge conflicts [163]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

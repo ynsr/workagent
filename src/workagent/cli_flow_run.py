@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Optional
 
 import typer
 
 from . import cli_flow_util as _futil
+from . import flow_lock as _flock
 from . import store, worktrees
 from . import store_flows as sf
 from .cli_core import (
@@ -27,6 +29,22 @@ _complete_refs = _COMP2["refs"]
 
 from . import cli_flow as _flow
 from .cli_flow import flow_app
+
+
+def _canonical_lock_scope(raw: str) -> str:
+    """Resolve a repo name or path into a canonical lock scope string."""
+    scope = (raw or "").strip()
+    if not scope or scope == "global":
+        return "global"
+    info = store.load_repos().get(scope)
+    if isinstance(info, dict) and info.get("path"):
+        scope = str(info["path"]).strip()
+    if Path(scope).is_absolute() or "/" in scope or "\\" in scope:
+        try:
+            return str(Path(scope).resolve())
+        except OSError:
+            return scope
+    return scope
 
 
 def _seam(name: str):
@@ -468,146 +486,163 @@ def flow_run(
                 _flow_parent_rid = _v
         except ValueError:
             pass
-    for idx in range(current, len(merged_steps)):
-        step = merged_steps[idx]
-        kind = step["kind"]
-        config = step.get("config") or {}
-        if harness:
-            config = {**config, "harness": harness}
-        step_harness = harness or config.get("harness") or store.default_harness()
-        label = str(step.get("action_label") or "")
-        child_key = _flow_child_key(key, ref, entry)
-        banner = _step_title(idx, kind, label)
-        eprint(banner)
-        child_rid = _begin_step_run(fid, child_key, kind, banner,
-                                    parent_run_id=_flow_parent_rid,
-                                    step_index=idx)
-        _prev_parent_env = _os.environ.get("WORKAGENT_PARENT_RUN_ID")
-        _prev_step_env = _os.environ.get("WORKAGENT_STEP_INDEX")
-        _step_parent_id = _flow_parent_rid or child_rid
-        if _step_parent_id:
-            _os.environ["WORKAGENT_PARENT_RUN_ID"] = str(_step_parent_id)
-        _os.environ["WORKAGENT_STEP_INDEX"] = str(idx)
-        try:
-            if kind == "start":
-                outcome = _run_start_step(ref, key, config, json_output)
-                if not outcome.get("preview"):
-                    new_key = str(outcome.get("key") or key or "")
-                    if new_key and new_key != key:
-                        key = new_key
-                        store.update_flow(fid, worktree_ref=key)
-                        links = store.load_links()
-                        entry = links.get(key, entry)
-                        wt_path = str((entry or {}).get("worktree", "")
-                                      or wt_path)
-                    if key and not (flow.get("repo_snapshot") or {}).get("repo"):
-                        repo = str((entry or {}).get("repo", "") or "")
-                        info = store.load_repos().get(repo, {})
-                        snap = {"repo": repo, "launch_ref": ref, "default_branch": str(
-                            info.get("default_branch", "") or ""),
-                            "release_branch": str(
-                            info.get("release_branch", "") or "")}
-                        store.update_flow(fid, repo_snapshot=snap)
-                        flow = store.get_flow(fid) or flow
-                    if pre and not wt_path:
-                        wt = str((store.load_links().get(key, {}) or {}
-                                 ).get("worktree", "") or "")
-                        if wt:  # deferred pre: worktree exists after step 0
-                            wt_path = wt
-                            eprint(f"{STEP_BAR}\n### pre-execution\n{STEP_BAR}\n$ {pre}")
-                            _run_repo_command(tpl["label"], "pre-execution", pre, wt)
-                            eprint(f"--- pre-execution ok (exit 0)\n{STEP_BAR}")
-            elif kind in ("review", "fix_comments"):
-                outcome = _run_review_step(key, config, kind == "fix_comments", json_output)
-            elif kind == "sync":
-                outcome = _run_sync_step(key, config, json_output)
-            elif kind == "action":
-                outcome = _run_action_step(key, str(step.get("action_label", "")), config, json_output)
-            elif kind == "prodtest_plan":
-                outcome = _run_prodtest_plan_step(key, config, json_output)
-            elif kind == "cleanup":
-                outcome = _run_cleanup_step(key, config, json_output)
-            elif kind == "release":
-                snap = (store.get_flow(fid, include_deleted_worktrees=True) or {}).get("repo_snapshot") or {}
-                outcome = _run_release_step(snap, config, json_output)
-            else:  # pragma: no cover — validate_template guards kinds
-                raise HarnessError(f"unknown step kind {kind!r}",
-                                   exit_code=2)
-        except HarnessError as e:
-            _finish_step_run(child_rid, e.exit_code,
-                             [f"{kind} step failed: {e}"])
-            results.append({"kind": kind, "status": "failed",
-                            "detail": str(e)})
-            store.update_flow(fid, status="failed", current_step=idx,
-                              step_results=results)
-            raise typer.Exit(e.exit_code)
-        finally:
-            if _prev_parent_env is None:
-                _os.environ.pop("WORKAGENT_PARENT_RUN_ID", None)
+    with _flock.SequentialStepLock() as seq_lock:
+        for idx in range(current, len(merged_steps)):
+            step = merged_steps[idx]
+            kind = step["kind"]
+            exec_mode = str(step.get("execution_mode") or "sequential").lower()
+            if exec_mode == "parallel":
+                seq_lock.release()
             else:
-                _os.environ["WORKAGENT_PARENT_RUN_ID"] = _prev_parent_env
-            if _prev_step_env is None:
-                _os.environ.pop("WORKAGENT_STEP_INDEX", None)
-            else:
-                _os.environ["WORKAGENT_STEP_INDEX"] = _prev_step_env
-        if outcome.get("status") == "skipped":
-            _finish_step_run(child_rid, 0,
-                             [f"{kind} step skipped: {outcome.get('detail', '')}"])
-            results.append({"kind": kind, "status": "skipped",
-                            "detail": str(outcome.get("detail", ""))})
-            store.update_flow(fid, current_step=idx + 1,
-                              step_results=results)
-            continue
-        if outcome.get("skipped"):
-            _finish_step_run(child_rid, 0,
-                             [f"{kind} step skipped: {outcome['skipped']}"])
-            results.append({"kind": kind, "status": "skipped",
-                            "detail": str(outcome["skipped"])})
-            store.update_flow(fid, current_step=idx + 1,
-                              step_results=results)
-            continue
-        if outcome.get("preview"):
-            detail = str(outcome.get("command", ""))
-            if outcome.get("terminal_pid") is not None:
-                detail = f"{detail} [terminal pid {outcome.get('terminal_pid')}]"
-            elif outcome.get("terminal_error"):
-                detail = f"{detail} [terminal spawn failed: {outcome.get('terminal_error')}]"
-            # A pause is resumable, not a failure: keep the step's run row
-            # 'finished' with exit 2 (the pause signal) so the Runs page
-            # does not render a hand-off as a failed step.
-            _finish_step_run(child_rid, 2, [f"paused: {detail}"],
-                             state="finished")
-            results.append({"kind": kind, "status": "paused",
-                            "detail": detail})
-            store.update_flow(fid, status="paused", current_step=idx,
-                              step_results=results)
-            cmd = outcome.get("command") or f"flow run {tpl['label']} {ref}"
+                _lock_scope = _canonical_lock_scope(
+                    str((flow.get("repo_snapshot") or {}).get("repo", "") or "")
+                    or str((entry or {}).get("repo", "") or "")
+                    or "global"
+                )
+                seq_lock.acquire(
+                    _lock_scope,
+                    on_wait=lambda sc: eprint(
+                        f"waiting for sequential execution lock ({sc})…"),
+                    on_acquired=lambda sc: eprint(
+                        f"acquired sequential execution lock ({sc})"),
+                )
+            config = step.get("config") or {}
+            if harness:
+                config = {**config, "harness": harness}
+            step_harness = harness or config.get("harness") or store.default_harness()
+            label = str(step.get("action_label") or "")
+            child_key = _flow_child_key(key, ref, entry)
+            banner = _step_title(idx, kind, label)
+            eprint(banner)
+            child_rid = _begin_step_run(fid, child_key, kind, banner,
+                                        parent_run_id=_flow_parent_rid,
+                                        step_index=idx)
+            _prev_parent_env = _os.environ.get("WORKAGENT_PARENT_RUN_ID")
+            _prev_step_env = _os.environ.get("WORKAGENT_STEP_INDEX")
+            _step_parent_id = _flow_parent_rid or child_rid
+            if _step_parent_id:
+                _os.environ["WORKAGENT_PARENT_RUN_ID"] = str(_step_parent_id)
+            _os.environ["WORKAGENT_STEP_INDEX"] = str(idx)
             try:
-                _futil.persist_terminal_pause(
-                    key or ref, str(outcome.get("manual_kind") or kind),
-                    list(outcome.get("manual_args") or [kind]),
-                    f"harness command: {cmd}", fid,
-                    terminal_pid=outcome.get("terminal_pid"),
-                    scope=str(outcome.get("session_scope", "") or ""),
-                    scope_dir=str(outcome.get("session_dir", "") or ""),
-                    harness_name=step_harness)
-            except Exception:
-                pass
-            if outcome.get("terminal_pid") is not None:
-                eprint(f"paused after step {idx} ({kind}) — terminal opened "
-                       f"(pid {outcome.get('terminal_pid')}): finish there, then re-run to resume:\n{cmd}")
-            else:
-                eprint(f"paused after step {idx} ({kind}) — preview/terminal "
-                       f"needs a human:\n{cmd}\nre-run to resume.")
-            _print_result({"flow": fid, "status": "paused",
-                           "step": idx, "kind": kind}, json_output)
-            return
-        results.append({"kind": kind, "status": "ok",
-                        "detail": str(outcome.get("status", ""))})
-        _finish_step_run(child_rid, 0, [f"{kind} step ok"])
-        store.update_flow(fid, current_step=idx + 1,
-                          step_results=results)
-        _tag_flow_run(key, fid)
+                if kind == "start":
+                    outcome = _run_start_step(ref, key, config, json_output)
+                    if not outcome.get("preview"):
+                        new_key = str(outcome.get("key") or key or "")
+                        if new_key and new_key != key:
+                            key = new_key
+                            store.update_flow(fid, worktree_ref=key)
+                            links = store.load_links()
+                            entry = links.get(key, entry)
+                            wt_path = str((entry or {}).get("worktree", "")
+                                          or wt_path)
+                        if key and not (flow.get("repo_snapshot") or {}).get("repo"):
+                            repo = str((entry or {}).get("repo", "") or "")
+                            info = store.load_repos().get(repo, {})
+                            snap = {"repo": repo, "launch_ref": ref, "default_branch": str(
+                                info.get("default_branch", "") or ""),
+                                "release_branch": str(
+                                info.get("release_branch", "") or "")}
+                            store.update_flow(fid, repo_snapshot=snap)
+                            flow = store.get_flow(fid) or flow
+                        if pre and not wt_path:
+                            wt = str((store.load_links().get(key, {}) or {}
+                                     ).get("worktree", "") or "")
+                            if wt:  # deferred pre: worktree exists after step 0
+                                wt_path = wt
+                                eprint(f"{STEP_BAR}\n### pre-execution\n{STEP_BAR}\n$ {pre}")
+                                _run_repo_command(tpl["label"], "pre-execution", pre, wt)
+                                eprint(f"--- pre-execution ok (exit 0)\n{STEP_BAR}")
+                elif kind in ("review", "fix_comments"):
+                    outcome = _run_review_step(key, config, kind == "fix_comments", json_output)
+                elif kind == "sync":
+                    outcome = _run_sync_step(key, config, json_output)
+                elif kind == "action":
+                    outcome = _run_action_step(key, str(step.get("action_label", "")), config, json_output)
+                elif kind == "prodtest_plan":
+                    outcome = _run_prodtest_plan_step(key, config, json_output)
+                elif kind == "cleanup":
+                    outcome = _run_cleanup_step(key, config, json_output)
+                elif kind == "release":
+                    snap = (store.get_flow(fid, include_deleted_worktrees=True) or {}).get("repo_snapshot") or {}
+                    outcome = _run_release_step(snap, config, json_output)
+                else:  # pragma: no cover — validate_template guards kinds
+                    raise HarnessError(f"unknown step kind {kind!r}",
+                                       exit_code=2)
+            except HarnessError as e:
+                _finish_step_run(child_rid, e.exit_code,
+                                 [f"{kind} step failed: {e}"])
+                results.append({"kind": kind, "status": "failed",
+                                "detail": str(e)})
+                store.update_flow(fid, status="failed", current_step=idx,
+                                  step_results=results)
+                raise typer.Exit(e.exit_code)
+            finally:
+                if _prev_parent_env is None:
+                    _os.environ.pop("WORKAGENT_PARENT_RUN_ID", None)
+                else:
+                    _os.environ["WORKAGENT_PARENT_RUN_ID"] = _prev_parent_env
+                if _prev_step_env is None:
+                    _os.environ.pop("WORKAGENT_STEP_INDEX", None)
+                else:
+                    _os.environ["WORKAGENT_STEP_INDEX"] = _prev_step_env
+            if outcome.get("status") == "skipped":
+                _finish_step_run(child_rid, 0,
+                                 [f"{kind} step skipped: {outcome.get('detail', '')}"])
+                results.append({"kind": kind, "status": "skipped",
+                                "detail": str(outcome.get("detail", ""))})
+                store.update_flow(fid, current_step=idx + 1,
+                                  step_results=results)
+                continue
+            if outcome.get("skipped"):
+                _finish_step_run(child_rid, 0,
+                                 [f"{kind} step skipped: {outcome['skipped']}"])
+                results.append({"kind": kind, "status": "skipped",
+                                "detail": str(outcome["skipped"])})
+                store.update_flow(fid, current_step=idx + 1,
+                                  step_results=results)
+                continue
+            if outcome.get("preview"):
+                detail = str(outcome.get("command", ""))
+                if outcome.get("terminal_pid") is not None:
+                    detail = f"{detail} [terminal pid {outcome.get('terminal_pid')}]"
+                elif outcome.get("terminal_error"):
+                    detail = f"{detail} [terminal spawn failed: {outcome.get('terminal_error')}]"
+                # A pause is resumable, not a failure: keep the step's run row
+                # 'finished' with exit 2 (the pause signal) so the Runs page
+                # does not render a hand-off as a failed step.
+                _finish_step_run(child_rid, 2, [f"paused: {detail}"],
+                                 state="finished")
+                results.append({"kind": kind, "status": "paused",
+                                "detail": detail})
+                store.update_flow(fid, status="paused", current_step=idx,
+                                  step_results=results)
+                cmd = outcome.get("command") or f"flow run {tpl['label']} {ref}"
+                try:
+                    _futil.persist_terminal_pause(
+                        key or ref, str(outcome.get("manual_kind") or kind),
+                        list(outcome.get("manual_args") or [kind]),
+                        f"harness command: {cmd}", fid,
+                        terminal_pid=outcome.get("terminal_pid"),
+                        scope=str(outcome.get("session_scope", "") or ""),
+                        scope_dir=str(outcome.get("session_dir", "") or ""),
+                        harness_name=step_harness)
+                except Exception:
+                    pass
+                if outcome.get("terminal_pid") is not None:
+                    eprint(f"paused after step {idx} ({kind}) — terminal opened "
+                           f"(pid {outcome.get('terminal_pid')}): finish there, then re-run to resume:\n{cmd}")
+                else:
+                    eprint(f"paused after step {idx} ({kind}) — preview/terminal "
+                           f"needs a human:\n{cmd}\nre-run to resume.")
+                _print_result({"flow": fid, "status": "paused",
+                               "step": idx, "kind": kind}, json_output)
+                return
+            results.append({"kind": kind, "status": "ok",
+                            "detail": str(outcome.get("status", ""))})
+            _finish_step_run(child_rid, 0, [f"{kind} step ok"])
+            store.update_flow(fid, current_step=idx + 1,
+                              step_results=results)
+            _tag_flow_run(key, fid)
     post = (tpl.get("post_execution") or "").strip()
     if post:
         snap_wt = wt_path or str(((store.load_links().get(key, {})
