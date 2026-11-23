@@ -17,6 +17,7 @@ This is a product UI, not a marketing site. It should feel calm under all-day us
 | [design/02-ao-signature.md](design/02-ao-signature.md) | **AO-specific** — the opinions that make AO feel like AO | You are deciding how something should look/behave |
 | [design/03-workagent-application.md](design/03-workagent-application.md) | **workagent** — what to adopt, adapt, or skip; state→visual mapping | You are touching StatusTable, the action buttons, Ask-tool questions, notifications |
 | [design/04-minimalism.md](design/04-minimalism.md) | **Minimalism** — content and interaction rules (what to show, hide, and say) behind AO's calm feel | You are adding a field, a form or a screen |
+| [design/05-dependency-audit.md](design/05-dependency-audit.md) | **Dependencies** — AO packages workagent lacks, purpose/impact, and what is not needed | You are deciding whether to add or remove a UI library |
 | [design/tokens.css](design/tokens.css) | **Machine-readable** — drop-in CSS variables (dark + light) and a few primitives | You are writing CSS or a component |
 
 **Precedence when rules conflict:** `04` applies alongside `02`; `03` (workagent decisions) > `02` (AO signature) > `01` (global baseline). A workagent decision may only override an AO rule with a one-line entry in the decisions log below.
