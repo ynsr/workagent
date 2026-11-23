@@ -1,6 +1,6 @@
 # Changelog
 ## Unreleased
-- Serialize sequential flow steps per repo with a cross-process lock held across contiguous steps to prevent PR merge conflicts [163]
+- Prevent main repo folders from being deleted during hard cleanup or destroy, and ensure scoped AI session directories are fully removed [169]
 - Fix GitHub PR cleanup failing in linked worktrees after merge [168]
 - Cleanup deletes merged feature branches from the remote, including external merges and soft-deletes; long-lived branches are kept [124]
 - New Task Start form sticks base branch, Implement/Plan action, and run mode per repo; related repos hide the selected repo [114]
@@ -619,6 +619,7 @@
 - Fold exploratory tool calls into ActivityRun bars, extract failed calls unfolded, and add settled turn headers in ACP transcripts [142]
 - Add in-app Git diff viewer with inline line annotations, prodtest YAML plan viewer, and read-only diff/plan API endpoints [145]
 - Add dedicated Worktree Workspace view (/worktrees/:ref) with collapsible inspector, ACP session/load resume, and multi-turn follow-up composer [144]
+- Serialize sequential flow steps per repo with a cross-process lock held across contiguous steps to prevent PR merge conflicts [163]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config

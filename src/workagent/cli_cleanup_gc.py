@@ -22,30 +22,47 @@ def _resolve_repo(worktree_path: str, repo_str: str) -> Path | None:
     return None
 
 
-def _harness_run_targets(key: str) -> set[str]:
-    """Transcript paths recorded for *key*: run file_path + metadata session_dir.
+def _harness_run_info(key: str) -> tuple[set[str], set[str]]:
+    """Return (targets, scoped_session_dirs) recorded for *key*.
 
     Read this BEFORE the store purge — ``runs_for_worktree`` returns nothing
-    once the runs rows go.
+    once the runs rows go. *scoped_session_dirs* holds ``metadata.session_dir``
+    paths that have a non-empty ``branch_path`` (dedicated to that branch,
+    safe to ``shutil.rmtree`` even if unrecorded session files remain).
     """
     try:
         from . import store_sqlite as _sq
         rows = _sq.runs_for_worktree(_sq.db_path(), key,
                                      include_deleted_worktrees=True)
     except Exception:
-        return set()
+        return set(), set()
     targets: set[str] = set()
+    scoped_dirs: set[str] = set()
     for r in rows:
         fp = str(r.get("file_path", "") or "")
         if fp:
             targets.add(fp)
-        sd = str((r.get("metadata") or {}).get("session_dir", "") or "")
+        meta = r.get("metadata") or {}
+        sd = str(meta.get("session_dir", "") or "")
         if sd:
             targets.add(sd)
+            if meta.get("branch_path"):
+                scoped_dirs.add(sd)
+    return targets, scoped_dirs
+
+
+def _harness_run_targets(key: str) -> set[str]:
+    """Transcript paths recorded for *key*: run file_path + metadata session_dir.
+
+    Read this BEFORE the store purge — ``runs_for_worktree`` returns nothing
+    once the runs rows go.
+    """
+    targets, _ = _harness_run_info(key)
     return targets
 
 
-def _remove_transcripts(targets: set[str], key: str = "") -> None:
+def _remove_transcripts(targets: set[str], key: str = "",
+                        scoped_dirs: set[str] | None = None) -> None:
     """Delete the transcript files/dirs in *targets* + prune emptied parents.
 
     Files live under ~/.config/workagent/runs/<harness>/<branch-path>/ (or
@@ -57,6 +74,13 @@ def _remove_transcripts(targets: set[str], key: str = "") -> None:
     """
     if not targets:
         return
+    scoped_resolved: set[Path] = set()
+    for sd in (scoped_dirs or ()):
+        sp = Path(sd).expanduser()
+        try:
+            scoped_resolved.add(sp.resolve())
+        except OSError:
+            scoped_resolved.add(sp)
     try:
         from . import store_sqlite as _sq
         config = store.config_dir()
@@ -83,6 +107,9 @@ def _remove_transcripts(targets: set[str], key: str = "") -> None:
                 if p.is_file():
                     p.unlink()
                     p = p.parent
+                elif p.is_dir() and resolved in scoped_resolved and resolved != under:
+                    shutil.rmtree(p)
+                    p = p.parent
                 if not p.is_dir():
                     continue
                 cur = p.resolve() if p.exists() else p
@@ -100,7 +127,8 @@ def _remove_transcripts(targets: set[str], key: str = "") -> None:
 
 def _remove_harness_runs(key: str) -> None:
     """Delete harness transcript files + emptied branch dirs for one worktree."""
-    _remove_transcripts(_harness_run_targets(key), key)
+    targets, scoped_dirs = _harness_run_info(key)
+    _remove_transcripts(targets, key, scoped_dirs=scoped_dirs)
 
 
 def purge_orphans(dry_run: bool = False) -> dict:
@@ -114,8 +142,90 @@ def purge_orphans(dry_run: bool = False) -> dict:
     out = store.purge_orphans(dry_run=dry_run)
     if dry_run:
         return out
-    _remove_transcripts(set(out.get("transcripts") or []), "orphans")
+    _remove_transcripts(
+        set(out.get("transcripts") or []),
+        "orphans",
+        scoped_dirs=set(out.get("scoped_dirs") or []),
+    )
     return out
+
+
+def _worktree_for_branch(repo: Path | None, branch: str) -> Path | None:
+    """Return the worktree path where *branch* is currently checked out, or None."""
+    if repo is None or not branch:
+        return None
+    from . import cli as _cli
+    target = f"refs/heads/{branch}"
+    try:
+        out = _cli.run_cmd("git", "-C", str(repo), "worktree", "list",
+                           "--porcelain", check=False) or ""
+    except Exception:
+        return None
+    cur_wt: Path | None = None
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            cur_wt = Path(line[len("worktree "):])
+        elif line == f"branch {target}" and cur_wt is not None:
+            return cur_wt
+        elif not line.strip():
+            cur_wt = None
+    return None
+
+
+def _is_main_repo_path(wt: Path, repo: Path | None) -> bool:
+    """True when *wt* is a main repo folder (or ancestor/root) that must never be deleted."""
+    try:
+        wt_res = wt.resolve()
+    except OSError:
+        wt_res = wt
+    for guard in (Path("/"), Path.home()):
+        try:
+            g_res = guard.resolve()
+        except OSError:
+            g_res = guard
+        if wt_res == g_res or wt_res in g_res.parents:
+            return True
+    if (wt / ".git").is_dir():
+        return True
+    if repo is not None:
+        try:
+            repo_res = repo.resolve()
+        except OSError:
+            repo_res = repo
+        if wt_res == repo_res or wt_res in repo_res.parents:
+            return True
+        from . import cli as _cli
+        try:
+            out = _cli.run_cmd("git", "-C", str(repo), "worktree", "list",
+                               "--porcelain", check=False) or ""
+            for line in out.splitlines():
+                if line.startswith("worktree "):
+                    main_wt = Path(line[len("worktree "):])
+                    try:
+                        main_res = main_wt.resolve()
+                    except OSError:
+                        main_res = main_wt
+                    if wt_res == main_res or wt_res in main_res.parents:
+                        return True
+                    break
+        except Exception:
+            pass
+    try:
+        reg = store.load_repos() or {}
+    except Exception:
+        reg = {}
+    for info in reg.values():
+        rp = str((info or {}).get("path", "") or "")
+        if not rp:
+            continue
+        rp_path = Path(rp).expanduser()
+        try:
+            rp_res = rp_path.resolve()
+        except OSError:
+            rp_res = rp_path
+        if wt_res == rp_res or wt_res in rp_res.parents:
+            return True
+    return False
 
 
 def _teardown_local(key: str, branch: str, repo_str: str, worktree_path: str = "") -> None:
@@ -123,6 +233,11 @@ def _teardown_local(key: str, branch: str, repo_str: str, worktree_path: str = "
     from . import cli as _cli
     repo = _resolve_repo(worktree_path or "", repo_str or "")
     branch = str(branch or "")
+    wt = Path(str(worktree_path or "")).expanduser() if worktree_path else None
+    guard_path = wt if wt is not None else _worktree_for_branch(repo, branch)
+    if guard_path is not None and _is_main_repo_path(guard_path, repo):
+        eprint(f"warning: refusing to delete main repo folder {guard_path} for {key}")
+        return
     if repo is not None and branch:
         try:
             gitwt.cleanup_worktree(repo, branch, delete_branch=False,
@@ -134,7 +249,6 @@ def _teardown_local(key: str, branch: str, repo_str: str, worktree_path: str = "
         except HarnessError:
             pass
     # Fallback: the recorded worktree dir may survive a stale-repo cleanup.
-    wt = Path(str(worktree_path or "")).expanduser() if worktree_path else None
     if wt is not None and wt.exists():
         if repo is not None:
             try:
@@ -147,6 +261,9 @@ def _teardown_local(key: str, branch: str, repo_str: str, worktree_path: str = "
             except HarnessError:
                 pass
         if wt.exists():
+            if _is_main_repo_path(wt, repo):
+                eprint(f"warning: refusing to delete main repo folder {wt} for {key}")
+                return
             try:
                 shutil.rmtree(wt)
             except OSError as e:
@@ -193,9 +310,9 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
     # Snapshot the transcript targets before the store GC purges the runs
     # rows (runs_for_worktree then returns nothing) — the .jsonl files are
     # ours to delete.
-    targets = {key: _harness_run_targets(key) for key in links
-               if key not in blocked and links[key].get("deleted_at")
-               and links[key]["deleted_at"] < cutoff}
+    run_info = {key: _harness_run_info(key) for key in links
+                if key not in blocked and links[key].get("deleted_at")
+                and links[key]["deleted_at"] < cutoff}
     expired = store.gc_soft_deleted(retention_days=retention_days)
     expired_keys = {r["ref_key"] for r in expired}
     # Blocked-but-expired rows: the store GC skips them, so they never
@@ -219,7 +336,8 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
                          "status": "skipped:prodtest-pending"})
             continue
         _teardown_local(key, branch, repo, worktree_path)
-        _remove_transcripts(targets.get(key, set()), key)
+        t_set, s_set = run_info.get(key, (set(), set()))
+        _remove_transcripts(t_set, key, scoped_dirs=s_set)
         rows.append({"key": key, "branch": branch, "status": "purged"})
     return rows
 

@@ -572,13 +572,24 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
             pass
         return {"key": key, "branch": branch, "status": "cleaned",
                 "deleted_at": deleted_at, "remote_deleted": remote_deleted}
-    cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=False,
-                                     force=force, yes=yes)
-    try:
-        _cli.run_cmd("git", "-C", str(repo), "branch", "-D", branch)
-        cleanup.setdefault("actions", []).append(f"deleted local branch {branch}")
-    except HarnessError:
-        pass
+    from .cli_cleanup_gc import (
+        _harness_run_info, _is_main_repo_path, _remove_transcripts,
+        _worktree_for_branch,
+    )
+    wt_raw = str(entry.get("worktree", "") or "")
+    wt_path = Path(wt_raw).expanduser() if wt_raw else None
+    guard_path = wt_path if wt_path is not None else _worktree_for_branch(repo, branch)
+    if guard_path is not None and _is_main_repo_path(guard_path, repo):
+        eprint(f"warning: refusing to delete main repo folder {guard_path} for {key}")
+        cleanup = {"actions": [], "skipped": "main-repo"}
+    else:
+        cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=False,
+                                         force=force, yes=yes)
+        try:
+            _cli.run_cmd("git", "-C", str(repo), "branch", "-D", branch)
+            cleanup.setdefault("actions", []).append(f"deleted local branch {branch}")
+        except HarnessError:
+            pass
     if delete_remote:
         # Remote branch goes LAST: local cleanup already succeeded.
         try:
@@ -592,10 +603,9 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
                 eprint(f"warning: remote branch delete failed: {e}")
     # Snapshot the transcript targets before the row (and via FK its runs)
     # goes: cleanup --hard-delete cascades to the AI harness sessions too.
-    from .cli_cleanup_gc import _harness_run_targets, _remove_transcripts
-    targets = _harness_run_targets(key)
+    targets, scoped_dirs = _harness_run_info(key)
     store.delete_worktree_row(key)
-    _remove_transcripts(targets, key)
+    _remove_transcripts(targets, key, scoped_dirs=scoped_dirs)
     if not json_output:
         tail = " (remote branch deleted)" if remote_deleted \
             else " (remote branch kept)"
