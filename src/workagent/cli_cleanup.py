@@ -572,11 +572,15 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
             pass
         return {"key": key, "branch": branch, "status": "cleaned",
                 "deleted_at": deleted_at, "remote_deleted": remote_deleted}
-    from .cli_cleanup_gc import _harness_run_info, _is_main_repo_path, _remove_transcripts
+    from .cli_cleanup_gc import (
+        _harness_run_info, _is_main_repo_path, _remove_transcripts,
+        _worktree_for_branch,
+    )
     wt_raw = str(entry.get("worktree", "") or "")
     wt_path = Path(wt_raw).expanduser() if wt_raw else None
-    if wt_path is not None and _is_main_repo_path(wt_path, repo):
-        eprint(f"warning: refusing to delete main repo folder {wt_path} for {key}")
+    guard_path = wt_path if wt_path is not None else _worktree_for_branch(repo, branch)
+    if guard_path is not None and _is_main_repo_path(guard_path, repo):
+        eprint(f"warning: refusing to delete main repo folder {guard_path} for {key}")
         cleanup = {"actions": [], "skipped": "main-repo"}
     else:
         cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=False,

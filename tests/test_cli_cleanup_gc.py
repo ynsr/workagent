@@ -240,3 +240,75 @@ def test_cleanup_hard_delete_refuses_main_repo_folder(
     assert not gitwt_called
     assert repo.is_dir() and (repo / "README.md").is_file()
     assert "refusing to delete main repo folder" in capsys.readouterr().err
+
+
+def test_empty_worktree_path_with_main_repo_branch_refuses_cleanup(
+    tmp_path, monkeypatch, isolated_config, capsys
+):
+    """When entry['worktree'] is empty, a branch checked out in main repo must still be guarded."""
+    import subprocess
+    from workagent import cli_cleanup as cc
+    from workagent import cli_cleanup_gc as gc
+    from workagent import gitwt, store, store_sqlite as sq
+
+    db = sq.db_path()
+    sq.init_db(db)
+    repo = tmp_path / "main-repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t.com"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    (repo / "README.md").write_text("main\n")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True)
+
+    gitwt_called = []
+    monkeypatch.setattr(gitwt, "cleanup_worktree", lambda *a, **k: gitwt_called.append((a, k)) or {})
+
+    # 1. destroy_deleted / _teardown_local with empty worktree_path
+    store.record_link("branch:main-gc", {"branch": "main", "repo": str(repo), "worktree": ""})
+    store.soft_delete_worktree("branch:main-gc")
+    rows = gc.destroy_deleted(["branch:main-gc"])
+    assert [r["status"] for r in rows] == ["destroyed"]
+    assert "refusing to delete main repo folder" in capsys.readouterr().err
+
+    # 2. cleanup --hard-delete with empty worktree
+    entry = {"branch": "main", "repo": str(repo), "worktree": ""}
+    store.record_link("branch:main-hard", entry)
+    res = cc._cleanup_one(
+        "branch:main-hard", entry, force=True, yes=True, dry_run=False,
+        json_output=True, merge=False, hard_delete=True,
+    )
+    assert res["status"] == "cleaned"
+    assert res["cleanup"]["skipped"] == "main-repo"
+    assert "refusing to delete main repo folder" in capsys.readouterr().err
+    assert not gitwt_called
+    assert repo.is_dir() and (repo / "README.md").is_file()
+
+
+def test_purge_orphans_removes_scoped_session_dir_files(isolated_config):
+    """purge_orphans passes scoped_dirs to _remove_transcripts for branch_path runs."""
+    import sqlite3
+    from workagent import cli_cleanup_gc as gc
+    from workagent import store_sqlite as sq
+
+    db = sq.db_path()
+    sq.init_db(db)
+    scoped_dir = isolated_config / "runs" / "omp" / "feat-orphan" / "start"
+    scoped_dir.mkdir(parents=True)
+    unrecorded = scoped_dir / "minted.jsonl"
+    unrecorded.write_text("{}\n")
+
+    with sqlite3.connect(db) as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute(
+            "INSERT INTO runs (command, args, created_at, worktree_ref, file_path, metadata)"
+            " VALUES ('start', '[]', '2026-01-01', 'gone:orphan', '', ?)",
+            (f'{{"session_dir": "{scoped_dir}", "branch_path": "feat-orphan"}}',),
+        )
+
+    out = gc.purge_orphans()
+    assert out["runs"] == 1
+    assert str(scoped_dir) in out["scoped_dirs"]
+    assert not unrecorded.exists()
+    assert not scoped_dir.exists()

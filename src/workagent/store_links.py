@@ -77,6 +77,7 @@ def purge_orphans_conn(conn, dry_run: bool = False) -> dict:
         " WHERE worktree_ref IS NOT NULL AND worktree_ref <> ''").fetchall()
     run_refs = {r[0] for r in run_rows if r[0] not in linked}
     targets: set[str] = set()
+    scoped_dirs: set[str] = set()
     run_count = 0
     for ref, file_path, metadata in run_rows:
         if ref not in run_refs:
@@ -85,11 +86,16 @@ def purge_orphans_conn(conn, dry_run: bool = False) -> dict:
         if file_path:
             targets.add(str(file_path))
         try:
-            session_dir = str((json.loads(metadata or "{}")).get("session_dir", "") or "")
+            meta = json.loads(metadata or "{}")
+            if not isinstance(meta, dict):
+                meta = {}
         except Exception:
-            session_dir = ""
+            meta = {}
+        session_dir = str(meta.get("session_dir", "") or "")
         if session_dir:
             targets.add(session_dir)
+            if meta.get("branch_path"):
+                scoped_dirs.add(session_dir)
 
     flow_count = conn.execute(
         "SELECT COUNT(*) FROM flows WHERE worktree_ref <> ''"
@@ -114,7 +120,8 @@ def purge_orphans_conn(conn, dry_run: bool = False) -> dict:
         " AND parent_key_ref NOT IN (SELECT ref_key FROM worktrees)").fetchone()[0]
 
     out = {"runs": run_count, "flows": flow_count, "messages": msg_count,
-           "parent_links": parent_count, "transcripts": sorted(targets)}
+           "parent_links": parent_count, "transcripts": sorted(targets),
+           "scoped_dirs": sorted(scoped_dirs)}
     if dry_run or not any(out[k] for k in ("runs", "flows", "messages", "parent_links")):
         return out
     # Correlated predicates, not the precomputed ref sets: linked/runs were

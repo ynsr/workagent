@@ -142,8 +142,34 @@ def purge_orphans(dry_run: bool = False) -> dict:
     out = store.purge_orphans(dry_run=dry_run)
     if dry_run:
         return out
-    _remove_transcripts(set(out.get("transcripts") or []), "orphans")
+    _remove_transcripts(
+        set(out.get("transcripts") or []),
+        "orphans",
+        scoped_dirs=set(out.get("scoped_dirs") or []),
+    )
     return out
+
+
+def _worktree_for_branch(repo: Path | None, branch: str) -> Path | None:
+    """Return the worktree path where *branch* is currently checked out, or None."""
+    if repo is None or not branch:
+        return None
+    from . import cli as _cli
+    target = f"refs/heads/{branch}"
+    try:
+        out = _cli.run_cmd("git", "-C", str(repo), "worktree", "list",
+                           "--porcelain", check=False) or ""
+    except Exception:
+        return None
+    cur_wt: Path | None = None
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            cur_wt = Path(line[len("worktree "):])
+        elif line == f"branch {target}" and cur_wt is not None:
+            return cur_wt
+        elif not line.strip():
+            cur_wt = None
+    return None
 
 
 def _is_main_repo_path(wt: Path, repo: Path | None) -> bool:
@@ -208,8 +234,9 @@ def _teardown_local(key: str, branch: str, repo_str: str, worktree_path: str = "
     repo = _resolve_repo(worktree_path or "", repo_str or "")
     branch = str(branch or "")
     wt = Path(str(worktree_path or "")).expanduser() if worktree_path else None
-    if wt is not None and _is_main_repo_path(wt, repo):
-        eprint(f"warning: refusing to delete main repo folder {wt} for {key}")
+    guard_path = wt if wt is not None else _worktree_for_branch(repo, branch)
+    if guard_path is not None and _is_main_repo_path(guard_path, repo):
+        eprint(f"warning: refusing to delete main repo folder {guard_path} for {key}")
         return
     if repo is not None and branch:
         try:
