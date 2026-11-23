@@ -172,9 +172,13 @@ def _merge_pr(pr_url: str, squash: bool = True, cwd: str | None = None,
         if "github.com" in pr_url:
             # gh requires an explicit strategy non-interactively; squash
             # default, merge commit for long-lived sources (--merge).
+            # Never pass --delete-branch: gh runs `git checkout <default>`
+            # locally in cwd, which fails inside a linked worktree when the
+            # default branch is already checked out in the main repo (issue
+            # #168) — after already merging the PR on GitHub. Delete the
+            # remote branch explicitly via git after verifying the merge.
             _cli.run_cmd("gh", "pr", "merge", pr_url,
-                    "--squash" if squash else "--merge",
-                    *([] if not delete_remote else ["--delete-branch"]), cwd=cwd)
+                    "--squash" if squash else "--merge", cwd=cwd)
         else:
             # glab defaults to a merge commit; pass --squash explicitly,
             # omit the flag (no --no-squash exists) for merge commits.
@@ -212,6 +216,15 @@ def _merge_pr(pr_url: str, squash: bool = True, cwd: str | None = None,
             "  The merge may be queued (e.g. merge-when-pipeline-succeeds). "
             "Re-run cleanup after the host reports merged.")
     eprint(f"merged {pr_url}")
+    if (delete_remote and "github.com" in pr_url and cwd
+            and verified is not None
+            and (verified.get("state") or "").lower() == "merged"):
+        try:
+            _cli.run_cmd("git", "-C", str(cwd), "push", "origin",
+                         "--delete", source_branch)
+        except HarnessError as e:
+            if not _remote_branch_gone(str(e)):
+                eprint(f"warning: remote branch delete failed: {e}")
 
 
 def _close_issue(parsed: dict, force: bool) -> None:

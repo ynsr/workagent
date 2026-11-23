@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Fix GitHub PR cleanup failing in linked worktrees after merge [168]
 - Cleanup deletes merged feature branches from the remote, including external merges and soft-deletes; long-lived branches are kept [124]
 - New Task Start form sticks base branch, Implement/Plan action, and run mode per repo; related repos hide the selected repo [114]
 - Add conversational multi-worktree orchestrator mode (`workagent orchestrate`) with `spawned_runs` API and live `SpawnedWorkersCard` UI [157]

@@ -824,7 +824,7 @@ def test_destroy_deleted_tears_down_files(isolated_config, tmp_path, monkeypatch
     assert not wt.exists()
 
 def test_merge_pr_github_deletes_feature_branch(isolated_config, monkeypatch):
-    """Issue #124: gh merge passes --delete-branch for feature sources."""
+    """Issue #124 / #168: gh merge omits --delete-branch (breaks worktrees) and deletes remote via git push."""
     import workagent.cli_cleanup as _cc
     seen = []
     monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
@@ -833,11 +833,12 @@ def test_merge_pr_github_deletes_feature_branch(isolated_config, monkeypatch):
                                           "merge_state": ""})
     cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp",
                   source_branch="feat/124--x")
-    assert "--delete-branch" in seen[0]
+    assert "--delete-branch" not in seen[0]
+    assert seen[1] == ("git", "-C", "/tmp", "push", "origin", "--delete", "feat/124--x")
 
 
 def test_merge_pr_github_keeps_long_lived_branch(isolated_config, monkeypatch):
-    """Issue #124: long-lived sources (develop) never pass --delete-branch."""
+    """Issue #124: long-lived sources (develop) never delete remote branch."""
     import workagent.cli_cleanup as _cc
     seen = []
     monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
@@ -847,6 +848,40 @@ def test_merge_pr_github_keeps_long_lived_branch(isolated_config, monkeypatch):
     cli._merge_pr("https://github.com/o/r/pull/9", squash=False, cwd="/tmp",
                   source_branch="develop")
     assert "--delete-branch" not in seen[0]
+    assert len(seen) == 1
+
+
+def test_merge_pr_github_remote_delete_gone_or_warned(isolated_config, monkeypatch, capsys):
+    """Issue #168: already-deleted or failed remote push after merge does not fail cleanup."""
+    import workagent.cli_cleanup as _cc
+    from workagent.errors import HarnessError
+
+    err_msg = ["error: unable to delete 'feat/168--x': remote ref does not exist"]
+
+    def _run(*a, **k):
+        if a[0] == "git":
+            raise HarnessError(err_msg[0])
+        return ""
+
+    monkeypatch.setattr(cli, "run_cmd", _run)
+    monkeypatch.setattr(_cc, "_fresh_pr_state",
+                        lambda url, cwd: {"state": "merged", "mergeable": "",
+                                          "merge_state": ""})
+    cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp",
+                  source_branch="feat/168--x")
+    assert "warning:" not in capsys.readouterr().err
+
+    err_msg[0] = "fatal: could not read Username"
+    cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp",
+                  source_branch="feat/168--x")
+    assert "warning: remote branch delete failed" in capsys.readouterr().err
+
+    seen = []
+    monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
+    monkeypatch.setattr(_cc, "_fresh_pr_state", lambda url, cwd: None)
+    cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp",
+                  source_branch="feat/168--x")
+    assert len(seen) == 1
 
 
 def test_merge_pr_glab_removes_feature_source_branch(isolated_config, monkeypatch):
