@@ -130,4 +130,23 @@ describe("ReleaseRow Pull button", () => {
     expect(pullBtn.getAttribute("title")).toContain("uncommitted changes")
     expect(pullBtn.getAttribute("title")).toContain("M README.md")
   })
+
+  it("hides Pull button when has_remote_diff is false and shows it when true", () => {
+    mockRepos.value = [{ name: "proj", path: "/repos/proj", release_branch: "release" }]
+    mockStatuses.value = { proj: { ...STATUS, has_remote_diff: false } }
+    const { rerender } = renderCard()
+    expect(screen.queryByRole("button", { name: "Pull proj from remote" })).toBeNull()
+
+    mockStatuses.value = { proj: { ...STATUS, has_remote_diff: true } }
+    rerender(
+      <MemoryRouter>
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <ConfirmProvider>
+            <ReleaseCard />
+          </ConfirmProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole("button", { name: "Pull proj from remote" })).toBeInTheDocument()
+  })
 })

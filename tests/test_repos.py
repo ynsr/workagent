@@ -118,10 +118,11 @@ def test_release_status_dirty_and_pull_repo(tmp_path, isolated_config):
 
     repos.register_repo("proj", work, tracker_key="jira:PROJ", default_branch_name="main", release_branch="release")
 
-    # Clean repo: dirty=False, dirty_files=[]
+    # Clean repo: dirty=False, dirty_files=[], has_remote_diff=False when in sync
     st_clean = repos_release.release_status("proj")
     assert st_clean["dirty"] is False
     assert st_clean["dirty_files"] == []
+    assert st_clean["has_remote_diff"] is False
 
     # Advance origin/main from seed, then pull into work
     (seed / "new.txt").write_text("hi\n")
@@ -129,9 +130,13 @@ def test_release_status_dirty_and_pull_repo(tmp_path, isolated_config):
     _git("commit", "-q", "-m", "remote commit", cwd=seed)
     _git("push", "-q", "origin", "main", cwd=seed)
 
+    st_behind = repos_release.release_status("proj", force=True)
+    assert st_behind["has_remote_diff"] is True
+
     pulled = repos_release.pull_repo("proj")
     assert pulled["pulled"] == "proj"
     assert (work / "new.txt").read_text() == "hi\n"
+    assert repos_release.release_status("proj")["has_remote_diff"] is False
 
     # Dirty repo: release_status reports dirty_files and pull_repo refuses
     (work / "dirty.txt").write_text("uncommitted\n")
@@ -146,4 +151,82 @@ def test_release_status_dirty_and_pull_repo(tmp_path, isolated_config):
     _git("checkout", "-q", "--detach", "HEAD", cwd=work)
     with pytest.raises(HarnessError, match="detached HEAD"):
         repos_release.pull_repo("proj")
+
+
+def test_pull_repo_auto_heals_remote_errors_and_protects_diverged(tmp_path, isolated_config):
+    import pytest
+    from workagent import repos_release, store_sqlite as sq
+    from workagent.errors import HarnessError
+
+    sq.init_db(sq.db_path())
+
+    origin = _bare_origin(tmp_path / "origin.git")
+    seed = tmp_path / "seed"
+    subprocess.run(["git", "clone", "-q", str(origin), str(seed)], check=True, capture_output=True)
+    _git("config", "user.email", "t@t", cwd=seed)
+    _git("config", "user.name", "t", cwd=seed)
+    _git("checkout", "-q", "-b", "main", cwd=seed)
+    _git("commit", "-q", "--allow-empty", "-m", "init", cwd=seed)
+    _git("push", "-q", "origin", "main", cwd=seed)
+    _git("push", "-q", "origin", "main:release", cwd=seed)
+
+    work = tmp_path / "work"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(origin), str(work)], check=True, capture_output=True)
+    _git("config", "user.email", "t@t", cwd=work)
+    _git("config", "user.name", "t", cwd=work)
+
+    repos.register_repo("proj", work, tracker_key="jira:PROJ", default_branch_name="main", release_branch="release")
+
+    # Error type 1: on a feature branch whose remote ref was deleted -> switches to main and pulls
+    _git("checkout", "-q", "-b", "feat/old-branch", cwd=work)
+    _git("push", "-q", "-u", "origin", "feat/old-branch", cwd=work)
+    _git("push", "-q", "origin", "--delete", "feat/old-branch", cwd=seed)
+    (seed / "f1.txt").write_text("from remote\n")
+    _git("add", "f1.txt", cwd=seed)
+    _git("commit", "-q", "-m", "c1", cwd=seed)
+    _git("push", "-q", "origin", "main", cwd=seed)
+
+    res1 = repos_release.pull_repo("proj")
+    assert res1["branch"] == "main"
+    assert (work / "f1.txt").read_text() == "from remote\n"
+
+    # Error type 2: multiple branch.main.merge entries -> normalizes config and pulls
+    _git("config", "--add", "branch.main.merge", "refs/heads/release", cwd=work)
+    (seed / "f2.txt").write_text("c2\n")
+    _git("add", "f2.txt", cwd=seed)
+    _git("commit", "-q", "-m", "c2", cwd=seed)
+    _git("push", "-q", "origin", "main", cwd=seed)
+
+    res2 = repos_release.pull_repo("proj")
+    assert res2["branch"] == "main"
+    assert (work / "f2.txt").read_text() == "c2\n"
+    merges = subprocess.run(
+        ["git", "-C", str(work), "config", "--get-all", "branch.main.merge"],
+        check=True, capture_output=True, text=True,
+    ).stdout.splitlines()
+    assert merges == ["refs/heads/main"]
+
+    # Missing upstream tracking -> sets upstream and pulls
+    _git("branch", "--unset-upstream", cwd=work)
+    (seed / "f3.txt").write_text("c3\n")
+    _git("add", "f3.txt", cwd=seed)
+    _git("commit", "-q", "-m", "c3", cwd=seed)
+    _git("push", "-q", "origin", "main", cwd=seed)
+
+    res3 = repos_release.pull_repo("proj")
+    assert res3["branch"] == "main"
+    assert (work / "f3.txt").read_text() == "c3\n"
+
+    # Diverged local commit -> fails safely without discarding local commit
+    (work / "local.txt").write_text("local\n")
+    _git("add", "local.txt", cwd=work)
+    _git("commit", "-q", "-m", "local diverged", cwd=work)
+    (seed / "f4.txt").write_text("c4\n")
+    _git("add", "f4.txt", cwd=seed)
+    _git("commit", "-q", "-m", "c4", cwd=seed)
+    _git("push", "-q", "origin", "main", cwd=seed)
+
+    with pytest.raises(HarnessError):
+        repos_release.pull_repo("proj")
+    assert (work / "local.txt").read_text() == "local\n"
 
