@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -28,6 +29,22 @@ _complete_refs = _COMP2["refs"]
 
 from . import cli_flow as _flow
 from .cli_flow import flow_app
+
+
+def _canonical_lock_scope(raw: str) -> str:
+    """Resolve a repo name or path into a canonical lock scope string."""
+    scope = (raw or "").strip()
+    if not scope or scope == "global":
+        return "global"
+    info = store.load_repos().get(scope)
+    if isinstance(info, dict) and info.get("path"):
+        scope = str(info["path"]).strip()
+    if Path(scope).is_absolute() or "/" in scope or "\\" in scope:
+        try:
+            return str(Path(scope).resolve())
+        except OSError:
+            return scope
+    return scope
 
 
 def _seam(name: str):
@@ -477,7 +494,7 @@ def flow_run(
             if exec_mode == "parallel":
                 seq_lock.release()
             else:
-                _lock_scope = (
+                _lock_scope = _canonical_lock_scope(
                     str((flow.get("repo_snapshot") or {}).get("repo", "") or "")
                     or str((entry or {}).get("repo", "") or "")
                     or "global"

@@ -134,3 +134,166 @@ def test_flow_run_holds_lock_across_contiguous_sequential_steps(tmp_path, monkey
     cleanup_idx = events.index(("cleanup", expected_scope))
     assert ("release", expected_scope) not in events[sync_idx:cleanup_idx]
     assert events[-1] == ("release", expected_scope)
+
+
+def test_slug_caps_long_paths_with_hash():
+    """Deep paths are capped under NAME_MAX with a stable hash suffix."""
+    deep_a = "/".join(["segment"] * 40) + "/repo-a"
+    deep_b = "/".join(["segment"] * 40) + "/repo-b"
+    slug_a = flow_lock._slug(deep_a)
+    slug_b = flow_lock._slug(deep_b)
+    assert len(slug_a) <= 120
+    assert len(slug_b) <= 120
+    assert slug_a != slug_b
+    # Idempotent when passed back into _slug
+    assert flow_lock._slug(slug_a) == slug_a
+
+
+def test_acquire_does_not_call_on_wait_on_non_contention_oserror(tmp_path, monkeypatch):
+    """Non-BlockingIOError OSError (e.g. ENOLCK) propagates without triggering on_wait."""
+    import errno
+    import pytest
+
+    def fake_flock(fd, op):
+        raise OSError(errno.ENOLCK, "no locks available")
+
+    monkeypatch.setattr(flow_lock.fcntl, "flock", fake_flock)
+    waited: list[str] = []
+    with pytest.raises(OSError) as exc_info:
+        with flow_lock.SequentialStepLock(base=tmp_path) as lock:
+            lock.acquire("workagent", on_wait=waited.append)
+    assert exc_info.value.errno == errno.ENOLCK
+    assert waited == []
+
+
+def test_canonical_lock_scope_unifies_repo_name_and_path(tmp_path):
+    """A registered repo name, its path, and a symlink resolve to the same scope."""
+    from workagent import cli_flow_run
+
+    real_repo = tmp_path / "real-repo"
+    real_repo.mkdir()
+    sym_repo = tmp_path / "sym-repo"
+    sym_repo.symlink_to(real_repo)
+    repos.register_repo("workagent", real_repo, tracker_key="github:ynsr/workagent", default_branch_name="main")
+
+    by_name = cli_flow_run._canonical_lock_scope("workagent")
+    by_path = cli_flow_run._canonical_lock_scope(str(real_repo) + "/")
+    by_sym = cli_flow_run._canonical_lock_scope(str(sym_repo))
+    assert by_name == by_path == by_sym == str(real_repo.resolve())
+
+
+def test_flow_run_releases_lock_on_sequential_to_parallel(tmp_path, monkeypatch):
+    """Transitioning from a sequential step to a parallel step releases the lock first."""
+    store.create_template(
+        name="Seq Then Par",
+        label="seq_par",
+        steps=[
+            {"kind": "sync", "execution_mode": "sequential"},
+            {"kind": "review", "execution_mode": "parallel"},
+        ],
+    )
+    repos.register_repo("workagent", tmp_path, tracker_key="github:ynsr/workagent", default_branch_name="main")
+    store.record_link(
+        "github:ynsr/workagent#158",
+        {"worktree": str(tmp_path / "wt"), "branch": "feat/158", "repo": "workagent"},
+    )
+
+    events: list[tuple[str, str | None]] = []
+    orig_acquire = flow_lock.SequentialStepLock.acquire
+    orig_release = flow_lock.SequentialStepLock.release
+    active: list[flow_lock.SequentialStepLock] = []
+
+    def spy_acquire(self, scope, **kw):
+        active.append(self)
+        events.append(("acquire", scope))
+        return orig_acquire(self, scope, **kw)
+
+    def spy_release(self):
+        if self.scope is not None:
+            events.append(("release", self.scope))
+        return orig_release(self)
+
+    monkeypatch.setattr(flow_lock.SequentialStepLock, "acquire", spy_acquire)
+    monkeypatch.setattr(flow_lock.SequentialStepLock, "release", spy_release)
+    monkeypatch.setattr(
+        cli_flow, "_run_sync_step",
+        lambda key, cfg, j: (events.append(("sync", active[-1].scope if active else None)) or {"status": "ok"}),
+    )
+    monkeypatch.setattr(
+        cli_flow, "_run_review_step",
+        lambda key, cfg, fix, j: (events.append(("review", active[-1].scope if active else None)) or {"status": "ok"}),
+    )
+
+    res = runner.invoke(app, ["flow", "run", "seq_par", "github:ynsr/workagent#158", "--yes", "--json"])
+    assert res.exit_code == 0, res.output
+    expected_scope = flow_lock._slug(str(tmp_path.resolve()))
+    sync_idx = events.index(("sync", expected_scope))
+    release_idx = events.index(("release", expected_scope))
+    review_idx = events.index(("review", None))
+    assert sync_idx < release_idx < review_idx
+
+
+def test_flow_run_releases_lock_on_step_failure(tmp_path, monkeypatch):
+    """A failing sequential step releases the lock on exit."""
+    from workagent.errors import HarnessError
+
+    store.create_template(
+        name="Seq Fail",
+        label="seq_fail",
+        steps=[{"kind": "sync", "execution_mode": "sequential"}],
+    )
+    repos.register_repo("workagent", tmp_path, tracker_key="github:ynsr/workagent", default_branch_name="main")
+    store.record_link(
+        "github:ynsr/workagent#159",
+        {"worktree": str(tmp_path / "wt"), "branch": "feat/159", "repo": "workagent"},
+    )
+
+    released: list[str] = []
+    orig_release = flow_lock.SequentialStepLock.release
+
+    def spy_release(self):
+        if self.scope is not None:
+            released.append(self.scope)
+        return orig_release(self)
+
+    monkeypatch.setattr(flow_lock.SequentialStepLock, "release", spy_release)
+    monkeypatch.setattr(
+        cli_flow, "_run_sync_step",
+        lambda key, cfg, j: (_ for _ in ()).throw(HarnessError("boom", exit_code=1)),
+    )
+
+    res = runner.invoke(app, ["flow", "run", "seq_fail", "github:ynsr/workagent#159", "--yes", "--json"])
+    assert res.exit_code != 0
+    assert released == [flow_lock._slug(str(tmp_path.resolve()))]
+
+
+def test_flow_run_releases_lock_on_preview_pause(tmp_path, monkeypatch):
+    """A pausing (preview=True) sequential step releases the lock on exit."""
+    store.create_template(
+        name="Seq Pause",
+        label="seq_pause",
+        steps=[{"kind": "sync", "execution_mode": "sequential"}],
+    )
+    repos.register_repo("workagent", tmp_path, tracker_key="github:ynsr/workagent", default_branch_name="main")
+    store.record_link(
+        "github:ynsr/workagent#160",
+        {"worktree": str(tmp_path / "wt"), "branch": "feat/160", "repo": "workagent"},
+    )
+
+    released: list[str] = []
+    orig_release = flow_lock.SequentialStepLock.release
+
+    def spy_release(self):
+        if self.scope is not None:
+            released.append(self.scope)
+        return orig_release(self)
+
+    monkeypatch.setattr(flow_lock.SequentialStepLock, "release", spy_release)
+    monkeypatch.setattr(
+        cli_flow, "_run_sync_step",
+        lambda key, cfg, j: {"status": "preview", "preview": True, "detail": "confirm"},
+    )
+
+    res = runner.invoke(app, ["flow", "run", "seq_pause", "github:ynsr/workagent#160", "--yes", "--json"])
+    assert res.exit_code == 0, res.output
+    assert released == [flow_lock._slug(str(tmp_path.resolve()))]

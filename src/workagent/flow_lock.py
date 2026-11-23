@@ -8,16 +8,25 @@ the next step is ``parallel`` or the flow exits/pauses/fails.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import re
 from pathlib import Path
 from typing import Callable
 
 from . import store
 
+_MAX_SLUG_LEN = 120
+
 
 def _slug(scope: str) -> str:
-    slug = re.sub(r"[^A-Za-z0-9]+", "-", (scope or "").strip()).strip("-")
-    return slug or "global"
+    raw = (scope or "").strip()
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", raw).strip("-")
+    if not slug:
+        return "global"
+    if len(slug) > _MAX_SLUG_LEN:
+        digest = hashlib.sha256(raw.encode()).hexdigest()[:12]
+        slug = f"{slug[:100].rstrip('-')}-{digest}"
+    return slug
 
 
 def lock_path(scope: str, *, base: Path | None = None) -> Path:
@@ -57,7 +66,7 @@ class SequentialStepLock:
         try:
             try:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError:
+            except BlockingIOError:
                 if on_wait is not None:
                     on_wait(norm)
                 fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
