@@ -234,7 +234,7 @@ issue-scoped ledger attribution that survives teardown.
 - PR-status cache (`pr_cache` table in `state.db`): `src/workagent/store.py`
   (delegates to `src/workagent/store_sqlite.py` once `workagent migrate` ran)
 - Completion internals (rc block, shell detect): `src/workagent/completions.py`
-- Web backend (`serve`): `src/workagent/webapp.py`; frontend: `web/`
+- Web backend (`serve`): `src/workagent/webapp.py`; frontend: `web/`; design language: `web/DESIGN.md` + `web/design/`
 - Tests: `tests/` (mirror module names)
 
 ## Parity checklist (review PRs against this list)
