@@ -16,9 +16,10 @@ This is a product UI, not a marketing site. It should feel calm under all-day us
 | [design/01-foundations.md](design/01-foundations.md) | **Global / public** — stack and conventions shared with the wider ecosystem (shadcn/ui, Radix, Tailwind, Lucide, variable fonts, OKLCH, 4px grid, WCAG) | You need the "boring correct" baseline, or want to swap framework |
 | [design/02-ao-signature.md](design/02-ao-signature.md) | **AO-specific** — the opinions that make AO feel like AO | You are deciding how something should look/behave |
 | [design/03-workagent-application.md](design/03-workagent-application.md) | **workagent** — what to adopt, adapt, or skip; state→visual mapping | You are touching StatusTable, the action buttons, Ask-tool questions, notifications |
+| [design/04-minimalism.md](design/04-minimalism.md) | **Minimalism** — content and interaction rules (what to show, hide, and say) behind AO's calm feel | You are adding a field, a form or a screen |
 | [design/tokens.css](design/tokens.css) | **Machine-readable** — drop-in CSS variables (dark + light) and a few primitives | You are writing CSS or a component |
 
-**Precedence when rules conflict:** `03` (workagent decisions) > `02` (AO signature) > `01` (global baseline). A workagent decision may only override an AO rule with a one-line entry in the decisions log below.
+**Precedence when rules conflict:** `04` applies alongside `02`; `03` (workagent decisions) > `02` (AO signature) > `01` (global baseline). A workagent decision may only override an AO rule with a one-line entry in the decisions log below.
 
 ## One-paragraph summary
 
@@ -74,3 +75,6 @@ Never use polish to obscure a state change, a destructive action, a failure, or 
 | 2026-11-23 | Brand accent is **not** adopted | AO's blue is Orchestrator branding; workagent uses the neutral `primary` as its accent and needs its own brand color if it wants one |
 | 2026-11-23 | `tokens.css` is a reference, not imported; the live theme stays in `web/src/index.css` until migration | workagent already ships its own shadcn palette (indigo slate), `.dark` class toggling and Inter/JetBrains Mono; swapping wholesale is a separate, reviewable change |
 | 2026-11-23 | Docs live in `web/DESIGN.md` + `web/design/` | Colocated with frontend contract docs |
+| 2026-11-23 | Keep the indigo-slate palette, Inter/JetBrains Mono, light default with `system` option | Reversible and low-risk; palette swap is cosmetic and can follow separately. Hue is still limited to status and focus per `04` |
+| 2026-11-23 | Added `quiet`, `destructive-ghost`, `accent`, `xs` button variants/sizes; `icon-sm` is now 28px; ghost uses the growing pill; `Tooltip` (new dependency `@radix-ui/react-tooltip`) and `Pressable` added | Parity checklist step 3; 44px row icons and native `title` tooltips replaced |
+| 2026-11-23 | Status badges replaced by `StatusGlyph`/`StatusLabel` with `--status-*` tokens | One glyph, no tinted pills, no raw Tailwind palette colors |

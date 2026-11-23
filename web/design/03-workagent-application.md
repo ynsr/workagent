@@ -4,6 +4,8 @@ Everything marked **[proposal]** is a mapping from AO's rules onto workagent's c
 
 ## 0. Current state of workagent's web UI (audited)
 
+**Update (PR for #177):** the Button, Status, Row actions, Ask-tool and Tooltip/Pressable rows below were migrated in this PR (see `DESIGN.md` decisions log). Remaining: confirm box, chips, `uppercase`, raw `<button>`s, and the combined harness/model/effort picker (`04-minimalism.md`).
+
 | Area | Today (`web/`) | Gap vs AO language |
 | --- | --- | --- |
 | Stack | React 18, Vite, Tailwind v4 (`@theme inline`), shadcn/ui on Radix, cva, Lucide, sonner, TanStack Query | None: same stack as AO. Tokens map 1:1 onto shadcn names |

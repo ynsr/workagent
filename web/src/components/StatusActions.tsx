@@ -8,7 +8,7 @@ import { FlowWizard } from "@/components/FlowWizard"
 import { ImmediateRunDialog, runsImmediately } from "@/components/ImmediateRunForm"
 import type { ActionRow, FlowTemplateRow, WorktreeMap } from "@/lib/api"
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
+import { Tooltip } from "@/components/ui/tooltip"
 import { useActions, useCreateRun, useFlowTemplates, useRuns } from "@/lib/queries"
 import { RunResumeActions } from "@/components/RunActions"
 import type { StatusTableActions } from "@/components/StatusTable"
@@ -29,20 +29,20 @@ export function ActionIcon({
   disabled?: boolean
 }) {
   return (
-    <Button
-      variant="ghost"
-      size="icon"
-      aria-label={title}
-      title={title}
-      disabled={disabled}
-      onClick={(e) => {
-        e.stopPropagation()
-        onClick()
-      }}
-      className={cn("size-11 text-muted-foreground hover:text-foreground", destructive && "hover:bg-destructive/10 hover:text-destructive")}
-    >
-      {children}
-    </Button>
+    <Tooltip label={title}>
+      <Button
+        variant={destructive ? "destructive-ghost" : "quiet"}
+        size="icon-sm"
+        aria-label={title}
+        disabled={disabled}
+        onClick={(e) => {
+          e.stopPropagation()
+          onClick()
+        }}
+      >
+        {children}
+      </Button>
+    </Tooltip>
   )
 }
 

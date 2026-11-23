@@ -1,7 +1,7 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 
-/** Minimalist, borderless interactive row for divided lists inside popovers. */
+/** Minimalist, borderless interactive row for divided lists inside popovers and cards. */
 const Pressable = React.forwardRef<
   HTMLButtonElement,
   React.ComponentProps<"button">
@@ -17,6 +17,7 @@ const Pressable = React.forwardRef<
         "focus-visible:bg-accent focus-visible:text-accent-foreground focus-visible:outline-none",
         "disabled:pointer-events-none disabled:opacity-50",
         "aria-[disabled=true]:cursor-not-allowed aria-[disabled=true]:opacity-50",
+        "aria-pressed:bg-foreground/[0.07] data-[active=true]:bg-foreground/[0.07]",
         className,
       )}
       {...props}

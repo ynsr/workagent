@@ -1,129 +1,59 @@
 import type { PrDetail, RunState } from "@/lib/api"
-import { Badge } from "@/components/ui/badge"
-import { cn } from "@/lib/utils"
+import { StatusGlyph, StatusLabel, type StatusTone } from "@/components/StatusGlyph"
 
-const RUN_STATE_BADGES: Record<RunState, { label: string; className: string }> = {
-  running: {
-    label: "Running",
-    className: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  },
-  succeeded: {
-    label: "Succeeded",
-    className:
-      "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  },
-  failed: {
-    label: "Failed",
-    className:
-      "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300",
-  },
-  needs_input: {
-    label: "Needs input",
-    className:
-      "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-  },
-  cancelled: {
-    label: "Cancelled",
-    className: "border-border bg-muted text-muted-foreground",
-  },
+const RUN_STATES: Record<RunState, { label: string; tone: StatusTone }> = {
+  running: { label: "Running", tone: "working" },
+  succeeded: { label: "Succeeded", tone: "done" },
+  failed: { label: "Failed", tone: "failed" },
+  needs_input: { label: "Needs input", tone: "needs-you" },
+  cancelled: { label: "Cancelled", tone: "idle" },
 }
 
-export function RunStateBadge({
-  state,
-  className,
-}: {
-  state: RunState
-  className?: string
-}) {
-  const badge = RUN_STATE_BADGES[state]
+export function RunStateBadge({ state, className }: { state: RunState; className?: string }) {
+  const run = RUN_STATES[state]
   return (
-    <Badge variant="outline" className={cn(badge.className, className)}>
-      {badge.label}
-    </Badge>
+    <StatusLabel tone={run.tone} className={className}>
+      {run.label}
+    </StatusLabel>
   )
 }
 
-const STATUS_TONE = {
-  active:
-    "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  review:
-    "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-  done:
-    "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  closed:
-    "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300",
-  muted: "border-border bg-muted text-muted-foreground",
-} as const
+const PR_TONES: Record<string, StatusTone> = { open: "in-review", merged: "merged", closed: "idle" }
 
-const PR_STATE_STYLES: Record<string, string> = {
-  open: STATUS_TONE.active,
-  merged: STATUS_TONE.done,
-  closed: STATUS_TONE.muted,
-}
-
-/** PR/MR state badge from pr_detail; falls back to the display string. */
+/** PR/MR state: glyph + `#N state`; falls back to a muted glyph. */
 export function PrBadge({ pr }: { pr: PrDetail | null | undefined }) {
   if (!pr) return null
-  const style = PR_STATE_STYLES[pr.state] ?? STATUS_TONE.muted
   return (
-    <Badge
-      variant="outline"
-      className={style}
-      title={`${pr.title} — ${pr.author} (${pr.tool})`}
-    >
+    <StatusLabel tone={PR_TONES[pr.state] ?? "idle"} title={`${pr.title} — ${pr.author} (${pr.tool})`}>
       #{pr.number} {pr.state}
-    </Badge>
+    </StatusLabel>
   )
 }
 
 const ISSUE_DONE_STATES: Record<string, true> = { done: true, released: true, resolved: true }
-const ISSUE_PROGRESS_STYLES: Record<string, string> = {
-  "to do": STATUS_TONE.muted,
-  "in progress": STATUS_TONE.active,
-  review: STATUS_TONE.review,
-  "code review": STATUS_TONE.review,
-  "product test": STATUS_TONE.review,
+const ISSUE_PROGRESS_TONES: Record<string, StatusTone> = {
+  "in progress": "working",
+  review: "in-review",
+  "code review": "in-review",
+  "product test": "in-review",
 }
 
-/** Linked-issue status badge; renders nothing when the worktree has no linked issue or the status is unknown. */
+/** Linked-issue status; renders nothing when the worktree has no linked issue or the status is unknown. */
 export function IssueStatusBadge({ status }: { status?: string | null }) {
   const s = (status ?? "").trim().toLowerCase()
   if (!s) return null
-  const style =
-    ISSUE_DONE_STATES[s]
-      ? STATUS_TONE.done
-      : (ISSUE_PROGRESS_STYLES[s] ?? STATUS_TONE.muted)
+  const tone: StatusTone = ISSUE_DONE_STATES[s] ? "done" : (ISSUE_PROGRESS_TONES[s] ?? "idle")
   return (
-    <Badge variant="outline" className={style} title={`Issue status: ${s}`}>
+    <StatusLabel tone={tone} title={`Issue status: ${s}`}>
       {s}
-    </Badge>
+    </StatusLabel>
   )
 }
 
 
 type CiState = "success" | "failure" | "running" | "not_started"
 
-const CI_BADGES: Record<CiState, { symbol: string; className: string }> = {
-  success: {
-    symbol: "✓",
-    className:
-      "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  },
-  failure: {
-    symbol: "✗",
-    className:
-      "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300",
-  },
-  running: {
-    symbol: "●",
-    className:
-      "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  },
-  not_started: {
-    symbol: "–",
-    className: "border-border bg-muted text-muted-foreground",
-  },
-}
+const CI_TONES: Record<CiState, StatusTone> = { success: "done", failure: "failed", running: "working", not_started: "idle" }
 
 const CI_TOOLTIPS: Record<CiState, string> = {
   success: "CI: success",
@@ -142,15 +72,14 @@ const CI_TOOLTIPS: Record<CiState, string> = {
 export function CiBadge({ ci, ciUrl, prUrl }: { ci?: string | null; ciUrl?: string | null; prUrl?: string | null }) {
   const state: CiState =
     ci === "success" || ci === "failure" || ci === "running" ? ci : "not_started"
-  const badge = CI_BADGES[state]
   const href = ciUrl || checksUrl(prUrl) || undefined
   const tip = href ? `${CI_TOOLTIPS[state]} — ${href}` : CI_TOOLTIPS[state]
   if (!href) {
     return (
-      <Badge variant="outline" className={badge.className} title={tip}>
+      <span title={tip} className="inline-flex">
         <span className="sr-only">{CI_TOOLTIPS[state]}</span>
-        <span aria-hidden="true">{badge.symbol}</span>
-      </Badge>
+        <StatusGlyph tone={CI_TONES[state]} />
+      </span>
     )
   }
   return (
@@ -163,10 +92,8 @@ export function CiBadge({ ci, ciUrl, prUrl }: { ci?: string | null; ciUrl?: stri
       onClick={(e) => e.stopPropagation()}
       className="inline-block"
     >
-      <Badge variant="outline" className={cn(badge.className, "cursor-pointer hover:opacity-80")}>
-        <span className="sr-only">{CI_TOOLTIPS[state]}</span>
-        <span aria-hidden="true">{badge.symbol}</span>
-      </Badge>
+      <span className="sr-only">{CI_TOOLTIPS[state]}</span>
+      <StatusGlyph tone={CI_TONES[state]} className="hover:opacity-70" />
     </a>
   )
 }

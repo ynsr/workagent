@@ -1,11 +1,13 @@
 import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { Send } from "lucide-react"
+import { Check, Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Pressable } from "@/components/ui/pressable"
+import { StatusGlyph } from "@/components/StatusGlyph"
 import { errorText } from "@/components/StatusFeedback"
 import { api, type PendingQuestion } from "@/lib/api"
 import { queryKeys } from "@/lib/queries"
@@ -31,48 +33,60 @@ export function QuestionCard({ runId, question }: { runId: string; question: Pen
 
   const canSend = Boolean(answer)
   return (
-    <Card className="mb-4 border-sky-500/40" data-testid="question-card">
+    <Card className="mb-4" data-testid="question-card">
       <CardHeader>
-        <CardTitle className="text-base">Agent question</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-[15px]">
+          <StatusGlyph tone="needs-you" />
+          Agent question
+        </CardTitle>
         <CardDescription>{question.text}</CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        {question.options.length > 0 ? (
-          <div className="flex flex-wrap gap-2" role="group" aria-label="Answer options">
-            {question.options.map((o) => {
-              const active = question.multi ? picked.includes(o) : choice === o
-              return (
-                <Button
-                  key={o}
-                  variant={active ? "default" : "outline"}
-                  size="sm"
-                  disabled={submit.isPending}
-                  aria-pressed={question.multi ? active : undefined}
-                  onClick={() =>
-                    question.multi
-                      ? setPicked((prev) => (prev.includes(o) ? prev.filter((x) => x !== o) : [...prev, o]))
-                      : setChoice(o)
-                  }
-                >
-                  {o}
-                </Button>
-              )
-            })}
+      <CardContent className="flex flex-col gap-3">
+        {/* One shared list: rows with dividers, "Type your own answer" last (design/03 section 4). */}
+        <div className="divide-y divide-border overflow-hidden rounded-md bg-secondary/60" role="group" aria-label="Answer options">
+          {question.options.map((o) => {
+            const active = question.multi ? picked.includes(o) : choice === o
+            return (
+              <Pressable
+                key={o}
+                disabled={submit.isPending}
+                aria-pressed={active}
+                className="flex min-h-8 w-full items-center justify-between px-3 py-1.5 text-[13px]"
+                onClick={() =>
+                  question.multi
+                    ? setPicked((prev) => (prev.includes(o) ? prev.filter((x) => x !== o) : [...prev, o]))
+                    : setChoice(o)
+                }
+              >
+                <span>{o}</span>
+                {active ? <Check aria-hidden className="size-3.5" /> : null}
+              </Pressable>
+            )
+          })}
+          <div className="px-3 py-1">
+            <Label className="sr-only" htmlFor="acp-answer">
+              Answer
+            </Label>
+            <Input
+              id="acp-answer"
+              className="h-7 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+              placeholder="Type your own answer"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && canSend && !submit.isPending) submit.mutate()
+              }}
+            />
           </div>
-        ) : null}
-        <div className="flex items-center gap-2">
-          <Label className="sr-only" htmlFor="acp-answer">Answer</Label>
-          <Input
-            id="acp-answer"
-            placeholder={question.options.length > 0 ? "Or type a custom answer…" : "Type your answer…"}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && canSend && !submit.isPending) submit.mutate()
-            }}
-          />
-          <Button size="sm" disabled={!canSend || submit.isPending} onClick={() => submit.mutate()}>
-            <Send aria-hidden /> Send
+        </div>
+        <div className="flex justify-end">
+          <Button
+            size="sm"
+            disabled={!canSend || submit.isPending}
+            title={canSend ? undefined : "Pick or type an answer first"}
+            onClick={() => submit.mutate()}
+          >
+            <Send aria-hidden /> Send answer
           </Button>
         </div>
       </CardContent>
