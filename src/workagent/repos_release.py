@@ -4,8 +4,7 @@ Split out of repos.py to keep both modules under the 500-line project
 limit. Public surface is re-exported by repos.py for compatibility.
 """
 
-from __future__ import annotations
-
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -260,7 +259,15 @@ def _has_remote_diff(path: str, default_branch: str) -> bool:
 
 
 def _normalize_tracking(path: Path, branch: str) -> None:
-    """Ensure branch.<branch>.remote=origin and branch.<branch>.merge=refs/heads/<branch>."""
+    """Repair ``branch.<branch>`` tracking so ``origin/<branch>`` merges cleanly.
+
+    Fixes duplicated ``branch.<branch>.merge`` entries (unambiguous
+    corruption — ``git pull`` refuses with "more than one value"). A remote
+    deliberately pointed at something other than ``origin`` is left alone:
+    retargeting it would silently change where the user's next push/pull
+    goes. The explicit ``merge origin/<branch>`` in :func:`pull_repo`
+    still fetches from origin for this pull only.
+    """
     expected_merge = f"refs/heads/{branch}"
     try:
         remote = (run_cmd("git", "-C", str(path), "config", "--get", f"branch.{branch}.remote", echo=False) or "").strip()
@@ -271,7 +278,10 @@ def _normalize_tracking(path: Path, branch: str) -> None:
         merges = [line.strip() for line in merges_raw.splitlines() if line.strip()]
     except HarnessError:
         merges = []
-    if remote != "origin":
+    if remote and remote != "origin":
+        print(f"warning: branch {branch} tracks remote {remote!r}, leaving it; pulling from origin this time",
+              file=sys.stderr)
+    elif remote != "origin":
         run_cmd("git", "-C", str(path), "config", f"branch.{branch}.remote", "origin", echo=False)
     if merges != [expected_merge]:
         run_cmd("git", "-C", str(path), "config", "--replace-all", f"branch.{branch}.merge", expected_merge, echo=False)
@@ -295,12 +305,14 @@ def pull_repo(repo_name: str) -> dict:
     if not branch:
         raise HarnessError(f"repo {repo_name} is in detached HEAD state", exit_code=1)
     default_branch = str(info.get("default_branch", "") or "")
+    switched_from = ""
     if not _ref_exists(path, f"refs/remotes/origin/{branch}"):
         if default_branch and branch != default_branch and _ref_exists(path, f"refs/remotes/origin/{default_branch}"):
             if _ref_exists(path, f"refs/heads/{default_branch}"):
                 run_cmd("git", "-C", str(path), "checkout", default_branch)
             else:
                 run_cmd("git", "-C", str(path), "checkout", "-b", default_branch, f"origin/{default_branch}")
+            switched_from = branch
             branch = default_branch
         else:
             raise HarnessError(f"remote branch origin/{branch} not found", exit_code=1)
@@ -313,7 +325,8 @@ def pull_repo(repo_name: str) -> dict:
             conn.execute("DELETE FROM release_diff_cache WHERE repo_key = ?", (repo_name,))
     except Exception:
         pass
-    return {"pulled": repo_name, "path": str(path), "branch": branch, "output": out.strip()}
+    return {"pulled": repo_name, "path": str(path), "branch": branch,
+            "switched_from": switched_from, "output": out.strip()}
 
 
 def release_status(repo_name: str, force: bool = False, background: bool = False) -> dict:

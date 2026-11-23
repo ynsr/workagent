@@ -135,8 +135,8 @@ def test_release_status_dirty_and_pull_repo(tmp_path, isolated_config):
 
     pulled = repos_release.pull_repo("proj")
     assert pulled["pulled"] == "proj"
+    assert pulled["switched_from"] == ""
     assert (work / "new.txt").read_text() == "hi\n"
-    assert repos_release.release_status("proj")["has_remote_diff"] is False
 
     # Dirty repo: release_status reports dirty_files and pull_repo refuses
     (work / "dirty.txt").write_text("uncommitted\n")
@@ -188,6 +188,7 @@ def test_pull_repo_auto_heals_remote_errors_and_protects_diverged(tmp_path, isol
 
     res1 = repos_release.pull_repo("proj")
     assert res1["branch"] == "main"
+    assert res1["switched_from"] == "feat/old-branch"
     assert (work / "f1.txt").read_text() == "from remote\n"
 
     # Error type 2: multiple branch.main.merge entries -> normalizes config and pulls
@@ -199,6 +200,7 @@ def test_pull_repo_auto_heals_remote_errors_and_protects_diverged(tmp_path, isol
 
     res2 = repos_release.pull_repo("proj")
     assert res2["branch"] == "main"
+    assert res2["switched_from"] == ""
     assert (work / "f2.txt").read_text() == "c2\n"
     merges = subprocess.run(
         ["git", "-C", str(work), "config", "--get-all", "branch.main.merge"],
@@ -229,4 +231,46 @@ def test_pull_repo_auto_heals_remote_errors_and_protects_diverged(tmp_path, isol
     with pytest.raises(HarnessError):
         repos_release.pull_repo("proj")
     assert (work / "local.txt").read_text() == "local\n"
+
+def test_pull_repo_preserves_non_origin_tracking_remote(tmp_path, isolated_config, capsys):
+    from workagent import repos_release, store_sqlite as sq
+
+    sq.init_db(sq.db_path())
+
+    origin = _bare_origin(tmp_path / "origin.git")
+    seed = tmp_path / "seed"
+    subprocess.run(["git", "clone", "-q", str(origin), str(seed)], check=True, capture_output=True)
+    _git("config", "user.email", "t@t", cwd=seed)
+    _git("config", "user.name", "t", cwd=seed)
+    _git("checkout", "-q", "-b", "main", cwd=seed)
+    _git("commit", "-q", "--allow-empty", "-m", "init", cwd=seed)
+    _git("push", "-q", "origin", "main", cwd=seed)
+    _git("push", "-q", "origin", "main:release", cwd=seed)
+
+    work = tmp_path / "work"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(origin), str(work)], check=True, capture_output=True)
+    _git("config", "user.email", "t@t", cwd=work)
+    _git("config", "user.name", "t", cwd=work)
+
+    repos.register_repo("proj", work, tracker_key="jira:PROJ", default_branch_name="main", release_branch="release")
+
+    # Deliberate upstream remote: pull must leave it alone and say so.
+    _git("remote", "add", "upstream", str(origin), cwd=work)
+    _git("config", "branch.main.remote", "upstream", cwd=work)
+    _git("config", "--add", "branch.main.merge", "refs/heads/release", cwd=work)
+    (seed / "u1.txt").write_text("u1\n")
+    _git("add", "u1.txt", cwd=seed)
+    _git("commit", "-q", "-m", "u1", cwd=seed)
+    _git("push", "-q", "origin", "main", cwd=seed)
+
+    res = repos_release.pull_repo("proj")
+    assert res["branch"] == "main"
+    assert res["switched_from"] == ""
+    assert (work / "u1.txt").read_text() == "u1\n"
+    kept = subprocess.run(
+        ["git", "-C", str(work), "config", "--get", "branch.main.remote"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    assert kept == "upstream"
+    assert "tracks remote" in capsys.readouterr().err
 

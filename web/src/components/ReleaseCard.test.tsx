@@ -7,9 +7,10 @@ import { FixDefaultDialog, ReleaseCard } from "@/components/ReleaseCard"
 import { ConfirmProvider } from "@/lib/confirm"
 import type { ReleaseStatus } from "@/lib/api"
 
-const { mutateAsync, mockRun, mockConfig, mockRepos, mockStatuses } = vi.hoisted(() => ({
+const { mutateAsync, mockRun, mockToastSuccess, mockConfig, mockRepos, mockStatuses } = vi.hoisted(() => ({
   mutateAsync: vi.fn(() => Promise.resolve({ run_id: "run-1" })),
   mockRun: vi.fn(() => Promise.resolve({ state: "succeeded", lines: [] })),
+  mockToastSuccess: vi.fn(),
   mockConfig: {
     default_harness: "agy",
     supported_harnesses: ["agy", "omp"],
@@ -26,6 +27,10 @@ vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api")
   return { ...actual, api: { ...actual.api, run: mockRun } }
 })
+
+vi.mock("sonner", () => ({
+  toast: { success: mockToastSuccess, error: vi.fn(), info: vi.fn() },
+}))
 
 vi.mock("@/lib/queries", () => ({
   queryKeys: {
@@ -67,6 +72,7 @@ function renderDialog() {
 beforeEach(() => {
   localStorage.clear()
   mutateAsync.mockClear()
+  mockToastSuccess.mockClear()
 })
 
 afterEach(cleanup)
@@ -148,5 +154,26 @@ describe("ReleaseRow Pull button", () => {
       </MemoryRouter>,
     )
     expect(screen.getByRole("button", { name: "Pull proj from remote" })).toBeInTheDocument()
+  })
+
+  it("toasts the old branch when the pull auto-switched to the default branch", async () => {
+    const user = userEvent.setup()
+    mockRepos.value = [{ name: "proj", path: "/repos/proj", release_branch: "release" }]
+    mockStatuses.value = { proj: { ...STATUS, dirty: false, dirty_files: [] } }
+    mockRun.mockResolvedValueOnce({
+      state: "succeeded",
+      lines: [
+        { seq: 0, text: "pulled: proj" },
+        { seq: 1, text: "branch: main" },
+        { seq: 2, text: "switched_from: feat/old-branch" },
+      ],
+    })
+    renderCard()
+
+    await user.click(screen.getByRole("button", { name: "Pull proj from remote" }))
+
+    expect(mockToastSuccess).toHaveBeenCalledWith(
+      "Pulled proj from remote (switched from feat/old-branch to main)",
+    )
   })
 })

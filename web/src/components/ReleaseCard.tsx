@@ -177,9 +177,14 @@ function ReleaseRow({ name }: { name: string }) {
         run = await api.run(run_id)
       }
       if (run.state === "succeeded") {
-        toast.success(`Pulled ${data.repo} from remote`)
-        void qc.invalidateQueries({ queryKey: queryKeys.release(data.repo) })
-        void qc.invalidateQueries({ queryKey: queryKeys.repos })
+        const switched = run.lines
+          ?.map((l) => l.text.match(/^switched_from:\s*(\S+)\s*$/)?.[1])
+          .find(Boolean)
+        toast.success(
+          switched
+            ? `Pulled ${data.repo} from remote (switched from ${switched} to ${data.default_branch})`
+            : `Pulled ${data.repo} from remote`,
+        )
       } else if (run.state === "running") {
         toast.info(`Pull still running for ${data.repo}`)
       } else {
