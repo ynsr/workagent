@@ -49,7 +49,7 @@ These carry most of the "feel" and need no dependency: the `PILL` hover (done in
 | `react-markdown`, `remark-gfm` | run transcripts, plan viewer | Keep |
 | `lucide-react` | 61 files | Keep. AO is on `^1.17`, workagent on `0.525`: icons used (`LoaderCircle`, `GitMerge`, ...) exist in both; upgrade is optional |
 
-**Code-level, not package-level, cleanups unlocked by the redesign:** `components/ui/badge.tsx` is now unused by status display but still has 19 importers; `ui/alert.tsx` has 0 importers (dead code, safe to delete after confirmation); `FieldHelp` and the native `title=` tooltips can migrate to `Tooltip`.
+**Code-level, not package-level, cleanups unlocked by the redesign:** `components/ui/badge.tsx` is now unused by status display but still has 19 importers; unused `ui/alert.tsx` has been deleted and `FieldHelp`/`CheckRow` have been migrated to `Tooltip`. Follow-up work is tracked in [#181](https://github.com/ynsr/workagent/issues/181) (combined harness/model/effort picker) and [#182](https://github.com/ynsr/workagent/issues/182) (`cmdk`, `motion`, `react-accordion`, `react-tabs`, `dnd-kit`, `@mynaui/icons-react` migration).
 
 ## 5. Version drift worth knowing (not required)
 
@@ -59,5 +59,5 @@ AO runs React 19, Vite 8, Vitest 4, Lucide 1.x, Tailwind 4.3; workagent runs Rea
 
 - To reach AO's feel you need **no new libraries beyond the tooltip already added**. The rest is token, variant and copy discipline.
 - Add `@radix-ui/react-accordion` when you build progressive-disclosure sections; consider Geist only for exact parity.
-- Do not add `motion`, `zustand`, `cmdk`, `dnd-kit`, `radix-ui` monolith, or a second icon set.
+- Do not add `motion`, `zustand`, `cmdk`, `dnd-kit`, `radix-ui` monolith, or a second icon set unless intentionally scoped — note: [#182](https://github.com/ynsr/workagent/issues/182) tracks a user-requested follow-up to adopt `cmdk`, `motion`, `react-accordion`, `react-tabs`, `dnd-kit`, and `@mynaui/icons-react`.
 - No existing dependency becomes obsolete; revisit `react-select` after the picker lands.
