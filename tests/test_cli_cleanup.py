@@ -524,7 +524,7 @@ def test_merge_pr_treats_merged_mr_as_success(isolated_config, monkeypatch, caps
         raise HarnessError("glab mr merge https://git.jibit.cloud/x/-/merge_requests/1 "
                            "failed: ERROR\n\n  This merge request has already been merged.")
     monkeypatch.setattr(cli, "run_cmd", fake_run)
-    cli._merge_pr("https://git.jibit.cloud/x/-/merge_requests/1", squash=True, cwd="/tmp")
+    assert cli._merge_pr("https://git.jibit.cloud/x/-/merge_requests/1", squash=True, cwd="/tmp") is False
     assert "already merged/closed" in capsys.readouterr().err
 
 
@@ -823,6 +823,45 @@ def test_destroy_deleted_tears_down_files(isolated_config, tmp_path, monkeypatch
     assert "jira:IPG-9" not in links
     assert not wt.exists()
 
+def test_cleanup_same_run_merge_skips_backstop_push(isolated_config, monkeypatch):
+    """PR #170 review: `_merge_pr` deleting the remote skips `_cleanup_one` backstop."""
+    import workagent.cli_cleanup as _cc
+    store.record_link("jira:IPG-132", {"issue": "IPG-132", "worktree": "/tmp/wt",
+                                       "branch": "feat/132--x", "repo": "/tmp/proj",
+                                       "pr_url": "https://github.com/o/r/pull/132"})
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
+                        lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(cli, "_status_cells",
+                        lambda key, entry, refresh_pr=False: {"pr_data": {"state": "OPEN"}})
+    monkeypatch.setattr(cli, "_resolve_branch_pr",
+                        lambda branch, url, cwd, tool=None: (
+                            url, {"state": "OPEN", "mergeable": "MERGEABLE",
+                                  "merge_state": ""}, False))
+    monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("backstop should not run after _merge_pr deleted")))
+    seen = []
+    def _run(*a, **k):
+        seen.append(a)
+        if a[0] == "gh":
+            return ""
+        if a[0] == "git" and "--delete" in a:
+            return ""  # the _merge_pr remote delete
+        if a[:4] == ("git", "-C", "/tmp/proj", "branch"):
+            return ""  # local branch teardown
+        raise AssertionError(f"unexpected host call: {a}")
+    monkeypatch.setattr(cli, "run_cmd", _run)
+    monkeypatch.setattr(_cc, "_fresh_pr_state",
+                        lambda url, cwd: {"state": "merged", "mergeable": "",
+                                          "merge_state": ""})
+    out = cli._cleanup_one("jira:IPG-132", dict(store.load_links()["jira:IPG-132"]),
+                           force=True, yes=True, dry_run=False, json_output=True,
+                           hard_delete=True)
+    assert out["remote_deleted"] is True
+    assert [a for a in seen if a[0] == "git" and "--delete" in a] == [
+        ("git", "-C", "/tmp/proj", "push", "origin", "--delete", "feat/132--x")]
+
+
 def test_merge_pr_github_deletes_feature_branch(isolated_config, monkeypatch):
     """Issue #124 / #168: gh merge omits --delete-branch (breaks worktrees) and deletes remote via git push."""
     import workagent.cli_cleanup as _cc
@@ -831,10 +870,9 @@ def test_merge_pr_github_deletes_feature_branch(isolated_config, monkeypatch):
     monkeypatch.setattr(_cc, "_fresh_pr_state",
                         lambda url, cwd: {"state": "merged", "mergeable": "",
                                           "merge_state": ""})
-    cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp",
-                  source_branch="feat/124--x")
+    assert cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp",
+                         source_branch="feat/124--x") is True
     assert "--delete-branch" not in seen[0]
-    assert seen[1] == ("git", "-C", "/tmp", "push", "origin", "--delete", "feat/124--x")
 
 
 def test_merge_pr_github_keeps_long_lived_branch(isolated_config, monkeypatch):
@@ -845,10 +883,9 @@ def test_merge_pr_github_keeps_long_lived_branch(isolated_config, monkeypatch):
     monkeypatch.setattr(_cc, "_fresh_pr_state",
                         lambda url, cwd: {"state": "merged", "mergeable": "",
                                           "merge_state": ""})
-    cli._merge_pr("https://github.com/o/r/pull/9", squash=False, cwd="/tmp",
-                  source_branch="develop")
+    assert cli._merge_pr("https://github.com/o/r/pull/9", squash=False, cwd="/tmp",
+                         source_branch="develop") is False
     assert "--delete-branch" not in seen[0]
-    assert len(seen) == 1
 
 
 def test_merge_pr_github_remote_delete_gone_or_warned(isolated_config, monkeypatch, capsys):
@@ -867,21 +904,19 @@ def test_merge_pr_github_remote_delete_gone_or_warned(isolated_config, monkeypat
     monkeypatch.setattr(_cc, "_fresh_pr_state",
                         lambda url, cwd: {"state": "merged", "mergeable": "",
                                           "merge_state": ""})
-    cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp",
-                  source_branch="feat/168--x")
+    assert cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp",
+                         source_branch="feat/168--x") is True
     assert "warning:" not in capsys.readouterr().err
-
     err_msg[0] = "fatal: could not read Username"
-    cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp",
-                  source_branch="feat/168--x")
+    assert cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp",
+                         source_branch="feat/168--x") is False
     assert "warning: remote branch delete failed" in capsys.readouterr().err
 
     seen = []
     monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: seen.append(a) or "")
     monkeypatch.setattr(_cc, "_fresh_pr_state", lambda url, cwd: None)
-    cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp",
-                  source_branch="feat/168--x")
-    assert len(seen) == 1
+    assert cli._merge_pr("https://github.com/o/r/pull/9", squash=True, cwd="/tmp",
+                         source_branch="feat/168--x") is False
 
 
 def test_merge_pr_glab_removes_feature_source_branch(isolated_config, monkeypatch):

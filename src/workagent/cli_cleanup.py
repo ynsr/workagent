@@ -480,8 +480,9 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
     # stale/invalid plan — prodtest state no longer blocks teardown.
     if merge:
         try:
-            _cli._merge_pr(pr_url, squash=squash, cwd=host_cwd,
-                           source_branch=branch, no_squash=not squash)
+            remote_deleted = bool(_cli._merge_pr(
+                pr_url, squash=squash, cwd=host_cwd,
+                source_branch=branch, no_squash=not squash))
         except HarnessError as e:
             if force and not _pr_missing(str(e)):
                 # Rule 3: --force merge failed (e.g. conflicts) → leave the
@@ -522,7 +523,8 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
     deletable_remote = bool(branch) and _source_needs_squash(branch)
     head_ref = ""
     head_verified = False
-    if pr_url and (merged_now or fresh_state == "merged") and deletable_remote:
+    if (pr_url and (merged_now or fresh_state == "merged") and deletable_remote
+            and not remote_deleted):
         try:
             head_ref = (refs.fetch_pr_info(refs.parse_ref(pr_url),
                                            cwd=host_cwd).get("head_ref") or "")
@@ -531,7 +533,7 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
             eprint(f"warning: cannot verify PR head branch for {pr_url}: {e}; "
                    f"remote branch {branch!r} kept.")
             head_verified = False
-    delete_remote = (deletable_remote
+    delete_remote = (not remote_deleted and deletable_remote
         and (merged_now or fresh_state == "merged")
         and head_verified and head_ref == branch)
     if not hard_delete:
@@ -554,7 +556,7 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
         # delete above).
         deleted_at = store.soft_delete_worktree(key)
         tail = (" (soft-deleted; remote branch deleted; local state recoverable "
-                "within 7 days via `link undelete`)") if delete_remote else \
+                "within 7 days via `link undelete`)") if remote_deleted else \
                " (soft-deleted; recover within 7 days via `link undelete`)"
         if not json_output:
             eprint(f"{key}: cleaned{tail}")

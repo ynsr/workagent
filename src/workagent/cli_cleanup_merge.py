@@ -125,10 +125,15 @@ def _source_needs_squash(source_branch: str) -> bool:
 
 
 def _merge_pr(pr_url: str, squash: bool = True, cwd: str | None = None,
-              source_branch: str = "", no_squash: bool = False) -> None:
+              source_branch: str = "", no_squash: bool = False) -> bool:
     """Merge an open PR/MR (squash default); verify host state; raise on failure.
 
-    Already-merged/closed is tolerated (returns with a note) since callers
+    Returns True when this call deleted the remote branch itself (or it was
+    already gone — the caller's backstop push would fail the same way), so
+    the caller can skip its own `git push origin --delete`. False otherwise
+    (glab host-side deletes stay unconfirmed: the backstop remains owner).
+
+    Already-merged/closed is tolerated (returns False) since callers
     may decide on cached PR state up to the 3d status TTL: the host PR can
     have gone terminal without local tip movement. Other failures raise.
 
@@ -196,7 +201,7 @@ def _merge_pr(pr_url: str, squash: bool = True, cwd: str | None = None,
         if ("already merged" in msg or "already been merged" in msg
                 or "already closed" in msg or "already been closed" in msg):
             eprint(f"note: {pr_url} already merged/closed; skipping merge.")
-            return
+            return False
         if "405" in msg or "method not allowed" in msg:
             raise HarnessError(
                 f"{pr_url} merge refused by the host (405 Method Not Allowed): "
@@ -223,8 +228,12 @@ def _merge_pr(pr_url: str, squash: bool = True, cwd: str | None = None,
             _cli.run_cmd("git", "-C", str(cwd), "push", "origin",
                          "--delete", source_branch)
         except HarnessError as e:
-            if not _remote_branch_gone(str(e)):
-                eprint(f"warning: remote branch delete failed: {e}")
+            if _remote_branch_gone(str(e)):
+                return True  # already gone: a backstop push would fail identically
+            eprint(f"warning: remote branch delete failed: {e}")
+            return False
+        return True
+    return False
 
 
 def _close_issue(parsed: dict, force: bool) -> None:
