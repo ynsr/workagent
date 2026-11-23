@@ -1,12 +1,14 @@
 import { useState } from "react"
-import { Rocket, Wrench } from "lucide-react"
+import { useQueryClient } from "@tanstack/react-query"
+import { AlertCircle, Download, Rocket, Wrench } from "lucide-react"
+import { toast } from "sonner"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { CiBadge } from "@/components/StateBadge"
-import { EmptyState, ErrorState, RefreshOverlay } from "@/components/StatusFeedback"
-import { useRepos, useReleaseStatus, useReleaseStatuses } from "@/lib/queries"
+import { EmptyState, ErrorState, RefreshOverlay, errorText } from "@/components/StatusFeedback"
+import { queryKeys, useCreateRun, useRepos, useReleaseStatus, useReleaseStatuses } from "@/lib/queries"
 import { useConfirmedRun } from "@/components/RunActions"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { HarnessSelect } from "@/components/HarnessSelect"
@@ -15,7 +17,7 @@ import { RunModeSelect } from "@/components/StartForm"
 import type { RunMode } from "@/lib/launchConfig"
 import { extraPromptArgs } from "@/lib/launchConfig"
 import { modelEffortArgs } from "@/lib/harness"
-import type { ReleaseStatus } from "@/lib/api"
+import { api, type ReleaseStatus } from "@/lib/api"
 import { ReleaseButton } from "@/components/ReleaseButton"
 import { FieldHelp } from "@/components/FieldHelp"
 
@@ -130,7 +132,10 @@ function ReleaseReadyCount({ names }: { names: string[] }) {
 
 function ReleaseRow({ name }: { name: string }) {
   const { data, isPending, isError } = useReleaseStatus(name)
+  const createRun = useCreateRun()
+  const qc = useQueryClient()
   const [fixOpen, setFixOpen] = useState(false)
+  const [pulling, setPulling] = useState(false)
   if (isPending && !data) {
     return (
       <div className="flex items-center justify-between rounded-lg border p-3">
@@ -150,6 +155,44 @@ function ReleaseRow({ name }: { name: string }) {
   if (!data?.releasable) {
     return null
   }
+  const dirtyFiles = data.dirty_files ?? []
+  const isDirty = Boolean(data.dirty || dirtyFiles.length > 0)
+  const dirtyTooltip = dirtyFiles.length > 0
+    ? `Cannot pull: uncommitted changes in ${data.repo} (${dirtyFiles.slice(0, 5).join(", ")}${dirtyFiles.length > 5 ? `, +${dirtyFiles.length - 5} more` : ""})`
+    : `Cannot pull: local repo ${data.repo} has uncommitted changes`
+
+  async function handlePull() {
+    if (!data || isDirty || pulling) return
+    setPulling(true)
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "repo",
+        args: ["pull", data.repo],
+        confirm: false,
+      })
+      const deadline = Date.now() + 60_000
+      let run = await api.run(run_id)
+      while (run.state === "running" && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 400))
+        run = await api.run(run_id)
+      }
+      if (run.state === "succeeded") {
+        toast.success(`Pulled ${data.repo} from remote`)
+        void qc.invalidateQueries({ queryKey: queryKeys.release(data.repo) })
+        void qc.invalidateQueries({ queryKey: queryKeys.repos })
+      } else if (run.state === "running") {
+        toast.info(`Pull still running for ${data.repo}`)
+      } else {
+        const lastLine = run.lines?.map((l) => l.text).filter(Boolean).at(-1)
+        toast.error(lastLine ? `Pull failed for ${data.repo}: ${lastLine}` : `Pull failed for ${data.repo}`)
+      }
+    } catch (err) {
+      toast.error(errorText(err))
+    } finally {
+      setPulling(false)
+    }
+  }
+
   return (
     <div className="relative flex items-center justify-between gap-3 rounded-lg border p-3">
       <div className="min-w-0 flex-1">
@@ -170,6 +213,21 @@ function ReleaseRow({ name }: { name: string }) {
         </p>
       </div>
       <span className="inline-flex items-center gap-1">
+        <span title={isDirty ? dirtyTooltip : `Pull remote changes into local ${data.repo}`}>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Pull ${data.repo} from remote`}
+            title={isDirty ? dirtyTooltip : `Pull remote changes into local ${data.repo}`}
+            disabled={isDirty || pulling}
+            onClick={() => void handlePull()}
+            className="text-muted-foreground hover:bg-primary/10 hover:text-primary disabled:opacity-50"
+          >
+            <Download aria-hidden />
+            {pulling ? "Pulling…" : "Pull"}
+            {isDirty ? <AlertCircle aria-hidden className="text-amber-500" /> : null}
+          </Button>
+        </span>
         {(data.behind ?? 0) > 0 || data.ci === "failure" ? (
           <Button
             variant="ghost"

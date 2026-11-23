@@ -79,6 +79,7 @@ def start(
     no_status: bool = typer.Option(False, "--no-status", help="Skip automatic issue status transitions."),
     no_review: bool = typer.Option(False, "--no-review", help="Chain has no later review step: post-start status is 'done' when no PR/MR exists, else 'code review'."),
     plan: bool = typer.Option(False, "--plan", help="Plan mode: no implementation — brainstorm/grill the user, write spec+plan MD files, push and open a PR/MR, then stop."),
+    register_only: bool = typer.Option(False, "--register-only", help="Check preconditions and create/register the worktree without launching an AI harness."),
 ) -> None:
     """Create worktree from issue and launch harness.
 
@@ -100,7 +101,8 @@ def start(
                               launch, dry_run, yes, json_output,
                               session_file, extra_prompt, terminal=terminal,
                               env_file=env_file, acp=acp, run_mode=run_mode,
-                              model=model, effort=effort)
+                              model=model, effort=effort,
+                              register_only=register_only is True)
     links = store.load_links()
     bare = refs.issue_key(parsed)
     if parsed["tool"] == "jira" and repo:
@@ -159,6 +161,13 @@ def start(
             from . import issue_status as _st
             _issue_ref = str(existing.get("issue_url", "") or existing.get("issue", "") or ref)
             _st.set_issue_status(_issue_ref, "in progress", dry_run=False)
+        if register_only is True:
+            _print_result({"worktree_path": str(existing.get("worktree", "")),
+                           "branch": str(existing.get("branch", "")),
+                           "repo": str(existing.get("repo", "")),
+                           "key": key, "reused": True, "command": "start",
+                           "register_only": True}, json_output)
+            return
         _reuse_ref = str(existing.get("issue_url", "") or existing.get("issue", "") or ref)
         _launch_in_worktree(key, existing, harness, no_tty, launch,
                             session_file, json_output, extra_prompt,
@@ -260,14 +269,21 @@ def start(
     except HarnessError:
         pass
     child_paths = _fan_out_related(parsed, key, branch, base_branch, related_paths)
-    prompt = backend.prompt_for_issue(issue["title"], issue["body"], ref,
-                                      worktree=worktree, branch=branch,
-                                      related_paths=child_paths, plan_mode=plan)
-    prompt = append_extra_prompt(prompt, extra_prompt)
     result = {"worktree_path": worktree, "branch": branch,
               "base": detected_default if branch_mode else base_branch,
               "key": key, "harness": harness_name, "command": "start"}
     eprint(f"worktree: {worktree}  branch: {branch}")
+    if register_only is True:
+        if not no_status:
+            from . import issue_status as _st
+            _st.set_issue_status(link_url or ref, "in progress", dry_run=False)
+        result["register_only"] = True
+        _print_result(result, json_output)
+        return
+    prompt = backend.prompt_for_issue(issue["title"], issue["body"], ref,
+                                      worktree=worktree, branch=branch,
+                                      related_paths=child_paths, plan_mode=plan)
+    prompt = append_extra_prompt(prompt, extra_prompt)
     if is_exec_mode(launch, acp, run_mode):
         _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, str(r), no_tty, launch,
@@ -388,7 +404,8 @@ def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
                    session_file: str | None, extra_prompt: str | None = None,
                    terminal: bool = False, env_file: str | None = None,
                    acp: bool = False, run_mode: "str | None" = None,
-                   model: "str | None" = None, effort: "str | None" = None) -> None:
+                   model: "str | None" = None, effort: "str | None" = None,
+                   register_only: bool = False) -> None:
     """Start a coding session on a PR/MR source branch (branch-keyed row)."""
     repo_dir, base_branch, tid, outcome = trackers.resolve_repo_for_ref(
         parsed, repo, Path.cwd(), depth=depth, yes=yes, persist=not dry_run)
@@ -406,15 +423,19 @@ def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
         return
     key, worktree, branch = _ensure_branch_worktree(
         repo_dir, head_ref, base_branch, pr_url)
+    result = {"worktree_path": worktree, "branch": branch,
+              "base": base_branch, "key": key, "pr_url": pr_url,
+              "harness": harness_name, "command": "start"}
+    eprint(f"worktree: {worktree}  branch: {branch}")
+    if register_only:
+        result["register_only"] = True
+        _print_result(result, json_output)
+        return
     prompt = backend.prompt_for_issue(info.get("title", ""), info.get("body", ""),
                                       pr_url, worktree=worktree, branch=branch)
     if no_tty:
         prompt += "\n\nAfter task done, commit and push to the PR/MR source branch"
     prompt = append_extra_prompt(prompt, extra_prompt)
-    result = {"worktree_path": worktree, "branch": branch,
-              "base": base_branch, "key": key, "pr_url": pr_url,
-              "harness": harness_name, "command": "start"}
-    eprint(f"worktree: {worktree}  branch: {branch}")
     if is_exec_mode(launch, acp, run_mode):
         _guard_harness(key, worktree)
     _run_harness(harness_name, prompt, worktree, str(repo_dir), no_tty,

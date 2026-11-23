@@ -370,6 +370,8 @@ export interface ReleaseStatus {
   ci?: string
   ci_url?: string
   fetched_at?: string | null
+  dirty?: boolean
+  dirty_files?: string[]
 }
 /** One unlinked open PR/MR of GET /api/candidates. */
 export interface CandidatePr {

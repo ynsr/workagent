@@ -873,3 +873,34 @@ def test_start_accepts_pr_ref(isolated_config, tmp_path, monkeypatch):
     links = store.load_links()
     assert set(links) == {"feat/88"}
     assert links["feat/88"]["pr_url"] == url
+
+
+def test_start_register_only_skips_harness(tmp_path, monkeypatch, isolated_config):
+    """`start --register-only` creates/registers the worktree without launching a harness."""
+    from typer.testing import CliRunner
+    from workagent import cli, store
+    import json
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    monkeypatch.setattr(cli.trackers, "resolve_repo_for_ref",
+                        lambda *a, **k: (repo, "main", "github:o/r", "ok"))
+    monkeypatch.setattr(cli.refs, "fetch_issue", lambda *a, **k: {"title": "Register me", "body": ""})
+    monkeypatch.setattr(cli.gitwt, "start_worktree",
+                        lambda *a, **k: {"worktree_path": str(wt), "branch": "feat/99--register-me"})
+    monkeypatch.setattr(cli.repos, "register_repo", lambda *a, **k: None)
+    launched = []
+    monkeypatch.setattr(cli.backend, "launch", lambda *a, **k: launched.append(a))
+
+    runner = CliRunner()
+    r = runner.invoke(cli.app, ["start", "o/r#99", "--register-only", "--no-status", "--yes", "--json"])
+    assert r.exit_code == 0, r.output
+    data = json.loads(r.stdout)
+    assert data["register_only"] is True
+    assert data["worktree_path"] == str(wt)
+    assert launched == []
+    links = store.load_links()
+    assert "github:o/r#99" in links
+

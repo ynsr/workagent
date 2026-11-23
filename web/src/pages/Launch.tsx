@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils"
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
 import { HarnessSelect } from "@/components/HarnessSelect"
 import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
-import { ReviewActionSelect, RunModeSelect, StartFormFields, buildReviewArgs, buildStartArgs } from "@/components/StartForm"
+import { ReviewActionSelect, RunModeSelect, StartFormFields, buildRegisterArgs, buildReviewArgs, buildStartArgs, registerFlagList } from "@/components/StartForm"
 import { COPY, INITIAL, MODES, adhocArgs, extraPromptArgs, isPrShaped, runModeArgs, splitAdhocRefs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { loadLaunchPrefs, lookupStartPrefsByRepo, saveLaunchPrefs, saveStartPrefsForRepo } from "@/lib/launchPrefs"
@@ -525,6 +525,7 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
       ]
     }
     if (mode === "start") return buildStartArgs(form)
+    if (mode === "register") return buildRegisterArgs(form)
     if (mode === "adhoc") {
       return [
         ...splitAdhocRefs(form.ref),
@@ -587,11 +588,13 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
       return
     }
     const ok = await confirm({
-      action: mode === "adhoc" ? null : mode,
+      action: mode === "adhoc" ? null : mode === "register" ? "start" : mode,
       title: `Launch ${copy.label}`,
       description: copy.confirmDesc,
       warning:
-        mode === "adhoc"
+        mode === "register"
+          ? "Creates and registers the worktree without launching any AI harness. The server appends --yes."
+          : mode === "adhoc"
           ? "The agent runs now with auto-approve: headless (--launch) or in an OS terminal (--terminal). The server appends --yes."
           : mode === "sync"
             ? "The server appends --yes: sync runs without prompts (AI-assisted conflict resolution if the rebase/merge conflicts)."
@@ -600,19 +603,19 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
               : form.runMode === "terminal"
                 ? "The agent runs in an OS terminal opened on your desktop (workagent --terminal). The server appends --yes."
                 : "Preview only: prints the TTY harness command (no -p flag) without running the agent. The server appends --yes.",
-      confirmLabel: "Launch",
+      confirmLabel: mode === "register" ? "Register" : "Launch",
       details: [
         { label: mode === "adhoc" ? "Refs" : "Ref", value: mode === "adhoc" ? adhocRefs.join(", ") : refValue, mono: true },
         ...(mode === "adhoc" && form.adhocPrompt.trim() ? [{ label: "Prompt", value: form.adhocPrompt.trim().slice(0, 200) }] : []),
         ...(repoValue ? [{ label: "Repo", value: repoValue, mono: true }] : []),
-        { label: "Flags", value: flagList.join(", ") },
+        { label: "Flags", value: mode === "register" ? registerFlagList(form) : flagList.join(", ") },
       ],
     })
     if (!ok) return
     setSubmitting(true)
     try {
       const { run_id } = await createRun.mutateAsync({
-        command: mode,
+        command: mode === "register" ? "start" : mode,
         args: buildArgs(),
         confirm: true,
       })
@@ -666,8 +669,14 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
           </div>
         </CardHeader>
         <CardContent className="grid min-h-[420px] content-start gap-5">
-          {mode === "start" ? (
-            <StartFormFields form={form} onChange={update} idPrefix="launch" issuesNonce={mode === "start" && !refParam ? issuesNonce : undefined} />
+          {mode === "start" || mode === "register" ? (
+            <StartFormFields
+              form={form}
+              onChange={update}
+              idPrefix="launch"
+              issuesNonce={!refParam ? issuesNonce : undefined}
+              registerOnly={mode === "register"}
+            />
           ) : mode === "flow" ? (
             <FlowTabFields
               key={templateParam}
@@ -738,14 +747,14 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
                 description="Skip automatic tracker issue status transitions."
               />
             ) : null}
-            {mode !== "start" ? (
+            {mode !== "start" && mode !== "register" ? (
               <HarnessSelect
                 idPrefix="launch"
                 value={form.harness}
                 onChange={(v) => { update("harness", v); update("model", ""); update("effort", "") }}
               />
             ) : null}
-            {mode !== "start" ? (
+            {mode !== "start" && mode !== "register" ? (
               <ModelSelect
                 idPrefix="launch"
                 harness={form.harness}
@@ -753,7 +762,7 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
                 onChange={(v) => update("model", v)}
               />
             ) : null}
-            {mode !== "start" ? (
+            {mode !== "start" && mode !== "register" ? (
               <EffortSelect
                 idPrefix="launch"
                 harness={form.harness}
@@ -767,7 +776,12 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
             <p className="flex items-start gap-2">
               <ShieldAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
               <span>
-                {mode === "adhoc" ? (
+                {mode === "register" ? (
+                  <>
+                    Register only: checks preconditions and creates/registers the worktree without
+                    launching any AI harness (<span className="font-mono text-[13px]">--register-only</span>).
+                  </>
+                ) : mode === "adhoc" ? (
                   <>
                     The web server appends <span className="font-mono text-[13px]">--yes</span>, so the agent runs
                     now with auto-approve — headless (<span className="font-mono text-[13px]">--launch</span>), ACP
@@ -847,7 +861,7 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
               }
             >
                 <Rocket aria-hidden />
-                {submitting ? "Launching…" : `Launch ${copy.label}`}
+                {submitting ? "Launching…" : mode === "register" ? "Register" : `Launch ${copy.label}`}
               </Button>
           </div>
           </>

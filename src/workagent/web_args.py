@@ -80,7 +80,9 @@ SPECS: dict[str, dict[str, Any]] = {
              "key": lambda args: f"open:{_first_positional(args)}"},
     "register": {"confirm": False, "force": True,
                  "key": lambda args: f"register:{_first_positional(args, VAL_FLAGS['register'])}"},
-    "repo": {"confirm": False, "force": True, "key": "config"},
+    "repo": {"confirm": False, "force": True,
+             "key": lambda args: (f"repo:pull:{_first_positional(args[1:])}"
+                                  if args[:1] == ["pull"] else "config")},
     "link": {"confirm": False, "force": False, "confirm_subs": ("destroy-deleted",),
              "key": lambda args: ("link:" + args[0]
                                   if args[:1] in (["destroy-deleted"], ["purge-orphans"])
@@ -111,7 +113,7 @@ SPECS: dict[str, dict[str, Any]] = {
 
 BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "start": ("-L", "--no-tty", "--launch", "--terminal", "--acp", "--dry-run",
-              "--yes", "--json", "--no-status", "--no-review", "--plan"),
+              "--yes", "--json", "--no-status", "--no-review", "--plan", "--register-only"),
     "review": ("-L", "--no-tty", "--launch", "--terminal", "--acp", "--dry-run",
                "--yes", "--json", "--all", "--sequential", "--fix", "--fix-comments", "--then-fix-comments", "--use-review-session", "--force-all", "--post-comments", "--no-status"),
     "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--released", "--no-squash", "--hard-delete", "--merge-only", "--create-prodtest"),
@@ -122,6 +124,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "register": ("--yes", "-y", "--force", "--json"),
     "repo add": ("--json", "--fetch", "--no-fetch"),
     "repo list": ("--json", "--csv"),
+    "repo pull": ("--json",),
     "repo remove": ("--json", "--force"),
     "repo update": ("--json", "--auto-fix-ci", "--no-auto-fix-ci", "--auto-fix-reviews", "--no-auto-fix-reviews"),
     "link set": ("--json",),
@@ -217,6 +220,7 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "register": ("--key", "--issue", "--repo"),
     "release": ("--checks", "--diff", "--pre-release-timeout", "--ci-timeout", "--env-file", "--action", "--run-mode", "--extra-prompt", "--harness", "--model", "--effort"),
     "repo add": ("--name", "--path", "--tracker", "--release-branch", "--pre-release"),
+    "repo pull": (),
     "repo update": ("--default-branch", "--release-branch", "--pre-release", "--overlay-buttons"),
     "link remove": ("--repo",),
     "tracker add": ("--vendor", "--remote-url"),
@@ -255,7 +259,7 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "schedule remove": (),
     "schedule run-due": (),
 }
-SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "remove", "update"},
+SUBCOMMANDS: dict[str, set[str]] = {"repo": {"add", "list", "pull", "remove", "update"},
                                     "link": {"list", "set", "remove", "deactivate", "reactivate", "undelete", "destroy-deleted"},
                                     "tracker": {"add", "list", "remove", "update"},
                                     "action": {"add", "list", "show", "run", "update", "delete", "suggest-icon"},

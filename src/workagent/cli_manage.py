@@ -240,6 +240,21 @@ def repo_remove(
         _fail(f"unknown repo: {name}", EXIT_USAGE)
     _print_result({"removed": name}, json_output)
 
+
+@repo_app.command("pull")
+@_catch_harness_errors
+def repo_pull(
+    name: str = typer.Argument(..., autocompletion=_complete_repos, help="Registered repo name."),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+) -> None:
+    """Fast-forward pull the registered repo's local checkout from origin.
+
+    Refuses if the local checkout has uncommitted changes.
+    """
+    from . import repos_release as _rr
+    result = _rr.pull_repo(name)
+    _print_result(result, json_output)
+
 # ── tracker ───────────────────────────────────────────────────────────
 
 tracker_app = typer.Typer(help="Manage issue trackers (CRUD over the trackers table).",

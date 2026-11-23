@@ -1,10 +1,10 @@
-export type Mode = "start" | "review" | "sync" | "adhoc" | "flow"
+export type Mode = "start" | "register" | "review" | "sync" | "adhoc" | "flow"
 
 /** Issue #26: Launch never defaults to the serve CWD. The backend
  * `GET /api/default-repo?ref=` returns the linked-worktree repo for the
  * typed ref, else the single-linked repo — else no default. */
 
-export const MODES: readonly Mode[] = ["start", "review", "sync", "adhoc", "flow"]
+export const MODES: readonly Mode[] = ["start", "register", "review", "sync", "adhoc", "flow"]
 
 export const COPY: Record<
   Mode,
@@ -26,6 +26,14 @@ export const COPY: Record<
     refHint: "Issue key, OWNER/REPO#22, or a full issue URL.",
     refPlaceholder: "IPG-932, OWNER/REPO#22, or https://…/issues/22",
     confirmDesc: "Creates a worktree from the issue and launches the coding agent.",
+  },
+  register: {
+    label: "Register",
+    title: "Register a worktree",
+    description: "Issue key/URL or PR/MR ref/URL — creates and registers the worktree without launching an AI harness.",
+    refHint: "Issue key, OWNER/REPO#22, or PR/MR URL.",
+    refPlaceholder: "IPG-932, OWNER/REPO#22, or https://…/pull/33",
+    confirmDesc: "Checks preconditions and creates/registers the worktree without launching any AI harness.",
   },
   review: {
     label: "Review",
