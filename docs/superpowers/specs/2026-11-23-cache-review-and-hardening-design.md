@@ -214,3 +214,11 @@ Fix all 20 Critical, High, and Medium cache bugs across Workagent's backend (`sr
   - `Dashboard.test.tsx`: single `/api/status` request shared by active/inactive/deleted tables.
   - `ReleaseCard.test.tsx`: manual Refresh button sends `?force=true` and updates cache.
   - `useRun("")` disabled test + `WorktreeWorkspace` SSE terminal sync test.
+
+---
+
+## 8. Open Risks & Mitigations
+
+- **SQLite migration & CDC trigger volume:** Adding 7 tables to `CDC_TABLES` increases `change_log` writes slightly. **Mitigation:** Phase 1's atomic single-row `pr_cache` upserts MUST land before (or alongside) Phase 5 so `pr_cache` no longer emits `2N` events per update, and `useServerEvents.ts` debounces bursts over a 150ms window.
+- **API contract drift during execution:** Adding `?force=true` to `/api/candidates/prs` and `/api/release/status` touches both backend routes and frontend clients. **Mitigation:** Update `web/API_CONTRACT.md`, `web/FEATURE_INVENTORY.md`, frontend controls, and `tests/test_webapp.py` in the same milestone/PR and verify `test_specs_mirror_cli_flags` stays green.
+- **Short-lived CLI vs `serve` SWR behavior in existing tests:** Switching `swr.is_background_enabled()` to default `False` in CLI mode (and `True` only in `webapp.create_app()`) may affect existing unit tests that expect background threads to spawn without `create_app()`. **Mitigation:** Tests exercising background SWR directly pass `allow_background=True` or call `swr.set_background_enabled(True)` explicitly, and fixtures reset it to avoid cross-test bleed.

@@ -27,6 +27,12 @@
 - **Concurrent multi-writer updates to `pr_cache`:** Parallel `cache_pr_status`, `cache_ci_status`, and `cache_review_stats` on different branches must not lose updates or emit `2N` CDC rows — pinned by test in Task 1.
 - **Persisted `localStorage` `workagent.issuesFilter` (`range: "365"` or `scope.all: true`) on mount:** Mounting `CandidatesCard` must NOT send `force=true` or fire duplicate requests for `days=365&mine=true` — pinned by test in Task 12.
 
+## Open Risks & Mitigations
+
+- **SQLite migration & CDC trigger volume:** Adding 7 tables to `CDC_TABLES` (Task 10) increases `change_log` writes slightly. Execute Task 1 (atomic single-row `pr_cache` upserts) before Task 10 so `pr_cache` no longer emits `2N` events per update, and pair Task 10 with Task 11's 150ms debounced invalidation queue in `useServerEvents.ts`.
+- **API contract drift during execution:** Adding `?force=true` to `/api/candidates/prs` (Task 6) and `/api/release/status` (Task 8) must stay in lockstep with `web/API_CONTRACT.md`, `web/FEATURE_INVENTORY.md`, frontend controls (Task 12), and `tests/test_webapp.py::test_specs_mirror_cli_flags`.
+- **Short-lived CLI vs `serve` SWR in existing tests:** Defaulting `swr.is_background_enabled()` to `False` (Task 2) can break existing unit tests that expect background threads to run without calling `webapp.create_app()`. Update affected SWR tests to pass `allow_background=True` or explicitly set/reset `swr.set_background_enabled(...)` in fixtures.
+
 ---
 
 ## Phase 1: Core SQLite & SWR Primitives
