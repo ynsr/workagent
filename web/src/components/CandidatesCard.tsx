@@ -155,7 +155,7 @@ export function CandidatesCard() {
       details: input.args.map((a, i) => ({ label: i === 0 ? "Ref" : `Arg ${i}`, value: a, mono: true })),
       command: input.command,
       args: input.args,
-      successLabel: "started",
+      successLabel: input.args.includes("--register-only") ? "registered" : "started",
     })
   }
 

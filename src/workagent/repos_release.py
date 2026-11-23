@@ -246,6 +246,8 @@ def pull_repo(repo_name: str) -> dict:
         raise HarnessError(f"repo {repo_name} has uncommitted changes: {preview}{more}", exit_code=1)
     run_cmd("git", "-C", str(path), "fetch", "origin")
     branch = (run_cmd("git", "-C", str(path), "branch", "--show-current", echo=False) or "").strip()
+    if not branch:
+        raise HarnessError(f"repo {repo_name} is in detached HEAD state", exit_code=1)
     try:
         out = run_cmd("git", "-C", str(path), "pull", "--ff-only") or ""
     except HarnessError as exc:

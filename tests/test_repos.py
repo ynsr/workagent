@@ -141,3 +141,9 @@ def test_release_status_dirty_and_pull_repo(tmp_path, isolated_config):
     with pytest.raises(HarnessError, match="uncommitted changes"):
         repos_release.pull_repo("proj")
 
+    # Detached HEAD: pull_repo refuses with clear message
+    (work / "dirty.txt").unlink()
+    _git("checkout", "-q", "--detach", "HEAD", cwd=work)
+    with pytest.raises(HarnessError, match="detached HEAD"):
+        repos_release.pull_repo("proj")
+

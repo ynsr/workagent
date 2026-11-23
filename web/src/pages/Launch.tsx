@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils"
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
 import { HarnessSelect } from "@/components/HarnessSelect"
 import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
-import { ReviewActionSelect, RunModeSelect, StartFormFields, buildRegisterArgs, buildReviewArgs, buildStartArgs } from "@/components/StartForm"
+import { ReviewActionSelect, RunModeSelect, StartFormFields, buildRegisterArgs, buildReviewArgs, buildStartArgs, registerFlagList } from "@/components/StartForm"
 import { COPY, INITIAL, MODES, adhocArgs, extraPromptArgs, isPrShaped, runModeArgs, splitAdhocRefs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { loadLaunchPrefs, lookupStartPrefsByRepo, saveLaunchPrefs, saveStartPrefsForRepo } from "@/lib/launchPrefs"
@@ -543,14 +543,6 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
   const adhocRefs = splitAdhocRefs(form.ref)
   const flagList = mode === "sync"
     ? [form.merge ? "--merge (local merge)" : "remote rebase (default)", harnessFlag ? `--harness ${harnessFlag}` : null, form.model.trim() ? `--model ${form.model.trim()}` : null, form.effort.trim() ? `--effort ${form.effort.trim()}` : null, extra ? `--extra-prompt ${extra}` : null].filter((v): v is string => v !== null)
-    : mode === "register"
-      ? [
-          "--register-only (no AI harness)",
-          repoValue ? `--repo ${repoValue}` : "repo: pick a repo",
-          `--depth ${form.depth.trim() || "7"}`,
-          form.base.trim() ? `--base ${form.base.trim()}` : "base: repo default",
-          form.noStatus ? "--no-status" : null,
-        ].filter((v): v is string => v !== null)
     : mode === "adhoc"
       ? [
           form.adhocPrompt.trim() ? `--prompt ${form.adhocPrompt.trim().slice(0, 80)}` : "prompt: required",
@@ -616,7 +608,7 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
         { label: mode === "adhoc" ? "Refs" : "Ref", value: mode === "adhoc" ? adhocRefs.join(", ") : refValue, mono: true },
         ...(mode === "adhoc" && form.adhocPrompt.trim() ? [{ label: "Prompt", value: form.adhocPrompt.trim().slice(0, 200) }] : []),
         ...(repoValue ? [{ label: "Repo", value: repoValue, mono: true }] : []),
-        { label: "Flags", value: flagList.join(", ") },
+        { label: "Flags", value: mode === "register" ? registerFlagList(form) : flagList.join(", ") },
       ],
     })
     if (!ok) return
