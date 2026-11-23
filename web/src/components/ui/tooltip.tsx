@@ -3,7 +3,28 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip"
 
 import { cn } from "@/lib/utils"
 
-/** One-phrase tooltip for icon-only controls and disabled hints (design/02 section 2.8). */
+const TooltipProviderContext = React.createContext(false)
+
+/** Shared provider so adjacent tooltips reuse Radix's skipDelayDuration window. */
+export function TooltipProvider({
+  delayDuration = 400,
+  skipDelayDuration = 300,
+  children,
+}: {
+  delayDuration?: number
+  skipDelayDuration?: number
+  children: React.ReactNode
+}) {
+  return (
+    <TooltipProviderContext.Provider value={true}>
+      <TooltipPrimitive.Provider delayDuration={delayDuration} skipDelayDuration={skipDelayDuration}>
+        {children}
+      </TooltipPrimitive.Provider>
+    </TooltipProviderContext.Provider>
+  )
+}
+
+/** One-phrase tooltip for icon-only controls and disabled hints (design/02 section 2.8). Keyboard-focusable via the trigger. */
 export function Tooltip({
   label,
   content,
@@ -17,32 +38,37 @@ export function Tooltip({
   side?: "top" | "bottom" | "left" | "right"
   className?: string
 }) {
+  const hasProvider = React.useContext(TooltipProviderContext)
   const tooltipContent = label ?? content
   if (!tooltipContent) return <>{children}</>
 
   const triggerChild =
     className || !React.isValidElement(children) ? (
-      <span className={cn("inline-flex", className)}>{children}</span>
+      <span
+        className={cn("inline-flex", className)}
+        title={typeof tooltipContent === "string" ? tooltipContent : undefined}
+      >
+        {children}
+      </span>
     ) : (
       children
     )
 
-  return (
-    <TooltipPrimitive.Provider delayDuration={400}>
-      <TooltipPrimitive.Root>
-        <TooltipPrimitive.Trigger asChild>{triggerChild}</TooltipPrimitive.Trigger>
-        <TooltipPrimitive.Portal>
-          <TooltipPrimitive.Content
-            side={side}
-            sideOffset={6}
-            className={cn(
-              "z-50 max-w-xs rounded-md bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md ring-1 ring-foreground/5",
-            )}
-          >
-            {tooltipContent}
-          </TooltipPrimitive.Content>
-        </TooltipPrimitive.Portal>
-      </TooltipPrimitive.Root>
-    </TooltipPrimitive.Provider>
+  const tooltip = (
+    <TooltipPrimitive.Root>
+      <TooltipPrimitive.Trigger asChild>{triggerChild}</TooltipPrimitive.Trigger>
+      <TooltipPrimitive.Portal>
+        <TooltipPrimitive.Content
+          side={side}
+          sideOffset={6}
+          className={cn(
+            "z-50 max-w-xs rounded-md bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md ring-1 ring-foreground/5",
+          )}
+        >
+          {tooltipContent}
+        </TooltipPrimitive.Content>
+      </TooltipPrimitive.Portal>
+    </TooltipPrimitive.Root>
   )
+  return hasProvider ? tooltip : <TooltipProvider>{tooltip}</TooltipProvider>
 }

@@ -37,7 +37,7 @@ describe("HarnessPicker disabled state (issue #112 / #181)", () => {
     modelBtn.focus()
     const tooltip = await screen.findByRole("tooltip")
     expect(tooltip).toHaveTextContent(/failed/)
-    expect(modelBtn).toHaveAttribute("aria-describedby", tooltip.id)
+    expect(modelBtn.parentElement).toHaveAttribute("aria-describedby", tooltip.id)
 
     const effortBtn = screen.getByRole("button", { name: "Effort" })
     expect(effortBtn).toHaveAttribute("aria-disabled", "true")
