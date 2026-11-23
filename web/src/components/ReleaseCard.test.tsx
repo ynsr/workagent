@@ -5,11 +5,11 @@ import { MemoryRouter } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { FixDefaultDialog, ReleaseCard } from "@/components/ReleaseCard"
 import { ConfirmProvider } from "@/lib/confirm"
-import type { ReleaseStatus } from "@/lib/api"
+import type { ReleaseStatus, RunLine } from "@/lib/api"
 
 const { mutateAsync, mockRun, mockToastSuccess, mockConfig, mockRepos, mockStatuses } = vi.hoisted(() => ({
   mutateAsync: vi.fn(() => Promise.resolve({ run_id: "run-1" })),
-  mockRun: vi.fn(() => Promise.resolve({ state: "succeeded", lines: [] })),
+  mockRun: vi.fn(() => Promise.resolve({ state: "succeeded", lines: [] as RunLine[] })),
   mockToastSuccess: vi.fn(),
   mockConfig: {
     default_harness: "agy",
@@ -94,8 +94,7 @@ describe("FixDefaultDialog harness", () => {
   })
 })
 
-function renderCard() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+function renderCard(client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return render(
     <MemoryRouter>
       <QueryClientProvider client={client}>
@@ -108,11 +107,13 @@ function renderCard() {
 }
 
 describe("ReleaseRow Pull button", () => {
-  it("pulls remote changes when local repo is clean", async () => {
+  it("pulls remote changes when local repo is clean and invalidates queries", async () => {
     const user = userEvent.setup()
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const invalidateSpy = vi.spyOn(client, "invalidateQueries")
     mockRepos.value = [{ name: "proj", path: "/repos/proj", release_branch: "release" }]
     mockStatuses.value = { proj: { ...STATUS, dirty: false, dirty_files: [] } }
-    renderCard()
+    renderCard(client)
 
     const pullBtn = screen.getByRole("button", { name: "Pull proj from remote" })
     expect(pullBtn).toBeEnabled()
@@ -124,6 +125,8 @@ describe("ReleaseRow Pull button", () => {
       confirm: false,
     })
     expect(mockRun).toHaveBeenCalledWith("run-1")
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["release", "proj"] })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["repos"] })
   })
 
   it("disables Pull with (!) tooltip when local repo has uncommitted changes", () => {

@@ -185,6 +185,8 @@ function ReleaseRow({ name }: { name: string }) {
             ? `Pulled ${data.repo} from remote (switched from ${switched} to ${data.default_branch})`
             : `Pulled ${data.repo} from remote`,
         )
+        void qc.invalidateQueries({ queryKey: queryKeys.release(data.repo) })
+        void qc.invalidateQueries({ queryKey: queryKeys.repos })
       } else if (run.state === "running") {
         toast.info(`Pull still running for ${data.repo}`)
       } else {
