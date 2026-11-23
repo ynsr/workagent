@@ -1,5 +1,7 @@
 # Changelog
 ## Unreleased
+- Auto-recover repo pull from stale or multi-branch tracking errors and hide the Pull button when local matches remote [178]
+- Repo pull names the previous branch in the success notice when it auto-switches to the default, and keeps tracking remotes pointed at non-origin hosts [178]
 - Prevent main repo folders from being deleted during hard cleanup or destroy, and ensure scoped AI session directories are fully removed [169]
 - Fix GitHub PR cleanup failing in linked worktrees after merge [168]
 - Cleanup deletes merged feature branches from the remote, including external merges and soft-deletes; long-lived branches are kept [124]

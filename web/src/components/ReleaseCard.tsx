@@ -177,9 +177,14 @@ function ReleaseRow({ name }: { name: string }) {
         run = await api.run(run_id)
       }
       if (run.state === "succeeded") {
-        toast.success(`Pulled ${data.repo} from remote`)
-        void qc.invalidateQueries({ queryKey: queryKeys.release(data.repo) })
-        void qc.invalidateQueries({ queryKey: queryKeys.repos })
+        const switched = run.lines
+          ?.map((l) => l.text.match(/^switched_from:\s*(\S+)\s*$/)?.[1])
+          .find(Boolean)
+        toast.success(
+          switched
+            ? `Pulled ${data.repo} from remote (switched from ${switched} to ${data.default_branch})`
+            : `Pulled ${data.repo} from remote`,
+        )
       } else if (run.state === "running") {
         toast.info(`Pull still running for ${data.repo}`)
       } else {
@@ -213,21 +218,23 @@ function ReleaseRow({ name }: { name: string }) {
         </p>
       </div>
       <span className="inline-flex items-center gap-1">
-        <span title={isDirty ? dirtyTooltip : `Pull remote changes into local ${data.repo}`}>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Pull ${data.repo} from remote`}
-            title={isDirty ? dirtyTooltip : `Pull remote changes into local ${data.repo}`}
-            disabled={isDirty || pulling}
-            onClick={() => void handlePull()}
-            className="text-muted-foreground hover:bg-primary/10 hover:text-primary disabled:opacity-50"
-          >
-            <Download aria-hidden />
-            {pulling ? "Pulling…" : "Pull"}
-            {isDirty ? <AlertCircle aria-hidden className="text-amber-500" /> : null}
-          </Button>
-        </span>
+        {data.has_remote_diff !== false ? (
+          <span title={isDirty ? dirtyTooltip : `Pull remote changes into local ${data.repo}`}>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Pull ${data.repo} from remote`}
+              title={isDirty ? dirtyTooltip : `Pull remote changes into local ${data.repo}`}
+              disabled={isDirty || pulling}
+              onClick={() => void handlePull()}
+              className="text-muted-foreground hover:bg-primary/10 hover:text-primary disabled:opacity-50"
+            >
+              <Download aria-hidden />
+              {pulling ? "Pulling…" : "Pull"}
+              {isDirty ? <AlertCircle aria-hidden className="text-amber-500" /> : null}
+            </Button>
+          </span>
+        ) : null}
         {(data.behind ?? 0) > 0 || data.ci === "failure" ? (
           <Button
             variant="ghost"

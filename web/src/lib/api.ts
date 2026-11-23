@@ -372,6 +372,7 @@ export interface ReleaseStatus {
   fetched_at?: string | null
   dirty?: boolean
   dirty_files?: string[]
+  has_remote_diff?: boolean
 }
 /** One unlinked open PR/MR of GET /api/candidates. */
 export interface CandidatePr {

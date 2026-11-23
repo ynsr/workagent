@@ -4,8 +4,7 @@ Split out of repos.py to keep both modules under the 500-line project
 limit. Public surface is re-exported by repos.py for compatibility.
 """
 
-from __future__ import annotations
-
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -231,6 +230,63 @@ def _dirty_files(path: str) -> list[str]:
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
+def _ref_exists(path: Path, ref: str) -> bool:
+    """True when *ref* resolves in *path*."""
+    try:
+        run_cmd("git", "-C", str(path), "rev-parse", "--verify", "--quiet", ref, echo=False)
+        return True
+    except (HarnessError, OSError):
+        return False
+
+
+def _has_remote_diff(path: str, default_branch: str) -> bool:
+    """True when local HEAD differs from its remote tracking branch (or unknown)."""
+    p = Path(path).expanduser()
+    if not path or not p.is_dir():
+        return True
+    try:
+        branch = (run_cmd("git", "-C", str(p), "branch", "--show-current", echo=False) or "").strip()
+        target = branch or default_branch
+        if not target or not _ref_exists(p, f"refs/remotes/origin/{target}"):
+            return True
+        local_sha = (run_cmd("git", "-C", str(p), "rev-parse", "HEAD", echo=False) or "").strip()
+        remote_sha = (run_cmd("git", "-C", str(p), "rev-parse", f"refs/remotes/origin/{target}", echo=False) or "").strip()
+        if not local_sha or not remote_sha:
+            return True
+        return local_sha != remote_sha
+    except (HarnessError, OSError):
+        return True
+
+
+def _normalize_tracking(path: Path, branch: str) -> None:
+    """Repair ``branch.<branch>`` tracking so ``origin/<branch>`` merges cleanly.
+
+    Fixes duplicated ``branch.<branch>.merge`` entries (unambiguous
+    corruption — ``git pull`` refuses with "more than one value"). A remote
+    deliberately pointed at something other than ``origin`` is left alone:
+    retargeting it would silently change where the user's next push/pull
+    goes. The explicit ``merge origin/<branch>`` in :func:`pull_repo`
+    still fetches from origin for this pull only.
+    """
+    expected_merge = f"refs/heads/{branch}"
+    try:
+        remote = (run_cmd("git", "-C", str(path), "config", "--get", f"branch.{branch}.remote", echo=False) or "").strip()
+    except HarnessError:
+        remote = ""
+    try:
+        merges_raw = run_cmd("git", "-C", str(path), "config", "--get-all", f"branch.{branch}.merge", echo=False) or ""
+        merges = [line.strip() for line in merges_raw.splitlines() if line.strip()]
+    except HarnessError:
+        merges = []
+    if remote and remote != "origin":
+        print(f"warning: branch {branch} tracks remote {remote!r}, leaving it; pulling from origin this time",
+              file=sys.stderr)
+    elif remote != "origin":
+        run_cmd("git", "-C", str(path), "config", f"branch.{branch}.remote", "origin", echo=False)
+    if merges != [expected_merge]:
+        run_cmd("git", "-C", str(path), "config", "--replace-all", f"branch.{branch}.merge", expected_merge, echo=False)
+
+
 def pull_repo(repo_name: str) -> dict:
     """Fast-forward pull *repo_name*'s local checkout from origin."""
     info = store.load_repos().get(repo_name)
@@ -244,17 +300,24 @@ def pull_repo(repo_name: str) -> dict:
         preview = ", ".join(dirty[:5])
         more = f" (+{len(dirty) - 5} more)" if len(dirty) > 5 else ""
         raise HarnessError(f"repo {repo_name} has uncommitted changes: {preview}{more}", exit_code=1)
-    run_cmd("git", "-C", str(path), "fetch", "origin")
+    run_cmd("git", "-C", str(path), "fetch", "--prune", "origin")
     branch = (run_cmd("git", "-C", str(path), "branch", "--show-current", echo=False) or "").strip()
     if not branch:
         raise HarnessError(f"repo {repo_name} is in detached HEAD state", exit_code=1)
-    try:
-        out = run_cmd("git", "-C", str(path), "pull", "--ff-only") or ""
-    except HarnessError as exc:
-        if branch and ("no tracking information" in str(exc).lower() or "set-upstream" in str(exc).lower()):
-            out = run_cmd("git", "-C", str(path), "pull", "--ff-only", "origin", branch) or ""
+    default_branch = str(info.get("default_branch", "") or "")
+    switched_from = ""
+    if not _ref_exists(path, f"refs/remotes/origin/{branch}"):
+        if default_branch and branch != default_branch and _ref_exists(path, f"refs/remotes/origin/{default_branch}"):
+            if _ref_exists(path, f"refs/heads/{default_branch}"):
+                run_cmd("git", "-C", str(path), "checkout", default_branch)
+            else:
+                run_cmd("git", "-C", str(path), "checkout", "-b", default_branch, f"origin/{default_branch}")
+            switched_from = branch
+            branch = default_branch
         else:
-            raise
+            raise HarnessError(f"remote branch origin/{branch} not found", exit_code=1)
+    _normalize_tracking(path, branch)
+    out = run_cmd("git", "-C", str(path), "merge", "--ff-only", f"origin/{branch}") or ""
     from . import store_sqlite as _sq
     try:
         db = _sq.db_path()
@@ -262,7 +325,8 @@ def pull_repo(repo_name: str) -> dict:
             conn.execute("DELETE FROM release_diff_cache WHERE repo_key = ?", (repo_name,))
     except Exception:
         pass
-    return {"pulled": repo_name, "path": str(path), "branch": branch, "output": out.strip()}
+    return {"pulled": repo_name, "path": str(path), "branch": branch,
+            "switched_from": switched_from, "output": out.strip()}
 
 
 def release_status(repo_name: str, force: bool = False, background: bool = False) -> dict:
@@ -288,7 +352,7 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
     base = {"repo": repo_name, "path": "", "default_branch": "", "release_branch": "",
             "diff_count": 0, "behind": 0, "releasable": False, "reason": "", "stale": False,
             "ci": "", "ci_url": "", "fetched_at": None, "releasing": False,
-            "dirty": False, "dirty_files": []}
+            "dirty": False, "dirty_files": [], "has_remote_diff": True}
     if base_dir:
         try:
             base["releasing"] = _lock.locked(_lock.lock_path(base_dir, repo_name))
@@ -300,8 +364,9 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
     default = str(info.get("default_branch", "") or "")
     release = str(info.get("release_branch", "") or "")
     dirty = _dirty_files(str(info.get("path", "")))
+    has_remote_diff = _has_remote_diff(str(info.get("path", "")), default)
     base.update(path=str(info.get("path", "")), default_branch=default, release_branch=release,
-                dirty=bool(dirty), dirty_files=dirty)
+                dirty=bool(dirty), dirty_files=dirty, has_remote_diff=has_remote_diff)
     if not release:
         base["reason"] = "no release branch"
         return base
@@ -339,6 +404,7 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
             behind = 0
         base.update(diff_count=count, behind=behind, releasable=count > 0, stale=stale,
                     reason="" if count > 0 else "already in sync",
+                    has_remote_diff=_has_remote_diff(str(info.get("path", "")), default),
                     fetched_at=base.get("fetched_at") or (fetched_at or "") or None)
         if reason:
             base["reason"] = reason
