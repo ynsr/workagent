@@ -203,6 +203,12 @@ issue-scoped ledger attribution that survives teardown.
   table/detail): `success | failure | running | not_started` via
   `refs.fetch_ci_status` (soft-fail: `None` + stderr warning, nothing
   cached); Rich tables render ✓/✗/●, `-` otherwise.
+  Side-CI guard (#184): GitLab side pipelines (a `merge_request_event`
+  pipeline whose jobs are all security/trivy scans) never shadow the main
+  pipeline of the same commit; per-repo `ci_ignore` globs
+  (`repos.ci_ignore`, `repo update --ci-ignore "trivy:*,security/*"`)
+  additionally drop matching sources/jobs/checks in PR, branch, and
+  release-SHA lookups.
 - Status `harness` column (tables, `status <ref>` detail, `/api/status`,
   web table/detail): `"<name> <pid>"` while a harness is live on the
   worktree, `""` (`—` in Rich tables) otherwise — `_harness_cell` in

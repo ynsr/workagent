@@ -836,3 +836,148 @@ def test_fetch_pr_review_details_glab(monkeypatch):
     assert t1["file"] == "src/b.py" and t1["line"] == 33 and not t1["resolved"]
     t2 = next(t for t in threads if t["thread_id"] == "disc-2")
     assert t2["is_bot"] and t2["resolved"]
+
+
+def test_fetch_ci_glab_ignores_side_ci_security_when_main_fails(monkeypatch):
+    """Issue #184: main CI (#81906) fails while later side-CI (#81907, security) passes."""
+    def fake(*a, **k):
+        api = a[2]
+        if api.endswith("/pipelines"):
+            return json.dumps([
+                {"id": 81907, "status": "success", "sha": "a9892b0e",
+                 "source": "merge_request_event",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/pipelines/81907"},
+                {"id": 81906, "status": "failed", "sha": "a9892b0e",
+                 "source": "push",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/pipelines/81906"},
+            ])
+        if "/pipelines/81907/jobs" in api:
+            return json.dumps([
+                {"id": 9001, "name": "trivy:source", "stage": "security", "status": "success",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/jobs/9001"},
+            ])
+        if "/pipelines/81906/jobs" in api:
+            return json.dumps([
+                {"id": 8001, "name": "test", "stage": "check", "status": "failed",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/jobs/8001"},
+                {"id": 8002, "name": "trivy:source", "stage": "security", "status": "success",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/jobs/8002"},
+            ])
+        return "[]"
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    state, url, checks = refs.fetch_ci_details(
+        "glab", "https://git.jibit.cloud/server/projectx/-/merge_requests/1823", "/repo"
+    )
+    assert state == "failure"
+    assert url == "https://git.jibit.cloud/server/projectx/-/jobs/8001"
+    assert [c["name"] for c in checks] == ["test", "trivy:source"]
+
+
+def test_fetch_ci_glab_ignores_side_ci_when_main_passes(monkeypatch):
+    """Issue #184: main CI passes while later side-CI fails -> still report success + main link."""
+    def fake(*a, **k):
+        api = a[2]
+        if api.endswith("/pipelines"):
+            return json.dumps([
+                {"id": 81907, "status": "failed", "sha": "a9892b0e",
+                 "source": "merge_request_event",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/pipelines/81907"},
+                {"id": 81906, "status": "success", "sha": "a9892b0e",
+                 "source": "push",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/pipelines/81906"},
+            ])
+        if "/pipelines/81907/jobs" in api:
+            return json.dumps([
+                {"id": 9001, "name": "trivy:source", "stage": "security", "status": "failed",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/jobs/9001"},
+            ])
+        if "/pipelines/81906/jobs" in api:
+            return json.dumps([
+                {"id": 8001, "name": "test", "stage": "check", "status": "success",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/jobs/8001"},
+            ])
+        return "[]"
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    state, url = refs.fetch_ci(
+        "glab", "https://git.jibit.cloud/server/projectx/-/merge_requests/1823", "/repo"
+    )
+    assert state == "success"
+    assert url == "https://git.jibit.cloud/server/projectx/-/jobs/8001"
+
+
+def test_fetch_ci_glab_falls_back_when_all_pipelines_match_side_ci(monkeypatch):
+    """If only the side-CI pipeline exists for the SHA, fall back to it instead of not_started."""
+    def fake(*a, **k):
+        api = a[2]
+        if api.endswith("/pipelines"):
+            return json.dumps([
+                {"id": 81907, "status": "success", "sha": "a9892b0e",
+                 "source": "merge_request_event",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/pipelines/81907"},
+            ])
+        if "/pipelines/81907/jobs" in api:
+            return json.dumps([
+                {"id": 9001, "name": "trivy:source", "stage": "security", "status": "success",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/jobs/9001"},
+            ])
+        return "[]"
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    state, url = refs.fetch_ci(
+        "glab", "https://git.jibit.cloud/server/projectx/-/merge_requests/1823", "/repo"
+    )
+    assert state == "success"
+    assert url == "https://git.jibit.cloud/server/projectx/-/jobs/9001"
+
+
+def test_fetch_ci_branch_glab_ignores_side_ci(monkeypatch):
+    """Branch CI lookup also ignores later side-CI pipelines on the same SHA."""
+    def fake(*a, **k):
+        api = a[2]
+        if "/pipelines?" in api:
+            return json.dumps([
+                {"id": 81907, "status": "success", "sha": "a9892b0e",
+                 "source": "merge_request_event",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/pipelines/81907"},
+                {"id": 81906, "status": "failed", "sha": "a9892b0e",
+                 "source": "push",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/pipelines/81906"},
+            ])
+        if "/pipelines/81907/jobs" in api:
+            return json.dumps([
+                {"id": 9001, "name": "trivy:source", "stage": "security", "status": "success",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/jobs/9001"},
+            ])
+        if "/pipelines/81906/jobs" in api:
+            return json.dumps([
+                {"id": 8001, "name": "test", "stage": "check", "status": "failed",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/jobs/8001"},
+            ])
+        return "[]"
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    from workagent import refs_ci
+    state, url = refs_ci.fetch_branch_ci(
+        "glab", "https://git.jibit.cloud/server/projectx.git", "feat/x", "/repo"
+    )
+    assert state == "failure"
+    assert url == "https://git.jibit.cloud/server/projectx/-/jobs/8001"
+
+
+def test_fetch_ci_gh_ignores_configured_side_ci(monkeypatch):
+    from workagent import refs_ci
+    monkeypatch.setattr(refs_ci, "_repo_ci_ignore", lambda cwd: ["trivy-*"])
+    monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: json.dumps({
+        "statusCheckRollup": [
+            {"name": "test", "status": "COMPLETED", "conclusion": "SUCCESS",
+             "detailsUrl": "https://github.com/o/r/runs/1"},
+            {"name": "trivy-scan", "status": "COMPLETED", "conclusion": "FAILURE",
+             "detailsUrl": "https://github.com/o/r/runs/2"},
+        ]
+    }))
+    state, url, checks = refs.fetch_ci_details("gh", "https://github.com/o/r/pull/1", "/repo")
+    assert state == "success"
+    assert url == "https://github.com/o/r/runs/1"
+    assert [c["name"] for c in checks] == ["test"]

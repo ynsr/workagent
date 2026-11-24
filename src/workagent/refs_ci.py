@@ -1,7 +1,9 @@
 """CI pipeline status for PR/MR (split from refs.py; re-exported via refs facade)."""
 from __future__ import annotations
 
+import fnmatch
 import json
+import os
 import re
 import sys
 from urllib.parse import quote
@@ -26,6 +28,110 @@ _GLAB_RUNNING = {"running", "pending", "created", "waiting_for_resource",
 _CI_PIPELINE_SCAN = 5
 
 
+_SEC_JOB_PREFIXES = (
+    "trivy:", "trivy-", "security", "sast", "dast",
+    "secret_detection", "dependency_scanning", "container_scanning",
+)
+
+
+def _matches_ci_ignore(value: str, patterns: list[str]) -> bool:
+    """Case-insensitive fnmatch against any pattern in *patterns*."""
+    v = (value or "").strip().lower()
+    if not v or not patterns:
+        return False
+    return any(fnmatch.fnmatchcase(v, p.strip().lower()) for p in patterns if p and p.strip())
+
+
+def _repo_ci_ignore(cwd: str | None) -> list[str]:
+    """Return per-repo ci_ignore patterns for *cwd* (repo or worktree), else []."""
+    if not cwd:
+        return []
+    try:
+        from . import store as _store
+        norm = os.path.realpath(os.path.expanduser(str(cwd)))
+        repos_map = _store.load_repos() or {}
+        for entry in repos_map.values():
+            rp = entry.get("path") or ""
+            if not rp:
+                continue
+            nrp = os.path.realpath(os.path.expanduser(str(rp)))
+            if norm == nrp or norm.startswith(nrp + os.sep):
+                return list(entry.get("ci_ignore") or [])
+        for wt in (_store.load_links() or {}).values():
+            wp = wt.get("worktree") or wt.get("path") or ""
+            if wp and os.path.realpath(os.path.expanduser(str(wp))) == norm:
+                repo_p = wt.get("repo") or ""
+                if repo_p:
+                    nrp = os.path.realpath(os.path.expanduser(str(repo_p)))
+                    for entry in repos_map.values():
+                        rp = entry.get("path") or ""
+                        if rp and os.path.realpath(os.path.expanduser(str(rp))) == nrp:
+                            return list(entry.get("ci_ignore") or [])
+    except Exception:
+        return []
+    return []
+
+
+def _is_security_only_jobs(jobs: list) -> bool:
+    """True when *jobs* is non-empty and every job is a security/trivy scan."""
+    dicts = [j for j in jobs if isinstance(j, dict)]
+    if not dicts:
+        return False
+    for j in dicts:
+        stage = str(j.get("stage") or "").strip().lower()
+        name = str(j.get("name") or "").strip().lower()
+        if stage == "security":
+            continue
+        if any(name.startswith(pref) for pref in _SEC_JOB_PREFIXES):
+            continue
+        return False
+    return True
+
+
+def _is_side_ci_glab(pipeline: dict, jobs: list, ignore_patterns: list[str]) -> bool:
+    """True when a GitLab pipeline is a side-CI (explicit ignore or security-only MR)."""
+    source = str(pipeline.get("source") or "").strip().lower()
+    if ignore_patterns:
+        if source and _matches_ci_ignore(source, ignore_patterns):
+            return True
+        dicts = [j for j in jobs if isinstance(j, dict)]
+        if dicts and all(
+            _matches_ci_ignore(str(j.get("name") or ""), ignore_patterns)
+            or _matches_ci_ignore(str(j.get("stage") or ""), ignore_patterns)
+            for j in dicts
+        ):
+            return True
+    if source == "merge_request_event" and _is_security_only_jobs(jobs):
+        return True
+    return False
+
+
+def _select_main_glab_pipeline(
+    data: list[dict],
+    path: str,
+    host: str,
+    cwd: str | None,
+    ref_label: str,
+    ignore_patterns: list[str],
+) -> tuple[dict, dict[int, list]]:
+    """Select the main CI pipeline for the latest commit SHA, ignoring side-CIs."""
+    newest = max(data, key=lambda p: p.get("id", 0))
+    target_sha = str(newest.get("sha") or "")
+    ordered = sorted(data, key=lambda p: p.get("id", 0), reverse=True)[:_CI_PIPELINE_SCAN]
+    same_sha = [p for p in ordered if str(p.get("sha") or "") == target_sha] if target_sha else ordered
+    jobs_by_id: dict[int, list] = {}
+    if len(same_sha) <= 1 and not ignore_patterns:
+        return newest, jobs_by_id
+    for p in same_sha:
+        pid = p.get("id")
+        jobs = _pipeline_jobs(path, pid, host, cwd, ref_label)
+        if pid is not None:
+            jobs_by_id[int(pid)] = jobs
+        if not _is_side_ci_glab(p, jobs, ignore_patterns):
+            return p, jobs_by_id
+    return newest, jobs_by_id
+
+
 def _ci_gh_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]]:
     """(status, url, checks) for a GitHub PR's statusCheckRollup."""
     out = run_cmd("gh", "pr", "view", pr_url, "--json", "statusCheckRollup",
@@ -34,6 +140,15 @@ def _ci_gh_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]]:
         rollup = json.loads(out or "{}").get("statusCheckRollup") or []
     except json.JSONDecodeError:
         raise HarnessError(f"cannot parse gh output for {pr_url}")
+    ignore_patterns = _repo_ci_ignore(cwd)
+    if ignore_patterns:
+        filtered = [
+            c for c in rollup
+            if isinstance(c, dict)
+            and not _matches_ci_ignore(str(c.get("name") or c.get("context") or ""), ignore_patterns)
+        ]
+        if filtered:
+            rollup = filtered
     worst = "not_started"
     worst_url = ""
     any_url = ""
@@ -100,22 +215,30 @@ def _ci_glab_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]
         raise HarnessError(f"cannot parse glab output for {pr_url}")
     if not data:
         return "not_started", "", []
-    newest = max(data, key=lambda p: p.get("id", 0))
-    state = _glab_state((newest.get("status") or "").lower())
+    ignore_patterns = _repo_ci_ignore(cwd)
+    main_pipe, jobs_by_id = _select_main_glab_pipeline(
+        data, path, host, cwd, pr_url, ignore_patterns
+    )
+    state = _glab_state((main_pipe.get("status") or "").lower())
     if state == "not_started":
         return "not_started", "", []  # skipped, manual, unknown
     ordered = sorted(data, key=lambda p: p.get("id", 0),
                      reverse=True)[:_CI_PIPELINE_SCAN]
-    newest_id = newest.get("id")
-    newest_checks: list[dict] = []
+    main_id = main_pipe.get("id")
+    scan = [main_pipe] + [p for p in ordered if p.get("id") != main_id]
+    main_checks: list[dict] = []
     fallback = ""
-    for pipeline in ordered:
-        jobs = _pipeline_jobs(path, pipeline.get("id"), host, cwd, pr_url)
+    for pipeline in scan:
+        pid = pipeline.get("id")
+        if pid is not None and int(pid) in jobs_by_id:
+            jobs = jobs_by_id[int(pid)]
+        else:
+            jobs = _pipeline_jobs(path, pid, host, cwd, pr_url)
         if not jobs:
             continue
-        if pipeline.get("id") == newest_id:
-            p_sha = str(pipeline.get("sha") or newest.get("sha") or "")
-            newest_checks = [
+        if pid == main_id:
+            p_sha = str(pipeline.get("sha") or main_pipe.get("sha") or "")
+            main_checks = [
                 {
                     "name": str(j.get("name") or f"job-{j.get('id') or idx + 1}").strip(),
                     "commit_sha": str((j.get("commit") or {}).get("id") or p_sha),
@@ -128,22 +251,22 @@ def _ci_glab_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]
                 if isinstance(j, dict)
             ]
             # Failed-first (#116): the URL must be a failing job of the
-            # newest pipeline, not max(id) (a later success like .../203730
+            # main pipeline, not max(id) (a later success like .../203730
             # must not shadow the real failure .../203729).
             url = _pick_job_url(jobs)
             if url:
-                return state, url, newest_checks
+                return state, url, main_checks
             continue
-        # Older pipelines are only a fallback when the newest has no job
-        # URL (e.g. merge_request_event that failed before any job started).
+        # Older pipelines are only a fallback when the main pipeline has no
+        # job URL (e.g. merge_request_event that failed before any job started).
         if not fallback:
             fallback = _pick_job_url(jobs)
             if fallback:
                 break  # one banked fallback is enough; skip older pipelines
     if fallback:
-        return state, fallback, newest_checks
-    # No job urls anywhere: the newest pipeline page beats a dead badge.
-    return state, newest.get("web_url") or "", newest_checks
+        return state, fallback, main_checks
+    # No job urls anywhere: the main pipeline page beats a dead badge.
+    return state, main_pipe.get("web_url") or "", main_checks
 
 
 def _ci_glab(pr_url: str, cwd: str | None) -> tuple[str, str]:
@@ -197,9 +320,9 @@ def _pick_job_url(jobs: list) -> str:
 
 def _ci_branch_glab(host: str, path: str, branch: str,
                     cwd: str | None) -> tuple[str, str]:
-    """(status, url) for the newest pipeline of *branch* (glab)."""
+    """(status, url) for the main pipeline of *branch* (glab)."""
     api = (f"projects/{quote(path, safe='')}/pipelines"
-           f"?ref={quote(branch, safe='')}&per_page=1")
+           f"?ref={quote(branch, safe='')}&per_page=5")
     out = _api_glab(api, host, cwd)
     try:
         data = json.loads(out or "[]")
@@ -207,28 +330,44 @@ def _ci_branch_glab(host: str, path: str, branch: str,
         raise HarnessError(f"cannot parse glab pipelines for {branch}")
     if not data:
         return "not_started", ""
-    newest = max(data, key=lambda p: p.get("id", 0))
-    state = _glab_state((newest.get("status") or "").lower())
+    ignore_patterns = _repo_ci_ignore(cwd)
+    main_pipe, jobs_by_id = _select_main_glab_pipeline(
+        data, path, host, cwd, branch, ignore_patterns
+    )
+    state = _glab_state((main_pipe.get("status") or "").lower())
     if state == "not_started":
         return "not_started", ""
-    jobs = _pipeline_jobs(path, newest.get("id"), host, cwd, branch)
+    pid = main_pipe.get("id")
+    if pid is not None and int(pid) in jobs_by_id:
+        jobs = jobs_by_id[int(pid)]
+    else:
+        jobs = _pipeline_jobs(path, pid, host, cwd, branch)
     url = _pick_job_url(jobs)
     if url:
         return state, url
-    return state, newest.get("web_url") or ""
+    return state, main_pipe.get("web_url") or ""
 
 
 def _ci_branch_gh(repo: str, branch: str, cwd: str | None) -> tuple[str, str]:
     """(status, url) for the newest run of *branch* (gh)."""
     out = run_cmd("gh", "run", "list", "--repo", repo, "--branch", branch,
-                  "--limit", "1", "--json", "conclusion,status,url", cwd=cwd)
+                  "--limit", "5", "--json", "conclusion,status,url,name,workflowName", cwd=cwd)
     try:
         data = json.loads(out or "[]")
     except json.JSONDecodeError:
         raise HarnessError(f"cannot parse gh runs for {branch}")
     if not data:
         return "not_started", ""
+    ignore_patterns = _repo_ci_ignore(cwd)
     run = data[0]
+    if ignore_patterns:
+        for cand in data:
+            if not (
+                _matches_ci_ignore(str(cand.get("name") or ""), ignore_patterns)
+                or _matches_ci_ignore(str(cand.get("workflowName") or ""), ignore_patterns)
+            ):
+                run = cand
+                break
     concl = (run.get("conclusion") or "").upper()
     status = (run.get("status") or "").upper()
     if concl in _GH_FAILURE or status == "FAILED":

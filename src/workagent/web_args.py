@@ -221,7 +221,7 @@ VAL_FLAGS: dict[str, tuple[str, ...]] = {
     "release": ("--checks", "--diff", "--pre-release-timeout", "--ci-timeout", "--env-file", "--action", "--run-mode", "--extra-prompt", "--harness", "--model", "--effort"),
     "repo add": ("--name", "--path", "--tracker", "--release-branch", "--pre-release"),
     "repo pull": (),
-    "repo update": ("--default-branch", "--release-branch", "--pre-release", "--overlay-buttons"),
+    "repo update": ("--default-branch", "--release-branch", "--pre-release", "--overlay-buttons", "--ci-ignore"),
     "link remove": ("--repo",),
     "tracker add": ("--vendor", "--remote-url"),
     "tracker update": ("--vendor", "--remote-url"),

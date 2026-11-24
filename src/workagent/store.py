@@ -336,13 +336,18 @@ def load_repos() -> dict:
         except Exception:
             key = ""
         ov = (v or {}).get("overlay_buttons", {})
+        ci_ignore = (v or {}).get("ci_ignore") or []
         out[name] = {"path": raw, "tracker": tmap.get(key, ""),
                      "remote": str((v or {}).get("remote", "") or ""),
                      "tool": (v or {}).get("tool"),
                      "default_branch": str((v or {}).get("default_branch", "") or ""),
                      "release_branch": str((v or {}).get("release_branch", "") or ""),
                      "commands": dict((v or {}).get("commands") or {}),
-                     "overlay_buttons": dict(ov) if isinstance(ov, dict) else {}}
+                     "auto_fix_ci": bool((v or {}).get("auto_fix_ci", False)),
+                     "auto_fix_reviews": bool((v or {}).get("auto_fix_reviews", False)),
+                     "overlay_buttons": dict(ov) if isinstance(ov, dict) else {},
+                     "ci_ignore": [str(x).strip() for x in ci_ignore
+                                   if str(x).strip()] if isinstance(ci_ignore, list) else []}
     return out
 
 

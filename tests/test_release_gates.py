@@ -149,3 +149,30 @@ def test_ci_sha_status_gh_prefers_failed_url(monkeypatch, tmp_path):
     monkeypatch.setattr(g.subprocess, "run", fake_run)
     st, url = g._ci_sha_status("gh", str(tmp_path / "repo"), "abc")
     assert (st, url) == ("failure", "https://ci/bad")
+
+
+def test_ci_sha_status_glab_ignores_ci_ignore_patterns(monkeypatch, tmp_path):
+    import json
+    import workagent.refs  # noqa: F401
+    from workagent import release_gates as g, refs_ci
+    monkeypatch.setattr(refs_ci, "_repo_ci_ignore", lambda cwd: ["trivy:*"])
+    statuses = json.dumps([
+        {"name": "trivy:source", "status": "failed", "target_url": "https://ci/trivy"},
+        {"name": "test", "status": "success", "target_url": "https://ci/test"},
+    ])
+    real_run = g.subprocess.run
+
+    def fake_run(*a, **k):
+        argv = a[0] if a else k.get("args", [])
+        if "glab" in argv[:2] and "statuses" in " ".join(argv):
+            return type("R", (), {"stdout": statuses})()
+        return real_run(*a, **k)
+
+    (tmp_path / "repo").mkdir()
+    assert real_run(["git", "-C", str(tmp_path / "repo"), "init", "-q"]).returncode == 0
+    assert real_run(["git", "-C", str(tmp_path / "repo"), "remote", "add", "origin",
+                     "https://git.jibit.cloud/server/projectx.git"]).returncode == 0
+    monkeypatch.setattr(g.subprocess, "run", fake_run)
+    st, url = g._ci_sha_status("glab", str(tmp_path / "repo"), "abc123")
+    assert st == "success"
+    assert url == "https://ci/test"
