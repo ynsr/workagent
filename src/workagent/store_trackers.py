@@ -6,6 +6,22 @@ from pathlib import Path
 
 from .store_sqlite import _norm, _tracker_meta, connect, init_db, normalize_vendor
 
+def _parse_ci_ignore(raw: object) -> list[str]:
+    """ci_ignore JSON text -> list[str]; invalid/empty -> [] (never raise)."""
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if not raw or not isinstance(raw, str):
+        return []
+    import json as _json
+    try:
+        data = _json.loads(raw)
+        if isinstance(data, list):
+            return [str(x).strip() for x in data if str(x).strip()]
+    except (_json.JSONDecodeError, TypeError):
+        pass
+    return []
+
+
 def _parse_commands(raw: object) -> dict:
     """commands JSON text → dict; invalid/empty → {} (no gate, never raise)."""
     import json
@@ -193,7 +209,7 @@ def load_repos(path: Path) -> dict:
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
         out: dict = {}
-        for r in conn.execute("SELECT key_ref, name, path, remote, tool, fetch_enabled, default_branch, release_branch, commands, overlay_buttons, auto_fix_ci, auto_fix_reviews FROM repos ORDER BY name"):
+        for r in conn.execute("SELECT key_ref, name, path, remote, tool, fetch_enabled, default_branch, release_branch, commands, overlay_buttons, auto_fix_ci, auto_fix_reviews, ci_ignore FROM repos ORDER BY name"):
             d = dict(r)
             tids = [x["tracker_key"] for x in conn.execute(
                 "SELECT tracker_key FROM tracker_repos WHERE repo_key = ? ORDER BY tracker_key",
@@ -207,7 +223,8 @@ def load_repos(path: Path) -> dict:
                 "commands": _parse_commands(d.get("commands")),
                 "overlay_buttons": _parse_overlay_buttons(d.get("overlay_buttons")),
                 "auto_fix_ci": bool(d.get("auto_fix_ci", 0)),
-                "auto_fix_reviews": bool(d.get("auto_fix_reviews", 0))}
+                "auto_fix_reviews": bool(d.get("auto_fix_reviews", 0)),
+                "ci_ignore": _parse_ci_ignore(d.get("ci_ignore"))}
         return out
 
 
@@ -322,7 +339,8 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
                       commands: dict | None = None,
                       overlay_buttons: dict | None = None,
                       auto_fix_ci: bool | None = None,
-                      auto_fix_reviews: bool | None = None) -> None:
+                      auto_fix_reviews: bool | None = None,
+                      ci_ignore: list[str] | None = None) -> None:
     """Upsert a named registry row and link it to *tracker_key* (join-only).
 
     tracker_key stays mandatory: an explicit key wins, else the caller
@@ -364,7 +382,7 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
             conn.execute("UPDATE repos SET key_ref = ?, name = ?, remote = ?, tool = ?"
                          " WHERE key_ref = ?",
                          (name, name, remote or "", tool or "", hit[0]))
-        fe_cur = conn.execute("SELECT fetch_enabled, default_branch, release_branch, commands, overlay_buttons, auto_fix_ci, auto_fix_reviews FROM repos WHERE key_ref = ? OR path = ?",
+        fe_cur = conn.execute("SELECT fetch_enabled, default_branch, release_branch, commands, overlay_buttons, auto_fix_ci, auto_fix_reviews, ci_ignore FROM repos WHERE key_ref = ? OR path = ?",
                               (name, norm)).fetchone()
         from .store_sqlite import _default_fetch_enabled
         fe = fe_cur[0] if fe_cur is not None else _default_fetch_enabled(tool=tool or "")
@@ -383,14 +401,17 @@ def register_repo_row(path: Path, name: str, repo_path: str, tracker_key: str,
         stored_auto_rev = int(fe_cur[6]) if fe_cur is not None and fe_cur[6] is not None else 0
         new_auto_ci = stored_auto_ci if auto_fix_ci is None else (1 if auto_fix_ci else 0)
         new_auto_rev = stored_auto_rev if auto_fix_reviews is None else (1 if auto_fix_reviews else 0)
-        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, fetch_enabled, default_branch, release_branch, commands, overlay_buttons, auto_fix_ci, auto_fix_reviews)"
-                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        stored_ci_ignore = _parse_ci_ignore(fe_cur[7] if fe_cur is not None else None)
+        new_ci_ignore = stored_ci_ignore if ci_ignore is None else [str(x).strip() for x in ci_ignore if str(x).strip()]
+        conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, fetch_enabled, default_branch, release_branch, commands, overlay_buttons, auto_fix_ci, auto_fix_reviews, ci_ignore)"
+                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                      " ON CONFLICT(key_ref) DO UPDATE SET path=excluded.path, name=excluded.name,"
                      " remote=excluded.remote, tool=excluded.tool, fetch_enabled=excluded.fetch_enabled,"
                      " default_branch=excluded.default_branch, release_branch=excluded.release_branch,"
                      " commands=excluded.commands, overlay_buttons=excluded.overlay_buttons,"
-                     " auto_fix_ci=excluded.auto_fix_ci, auto_fix_reviews=excluded.auto_fix_reviews",
-                     (name, norm, name, remote or "", tool or "", fe, new_default or "", new_release or "", _json.dumps(new_commands), _json.dumps(new_overlay), new_auto_ci, new_auto_rev))
+                     " auto_fix_ci=excluded.auto_fix_ci, auto_fix_reviews=excluded.auto_fix_reviews,"
+                     " ci_ignore=excluded.ci_ignore",
+                     (name, norm, name, remote or "", tool or "", fe, new_default or "", new_release or "", _json.dumps(new_commands), _json.dumps(new_overlay), new_auto_ci, new_auto_rev, _json.dumps(new_ci_ignore)))
         conn.execute("INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
                      (tracker_key, name))
 

@@ -64,6 +64,7 @@ export function Repos() {
   const editDefaultRef = useRef("")
   const editReleaseRef = useRef("")
   const editPreReleaseRef = useRef("")
+  const editCiIgnoreRef = useRef("")
 
   async function handlePathBlur() {
     if (!path.trim() || preReleaseTouched || preRelease) return
@@ -204,6 +205,45 @@ export function Repos() {
         confirm: true,
       })
       toast.success("Repo update started", {
+        action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
+      })
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
+
+  async function handleEditCiIgnore(repo: Repo) {
+    editCiIgnoreRef.current = (repo.ci_ignore ?? []).join(", ")
+    const ok = await confirm({
+      title: `Edit CI ignore list for ${repo.name}`,
+      description:
+        "Glob patterns for side-CI pipelines/jobs/checks (e.g. trivy:*) excluded from the CI status; empty clears.",
+      confirmLabel: "Update CI ignore",
+      details: [
+        { label: "Current", value: (repo.ci_ignore ?? []).join(", ") || "—", mono: true },
+      ],
+      extras: (
+        <div className="grid gap-2">
+          <Label htmlFor="repo-edit-ci-ignore">Patterns (comma-separated, empty clears)</Label>
+          <Input
+            id="repo-edit-ci-ignore"
+            defaultValue={(repo.ci_ignore ?? []).join(", ")}
+            onChange={(e) => { editCiIgnoreRef.current = e.target.value }}
+            placeholder="trivy:*, security/*"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+      ),
+    })
+    if (!ok) return
+    try {
+      const { run_id } = await createRun.mutateAsync({
+        command: "repo",
+        args: ["update", repo.name, "--ci-ignore", editCiIgnoreRef.current],
+        confirm: true,
+      })
+      toast.success("Repo CI ignore update started", {
         action: { label: "View run", onClick: () => navigate(`/runs/${run_id}`) },
       })
     } catch (err) {
@@ -356,6 +396,7 @@ export function Repos() {
                         <TableHead>Branches</TableHead>
                         <TableHead>Pre-release</TableHead>
                         <TableHead>Overlay</TableHead>
+                        <TableHead>CI ignore</TableHead>
                         <TableHead>Watchers</TableHead>
                         <TableHead className="w-12" aria-label="Release" />
                         <TableHead className="w-12" aria-label="Remove" />
@@ -418,6 +459,20 @@ export function Repos() {
                               className="rounded underline decoration-dotted underline-offset-4 hover:text-foreground"
                             >
                               {overlaySummary(r)}
+                            </button>
+                          </TableCell>
+                          <TableCell className="max-w-48 font-mono text-[13px]">
+                            <button
+                              type="button"
+                              onClick={() => void handleEditCiIgnore(r)}
+                              title={`Edit CI ignore patterns for ${r.name}`}
+                              className="rounded underline decoration-dotted underline-offset-4 hover:text-foreground"
+                            >
+                              {(r.ci_ignore ?? []).length ? (
+                                <span>{(r.ci_ignore ?? []).join(", ")}</span>
+                              ) : (
+                                <span className="text-muted-foreground">set ignore</span>
+                              )}
                             </button>
                           </TableCell>
                           <TableCell>
@@ -488,6 +543,13 @@ export function Repos() {
                         className="mt-1 block max-w-full truncate text-left font-mono text-[13px] text-muted-foreground underline decoration-dotted underline-offset-4"
                       >
                         {r.commands?.["pre-release"] ? `gate: ${r.commands["pre-release"]}` : "set gate"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleEditCiIgnore(r)}
+                        className="mt-1 block max-w-full truncate text-left font-mono text-[13px] text-muted-foreground underline decoration-dotted underline-offset-4"
+                      >
+                        {(r.ci_ignore ?? []).length ? `ci ignore: ${(r.ci_ignore ?? []).join(", ")}` : "set ci ignore"}
                       </button>
                       <div className="mt-3 flex items-center justify-between gap-2 border-t pt-1">
                         <span className="font-mono text-xs text-muted-foreground">

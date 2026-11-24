@@ -283,6 +283,8 @@ export interface Repo {
   auto_fix_ci?: boolean
   /** Opt-in background watcher: auto-fix unresolved PR review comments. */
   auto_fix_reviews?: boolean
+  /** Glob patterns for side-CI pipelines/jobs/checks excluded from CI status. */
+  ci_ignore?: string[]
 }
 
 /** GET/POST /api/worktrees/{ref}/watcher response payload. */

@@ -134,7 +134,7 @@ def local_gate_path(repo_name: str) -> Path:
 
 def _ci_sha_status(tool: str, path: str, sha: str) -> tuple[str, str]:
     """Pinned-SHA CI status: (status, url). Statuses mirror fetch_ci_status."""
-    from .refs_ci import _split_remote
+    from .refs_ci import _matches_ci_ignore, _repo_ci_ignore, _split_remote
     from . import env as _env
     merged = _env.merged_env()
     try:
@@ -155,6 +155,15 @@ def _ci_sha_status(tool: str, path: str, sha: str) -> tuple[str, str]:
             rows = []
         if not rows:
             return "not_started", ""
+        ignore_patterns = _repo_ci_ignore(path)
+        if ignore_patterns:
+            kept = [
+                r for r in rows
+                if isinstance(r, dict)
+                and not _matches_ci_ignore(str(r.get("name") or r.get("context") or ""), ignore_patterns)
+            ]
+            if kept:
+                rows = kept
         states = {str(r.get("status", "")).lower() for r in rows}
         # Failed-first (#116): prefer a failing status' URL over rows[0]
         # (a later success must not shadow the real failure).
@@ -180,6 +189,15 @@ def _ci_sha_status(tool: str, path: str, sha: str) -> tuple[str, str]:
             runs = []
         if not runs:
             return "not_started", ""
+        ignore_patterns = _repo_ci_ignore(path)
+        if ignore_patterns:
+            kept = [
+                r for r in runs
+                if isinstance(r, dict)
+                and not _matches_ci_ignore(str(r.get("name") or ""), ignore_patterns)
+            ]
+            if kept:
+                runs = kept
         conclusions = {str(r.get("conclusion", "") or "").lower() for r in runs}
         statuses = {str(r.get("status", "") or "").lower() for r in runs}
         # Failed-first (#116): prefer a failing check's URL over runs[0].

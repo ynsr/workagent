@@ -618,6 +618,7 @@ Read-only endpoints (all GET, no confirm):
 - `GET /api/worktrees/{ref}/watcher` → `{ key, auto_fix_ci, auto_fix_reviews, effective_auto_fix_ci, effective_auto_fix_reviews, last_nudge_signature }` (`auto_fix_*` is `true | false | null`, where `null` inherits from the repo).
 - `POST /api/worktrees/{ref}/watcher` with JSON `{ "auto_fix_ci"?: bool | null, "auto_fix_reviews"?: bool | null }` persists or clears per-worktree overrides.
 - `GET /api/repos` includes `auto_fix_ci` and `auto_fix_reviews` booleans; `repo update` accepts `--auto-fix-ci/--no-auto-fix-ci` and `--auto-fix-reviews/--no-auto-fix-reviews`.
+- `GET /api/repos` includes `ci_ignore` (string array, default `[]`): glob patterns for side-CI pipelines/jobs/checks excluded from kanban CI status and the release CI gate; `repo update --ci-ignore "trivy:*,security/*"` sets it (empty string clears), and the Repos page per-row "CI ignore" editor edits it.
 - `watch` command accepts `--once`, `--dry-run`, `--json`, `--interval`, `--repo`.
 
 ---
