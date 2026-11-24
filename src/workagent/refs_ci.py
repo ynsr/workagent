@@ -218,6 +218,241 @@ def _api_glab(api: str, host: str, cwd: str | None) -> str:
         return run_cmd("glab", "api", api, cwd=cwd)
 
 
+def _api_gh(api: str, host: str, cwd: str | None) -> str:
+    """gh api with --hostname when non-github.com, falling back on error."""
+    if host and host.lower() != "github.com":
+        try:
+            return run_cmd("gh", "api", api, "--hostname", host, cwd=cwd) or ""
+        except HarnessError:
+            pass
+    return run_cmd("gh", "api", api, cwd=cwd) or ""
+
+
+CI_LOG_TAIL_LINES = 50
+CI_LOG_MAX_CHARS = 12000
+
+_ANSI_CSI_RE = re.compile(r"\x1b\[[0-9;:?]*[A-Za-z]")
+_ANSI_OSC_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+_GL_JOB_URL_RE = re.compile(r"^https?://([^/]+)/(.+?)/-/jobs/(\d+)(?:[/?#].*)?$")
+_GL_PIPELINE_URL_RE = re.compile(r"^https?://([^/]+)/(.+?)/-/pipelines/(\d+)(?:[/?#].*)?$")
+_GH_RUN_JOB_URL_RE = re.compile(
+    r"^https?://([^/]+)/([^/]+/[^/]+)/actions/runs/(\d+)/job/(\d+)(?:[/?#].*)?$"
+)
+_GH_RUN_URL_RE = re.compile(
+    r"^https?://([^/]+)/([^/]+/[^/]+)/actions/runs/(\d+)(?:[/?#].*)?$"
+)
+_GH_CHECK_RUN_URL_RE = re.compile(
+    r"^https?://([^/]+)/([^/]+/[^/]+)/(?:runs/(\d+)(?:[/?#].*)?|pull/\d+/checks\?[^#]*\bcheck_run_id=(\d+)(?:[&#].*)?)$"
+)
+_GHES_PR_URL_RE = re.compile(
+    r"^https?://[^/]+/[^/]+/[^/]+/pull/\d+(?:[/?#].*)?$"
+)
+
+
+def _strip_ansi_and_cr(text: str) -> str:
+    """Strip ANSI escape sequences and collapse CR progress overwrites."""
+    cleaned = _ANSI_OSC_RE.sub("", text or "")
+    cleaned = _ANSI_CSI_RE.sub("", cleaned)
+    cleaned = cleaned.replace("\r\n", "\n")
+    if "\r" in cleaned:
+        cleaned = "\n".join(
+            ln.rstrip("\r").rsplit("\r", 1)[-1] for ln in cleaned.split("\n")
+        )
+    return cleaned
+
+
+def _tail_log_lines(
+    text: str,
+    max_lines: int = CI_LOG_TAIL_LINES,
+    max_chars: int = CI_LOG_MAX_CHARS,
+) -> str:
+    """Return the cleaned last *max_lines* lines (capped at *max_chars*)."""
+    cleaned = _strip_ansi_and_cr(text).rstrip()
+    if not cleaned:
+        return ""
+    lines = cleaned.splitlines()
+    if max_lines > 0:
+        lines = lines[-max_lines:]
+    tail = "\n".join(lines).strip()
+    if max_chars > 0 and len(tail) > max_chars:
+        tail = tail[-max_chars:]
+        if "\n" in tail:
+            tail = tail.split("\n", 1)[1]
+        tail = tail.strip()
+    return tail
+
+
+def infer_pr_tool(pr_url: str, cached: dict | None = None) -> str:
+    """Derive host CLI (``gh`` or ``glab``) for a PR/MR URL, preferring *cached*."""
+    tool = str((cached or {}).get("tool") or "").strip().lower()
+    if tool in ("gh", "glab"):
+        return tool
+    u = (pr_url or "").strip()
+    if not u:
+        return ""
+    from .refs import _GITHUB_PR
+    if _GITHUB_PR.match(u) or _GHES_PR_URL_RE.match(u):
+        return "gh"
+    if _GITLAB_MR.match(u):
+        return "glab"
+    return "gh" if "github.com" in u.lower() else "glab"
+
+
+def _infer_ci_tool(tool: str, job_url: str) -> str:
+    t = (tool or "").strip().lower()
+    if t in ("gh", "glab"):
+        return t
+    u = (job_url or "").strip()
+    if (_GH_RUN_JOB_URL_RE.match(u) or _GH_RUN_URL_RE.match(u)
+            or _GH_CHECK_RUN_URL_RE.match(u) or "github.com" in u.lower()):
+        return "gh"
+    if _GL_JOB_URL_RE.match(u) or _GL_PIPELINE_URL_RE.match(u):
+        return "glab"
+    return ""
+
+
+def fetch_ci_job_log(
+    tool: str,
+    job_url: str,
+    *,
+    cwd: str | None = None,
+    tail_lines: int = CI_LOG_TAIL_LINES,
+) -> str:
+    """Return the last *tail_lines* of terminal output for a failing CI job URL.
+
+    Supports GitHub Actions (run/job/check-run URLs) and GitLab CI
+    (job/pipeline URLs). Soft-fails to ``""`` on any error or unsupported URL.
+    """
+    url = (job_url or "").strip()
+    if not url:
+        return ""
+    eff_tool = _infer_ci_tool(tool, url)
+    if not eff_tool:
+        return ""
+    raw = ""
+    try:
+        if eff_tool == "glab":
+            m = _GL_JOB_URL_RE.match(url)
+            if m:
+                host, project, job_id = m.group(1), m.group(2), m.group(3)
+                raw = _api_glab(
+                    f"projects/{quote(project, safe='')}/jobs/{job_id}/trace",
+                    host,
+                    cwd,
+                ) or ""
+            else:
+                pm = _GL_PIPELINE_URL_RE.match(url)
+                if not pm:
+                    return ""
+                host, project, pid = pm.group(1), pm.group(2), pm.group(3)
+                jobs = _pipeline_jobs(project, int(pid), host, cwd, url)
+                failed = [
+                    j for j in jobs
+                    if isinstance(j, dict)
+                    and j.get("id") is not None
+                    and _glab_state(str(j.get("status") or "").lower()) == "failure"
+                ]
+                if not failed:
+                    return ""
+                job_id = str(max(failed, key=lambda j: j.get("id", 0))["id"])
+                raw = _api_glab(
+                    f"projects/{quote(project, safe='')}/jobs/{job_id}/trace",
+                    host,
+                    cwd,
+                ) or ""
+        else:
+            m = _GH_RUN_JOB_URL_RE.match(url)
+            if m:
+                host, project, run_id, job_id = m.group(1), m.group(2), m.group(3), m.group(4)
+                repo_arg = f"{host}/{project}" if host.lower() != "github.com" else project
+                try:
+                    raw = run_cmd(
+                        "gh", "run", "view", run_id, "--job", job_id,
+                        "--log-failed", "--repo", repo_arg, cwd=cwd,
+                    ) or ""
+                except HarnessError:
+                    raw = ""
+                if not raw.strip():
+                    raw = _api_gh(
+                        f"repos/{project}/actions/jobs/{job_id}/logs",
+                        host,
+                        cwd,
+                    )
+            else:
+                rm = _GH_RUN_URL_RE.match(url)
+                if rm:
+                    host, project, run_id = rm.group(1), rm.group(2), rm.group(3)
+                    repo_arg = f"{host}/{project}" if host.lower() != "github.com" else project
+                    raw = run_cmd(
+                        "gh", "run", "view", run_id,
+                        "--log-failed", "--repo", repo_arg, cwd=cwd,
+                    ) or ""
+                else:
+                    cm = _GH_CHECK_RUN_URL_RE.match(url)
+                    if not cm:
+                        return ""
+                    host, project = cm.group(1), cm.group(2)
+                    job_id = cm.group(3) or cm.group(4)
+                    raw = _api_gh(
+                        f"repos/{project}/actions/jobs/{job_id}/logs",
+                        host,
+                        cwd,
+                    )
+    except Exception as e:
+        print(f"warning: CI log fetch failed for {url}: {e}", file=sys.stderr)
+        return ""
+    return _tail_log_lines(raw, max_lines=tail_lines)
+
+
+def populate_failing_check_logs(
+    tool: str,
+    checks: list[dict],
+    *,
+    cwd: str | None = None,
+    tail_lines: int = CI_LOG_TAIL_LINES,
+    max_checks: int = 5,
+    fallback_url: str = "",
+) -> list[dict]:
+    """Populate ``log_tail`` (last *tail_lines*) on failing checks missing logs.
+
+    When *fallback_url* is provided, failing checks with an empty ``url`` are
+    backfilled with it. Distinct ``(tool, url)`` targets are fetched at most
+    once so shared URLs (e.g. a pipeline fallback) reuse the cached tail
+    without consuming extra *max_checks* slots.
+    """
+    if not checks:
+        return checks
+    from . import store_timeline
+    fb_url = (fallback_url or "").strip()
+    fetched = 0
+    tail_cache: dict[tuple[str, str], str] = {}
+    for chk in checks:
+        if not isinstance(chk, dict):
+            continue
+        if not store_timeline.is_failing_check(chk):
+            continue
+        url = str(chk.get("url") or "").strip()
+        if not url and fb_url:
+            url = fb_url
+            chk["url"] = fb_url
+        if str(chk.get("log_tail") or "").strip():
+            continue
+        if not url:
+            continue
+        cache_key = (tool, url)
+        if cache_key in tail_cache:
+            tail = tail_cache[cache_key]
+        else:
+            if fetched >= max_checks:
+                continue
+            fetched += 1
+            tail = fetch_ci_job_log(tool, url, cwd=cwd, tail_lines=tail_lines)
+            tail_cache[cache_key] = tail
+        if tail:
+            chk["log_tail"] = tail
+    return checks
+
+
 def _ci_glab_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]]:
     """(status, url, checks) for a GitLab MR's newest pipeline."""
     m = _GITLAB_MR.match(pr_url or "")

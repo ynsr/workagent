@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import {
   AlertCircle,
   CheckCircle2,
@@ -11,29 +12,12 @@ import {
   Wrench,
 } from "lucide-react"
 import { toast } from "sonner"
-import type { PrCheckRow, PrReviewThreadRow, WorktreeEntry, WorktreeEventRow } from "@/lib/api"
-import { prUrl } from "@/lib/api"
+import { prUrl, type PrCheckRow, type PrReviewThreadRow, type WorktreeEntry, type WorktreeEventRow } from "@/lib/api"
+import { isFailingCheck, resolveFixCiPrompt } from "@/lib/fixCiPrompt"
 import { useCreateRun, useWorktreeTimeline } from "@/lib/queries"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { errorText } from "@/components/StatusFeedback"
-
-const FAILING_CONCLUSIONS = new Set([
-  "failure",
-  "failed",
-  "timed_out",
-  "action_required",
-  "startup_failure",
-  "cancelled",
-  "canceled",
-])
-
-function isFailingCheck(chk: PrCheckRow): boolean {
-  return (
-    FAILING_CONCLUSIONS.has((chk.conclusion || "").toLowerCase()) ||
-    (chk.status || "").toLowerCase() === "failed"
-  )
-}
 
 function eventIcon(eventType: string) {
   switch (eventType) {
@@ -84,9 +68,11 @@ export function WorktreeFeedbackTimeline({
   onFixComments,
   onCleanup,
 }: WorktreeFeedbackTimelineProps) {
+  const qc = useQueryClient()
   const { data, isLoading, isError } = useWorktreeTimeline(worktreeKey)
   const createRun = useCreateRun()
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null)
+  const [isFetchingCiLogs, setIsFetchingCiLogs] = useState(false)
 
   const checks: PrCheckRow[] = data?.checks ?? []
   const threads: PrReviewThreadRow[] = data?.threads ?? []
@@ -98,15 +84,22 @@ export function WorktreeFeedbackTimeline({
   const isMerged = prState === "merged"
   const isReadyToMerge = entry?.kanban_column === "ready_to_merge"
 
-  const handleFixCi = () => {
+  const handleFixCi = async () => {
     const names = failingChecks.map((c) => c.name)
     if (onFixCi) {
       onFixCi(names)
       return
     }
-    const prompt = names.length
-      ? `Investigate and fix the failing CI checks: ${names.join(", ")}.`
-      : "Investigate and fix the failing CI checks on this branch."
+    setIsFetchingCiLogs(true)
+    let prompt: string
+    try {
+      prompt = await resolveFixCiPrompt(worktreeKey, checks, {
+        fallbackCiUrl: entry?.ci_url,
+        queryClient: qc,
+      })
+    } finally {
+      setIsFetchingCiLogs(false)
+    }
     createRun.mutate(
       { command: "adhoc", args: [worktreeKey, "--prompt", prompt], confirm: true },
       {
@@ -192,11 +185,11 @@ export function WorktreeFeedbackTimeline({
               size="sm"
               variant="destructive"
               className="h-6 px-2 text-xs"
-              disabled={createRun.isPending}
-              onClick={handleFixCi}
+              disabled={createRun.isPending || isFetchingCiLogs}
+              onClick={() => void handleFixCi()}
             >
               <Wrench className="mr-1 size-3" aria-hidden="true" />
-              Fix CI
+              {isFetchingCiLogs ? "Fetching logs…" : "Fix CI"}
             </Button>
           ) : null}
           {unresolvedThreads.length > 0 ? (

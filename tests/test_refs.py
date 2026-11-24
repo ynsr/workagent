@@ -1136,3 +1136,195 @@ def test_fetch_ci_branch_gh_ignores_configured_side_ci(monkeypatch):
     ]))
     state, url = refs_ci.fetch_branch_ci("gh", "https://github.com/o/r.git", "feat/x", "/repo")
     assert (state, url) == ("success", "https://github.com/o/r/actions/runs/6")
+
+
+def test_fetch_ci_job_log_gitlab_tails_50_lines_and_strips_ansi(monkeypatch):
+    from workagent import refs_ci
+
+    calls = []
+    raw_lines = [f"\x1b[31mline {i}\x1b[0m" for i in range(1, 71)]
+    raw_lines.append("progress 10%\rprogress 100% FAILED")
+
+    def fake(*args, **kwargs):
+        calls.append(args)
+        return "\n".join(raw_lines)
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    out = refs_ci.fetch_ci_job_log(
+        "glab",
+        "https://git.jibit.cloud/server/projectx/-/jobs/203729",
+        cwd="/repo",
+    )
+    assert calls == [(
+        "glab", "api", "projects/server%2Fprojectx/jobs/203729/trace",
+        "--hostname", "git.jibit.cloud",
+    )]
+    lines = out.splitlines()
+    assert len(lines) == 50
+    assert lines[0] == "line 22"
+    assert lines[-2] == "line 70"
+    assert lines[-1] == "progress 100% FAILED"
+    assert "\x1b[" not in out
+
+
+def test_fetch_ci_job_log_gitlab_pipeline_url_picks_failed_job(monkeypatch):
+    from workagent import refs_ci
+
+    def fake(*args, **kwargs):
+        api = args[2]
+        if "/pipelines/81409/jobs" in api:
+            return json.dumps([
+                {"id": 100, "name": "lint", "status": "success"},
+                {"id": 101, "name": "test", "status": "failed"},
+            ])
+        if "/jobs/101/trace" in api:
+            return "FAILED test_foo\n"
+        return ""
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    out = refs_ci.fetch_ci_job_log(
+        "glab",
+        "https://git.jibit.cloud/server/projectx/-/pipelines/81409",
+        cwd="/repo",
+    )
+    assert out == "FAILED test_foo"
+
+
+def test_fetch_ci_job_log_github_variants(monkeypatch):
+    from workagent import refs_ci
+
+    calls = []
+
+    def fake_run_job(*args, **kwargs):
+        calls.append(args)
+        return "\n".join(f"gh-line-{i}" for i in range(1, 65))
+
+    monkeypatch.setattr(refs, "run_cmd", fake_run_job)
+    out = refs_ci.fetch_ci_job_log(
+        "gh",
+        "https://github.com/ynsr/workagent/actions/runs/555/job/777",
+        cwd="/repo",
+    )
+    assert calls == [(
+        "gh", "run", "view", "555", "--job", "777", "--log-failed", "--repo", "ynsr/workagent"
+    )]
+    assert len(out.splitlines()) == 50
+    assert out.splitlines()[0] == "gh-line-15"
+    assert out.splitlines()[-1] == "gh-line-64"
+
+    # Empty --log-failed falls back to gh api job logs
+    calls.clear()
+
+    def fake_fallback(*args, **kwargs):
+        calls.append(args)
+        if "run" in args:
+            return ""
+        return "job cancelled by user"
+
+    monkeypatch.setattr(refs, "run_cmd", fake_fallback)
+    out_fb = refs_ci.fetch_ci_job_log(
+        "gh",
+        "https://github.com/ynsr/workagent/actions/runs/555/job/777",
+        cwd="/repo",
+    )
+    assert out_fb == "job cancelled by user"
+    assert calls[1] == ("gh", "api", "repos/ynsr/workagent/actions/jobs/777/logs")
+
+    # /runs/<id> (including query string) and ?check_run_id=<id>
+    calls.clear()
+    monkeypatch.setattr(refs, "run_cmd", lambda *a, **k: (calls.append(a) or "api check log"))
+    assert refs_ci.fetch_ci_job_log("gh", "https://github.com/ynsr/workagent/runs/999") == "api check log"
+    assert refs_ci.fetch_ci_job_log(
+        "gh", "https://github.com/ynsr/workagent/runs/999?check_suite_focus=true"
+    ) == "api check log"
+    assert refs_ci.fetch_ci_job_log(
+        "gh", "https://github.com/ynsr/workagent/pull/12/checks?check_run_id=888"
+    ) == "api check log"
+    assert calls == [
+        ("gh", "api", "repos/ynsr/workagent/actions/jobs/999/logs"),
+        ("gh", "api", "repos/ynsr/workagent/actions/jobs/999/logs"),
+        ("gh", "api", "repos/ynsr/workagent/actions/jobs/888/logs"),
+    ]
+
+
+def test_fetch_ci_job_log_soft_fails_and_populate_failing_check_logs(monkeypatch):
+    from workagent import refs_ci
+    from workagent.errors import HarnessError
+
+    def boom(*_a, **_k):
+        raise HarnessError("network down")
+
+    monkeypatch.setattr(refs, "run_cmd", boom)
+    assert refs_ci.fetch_ci_job_log("gh", "https://github.com/o/r/actions/runs/1/job/2") == ""
+    assert refs_ci.fetch_ci_job_log("gh", "https://external-ci.example/build/1") == ""
+
+    fetched_urls = []
+
+    def fake_ok(*args, **kwargs):
+        fetched_urls.append(args)
+        return "AssertionError: boom"
+
+    monkeypatch.setattr(refs, "run_cmd", fake_ok)
+    checks = [
+        {"name": "lint", "status": "completed", "conclusion": "success",
+         "url": "https://github.com/o/r/actions/runs/1/job/10", "log_tail": ""},
+        {"name": "test", "status": "completed", "conclusion": "failure",
+         "url": "https://github.com/o/r/actions/runs/1/job/20", "log_tail": ""},
+        {"name": "cached", "status": "completed", "conclusion": "failure",
+         "url": "https://github.com/o/r/actions/runs/1/job/30", "log_tail": "already here"},
+    ]
+    refs_ci.populate_failing_check_logs("gh", checks, cwd="/repo")
+    assert checks[0]["log_tail"] == ""
+    assert checks[1]["log_tail"] == "AssertionError: boom"
+    assert checks[2]["log_tail"] == "already here"
+    assert len(fetched_urls) == 1
+
+
+def test_strip_ansi_and_cr_preserves_line_with_trailing_cr():
+    from workagent import refs_ci
+
+    assert refs_ci._strip_ansi_and_cr("FAILED test_x\r") == "FAILED test_x"
+    assert refs_ci._strip_ansi_and_cr("progress 10%\rprogress 20%\r\nnext") == "progress 20%\nnext"
+
+
+def test_populate_failing_check_logs_dedups_urls_and_uses_fallback_url(monkeypatch):
+    from workagent import refs_ci
+
+    calls = []
+
+    def fake_fetch(tool, url, *, cwd=None, tail_lines=50):
+        calls.append((tool, url, cwd))
+        return f"log for {url}"
+
+    monkeypatch.setattr(refs_ci, "fetch_ci_job_log", fake_fetch)
+    pipeline_url = "https://git.jibit.cloud/server/projectx/-/pipelines/81409"
+    checks = [
+        {"name": "job1", "status": "failed", "conclusion": "failure", "url": "", "log_tail": ""},
+        {"name": "job2", "status": "failed", "conclusion": "failure", "url": "", "log_tail": ""},
+        {"name": "job3", "status": "failed", "conclusion": "failure", "url": pipeline_url, "log_tail": ""},
+        {"name": "job4", "status": "failed", "conclusion": "failure",
+         "url": "https://git.jibit.cloud/server/projectx/-/jobs/999", "log_tail": ""},
+    ]
+    refs_ci.populate_failing_check_logs(
+        "glab", checks, cwd="/repo", max_checks=2, fallback_url=pipeline_url
+    )
+    assert calls == [
+        ("glab", pipeline_url, "/repo"),
+        ("glab", "https://git.jibit.cloud/server/projectx/-/jobs/999", "/repo"),
+    ]
+    assert checks[0]["url"] == pipeline_url
+    assert checks[1]["url"] == pipeline_url
+    assert checks[0]["log_tail"] == f"log for {pipeline_url}"
+    assert checks[1]["log_tail"] == f"log for {pipeline_url}"
+    assert checks[2]["log_tail"] == f"log for {pipeline_url}"
+    assert checks[3]["log_tail"] == "log for https://git.jibit.cloud/server/projectx/-/jobs/999"
+
+
+def test_infer_pr_tool_detects_ghes_gitlab_and_cached():
+    from workagent import refs_ci
+
+    assert refs_ci.infer_pr_tool("https://ghe.example.com/org/repo/pull/12") == "gh"
+    assert refs_ci.infer_pr_tool("https://github.com/org/repo/pull/12") == "gh"
+    assert refs_ci.infer_pr_tool("https://git.jibit.cloud/server/projectx/-/merge_requests/10") == "glab"
+    assert refs_ci.infer_pr_tool("https://ghe.example.com/org/repo/pull/12", {"tool": "glab"}) == "glab"
+    assert refs_ci.infer_pr_tool("") == ""

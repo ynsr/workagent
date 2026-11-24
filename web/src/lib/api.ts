@@ -678,9 +678,12 @@ export const api = {
     request<WorktreeDetail>(`/api/status${qs({ ref })}`),
 
   /** GET /api/worktrees/{ref}/timeline — normalized PR checks, review threads, and events. */
-  worktreeTimeline: (ref: string, limit?: number) =>
+  worktreeTimeline: (ref: string, limit?: number, opts?: { fetchLogs?: boolean }) =>
     request<WorktreeTimeline>(
-      `/api/worktrees/${encodeURIComponent(ref)}/timeline${qs({ limit: limit != null ? String(limit) : undefined })}`,
+      `/api/worktrees/${encodeURIComponent(ref)}/timeline${qs({
+        limit: limit != null ? String(limit) : undefined,
+        fetch_logs: opts?.fetchLogs ? "true" : undefined,
+      })}`,
     ),
 
   /** GET /api/worktrees/{ref}/watcher — per-worktree watcher overrides & effective state. */

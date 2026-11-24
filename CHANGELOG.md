@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Fix CI prompt now includes the failing GitHub or GitLab job URL and the last 50 lines of its terminal log [186]
 - CI status now reports the main pipeline instead of a later side-CI, with per-repo ignore globs (`repo update --ci-ignore`) [184]
 - Fix web UI build and restore release status cache invalidation after repo pull [178]
 - Auto-recover repo pull from stale or multi-branch tracking errors and hide the Pull button when local matches remote [178]

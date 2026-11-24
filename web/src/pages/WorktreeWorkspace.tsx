@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
@@ -31,7 +31,8 @@ import { api, prLabel, prUrl, type Run } from "@/lib/api"
 import { relativeTime, shortId } from "@/lib/format"
 import { hasAcpStructuredEvents } from "@/lib/harness"
 import type { RunMode } from "@/lib/launchConfig"
-import { queryKeys, useFlows, useRun, useRuns, useStatusAll } from "@/lib/queries"
+import { isFailingCheck, resolveFixCiPrompt } from "@/lib/fixCiPrompt"
+import { queryKeys, useFlows, useRun, useRuns, useStatusAll, useWorktreeTimeline } from "@/lib/queries"
 
 type InspectorTab = "summary" | "diff" | "flows" | "prodtest"
 
@@ -65,6 +66,7 @@ export function WorktreeWorkspace() {
   const flowsQ = useFlows(refKey)
 
   const entry = statusQ.data?.[refKey]
+  const timelineQ = useWorktreeTimeline(entry?.ci === "failure" ? refKey : undefined)
   const worktreePath = entry?.worktree ?? ""
 
   const worktreeRuns = useMemo(() => {
@@ -79,9 +81,16 @@ export function WorktreeWorkspace() {
     return all.filter((f) => f.worktree_ref === refKey)
   }, [flowsQ.data, refKey])
 
+  const activeRefKeyRef = useRef(refKey)
+  activeRefKeyRef.current = refKey
+  const ciFetchTokenRef = useRef(0)
+
   const [selectedRunId, setSelectedRunId] = useState<string>("")
+  const [isFetchingCiLogs, setIsFetchingCiLogs] = useState(false)
   useEffect(() => {
     setSelectedRunId("")
+    ciFetchTokenRef.current += 1
+    setIsFetchingCiLogs(false)
   }, [refKey])
   const activeRunId = selectedRunId || worktreeRuns[0]?.id || ""
 
@@ -284,9 +293,44 @@ export function WorktreeWorkspace() {
                     variant="outline"
                     size="sm"
                     className="h-7 text-xs"
-                    onClick={() => setPrompt(chip.prompt)}
+                    disabled={chip.label === "Fix CI" && isFetchingCiLogs}
+                    onClick={() => {
+                      if (chip.label !== "Fix CI") {
+                        setPrompt(chip.prompt)
+                        return
+                      }
+                      const timelineChecks = timelineQ.data?.checks ?? []
+                      if (timelineChecks.some(isFailingCheck) || entry?.ci === "failure") {
+                        const requestRefKey = refKey
+                        const requestToken = ++ciFetchTokenRef.current
+                        setIsFetchingCiLogs(true)
+                        void resolveFixCiPrompt(requestRefKey, timelineChecks, {
+                          fallbackCiUrl: entry?.ci_url,
+                          fetchIfEmpty: true,
+                          queryClient: qc,
+                        })
+                          .then((resolvedPrompt) => {
+                            if (
+                              activeRefKeyRef.current === requestRefKey &&
+                              ciFetchTokenRef.current === requestToken
+                            ) {
+                              setPrompt(resolvedPrompt)
+                            }
+                          })
+                          .finally(() => {
+                            if (
+                              activeRefKeyRef.current === requestRefKey &&
+                              ciFetchTokenRef.current === requestToken
+                            ) {
+                              setIsFetchingCiLogs(false)
+                            }
+                          })
+                        return
+                      }
+                      setPrompt(chip.prompt)
+                    }}
                   >
-                    {chip.label}
+                    {chip.label === "Fix CI" && isFetchingCiLogs ? "Fetching logs…" : chip.label}
                   </Button>
                 ))}
               </div>

@@ -428,3 +428,72 @@ def test_cli_watch_dry_run_implies_once_without_loop(tmp_path, monkeypatch):
     assert len(calls) == 1
     assert calls[0].get("dry_run") is True
 
+
+def test_build_ci_fix_prompt_includes_url_and_last_50_lines():
+    long_lines = [f"step line {i:02d} " + ("x" * 60) for i in range(1, 65)]
+    prompt = watcher._build_ci_fix_prompt([
+        {
+            "name": "test",
+            "conclusion": "failure",
+            "url": "https://git.jibit.cloud/server/projectx/-/jobs/203729",
+            "log_tail": "\n".join(long_lines),
+        }
+    ])
+    assert "URL: https://git.jibit.cloud/server/projectx/-/jobs/203729" in prompt
+    assert "step line 14 " not in prompt
+    assert "step line 15 " in prompt
+    assert "step line 64 " in prompt
+
+
+def test_build_ci_fix_prompt_uses_longer_fence_when_logs_contain_backticks():
+    tail = "error output:\n```python\nassert False\n```"
+    prompt = watcher._build_ci_fix_prompt([
+        {
+            "name": "test",
+            "conclusion": "failure",
+            "url": "https://github.com/o/r/actions/runs/1/job/2",
+            "log_tail": tail,
+        }
+    ])
+    assert "\n````\n" in prompt
+    assert prompt.endswith("\n````")
+
+
+def test_refresh_worktree_inputs_passes_ci_url_fallback_to_populate_logs(
+    tmp_path, monkeypatch
+):
+    from workagent import refs, refs_ci
+
+    _seed_worktree(tmp_path, ref_key="gl:test#1", branch="feat/t1")
+    monkeypatch.setattr(
+        refs,
+        "fetch_ci_details",
+        lambda tool, pr_url, cwd: (
+            "failure",
+            "https://git.jibit.cloud/server/projectx/-/pipelines/77",
+            [{"name": "test", "status": "failed", "conclusion": "failure", "url": "", "log_tail": ""}],
+        ),
+    )
+    monkeypatch.setattr(
+        refs,
+        "fetch_pr_review_details",
+        lambda tool, pr_url, cwd: ({"reviews": 0, "unresolved": 0, "resolved": 0}, []),
+    )
+    seen = []
+
+    def fake_log(tool, url, *, cwd=None, tail_lines=50):
+        seen.append((tool, url))
+        return "FAILED test_fallback"
+
+    monkeypatch.setattr(refs_ci, "fetch_ci_job_log", fake_log)
+    ci_state, ci_url, checks, _, _ = watcher._refresh_worktree_inputs(
+        "gl:test#1",
+        {"pr_url": "https://git.jibit.cloud/server/projectx/-/merge_requests/1", "repo": str(tmp_path)},
+        "feat/t1",
+        None,
+        "deadbeef",
+    )
+    assert ci_state == "failure"
+    assert seen == [("glab", "https://git.jibit.cloud/server/projectx/-/pipelines/77")]
+    assert checks[0]["log_tail"] == "FAILED test_fallback"
+

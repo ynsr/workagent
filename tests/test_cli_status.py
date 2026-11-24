@@ -592,3 +592,43 @@ def test_ci_and_review_cells_emit_worktree_events(isolated_config, tmp_path, mon
     ev_types = [e["event_type"] for e in store.list_worktree_events(key)]
     assert "review_comments_arrived" in ev_types
     assert "review_comments_resolved" in ev_types
+
+
+def test_ci_cell_passes_ci_url_fallback_to_populate_failing_check_logs(
+    isolated_config, tmp_path, monkeypatch
+):
+    """cli_status._ci_cell passes ci_url as fallback_url when checks have empty urls."""
+    from workagent import cli_status, refs, refs_ci, store, store_sqlite
+
+    store_sqlite.init_db(isolated_config / "state.db")
+    wt_dir = tmp_path / "wt"
+    wt_dir.mkdir()
+    key = "jira:IPG-500"
+    entry = {"worktree": str(wt_dir), "branch": "feat/500", "repo": "/repo"}
+    store.record_link(key, entry)
+    cells = {
+        "pr_data": {"url": "https://git.jibit.cloud/server/projectx/-/merge_requests/500"},
+        "_tip": "def456",
+    }
+
+    monkeypatch.setattr(
+        refs,
+        "fetch_ci_details",
+        lambda tool, url, repo: (
+            "failure",
+            "https://git.jibit.cloud/server/projectx/-/pipelines/500",
+            [{"name": "test", "status": "failed", "conclusion": "failure", "url": ""}],
+        ),
+    )
+    seen = []
+
+    def fake_log(tool, url, *, cwd=None, tail_lines=50):
+        seen.append((tool, url))
+        return "FAILED test_cli_fallback"
+
+    monkeypatch.setattr(refs_ci, "fetch_ci_job_log", fake_log)
+    cli_status._ci_cell(entry, cells, refresh_pr=True, key=key)
+    assert seen == [("glab", "https://git.jibit.cloud/server/projectx/-/pipelines/500")]
+    saved = store.list_pr_checks(key)
+    assert saved[0]["url"] == "https://git.jibit.cloud/server/projectx/-/pipelines/500"
+    assert saved[0]["log_tail"] == "FAILED test_cli_fallback"

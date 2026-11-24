@@ -766,6 +766,115 @@ def test_api_worktree_timeline_and_status_fields(client, tmp_path):
     assert miss.status_code == 404
 
 
+def test_api_worktree_timeline_fetch_logs_populates_gitlab_and_github(client, tmp_path, monkeypatch):
+    """GET /api/worktrees/{ref}/timeline?fetch_logs=true fetches 50-line job logs for GitLab & GitHub."""
+    from workagent import refs, store, store_sqlite as sq, store_timeline as tl
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt_gl = tmp_path / "wt-gl"
+    wt_gh = tmp_path / "wt-gh"
+    wt_gl.mkdir()
+    wt_gh.mkdir()
+    store.record_link("jira:IPG-200", {
+        "worktree": str(wt_gl),
+        "branch": "feat/gl",
+        "repo": str(tmp_path),
+        "pr_url": "https://git.jibit.cloud/server/projectx/-/merge_requests/10",
+    })
+    store.record_link("github:o/r#201", {
+        "worktree": str(wt_gh),
+        "branch": "feat/gh",
+        "repo": str(tmp_path),
+        "pr_url": "https://github.com/o/r/pull/201",
+    })
+    tl.replace_pr_checks(db, "jira:IPG-200", [
+        {"name": "test", "commit_sha": "aaa", "status": "failed", "conclusion": "failure",
+         "url": "https://git.jibit.cloud/server/projectx/-/jobs/194493", "log_tail": ""},
+    ])
+    tl.replace_pr_checks(db, "github:o/r#201", [
+        {"name": "pytest", "commit_sha": "bbb", "status": "completed", "conclusion": "failure",
+         "url": "https://github.com/o/r/actions/runs/500/job/600", "log_tail": ""},
+    ])
+
+    def fake_run_cmd(*args, **kwargs):
+        if args[0] == "glab" and "jobs/194493/trace" in args[2]:
+            return "\n".join(f"gl-line-{i}" for i in range(1, 61))
+        if args[0] == "gh" and args[1] == "run":
+            return "\n".join(f"gh-line-{i}" for i in range(1, 61))
+        return ""
+
+    monkeypatch.setattr(refs, "run_cmd", fake_run_cmd)
+
+    r_gl = client.get("/api/worktrees/jira:IPG-200/timeline?fetch_logs=true")
+    assert r_gl.status_code == 200, r_gl.text
+    gl_tail = r_gl.json()["checks"][0]["log_tail"]
+    assert len(gl_tail.splitlines()) == 50
+    assert gl_tail.splitlines()[0] == "gl-line-11"
+    assert gl_tail.splitlines()[-1] == "gl-line-60"
+    # Persisted to SQLite
+    assert tl.list_pr_checks(db, "jira:IPG-200")[0]["log_tail"] == gl_tail
+
+    r_gh = client.get("/api/worktrees/github:o%2Fr%23201/timeline?fetch_logs=true")
+    assert r_gh.status_code == 200, r_gh.text
+    gh_tail = r_gh.json()["checks"][0]["log_tail"]
+    assert len(gh_tail.splitlines()) == 50
+    assert gh_tail.splitlines()[0] == "gh-line-11"
+    assert gh_tail.splitlines()[-1] == "gh-line-60"
+
+
+def test_api_worktree_timeline_fetch_logs_ghes_and_persistence_fallback(
+    client, tmp_path, monkeypatch
+):
+    """GHES PR URLs resolve to gh and persistence failures still return normalized PrCheckRow dicts."""
+    from workagent import refs, store, store_sqlite as sq
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt_ghes = tmp_path / "wt-ghes"
+    wt_ghes.mkdir()
+    store.record_link("github:org/repo#12", {
+        "worktree": str(wt_ghes),
+        "branch": "feat/ghes",
+        "repo": str(tmp_path),
+        "pr_url": "https://ghe.example.com/org/repo/pull/12",
+    })
+
+    seen_tools = []
+
+    def fake_ci_details(tool, pr_url, cwd):
+        seen_tools.append((tool, pr_url))
+        return (
+            "failure",
+            "https://ghe.example.com/org/repo/actions/runs/10/job/20",
+            [{"name": "test", "commit_sha": "abc", "status": "completed", "conclusion": "failure", "url": ""}],
+        )
+
+    def fake_run_cmd(*args, **kwargs):
+        if args[0] == "gh" and args[1] == "run":
+            return "FAILED test_ghes"
+        return ""
+
+    monkeypatch.setattr(refs, "fetch_ci_details", fake_ci_details)
+    monkeypatch.setattr(refs, "run_cmd", fake_run_cmd)
+    monkeypatch.setattr(
+        store,
+        "replace_pr_checks",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("db locked")),
+    )
+
+    r = client.get("/api/worktrees/github:org%2Frepo%2312/timeline?fetch_logs=true")
+    assert r.status_code == 200, r.text
+    assert seen_tools == [("gh", "https://ghe.example.com/org/repo/pull/12")]
+    checks = r.json()["checks"]
+    assert len(checks) == 1
+    assert checks[0]["id"] == 1
+    assert checks[0]["worktree_ref"] == "github:org/repo#12"
+    assert checks[0]["updated_at"]
+    assert checks[0]["url"] == "https://ghe.example.com/org/repo/actions/runs/10/job/20"
+    assert checks[0]["log_tail"] == "FAILED test_ghes"
+
+
 def test_api_worktree_files_and_diff(client, tmp_path, monkeypatch):
     """GET /api/worktrees/{ref}/files and /diff return structured diffs and guard traversal."""
     import subprocess

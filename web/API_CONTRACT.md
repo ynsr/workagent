@@ -62,8 +62,8 @@ Jira rows are keyed `jira:KEY@repo` (e.g. `jira:IPG-932@projectx`); bare
 ```
 `failing_checks` lists names of currently failing normalized PR checks (`pr_checks`); `unresolved_threads` is the count of unresolved review threads.
 
-### `GET /api/worktrees/{ref}/timeline?limit=100` → normalized PR checks, review threads & feedback timeline
-Returns `404` when `ref` does not match any linked worktree.
+### `GET /api/worktrees/{ref}/timeline?limit=100&fetch_logs=false` → normalized PR checks, review threads & feedback timeline
+Returns `404` when `ref` does not match any linked worktree. When `fetch_logs=true`, refreshes missing CI checks and populates `log_tail` (last 50 lines of terminal output, ANSI-stripped) on failing GitHub/GitLab CI checks before returning.
 ```json
 {
   "ref": "jira:IPG-123",

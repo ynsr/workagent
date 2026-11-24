@@ -356,13 +356,95 @@ def create_app(static_dir: Path, host: str, port: int,
         )
 
     @app.get("/api/worktrees/{ref:path}/timeline")
-    def worktree_timeline(ref: str, limit: int = 100):
+    def worktree_timeline(ref: str, limit: int = 100, fetch_logs: bool = False):
         links = store.load_links(include_inactive=True, include_deleted=True)
         resolved = worktrees.resolve_worktree(ref, links)
         if resolved is None:
             raise HTTPException(404, f"no linked state for {ref}")
         key = worktrees.pick_worktree(ref, resolved, links)
         checks = store.list_pr_checks(key)
+        if fetch_logs:
+            from . import refs as _refs, refs_ci as _refs_ci, store_timeline as _tl
+            entry = links[key]
+            branch = str(entry.get("branch") or "")
+            repo = str(entry.get("repo") or "")
+            cwd = repo or str(entry.get("worktree") or "") or None
+            cached = store.lookup_pr_cache(branch, repo) if branch else None
+            pr_url = str(entry.get("pr_url") or "").strip()
+            if not pr_url.startswith("http"):
+                pr_url = str((cached or {}).get("url") or (cached or {}).get("pr_url") or "").strip()
+            tool = _refs_ci.infer_pr_tool(pr_url, cached)
+            changed = False
+            failing_now = [c for c in checks if _tl.is_failing_check(c)]
+            ci_url = str((cached or {}).get("ci_url") or "")
+            if not failing_now and pr_url and tool:
+                ci_state, fetched_ci_url, fresh_checks = _refs.fetch_ci_details(tool, pr_url, cwd)
+                if ci_state is not None:
+                    tip = str((cached or {}).get("branch_tip") or "")
+                    for c in fresh_checks:
+                        if not c.get("commit_sha") and tip:
+                            c["commit_sha"] = tip
+                    checks = fresh_checks
+                    ci_url = fetched_ci_url or ci_url
+                    changed = True
+                    if branch:
+                        store.cache_ci_status(
+                            branch,
+                            ci_state,
+                            sha=tip,
+                            ci_url=ci_url,
+                            repo=repo,
+                        )
+            if checks:
+                before = [
+                    (str(c.get("url") or ""), str(c.get("log_tail") or ""))
+                    for c in checks
+                ]
+                _refs_ci.populate_failing_check_logs(
+                    tool, checks, cwd=cwd, fallback_url=ci_url
+                )
+                after = [
+                    (str(c.get("url") or ""), str(c.get("log_tail") or ""))
+                    for c in checks
+                ]
+                if after != before:
+                    changed = True
+            if changed:
+                def _normalize_fallback_checks(raw_checks: list[dict]) -> list[dict]:
+                    now_iso = _tl._now_iso()
+                    return [
+                        {
+                            "id": int(c.get("id") or (idx + 1)),
+                            "worktree_ref": str(c.get("worktree_ref") or key),
+                            "name": str(c.get("name") or ""),
+                            "commit_sha": str(c.get("commit_sha") or ""),
+                            "status": str(c.get("status") or ""),
+                            "conclusion": str(c.get("conclusion") or ""),
+                            "url": str(c.get("url") or ""),
+                            "log_tail": str(c.get("log_tail") or ""),
+                            "updated_at": str(c.get("updated_at") or now_iso),
+                        }
+                        for idx, c in enumerate(raw_checks)
+                        if isinstance(c, dict)
+                    ]
+
+                has_named_checks = any(
+                    isinstance(c, dict) and str(c.get("name") or "").strip()
+                    for c in checks
+                )
+                try:
+                    written = store.replace_pr_checks(key, checks)
+                    if written or not has_named_checks:
+                        checks = store.list_pr_checks(key)
+                    else:
+                        logger.warning(
+                            "Failed to persist pr_checks for %s (replace_pr_checks returned 0)",
+                            key,
+                        )
+                        checks = _normalize_fallback_checks(checks)
+                except Exception as exc:
+                    logger.warning("Failed to persist pr_checks for %s: %s", key, exc)
+                    checks = _normalize_fallback_checks(checks)
         threads = store.list_pr_review_threads(key)
         events = store.list_worktree_events(key, limit=limit)
         from . import store_timeline
