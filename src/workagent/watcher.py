@@ -68,8 +68,10 @@ def _refresh_worktree_inputs(
         return None, "", [], None, []
     cwd = str(entry.get("repo") or entry.get("worktree") or "").strip() or None
     try:
-        from . import refs as _refs
+        from . import refs as _refs, refs_ci as _refs_ci
         ci_state, ci_url, checks = _refs.fetch_ci_details(tool, pr_url, cwd)
+        if ci_state == "failure" and checks:
+            _refs_ci.populate_failing_check_logs(tool, checks, cwd=cwd)
         stats, threads = _refs.fetch_pr_review_details(tool, pr_url, cwd)
     except Exception as exc:
         logger.warning("watcher refresh failed for %s (%s): %s", ref_key, pr_url, exc)
@@ -207,7 +209,8 @@ def _head_sha_for_entry(entry: dict[str, Any], pr_cached: dict[str, Any] | None)
 
 
 def _build_ci_fix_prompt(failing_checks: Sequence[dict[str, Any]]) -> str:
-    """Build a concise CI-fix prompt including failing check names and log tails."""
+    """Build a concise CI-fix prompt including failing check names, URLs, and 50-line log tails."""
+    from . import refs_ci
     lines = [
         "CI checks are failing on this PR. Diagnose and fix the failures, run the relevant tests, and push the fix.",
         "",
@@ -217,12 +220,12 @@ def _build_ci_fix_prompt(failing_checks: Sequence[dict[str, Any]]) -> str:
         name = str(chk.get("name") or "unnamed")
         conclusion = str(chk.get("conclusion") or chk.get("status") or "failure")
         url = str(chk.get("url") or "")
-        tail = str(chk.get("log_tail") or "").strip()
-        header = f"- {name} ({conclusion})" + (f" {url}" if url else "")
+        tail = refs_ci._tail_log_lines(str(chk.get("log_tail") or ""), max_lines=refs_ci.CI_LOG_TAIL_LINES)
+        header = f"- {name} ({conclusion})" + (f" — URL: {url}" if url else "")
         lines.append(header)
         if tail:
             lines.append("```")
-            lines.append(tail[-1500:])
+            lines.append(tail)
             lines.append("```")
     return "\n".join(lines)
 

@@ -356,13 +356,64 @@ def create_app(static_dir: Path, host: str, port: int,
         )
 
     @app.get("/api/worktrees/{ref:path}/timeline")
-    def worktree_timeline(ref: str, limit: int = 100):
+    def worktree_timeline(ref: str, limit: int = 100, fetch_logs: bool = False):
         links = store.load_links(include_inactive=True, include_deleted=True)
         resolved = worktrees.resolve_worktree(ref, links)
         if resolved is None:
             raise HTTPException(404, f"no linked state for {ref}")
         key = worktrees.pick_worktree(ref, resolved, links)
         checks = store.list_pr_checks(key)
+        if fetch_logs:
+            from . import refs as _refs, refs_ci as _refs_ci, store_timeline as _tl
+            entry = links[key]
+            branch = str(entry.get("branch") or "")
+            repo = str(entry.get("repo") or "")
+            cwd = repo or str(entry.get("worktree") or "") or None
+            cached = store.lookup_pr_cache(branch, repo) if branch else None
+            pr_url = str(entry.get("pr_url") or "").strip()
+            if not pr_url.startswith("http"):
+                pr_url = str((cached or {}).get("url") or (cached or {}).get("pr_url") or "").strip()
+            tool = str((cached or {}).get("tool") or "").strip()
+            if tool not in ("gh", "glab"):
+                tool = "gh" if "github.com" in pr_url else ("glab" if pr_url else "")
+            changed = False
+            failing_now = [c for c in checks if _tl.is_failing_check(c)]
+            ci_url = str((cached or {}).get("ci_url") or "")
+            if not failing_now and pr_url and tool:
+                ci_state, fetched_ci_url, fresh_checks = _refs.fetch_ci_details(tool, pr_url, cwd)
+                if ci_state is not None:
+                    tip = str((cached or {}).get("branch_tip") or "")
+                    for c in fresh_checks:
+                        if not c.get("commit_sha") and tip:
+                            c["commit_sha"] = tip
+                    checks = fresh_checks
+                    ci_url = fetched_ci_url or ci_url
+                    changed = True
+                    if branch:
+                        store.cache_ci_status(
+                            branch,
+                            ci_state,
+                            sha=tip,
+                            ci_url=ci_url,
+                            repo=repo,
+                        )
+            if checks:
+                if ci_url:
+                    for c in checks:
+                        if _tl.is_failing_check(c) and not str(c.get("url") or "").strip():
+                            c["url"] = ci_url
+                            changed = True
+                before = [str(c.get("log_tail") or "") for c in checks]
+                _refs_ci.populate_failing_check_logs(tool, checks, cwd=cwd)
+                after = [str(c.get("log_tail") or "") for c in checks]
+                if after != before:
+                    changed = True
+            if changed:
+                try:
+                    store.replace_pr_checks(key, checks)
+                    checks = store.list_pr_checks(key)
+                except Exception:
+                    pass
         threads = store.list_pr_review_threads(key)
         events = store.list_worktree_events(key, limit=limit)
         from . import store_timeline

@@ -31,7 +31,8 @@ import { api, prLabel, prUrl, type Run } from "@/lib/api"
 import { relativeTime, shortId } from "@/lib/format"
 import { hasAcpStructuredEvents } from "@/lib/harness"
 import type { RunMode } from "@/lib/launchConfig"
-import { queryKeys, useFlows, useRun, useRuns, useStatusAll } from "@/lib/queries"
+import { isFailingCheck, resolveFixCiPrompt } from "@/lib/fixCiPrompt"
+import { queryKeys, useFlows, useRun, useRuns, useStatusAll, useWorktreeTimeline } from "@/lib/queries"
 
 type InspectorTab = "summary" | "diff" | "flows" | "prodtest"
 
@@ -65,6 +66,7 @@ export function WorktreeWorkspace() {
   const flowsQ = useFlows(refKey)
 
   const entry = statusQ.data?.[refKey]
+  const timelineQ = useWorktreeTimeline(entry?.ci === "failure" ? refKey : undefined)
   const worktreePath = entry?.worktree ?? ""
 
   const worktreeRuns = useMemo(() => {
@@ -99,6 +101,7 @@ export function WorktreeWorkspace() {
 
   // Follow-up composer state
   const [prompt, setPrompt] = useState("")
+  const [isFetchingCiLogs, setIsFetchingCiLogs] = useState(false)
   const [harness, setHarness] = useState("")
   const [runMode, setRunMode] = useState<RunMode>("acp")
   const [model, setModel] = useState("")
@@ -284,9 +287,28 @@ export function WorktreeWorkspace() {
                     variant="outline"
                     size="sm"
                     className="h-7 text-xs"
-                    onClick={() => setPrompt(chip.prompt)}
+                    disabled={chip.label === "Fix CI" && isFetchingCiLogs}
+                    onClick={() => {
+                      if (chip.label !== "Fix CI") {
+                        setPrompt(chip.prompt)
+                        return
+                      }
+                      const timelineChecks = timelineQ.data?.checks ?? []
+                      if (timelineChecks.some(isFailingCheck) || entry?.ci === "failure") {
+                        setIsFetchingCiLogs(true)
+                        void resolveFixCiPrompt(refKey, timelineChecks, {
+                          fallbackCiUrl: entry?.ci_url,
+                          fetchIfEmpty: true,
+                          queryClient: qc,
+                        })
+                          .then((resolvedPrompt) => setPrompt(resolvedPrompt))
+                          .finally(() => setIsFetchingCiLogs(false))
+                        return
+                      }
+                      setPrompt(chip.prompt)
+                    }}
                   >
-                    {chip.label}
+                    {chip.label === "Fix CI" && isFetchingCiLogs ? "Fetching logs…" : chip.label}
                   </Button>
                 ))}
               </div>

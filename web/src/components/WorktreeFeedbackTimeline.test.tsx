@@ -1,18 +1,34 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen, fireEvent, cleanup } from "@testing-library/react"
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { WorktreeFeedbackTimeline } from "./WorktreeFeedbackTimeline"
-import type { WorktreeEntry, WorktreeTimeline } from "@/lib/api"
+import { api, type WorktreeEntry, type WorktreeTimeline } from "@/lib/api"
 
 const mockTimeline = vi.fn()
+const mockMutate = vi.fn()
 
-vi.mock("@/lib/queries", () => ({
-  useWorktreeTimeline: (...args: unknown[]) => mockTimeline(...args),
-  useCreateRun: () => ({
-    mutate: vi.fn(),
-    isPending: false,
-  }),
-}))
+vi.mock("@/lib/queries", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/queries")>("@/lib/queries")
+  return {
+    ...actual,
+    useWorktreeTimeline: (...args: unknown[]) => mockTimeline(...args),
+    useCreateRun: () => ({
+      mutate: mockMutate,
+      isPending: false,
+    }),
+  }
+})
+
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api")
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      worktreeTimeline: vi.fn(),
+    },
+  }
+})
 
 function wrap(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -22,6 +38,8 @@ function wrap(ui: React.ReactElement) {
 describe("WorktreeFeedbackTimeline", () => {
   beforeEach(() => {
     mockTimeline.mockReset()
+    mockMutate.mockReset()
+    vi.mocked(api.worktreeTimeline).mockReset()
   })
 
   afterEach(() => {
@@ -207,5 +225,107 @@ describe("WorktreeFeedbackTimeline", () => {
     expect(
       screen.getByText(/No CI checks, review threads, or timeline events recorded yet/i),
     ).toBeInTheDocument()
+  })
+
+  it("Fix CI launches adhoc run with failing job URL and cached 50-line log tail", async () => {
+    const logLines = Array.from({ length: 60 }, (_, i) => `log-${i + 1}`).join("\n")
+    mockTimeline.mockReturnValue({
+      data: {
+        ref: "jira:IPG-146",
+        checks: [
+          {
+            id: 1,
+            worktree_ref: "jira:IPG-146",
+            name: "test",
+            commit_sha: "abc",
+            status: "failed",
+            conclusion: "failure",
+            url: "https://git.jibit.cloud/server/projectx/-/jobs/203729",
+            log_tail: logLines,
+            updated_at: "2026-11-24T01:00:00Z",
+          },
+        ],
+        threads: [],
+        events: [],
+        summary: { failing_checks: ["test"], unresolved_threads: 0 },
+      },
+      isLoading: false,
+      isError: false,
+    })
+
+    wrap(<WorktreeFeedbackTimeline worktreeKey="jira:IPG-146" />)
+    fireEvent.click(screen.getByRole("button", { name: /Fix CI/i }))
+
+    await waitFor(() => {
+      expect(mockMutate).toHaveBeenCalledTimes(1)
+    })
+    expect(api.worktreeTimeline).not.toHaveBeenCalled()
+    const payload = mockMutate.mock.calls[0]?.[0] as { command: string; args: string[]; confirm: boolean }
+    expect(payload.command).toBe("adhoc")
+    expect(payload.confirm).toBe(true)
+    expect(payload.args[0]).toBe("jira:IPG-146")
+    expect(payload.args[1]).toBe("--prompt")
+    const prompt = payload.args[2] ?? ""
+    expect(prompt).toContain("https://git.jibit.cloud/server/projectx/-/jobs/203729")
+    expect(prompt).not.toContain("log-10\n")
+    expect(prompt).toContain("log-11")
+    expect(prompt).toContain("log-60")
+  })
+
+  it("Fix CI fetches missing logs via fetchLogs=true before launching run", async () => {
+    mockTimeline.mockReturnValue({
+      data: {
+        ref: "github:o/r#1",
+        checks: [
+          {
+            id: 1,
+            worktree_ref: "github:o/r#1",
+            name: "pytest",
+            commit_sha: "abc",
+            status: "completed",
+            conclusion: "failure",
+            url: "https://github.com/o/r/actions/runs/50/job/60",
+            log_tail: "",
+            updated_at: "2026-11-24T01:00:00Z",
+          },
+        ],
+        threads: [],
+        events: [],
+        summary: { failing_checks: ["pytest"], unresolved_threads: 0 },
+      },
+      isLoading: false,
+      isError: false,
+    })
+    vi.mocked(api.worktreeTimeline).mockResolvedValue({
+      ref: "github:o/r#1",
+      checks: [
+        {
+          id: 1,
+          worktree_ref: "github:o/r#1",
+          name: "pytest",
+          commit_sha: "abc",
+          status: "completed",
+          conclusion: "failure",
+          url: "https://github.com/o/r/actions/runs/50/job/60",
+          log_tail: "E AssertionError: 1 != 2",
+          updated_at: "2026-11-24T01:00:00Z",
+        },
+      ],
+      threads: [],
+      events: [],
+      summary: { failing_checks: ["pytest"], unresolved_threads: 0 },
+    })
+
+    wrap(<WorktreeFeedbackTimeline worktreeKey="github:o/r#1" />)
+    fireEvent.click(screen.getByRole("button", { name: /Fix CI/i }))
+
+    await waitFor(() => {
+      expect(mockMutate).toHaveBeenCalledTimes(1)
+    })
+    expect(api.worktreeTimeline).toHaveBeenCalledWith("github:o/r#1", 100, { fetchLogs: true })
+    const payload = mockMutate.mock.calls[0]?.[0] as { args: string[] }
+    const prompt = payload.args[2] ?? ""
+    expect(prompt).toContain("https://github.com/o/r/actions/runs/50/job/60")
+    expect(prompt).toContain("E AssertionError: 1 != 2")
   })
 })

@@ -1,5 +1,5 @@
-import { describe, expect, it, vi, beforeEach } from "vitest"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { WorktreeWorkspace } from "@/pages/WorktreeWorkspace"
@@ -19,6 +19,7 @@ vi.mock("@/lib/api", async () => {
       harnessOptions: vi.fn(),
       followUpRun: vi.fn(),
       createRun: vi.fn(),
+      worktreeTimeline: vi.fn(),
     },
   }
 })
@@ -38,6 +39,10 @@ function renderWorkspace(ref = "jira:IPG-42") {
 }
 
 describe("WorktreeWorkspace", () => {
+  afterEach(() => {
+    cleanup()
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(api.statusAll).mockResolvedValue({
@@ -111,6 +116,48 @@ describe("WorktreeWorkspace", () => {
           run_mode: "acp",
         }),
       )
+    })
+  })
+
+  it("populates Fix CI quick chip with failing CI job URL and logs when CI fails", async () => {
+    vi.mocked(api.statusAll).mockResolvedValue({
+      "jira:IPG-42": {
+        worktree: "/tmp/wt/42",
+        branch: "feat/42",
+        pr: "MR #42",
+        ci: "failure",
+        ci_url: "https://git.jibit.cloud/server/projectx/-/jobs/203729",
+        display_status: "CI failing",
+      },
+    } as never)
+    vi.mocked(api.worktreeTimeline).mockResolvedValue({
+      ref: "jira:IPG-42",
+      checks: [
+        {
+          id: 1,
+          worktree_ref: "jira:IPG-42",
+          name: "test",
+          commit_sha: "abc",
+          status: "failed",
+          conclusion: "failure",
+          url: "https://git.jibit.cloud/server/projectx/-/jobs/203729",
+          log_tail: "FAILED tests/test_app.py::test_x",
+          updated_at: "2026-11-24T00:00:00Z",
+        },
+      ],
+      threads: [],
+      events: [],
+      summary: { failing_checks: ["test"], unresolved_threads: 0 },
+    })
+
+    renderWorkspace("jira:IPG-42")
+    await screen.findByText("Done implementing.")
+    fireEvent.click(screen.getByRole("button", { name: "Fix CI" }))
+
+    const textarea = screen.getByLabelText("Follow-up prompt") as HTMLTextAreaElement
+    await waitFor(() => {
+      expect(textarea.value).toContain("https://git.jibit.cloud/server/projectx/-/jobs/203729")
+      expect(textarea.value).toContain("FAILED tests/test_app.py::test_x")
     })
   })
 })

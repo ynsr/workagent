@@ -428,3 +428,19 @@ def test_cli_watch_dry_run_implies_once_without_loop(tmp_path, monkeypatch):
     assert len(calls) == 1
     assert calls[0].get("dry_run") is True
 
+
+def test_build_ci_fix_prompt_includes_url_and_last_50_lines():
+    long_lines = [f"step line {i:02d} " + ("x" * 60) for i in range(1, 65)]
+    prompt = watcher._build_ci_fix_prompt([
+        {
+            "name": "test",
+            "conclusion": "failure",
+            "url": "https://git.jibit.cloud/server/projectx/-/jobs/203729",
+            "log_tail": "\n".join(long_lines),
+        }
+    ])
+    assert "URL: https://git.jibit.cloud/server/projectx/-/jobs/203729" in prompt
+    assert "step line 14 " not in prompt
+    assert "step line 15 " in prompt
+    assert "step line 64 " in prompt
+

@@ -519,7 +519,9 @@ from .refs_ci import (  # noqa: F401,E402
     _ci_glab,
     fetch_ci,
     fetch_ci_details,
+    fetch_ci_job_log,
     fetch_ci_status,
+    populate_failing_check_logs,
 )
 
 from .refs_reviews import (  # noqa: F401,E402
