@@ -397,7 +397,7 @@ def _validate_args(command: str, args: list[str], body_force: bool = False) -> N
                 # so the value can't be mistaken for the next flag. Same for
                 # --overlay-buttons: hide-only values (`-adhoc`) and the empty
                 # reset (`""`) are legal CLI values.
-                if value.startswith("-") and a not in ("--prompt", "--extra-prompt", "--overlay-buttons"):
+                if value.startswith("-") and a not in ("--prompt", "--extra-prompt", "--overlay-buttons", "--ci-ignore"):
                     raise ApiError(
                         "bad_arg",
                         f"value for {a} must not start with '-': {value!r}", 400)
@@ -509,9 +509,9 @@ def _build_argv(command: str, args: list[str]) -> list[str]:
     while i < len(rest):
         # Click parses `--extra-prompt value` fine, but a value starting
         # with '-' would be read as the next flag — always use the = form.
-        # Same for --overlay-buttons: hide-only values (`-adhoc`) and the
-        # empty reset (`""`) must survive as one token.
-        if rest[i] in ("--extra-prompt", "--overlay-buttons") and i + 1 < len(rest):
+        # Same for --overlay-buttons and --ci-ignore: hide-only values
+        # (`-adhoc`) and the empty reset (`""`) must survive as one token.
+        if rest[i] in ("--extra-prompt", "--overlay-buttons", "--ci-ignore") and i + 1 < len(rest):
             out.append(f"{rest[i]}={rest[i + 1]}")
             i += 2
         else:

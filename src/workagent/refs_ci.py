@@ -50,13 +50,17 @@ def _repo_ci_ignore(cwd: str | None) -> list[str]:
         from . import store as _store
         norm = os.path.realpath(os.path.expanduser(str(cwd)))
         repos_map = _store.load_repos() or {}
+        best: tuple[int, list[str]] | None = None
         for entry in repos_map.values():
             rp = entry.get("path") or ""
             if not rp:
                 continue
             nrp = os.path.realpath(os.path.expanduser(str(rp)))
             if norm == nrp or norm.startswith(nrp + os.sep):
-                return list(entry.get("ci_ignore") or [])
+                if best is None or len(nrp) > best[0]:
+                    best = (len(nrp), list(entry.get("ci_ignore") or []))
+        if best is not None:
+            return best[1]
         for wt in (_store.load_links() or {}).values():
             wp = wt.get("worktree") or wt.get("path") or ""
             if wp and os.path.realpath(os.path.expanduser(str(wp))) == norm:
@@ -124,7 +128,12 @@ def _select_main_glab_pipeline(
         return newest, jobs_by_id
     for p in same_sha:
         pid = p.get("id")
-        jobs = _pipeline_jobs(path, pid, host, cwd, ref_label)
+        try:
+            jobs = _pipeline_jobs(path, pid, host, cwd, ref_label)
+        except HarnessError:
+            # A transient jobs failure must not blank CI: skip this
+            # candidate and keep looking for the main pipeline.
+            continue
         if pid is not None:
             jobs_by_id[int(pid)] = jobs
         if not _is_side_ci_glab(p, jobs, ignore_patterns):
@@ -259,7 +268,9 @@ def _ci_glab_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]
             continue
         # Older pipelines are only a fallback when the main pipeline has no
         # job URL (e.g. merge_request_event that failed before any job started).
-        if not fallback:
+        # A side-CI never supplies the link: its passing job would point the
+        # badge at the wrong pipeline (#184).
+        if not fallback and not _is_side_ci_glab(pipeline, jobs, ignore_patterns):
             fallback = _pick_job_url(jobs)
             if fallback:
                 break  # one banked fallback is enough; skip older pipelines

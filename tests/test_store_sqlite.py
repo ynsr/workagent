@@ -401,6 +401,23 @@ def test_backfill_maps_explicit_tracker(tmp_path):
         assert row[0] == "proj"
 
 
+
+def test_backfill_preserves_ci_ignore(tmp_path):
+    """Issue #184: migrating config.json must not drop repo ci_ignore patterns."""
+    import json
+    db = tmp_path / "state.db"
+    cfg = {"repos": {"proj": {"path": "/x/proj", "ci_ignore": ["trivy:*", "sast"]}},
+           "trackers": {"jira:IPG": {"repos": ["/x/proj"]}}}
+    sq.backfill_trackers_repos(db, cfg)
+    with sq.connect(db) as conn:
+        raw = conn.execute("SELECT ci_ignore FROM repos WHERE key_ref = 'proj'").fetchone()[0]
+    assert json.loads(raw) == ["trivy:*", "sast"]
+    # Re-running the backfill (idempotent) keeps the value.
+    sq.backfill_trackers_repos(db, cfg)
+    with sq.connect(db) as conn:
+        raw = conn.execute("SELECT ci_ignore FROM repos WHERE key_ref = 'proj'").fetchone()[0]
+    assert json.loads(raw) == ["trivy:*", "sast"]
+
 def test_backfill_derives_tracker(tmp_path):
     """No explicit mapping → derive_tracker writes the join link (issue #26)."""
     db = tmp_path / "state.db"

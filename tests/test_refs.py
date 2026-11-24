@@ -981,3 +981,87 @@ def test_fetch_ci_gh_ignores_configured_side_ci(monkeypatch):
     assert state == "success"
     assert url == "https://github.com/o/r/runs/1"
     assert [c["name"] for c in checks] == ["test"]
+
+
+def test_fetch_ci_glab_main_without_jobs_never_links_side_ci(monkeypatch):
+    """Issue #184: main pipeline with no job URL must not fall back to a side-CI link."""
+    def fake(*a, **k):
+        api = a[2]
+        if api.endswith("/pipelines"):
+            return json.dumps([
+                {"id": 81907, "status": "success", "sha": "a9892b0e",
+                 "source": "merge_request_event",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/pipelines/81907"},
+                {"id": 81906, "status": "running", "sha": "a9892b0e",
+                 "source": "push",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/pipelines/81906"},
+            ])
+        if "/pipelines/81907/jobs" in api:
+            return json.dumps([
+                {"id": 9001, "name": "trivy:source", "stage": "security", "status": "success",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/jobs/9001"},
+            ])
+        if "/pipelines/81906/jobs" in api:
+            return "[]"  # main pipeline: nothing started yet
+        return "[]"
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    state, url = refs.fetch_ci(
+        "glab", "https://git.jibit.cloud/server/projectx/-/merge_requests/1823", "/repo"
+    )
+    assert state == "running"
+    assert url == "https://git.jibit.cloud/server/projectx/-/pipelines/81906"
+
+
+def test_fetch_ci_glab_survives_jobs_api_failure(monkeypatch):
+    """A transient jobs error on one candidate must not blank the CI cell."""
+    from workagent.errors import HarnessError
+
+    def fake(*a, **k):
+        api = a[2]
+        if api.endswith("/pipelines"):
+            return json.dumps([
+                {"id": 81907, "status": "success", "sha": "a9892b0e",
+                 "source": "merge_request_event",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/pipelines/81907"},
+                {"id": 81906, "status": "failed", "sha": "a9892b0e",
+                 "source": "push",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/pipelines/81906"},
+            ])
+        if "/pipelines/81907/jobs" in api:
+            return "{broken"
+        if "/pipelines/81906/jobs" in api:
+            return json.dumps([
+                {"id": 8001, "name": "test", "stage": "check", "status": "failed",
+                 "web_url": "https://git.jibit.cloud/server/projectx/-/jobs/8001"},
+            ])
+        return "[]"
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    state, url = refs.fetch_ci(
+        "glab", "https://git.jibit.cloud/server/projectx/-/merge_requests/1823", "/repo"
+    )
+    assert (state, url) == ("failure", "https://git.jibit.cloud/server/projectx/-/jobs/8001")
+
+
+def test_repo_ci_ignore_prefers_longest_repo_path(monkeypatch):
+    """Nested registered repos: the innermost match wins, not config order."""
+    from workagent import refs_ci, store as _store
+    monkeypatch.setattr(_store, "load_repos", lambda: {
+        "outer": {"path": "/work", "ci_ignore": ["outer-ci"]},
+        "inner": {"path": "/work/proj", "ci_ignore": ["trivy:*"]},
+    })
+    assert refs_ci._repo_ci_ignore("/work/proj/src") == ["trivy:*"]
+    assert refs_ci._repo_ci_ignore("/work/other") == ["outer-ci"]
+
+
+def test_repo_ci_ignore_resolves_linked_worktree(monkeypatch):
+    """A linked worktree inherits its main repo's ci_ignore patterns."""
+    from workagent import refs_ci, store as _store
+    monkeypatch.setattr(_store, "load_repos", lambda: {
+        "proj": {"path": "/work/proj", "ci_ignore": ["trivy:*"]},
+    })
+    monkeypatch.setattr(_store, "load_links", lambda: {
+        "jira:IPG-1": {"worktree": "/wt/IPG-1", "repo": "/work/proj"},
+    })
+    assert refs_ci._repo_ci_ignore("/wt/IPG-1") == ["trivy:*"]

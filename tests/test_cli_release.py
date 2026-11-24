@@ -183,6 +183,31 @@ def test_repo_update_ci_ignore_roundtrip(isolated_config, tmp_path):
     assert _store.load_repos()["proj"]["ci_ignore"] == []
 
 
+def test_repo_update_ci_ignore_sqlite_branch(isolated_config, tmp_path):
+    """Post-migration path: repo update writes/clears ci_ignore in state.db."""
+    from typer.testing import CliRunner
+    from workagent import cli as _cli, store as _store, store_sqlite as _sq
+    import json
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    assert CliRunner().invoke(_cli.app, ["repo", "add", "--name", "proj",
+                                         "--path", str(repo_dir),
+                                         "--tracker", "IPG"]).exit_code == 0
+    _sq.init_db(_sq.db_path())
+    _sq.backfill_trackers_repos(_sq.db_path(), _store.load_config())
+    assert _store._sqlite_path() is not None
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--ci-ignore", "trivy:*,sast", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["ci_ignore"] == ["trivy:*", "sast"]
+    assert _store.load_repos()["proj"]["ci_ignore"] == ["trivy:*", "sast"]
+    r = CliRunner().invoke(_cli.app, ["repo", "update", "proj",
+                                      "--ci-ignore", "", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["ci_ignore"] == []
+    assert _store.load_repos()["proj"]["ci_ignore"] == []
+
+
 def test_release_status_same_branch_guard(monkeypatch):
     from workagent import repos as _repos
     monkeypatch.setattr(_repos.store, "load_repos", lambda: {
