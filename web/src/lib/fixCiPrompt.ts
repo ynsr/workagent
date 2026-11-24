@@ -30,6 +30,15 @@ export function tailLogLines(log: string, maxLines = CI_LOG_TAIL_LINES): string 
   return lines.slice(-maxLines).join("\n").trim()
 }
 
+/** Return a backtick fence strictly longer than any run of backticks in `text` (min 3). */
+export function markdownFence(text: string): string {
+  let longest = 0
+  for (const m of text.matchAll(/`+/g)) {
+    if (m[0].length > longest) longest = m[0].length
+  }
+  return "`".repeat(Math.max(3, longest + 1))
+}
+
 /**
  * Build the Fix CI prompt including failing check names, failing CI job URL(s),
  * and the last 50 lines of failing job terminal logs.
@@ -54,10 +63,11 @@ export function buildFixCiPrompt(
     const tail = tailLogLines(chk.log_tail || "")
     sections.push(`- ${chk.name} (${status})${url ? ` — URL: ${url}` : ""}`)
     if (tail) {
+      const fence = markdownFence(tail)
       sections.push(`Last ${CI_LOG_TAIL_LINES} lines of terminal log:`)
-      sections.push("```")
+      sections.push(fence)
       sections.push(tail)
-      sections.push("```")
+      sections.push(fence)
     }
   }
   return sections.join("\n")

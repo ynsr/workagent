@@ -242,7 +242,10 @@ _GH_RUN_URL_RE = re.compile(
     r"^https?://([^/]+)/([^/]+/[^/]+)/actions/runs/(\d+)(?:[/?#].*)?$"
 )
 _GH_CHECK_RUN_URL_RE = re.compile(
-    r"^https?://([^/]+)/([^/]+/[^/]+)/(?:runs/(\d+)|pull/\d+/checks\?[^#]*\bcheck_run_id=(\d+))(?:[&#].*)?$"
+    r"^https?://([^/]+)/([^/]+/[^/]+)/(?:runs/(\d+)(?:[/?#].*)?|pull/\d+/checks\?[^#]*\bcheck_run_id=(\d+)(?:[&#].*)?)$"
+)
+_GHES_PR_URL_RE = re.compile(
+    r"^https?://[^/]+/[^/]+/[^/]+/pull/\d+(?:[/?#].*)?$"
 )
 
 
@@ -252,7 +255,9 @@ def _strip_ansi_and_cr(text: str) -> str:
     cleaned = _ANSI_CSI_RE.sub("", cleaned)
     cleaned = cleaned.replace("\r\n", "\n")
     if "\r" in cleaned:
-        cleaned = "\n".join(ln.rsplit("\r", 1)[-1] for ln in cleaned.split("\n"))
+        cleaned = "\n".join(
+            ln.rstrip("\r").rsplit("\r", 1)[-1] for ln in cleaned.split("\n")
+        )
     return cleaned
 
 
@@ -275,6 +280,22 @@ def _tail_log_lines(
             tail = tail.split("\n", 1)[1]
         tail = tail.strip()
     return tail
+
+
+def infer_pr_tool(pr_url: str, cached: dict | None = None) -> str:
+    """Derive host CLI (``gh`` or ``glab``) for a PR/MR URL, preferring *cached*."""
+    tool = str((cached or {}).get("tool") or "").strip().lower()
+    if tool in ("gh", "glab"):
+        return tool
+    u = (pr_url or "").strip()
+    if not u:
+        return ""
+    from .refs import _GITHUB_PR
+    if _GITHUB_PR.match(u) or _GHES_PR_URL_RE.match(u):
+        return "gh"
+    if _GITLAB_MR.match(u):
+        return "glab"
+    return "gh" if "github.com" in u.lower() else "glab"
 
 
 def _infer_ci_tool(tool: str, job_url: str) -> str:
@@ -390,26 +411,43 @@ def populate_failing_check_logs(
     cwd: str | None = None,
     tail_lines: int = CI_LOG_TAIL_LINES,
     max_checks: int = 5,
+    fallback_url: str = "",
 ) -> list[dict]:
-    """Populate ``log_tail`` (last *tail_lines*) on failing checks missing logs."""
+    """Populate ``log_tail`` (last *tail_lines*) on failing checks missing logs.
+
+    When *fallback_url* is provided, failing checks with an empty ``url`` are
+    backfilled with it. Distinct ``(tool, url)`` targets are fetched at most
+    once so shared URLs (e.g. a pipeline fallback) reuse the cached tail
+    without consuming extra *max_checks* slots.
+    """
     if not checks:
         return checks
     from . import store_timeline
+    fb_url = (fallback_url or "").strip()
     fetched = 0
+    tail_cache: dict[tuple[str, str], str] = {}
     for chk in checks:
         if not isinstance(chk, dict):
             continue
         if not store_timeline.is_failing_check(chk):
             continue
+        url = str(chk.get("url") or "").strip()
+        if not url and fb_url:
+            url = fb_url
+            chk["url"] = fb_url
         if str(chk.get("log_tail") or "").strip():
             continue
-        url = str(chk.get("url") or "").strip()
         if not url:
             continue
-        if fetched >= max_checks:
-            break
-        fetched += 1
-        tail = fetch_ci_job_log(tool, url, cwd=cwd, tail_lines=tail_lines)
+        cache_key = (tool, url)
+        if cache_key in tail_cache:
+            tail = tail_cache[cache_key]
+        else:
+            if fetched >= max_checks:
+                continue
+            fetched += 1
+            tail = fetch_ci_job_log(tool, url, cwd=cwd, tail_lines=tail_lines)
+            tail_cache[cache_key] = tail
         if tail:
             chk["log_tail"] = tail
     return checks

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
@@ -81,9 +81,16 @@ export function WorktreeWorkspace() {
     return all.filter((f) => f.worktree_ref === refKey)
   }, [flowsQ.data, refKey])
 
+  const activeRefKeyRef = useRef(refKey)
+  activeRefKeyRef.current = refKey
+  const ciFetchTokenRef = useRef(0)
+
   const [selectedRunId, setSelectedRunId] = useState<string>("")
+  const [isFetchingCiLogs, setIsFetchingCiLogs] = useState(false)
   useEffect(() => {
     setSelectedRunId("")
+    ciFetchTokenRef.current += 1
+    setIsFetchingCiLogs(false)
   }, [refKey])
   const activeRunId = selectedRunId || worktreeRuns[0]?.id || ""
 
@@ -101,7 +108,6 @@ export function WorktreeWorkspace() {
 
   // Follow-up composer state
   const [prompt, setPrompt] = useState("")
-  const [isFetchingCiLogs, setIsFetchingCiLogs] = useState(false)
   const [harness, setHarness] = useState("")
   const [runMode, setRunMode] = useState<RunMode>("acp")
   const [model, setModel] = useState("")
@@ -295,14 +301,30 @@ export function WorktreeWorkspace() {
                       }
                       const timelineChecks = timelineQ.data?.checks ?? []
                       if (timelineChecks.some(isFailingCheck) || entry?.ci === "failure") {
+                        const requestRefKey = refKey
+                        const requestToken = ++ciFetchTokenRef.current
                         setIsFetchingCiLogs(true)
-                        void resolveFixCiPrompt(refKey, timelineChecks, {
+                        void resolveFixCiPrompt(requestRefKey, timelineChecks, {
                           fallbackCiUrl: entry?.ci_url,
                           fetchIfEmpty: true,
                           queryClient: qc,
                         })
-                          .then((resolvedPrompt) => setPrompt(resolvedPrompt))
-                          .finally(() => setIsFetchingCiLogs(false))
+                          .then((resolvedPrompt) => {
+                            if (
+                              activeRefKeyRef.current === requestRefKey &&
+                              ciFetchTokenRef.current === requestToken
+                            ) {
+                              setPrompt(resolvedPrompt)
+                            }
+                          })
+                          .finally(() => {
+                            if (
+                              activeRefKeyRef.current === requestRefKey &&
+                              ciFetchTokenRef.current === requestToken
+                            ) {
+                              setIsFetchingCiLogs(false)
+                            }
+                          })
                         return
                       }
                       setPrompt(chip.prompt)

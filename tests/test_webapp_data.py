@@ -823,6 +823,58 @@ def test_api_worktree_timeline_fetch_logs_populates_gitlab_and_github(client, tm
     assert gh_tail.splitlines()[-1] == "gh-line-60"
 
 
+def test_api_worktree_timeline_fetch_logs_ghes_and_persistence_fallback(
+    client, tmp_path, monkeypatch
+):
+    """GHES PR URLs resolve to gh and persistence failures still return normalized PrCheckRow dicts."""
+    from workagent import refs, store, store_sqlite as sq
+
+    db = sq.db_path()
+    sq.init_db(db)
+    wt_ghes = tmp_path / "wt-ghes"
+    wt_ghes.mkdir()
+    store.record_link("github:org/repo#12", {
+        "worktree": str(wt_ghes),
+        "branch": "feat/ghes",
+        "repo": str(tmp_path),
+        "pr_url": "https://ghe.example.com/org/repo/pull/12",
+    })
+
+    seen_tools = []
+
+    def fake_ci_details(tool, pr_url, cwd):
+        seen_tools.append((tool, pr_url))
+        return (
+            "failure",
+            "https://ghe.example.com/org/repo/actions/runs/10/job/20",
+            [{"name": "test", "commit_sha": "abc", "status": "completed", "conclusion": "failure", "url": ""}],
+        )
+
+    def fake_run_cmd(*args, **kwargs):
+        if args[0] == "gh" and args[1] == "run":
+            return "FAILED test_ghes"
+        return ""
+
+    monkeypatch.setattr(refs, "fetch_ci_details", fake_ci_details)
+    monkeypatch.setattr(refs, "run_cmd", fake_run_cmd)
+    monkeypatch.setattr(
+        store,
+        "replace_pr_checks",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("db locked")),
+    )
+
+    r = client.get("/api/worktrees/github:org%2Frepo%2312/timeline?fetch_logs=true")
+    assert r.status_code == 200, r.text
+    assert seen_tools == [("gh", "https://ghe.example.com/org/repo/pull/12")]
+    checks = r.json()["checks"]
+    assert len(checks) == 1
+    assert checks[0]["id"] == 1
+    assert checks[0]["worktree_ref"] == "github:org/repo#12"
+    assert checks[0]["updated_at"]
+    assert checks[0]["url"] == "https://ghe.example.com/org/repo/actions/runs/10/job/20"
+    assert checks[0]["log_tail"] == "FAILED test_ghes"
+
+
 def test_api_worktree_files_and_diff(client, tmp_path, monkeypatch):
     """GET /api/worktrees/{ref}/files and /diff return structured diffs and guard traversal."""
     import subprocess

@@ -373,9 +373,7 @@ def create_app(static_dir: Path, host: str, port: int,
             pr_url = str(entry.get("pr_url") or "").strip()
             if not pr_url.startswith("http"):
                 pr_url = str((cached or {}).get("url") or (cached or {}).get("pr_url") or "").strip()
-            tool = str((cached or {}).get("tool") or "").strip()
-            if tool not in ("gh", "glab"):
-                tool = "gh" if "github.com" in pr_url else ("glab" if pr_url else "")
+            tool = _refs_ci.infer_pr_tool(pr_url, cached)
             changed = False
             failing_now = [c for c in checks if _tl.is_failing_check(c)]
             ci_url = str((cached or {}).get("ci_url") or "")
@@ -398,22 +396,55 @@ def create_app(static_dir: Path, host: str, port: int,
                             repo=repo,
                         )
             if checks:
-                if ci_url:
-                    for c in checks:
-                        if _tl.is_failing_check(c) and not str(c.get("url") or "").strip():
-                            c["url"] = ci_url
-                            changed = True
-                before = [str(c.get("log_tail") or "") for c in checks]
-                _refs_ci.populate_failing_check_logs(tool, checks, cwd=cwd)
-                after = [str(c.get("log_tail") or "") for c in checks]
+                before = [
+                    (str(c.get("url") or ""), str(c.get("log_tail") or ""))
+                    for c in checks
+                ]
+                _refs_ci.populate_failing_check_logs(
+                    tool, checks, cwd=cwd, fallback_url=ci_url
+                )
+                after = [
+                    (str(c.get("url") or ""), str(c.get("log_tail") or ""))
+                    for c in checks
+                ]
                 if after != before:
                     changed = True
             if changed:
+                def _normalize_fallback_checks(raw_checks: list[dict]) -> list[dict]:
+                    now_iso = _tl._now_iso()
+                    return [
+                        {
+                            "id": int(c.get("id") or (idx + 1)),
+                            "worktree_ref": str(c.get("worktree_ref") or key),
+                            "name": str(c.get("name") or ""),
+                            "commit_sha": str(c.get("commit_sha") or ""),
+                            "status": str(c.get("status") or ""),
+                            "conclusion": str(c.get("conclusion") or ""),
+                            "url": str(c.get("url") or ""),
+                            "log_tail": str(c.get("log_tail") or ""),
+                            "updated_at": str(c.get("updated_at") or now_iso),
+                        }
+                        for idx, c in enumerate(raw_checks)
+                        if isinstance(c, dict)
+                    ]
+
+                has_named_checks = any(
+                    isinstance(c, dict) and str(c.get("name") or "").strip()
+                    for c in checks
+                )
                 try:
-                    store.replace_pr_checks(key, checks)
-                    checks = store.list_pr_checks(key)
-                except Exception:
-                    pass
+                    written = store.replace_pr_checks(key, checks)
+                    if written or not has_named_checks:
+                        checks = store.list_pr_checks(key)
+                    else:
+                        logger.warning(
+                            "Failed to persist pr_checks for %s (replace_pr_checks returned 0)",
+                            key,
+                        )
+                        checks = _normalize_fallback_checks(checks)
+                except Exception as exc:
+                    logger.warning("Failed to persist pr_checks for %s: %s", key, exc)
+                    checks = _normalize_fallback_checks(checks)
         threads = store.list_pr_review_threads(key)
         events = store.list_worktree_events(key, limit=limit)
         from . import store_timeline

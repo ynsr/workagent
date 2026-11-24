@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -28,15 +29,8 @@ DEFAULT_WATCH_INTERVAL = 60.0
 
 def _tool_for_pr_url(pr_url: str, cached: dict[str, Any] | None = None) -> str | None:
     """Derive the host CLI (gh/glab) for a PR/MR URL, preferring cached tool."""
-    tool = str((cached or {}).get("tool") or "").strip()
-    if tool in ("gh", "glab"):
-        return tool
-    url = (pr_url or "").strip()
-    if "github.com" in url:
-        return "gh"
-    if url:
-        return "glab"
-    return None
+    from . import refs_ci
+    return refs_ci.infer_pr_tool(pr_url, cached) or None
 
 
 def _refresh_worktree_inputs(
@@ -71,7 +65,9 @@ def _refresh_worktree_inputs(
         from . import refs as _refs, refs_ci as _refs_ci
         ci_state, ci_url, checks = _refs.fetch_ci_details(tool, pr_url, cwd)
         if ci_state == "failure" and checks:
-            _refs_ci.populate_failing_check_logs(tool, checks, cwd=cwd)
+            _refs_ci.populate_failing_check_logs(
+                tool, checks, cwd=cwd, fallback_url=ci_url
+            )
         stats, threads = _refs.fetch_pr_review_details(tool, pr_url, cwd)
     except Exception as exc:
         logger.warning("watcher refresh failed for %s (%s): %s", ref_key, pr_url, exc)
@@ -208,6 +204,12 @@ def _head_sha_for_entry(entry: dict[str, Any], pr_cached: dict[str, Any] | None)
     return ""
 
 
+def _markdown_fence(text: str) -> str:
+    """Return a backtick fence strictly longer than any run in *text* (min 3)."""
+    longest = max((len(m.group(0)) for m in re.finditer(r"`+", text)), default=0)
+    return "`" * max(3, longest + 1)
+
+
 def _build_ci_fix_prompt(failing_checks: Sequence[dict[str, Any]]) -> str:
     """Build a concise CI-fix prompt including failing check names, URLs, and 50-line log tails."""
     from . import refs_ci
@@ -224,9 +226,10 @@ def _build_ci_fix_prompt(failing_checks: Sequence[dict[str, Any]]) -> str:
         header = f"- {name} ({conclusion})" + (f" — URL: {url}" if url else "")
         lines.append(header)
         if tail:
-            lines.append("```")
+            fence = _markdown_fence(tail)
+            lines.append(fence)
             lines.append(tail)
-            lines.append("```")
+            lines.append(fence)
     return "\n".join(lines)
 
 

@@ -318,7 +318,9 @@ def _ci_cell(entry: dict, cells: dict, refresh_pr: bool, key: str = "") -> tuple
     if refs.fetch_ci is _refs_ci.fetch_ci:
         ci, ci_url, checks = refs.fetch_ci_details(tool, url, entry.get("repo", ""))
         if ci == "failure" and checks:
-            _refs_ci.populate_failing_check_logs(tool, checks, cwd=entry.get("repo", ""))
+            _refs_ci.populate_failing_check_logs(
+                tool, checks, cwd=entry.get("repo", ""), fallback_url=ci_url
+            )
     else:
         ci, ci_url = refs.fetch_ci(tool, url, entry.get("repo", ""))
         checks = []

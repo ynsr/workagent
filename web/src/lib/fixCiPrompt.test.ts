@@ -59,4 +59,12 @@ describe("buildFixCiPrompt", () => {
     expect(prompt).toContain("Investigate and fix the failing CI checks on this branch.")
     expect(prompt).toContain("Failing CI job URL: https://git.jibit.cloud/server/projectx/-/jobs/999")
   })
+
+  it("uses a longer backtick fence when log_tail contains triple backticks", () => {
+    const prompt = buildFixCiPrompt([
+      makeCheck({ log_tail: "snippet:\n```ts\nexpect(1).toBe(2)\n```" }),
+    ])
+    expect(prompt).toContain("\n````\nsnippet:")
+    expect(prompt.endsWith("\n````")).toBe(true)
+  })
 })
