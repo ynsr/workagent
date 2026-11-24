@@ -61,16 +61,24 @@ def _repo_ci_ignore(cwd: str | None) -> list[str]:
                     best = (len(nrp), list(entry.get("ci_ignore") or []))
         if best is not None:
             return best[1]
+        best_wt: tuple[int, list[str]] | None = None
         for wt in (_store.load_links() or {}).values():
             wp = wt.get("worktree") or wt.get("path") or ""
-            if wp and os.path.realpath(os.path.expanduser(str(wp))) == norm:
+            if not wp:
+                continue
+            nwp = os.path.realpath(os.path.expanduser(str(wp)))
+            if norm == nwp or norm.startswith(nwp + os.sep):
                 repo_p = wt.get("repo") or ""
                 if repo_p:
                     nrp = os.path.realpath(os.path.expanduser(str(repo_p)))
                     for entry in repos_map.values():
                         rp = entry.get("path") or ""
                         if rp and os.path.realpath(os.path.expanduser(str(rp))) == nrp:
-                            return list(entry.get("ci_ignore") or [])
+                            if best_wt is None or len(nwp) > best_wt[0]:
+                                best_wt = (len(nwp), list(entry.get("ci_ignore") or []))
+                            break
+        if best_wt is not None:
+            return best_wt[1]
     except Exception:
         return []
     return []
@@ -241,6 +249,11 @@ def _ci_glab_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]
         pid = pipeline.get("id")
         if pid is not None and int(pid) in jobs_by_id:
             jobs = jobs_by_id[int(pid)]
+        elif pid != main_id:
+            try:
+                jobs = _pipeline_jobs(path, pid, host, cwd, pr_url)
+            except HarnessError:
+                continue
         else:
             jobs = _pipeline_jobs(path, pid, host, cwd, pr_url)
         if not jobs:

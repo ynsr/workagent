@@ -417,6 +417,13 @@ def test_backfill_preserves_ci_ignore(tmp_path):
     with sq.connect(db) as conn:
         raw = conn.execute("SELECT ci_ignore FROM repos WHERE key_ref = 'proj'").fetchone()[0]
     assert json.loads(raw) == ["trivy:*", "sast"]
+    # Re-running with config.json omitting ci_ignore must not clobber existing SQLite value.
+    cfg_without = {"repos": {"proj": {"path": "/x/proj"}},
+                   "trackers": {"jira:IPG": {"repos": ["/x/proj"]}}}
+    sq.backfill_trackers_repos(db, cfg_without)
+    with sq.connect(db) as conn:
+        raw = conn.execute("SELECT ci_ignore FROM repos WHERE key_ref = 'proj'").fetchone()[0]
+    assert json.loads(raw) == ["trivy:*", "sast"]
 
 def test_backfill_derives_tracker(tmp_path):
     """No explicit mapping → derive_tracker writes the join link (issue #26)."""

@@ -2195,8 +2195,9 @@ def backfill_trackers_repos(path: Path, cfg: dict,
             # valid) instead of dying on the path UNIQUE.
             row = conn.execute("SELECT key_ref FROM repos WHERE path = ? OR key_ref = ?",
                                (norm, name)).fetchone()
-            ci_ignore = json.dumps([str(x).strip() for x in ((v or {}).get("ci_ignore") or [])
-                                    if str(x).strip()])
+            ci_ignore_list = [str(x).strip() for x in ((v or {}).get("ci_ignore") or [])
+                              if str(x).strip()]
+            ci_ignore = json.dumps(ci_ignore_list)
             if row is None:
                 conn.execute("INSERT INTO repos (key_ref, path, name, remote, tool, commands, ci_ignore)"
                              " VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -2207,12 +2208,20 @@ def backfill_trackers_repos(path: Path, cfg: dict,
                 repo_key = name
             else:
                 repo_key = row[0]
-                counts["repos"] += conn.execute(
-                    "UPDATE repos SET name = ?, remote = ?, tool = ?, commands = ?, ci_ignore = ?"
-                    " WHERE key_ref = ?",
-                    (name, str((v or {}).get("remote", "") or ""),
-                     str((v or {}).get("tool", "") or ""),
-                     json.dumps(dict((v or {}).get("commands") or {})), ci_ignore, repo_key)).rowcount
+                if ci_ignore_list:
+                    counts["repos"] += conn.execute(
+                        "UPDATE repos SET name = ?, remote = ?, tool = ?, commands = ?, ci_ignore = ?"
+                        " WHERE key_ref = ?",
+                        (name, str((v or {}).get("remote", "") or ""),
+                         str((v or {}).get("tool", "") or ""),
+                         json.dumps(dict((v or {}).get("commands") or {})), ci_ignore, repo_key)).rowcount
+                else:
+                    counts["repos"] += conn.execute(
+                        "UPDATE repos SET name = ?, remote = ?, tool = ?, commands = ?"
+                        " WHERE key_ref = ?",
+                        (name, str((v or {}).get("remote", "") or ""),
+                         str((v or {}).get("tool", "") or ""),
+                         json.dumps(dict((v or {}).get("commands") or {})), repo_key)).rowcount
             counts["links"] += conn.execute(
                 "INSERT OR IGNORE INTO tracker_repos (tracker_key, repo_key) VALUES (?, ?)",
                 (tid, repo_key)).rowcount
