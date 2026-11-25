@@ -8,6 +8,7 @@ import typer
 from . import store, worktrees
 from .cli_core import EXIT_USAGE, _catch_harness_errors, _fail, _print_result, app, eprint
 from .cli_harness import _guard_harness, _run_harness, append_extra_prompt
+from .errors import HarnessError
 
 
 @app.command("adhoc")
@@ -30,6 +31,7 @@ def adhoc(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    no_auto_register: bool = typer.Option(False, "--no-auto-register", help="Do not auto-register a worktree when ref is an unlinked PR/MR."),
 ) -> None:
     """Run an adhoc prompt on one or more linked worktrees, sequentially."""
     if not (refs or []):
@@ -50,12 +52,35 @@ def adhoc(
     failed = False
     for ref in refs or []:
         try:
-            key, entry, _ = worktrees.resolve_any(ref, links)
+            key, entry, parsed = worktrees.resolve_any(ref, links)
         except worktrees.NoLinkedState as e:
             eprint(f"{ref}: {e} — skipping")
             rows.append({"ref": ref, "skipped": str(e)})
             failed = True
             continue
+        did_auto_register = False
+        if not key:
+            if parsed is not None and parsed.get("kind") in ("pr", "mr") and not no_auto_register:
+                from . import cli_review as _cr
+                try:
+                    if dry_run:
+                        _, preview = _cr.auto_register_pr_worktree(ref, parsed, yes=yes, dry_run=True)
+                        rows.append({"ref": ref, "mode": mode, "dry_run": True,
+                                     "auto_register": preview})
+                        continue
+                    key, entry = _cr.auto_register_pr_worktree(ref, parsed, yes=yes)
+                except HarnessError as e:
+                    eprint(f"{ref}: {e} — skipping")
+                    rows.append({"ref": ref, "skipped": str(e)})
+                    failed = True
+                    continue
+                did_auto_register = True
+                links = store.load_links()
+            else:
+                eprint(f"{ref}: no linked state for {ref} — skipping")
+                rows.append({"ref": ref, "skipped": f"no linked state for {ref}"})
+                failed = True
+                continue
         if (entry.get("active", 1) == 0):
             eprint(f"{key}: deactivated — skipping")
             rows.append({"key": key, "skipped": "deactivated"})
@@ -75,7 +100,7 @@ def adhoc(
                          "dry_run": True, "prompt_chars": len(body)})
             continue
         import sys as _sys
-        if not yes and _sys.stdin.isatty():
+        if not yes and not did_auto_register and _sys.stdin.isatty():
             eprint(f"run adhoc prompt on {key} ({wt})? [y/N] ", end="")
             if (_sys.stdin.readline() or "").strip().lower() not in ("y", "yes"):
                 _fail("aborted", EXIT_USAGE)

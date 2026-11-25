@@ -179,9 +179,9 @@ Candidates/Launch issue fetch per tracker — `tracker add
   "created_at": "…", "modified_at": "…"}]}
 ```
 (CRUD page source: `action add/list/show/update/delete` run as runs; detail 404s
-on unknown label. `action update OLD [--new-label NEW] ...` renames the label (flow steps cascade). Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection. `action run <label> <ref>` runs via `POST /api/runs`
+on unknown label. `action update OLD [--new-label NEW] ...` renames the label (flow steps cascade). Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection. `action run <label> <ref> [--no-auto-register]` runs via `POST /api/runs`
 with target key `action:<label>:<ref>` — one run per worktree, fanned out
-by the Dashboard Actions dropdown.)
+by the Dashboard Actions dropdown; unlinked PR/MR refs auto-register a worktree unless `--no-auto-register` is passed.)
 
 ### `GET /api/flow-templates` → `{"templates": [...]}`, `GET /api/flow-templates/{label}`, `GET /api/flows?worktree=`
 {"templates": [{"id": 1, "label": "full-review-cycle",
@@ -210,7 +210,7 @@ by the Dashboard Actions dropdown.)
  `flow template clone SRC [--name] [--label]` duplicates one template (lineage in `parent_labels`);
  `flow template compose LABEL --from A,B [--name]` concatenates chains (starts preserved, but a start after the first cleanup is rejected; lineage recorded).
  Pre/post-execution are multi-line scripts; the details dialog highlights them via shebang detection.
- `flow run TEMPLATE REF [--steps JSON] [--step-config JSON] [--skip-steps 0[,N]] [--harness NAME] [--dry-run] [--fresh] [--yes] [--json]` runs via `POST /api/runs`. Resume keeps the stored chain: passing a different `--steps` chain for a resumable run fails (exit 2) — use `--fresh` for the new chain or drop `--steps` to resume. When `--harness` is given, it applies to every step and overrides step-level `config.harness`.
+ `flow run TEMPLATE REF [--steps JSON] [--step-config JSON] [--skip-steps 0[,N]] [--harness NAME] [--dry-run] [--fresh] [--yes] [--json] [--no-auto-register]` runs via `POST /api/runs`. Resume keeps the stored chain: passing a different `--steps` chain for a resumable run fails (exit 2) — use `--fresh` for the new chain or drop `--steps` to resume. When `--harness` is given, it applies to every step and overrides step-level `config.harness`. Unlinked PR/MR refs auto-register a worktree unless `--no-auto-register` is passed.
 ### `GET /api/links`
 ```json
 {"trackers": {"jira:IPG": {"repos": ["/home/x/projects/projectx"]}},
@@ -342,7 +342,7 @@ Request:
  - `action suggest-icon [--name --label --prompt --pre-execution --post-execution --used-icons --harness --json]` / `flow template suggest-icon [--name --label --steps --pre-execution --post-execution --used-icons --harness --json]`: Ask-AI Lucide icon (issues #62, #84) — ONE bare judge-style harness session (temp dir, no checkout; uses `Harness.judge_argv`, e.g. `agy-guard --model gemini-3.8-flash-low --disable-slash-commands --mode plan` or `omp --smol --no-skills --no-tools ...`), stdout `{"icon": "Rocket"}`; target keys `suggest-icon:action` / `suggest-icon:flow` so long AI runs never 409-block saves; the prompt lists all 1611 Lucide icons (pinned lucide-react 0.525.0 registry) plus the already-used icons of other actions/templates (explicit `--used-icons` unioned with the store-collected fallback) so the model avoids duplicates; parsed against `SUGGEST_ICON_CHOICES`, never confirmed.
  - `command`: one of `start | review | cleanup | release | sync | open | register |
    repo | link | tracker | action | flow | message | backup | prodtest | adhoc | orchestrate | config` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`; prodtest: `["plan", REF, …]` / `["run", REF, …]`; adhoc: `[REF, --prompt P, …]`; orchestrate: `[--repo R…, --prompt P, …]` (single-flight key `orchestrate:<repos>:<prompt-hash>`); config: `["show"]` or `["set", "default-harness", "agy|omp"]`, non-destructive under target key `"config"`).
- - `sync [REF]` accepts `--harness <name>` (selects the conflict-resolution harness; default: configured `default_harness`). `agy` (`agy-guard`) is the default AI harness (`DEFAULT_HARNESS = "agy"`): headless uses `agy-guard --dangerously-skip-permissions --output-format stream-json -p=<prompt>` and preview/interactive uses `agy-guard -i=<prompt>` (or bare `agy-guard`).
+ - `sync [REF]` accepts `--harness <name>` (selects the conflict-resolution harness; default: configured `default_harness`) and `--no-auto-register` (skip auto-registering an unlinked PR/MR worktree). `agy` (`agy-guard`) is the default AI harness (`DEFAULT_HARNESS = "agy"`): headless uses `agy-guard --dangerously-skip-permissions --output-format stream-json -p=<prompt>` and preview/interactive uses `agy-guard -i=<prompt>` (or bare `agy-guard`). `adhoc` also accepts `--no-auto-register`.
 - Global `-v` may be passed as `args[0]`.
 - `start`/`review`/`sync`/`release` take `--env-file <script>`: a shell script sourced before every harness command including the preview (`source <file> && …`; headless children also get it parsed into their environment) and before the release pre-release gate. Default: `env_file` in `config.json` (auto-created as `<config_dir>/env.sh` on first launch with `VISUAL`/`EDITOR`/`NO_PROXY`/`PI_EDIT_VARIANT` defaults). Delete the file to opt out; run resume reuses the originating run's explicit `--env-file` or the configured default.
 - Destructive (`cleanup`, `sync` w/o `--dry-run`, `start`, `review`, `adhoc`, `orchestrate`,

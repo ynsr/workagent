@@ -49,3 +49,39 @@ def test_recorded_key_path_match_requires_matching_branch():
     assert worktrees.recorded_key("/tmp/wt-shared", "feat/old", links, repo="/tmp/repo") == "feat/old"
     # Empty branch matches path fallback
     assert worktrees.recorded_key("/tmp/wt-shared", "", links, repo="/tmp/repo") == "feat/old"
+
+
+def test_resolve_by_pr_url_matches_branch_keyed_row():
+    """Issue #188: review-created row keyed by branch slug resolves by pr_url."""
+    mr_url = "https://git.jibit.cloud/server/projectx/-/merge_requests/1824"
+    links = {
+        "ao/terminal-priority/ipg-1076": {
+            "branch": "ao/terminal-priority/ipg-1076",
+            "worktree": "/tmp/wt-px6",
+            "repo": "/tmp/projectx",
+            "pr_url": mr_url,
+            "issue_url": "",
+        },
+        "other-1824-branch": {
+            "branch": "feat/1824-unrelated",
+            "worktree": "/tmp/wt-other",
+            "repo": "/tmp/other",
+        },
+    }
+    assert worktrees.resolve_worktree(mr_url, links) == "ao/terminal-priority/ipg-1076"
+    assert worktrees.resolve_worktree(f"{mr_url}/", links) == "ao/terminal-priority/ipg-1076"
+
+
+def test_resolve_empty_ref_returns_none():
+    """Issue #188: empty/whitespace ref must never match every worktree."""
+    assert worktrees.resolve_worktree("", LINKS) is None
+    assert worktrees.resolve_worktree("   ", LINKS) is None
+
+
+def test_pick_worktree_rejects_empty_ref():
+    """Issue #188: pick_worktree rejects empty ref instead of reporting ambiguous ''."""
+    import pytest
+    import typer
+    with pytest.raises(typer.Exit) as exc:
+        worktrees.pick_worktree("", list(LINKS), LINKS)
+    assert exc.value.exit_code == 2
