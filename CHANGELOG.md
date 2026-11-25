@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Fix web runs staying stuck in Running state after a serve restart by persisting their database ID and reconciling orphaned rows [207]
 - Support default AI model and effort in Settings, keep model chooser open until both are picked, and persist flow template harness defaults [203]
 - Support selecting Rebase (default) or Merge locally for Sync in the Launch Sync tab and flow step editor, plus `--rebase` CLI flag [196]
 - Fix high idle CPU caused by full-table PR cache rewrites, missing-worktree cache misses, and status enrichment errors

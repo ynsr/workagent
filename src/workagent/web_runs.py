@@ -872,12 +872,15 @@ def _spawn(run: Run, registry: Registry) -> None:
     run.run_dir = str(d)
     with run.lock:
         created = run.created
+    _precreate_run_row(run)
     _rs.write_meta(d, {"command": run.command, "args": run.args,
                        "target": run.target, "created": created,
                        "session_file": run.session_file,
                        "worktree": run.worktree,
-                       "harness_name": run.harness_name})
-    _precreate_run_row(run)
+                       "harness_name": run.harness_name,
+                       "db_run_id": run.db_run_id,
+                       "db_worktree_ref": run.db_worktree_ref,
+                       "session_type": run.session_type})
     try:
         from .env import apply_env_file as _apply_env
         _apply_env()
@@ -904,16 +907,115 @@ def _spawn(run: Run, registry: Registry) -> None:
     _start_tailer(run, registry)
 
 
+def _resolve_db_run_id(d: Path, meta: dict) -> int:
+    """Resolve the precreated DB row id from meta.json or by web_run_id lookup."""
+    try:
+        rid = int(meta.get("db_run_id") or 0)
+    except (TypeError, ValueError):
+        rid = 0
+    if rid:
+        return rid
+    try:
+        from . import store_sqlite as _sq
+        db = _sq.db_path()
+        row = _sq.find_web_run(db, d.name)
+        if row is not None:
+            return int(row.get("id") or 0)
+    except Exception:
+        pass
+    return 0
+
+
+def _run_from_meta(d: Path, meta: dict, db_run_id: int) -> Run:
+    """Construct a Run hydrated from disk meta.json and a resolved DB row id."""
+    cmd = str(meta.get("command", ""))
+    args = [str(a) for a in (meta.get("args") or [])]
+    run = Run(
+        id=d.name,
+        command=cmd,
+        args=args,
+        target=str(meta.get("target", f"run:{d.name}")),
+        argv=[cmd, *args] if cmd else list(args),
+    )
+    run.run_dir = str(d)
+    if meta.get("created") is not None:
+        try:
+            run.created = float(meta["created"])
+        except (TypeError, ValueError):
+            pass
+    run.session_file = str(meta.get("session_file", ""))
+    run.worktree = str(meta.get("worktree", ""))
+    run.harness_name = str(meta.get("harness_name", ""))
+    run.db_run_id = db_run_id
+    run.db_worktree_ref = str(meta.get("db_worktree_ref", ""))
+    run.session_type = meta.get("session_type")
+    return run
+
+
+def _finalize_rehydrated_run(d: Path, meta: dict, exit_code: int) -> None:
+    """Finalize a precreated DB row if it is still 'running' after a serve restart."""
+    rid = _resolve_db_run_id(d, meta)
+    if not rid:
+        return
+    try:
+        from . import store_sqlite as _sq
+        db = _sq.db_path()
+        if not db.exists():
+            return
+        existing = _sq.get_run(db, rid, include_deleted_worktrees=True)
+        if existing is None or existing.get("state") != "running":
+            return
+    except Exception:
+        return
+    run = _run_from_meta(d, meta, rid)
+    try:
+        data = (d / "output.log").read_bytes()
+        all_lines = data.decode(errors="replace").splitlines()
+        if len(all_lines) > MAX_LINES:
+            run.truncated = True
+        for ln in all_lines[-MAX_LINES:]:
+            run.append(ln + "\n")
+    except OSError:
+        pass
+    try:
+        finished = (d / "exit_code").stat().st_mtime
+    except OSError:
+        finished = time.time()
+    run.exit_code = exit_code
+    run.state = _finish_state(exit_code)
+    run.finished = finished
+    run.duration_ms = max(0, int((finished - run.created) * 1000))
+    try:
+        usage = _resolve_usage([t for _, t in run.lines], run.truncated, run.session_file)
+        if usage.get("input_tokens") is not None:
+            run.input_tokens = int(usage["input_tokens"])
+        if usage.get("output_tokens") is not None:
+            run.output_tokens = int(usage["output_tokens"])
+        if usage.get("cached_tokens") is not None:
+            run.cached_tokens = int(usage["cached_tokens"])
+        if usage.get("cost_usd") is not None:
+            run.cost_usd = float(usage["cost_usd"])
+        if usage.get("model_id") and not run.model_id:
+            run.model_id = str(usage["model_id"])
+    except Exception:
+        pass
+    _mirror_run(run)
+
+
 def rehydrate(registry: Registry) -> dict:
     """Re-adopt live runs from disk after a serve restart."""
     from . import run_store as _rs
     from . import store as _store
     adopted, closed = [], []
     for d in _rs.iter_run_dirs():
-        if _rs.read_exit(d) is not None:
+        exit_code = _rs.read_exit(d)
+        if exit_code is not None:
+            _finalize_rehydrated_run(d, _rs.read_meta(d), exit_code)
             continue
         with _rs.lock(d):
-            if _rs.read_exit(d) is not None:
+            exit_code = _rs.read_exit(d)
+            if exit_code is not None:
+                _finalize_rehydrated_run(d, _rs.read_meta(d), exit_code)
                 continue
             meta = _rs.read_meta(d)
             pid, ticks = _rs.read_pid(d)
@@ -921,15 +1023,10 @@ def rehydrate(registry: Registry) -> dict:
                      and _store._proc_start_ticks(pid) in (None, ticks))
             if not alive:
                 _rs.write_exit(d, -1)
+                _finalize_rehydrated_run(d, meta, -1)
                 closed.append(d.name)
                 continue
-            run = Run(id=d.name, command=str(meta.get("command", "")),
-                      args=list(meta.get("args", [])),
-                      target=str(meta.get("target", f"run:{d.name}")))
-            run.run_dir = str(d)
-            run.session_file = str(meta.get("session_file", ""))
-            run.worktree = str(meta.get("worktree", ""))
-            run.harness_name = str(meta.get("harness_name", ""))
+            run = _run_from_meta(d, meta, _resolve_db_run_id(d, meta))
             with registry.lock:
                 registry.runs[run.id] = run
                 registry.targets.setdefault(run.target, run.id)
@@ -944,6 +1041,13 @@ def rehydrate(registry: Registry) -> dict:
             _start_tailer(run, registry, backfill=False, initial_offset=len(complete_raw))
             adopted.append(d.name)
     _rs.prune_finished()
+    try:
+        from . import store_sqlite as _sq
+        db = _sq.db_path()
+        if db.exists():
+            _sq.reconcile_orphaned_web_runs(db, set(registry.runs.keys()))
+    except Exception:
+        pass
     return {"adopted": adopted, "closed": closed}
 
 

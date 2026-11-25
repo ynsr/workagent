@@ -1719,6 +1719,98 @@ def runs_by_parent(path: Path, parent_run_id: int,
         return [_run_dict(r) for r in conn.execute(q, (parent_run_id,)).fetchall()]
 
 
+def find_web_run(path: Path, web_run_id: str) -> dict | None:
+    """Find a running web-run row matching *web_run_id* in its metadata."""
+    if not web_run_id or not path.exists():
+        return None
+    with connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM runs WHERE state = 'running' AND metadata LIKE ? ORDER BY id DESC",
+            (f"%{web_run_id}%",),
+        ).fetchall()
+        for row in rows:
+            d = _run_dict(row)
+            meta = d.get("metadata") if isinstance(d.get("metadata"), dict) else {}
+            if meta.get("web_run_id") == web_run_id:
+                return d
+    return None
+
+
+def reconcile_orphaned_web_runs(path: Path, active_web_ids: set[str]) -> list[int]:
+    """Finalize ``origin='web-run'`` rows left ``running`` after their run dir is gone.
+
+    Infer ``finished`` (exit_code=0) when child runs exist, none are running,
+    and the latest child with an exit code succeeded without any failed child;
+    otherwise mark ``failed`` (exit_code=-1). Never raises.
+    """
+    if not path.exists():
+        return []
+    reconciled: list[int] = []
+    try:
+        now = datetime.now(timezone.utc)
+        finished_iso = now.isoformat()
+        with connect(path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, created_at, metadata FROM runs "
+                "WHERE state = 'running' AND metadata LIKE '%\"web-run\"%'"
+            ).fetchall()
+            candidates: list[tuple[int, object]] = []
+            for row in rows:
+                try:
+                    meta = json.loads(row["metadata"] or "{}")
+                except Exception:
+                    meta = {}
+                if not isinstance(meta, dict) or meta.get("origin") != "web-run":
+                    continue
+                wid = str(meta.get("web_run_id") or "")
+                if wid and wid in active_web_ids:
+                    continue
+                candidates.append((int(row["id"]), row["created_at"]))
+            for rid, created_at in candidates:
+                children = conn.execute(
+                    "SELECT exit_code, state FROM runs WHERE parent_run_id = ? ORDER BY id DESC",
+                    (rid,),
+                ).fetchall()
+                exit_code = -1
+                target_state = "failed"
+                if children:
+                    any_running = any(str(c["state"] or "") == "running" for c in children)
+                    any_failed = any(
+                        str(c["state"] or "") == "failed"
+                        or (c["exit_code"] is not None and int(c["exit_code"]) not in (0, 2))
+                        for c in children
+                    )
+                    coded = [c["exit_code"] for c in children if c["exit_code"] is not None]
+                    if not any_running and not any_failed and coded and int(coded[0]) == 0:
+                        exit_code = 0
+                        target_state = "finished"
+                duration_ms: int | None = None
+                if created_at:
+                    try:
+                        created_dt = datetime.fromisoformat(str(created_at))
+                        if created_dt.tzinfo is None:
+                            created_dt = created_dt.replace(tzinfo=timezone.utc)
+                        duration_ms = max(0, int((now - created_dt).total_seconds() * 1000))
+                    except Exception:
+                        duration_ms = None
+                if duration_ms is not None:
+                    conn.execute(
+                        "UPDATE runs SET exit_code = ?, state = ?, finished_at = ?, duration_ms = ? WHERE id = ?",
+                        (exit_code, target_state, finished_iso, duration_ms, rid),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE runs SET exit_code = ?, state = ?, finished_at = ? WHERE id = ?",
+                        (exit_code, target_state, finished_iso, rid),
+                    )
+                reconciled.append(rid)
+    except Exception:
+        return reconciled
+    return reconciled
+
+
 def update_run(path: Path, run_id: int, *,
                exit_code: int | None = None,
                output: list[str] | None = None,
