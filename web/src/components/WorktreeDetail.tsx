@@ -23,7 +23,6 @@ import { ActionsMenu } from "@/components/ActionsMenu"
 import { HarnessPicker } from "@/components/HarnessPicker"
 import { WorktreeFeedbackTimeline } from "@/components/WorktreeFeedbackTimeline"
 import { WorktreeWatcherOverrides } from "@/components/WorktreeWatcherOverrides"
-import { WorkspaceDiffView } from "@/components/WorkspaceDiffView"
 import { ProdtestPlanViewer } from "@/components/ProdtestPlanViewer"
 import { copyToClipboard } from "@/lib/format"
 import { errorText } from "@/components/StatusFeedback"
@@ -84,7 +83,7 @@ export function WorktreeDetail({
   const [terminalModel, setTerminalModel] = useState("")
   const [terminalEffort, setTerminalEffort] = useState("")
   const [pendingMode, setPendingMode] = useState<"harness" | "prodtest" | null>(null)
-  const [viewTab, setViewTab] = useState<"overview" | "diff" | "prodtest">("overview")
+  const [viewTab, setViewTab] = useState<"overview" | "prodtest">("overview")
   const prodtestIssueKey = entry.prodtest_detail?.issue_key ?? null
   const launchTerminal = useMutation({
     mutationFn: async (mmode: "harness" | "prodtest") => {
@@ -182,7 +181,7 @@ export function WorktreeDetail({
       <CardHeader className="min-w-0 overflow-hidden">
         <div className="flex min-w-0 items-center justify-between gap-2 overflow-hidden">
           <CardTitle className="min-w-0 flex-1 truncate overflow-hidden font-mono text-[13px]" title={entry.branch ?? undefined}>{entry.branch ?? "—"}</CardTitle>
-          {worktreeKey ? (
+          {worktreeKey && prodtestIssueKey ? (
             <div className="flex shrink-0 items-center gap-1" role="tablist" aria-label="Worktree inspector">
               <Button
                 type="button"
@@ -197,33 +196,19 @@ export function WorktreeDetail({
               <Button
                 type="button"
                 role="tab"
-                aria-selected={viewTab === "diff"}
+                aria-selected={viewTab === "prodtest"}
                 size="sm"
-                variant={viewTab === "diff" ? "default" : "ghost"}
-                onClick={() => setViewTab("diff")}
+                variant={viewTab === "prodtest" ? "default" : "ghost"}
+                onClick={() => setViewTab("prodtest")}
               >
-                Diff
+                Prodtest
               </Button>
-              {prodtestIssueKey ? (
-                <Button
-                  type="button"
-                  role="tab"
-                  aria-selected={viewTab === "prodtest"}
-                  size="sm"
-                  variant={viewTab === "prodtest" ? "default" : "ghost"}
-                  onClick={() => setViewTab("prodtest")}
-                >
-                  Prodtest
-                </Button>
-              ) : null}
             </div>
           ) : null}
         </div>
       </CardHeader>
       <CardContent>
-        {viewTab === "diff" && worktreeKey ? (
-          <WorkspaceDiffView worktreeRef={worktreeKey} />
-        ) : viewTab === "prodtest" && prodtestIssueKey ? (
+        {viewTab === "prodtest" && prodtestIssueKey ? (
           <ProdtestPlanViewer issueKey={prodtestIssueKey} />
         ) : (
         <>

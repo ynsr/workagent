@@ -5,7 +5,6 @@ import { toast } from "sonner"
 import {
   ArrowLeft,
   ChevronRight,
-  FileDiff,
   FlaskConical,
   GitBranch,
   Info,
@@ -33,7 +32,7 @@ import type { RunMode } from "@/lib/launchConfig"
 import { isFailingCheck, resolveFixCiPrompt } from "@/lib/fixCiPrompt"
 import { queryKeys, useFlows, useRun, useRuns, useStatusAll, useWorktreeTimeline } from "@/lib/queries"
 
-type InspectorTab = "summary" | "diff" | "flows" | "prodtest"
+type InspectorTab = "summary" | "flows" | "prodtest"
 
 const QUICK_CHIPS = [
   { label: "Fix CI", prompt: "Inspect the failing CI checks and fix the root cause." },
@@ -393,11 +392,10 @@ export function WorktreeWorkspace() {
         {/* Right Collapsible Tabbed Inspector Rail */}
         {inspectorOpen ? (
           <aside className="flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3" aria-label="Worktree inspector">
-            <div className="grid grid-cols-2 gap-1 rounded-md bg-muted p-1 text-xs" role="tablist">
+            <div className="grid grid-cols-3 gap-1 rounded-md bg-muted p-1 text-xs" role="tablist">
               {(
                 [
                   { id: "summary", label: "Summary & Timeline", icon: Info },
-                  { id: "diff", label: "Diff / Files", icon: FileDiff },
                   { id: "flows", label: "Flows & Runs", icon: Workflow },
                   { id: "prodtest", label: "Prodtest", icon: FlaskConical },
                 ] as const
@@ -478,18 +476,6 @@ export function WorktreeWorkspace() {
                     </ul>
                   )}
                 </div>
-              </div>
-            ) : null}
-
-            {inspectorTab === "diff" ? (
-              <div className="space-y-2 text-xs text-muted-foreground" data-testid="inspector-diff">
-                <p className="font-medium text-foreground">Changed Files &amp; Diff</p>
-                <p>
-                  In-app diff viewer mounts here (T08). Worktree path:
-                </p>
-                <p className="break-all rounded bg-muted p-2 font-mono text-[11px] text-foreground">
-                  {entry?.worktree || "—"}
-                </p>
               </div>
             ) : null}
 

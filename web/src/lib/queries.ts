@@ -28,8 +28,6 @@ export const queryKeys = {
   prodtests: ["prodtests"] as const,
   prodtestDetail: (ref: string) => ["prodtests", "detail", ref] as const,
   prodtestPlan: (issueKey: string) => ["prodtests", "plan", issueKey] as const,
-  worktreeFiles: (ref: string, mode: "base" | "head") => ["worktrees", ref, "files", mode] as const,
-  worktreeDiff: (ref: string, path: string, mode: "base" | "head") => ["worktrees", ref, "diff", mode, path] as const,
   runs: ["runs"] as const,
   run: (id: string) => ["runs", "detail", id] as const,
   candidates: (days?: number, mine?: boolean) => ["candidates", days ?? 90, mine ?? true] as const,
@@ -169,21 +167,6 @@ export function useProdtestPlan(issueKey: string | null) {
   })
 }
 
-export function useWorktreeFiles(ref: string | null, mode: "base" | "head" = "base") {
-  return useQuery({
-    queryKey: queryKeys.worktreeFiles(ref ?? "", mode),
-    queryFn: () => api.worktreeFiles(ref ?? "", mode),
-    enabled: !!ref,
-  })
-}
-
-export function useWorktreeDiff(ref: string | null, path: string | null, mode: "base" | "head" = "base") {
-  return useQuery({
-    queryKey: queryKeys.worktreeDiff(ref ?? "", path ?? "", mode),
-    queryFn: () => api.worktreeDiff(ref ?? "", path ?? "", mode),
-    enabled: Boolean(ref && path),
-  })
-}
 export function useFlowTemplate(label: string | null) {
   return useQuery({
     queryKey: queryKeys.flowTemplate(label ?? ""),
