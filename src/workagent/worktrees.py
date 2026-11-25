@@ -71,6 +71,14 @@ def resolve_worktree(ref: str, links: dict) -> str | list[str] | None:
             # (bare "69" matching "IPG-1069", "69" in branch slugs, ...)
             # must not dilute it into an ambiguous list (flow #71, #188).
             return url_hits[0]
+        norm_ref = refs.normalize_pr_url(ref) if ref.startswith("http") else ""
+        pr_hits = [k for k, v in links.items()
+                   if isinstance(v, dict) and v.get("worktree")
+                   and (v.get("pr_url") == ref
+                        or (norm_ref and v.get("pr_url")
+                            and refs.normalize_pr_url(str(v["pr_url"])) == norm_ref))]
+        if len(pr_hits) == 1:
+            return pr_hits[0]
     try:
         parsed = refs.parse_ref(ref)
     except HarnessError:

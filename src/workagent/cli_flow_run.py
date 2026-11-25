@@ -287,6 +287,7 @@ def flow_run(
     run_mode: Optional[str] = typer.Option(None, "--run-mode", help="Run mode: preview|headless|acp|terminal (default: derived from --launch/--terminal/--acp)."),
     model: Optional[str] = typer.Option(None, "--model", help="Model id (ACP-discovered; non-ACP harnesses pass --model through when supported)."),
     effort: Optional[str] = typer.Option(None, "--effort", help="Effort level (ACP-discovered; non-ACP harnesses pass --effort through when supported)."),
+    no_auto_register: bool = typer.Option(False, "--no-auto-register", help="Do not auto-register a worktree when ref is an unlinked PR/MR."),
 ) -> None:
     """Run a flow template against an issue ref or worktree."""
     if harness:
@@ -346,6 +347,11 @@ def flow_run(
         if (_sys.stdin.readline() or "").strip().lower() not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)
     key, entry, parsed = _resolve_ref(ref)
+    if not key and parsed is not None and parsed.get("kind") in ("pr", "mr"):
+        if no_auto_register:
+            _fail(f"no linked state for {ref}", EXIT_USAGE)
+        from . import cli_review as _cr
+        key, entry = _cr.auto_register_pr_worktree(ref, parsed, yes=True)
     if not key and not any(s["kind"] == "start" for s in merged_steps):
         _fail(f"no linked worktree for {ref}", EXIT_USAGE)
     flow = None if fresh else _find_resumable(tpl["label"], ref, key)

@@ -499,7 +499,7 @@ def _run_then_fix(review_key: str, pr_url: str, harness_name: str,
         _fail(f"then-fix child exited {proc.returncode}", proc.returncode)
 
 def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
-                            pr_url: str) -> tuple[str, str, str]:
+                            pr_url: str, *, issue_url: str = "") -> tuple[str, str, str]:
     """Reuse or create the worktree for a PR/MR source branch.
 
     Returns (key, worktree, branch): an already-recorded row for this
@@ -509,28 +509,85 @@ def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
     (UNIQUE (repo_key, branch)), so the same branch in another repo is
     simply a different row — e.g. IPG-1002 in projectx vs ipg-commons.
     """
-    links = store.load_links(include_deleted=True)
+    links = store.load_links(include_inactive=True, include_deleted=True)
     reuse = worktrees.recorded_key("", head_ref, links, repo=str(repo_dir))
     if isinstance(reuse, str):
         entry = links.get(reuse, {})
         worktree = entry.get("worktree", "")
-        branch = entry.get("branch", head_ref)
-        store.record_link(reuse, {"pr_url": pr_url, "worktree": worktree,
-                                  "branch": branch, "repo": str(repo_dir)})
-        return reuse, worktree, branch
+        if (not entry.get("deleted_at")
+                and entry.get("active", 1) != 0
+                and worktrees.is_valid_worktree(worktree)):
+            branch = entry.get("branch", head_ref)
+            rec = {"pr_url": pr_url, "worktree": worktree,
+                   "branch": branch, "repo": str(repo_dir)}
+            if issue_url and not entry.get("issue_url"):
+                rec["issue_url"] = issue_url
+            store.record_link(reuse, rec)
+            return reuse, worktree, branch
     wt = gitwt.start_worktree(repo_dir, branch=head_ref, base=base_branch)
     worktree = wt.get("worktree_path", "")
     branch = wt.get("branch", head_ref)
+    links_now = store.load_links(include_inactive=True, include_deleted=True)
     prior = worktrees.recorded_key(
-        worktree, branch, store.load_links(include_deleted=True), repo=str(repo_dir))
+        worktree, branch, links_now, repo=str(repo_dir))
     use_key = prior if isinstance(prior, str) else head_ref
-    store.record_link(use_key, {"pr_url": pr_url, "worktree": worktree,
-                                "branch": branch, "repo": str(repo_dir)})
+    rec = {"pr_url": pr_url, "worktree": worktree,
+           "branch": branch, "repo": str(repo_dir),
+           "active": 1, "deleted_at": ""}
+    if issue_url and not (links_now.get(use_key) or {}).get("issue_url"):
+        rec["issue_url"] = issue_url
+    store.record_link(use_key, rec)
     try:
         repos.register_repo(repos.repo_name(repo_dir), repo_dir)
     except HarnessError:
         pass
     return use_key, worktree, branch
+
+
+def auto_register_pr_worktree(
+    ref: str,
+    parsed: dict,
+    *,
+    repo: str | None = None,
+    depth: int = 7,
+    yes: bool = False,
+    dry_run: bool = False,
+) -> tuple[str, dict]:
+    """Create/adopt and link the worktree for an unlinked PR/MR ref.
+
+    Shared by ``flow run``, ``action run``, ``adhoc``, and ``sync`` so any
+    PR/MR URL works without a manual ``workagent review`` pre-step.
+    Returns ``(key, entry)``; when ``dry_run`` is True returns ``("", info)``.
+    """
+    if not yes and not dry_run and sys.stdin.isatty():
+        eprint(f"auto-register worktree for {ref}? [y/N] ", end="")
+        if (sys.stdin.readline() or "").strip().lower() not in ("y", "yes"):
+            _fail("aborted", EXIT_USAGE)
+    _pre_repo = _pinned_repo_for_pr(ref, parsed) if not repo else ""
+    repo_dir, _base, tid, outcome = trackers.resolve_repo_for_ref(
+        parsed, repo, Path.cwd(), depth=depth, yes=yes,
+        persist=not dry_run, pinned=_pre_repo)
+    if outcome == "recorded" and tid and not dry_run:
+        eprint(f"note: linked tracker {tid} to repo {repo_dir}")
+    base_branch = repos.default_branch(repo_dir)
+    info, head_ref = refs.require_head_ref(parsed, repo_dir, ref)
+    if dry_run:
+        return "", {"dry_run": True, "repo": str(repo_dir),
+                    "pr_url": parsed["url"], "key": head_ref,
+                    "branch": head_ref}
+    issue_url = refs.derive_issue_url(head_ref, info, parsed)
+    key, worktree, branch = _ensure_branch_worktree(
+        repo_dir, head_ref, base_branch, parsed["url"], issue_url=issue_url)
+    eprint(f"note: auto-registered worktree {key} ({worktree}) for {ref}")
+    links = store.load_links(include_deleted=True)
+    entry = links.get(key) or {
+        "worktree": worktree,
+        "branch": branch,
+        "repo": str(repo_dir),
+        "pr_url": parsed["url"],
+        **({"issue_url": issue_url} if issue_url else {}),
+    }
+    return key, entry
 
 
 def _mark_reviewed(key: str, worktree: str) -> None:
@@ -798,8 +855,12 @@ def review(
             worktree = reuse_entry["worktree"]
             branch = reuse_entry.get("branch", head_ref)
             review_key = _review_key_for(pr_url, worktree, branch, repo=str(repo_dir))
-            store.record_link(review_key, {"pr_url": pr_url, "worktree": worktree,
-                                           "branch": branch, "repo": str(repo_dir)})
+            _rec = {"pr_url": pr_url, "worktree": worktree,
+                    "branch": branch, "repo": str(repo_dir)}
+            _derived_issue = refs.derive_issue_url(branch, info, parsed)
+            if _derived_issue and not reuse_entry.get("issue_url"):
+                _rec["issue_url"] = _derived_issue
+            store.record_link(review_key, _rec)
             if fix_comments:
                 prompt = backend.prompt_for_fix_comments(pr_url, worktree=worktree, branch=branch)
                 prompt += _prodtest_fix_warning(pr_url, str(repo_dir))
@@ -865,7 +926,8 @@ def review(
               f"  Run `git fetch origin` in {repo_dir} and check `glab`/`gh` auth for that host.",
               EXIT_USAGE)
     review_key, worktree, branch = _ensure_branch_worktree(
-        repo_dir, head_ref, base_branch, pr_url)
+        repo_dir, head_ref, base_branch, pr_url,
+        issue_url=refs.derive_issue_url(head_ref, info, parsed))
 
     if fix_comments:
         prompt = backend.prompt_for_fix_comments(pr_url, worktree=worktree, branch=branch)

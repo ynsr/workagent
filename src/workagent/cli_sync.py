@@ -49,6 +49,7 @@ def sync_cmd(
     session_file: Optional[str] = typer.Option(None, "--session-file", help="Transcript .jsonl path: resumed when non-empty, otherwise used as scope for a fresh session."),
     env_file: Optional[str] = typer.Option(None, "--env-file", help="Shell script sourced before terminal/headless harness commands (default: env_file in config.json, auto-created)."),
     extra_prompt: Optional[str] = typer.Option(None, "--extra-prompt", help="Extra instructions appended to the conflict-resolution prompt."),
+    no_auto_register: bool = typer.Option(False, "--no-auto-register", help="Do not auto-register a worktree when ref is an unlinked PR/MR."),
 ) -> None:
     from . import cli as _cli  # shim: tests patch cli._sync_one
     """Bring a worktree branch up to date with its base branch.
@@ -81,7 +82,9 @@ def sync_cmd(
         if key:
             keys = [key]
         elif parsed_any is not None and parsed_any["kind"] in ("pr", "mr"):
-            key = _sync_create_pr_worktree(ref, parsed_any, dry_run)
+            if no_auto_register:
+                _fail(f"no linked state for {ref}", EXIT_USAGE)
+            key = _sync_create_pr_worktree(ref, parsed_any, dry_run, yes=yes)
             if key is None:
                 return
             links = store.load_links()
@@ -121,24 +124,20 @@ def sync_cmd(
         print(json.dumps(out, indent=2, ensure_ascii=False))
 
 
-def _sync_create_pr_worktree(ref: str, parsed: dict, dry_run: bool) -> str | None:
+def _sync_create_pr_worktree(ref: str, parsed: dict, dry_run: bool,
+                             *, yes: bool = True) -> str | None:
     """Create the branch-keyed worktree for an unregistered PR/MR ref.
 
     Returns the link key (the source branch name); the shared helper
     reuses an already-recorded row when one exists. Dry-run prints the
     plan without creating anything and returns None.
     """
-    repo_dir, base_branch, tid, _ = trackers.resolve_repo_for_ref(
-        parsed, None, Path.cwd(), depth=7, yes=True, persist=not dry_run)
-    info, head_ref = refs.require_head_ref(parsed, repo_dir, ref)
+    from . import cli_review as _cr
     if dry_run:
-        _print_result({"dry_run": True, "repo": str(repo_dir),
-                       "pr_url": parsed["url"], "key": head_ref,
-                       "branch": head_ref}, False)
+        _, preview = _cr.auto_register_pr_worktree(ref, parsed, yes=yes, dry_run=True)
+        _print_result(preview, False)
         return None
-    key, _worktree, _branch = _ensure_branch_worktree(
-        repo_dir, head_ref, base_branch, parsed["url"])
-    eprint(f"note: created worktree for {ref} on branch {head_ref}")
+    key, _entry = _cr.auto_register_pr_worktree(ref, parsed, yes=yes)
     return key
 
 

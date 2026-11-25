@@ -1,6 +1,7 @@
 # Changelog
 ## Unreleased
 - Flows given an MR or PR URL now resolve to their linked worktree and fail fast when none exists [188]
+- Auto-register and link worktrees for fresh PR/MR URLs in flow, action, adhoc, and sync commands with `--no-auto-register` opt-out [189]
 - Fix CI prompt now includes the failing GitHub or GitLab job URL and the last 50 lines of its terminal log [186]
 - CI status now reports the main pipeline instead of a later side-CI, with per-repo ignore globs (`repo update --ci-ignore`) [184]
 - Fix web UI build and restore release status cache invalidation after repo pull [178]

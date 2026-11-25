@@ -1366,7 +1366,7 @@ def test_flow_run_without_start_step_fails_fast_when_unlinked(tmp_path, monkeypa
     import workagent.cli  # noqa: F401
     import workagent.cli_flow as cli_mod
 
-    mr_url = "https://git.jibit.cloud/server/projectx/-/merge_requests/9999"
+    ref = "jira:IPG-9999"
     tpl = {"label": "review_fix", "name": "Review + Fix",
            "steps": [{"kind": "review", "config": {}},
                      {"kind": "fix_comments", "config": {}}]}
@@ -1378,7 +1378,7 @@ def test_flow_run_without_start_step_fails_fast_when_unlinked(tmp_path, monkeypa
     monkeypatch.setattr("workagent.store.create_flow", lambda **f: created.append(f))
 
     runner = CliRunner()
-    res = runner.invoke(cli_mod.app, ["flow", "run", "review_fix", mr_url, "--yes"])
+    res = runner.invoke(cli_mod.app, ["flow", "run", "review_fix", ref, "--yes"])
     assert res.exit_code == 2, res.output
     assert "no linked worktree" in res.output
     assert created == []
