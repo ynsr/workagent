@@ -61,8 +61,30 @@ def _harness_run_targets(key: str) -> set[str]:
     return targets
 
 
+def _plural(n: int, singular: str, plural: str | None = None) -> str:
+    return f"{n} {singular if n == 1 else (plural or singular + 's')}"
+
+
+def _format_cascade_items(cascaded: dict | None, transcripts_removed: int = 0) -> list[str]:
+    """Return compact human-readable labels for non-zero cascaded DB/transcript counts."""
+    items: list[str] = []
+    c = cascaded or {}
+    for field, singular, plural in (
+        ("runs", "run", "runs"),
+        ("flows", "flow", "flows"),
+        ("messages", "message link", "message links"),
+        ("parent_links", "parent link", "parent links"),
+    ):
+        n = int(c.get(field) or 0)
+        if n > 0:
+            items.append(_plural(n, singular, plural))
+    if transcripts_removed > 0:
+        items.append(_plural(transcripts_removed, "transcript", "transcripts"))
+    return items
+
+
 def _remove_transcripts(targets: set[str], key: str = "",
-                        scoped_dirs: set[str] | None = None) -> None:
+                        scoped_dirs: set[str] | None = None) -> int:
     """Delete the transcript files/dirs in *targets* + prune emptied parents.
 
     Files live under ~/.config/workagent/runs/<harness>/<branch-path>/ (or
@@ -70,10 +92,12 @@ def _remove_transcripts(targets: set[str], key: str = "",
     either transcript root. Targets outside those roots are skipped with a
     warning: ``file_path`` can name any file (``--session-file <existing
     file>`` is stored verbatim), and the orphan sweep runs unattended at
-    serve startup. Best effort, never raises (issue #102).
+    serve startup. Best effort, never raises (issue #102). Returns count of
+    removed transcript files/scoped dirs.
     """
     if not targets:
-        return
+        return 0
+    removed_count = 0
     scoped_resolved: set[Path] = set()
     for sd in (scoped_dirs or ()):
         sp = Path(sd).expanduser()
@@ -106,9 +130,11 @@ def _remove_transcripts(targets: set[str], key: str = "",
                     continue
                 if p.is_file():
                     p.unlink()
+                    removed_count += 1
                     p = p.parent
                 elif p.is_dir() and resolved in scoped_resolved and resolved != under:
                     shutil.rmtree(p)
+                    removed_count += 1
                     p = p.parent
                 if not p.is_dir():
                     continue
@@ -123,12 +149,13 @@ def _remove_transcripts(targets: set[str], key: str = "",
                 eprint(f"warning: harness transcript cleanup failed for {key}: {e}")
     except Exception as e:
         eprint(f"warning: harness transcript cleanup failed for {key}: {e}")
+    return removed_count
 
 
-def _remove_harness_runs(key: str) -> None:
+def _remove_harness_runs(key: str) -> int:
     """Delete harness transcript files + emptied branch dirs for one worktree."""
     targets, scoped_dirs = _harness_run_info(key)
-    _remove_transcripts(targets, key, scoped_dirs=scoped_dirs)
+    return _remove_transcripts(targets, key, scoped_dirs=scoped_dirs)
 
 
 def purge_orphans(dry_run: bool = False) -> dict:
@@ -228,24 +255,32 @@ def _is_main_repo_path(wt: Path, repo: Path | None) -> bool:
     return False
 
 
-def _teardown_local(key: str, branch: str, repo_str: str, worktree_path: str = "") -> None:
+def _teardown_local(key: str, branch: str, repo_str: str, worktree_path: str = "") -> dict:
     """Remove the worktree dir + git worktree entry + local branch (best effort, never raises)."""
     from . import cli as _cli
     repo = _resolve_repo(worktree_path or "", repo_str or "")
     branch = str(branch or "")
     wt = Path(str(worktree_path or "")).expanduser() if worktree_path else None
+    result = {"worktree_removed": False, "local_branch_deleted": False,
+              "worktree_path": str(wt) if wt else "", "branch": branch,
+              "skipped": ""}
     guard_path = wt if wt is not None else _worktree_for_branch(repo, branch)
     if guard_path is not None and _is_main_repo_path(guard_path, repo):
         eprint(f"warning: refusing to delete main repo folder {guard_path} for {key}")
-        return
+        result["skipped"] = "main-repo"
+        return result
+    wt_existed = bool(wt is not None and wt.exists())
     if repo is not None and branch:
         try:
             gitwt.cleanup_worktree(repo, branch, delete_branch=False,
                                    force=True, yes=True)
+            if wt is not None and not wt.exists() and wt_existed:
+                result["worktree_removed"] = True
         except HarnessError as e:
             eprint(f"warning: git-wt cleanup failed for {key}: {e}")
         try:
             _cli.run_cmd("git", "-C", str(repo), "branch", "-D", branch)
+            result["local_branch_deleted"] = True
         except HarnessError:
             pass
     # Fallback: the recorded worktree dir may survive a stale-repo cleanup.
@@ -254,6 +289,8 @@ def _teardown_local(key: str, branch: str, repo_str: str, worktree_path: str = "
             try:
                 _cli.run_cmd("git", "-C", str(repo), "worktree", "remove",
                              "--force", str(wt))
+                if not wt.exists():
+                    result["worktree_removed"] = True
             except HarnessError:
                 pass
             try:
@@ -263,15 +300,43 @@ def _teardown_local(key: str, branch: str, repo_str: str, worktree_path: str = "
         if wt.exists():
             if _is_main_repo_path(wt, repo):
                 eprint(f"warning: refusing to delete main repo folder {wt} for {key}")
-                return
+                result["skipped"] = "main-repo"
+                return result
             try:
                 shutil.rmtree(wt)
+                result["worktree_removed"] = True
             except OSError as e:
                 eprint(f"warning: worktree dir removal failed for {key}: {e}")
     if repo is None and (branch or worktree_path):
         eprint(f"warning: partial purge for {key}: unknown repo — row dropped, leftovers may remain")
+    return result
 
-def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict]:
+
+def _local_removed_items(key: str, teardown: dict | None,
+                        cascaded: dict | None, t_count: int) -> list[str]:
+    items: list[str] = []
+    td = teardown or {}
+    if td.get("worktree_removed") and td.get("worktree_path"):
+        items.append(f"worktree dir {td['worktree_path']}")
+    if td.get("local_branch_deleted") and td.get("branch"):
+        items.append(f"local branch {td['branch']}")
+    items.append(f"worktree row {key}")
+    items.extend(_format_cascade_items(cascaded, t_count))
+    return items
+
+
+def _dry_run_local_items(key: str, branch: str, worktree_path: str) -> list[str]:
+    items: list[str] = []
+    if worktree_path:
+        items.append(f"worktree dir {worktree_path}")
+    if branch:
+        items.append(f"local branch {branch}")
+    items.append(f"worktree row {key}")
+    return items
+
+
+def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False,
+                    include_report: bool = False) -> list[dict]:
     """Purge worktree rows soft-deleted longer than *retention_days* ago.
 
     For each expired row: git-wt cleanup (worktree dir + git worktree entry
@@ -300,12 +365,20 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
             if not e.get("deleted_at") or not e["deleted_at"] < cutoff:
                 continue
             if key in blocked:
-                rows.append({"key": key,
-                             "branch": str(e.get("branch", "")),
-                             "status": "skipped:prodtest-pending"})
+                row = {"key": key,
+                       "branch": str(e.get("branch", "")),
+                       "status": "skipped:prodtest-pending"}
+                if include_report:
+                    row["would_remove"] = []
+                rows.append(row)
             else:
-                rows.append({"key": key, "branch": str(e.get("branch", "")),
-                             "status": "gc-dry-run"})
+                branch = str(e.get("branch", ""))
+                row = {"key": key, "branch": branch,
+                       "status": "gc-dry-run"}
+                if include_report:
+                    row["would_remove"] = _dry_run_local_items(
+                        key, branch, str(e.get("worktree", "") or ""))
+                rows.append(row)
         return rows
     # Snapshot the transcript targets before the store GC purges the runs
     # rows (runs_for_worktree then returns nothing) — the .jsonl files are
@@ -322,8 +395,11 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
         if not e.get("deleted_at") or not e["deleted_at"] < cutoff:
             continue
         if key in blocked and key not in expired_keys:
-            rows.append({"key": key, "branch": str(e.get("branch", "")),
-                         "status": "skipped:prodtest-pending"})
+            row = {"key": key, "branch": str(e.get("branch", "")),
+                   "status": "skipped:prodtest-pending"}
+            if include_report:
+                row["removed"] = []
+            rows.append(row)
     for r in expired:
         key = r["ref_key"]
         branch = str(r.get("branch", "") or "")
@@ -332,17 +408,25 @@ def gc_soft_deleted(retention_days: int = 7, dry_run: bool = False) -> list[dict
         if key in blocked:
             # Store-level GC already skips prodtest-blocked rows, but a
             # same-run plan change can slip one through — report, don't drop.
-            rows.append({"key": key, "branch": branch,
-                         "status": "skipped:prodtest-pending"})
+            row = {"key": key, "branch": branch,
+                   "status": "skipped:prodtest-pending"}
+            if include_report:
+                row["removed"] = []
+            rows.append(row)
             continue
-        _teardown_local(key, branch, repo, worktree_path)
+        teardown = _teardown_local(key, branch, repo, worktree_path)
         t_set, s_set = run_info.get(key, (set(), set()))
-        _remove_transcripts(t_set, key, scoped_dirs=s_set)
-        rows.append({"key": key, "branch": branch, "status": "purged"})
+        t_count = _remove_transcripts(t_set, key, scoped_dirs=s_set) or 0
+        row = {"key": key, "branch": branch, "status": "purged"}
+        if include_report:
+            row["removed"] = _local_removed_items(
+                key, teardown, r.get("cascaded"), t_count)
+        rows.append(row)
     return rows
 
 
-def destroy_deleted(keys: list[str], dry_run: bool = False) -> list[dict]:
+def destroy_deleted(keys: list[str], dry_run: bool = False,
+                    include_report: bool = False) -> list[dict]:
     """Permanently destroy soft-deleted rows: worktree dir + branches + row.
 
     Tears down surviving local state: git-wt cleanup (worktree dir), local
@@ -358,22 +442,34 @@ def destroy_deleted(keys: list[str], dry_run: bool = False) -> list[dict]:
     for key in keys:
         entry = links.get(key, {})
         if not entry or not entry.get("deleted_at"):
-            rows.append({"key": key, "branch": str(entry.get("branch", "")),
-                         "status": "skipped:not-deleted"})
+            row = {"key": key, "branch": str(entry.get("branch", "")),
+                   "status": "skipped:not-deleted"}
+            if include_report:
+                row["would_remove" if dry_run else "removed"] = []
+            rows.append(row)
             continue
         if _cc._prodtest_blocked(key, entry):
-            rows.append({"key": key, "branch": str(entry.get("branch", "")),
-                         "status": "skipped:prodtest-pending"})
+            row = {"key": key, "branch": str(entry.get("branch", "")),
+                   "status": "skipped:prodtest-pending"}
+            if include_report:
+                row["would_remove" if dry_run else "removed"] = []
+            rows.append(row)
             continue
         branch = str(entry.get("branch", "") or "")
         repo = str(entry.get("repo", "") or "")
         worktree_path = str(entry.get("worktree", "") or "")
         if dry_run:
-            rows.append({"key": key, "branch": branch, "status": "destroy-dry-run"})
+            row = {"key": key, "branch": branch, "status": "destroy-dry-run"}
+            if include_report:
+                row["would_remove"] = _dry_run_local_items(key, branch, worktree_path)
+            rows.append(row)
             continue
-        _teardown_local(key, branch, repo, worktree_path)
-        _remove_harness_runs(key)
-        store.delete_worktree_row(key)
-        rows.append({"key": key, "branch": branch, "status": "destroyed"})
+        teardown = _teardown_local(key, branch, repo, worktree_path)
+        t_count = _remove_harness_runs(key) or 0
+        cascaded = store.delete_worktree_row(key)
+        row = {"key": key, "branch": branch, "status": "destroyed"}
+        if include_report:
+            row["removed"] = _local_removed_items(key, teardown, cascaded, t_count)
+        rows.append(row)
     return rows
 

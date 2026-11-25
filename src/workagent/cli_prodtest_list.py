@@ -113,9 +113,13 @@ def prodtest_cleanup(
             return
         _print_rows(rows, json_output=False, csv_output=False,
                     columns=["issue", "status"],
-                    title="Prodtest cleanup", empty="no passed prodtest items")
+                    title="Prodtest cleanup", empty="no passed prodtest items",
+                    caption=f"{len(rows)} would be deleted" if rows else None)
         return
     if not targets:
+        if json_output:
+            print(json.dumps({"results": []}, indent=2, ensure_ascii=False))
+            return
         _print_rows([], json_output=False, csv_output=False,
                     columns=["issue", "status"],
                     title="Prodtest cleanup", empty="no passed prodtest items")
@@ -133,6 +137,9 @@ def prodtest_cleanup(
     if json_output:
         print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
         return
+    deleted = sum(1 for r in rows if r.get("status") == "deleted")
+    failed = len(rows) - deleted
     _print_rows(rows, json_output=False, csv_output=False,
                 columns=["issue", "status"],
-                title="Prodtest cleanup", empty="no passed prodtest items")
+                title="Prodtest cleanup", empty="no passed prodtest items",
+                caption=f"{deleted} deleted, {failed} failed" if rows else None)

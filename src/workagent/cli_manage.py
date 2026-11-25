@@ -505,9 +505,10 @@ def link_remove(
             target = str(repos.resolve_repo(repo, Path.cwd()).expanduser().resolve())
             if not store.remove_tracker_repo(tid, target):
                 _fail(f"repo {repo} not linked to tracker {tid}", EXIT_USAGE)
+            _print_result({"removed": tid, "repo": target}, json_output)
         else:
             store.remove_tracker_repo(tid)
-        _print_result({"removed": tid}, json_output)
+            _print_result({"removed": tid}, json_output)
         return
     resolved = worktrees.resolve_worktree(ref, store.load_links(include_inactive=True,
                                                                 include_deleted=True))
@@ -516,13 +517,20 @@ def link_remove(
     links = store.load_links(include_inactive=True, include_deleted=True)
     if resolved in links:
         if hard_delete:
-            from .cli_cleanup_gc import _remove_harness_runs
-            _remove_harness_runs(resolved)
-            store.delete_worktree_row(resolved)
-            _print_result({"removed": resolved}, json_output)
+            from .cli_cleanup_gc import _format_cascade_items, _remove_harness_runs
+            t_count = _remove_harness_runs(resolved) or 0
+            cascaded = store.delete_worktree_row(resolved)
+            details = [f"worktree row {resolved}",
+                       *_format_cascade_items(cascaded, t_count)]
+            _print_result({"removed": resolved, "mode": "hard-delete",
+                           "cascaded": cascaded,
+                           "transcripts_removed": t_count,
+                           "details": details if json_output else ", ".join(details)},
+                          json_output)
         else:
             deleted_at = store.soft_delete_worktree(resolved)
-            _print_result({"removed": resolved, "deleted_at": deleted_at,
+            _print_result({"removed": resolved, "mode": "soft-delete",
+                           "deleted_at": deleted_at,
                            "recover": "workagent link undelete " + resolved}, json_output)
         return
 
@@ -563,12 +571,17 @@ def link_gc(
 ) -> None:
     """Purge worktree rows soft-deleted more than 7 days ago (worktree dir + local branch + row)."""
     from . import cli_cleanup as _cleanup
-    rows = _cleanup.gc_soft_deleted(dry_run=dry_run)
+    rows = _cleanup.gc_soft_deleted(dry_run=dry_run, include_report=True)
     if json_output:
         print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
         return
-    _print_rows(rows, json_output, False, ["key", "branch", "status"],
-                "GC (soft-deleted)", "(nothing to purge)")
+    acted = sum(1 for r in rows if r.get("status") in ("purged", "gc-dry-run"))
+    skipped = len(rows) - acted
+    label = "would purge" if dry_run else "purged"
+    _print_rows(rows, json_output, False, ["key", "branch", "status", "removed"],
+                "GC (soft-deleted)", "(nothing to purge)",
+                caption=f"{acted} {label}, {skipped} skipped" if rows else None,
+                colorize=_cleanup._format_removed_col)
 
 
 @link_app.command("purge-orphans")
@@ -622,12 +635,17 @@ def link_destroy_deleted(
         targets = [resolved]
     else:
         _fail("pass a ref, or use --all to destroy every soft-deleted row.", EXIT_USAGE)
-    rows = _cleanup.destroy_deleted(targets, dry_run=dry_run)
+    rows = _cleanup.destroy_deleted(targets, dry_run=dry_run, include_report=True)
     if json_output:
         print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
         return
-    _print_rows(rows, json_output, False, ["key", "branch", "status"],
-                "Destroy deleted", "(nothing to destroy)")
+    acted = sum(1 for r in rows if r.get("status") in ("destroyed", "destroy-dry-run"))
+    skipped = len(rows) - acted
+    label = "would destroy" if dry_run else "destroyed"
+    _print_rows(rows, json_output, False, ["key", "branch", "status", "removed"],
+                "Destroy deleted", "(nothing to destroy)",
+                caption=f"{acted} {label}, {skipped} skipped" if rows else None,
+                colorize=_cleanup._format_removed_col)
 
 
 @link_app.command("undelete")

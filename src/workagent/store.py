@@ -244,19 +244,19 @@ def set_worktree_active(key: str, active: bool) -> None:
     save_links(links)
 
 
-def delete_worktree_row(key: str) -> None:
+def delete_worktree_row(key: str) -> dict:
     """Delete a worktree row and its dependent records; files/branch/PR stay."""
     from .errors import HarnessError
     db = _sqlite_path()
     if db is not None:
         from . import store_sqlite as sq
-        sq.delete_worktree_row(db, key)
-        return
+        return sq.delete_worktree_row(db, key)
     links = load_links(include_inactive=True, include_deleted=True)
     if key not in links:
         raise HarnessError(f"no worktree link for {key}", exit_code=2)
     del links[key]
     save_links(links)
+    return {"runs": 0, "flows": 0, "messages": 0, "parent_links": 0}
 
 
 def soft_delete_worktree(key: str) -> str:
