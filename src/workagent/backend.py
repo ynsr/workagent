@@ -6,6 +6,7 @@ import abc
 import collections
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -41,7 +42,8 @@ def warn_effort_retry(model: str | None, effort: str,
     print(f"warning: {target} does not support --effort {effort!r}; "
           "retrying without --effort", file=sys.stderr, flush=True)
     if retry_argv:
-        print(f"$ {' '.join(retry_argv)}", file=sys.stderr, flush=True)
+        quoted = " ".join(shlex.quote(a) for a in retry_argv)
+        print(f"$ {quoted}", file=sys.stderr, flush=True)
 
 
 def start_stderr_tee(stream, max_lines: int = 64) -> tuple[threading.Thread | None, collections.deque[str]]:

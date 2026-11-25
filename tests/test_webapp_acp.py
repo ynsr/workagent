@@ -60,6 +60,7 @@ def test_harness_options_non_acp_supported_false(client, monkeypatch):
     assert body["harness"] == "legacy"
     assert body["supported"] is False
     assert body["models"] == [] and body["efforts"] == []
+    assert body["model_efforts"] == {}
 
 
 def test_harness_options_acp_probe_ok(client, monkeypatch):
@@ -75,6 +76,7 @@ def test_harness_options_acp_probe_ok(client, monkeypatch):
         def discover_options(self, env_file=None):
             return HarnessOptions(models=[{"id": "m1", "name": "M1"}],
                                   efforts=[{"id": "hi", "name": "High"}],
+                                  model_efforts={"m1": [{"id": "hi", "name": "High"}]},
                                   current_model="m1", current_effort="hi")
 
     monkeypatch.setattr(b, "HARNESSES", {"fakeacp": _Acp()})
@@ -83,6 +85,7 @@ def test_harness_options_acp_probe_ok(client, monkeypatch):
     body = r.json()
     assert body["supported"] is True
     assert body["models"] == [{"id": "m1", "name": "M1"}]
+    assert body["model_efforts"] == {"m1": [{"id": "hi", "name": "High"}]}
     assert body["current_model"] == "m1"
     assert body["cached"] is False
 

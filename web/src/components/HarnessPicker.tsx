@@ -30,6 +30,23 @@ function HarnessIcon({ name, className }: { name: string; className?: string }) 
   return <Cpu aria-hidden className={cn("size-3.5 shrink-0", className)} />
 }
 
+function getPerModelEfforts(
+  modelEfforts: Record<string, Array<{ id: string; name: string }>> | undefined,
+  effectiveModel: string,
+): Array<{ id: string; name: string }> | undefined {
+  if (!effectiveModel || !modelEfforts) return undefined
+  return Object.prototype.hasOwnProperty.call(modelEfforts, effectiveModel)
+    ? modelEfforts[effectiveModel]
+    : undefined
+}
+
+function isEffortUnsupportedForModel(
+  perModelEfforts: Array<{ id: string; name: string }> | undefined,
+  effort: string,
+): boolean {
+  return Boolean(effort && perModelEfforts !== undefined && !perModelEfforts.some((e) => e.id === effort))
+}
+
 /** Combined minimalist popover picker for Harness, Model, and Effort.
  * Replaces HarnessSelect, ModelSelect, and EffortSelect with a single compact trigger. */
 export function HarnessPicker({
@@ -82,12 +99,7 @@ export function HarnessPicker({
   const { data, isPending, isError } = useHarnessOptions(harness, !harnessOnly)
   const models = useMemo(() => data?.models ?? [], [data?.models])
   const effectiveModel = model || data?.current_model || ""
-  const perModelEfforts =
-    effectiveModel &&
-    data?.model_efforts &&
-    Object.prototype.hasOwnProperty.call(data.model_efforts, effectiveModel)
-      ? data.model_efforts[effectiveModel]
-      : undefined
+  const perModelEfforts = getPerModelEfforts(data?.model_efforts, effectiveModel)
   const modelUnsupportedEffort = perModelEfforts !== undefined && perModelEfforts.length === 0
   const efforts = perModelEfforts !== undefined ? perModelEfforts : (data?.efforts ?? [])
 
@@ -137,8 +149,7 @@ export function HarnessPicker({
   const clampedActiveIdx = filteredModels.length > 0 ? Math.min(activeIdx, filteredModels.length - 1) : 0
 
   useEffect(() => {
-    if (!effort || perModelEfforts === undefined) return
-    if (!perModelEfforts.some((e) => e.id === effort)) {
+    if (isEffortUnsupportedForModel(perModelEfforts, effort)) {
       onEffortChange?.("")
     }
   }, [effort, perModelEfforts, onEffortChange])
@@ -171,14 +182,9 @@ export function HarnessPicker({
 
   function selectModel(nextModelId: string) {
     onModelChange?.(nextModelId)
-    if (effort && data?.model_efforts) {
-      const nextEffective = nextModelId || data.current_model || ""
-      if (nextEffective && Object.prototype.hasOwnProperty.call(data.model_efforts, nextEffective)) {
-        const nextEfforts = data.model_efforts[nextEffective] ?? []
-        if (!nextEfforts.some((e) => e.id === effort)) {
-          onEffortChange?.("")
-        }
-      }
+    const nextEfforts = getPerModelEfforts(data?.model_efforts, nextModelId || data?.current_model || "")
+    if (isEffortUnsupportedForModel(nextEfforts, effort)) {
+      onEffortChange?.("")
     }
     setOpen(false)
   }

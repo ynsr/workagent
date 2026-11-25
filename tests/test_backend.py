@@ -1324,3 +1324,17 @@ def test_run_harness_omits_effort_from_cached_model_capabilities(tmp_path, isola
                     False, False, res_unknown, False,
                     model="future-model", effort="medium")
     assert "--effort medium" in res_unknown["harness_command"]
+
+    # Empty harness_name resolves to default harness ("agy") and still hits the "agy" cache.
+    res_alias = {"branch": "feat/x", "command": "start", "key": "k"}
+    _h._run_harness("", "do things", str(worktree), str(worktree),
+                    False, False, res_alias, False,
+                    model="gemini-pro-orchestrator-neon", effort="medium")
+    assert "--effort" not in res_alias["harness_command"]
+    assert "omitting --effort" in capsys.readouterr().err
+
+
+def test_warn_effort_retry_quotes_argv(capsys):
+    backend.warn_effort_retry("m1", "high", ["agy", "-p", "hello world\nline2"])
+    err = capsys.readouterr().err
+    assert "$ agy -p 'hello world\nline2'" in err

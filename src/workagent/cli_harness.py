@@ -275,7 +275,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     env_path = _env.ensure_env_file(env_file)
     harness = backend.get_harness(harness_name)
     if model and effort:
-        supported_efforts = store.cached_model_efforts(harness_name, model)
+        supported_efforts = store.cached_model_efforts(harness.name, model)
         if supported_efforts is not None:
             if not supported_efforts:
                 eprint(f"warning: model {model!r} does not support --effort {effort!r}; omitting --effort")

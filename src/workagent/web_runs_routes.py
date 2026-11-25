@@ -492,12 +492,6 @@ def _cached_harness_options(name: str, refresh: bool = False) -> tuple[dict, boo
             "current_model": str(opts.current_model or ""),
             "current_effort": str(opts.current_effort or "")}
     _OPTIONS_CACHE[name] = (now, dict(body))
-    if model_efforts:
-        try:
-            from . import store as _store
-            _store.save_harness_options_cache(name, body)
-        except Exception:
-            pass
     return (body, False, None)
 
 
