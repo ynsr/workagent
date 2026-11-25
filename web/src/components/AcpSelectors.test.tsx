@@ -66,7 +66,7 @@ describe("HarnessPicker (issue #112 / #181)", () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
     renderWithClient(<HarnessPicker idPrefix="t" harness="" onHarnessChange={onChange} />)
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     expect(screen.getByRole("radio", { name: "Default (agy)" })).toBeInTheDocument()
     expect(screen.getByRole("radio", { name: "omp" })).toBeInTheDocument()
     expect(screen.getByRole("radio", { name: "agy" })).toBeInTheDocument()
@@ -90,12 +90,12 @@ describe("HarnessPicker (issue #112 / #181)", () => {
         onEffortChange={onEffort}
       />,
     )
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     expect(screen.getByRole("option", { name: "Model One" })).toBeInTheDocument()
     await user.click(screen.getByRole("option", { name: "Model One" }))
     expect(onModel).toHaveBeenCalledWith("m1")
 
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("button", { name: /Effort/ }))
     await user.click(screen.getByRole("option", { name: "High" }))
     expect(onEffort).toHaveBeenCalledWith("high")

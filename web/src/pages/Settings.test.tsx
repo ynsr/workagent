@@ -18,7 +18,10 @@ const { mutateAsync, mockConfig } = vi.hoisted(() => ({
 }))
 
 vi.mock("@/lib/queries", () => ({
-  queryKeys: { config: ["config"] },
+  queryKeys: {
+    config: ["config"],
+    harnessOptions: (name: string) => ["harnessOptions", name],
+  },
   useConfig: () => ({ data: mockConfig }),
   useCreateRun: () => ({ mutateAsync }),
 }))
@@ -61,7 +64,7 @@ describe("Settings Default AI Harness", () => {
     renderSettings()
 
     expect(screen.getByText("Default AI Harness")).toBeInTheDocument()
-    const trigger = screen.getByRole("button", { name: "Default harness" })
+    const trigger = screen.getByRole("button", { name: /^Default harness/ })
     expect(trigger).toHaveTextContent("agy")
     await user.click(trigger)
     expect(screen.queryByRole("radio", { name: /^Default/ })).not.toBeInTheDocument()
@@ -88,23 +91,23 @@ describe("Settings Default AI Harness", () => {
     )
     const { rerender } = render(tree())
 
-    await user.click(screen.getByRole("button", { name: "Default harness" }))
+    await user.click(screen.getByRole("button", { name: /^Default harness/ }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
-    expect(screen.getByRole("button", { name: "Default harness" })).toHaveTextContent("omp")
+    expect(screen.getByRole("button", { name: /^Default harness/ })).toHaveTextContent("omp")
 
     // Server config settles to "omp".
     mockConfig.default_harness = "omp"
     rerender(tree())
-    expect(screen.getByRole("button", { name: "Default harness" })).toHaveTextContent("omp")
+    expect(screen.getByRole("button", { name: /^Default harness/ })).toHaveTextContent("omp")
 
     // External CLI change switches config back to "agy" while Settings stays mounted.
     mockConfig.default_harness = "agy"
     rerender(tree())
-    expect(screen.getByRole("button", { name: "Default harness" })).toHaveTextContent("agy")
+    expect(screen.getByRole("button", { name: /^Default harness/ })).toHaveTextContent("agy")
 
     // Clicking "omp" again must not be blocked by stale optimistic state.
     mutateAsync.mockClear()
-    await user.click(screen.getByRole("button", { name: "Default harness" }))
+    await user.click(screen.getByRole("button", { name: /^Default harness/ }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
     expect(mutateAsync).toHaveBeenCalledWith({
       command: "config",

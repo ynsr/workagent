@@ -61,9 +61,9 @@ describe("HarnessPicker", () => {
         onHarnessChange={vi.fn()}
       />,
     )
-    expect(screen.getByRole("button", { name: "Harness, model, and effort" })).toHaveTextContent(
-      "agy · Claude Sonnet 5.5 · Medium",
-    )
+    expect(
+      screen.getByRole("button", { name: "Harness, model, and effort: agy · Claude Sonnet 5.5 · Medium" }),
+    ).toHaveTextContent("agy · Claude Sonnet 5.5 · Medium")
   })
 
   it("shows missing harness tooltip and calls onHarnessChange on harness switch", async () => {
@@ -78,7 +78,7 @@ describe("HarnessPicker", () => {
         onHarnessChange={onHarness}
       />,
     )
-    const trigger = screen.getByRole("button", { name: "Harness, model, and effort" })
+    const trigger = screen.getByRole("button", { name: /^Harness, model, and effort/ })
     expect(trigger).toHaveTextContent("Default (agy) · Claude Sonnet 5.5 · Medium")
 
     await user.click(trigger)
@@ -99,7 +99,7 @@ describe("HarnessPicker", () => {
         onModelChange={onModel}
       />,
     )
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     const search = screen.getByLabelText("Search models")
     await user.type(search, "gemini")
 
@@ -121,7 +121,7 @@ describe("HarnessPicker", () => {
         onEffortChange={onEffort}
       />,
     )
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.type(screen.getByLabelText("Search models"), "nonexistent")
     expect(screen.getByText("No matching models")).toBeInTheDocument()
 
@@ -145,12 +145,56 @@ describe("HarnessPicker", () => {
         onHarnessChange={onHarness}
       />,
     )
-    const trigger = screen.getByRole("button", { name: "Harness" })
+    const trigger = screen.getByRole("button", { name: "Harness: agy" })
     expect(trigger).toHaveTextContent("agy")
     await user.click(trigger)
     expect(screen.queryByLabelText("Search models")).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Effort" })).not.toBeInTheDocument()
     await user.click(screen.getByRole("radio", { name: "omp (missing)" }))
     expect(onHarness).toHaveBeenCalledWith("omp")
+  })
+
+  it("wires aria-activedescendant, scrolls active option into view, and clamps activeIdx when models shrink", async () => {
+    const user = userEvent.setup()
+    const onModel = vi.fn()
+    const scrollSpy = vi.fn()
+    Element.prototype.scrollIntoView = scrollSpy
+
+    const { rerender } = renderPicker(
+      <HarnessPicker
+        idPrefix="k"
+        harness="agy"
+        onHarnessChange={vi.fn()}
+        onModelChange={onModel}
+      />,
+    )
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
+    const search = screen.getByLabelText("Search models")
+    await user.click(search)
+    await user.keyboard("{ArrowDown}{ArrowDown}")
+    const activeId = search.getAttribute("aria-activedescendant")
+    expect(activeId).toBeTruthy()
+    expect(document.getElementById(activeId!)).toHaveTextContent("Gemini 4 Hydrogen")
+    expect(scrollSpy).toHaveBeenCalledWith({ block: "nearest" })
+
+    // Shrink the models list asynchronously without changing search
+    const prevModels = mockOptions.data.models
+    mockOptions.data = { ...mockOptions.data, models: [{ id: "claude-sonnet-5.5", name: "Claude Sonnet 5.5" }] }
+    try {
+      rerender(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <HarnessPicker
+            idPrefix="k"
+            harness="agy"
+            onHarnessChange={vi.fn()}
+            onModelChange={onModel}
+          />
+        </QueryClientProvider>,
+      )
+      await user.keyboard("{Enter}")
+      expect(onModel).toHaveBeenCalledWith("claude-sonnet-5.5")
+    } finally {
+      mockOptions.data = { ...mockOptions.data, models: prevModels }
+    }
   })
 })

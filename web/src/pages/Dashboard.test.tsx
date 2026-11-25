@@ -77,7 +77,7 @@ describe("Dashboard bulk confirm harness", () => {
 
     await user.click(screen.getByRole("button", { name: "Bulk actions" }))
     await user.click(screen.getByRole("button", { name: "Sync all" }))
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
     await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Sync all" }))
@@ -95,7 +95,7 @@ describe("Dashboard bulk confirm harness", () => {
 
     await user.click(screen.getByRole("button", { name: "Bulk actions" }))
     await user.click(screen.getByRole("button", { name: "Review all" }))
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("radio", { name: "agy" }))
     await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Review all" }))
@@ -113,7 +113,7 @@ describe("Dashboard bulk confirm harness", () => {
 
     await user.click(screen.getByRole("button", { name: "Bulk actions" }))
     await user.click(screen.getByRole("button", { name: "Fix all PR comments" }))
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
     await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Fix all" }))

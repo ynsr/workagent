@@ -56,7 +56,7 @@ describe("ImmediateRunForm harness", () => {
     const user = userEvent.setup()
     renderRunForm("action", "audit")
 
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
     await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Run action now" }))
@@ -73,7 +73,7 @@ describe("ImmediateRunForm harness", () => {
     const user = userEvent.setup()
     renderRunForm("flow", "ship")
 
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("radio", { name: "agy" }))
     await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Run flow now" }))

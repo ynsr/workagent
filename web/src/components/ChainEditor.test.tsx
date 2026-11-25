@@ -304,7 +304,7 @@ describe("ChainEditor step harness", () => {
           knownActions={ACTIONS}
         />,
       )
-      const trigger = within(container).getByRole("button", { name: "Harness, model, and effort" })
+      const trigger = within(container).getByRole("button", { name: /^Harness, model, and effort/ })
       await user.click(trigger)
       await user.click(screen.getByRole("radio", { name: "omp" }))
       expect(next[0]?.config?.harness).toBe("omp")
@@ -319,7 +319,7 @@ describe("ChainEditor step harness", () => {
           knownActions={[]}
         />,
       )
-      expect(within(container).queryByRole("button", { name: "Harness, model, and effort" })).not.toBeInTheDocument()
+      expect(within(container).queryByRole("button", { name: /^Harness, model, and effort/ })).not.toBeInTheDocument()
       unmount()
     }
   })
@@ -335,7 +335,7 @@ describe("ChainEditor step harness", () => {
         knownActions={[]}
       />,
     )
-    const trigger = within(container).getByRole("button", { name: "Harness, model, and effort" })
+    const trigger = within(container).getByRole("button", { name: /^Harness, model, and effort/ })
     expect(trigger).toHaveTextContent("omp")
     await user.click(trigger)
     await user.click(screen.getByRole("radio", { name: /^Default/ }))

@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent } from "react"
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { Check, ChevronDown, ChevronRight, Cpu, Search, Sparkles, Terminal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -51,6 +51,8 @@ export function HarnessPicker({
   const [search, setSearch] = useState("")
   const [effortOpen, setEffortOpen] = useState(false)
   const [activeIdx, setActiveIdx] = useState(0)
+  const optionIdBase = useId()
+  const modelListRef = useRef<HTMLDivElement>(null)
 
   const { data: cfg } = useConfig()
   const def = (cfg?.default_harness ?? "") || "agy"
@@ -122,6 +124,14 @@ export function HarnessPicker({
     ? harnessDisplay
     : `${harnessDisplay} · ${modelDisplay} · ${effortDisplay}`
 
+  const clampedActiveIdx = filteredModels.length > 0 ? Math.min(activeIdx, filteredModels.length - 1) : 0
+
+  useEffect(() => {
+    if (!open || modelsDisabled) return
+    const el = modelListRef.current?.children[clampedActiveIdx] as HTMLElement | undefined
+    el?.scrollIntoView?.({ block: "nearest" })
+  }, [open, modelsDisabled, clampedActiveIdx])
+
   function handleOpenChange(next: boolean) {
     setOpen(next)
     if (next) {
@@ -146,13 +156,13 @@ export function HarnessPicker({
     if (modelsDisabled || filteredModels.length === 0) return
     if (e.key === "ArrowDown") {
       e.preventDefault()
-      setActiveIdx((i) => Math.min(i + 1, filteredModels.length - 1))
+      setActiveIdx((i) => Math.min(Math.min(i, filteredModels.length - 1) + 1, filteredModels.length - 1))
     } else if (e.key === "ArrowUp") {
       e.preventDefault()
-      setActiveIdx((i) => Math.max(i - 1, 0))
+      setActiveIdx((i) => Math.max(Math.min(i, filteredModels.length - 1) - 1, 0))
     } else if (e.key === "Enter") {
       e.preventDefault()
-      const picked = filteredModels[activeIdx]
+      const picked = filteredModels[clampedActiveIdx]
       if (picked) {
         onModelChange?.(picked.id)
         setOpen(false)
@@ -170,7 +180,7 @@ export function HarnessPicker({
           type="button"
           variant="outline"
           size={compact ? "sm" : "default"}
-          aria-label={accessibleName}
+          aria-label={`${accessibleName}: ${triggerText}`}
           aria-expanded={open}
           className={cn(
             "justify-between gap-2 font-normal",
@@ -185,7 +195,7 @@ export function HarnessPicker({
           <ChevronDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-80 p-0">
+      <PopoverContent align="start" className="w-80 max-w-[calc(100vw-2rem)] p-0">
         {/* Harness icon toggles */}
         <div
           role="radiogroup"
@@ -239,6 +249,11 @@ export function HarnessPicker({
                 onKeyDown={handleSearchKeyDown}
                 placeholder="Search models…"
                 aria-label="Search models"
+                aria-activedescendant={
+                  !modelsDisabled && filteredModels.length > 0
+                    ? `${optionIdBase}-model-${clampedActiveIdx}`
+                    : undefined
+                }
                 disabled={modelsDisabled}
                 className="w-full bg-transparent text-sm text-popover-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
               />
@@ -247,7 +262,7 @@ export function HarnessPicker({
             {/* Divided model list */}
             {modelsDisabled ? (
               <Tooltip content={modelDisabledReason} className="w-full">
-                <Pressable disabled aria-label="Model" className="text-xs text-muted-foreground">
+                <Pressable aria-disabled="true" aria-label="Model" className="text-xs text-muted-foreground">
                   <span className="truncate">{modelDisabledReason}</span>
                 </Pressable>
               </Tooltip>
@@ -255,6 +270,7 @@ export function HarnessPicker({
               <div className="px-3 py-2.5 text-xs text-muted-foreground">No matching models</div>
             ) : (
               <div
+                ref={modelListRef}
                 role="listbox"
                 aria-label="Model"
                 className="max-h-56 divide-y divide-border overflow-y-auto"
@@ -264,13 +280,14 @@ export function HarnessPicker({
                   return (
                     <Pressable
                       key={item.id || "__default__"}
+                      id={`${optionIdBase}-model-${idx}`}
                       role="option"
                       aria-selected={selected}
                       onClick={() => {
                         onModelChange?.(item.id)
                         setOpen(false)
                       }}
-                      className={cn(idx === activeIdx && "bg-accent/60")}
+                      className={cn(idx === clampedActiveIdx && "bg-accent/60")}
                     >
                       <span className="truncate">{item.name || item.id}</span>
                       {selected ? <Check aria-hidden className="size-3.5 shrink-0 text-primary" /> : null}
@@ -284,7 +301,7 @@ export function HarnessPicker({
             <div className="border-t border-border">
               {effortsDisabled ? (
                 <Tooltip content={effortDisabledReason} className="w-full">
-                  <Pressable disabled aria-label="Effort">
+                  <Pressable aria-disabled="true" aria-label="Effort">
                     <span className="font-medium">Effort</span>
                     <span className="text-xs text-muted-foreground">Default</span>
                   </Pressable>

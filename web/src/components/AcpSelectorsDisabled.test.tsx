@@ -28,14 +28,19 @@ describe("HarnessPicker disabled state (issue #112 / #181)", () => {
   it("disables model and effort with tooltip when discovery failed", async () => {
     const user = userEvent.setup()
     renderWithClient(
-      <HarnessPicker idPrefix="d" harness="agy" onHarnessChange={() => {}} />,
+      <HarnessPicker idPrefix="d" harness="agy" onHarnessChange={vi.fn()} />,
     )
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     const modelBtn = screen.getByRole("button", { name: "Model" })
-    expect(modelBtn).toBeDisabled()
+    expect(modelBtn).toHaveAttribute("aria-disabled", "true")
     expect(modelBtn.parentElement).toHaveAttribute("title", expect.stringContaining("failed"))
+    modelBtn.focus()
+    const tooltip = await screen.findByRole("tooltip")
+    expect(tooltip).toHaveTextContent(/failed/)
+    expect(modelBtn).toHaveAttribute("aria-describedby", tooltip.id)
+
     const effortBtn = screen.getByRole("button", { name: "Effort" })
-    expect(effortBtn).toBeDisabled()
+    expect(effortBtn).toHaveAttribute("aria-disabled", "true")
     expect(effortBtn.parentElement).toHaveAttribute("title", expect.stringContaining("failed"))
   })
 })

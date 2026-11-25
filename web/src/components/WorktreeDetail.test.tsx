@@ -69,7 +69,7 @@ describe("WorktreeDetail terminal harness", () => {
     const user = userEvent.setup()
     renderDetail()
 
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
     await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Harness" }))

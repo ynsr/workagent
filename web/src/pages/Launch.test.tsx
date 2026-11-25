@@ -57,7 +57,7 @@ describe("Launch harness integration", () => {
     await user.click(screen.getByRole("radio", { name: "Headless" }))
     expect(screen.getByText("agy-guard --dangerously-skip-permissions -p=…")).toBeInTheDocument()
 
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
     expect(screen.getByText("omp -p --auto-approve")).toBeInTheDocument()
 
@@ -69,7 +69,7 @@ describe("Launch harness integration", () => {
     const user = userEvent.setup()
     renderLaunch("/launch?mode=sync&ref=jira%3AIPG-1")
 
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
     await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Launch Sync" }))
@@ -88,7 +88,7 @@ describe("Launch harness integration", () => {
 
     await user.type(screen.getByLabelText("Worktree refs (one per line)"), "jira:IPG-1")
     await user.type(screen.getByLabelText(/^Prompt/, { selector: "textarea" }), "summarize")
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("radio", { name: "agy" }))
     await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Launch Adhoc Prompt" }))
@@ -123,7 +123,7 @@ describe("Launch harness integration", () => {
     expect(storedAfterFlow.sync).toEqual({ merge: true, harness: "omp", model: "", effort: "" })
 
     await user.click(screen.getByRole("tab", { name: "Sync" }))
-    const trigger = screen.getByRole("button", { name: "Harness, model, and effort" })
+    const trigger = screen.getByRole("button", { name: /^Harness, model, and effort/ })
     expect(trigger).toHaveTextContent("omp")
     await user.click(trigger)
     expect(screen.getByRole("radio", { name: "omp" })).toHaveAttribute("aria-checked", "true")

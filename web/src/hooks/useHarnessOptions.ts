@@ -7,7 +7,7 @@ import { queryKeys } from "@/lib/queries"
 export function useHarnessOptions(harness: string, enabled = true) {
   const name = harness.trim() || "agy"
   return useQuery({
-    queryKey: queryKeys?.harnessOptions?.(name) ?? ["harnessOptions", name],
+    queryKey: queryKeys.harnessOptions(name),
     queryFn: () => api.harnessOptions(name),
     enabled,
     staleTime: 10 * 60 * 1000,

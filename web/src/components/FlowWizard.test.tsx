@@ -164,7 +164,7 @@ describe("FlowWizard start step constraints", () => {
     cleanup()
     const user = userEvent.setup()
     const { unmount } = renderWizard()
-    await user.click(screen.getAllByRole("button", { name: "Harness, model, and effort" })[0]!)
+    await user.click(screen.getAllByRole("button", { name: /^Harness, model, and effort/ })[0]!)
     expect(screen.getByRole("radio", { name: "Use template / default" })).toBeInTheDocument()
     await user.click(screen.getByRole("radio", { name: "omp" }))
     await user.keyboard("{Escape}")

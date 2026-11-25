@@ -50,7 +50,7 @@ describe("ActionFormCard harness", () => {
 
     await user.type(screen.getByLabelText("Name"), "Audit")
     await user.type(screen.getByLabelText("Prompt"), "audit repo")
-    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
     await user.keyboard("{Escape}")
 
@@ -90,7 +90,7 @@ describe("ActionFormCard harness", () => {
       created_at: "",
       modified_at: "",
     })
-    const trigger = screen.getByRole("button", { name: "Harness, model, and effort" })
+    const trigger = screen.getByRole("button", { name: /^Harness, model, and effort/ })
     expect(trigger).toHaveTextContent("omp")
     await user.click(trigger)
     expect(screen.getByRole("radio", { name: "omp" })).toHaveAttribute("aria-checked", "true")

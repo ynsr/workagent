@@ -16,6 +16,7 @@ const Pressable = React.forwardRef<
         "hover:bg-accent hover:text-accent-foreground",
         "focus-visible:bg-accent focus-visible:text-accent-foreground focus-visible:outline-none",
         "disabled:pointer-events-none disabled:opacity-50",
+        "aria-[disabled=true]:cursor-not-allowed aria-[disabled=true]:opacity-50",
         className,
       )}
       {...props}
