@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Re-run button on the web run page now adds `--fresh` automatically when a flow run fails with a `--steps` chain-change error [183]
 - Replace separate harness, model, and effort selectors with a single combined popover picker across the web UI [181]
 - Flows given an MR or PR URL now resolve to their linked worktree and fail fast when none exists [188]
 - Auto-register and link worktrees for fresh PR/MR URLs in flow, action, adhoc, and sync commands with `--no-auto-register` opt-out [189]

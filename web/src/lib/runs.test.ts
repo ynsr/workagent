@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { queryKeys } from "./queries"
-import { commandAction, needsConfirm, runKind } from "./runs"
+import { buildRerunArgs, commandAction, hasChainChangeError, needsConfirm, runKind } from "./runs"
 
 describe("needsConfirm (backend _needs_confirm mirror)", () => {
   it("gates flow run / template delete, not template add", () => {
@@ -72,5 +72,54 @@ describe("query keys", () => {
   it("expose no sessions surface", () => {
     expect(Object.keys(queryKeys)).not.toContain("session")
     expect(JSON.stringify(queryKeys)).not.toContain("sessions")
+  })
+})
+
+describe("buildRerunArgs / hasChainChangeError (issue #183)", () => {
+  const STEP_DIFF_LINE =
+    "error: --steps differs from the resumable run 155 (current step 0) — re-run with --fresh for a new run on the new chain, or without --steps to resume"
+  const CONFIG_DIFF_LINE =
+    "error: --steps config differs from the resumable run 155 — re-run with --fresh for a new run on the new chain, without --steps to resume, or pass config edits via --step-config"
+
+  it("detects both --steps diff and --steps config diff errors", () => {
+    expect(hasChainChangeError([STEP_DIFF_LINE])).toBe(true)
+    expect(hasChainChangeError([{ seq: 1, text: CONFIG_DIFF_LINE }])).toBe(true)
+    expect(hasChainChangeError(["error: unparseable ref"])).toBe(false)
+  })
+
+  it("appends --fresh for flow run when chain-change error occurred", () => {
+    expect(
+      buildRerunArgs(
+        "flow",
+        ["-v", "run", "review_fix", "ao/wave2-iban/root", "--steps", "[]", "--yes"],
+        [{ seq: 1, text: STEP_DIFF_LINE }],
+      ),
+    ).toEqual(["run", "review_fix", "ao/wave2-iban/root", "--steps", "[]", "--fresh"])
+    expect(
+      buildRerunArgs(
+        "flow",
+        ["--verbose", "run", "review_fix", "ao/wave2-iban/root", "--steps", "[]", "--yes"],
+        [CONFIG_DIFF_LINE],
+      ),
+    ).toEqual(["run", "review_fix", "ao/wave2-iban/root", "--steps", "[]", "--fresh"])
+  })
+
+  it("does not duplicate --fresh if already present", () => {
+    expect(
+      buildRerunArgs(
+        "flow",
+        ["run", "review_fix", "ao/wave2-iban/root", "--fresh", "--yes"],
+        [STEP_DIFF_LINE],
+      ),
+    ).toEqual(["run", "review_fix", "ao/wave2-iban/root", "--fresh"])
+  })
+
+  it("does not add --fresh for other errors or non-flow-run commands", () => {
+    expect(
+      buildRerunArgs("flow", ["run", "review_fix", "jira:X", "--yes"], ["error: no linked state"]),
+    ).toEqual(["run", "review_fix", "jira:X"])
+    expect(
+      buildRerunArgs("review", ["jira:X", "--yes"], [STEP_DIFF_LINE]),
+    ).toEqual(["jira:X"])
   })
 })

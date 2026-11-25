@@ -1,3 +1,4 @@
+import type { RunLine } from "./api"
 import type { OptOutAction } from "./settings"
 
 /** Mirror of backend `_needs_confirm` (web_args.py) minus the
@@ -147,4 +148,41 @@ export function runKind(
 export function runLabel(command: string, args: readonly string[]): string {
   const refs = args.filter((a) => !a.startsWith("-"))
   return `${commandLabel(command)}${refs.length > 0 ? ` ${refs.join(" ")}` : ""}`
+}
+
+const CHAIN_CHANGE_ERROR_RE = /--steps (?:config )?differs from the resumable run\b/
+
+/** True when a run's captured output contains the flow `--steps` chain-change
+ * error that instructs the user to re-run with `--fresh`. */
+export function hasChainChangeError(
+  lines: readonly (string | RunLine)[],
+): boolean {
+  return lines.some((line) =>
+    CHAIN_CHANGE_ERROR_RE.test(typeof line === "string" ? line : line.text),
+  )
+}
+
+/** Build the args array for Re-running a `needs_input` run.
+ * Strips the leading `-v`/`--verbose` (re-added per current Settings) and any
+ * appended `--yes`, and appends `--fresh` for `flow run` when the captured
+ * output failed with a `--steps` chain-change error. */
+export function buildRerunArgs(
+  command: string,
+  rawArgs: readonly string[],
+  lines: readonly (string | RunLine)[],
+): string[] {
+  const stripped =
+    rawArgs[0] === "-v" || rawArgs[0] === "--verbose"
+      ? rawArgs.slice(1)
+      : [...rawArgs]
+  const args = stripped.filter((a) => a !== "--yes")
+  if (
+    command === "flow" &&
+    args[0] === "run" &&
+    hasChainChangeError(lines) &&
+    !args.includes("--fresh")
+  ) {
+    args.push("--fresh")
+  }
+  return args
 }
