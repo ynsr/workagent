@@ -155,54 +155,6 @@ export interface ProdtestRow {
   updated_at?: string
 }
 
-export type DiffMode = "base" | "head"
-
-export interface WorktreeDiffFile {
-  path: string
-  status: string
-  additions: number
-  deletions: number
-  binary: boolean
-  old_path?: string | null
-}
-
-export interface WorktreeFilesResponse {
-  key: string
-  mode: DiffMode
-  base_ref: string
-  files: WorktreeDiffFile[]
-  total_additions: number
-  total_deletions: number
-}
-
-export interface DiffLine {
-  type: "context" | "add" | "del" | "meta"
-  old_line: number | null
-  new_line: number | null
-  content: string
-}
-
-export interface DiffHunk {
-  header: string
-  old_start: number
-  old_count: number
-  new_start: number
-  new_count: number
-  lines: DiffLine[]
-}
-
-export interface WorktreeDiffResponse {
-  key: string
-  path: string
-  mode: DiffMode
-  base_ref: string
-  binary: boolean
-  truncated: boolean
-  additions: number
-  deletions: number
-  hunks: DiffHunk[]
-}
-
 export interface ProdtestPlanCase {
   id?: string
   title?: string
@@ -835,18 +787,6 @@ export const api = {
       "/api/terminal/stop",
       { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ worktree_ref: worktreeRef }) },
-    ),
-
-  /** GET /api/worktrees/{ref}/files?mode=base|head — changed files in a worktree. */
-  worktreeFiles: (ref: string, mode: DiffMode = "base") =>
-    request<WorktreeFilesResponse>(
-      `/api/worktrees/${encodeURIComponent(ref)}/files${qs({ mode })}`,
-    ),
-
-  /** GET /api/worktrees/{ref}/diff?path=<file>&mode=base|head — unified diff hunks. */
-  worktreeDiff: (ref: string, path: string, mode: DiffMode = "base") =>
-    request<WorktreeDiffResponse>(
-      `/api/worktrees/${encodeURIComponent(ref)}/diff${qs({ path, mode })}`,
     ),
 
   /** GET /api/prodtests/{issue_key}/plan — validated YAML plan content + metadata. */

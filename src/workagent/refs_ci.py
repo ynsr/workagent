@@ -24,8 +24,6 @@ _GH_RUNNING = {"IN_PROGRESS", "QUEUED", "PENDING", "STARTING"}
 _CI_RANK = {"not_started": 0, "success": 1, "running": 2, "failure": 3}
 _GLAB_RUNNING = {"running", "pending", "created", "waiting_for_resource",
                  "preparing"}
-# Maximum pipelines of an MR inspected for a job URL (newest first).
-_CI_PIPELINE_SCAN = 5
 
 
 _SEC_JOB_PREFIXES = (
@@ -118,35 +116,143 @@ def _is_side_ci_glab(pipeline: dict, jobs: list, ignore_patterns: list[str]) -> 
     return False
 
 
-def _select_main_glab_pipeline(
-    data: list[dict],
+def _glab_mr_head_sha(path: str, iid: str, host: str, cwd: str | None) -> str:
+    """Return the MR's remote head commit SHA, or '' on error/missing."""
+    try:
+        out = _api_glab(f"projects/{quote(path, safe='')}/merge_requests/{iid}", host, cwd)
+        data = json.loads(out or "{}")
+    except (HarnessError, json.JSONDecodeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    diff_refs = data.get("diff_refs")
+    head_sha = data.get("sha") or (diff_refs.get("head_sha") if isinstance(diff_refs, dict) else "")
+    return str(head_sha or "")
+
+
+def _glab_branch_head_sha(path: str, branch: str, host: str, cwd: str | None) -> str:
+    """Return *branch*'s remote head commit SHA, or '' on error/missing."""
+    try:
+        out = _api_glab(
+            f"projects/{quote(path, safe='')}/repository/branches/{quote(branch, safe='')}",
+            host,
+            cwd,
+        )
+        data = json.loads(out or "{}")
+    except (HarnessError, json.JSONDecodeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    commit = data.get("commit")
+    return str(commit.get("id") or "") if isinstance(commit, dict) else ""
+
+
+def _gh_branch_head_sha(repo: str, branch: str, cwd: str | None, host: str = "") -> str:
+    """Return *branch*'s remote head commit SHA on GitHub, or '' on error/missing."""
+    try:
+        out = _api_gh(f"repos/{repo}/branches/{quote(branch, safe='')}", host, cwd)
+        data = json.loads(out or "{}")
+    except (HarnessError, json.JSONDecodeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    commit = data.get("commit")
+    return str(commit.get("sha") or "") if isinstance(commit, dict) else ""
+
+
+def _filter_commit_items(items: list, head_sha: str, sha_key: str) -> list[dict]:
+    """Filter *items* (already newest-first) to those matching *head_sha*."""
+    dicts = [it for it in items if isinstance(it, dict)]
+    if not dicts:
+        return []
+    has_shas = any(str(it.get(sha_key) or "") for it in dicts)
+    if head_sha:
+        if not has_shas:
+            return dicts
+        return [it for it in dicts if str(it.get(sha_key) or "") == head_sha]
+    target_sha = str(dicts[0].get(sha_key) or "")
+    if target_sha:
+        return [it for it in dicts if str(it.get(sha_key) or "") == target_sha]
+    return dicts
+
+
+def _filter_glab_commit_pipelines(data: list, head_sha: str) -> list[dict]:
+    """Return pipelines (newest first) belonging to the active branch's last commit."""
+    dicts = [p for p in data if isinstance(p, dict)]
+    ordered = sorted(dicts, key=lambda p: p.get("id") or 0, reverse=True)
+    return _filter_commit_items(ordered, head_sha, "sha")
+
+
+def _evaluate_glab_commit_pipelines(
+    same_sha: list[dict],
     path: str,
     host: str,
     cwd: str | None,
     ref_label: str,
     ignore_patterns: list[str],
-) -> tuple[dict, dict[int, list]]:
-    """Select the main CI pipeline for the latest commit SHA, ignoring side-CIs."""
-    newest = max(data, key=lambda p: p.get("id", 0))
-    target_sha = str(newest.get("sha") or "")
-    ordered = sorted(data, key=lambda p: p.get("id", 0), reverse=True)[:_CI_PIPELINE_SCAN]
-    same_sha = [p for p in ordered if str(p.get("sha") or "") == target_sha] if target_sha else ordered
+) -> tuple[str, str, list[dict]]:
+    """Aggregate all non-ignored GitLab pipelines for the last commit."""
+    if not same_sha:
+        return "not_started", "", []
     jobs_by_id: dict[int, list] = {}
-    if len(same_sha) <= 1 and not ignore_patterns:
-        return newest, jobs_by_id
+    main_pipes: list[dict] = []
     for p in same_sha:
         pid = p.get("id")
         try:
             jobs = _pipeline_jobs(path, pid, host, cwd, ref_label)
         except HarnessError:
-            # A transient jobs failure must not blank CI: skip this
-            # candidate and keep looking for the main pipeline.
+            source = str(p.get("source") or "").strip().lower()
+            if not (ignore_patterns and source and _matches_ci_ignore(source, ignore_patterns)):
+                main_pipes.append(p)
             continue
         if pid is not None:
             jobs_by_id[int(pid)] = jobs
         if not _is_side_ci_glab(p, jobs, ignore_patterns):
-            return p, jobs_by_id
-    return newest, jobs_by_id
+            main_pipes.append(p)
+    selected = main_pipes if main_pipes else [same_sha[0]]
+    worst_state = "not_started"
+    worst_pipe = selected[0]
+    for p in selected:
+        p_state = _glab_state((p.get("status") or "").lower())
+        if _CI_RANK[p_state] > _CI_RANK[worst_state]:
+            worst_state = p_state
+            worst_pipe = p
+    if worst_state == "not_started":
+        return "not_started", "", []
+    worst_jobs: list[dict] = []
+    all_jobs: list[dict] = []
+    checks: list[dict] = []
+    for p in selected:
+        pid = p.get("id")
+        jobs = jobs_by_id.get(int(pid), []) if pid is not None else []
+        p_sha = str(p.get("sha") or "")
+        p_state = _glab_state((p.get("status") or "").lower())
+        for idx, j in enumerate(jobs):
+            if not isinstance(j, dict):
+                continue
+            all_jobs.append(j)
+            if p_state == worst_state:
+                worst_jobs.append(j)
+            checks.append({
+                "name": str(j.get("name") or f"job-{j.get('id') or idx + 1}").strip(),
+                "commit_sha": str((j.get("commit") or {}).get("id") or p_sha),
+                "status": str(j.get("status") or "").lower(),
+                "conclusion": _glab_state(str(j.get("status") or "").lower()),
+                "url": str(j.get("web_url") or ""),
+                "log_tail": "",
+            })
+    url = _pick_job_url(worst_jobs) or (
+        "" if worst_state in ("failure", "running") else _pick_job_url(all_jobs)
+    )
+    if url:
+        return worst_state, url, checks
+    fallback_url = str(worst_pipe.get("web_url") or "")
+    if not fallback_url:
+        for p in selected:
+            if p.get("web_url"):
+                fallback_url = str(p["web_url"])
+                break
+    return worst_state, fallback_url, checks
 
 
 def _ci_gh_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]]:
@@ -454,7 +560,7 @@ def populate_failing_check_logs(
 
 
 def _ci_glab_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]]:
-    """(status, url, checks) for a GitLab MR's newest pipeline."""
+    """(status, url, checks) for all CI pipelines of a GitLab MR's last commit."""
     m = _GITLAB_MR.match(pr_url or "")
     if not m:
         raise HarnessError(f"not a GitLab MR URL: {pr_url}")
@@ -465,79 +571,20 @@ def _ci_glab_details(pr_url: str, cwd: str | None) -> tuple[str, str, list[dict]
         data = json.loads(out or "[]")
     except json.JSONDecodeError:
         raise HarnessError(f"cannot parse glab output for {pr_url}")
-    if not data:
+    if not isinstance(data, list) or not data:
+        return "not_started", "", []
+    head_sha = _glab_mr_head_sha(path, iid, host, cwd)
+    same_sha = _filter_glab_commit_pipelines(data, head_sha)
+    if not same_sha:
         return "not_started", "", []
     ignore_patterns = _repo_ci_ignore(cwd)
-    main_pipe, jobs_by_id = _select_main_glab_pipeline(
-        data, path, host, cwd, pr_url, ignore_patterns
+    return _evaluate_glab_commit_pipelines(
+        same_sha, path, host, cwd, pr_url, ignore_patterns
     )
-    state = _glab_state((main_pipe.get("status") or "").lower())
-    if state == "not_started":
-        return "not_started", "", []  # skipped, manual, unknown
-    ordered = sorted(data, key=lambda p: p.get("id", 0),
-                     reverse=True)[:_CI_PIPELINE_SCAN]
-    main_id = main_pipe.get("id")
-    scan = [main_pipe] + [p for p in ordered if p.get("id") != main_id]
-    main_checks: list[dict] = []
-    fallback = ""
-    for pipeline in scan:
-        pid = pipeline.get("id")
-        if pid is not None and int(pid) in jobs_by_id:
-            jobs = jobs_by_id[int(pid)]
-        elif pid != main_id:
-            try:
-                jobs = _pipeline_jobs(path, pid, host, cwd, pr_url)
-            except HarnessError:
-                continue
-        else:
-            jobs = _pipeline_jobs(path, pid, host, cwd, pr_url)
-        if not jobs:
-            continue
-        if pid == main_id:
-            p_sha = str(pipeline.get("sha") or main_pipe.get("sha") or "")
-            main_checks = [
-                {
-                    "name": str(j.get("name") or f"job-{j.get('id') or idx + 1}").strip(),
-                    "commit_sha": str((j.get("commit") or {}).get("id") or p_sha),
-                    "status": str(j.get("status") or "").lower(),
-                    "conclusion": _glab_state(str(j.get("status") or "").lower()),
-                    "url": str(j.get("web_url") or ""),
-                    "log_tail": "",
-                }
-                for idx, j in enumerate(jobs)
-                if isinstance(j, dict)
-            ]
-            # Failed-first (#116): the URL must be a failing job of the
-            # main pipeline, not max(id) (a later success like .../203730
-            # must not shadow the real failure .../203729).
-            url = _pick_job_url(jobs)
-            if url:
-                return state, url, main_checks
-            continue
-        # Older pipelines are only a fallback when the main pipeline has no
-        # job URL (e.g. merge_request_event that failed before any job started).
-        # A side-CI never supplies the link: its passing job would point the
-        # badge at the wrong pipeline (#184).
-        if not fallback and not _is_side_ci_glab(pipeline, jobs, ignore_patterns):
-            fallback = _pick_job_url(jobs)
-            if fallback:
-                break  # one banked fallback is enough; skip older pipelines
-    if fallback:
-        return state, fallback, main_checks
-    # No job urls anywhere: the main pipeline page beats a dead badge.
-    return state, main_pipe.get("web_url") or "", main_checks
 
 
 def _ci_glab(pr_url: str, cwd: str | None) -> tuple[str, str]:
-    """(status, url): url is the newest failed job's page (e.g. .../jobs/194493).
-
-    Status comes from the newest pipeline. The URL is the newest *failed*
-    job of that pipeline (newest running when none failed, else newest);
-    when it has no jobs (a ``merge_request_event`` pipeline that failed
-    before any job started), earlier pipelines of the same MR are walked
-    back so the badge still points at a real job, and the newest pipeline
-    page is the last resort.
-    """
+    """(status, url) for all non-ignored pipelines of a GitLab MR's last commit."""
     state, url, _ = _ci_glab_details(pr_url, cwd)
     return state, url
 
@@ -579,63 +626,80 @@ def _pick_job_url(jobs: list) -> str:
 
 def _ci_branch_glab(host: str, path: str, branch: str,
                     cwd: str | None) -> tuple[str, str]:
-    """(status, url) for the main pipeline of *branch* (glab)."""
+    """(status, url) for all CI pipelines of *branch*'s last commit (glab)."""
     api = (f"projects/{quote(path, safe='')}/pipelines"
-           f"?ref={quote(branch, safe='')}&per_page=5")
+           f"?ref={quote(branch, safe='')}&per_page=20")
     out = _api_glab(api, host, cwd)
     try:
         data = json.loads(out or "[]")
     except json.JSONDecodeError:
         raise HarnessError(f"cannot parse glab pipelines for {branch}")
-    if not data:
+    if not isinstance(data, list) or not data:
+        return "not_started", ""
+    head_sha = _glab_branch_head_sha(path, branch, host, cwd)
+    same_sha = _filter_glab_commit_pipelines(data, head_sha)
+    if not same_sha:
         return "not_started", ""
     ignore_patterns = _repo_ci_ignore(cwd)
-    main_pipe, jobs_by_id = _select_main_glab_pipeline(
-        data, path, host, cwd, branch, ignore_patterns
+    state, url, _ = _evaluate_glab_commit_pipelines(
+        same_sha, path, host, cwd, branch, ignore_patterns
     )
-    state = _glab_state((main_pipe.get("status") or "").lower())
-    if state == "not_started":
-        return "not_started", ""
-    pid = main_pipe.get("id")
-    if pid is not None and int(pid) in jobs_by_id:
-        jobs = jobs_by_id[int(pid)]
-    else:
-        jobs = _pipeline_jobs(path, pid, host, cwd, branch)
-    url = _pick_job_url(jobs)
-    if url:
-        return state, url
-    return state, main_pipe.get("web_url") or ""
+    return state, url
 
 
-def _ci_branch_gh(repo: str, branch: str, cwd: str | None) -> tuple[str, str]:
-    """(status, url) for the newest run of *branch* (gh)."""
+def _gh_run_state(run: dict) -> str:
+    """Map one GitHub Actions run dict onto the CI cell vocabulary."""
+    concl = (run.get("conclusion") or "").upper()
+    status = (run.get("status") or "").upper()
+    if concl in _GH_FAILURE or status == "FAILED":
+        return "failure"
+    if concl in _GH_SUCCESS and status in ("COMPLETED", ""):
+        return "success"
+    if concl in _GH_RUNNING or status in ("IN_PROGRESS", "QUEUED", "PENDING"):
+        return "running"
+    return "not_started"
+
+
+def _ci_branch_gh(repo: str, branch: str, cwd: str | None, host: str = "") -> tuple[str, str]:
+    """(status, url) for all workflow runs of *branch*'s last commit (gh)."""
     out = run_cmd("gh", "run", "list", "--repo", repo, "--branch", branch,
-                  "--limit", "5", "--json", "conclusion,status,url,name,workflowName", cwd=cwd)
+                  "--limit", "20", "--json", "conclusion,status,url,name,workflowName,headSha", cwd=cwd)
     try:
         data = json.loads(out or "[]")
     except json.JSONDecodeError:
         raise HarnessError(f"cannot parse gh runs for {branch}")
-    if not data:
+    if not isinstance(data, list) or not data:
+        return "not_started", ""
+    head_sha = _gh_branch_head_sha(repo, branch, cwd, host)
+    same_sha = _filter_commit_items(data, head_sha, "headSha")
+    if not same_sha:
         return "not_started", ""
     ignore_patterns = _repo_ci_ignore(cwd)
-    run = data[0]
     if ignore_patterns:
-        for cand in data:
+        kept = [
+            r for r in same_sha
             if not (
-                _matches_ci_ignore(str(cand.get("name") or ""), ignore_patterns)
-                or _matches_ci_ignore(str(cand.get("workflowName") or ""), ignore_patterns)
-            ):
-                run = cand
-                break
-    concl = (run.get("conclusion") or "").upper()
-    status = (run.get("status") or "").upper()
-    if concl in _GH_FAILURE or status == "FAILED":
-        return "failure", run.get("url") or ""
-    if concl in _GH_SUCCESS and status in ("COMPLETED", ""):
-        return "success", run.get("url") or ""
-    if concl in _GH_RUNNING or status in ("IN_PROGRESS", "QUEUED", "PENDING"):
-        return "running", run.get("url") or ""
-    return "not_started", run.get("url") or ""
+                _matches_ci_ignore(str(r.get("name") or ""), ignore_patterns)
+                or _matches_ci_ignore(str(r.get("workflowName") or ""), ignore_patterns)
+            )
+        ]
+        selected = kept if kept else [same_sha[0]]
+    else:
+        selected = same_sha
+    worst = "not_started"
+    worst_url = ""
+    any_url = ""
+    for run in selected:
+        state = _gh_run_state(run)
+        url = str(run.get("url") or "")
+        if url and not any_url:
+            any_url = url
+        if _CI_RANK[state] > _CI_RANK[worst]:
+            worst = state
+            worst_url = url
+        elif state == worst and not worst_url and url:
+            worst_url = url
+    return worst, worst_url or any_url
 
 def _pipeline_jobs(path: str, pipeline_id: int | None, host: str,
                    cwd: str | None, pr_url: str) -> list:
@@ -740,7 +804,7 @@ def fetch_branch_ci(tool: str, remote_url: str, branch: str,
         if not path:
             raise HarnessError(f"cannot parse remote URL: {remote_url}")
         if tool == "gh":
-            return _ci_branch_gh(path, branch, cwd)
+            return _ci_branch_gh(path, branch, cwd, host)
         if tool == "glab":
             return _ci_branch_glab(host or "gitlab.com", path, branch, cwd)
         raise HarnessError(f"unknown host CLI: {tool}")

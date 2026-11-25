@@ -609,12 +609,10 @@ preset as before).
 
 ---
 
-## In-App Git Diff & Prodtest YAML Plan Inspection (T08)
+## Prodtest YAML Plan Inspection (T08)
 
 Read-only endpoints (all GET, no confirm):
 
-- `GET /api/worktrees/{ref}/files?mode=base|head` — returns `{key, mode, base_ref, files: [{path, status, additions, deletions, binary, old_path}], total_additions, total_deletions}`. `mode=base` (default) diffs against merge-base with the worktree's base branch plus untracked files; `mode=head` diffs working tree + staged changes against `HEAD` plus untracked files. `400` on invalid `mode`, `404` when the worktree ref or directory is missing.
-- `GET /api/worktrees/{ref}/diff?path=<file>&mode=base|head` — returns `{key, path, mode, base_ref, binary, truncated, additions, deletions, hunks: [{header, old_start, old_count, new_start, new_count, lines: [{type, old_line, new_line, content}]}]}`. Rejects empty/absolute/traversal (`..`)/NUL paths with `400`; caps large diffs (`truncated: true`) and skips binary bodies (`binary: true`, `hunks: []`).
 - `GET /api/prodtests/{issue_key}/plan` — returns `{issue_key, status, plan_path, plan_revision, plan_risk, plan_diff_hash, release_sha, last_run_id, updated_at, truncated, yaml, parse_error, summary, preconditions, cases, metadata}`. `404` when the prodtest item or plan file is missing; `400` when `plan_path` is not a `.yaml`/`.yml` file.
 
 ### Worktree Watcher Overrides (`GET` / `POST /api/worktrees/{ref}/watcher`)

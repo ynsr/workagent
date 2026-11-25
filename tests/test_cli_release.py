@@ -85,14 +85,16 @@ def test_fetch_branch_ci_parses_remote(monkeypatch):
 
 def test_fetch_branch_ci_gh_remote(monkeypatch):
     from workagent import refs_ci as _ci
-    seen = {}
+    calls = []
     def _fake(*a, **k):
-        seen["argv"] = a
-        return '[{"conclusion":"SUCCESS","status":"COMPLETED","url":"https://gh/run/1"}]'
+        calls.append(a)
+        if a[:2] == ("gh", "api"):
+            return '{"commit":{"sha":"abc"}}'
+        return '[{"conclusion":"SUCCESS","status":"COMPLETED","url":"https://gh/run/1","headSha":"abc"}]'
     monkeypatch.setattr(_ci, "run_cmd", _fake)
     st, url = _ci.fetch_branch_ci("gh", "git@github.com:o/r.git", "master")
     assert st == "success"
-    assert "--repo" in seen["argv"] and "o/r" in seen["argv"]
+    assert any("--repo" in c and "o/r" in c for c in calls)
 
 def test_fetch_branch_ci_glab_prefers_failed_job(monkeypatch):
     """Issue #116 branch path (used by `release fix-default --action ci`):

@@ -324,11 +324,14 @@ def test_fetch_ci_glab_pipeline(monkeypatch):
 
     def fake_run(*args, **kw):
         calls.append(args)
-        if len(args) > 2 and "/jobs" in args[2]:
+        api = args[2] if len(args) > 2 else ""
+        if api.endswith("/merge_requests/7"):
+            return json.dumps({"sha": "newsha"})
+        if "/jobs" in api:
             return json.dumps([{"id": 10, "web_url": "https://git.jibit.cloud/g/p/-/jobs/10"},
                                {"id": 11, "web_url": "https://git.jibit.cloud/g/p/-/jobs/11"}])
-        return json.dumps([{"id": 1, "status": "failed"},
-                           {"id": 2, "status": "success"}])
+        return json.dumps([{"id": 1, "status": "failed", "sha": "oldsha"},
+                           {"id": 2, "status": "success", "sha": "newsha"}])
 
     monkeypatch.setattr(refs, "run_cmd", fake_run)
     assert refs.fetch_ci(
@@ -336,6 +339,9 @@ def test_fetch_ci_glab_pipeline(monkeypatch):
     ) == ("success", "https://git.jibit.cloud/g/p/-/jobs/11")
     assert calls == [("glab", "api",
                       "projects/g%2Fp/merge_requests/7/pipelines",
+                      "--hostname", "git.jibit.cloud"),
+                     ("glab", "api",
+                      "projects/g%2Fp/merge_requests/7",
                       "--hostname", "git.jibit.cloud"),
                      ("glab", "api",
                       "projects/g%2Fp/pipelines/2/jobs",
@@ -349,15 +355,17 @@ def test_fetch_ci_glab_hostname_retry(monkeypatch):
         calls.append(args)
         if "--hostname" in args:
             raise HarnessError("unknown flag")
+        if len(args) > 1 and args[1].endswith("/merge_requests/7"):
+            return json.dumps({"sha": "s1"})
         if len(args) > 1 and "/jobs" in args[1]:
             return json.dumps([{"id": 50, "web_url": "https://git.example.com/g/p/-/jobs/50"}])
-        return json.dumps([{"id": 5, "status": "running"}])
+        return json.dumps([{"id": 5, "status": "running", "sha": "s1"}])
 
     monkeypatch.setattr(refs, "run_cmd", fake_run)
     got = refs.fetch_ci(
         "glab", "https://git.example.com/g/p/-/merge_requests/7", "/repo")
     assert got == ("running", "https://git.example.com/g/p/-/jobs/50"), got
-    assert len(calls) == 4, calls
+    assert len(calls) == 6, calls
 
 
 def test_fetch_ci_glab_status_map(monkeypatch):
@@ -619,16 +627,21 @@ def test_fetch_ci_details_gh(monkeypatch):
     assert checks[1]["conclusion"] == "success"
 
 
-def test_fetch_ci_details_glab_fallback_does_not_leak_older_checks(monkeypatch):
-    """When newest pipeline has no jobs and falls back to an older pipeline for
-    the badge URL, checks must remain [] instead of pairing stale jobs with newest."""
+def test_fetch_ci_details_glab_does_not_leak_or_fetch_older_commit_pipelines(monkeypatch):
+    """Issue #199: when the last commit's pipeline has no jobs, older commits'
+    pipelines must not be fetched or used for fallback URLs/checks."""
+    calls = []
+
     def fake(*a, **k):
         api = a[2]
+        calls.append(api)
         if api.endswith("/pipelines"):
             return json.dumps([
                 {"id": 200, "status": "failed", "sha": "newsha", "web_url": "https://git.x/p/200"},
                 {"id": 100, "status": "success", "sha": "oldsha", "web_url": "https://git.x/p/100"},
             ])
+        if api.endswith("/merge_requests/9"):
+            return json.dumps({"sha": "newsha"})
         if "/pipelines/200/jobs" in api:
             return json.dumps([])
         if "/pipelines/100/jobs" in api:
@@ -642,40 +655,8 @@ def test_fetch_ci_details_glab_fallback_does_not_leak_older_checks(monkeypatch):
         "glab", "https://git.x/g/r/-/merge_requests/9", "/repo"
     )
     assert state == "failure"
-    assert url == "https://git.x/j/10"
+    assert url == "https://git.x/p/200"
     assert checks == []
-
-def test_fetch_ci_details_glab_fallback_stops_after_first_hit(monkeypatch):
-    """Once an older pipeline banks a fallback URL, remaining pipelines are
-    not fetched (saves one glab API call per older pipeline)."""
-    calls = []
-    def fake(*a, **k):
-        api = a[2]
-        if api.endswith("/pipelines"):
-            return json.dumps([
-                {"id": 300, "status": "failed", "sha": "newsha", "web_url": "https://git.x/p/300"},
-                {"id": 200, "status": "success", "sha": "midsha", "web_url": "https://git.x/p/200"},
-                {"id": 100, "status": "success", "sha": "oldsha", "web_url": "https://git.x/p/100"},
-            ])
-        if "/jobs" in api:
-            calls.append(api)
-            if "/pipelines/300/jobs" in api:
-                return json.dumps([])
-            if "/pipelines/200/jobs" in api:
-                return json.dumps([
-                    {"id": 10, "name": "mid-job", "status": "success", "web_url": "https://git.x/j/10"},
-                ])
-            return json.dumps([
-                {"id": 9, "name": "old-job", "status": "success", "web_url": "https://git.x/j/9"},
-            ])
-        return "[]"
-
-    monkeypatch.setattr(refs, "run_cmd", fake)
-    state, url, _ = refs.fetch_ci_details(
-        "glab", "https://git.x/g/r/-/merge_requests/9", "/repo"
-    )
-    assert state == "failure"
-    assert url == "https://git.x/j/10"
     assert not any("/pipelines/100/jobs" in c for c in calls)
 
 
@@ -1069,26 +1050,29 @@ def test_repo_ci_ignore_resolves_linked_worktree(monkeypatch):
     assert refs_ci._repo_ci_ignore("/wt/IPG-10") == []
 
 
-def test_fetch_ci_details_glab_fallback_survives_jobs_error(monkeypatch):
-    """A transient jobs error on an older fallback pipeline must not fail the lookup."""
+def test_fetch_ci_glab_aggregates_all_pipelines_of_last_commit(monkeypatch):
+    """Issue #199: all non-ignored pipelines on the MR's last commit are checked."""
     def fake(*a, **k):
         api = a[2]
         if api.endswith("/pipelines"):
             return json.dumps([
-                {"id": 300, "status": "failed", "sha": "newsha",
-                 "source": "push", "web_url": "https://git.x/p/300"},
-                {"id": 200, "status": "success", "sha": "midsha",
+                {"id": 302, "status": "success", "sha": "headsha",
+                 "source": "merge_request_event", "web_url": "https://git.x/p/302"},
+                {"id": 301, "status": "failed", "sha": "headsha",
+                 "source": "push", "web_url": "https://git.x/p/301"},
+                {"id": 200, "status": "success", "sha": "oldsha",
                  "source": "push", "web_url": "https://git.x/p/200"},
-                {"id": 100, "status": "success", "sha": "oldsha",
-                 "source": "push", "web_url": "https://git.x/p/100"},
             ])
-        if "/pipelines/300/jobs" in api:
-            return "[]"
-        if "/pipelines/200/jobs" in api:
-            return "{broken"
-        if "/pipelines/100/jobs" in api:
+        if api.endswith("/merge_requests/9"):
+            return json.dumps({"sha": "headsha"})
+        if "/pipelines/302/jobs" in api:
             return json.dumps([
-                {"id": 10, "name": "test", "stage": "check", "status": "success",
+                {"id": 20, "name": "lint", "stage": "check", "status": "success",
+                 "web_url": "https://git.x/j/20"},
+            ])
+        if "/pipelines/301/jobs" in api:
+            return json.dumps([
+                {"id": 10, "name": "test", "stage": "check", "status": "failed",
                  "web_url": "https://git.x/j/10"},
             ])
         return "[]"
@@ -1099,7 +1083,203 @@ def test_fetch_ci_details_glab_fallback_survives_jobs_error(monkeypatch):
     )
     assert state == "failure"
     assert url == "https://git.x/j/10"
-    assert checks == []
+    assert [c["name"] for c in checks] == ["lint", "test"]
+
+
+def test_fetch_ci_glab_last_commit_without_pipelines_returns_not_started(monkeypatch):
+    """Issue #199: when MR head_sha has no pipelines yet, older commits are ignored."""
+    def fake(*a, **k):
+        api = a[2]
+        if api.endswith("/pipelines"):
+            return json.dumps([
+                {"id": 200, "status": "success", "sha": "oldsha",
+                 "source": "push", "web_url": "https://git.x/p/200"},
+            ])
+        if api.endswith("/merge_requests/9"):
+            return json.dumps({"sha": "brandnewsha"})
+        return "[]"
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    assert refs.fetch_ci_details(
+        "glab", "https://git.x/g/r/-/merge_requests/9", "/repo"
+    ) == ("not_started", "", [])
+
+
+def test_fetch_ci_glab_prefers_mr_head_sha_over_retriggered_older_pipeline(monkeypatch):
+    """Issue #199: a newer-id pipeline on an older commit must not shadow MR head_sha."""
+    def fake(*a, **k):
+        api = a[2]
+        if api.endswith("/pipelines"):
+            return json.dumps([
+                {"id": 500, "status": "failed", "sha": "oldsha",
+                 "source": "web", "web_url": "https://git.x/p/500"},
+                {"id": 400, "status": "success", "sha": "headsha",
+                 "source": "push", "web_url": "https://git.x/p/400"},
+            ])
+        if api.endswith("/merge_requests/9"):
+            return json.dumps({"sha": "headsha"})
+        if "/pipelines/400/jobs" in api:
+            return json.dumps([
+                {"id": 40, "name": "test", "stage": "check", "status": "success",
+                 "web_url": "https://git.x/j/40"},
+            ])
+        return "[]"
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    state, url, checks = refs.fetch_ci_details(
+        "glab", "https://git.x/g/r/-/merge_requests/9", "/repo"
+    )
+    assert (state, url) == ("success", "https://git.x/j/40")
+    assert [c["name"] for c in checks] == ["test"]
+
+
+def test_fetch_ci_branch_gh_checks_all_runs_of_last_commit(monkeypatch):
+    """Issue #199: branch CI on GitHub aggregates all runs of the remote head commit."""
+    from workagent import refs_ci
+
+    def fake(*a, **k):
+        if a[:2] == ("gh", "api"):
+            return json.dumps({"commit": {"sha": "head123"}})
+        return json.dumps([
+            {"name": "lint", "workflowName": "Lint", "status": "COMPLETED",
+             "conclusion": "SUCCESS", "headSha": "head123",
+             "url": "https://github.com/o/r/actions/runs/20"},
+            {"name": "test", "workflowName": "Test", "status": "COMPLETED",
+             "conclusion": "FAILURE", "headSha": "head123",
+             "url": "https://github.com/o/r/actions/runs/19"},
+            {"name": "test", "workflowName": "Test", "status": "COMPLETED",
+             "conclusion": "SUCCESS", "headSha": "old999",
+             "url": "https://github.com/o/r/actions/runs/10"},
+        ])
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    assert refs_ci.fetch_branch_ci("gh", "https://github.com/o/r.git", "feat/x", "/repo") == (
+        "failure", "https://github.com/o/r/actions/runs/19"
+    )
+
+    # Head commit has no runs yet -> not_started (older commit runs ignored)
+    def fake_no_head(*a, **k):
+        if a[:2] == ("gh", "api"):
+            return json.dumps({"commit": {"sha": "newhead"}})
+        return json.dumps([
+            {"name": "test", "workflowName": "Test", "status": "COMPLETED",
+             "conclusion": "SUCCESS", "headSha": "old999",
+             "url": "https://github.com/o/r/actions/runs/10"},
+        ])
+
+    monkeypatch.setattr(refs, "run_cmd", fake_no_head)
+    assert refs_ci.fetch_branch_ci("gh", "https://github.com/o/r.git", "feat/x", "/repo") == (
+        "not_started", ""
+    )
+
+
+def test_fetch_ci_branch_gh_does_not_keep_passing_url_when_failure_has_empty_url(monkeypatch):
+    """Worse state resets worst_url even if empty, and a later same-state URL fills it."""
+    from workagent import refs_ci
+
+    def fake(*a, **k):
+        if a[:2] == ("gh", "api"):
+            return json.dumps({"commit": {"sha": "head123"}})
+        return json.dumps([
+            {"name": "lint", "workflowName": "Lint", "status": "COMPLETED",
+             "conclusion": "SUCCESS", "headSha": "head123",
+             "url": "https://github.com/o/r/actions/runs/30"},
+            {"name": "build", "workflowName": "Build", "status": "COMPLETED",
+             "conclusion": "FAILURE", "headSha": "head123", "url": ""},
+            {"name": "test", "workflowName": "Test", "status": "COMPLETED",
+             "conclusion": "FAILURE", "headSha": "head123",
+             "url": "https://github.com/o/r/actions/runs/28"},
+        ])
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    assert refs_ci.fetch_branch_ci("gh", "https://github.com/o/r.git", "feat/x", "/repo") == (
+        "failure", "https://github.com/o/r/actions/runs/28"
+    )
+
+
+def test_fetch_ci_branch_gh_passes_ghes_hostname_to_api(monkeypatch):
+    """GHES remote host is forwarded through _api_gh (--hostname) for head SHA lookup."""
+    from workagent import refs_ci
+
+    api_calls = []
+
+    def fake(*a, **k):
+        if a[:2] == ("gh", "api"):
+            api_calls.append(a)
+            return json.dumps({"commit": {"sha": "head123"}})
+        return json.dumps([
+            {"name": "test", "workflowName": "Test", "status": "COMPLETED",
+             "conclusion": "SUCCESS", "headSha": "head123",
+             "url": "https://gh.corp.local/o/r/actions/runs/1"},
+        ])
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    assert refs_ci.fetch_branch_ci("gh", "https://gh.corp.local/o/r.git", "feat/x", "/repo") == (
+        "success", "https://gh.corp.local/o/r/actions/runs/1"
+    )
+    assert api_calls == [("gh", "api", "repos/o/r/branches/feat%2Fx", "--hostname", "gh.corp.local")]
+
+
+def test_fetch_ci_branch_glab_checks_all_pipelines_of_last_commit(monkeypatch):
+    """Issue #199: branch CI on GitLab aggregates all non-ignored pipelines of remote head."""
+    from workagent import refs_ci
+
+    def fake(*a, **k):
+        api = a[2]
+        if "/repository/branches/" in api:
+            return json.dumps({"commit": {"id": "head123"}})
+        if "/pipelines?" in api:
+            return json.dumps([
+                {"id": 302, "status": "success", "sha": "head123",
+                 "source": "push", "web_url": "https://git.x/p/302"},
+                {"id": 301, "status": "running", "sha": "head123",
+                 "source": "trigger", "web_url": "https://git.x/p/301"},
+                {"id": 200, "status": "failed", "sha": "old999",
+                 "source": "push", "web_url": "https://git.x/p/200"},
+            ])
+        if "/pipelines/302/jobs" in api:
+            return json.dumps([
+                {"id": 20, "name": "lint", "stage": "check", "status": "success",
+                 "web_url": "https://git.x/j/20"},
+            ])
+        if "/pipelines/301/jobs" in api:
+            return json.dumps([
+                {"id": 10, "name": "e2e", "stage": "test", "status": "running",
+                 "web_url": "https://git.x/j/10"},
+            ])
+        return "[]"
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    assert refs_ci.fetch_branch_ci(
+        "glab", "https://git.x/g/r.git", "feat/x", "/repo"
+    ) == ("running", "https://git.x/j/10")
+
+
+def test_fetch_ci_glab_failing_pipeline_without_jobs_keeps_failing_pipeline_url(monkeypatch):
+    """If a failing pipeline on head_sha has no jobs, do not link a sibling passing job."""
+    def fake(*a, **k):
+        api = a[2]
+        if api.endswith("/pipelines"):
+            return json.dumps([
+                {"id": 302, "status": "success", "sha": "headsha",
+                 "source": "merge_request_event", "web_url": "https://git.x/p/302"},
+                {"id": 301, "status": "failed", "sha": "headsha",
+                 "source": "push", "web_url": "https://git.x/p/301"},
+            ])
+        if api.endswith("/merge_requests/9"):
+            return json.dumps({"sha": "headsha"})
+        if "/pipelines/302/jobs" in api:
+            return json.dumps([
+                {"id": 20, "name": "lint", "stage": "check", "status": "success",
+                 "web_url": "https://git.x/j/20"},
+            ])
+        return "[]"
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    state, url, _ = refs.fetch_ci_details(
+        "glab", "https://git.x/g/r/-/merge_requests/9", "/repo"
+    )
+    assert (state, url) == ("failure", "https://git.x/p/301")
 
 
 def test_fetch_ci_branch_gh_ignores_configured_side_ci(monkeypatch):

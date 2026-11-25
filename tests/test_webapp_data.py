@@ -875,48 +875,6 @@ def test_api_worktree_timeline_fetch_logs_ghes_and_persistence_fallback(
     assert checks[0]["log_tail"] == "FAILED test_ghes"
 
 
-def test_api_worktree_files_and_diff(client, tmp_path, monkeypatch):
-    """GET /api/worktrees/{ref}/files and /diff return structured diffs and guard traversal."""
-    import subprocess
-
-    repo = tmp_path / "wt"
-    repo.mkdir()
-    for args in (
-        ("init", "-b", "main"),
-        ("config", "user.email", "test@example.com"),
-        ("config", "user.name", "Test"),
-    ):
-        subprocess.run(["git", "-C", str(repo), *args], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(repo), "add", "app.py"], check=True)
-    subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, stdout=subprocess.PIPE)
-    (repo / "app.py").write_text("x = 2\ny = 3\n", encoding="utf-8")
-
-    monkeypatch.setattr(
-        store,
-        "load_links",
-        lambda **kw: {"jira:T-1": {"worktree": str(repo), "branch": "feat/t-1", "base_branch": "main"}},
-    )
-
-    r_files = client.get("/api/worktrees/jira:T-1/files?mode=head")
-    assert r_files.status_code == 200, r_files.text
-    body = r_files.json()
-    assert body["key"] == "jira:T-1"
-    assert body["files"][0]["path"] == "app.py"
-    assert body["files"][0]["additions"] == 2
-    assert body["files"][0]["deletions"] == 1
-
-    r_diff = client.get("/api/worktrees/jira:T-1/diff?path=app.py&mode=head")
-    assert r_diff.status_code == 200, r_diff.text
-    dbody = r_diff.json()
-    assert dbody["path"] == "app.py"
-    assert len(dbody["hunks"]) == 1
-
-    assert client.get("/api/worktrees/jira:T-1/diff?path=../secret&mode=head").status_code == 400
-    assert client.get("/api/worktrees/jira:T-1/files?mode=bogus").status_code == 400
-    assert client.get("/api/worktrees/nope/files").status_code == 404
-
-
 def test_api_prodtest_plan_endpoint(client, tmp_path):
     """GET /api/prodtests/{issue_key}/plan returns raw YAML + parsed cases/metadata."""
     from workagent import store_sqlite as sq
