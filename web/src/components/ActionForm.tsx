@@ -3,8 +3,7 @@ import { Pencil, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import { SegmentedControl, SuggestIconButton } from "@/components/FormControls"
-import { HarnessSelect } from "@/components/HarnessSelect"
-import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { IconPicker } from "@/components/IconPicker"
 import { ScriptField } from "@/components/ScriptBlock"
 import { errorText } from "@/components/StatusFeedback"
@@ -210,24 +209,15 @@ export function ActionFormCard({ editing, onDone, onCancel, usedIcons }: {
           value={RUN_MODES.includes(mode as (typeof RUN_MODES)[number]) ? mode as (typeof RUN_MODES)[number] : "preview"}
           onChange={setMode}
         />
-        <HarnessSelect
+        <HarnessPicker
           idPrefix="action-default"
-          value={harness}
-          onChange={(v) => { setHarness(v); setModel(""); setEffort("") }}
+          harness={harness}
+          model={model}
+          effort={effort}
+          onHarnessChange={(v) => { setHarness(v); setModel(""); setEffort("") }}
+          onModelChange={setModel}
+          onEffortChange={setEffort}
           allowDefault
-          description="Default AI harness stored in default_options (defaults to Settings)."
-        />
-        <ModelSelect
-          idPrefix="action-default"
-          harness={harness}
-          value={model}
-          onChange={setModel}
-        />
-        <EffortSelect
-          idPrefix="action-default"
-          harness={harness}
-          value={effort}
-          onChange={setEffort}
         />
         <SegmentedControl
           idPrefix="action-category"

@@ -53,7 +53,9 @@ describe("ProdtestLaunch harness integration", () => {
     const user = userEvent.setup()
     renderProdtestLaunch("/prodtest-launch?ref=IPG-10&prodtestAction=plan")
 
+    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
+    await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Plan prodtest" }))
     await user.click(screen.getByRole("button", { name: "Launch" }))
 
@@ -68,7 +70,9 @@ describe("ProdtestLaunch harness integration", () => {
     const user = userEvent.setup()
     renderProdtestLaunch("/prodtest-launch")
 
+    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
     await user.click(screen.getByRole("radio", { name: "agy" }))
+    await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Run all prodtests" }))
     await user.click(screen.getByRole("button", { name: "Launch" }))
 

@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Replace separate harness, model, and effort selectors with a single combined popover picker across the web UI [181]
 - Fix CI prompt now includes the failing GitHub or GitLab job URL and the last 50 lines of its terminal log [186]
 - CI status now reports the main pipeline instead of a later side-CI, with per-repo ignore globs (`repo update --ci-ignore`) [184]
 - Fix web UI build and restore release status cache invalidation after repo pull [178]

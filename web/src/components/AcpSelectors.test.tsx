@@ -3,8 +3,7 @@ import { cleanup, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { HarnessSelect } from "@/components/HarnessSelect"
-import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { RunModeSelect, useStartForm } from "@/components/StartForm"
 import { act, renderHook } from "@testing-library/react"
 import { loadLaunchPrefs, loadStartPrefsByRepo, lookupStartPrefsByRepo, saveLaunchPrefs, saveStartPrefsForRepo } from "@/lib/launchPrefs"
@@ -62,11 +61,12 @@ describe("RunModeSelect (issue #112)", () => {
   })
 })
 
-describe("HarnessSelect (issue #112)", () => {
-  it("lists only omp and agy plus default", async () => {
+describe("HarnessPicker (issue #112 / #181)", () => {
+  it("lists only omp and agy plus default inside popover", async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
-    renderWithClient(<HarnessSelect idPrefix="t" value="" onChange={onChange} />)
+    renderWithClient(<HarnessPicker idPrefix="t" harness="" onHarnessChange={onChange} />)
+    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
     expect(screen.getByRole("radio", { name: "Default (agy)" })).toBeInTheDocument()
     expect(screen.getByRole("radio", { name: "omp" })).toBeInTheDocument()
     expect(screen.getByRole("radio", { name: "agy" })).toBeInTheDocument()
@@ -74,28 +74,30 @@ describe("HarnessSelect (issue #112)", () => {
     await user.click(screen.getByRole("radio", { name: "omp" }))
     expect(onChange).toHaveBeenCalledWith("omp")
   })
-})
 
-describe("ModelSelect/EffortSelect (issue #112)", () => {
-  it("renders discovered options with Default empty", async () => {
+  it("renders discovered model and effort options with Default empty", async () => {
     const user = userEvent.setup()
     const onModel = vi.fn()
     const onEffort = vi.fn()
     renderWithClient(
-      <>
-        <ModelSelect idPrefix="t" harness="agy" value="" onChange={onModel} />
-        <EffortSelect idPrefix="t" harness="agy" value="" onChange={onEffort} />
-      </>,
+      <HarnessPicker
+        idPrefix="t"
+        harness="agy"
+        model=""
+        effort=""
+        onHarnessChange={() => {}}
+        onModelChange={onModel}
+        onEffortChange={onEffort}
+      />,
     )
-    const model = screen.getByLabelText<HTMLSelectElement>("Model")
-    expect(model).not.toBeDisabled()
-    expect(Array.from(model.options).map((o) => o.value)).toEqual(["", "m1"])
-    await user.selectOptions(model, "m1")
+    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    expect(screen.getByRole("option", { name: "Model One" })).toBeInTheDocument()
+    await user.click(screen.getByRole("option", { name: "Model One" }))
     expect(onModel).toHaveBeenCalledWith("m1")
 
-    const effort = screen.getByLabelText<HTMLSelectElement>("Effort")
-    expect(Array.from(effort.options).map((o) => o.value)).toEqual(["", "high"])
-    await user.selectOptions(effort, "high")
+    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    await user.click(screen.getByRole("button", { name: /Effort/ }))
+    await user.click(screen.getByRole("option", { name: "High" }))
     expect(onEffort).toHaveBeenCalledWith("high")
   })
 })

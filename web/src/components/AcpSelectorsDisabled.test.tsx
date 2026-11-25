@@ -1,11 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 
 vi.mock("@/hooks/useHarnessOptions", () => ({
   useHarnessOptions: () => ({ data: null, isPending: false, isError: true }),
+}))
+
+vi.mock("@/lib/queries", () => ({
+  useConfig: () => ({ data: undefined }),
 }))
 
 function renderWithClient(ui: React.ReactNode) {
@@ -19,17 +24,18 @@ function renderWithClient(ui: React.ReactNode) {
 
 afterEach(cleanup)
 
-describe("ModelSelect/EffortSelect disabled state (issue #112)", () => {
-  it("disables with tooltip when discovery failed", () => {
+describe("HarnessPicker disabled state (issue #112 / #181)", () => {
+  it("disables model and effort with tooltip when discovery failed", async () => {
+    const user = userEvent.setup()
     renderWithClient(
-      <>
-        <ModelSelect idPrefix="d" harness="agy" value="" onChange={() => {}} />
-        <EffortSelect idPrefix="d" harness="agy" value="" onChange={() => {}} />
-      </>,
+      <HarnessPicker idPrefix="d" harness="agy" onHarnessChange={() => {}} />,
     )
-    const model = screen.getByLabelText<HTMLSelectElement>("Model")
-    expect(model).toBeDisabled()
-    expect(model.closest("div")).toHaveAttribute("title", expect.stringContaining("failed"))
-    expect(screen.getByLabelText<HTMLSelectElement>("Effort")).toBeDisabled()
+    await user.click(screen.getByRole("button", { name: "Harness, model, and effort" }))
+    const modelBtn = screen.getByRole("button", { name: "Model" })
+    expect(modelBtn).toBeDisabled()
+    expect(modelBtn.parentElement).toHaveAttribute("title", expect.stringContaining("failed"))
+    const effortBtn = screen.getByRole("button", { name: "Effort" })
+    expect(effortBtn).toBeDisabled()
+    expect(effortBtn.parentElement).toHaveAttribute("title", expect.stringContaining("failed"))
   })
 })

@@ -11,8 +11,7 @@ import { EmptyState, ErrorState, RefreshOverlay, errorText } from "@/components/
 import { queryKeys, useCreateRun, useRepos, useReleaseStatus, useReleaseStatuses } from "@/lib/queries"
 import { useConfirmedRun } from "@/components/RunActions"
 import { ActionDialog } from "@/components/LinkDialogs"
-import { HarnessSelect } from "@/components/HarnessSelect"
-import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { RunModeSelect } from "@/components/StartForm"
 import type { RunMode } from "@/lib/launchConfig"
 import { extraPromptArgs } from "@/lib/launchConfig"
@@ -367,9 +366,16 @@ export function FixDefaultDialog({ status, onClose }: { status: ReleaseStatus; o
         </div>
       </div>
       <RunModeSelect idPrefix="fix-default" value={runMode} onChange={setRunMode} />
-      <HarnessSelect idPrefix="fix-default" value={harness} onChange={(v) => { setHarness(v); setModel(""); setEffort("") }} allowDefault />
-      <ModelSelect idPrefix="fix-default" harness={harness} value={model} onChange={setModel} />
-      <EffortSelect idPrefix="fix-default" harness={harness} value={effort} onChange={setEffort} />
+      <HarnessPicker
+        idPrefix="fix-default"
+        harness={harness}
+        model={model}
+        effort={effort}
+        onHarnessChange={(v) => { setHarness(v); setModel(""); setEffort("") }}
+        onModelChange={setModel}
+        onEffortChange={setEffort}
+        allowDefault
+      />
       <div className="grid gap-2">
         <Label htmlFor="fix-default-extra">
           <FieldHelp

@@ -56,11 +56,14 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe("Settings Default AI Harness", () => {
-  it("renders segmented harness selector without Default option and saves via config set", async () => {
+  it("renders harness picker without Default option and saves via config set", async () => {
     const user = userEvent.setup()
     renderSettings()
 
     expect(screen.getByText("Default AI Harness")).toBeInTheDocument()
+    const trigger = screen.getByRole("button", { name: "Default harness" })
+    expect(trigger).toHaveTextContent("agy")
+    await user.click(trigger)
     expect(screen.queryByRole("radio", { name: /^Default/ })).not.toBeInTheDocument()
     expect(screen.getByRole("radio", { name: "agy" })).toHaveAttribute("aria-checked", "true")
 
@@ -85,22 +88,23 @@ describe("Settings Default AI Harness", () => {
     )
     const { rerender } = render(tree())
 
+    await user.click(screen.getByRole("button", { name: "Default harness" }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
-    expect(screen.getByRole("radio", { name: "omp" })).toHaveAttribute("aria-checked", "true")
+    expect(screen.getByRole("button", { name: "Default harness" })).toHaveTextContent("omp")
 
     // Server config settles to "omp".
     mockConfig.default_harness = "omp"
     rerender(tree())
-    expect(screen.getByRole("radio", { name: "omp" })).toHaveAttribute("aria-checked", "true")
+    expect(screen.getByRole("button", { name: "Default harness" })).toHaveTextContent("omp")
 
     // External CLI change switches config back to "agy" while Settings stays mounted.
     mockConfig.default_harness = "agy"
     rerender(tree())
-    expect(screen.getByRole("radio", { name: "agy" })).toHaveAttribute("aria-checked", "true")
-    expect(screen.getByRole("radio", { name: "omp" })).toHaveAttribute("aria-checked", "false")
+    expect(screen.getByRole("button", { name: "Default harness" })).toHaveTextContent("agy")
 
     // Clicking "omp" again must not be blocked by stale optimistic state.
     mutateAsync.mockClear()
+    await user.click(screen.getByRole("button", { name: "Default harness" }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
     expect(mutateAsync).toHaveBeenCalledWith({
       command: "config",
