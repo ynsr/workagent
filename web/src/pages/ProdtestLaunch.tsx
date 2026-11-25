@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/PageHeader"
-import { HarnessSelect } from "@/components/HarnessSelect"
-import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { ProdtestActionSelect, RunModeSelect } from "@/components/StartForm"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { Button } from "@/components/ui/button"
@@ -163,9 +162,15 @@ export function ProdtestLaunch({ embedded = false }: { embedded?: boolean } = {}
           <div className="flex flex-wrap gap-x-6 gap-y-3">
             <RunModeSelect idPrefix="ptl" value={form.runMode} onChange={(v) => update("runMode", v)} />
             <ProdtestActionSelect idPrefix="ptl" value={form.prodtestAction} onChange={(v) => update("prodtestAction", v)} />
-            <HarnessSelect idPrefix="ptl" value={form.harness} onChange={(v) => { update("harness", v); update("model", ""); update("effort", "") }} />
-            <ModelSelect idPrefix="ptl" harness={form.harness} value={form.model} onChange={(v) => update("model", v)} />
-            <EffortSelect idPrefix="ptl" harness={form.harness} value={form.effort} onChange={(v) => update("effort", v)} />
+            <HarnessPicker
+              idPrefix="ptl"
+              harness={form.harness}
+              model={form.model}
+              effort={form.effort}
+              onHarnessChange={(v) => { update("harness", v); update("model", ""); update("effort", "") }}
+              onModelChange={(v) => update("model", v)}
+              onEffortChange={(v) => update("effort", v)}
+            />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="ptl-extra-prompt">

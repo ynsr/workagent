@@ -3,8 +3,7 @@ import { ChevronDown, GripVertical, Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { HarnessSelect } from "@/components/HarnessSelect"
-import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { RelatedReposSelect } from "@/components/RelatedReposSelect"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { EXECUTION_MODES, SEQUENTIAL_ONLY_STEPS, summarizeExecution } from "@/lib/flowExecution"
@@ -359,12 +358,13 @@ function StepConfigForm({
       ) : null}
       {showHarness ? (
         <div className="sm:col-span-2">
-          <HarnessSelect
+          <HarnessPicker
             idPrefix={idPrefix}
-            variant="select"
             allowDefault
-            value={harness || hintHarness}
-            onChange={(v) => {
+            harness={harness || hintHarness}
+            model={String(config.model ?? "")}
+            effort={String(config.effort ?? "")}
+            onHarnessChange={(v) => {
               const next = { ...config }
               if (v) next.harness = v
               else delete next.harness
@@ -372,21 +372,9 @@ function StepConfigForm({
               delete next.effort
               onChange(next)
             }}
+            onModelChange={(v) => patch("model", v)}
+            onEffortChange={(v) => patch("effort", v)}
           />
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-            <ModelSelect
-              idPrefix={idPrefix}
-              harness={harness || hintHarness}
-              value={String(config.model ?? "")}
-              onChange={(v) => patch("model", v)}
-            />
-            <EffortSelect
-              idPrefix={idPrefix}
-              harness={harness || hintHarness}
-              value={String(config.effort ?? "")}
-              onChange={(v) => patch("effort", v)}
-            />
-          </div>
         </div>
       ) : null}
       <div className="sm:col-span-2">

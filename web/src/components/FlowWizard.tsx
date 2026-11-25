@@ -2,8 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { ChainEditor, startRepoState, validateChain } from "@/components/ChainEditor"
-import { HarnessSelect } from "@/components/HarnessSelect"
-import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { modelEffortArgs } from "@/lib/harness"
 import { chainRunsParallel, runChainOnWorktrees, summarizeExecution } from "@/lib/flowExecution"
 import { ActionDialog } from "@/components/LinkDialogs"
@@ -192,25 +191,17 @@ export function FlowWizard({
           })()}
         </p>
       ) : null}
-      <div className="mb-3 grid gap-2.5">
-        <HarnessSelect
+      <div className="mb-3">
+        <HarnessPicker
           idPrefix="flow-wizard"
-          value={harness}
-          onChange={(v) => { setHarness(v); setModel(""); setEffort("") }}
+          harness={harness}
+          model={model}
+          effort={effort}
+          onHarnessChange={(v) => { setHarness(v); setModel(""); setEffort("") }}
+          onModelChange={setModel}
+          onEffortChange={setEffort}
           allowDefault
           defaultLabel="Use template / default"
-        />
-        <ModelSelect
-          idPrefix="flow-wizard"
-          harness={harness}
-          value={model}
-          onChange={setModel}
-        />
-        <EffortSelect
-          idPrefix="flow-wizard"
-          harness={harness}
-          value={effort}
-          onChange={setEffort}
         />
       </div>
       <p className="mb-2 text-[13px] text-muted-foreground">

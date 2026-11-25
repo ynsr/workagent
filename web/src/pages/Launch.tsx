@@ -18,8 +18,7 @@ import { api, type FlowTemplateRow } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
-import { HarnessSelect } from "@/components/HarnessSelect"
-import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { ReviewActionSelect, RunModeSelect, StartFormFields, buildRegisterArgs, buildReviewArgs, buildStartArgs, registerFlagList } from "@/components/StartForm"
 import { COPY, INITIAL, MODES, adhocArgs, extraPromptArgs, isPrShaped, runModeArgs, splitAdhocRefs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
@@ -748,26 +747,14 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
               />
             ) : null}
             {mode !== "start" && mode !== "register" ? (
-              <HarnessSelect
-                idPrefix="launch"
-                value={form.harness}
-                onChange={(v) => { update("harness", v); update("model", ""); update("effort", "") }}
-              />
-            ) : null}
-            {mode !== "start" && mode !== "register" ? (
-              <ModelSelect
+              <HarnessPicker
                 idPrefix="launch"
                 harness={form.harness}
-                value={form.model}
-                onChange={(v) => update("model", v)}
-              />
-            ) : null}
-            {mode !== "start" && mode !== "register" ? (
-              <EffortSelect
-                idPrefix="launch"
-                harness={form.harness}
-                value={form.effort}
-                onChange={(v) => update("effort", v)}
+                model={form.model}
+                effort={form.effort}
+                onHarnessChange={(v) => { update("harness", v); update("model", ""); update("effort", "") }}
+                onModelChange={(v) => update("model", v)}
+                onEffortChange={(v) => update("effort", v)}
               />
             ) : null}
           </div>

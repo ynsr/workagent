@@ -10,8 +10,7 @@ import { RUN_MODE_OPTIONS, REVIEW_ACTION_OPTIONS, PRODTEST_ACTION_OPTIONS, START
 import { modelEffortArgs } from "@/lib/harness"
 import type { LaunchForm, RunMode, ReviewAction, ProdtestAction, StartAction } from "@/lib/launchConfig"
 import { RelatedReposSelect } from "@/components/RelatedReposSelect"
-import { HarnessSelect } from "@/components/HarnessSelect"
-import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { loadLaunchPrefs, lookupStartPrefsByRepo, saveStartPrefsForRepo } from "@/lib/launchPrefs"
 import { FieldHelp } from "@/components/FieldHelp"
 export interface StartFormValue extends LaunchForm {}
@@ -340,22 +339,14 @@ export function StartFormFields({
               value={form.runMode}
               onChange={(v) => onChange("runMode", v)}
             />
-            <HarnessSelect
-              idPrefix={idPrefix}
-              value={form.harness}
-              onChange={(v) => { onChange("harness", v); onChange("model", ""); onChange("effort", "") }}
-            />
-            <ModelSelect
+            <HarnessPicker
               idPrefix={idPrefix}
               harness={form.harness}
-              value={form.model}
-              onChange={(v) => onChange("model", v)}
-            />
-            <EffortSelect
-              idPrefix={idPrefix}
-              harness={form.harness}
-              value={form.effort}
-              onChange={(v) => onChange("effort", v)}
+              model={form.model}
+              effort={form.effort}
+              onHarnessChange={(v) => { onChange("harness", v); onChange("model", ""); onChange("effort", "") }}
+              onModelChange={(v) => onChange("model", v)}
+              onEffortChange={(v) => onChange("effort", v)}
             />
           </>
         )}

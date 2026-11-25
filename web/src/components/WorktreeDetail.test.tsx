@@ -59,7 +59,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe("WorktreeDetail terminal harness", () => {
-  it("renders compact HarnessSelect and forwards selected harness to /terminal", async () => {
+  it("renders compact HarnessPicker and forwards selected harness to /terminal", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ id: 1, session_file: "", worktree: "/tmp/wt", mode: "harness" }), {
         status: 200,
@@ -69,9 +69,9 @@ describe("WorktreeDetail terminal harness", () => {
     const user = userEvent.setup()
     renderDetail()
 
-    const select = screen.getByLabelText<HTMLSelectElement>("Harness")
-    expect(select.tagName).toBe("SELECT")
-    await user.selectOptions(select, "omp")
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
+    await user.click(screen.getByRole("radio", { name: "omp" }))
+    await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Harness" }))
 
     expect(fetchSpy).toHaveBeenCalledWith(

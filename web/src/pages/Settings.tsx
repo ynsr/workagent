@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { Monitor, Moon, RotateCcw, Sun } from "lucide-react"
-import { HarnessSelect } from "@/components/HarnessSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { PageHeader } from "@/components/PageHeader"
 import { errorText } from "@/components/StatusFeedback"
 import { Button } from "@/components/ui/button"
@@ -135,13 +135,13 @@ export function Settings() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <HarnessSelect
+          <HarnessPicker
             idPrefix="settings-default"
             allowDefault={false}
-            value={currentHarness}
-            onChange={(next) => void handleDefaultHarness(next)}
+            harnessOnly
+            harness={currentHarness}
+            onHarnessChange={(next) => void handleDefaultHarness(next)}
             label="Default harness"
-            description="Default AI harness persisted in config.json."
           />
         </CardContent>
       </Card>
