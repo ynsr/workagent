@@ -215,7 +215,7 @@ describe("ChainEditor execution mode", () => {
 })
 describe("ChainEditor execution bulk bar", () => {
   it("disables both bulk actions for forced-only steps", () => {
-    const { unmount } = renderChain([{ kind: "start", config: {} }, { kind: "cleanup", config: {} }])
+    const { unmount } = renderChain([{ kind: "cleanup", config: {} }, { kind: "release", config: {} }])
     expect(screen.getByRole("button", { name: "All parallel" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "All sequential" })).toBeDisabled()
     unmount()
@@ -224,14 +224,14 @@ describe("ChainEditor execution bulk bar", () => {
   it("sets every parallelizable step parallel, skipping forced kinds", async () => {
     const user = userEvent.setup()
     const steps: FlowStep[] = [
-      { kind: "start", config: {} },
+      { kind: "start", config: {}, execution_mode: "sequential" },
       { kind: "review", config: {} },
       { kind: "cleanup", config: {} },
     ]
     const { unmount, next } = renderChain(steps)
     await user.click(screen.getByRole("button", { name: "All parallel" }))
-    expect(next()[1]?.execution_mode).toBe("parallel")
     expect(next()[0]?.execution_mode).toBeUndefined()
+    expect(next()[1]?.execution_mode).toBe("parallel")
     expect(next()[2]?.execution_mode).toBeUndefined()
     expect(summarizeExecution(next()).runsParallel).toBe(true)
     unmount()

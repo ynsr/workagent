@@ -198,9 +198,9 @@ by the Dashboard Actions dropdown; unlinked PR/MR refs auto-register a worktree 
  `action` steps carry `action_label` (a custom action; the Judgement preset ships with the Actions page),
  `prodtest_plan` generates the worktree's prod-test plan (config `update`), and `cleanup` accepts `merge_only`
  to merge the PR/MR squash-style without tearing down the worktree/branch/link.
- Each step carries `execution_mode` (`sequential` default | `parallel`): multi-worktree runs (Dashboard selection,
+ Each step carries `execution_mode` (`parallel` default for `start`, `sequential` default for all other steps | `parallel`): multi-worktree runs (Dashboard selection,
  wizard) run one worktree at a time when any step is sequential — waiting for each run to settle before starting
- the next — and fan out concurrently only when every step is parallel; `start`/`cleanup`/`release` reject
+ the next — and fan out concurrently only when every step is parallel; `cleanup`/`release` reject
  `parallel` (teardown/creation ordering). The toggle is hidden for single-worktree runs.
  The Run dialog closes first and queued runs continue in the background with toast progress.
  The ChainEditor adds All-parallel/All-sequential bulk buttons plus a fan-out summary; the FlowWizard shows
