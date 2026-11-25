@@ -344,8 +344,11 @@ def cleanup(
         mode = ("merge-only" if merge_only
                 else ("hard-delete" if hard_delete else "soft-delete"))
         wt_path = str(entry.get("worktree", "") or "")
+        extra: dict[str, object] = {}
         if merge_only:
-            would_remove: list[str] = []
+            pr_url = str(entry.get("pr_url", "") or "")
+            would_remove = [f"merged PR {pr_url}"] if pr_url else []
+            extra["kept"] = ["worktree", "local branch", "worktree row"]
         elif hard_delete:
             would_remove = _dry_run_local_items(key, branch, wt_path)
         else:
@@ -354,7 +357,8 @@ def cleanup(
             {"dry_run": True, "mode": mode, "status": "dry-run", "key": key,
              "repo": str(repo), "branch": branch,
              "pr_url": entry.get("pr_url", ""), "force": force,
-             "merge": entry.get("pr_url", ""), "would_remove": would_remove},
+             "merge": entry.get("pr_url", ""), "would_remove": would_remove,
+             **extra},
             json_output,
         )
         return
@@ -674,9 +678,10 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
         eprint(f"warning: refusing to delete main repo folder {guard_path} for {key}")
         cleanup = {"actions": [], "skipped": "main-repo"}
     else:
+        wt_existed = bool(wt_path is not None and wt_path.exists())
         cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=False,
                                          force=force, yes=yes)
-        if wt_raw:
+        if wt_existed and wt_path is not None and not wt_path.exists():
             removed.append(f"worktree dir {wt_raw}")
         try:
             _cli.run_cmd("git", "-C", str(repo), "branch", "-D", branch)

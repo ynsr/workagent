@@ -74,8 +74,12 @@ def test_cleanup_hard_delete_report_includes_cascades_and_transcripts(
     monkeypatch.setattr(cli, "_resolve_branch_pr", lambda *a, **k: ("", None, False))
     monkeypatch.setattr(cli, "_close_issue", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_close_pr", lambda *a, **k: None)
-    monkeypatch.setattr(cli.gitwt, "cleanup_worktree",
-                        lambda *a, **k: {"actions": ["removed worktree"]})
+    def _fake_cleanup(*a, **k):
+        if wt.exists():
+            wt.rmdir()
+        return {"actions": ["removed worktree"]}
+
+    monkeypatch.setattr(cli.gitwt, "cleanup_worktree", _fake_cleanup)
     monkeypatch.setattr(cli, "run_cmd", lambda *a, **k: "")
 
     r = _invoke("cleanup", "jira:IPG-211", "--hard-delete", "--yes", "--json")
@@ -92,6 +96,15 @@ def test_cleanup_hard_delete_report_includes_cascades_and_transcripts(
     assert "1 run" in out["removed"]
     assert "1 transcript" in out["removed"]
 
+    # If the worktree dir was already missing on disk, do not report it as removed
+    _repo2, wt2, _ = _seed_worktree(tmp_path, isolated_config, key="jira:IPG-215",
+                                    branch="feat/215", with_run=False)
+    wt2.rmdir()
+    r2 = _invoke("cleanup", "jira:IPG-215", "--hard-delete", "--yes", "--json")
+    assert r2.exit_code == 0, r2.output
+    out2 = json.loads(r2.stdout)
+    assert not any(item.startswith("worktree dir ") for item in out2["removed"])
+
 
 def test_cleanup_merge_only_and_dry_run_reports(isolated_config, tmp_path, monkeypatch):
     _seed_worktree(tmp_path, isolated_config,
@@ -104,6 +117,13 @@ def test_cleanup_merge_only_and_dry_run_reports(isolated_config, tmp_path, monke
     assert any("worktree dir" in x for x in dry["would_remove"])
     assert "local branch feat/211" in dry["would_remove"]
     assert "worktree row jira:IPG-211" in dry["would_remove"]
+
+    r_mo_dry = _invoke("cleanup", "jira:IPG-211", "--merge-only", "--dry-run", "--json")
+    assert r_mo_dry.exit_code == 0, r_mo_dry.output
+    mo_dry = json.loads(r_mo_dry.stdout)
+    assert mo_dry["mode"] == "merge-only"
+    assert mo_dry["would_remove"] == ["merged PR https://github.com/o/r/pull/20"]
+    assert mo_dry["kept"] == ["worktree", "local branch", "worktree row"]
 
     monkeypatch.setattr(cli, "_status_cells", lambda *a, **k: {"pr_data": {}})
     monkeypatch.setattr(cli, "_resolve_branch_pr",
@@ -187,3 +207,4 @@ def test_link_remove_gc_and_destroy_deleted_reports(isolated_config, tmp_path, m
     assert "worktree row jira:IPG-214" in gc_row["removed"]
     assert "1 run" in gc_row["removed"]
     assert "1 transcript" in gc_row["removed"]
+
