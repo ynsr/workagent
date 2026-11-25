@@ -1173,6 +1173,53 @@ def test_fetch_ci_branch_gh_checks_all_runs_of_last_commit(monkeypatch):
     )
 
 
+def test_fetch_ci_branch_gh_does_not_keep_passing_url_when_failure_has_empty_url(monkeypatch):
+    """Worse state resets worst_url even if empty, and a later same-state URL fills it."""
+    from workagent import refs_ci
+
+    def fake(*a, **k):
+        if a[:2] == ("gh", "api"):
+            return json.dumps({"commit": {"sha": "head123"}})
+        return json.dumps([
+            {"name": "lint", "workflowName": "Lint", "status": "COMPLETED",
+             "conclusion": "SUCCESS", "headSha": "head123",
+             "url": "https://github.com/o/r/actions/runs/30"},
+            {"name": "build", "workflowName": "Build", "status": "COMPLETED",
+             "conclusion": "FAILURE", "headSha": "head123", "url": ""},
+            {"name": "test", "workflowName": "Test", "status": "COMPLETED",
+             "conclusion": "FAILURE", "headSha": "head123",
+             "url": "https://github.com/o/r/actions/runs/28"},
+        ])
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    assert refs_ci.fetch_branch_ci("gh", "https://github.com/o/r.git", "feat/x", "/repo") == (
+        "failure", "https://github.com/o/r/actions/runs/28"
+    )
+
+
+def test_fetch_ci_branch_gh_passes_ghes_hostname_to_api(monkeypatch):
+    """GHES remote host is forwarded through _api_gh (--hostname) for head SHA lookup."""
+    from workagent import refs_ci
+
+    api_calls = []
+
+    def fake(*a, **k):
+        if a[:2] == ("gh", "api"):
+            api_calls.append(a)
+            return json.dumps({"commit": {"sha": "head123"}})
+        return json.dumps([
+            {"name": "test", "workflowName": "Test", "status": "COMPLETED",
+             "conclusion": "SUCCESS", "headSha": "head123",
+             "url": "https://gh.corp.local/o/r/actions/runs/1"},
+        ])
+
+    monkeypatch.setattr(refs, "run_cmd", fake)
+    assert refs_ci.fetch_branch_ci("gh", "https://gh.corp.local/o/r.git", "feat/x", "/repo") == (
+        "success", "https://gh.corp.local/o/r/actions/runs/1"
+    )
+    assert api_calls == [("gh", "api", "repos/o/r/branches/feat%2Fx", "--hostname", "gh.corp.local")]
+
+
 def test_fetch_ci_branch_glab_checks_all_pipelines_of_last_commit(monkeypatch):
     """Issue #199: branch CI on GitLab aggregates all non-ignored pipelines of remote head."""
     from workagent import refs_ci

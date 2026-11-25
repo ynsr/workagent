@@ -147,10 +147,10 @@ def _glab_branch_head_sha(path: str, branch: str, host: str, cwd: str | None) ->
     return str(commit.get("id") or "") if isinstance(commit, dict) else ""
 
 
-def _gh_branch_head_sha(repo: str, branch: str, cwd: str | None) -> str:
+def _gh_branch_head_sha(repo: str, branch: str, cwd: str | None, host: str = "") -> str:
     """Return *branch*'s remote head commit SHA on GitHub, or '' on error/missing."""
     try:
-        out = run_cmd("gh", "api", f"repos/{repo}/branches/{quote(branch, safe='')}", cwd=cwd)
+        out = _api_gh(f"repos/{repo}/branches/{quote(branch, safe='')}", host, cwd)
         data = json.loads(out or "{}")
     except (HarnessError, json.JSONDecodeError):
         return ""
@@ -660,7 +660,7 @@ def _gh_run_state(run: dict) -> str:
     return "not_started"
 
 
-def _ci_branch_gh(repo: str, branch: str, cwd: str | None) -> tuple[str, str]:
+def _ci_branch_gh(repo: str, branch: str, cwd: str | None, host: str = "") -> tuple[str, str]:
     """(status, url) for all workflow runs of *branch*'s last commit (gh)."""
     out = run_cmd("gh", "run", "list", "--repo", repo, "--branch", branch,
                   "--limit", "20", "--json", "conclusion,status,url,name,workflowName,headSha", cwd=cwd)
@@ -670,7 +670,7 @@ def _ci_branch_gh(repo: str, branch: str, cwd: str | None) -> tuple[str, str]:
         raise HarnessError(f"cannot parse gh runs for {branch}")
     if not isinstance(data, list) or not data:
         return "not_started", ""
-    head_sha = _gh_branch_head_sha(repo, branch, cwd)
+    head_sha = _gh_branch_head_sha(repo, branch, cwd, host)
     same_sha = _filter_commit_items(data, head_sha, "headSha")
     if not same_sha:
         return "not_started", ""
@@ -696,8 +696,9 @@ def _ci_branch_gh(repo: str, branch: str, cwd: str | None) -> tuple[str, str]:
             any_url = url
         if _CI_RANK[state] > _CI_RANK[worst]:
             worst = state
-            if url:
-                worst_url = url
+            worst_url = url
+        elif state == worst and not worst_url and url:
+            worst_url = url
     return worst, worst_url or any_url
 
 def _pipeline_jobs(path: str, pipeline_id: int | None, host: str,
@@ -803,7 +804,7 @@ def fetch_branch_ci(tool: str, remote_url: str, branch: str,
         if not path:
             raise HarnessError(f"cannot parse remote URL: {remote_url}")
         if tool == "gh":
-            return _ci_branch_gh(path, branch, cwd)
+            return _ci_branch_gh(path, branch, cwd, host)
         if tool == "glab":
             return _ci_branch_glab(host or "gitlab.com", path, branch, cwd)
         raise HarnessError(f"unknown host CLI: {tool}")
