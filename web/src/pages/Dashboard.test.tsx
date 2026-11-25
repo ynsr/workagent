@@ -1,13 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, useLocation } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ConfirmProvider } from "@/lib/confirm"
 import { Dashboard } from "@/pages/Dashboard"
 import type * as QueriesModule from "@/lib/queries"
 
-const { mutateAsync, mockConfig } = vi.hoisted(() => ({
+const { mutateAsync, mockConfig, mockStatusAll } = vi.hoisted(() => ({
   mutateAsync: vi.fn(() => Promise.resolve({ run_id: "run-1" })),
   mockConfig: {
     default_harness: "agy",
@@ -17,6 +17,7 @@ const { mutateAsync, mockConfig } = vi.hoisted(() => ({
       { name: "omp", label: "OMP (omp)", binary: "omp", available: true },
     ],
   },
+  mockStatusAll: vi.fn(() => ({})),
 }))
 
 vi.mock("@/lib/queries", async () => {
@@ -33,7 +34,14 @@ vi.mock("@/lib/queries", async () => {
     ...actual,
     useConfig: () => ({ data: mockConfig }),
     useCreateRun: () => ({ mutateAsync }),
-    useStatusAll: settled({}),
+    useStatusAll: () => ({
+      data: mockStatusAll(),
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    }),
     useStatusInactive: settled({}),
     useStatusDeleted: settled({}),
     useInfo: settled({ version: "1", host: "127.0.0.1", port: 8000, network_exposed: false }),
@@ -50,6 +58,11 @@ vi.mock("@/lib/queries", async () => {
   }
 })
 
+function LocationEcho() {
+  const loc = useLocation()
+  return <div data-testid="location-echo">{`${loc.pathname}${loc.search}`}</div>
+}
+
 function renderDashboard() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -57,6 +70,7 @@ function renderDashboard() {
       <QueryClientProvider client={client}>
         <ConfirmProvider>
           <Dashboard />
+          <LocationEcho />
         </ConfirmProvider>
       </QueryClientProvider>
     </MemoryRouter>,
@@ -66,6 +80,7 @@ function renderDashboard() {
 beforeEach(() => {
   localStorage.clear()
   mutateAsync.mockClear()
+  mockStatusAll.mockReturnValue({})
 })
 
 afterEach(cleanup)
@@ -147,5 +162,25 @@ describe("Dashboard bulk confirm harness", () => {
 
     expect(mutateAsync).not.toHaveBeenCalled()
     expect(screen.getByRole("alertdialog")).toBeInTheDocument()
+  })
+
+  it("navigates to Launch Sync card on StatusTable row Sync overlay click without calling mutateAsync", async () => {
+    mockStatusAll.mockReturnValue({
+      "jira:IPG-1": {
+        issue: "IPG-1",
+        branch: "feat/IPG-1",
+        worktree: "/tmp/wt-1",
+        wt_valid: true,
+      },
+    })
+    const user = userEvent.setup()
+    renderDashboard()
+
+    await user.click(screen.getAllByRole("button", { name: "Sync jira:IPG-1" })[0])
+
+    expect(mutateAsync).not.toHaveBeenCalled()
+    expect(screen.getByTestId("location-echo")).toHaveTextContent(
+      "/launch?mode=sync&ref=jira%3AIPG-1",
+    )
   })
 })
