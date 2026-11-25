@@ -314,20 +314,25 @@ def set_worktree_active(path: Path, key: str, active: bool) -> None:
             raise HarnessError(f"no worktree link for {key}", exit_code=2)
 
 
-def delete_worktree_row(path: Path, key: str) -> None:
+def delete_worktree_row(path: Path, key: str) -> dict:
     """Delete a worktree row and every dependent record; files/branch/PR stay.
 
     runs go with the row (v26 FK ON DELETE CASCADE); flows, message worktree
     links, and child parent labels are purged explicitly. Callers that also
     tear down disk snapshot the transcript targets before calling this.
+    Returns cascade counts ``{runs, flows, messages, parent_links}``.
     """
     from .errors import HarnessError
     init_db(path)
     with connect(path) as conn:
+        run_count = conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE worktree_ref = ?", (key,)
+        ).fetchone()[0]
         cur = conn.execute("DELETE FROM worktrees WHERE ref_key = ?", (key,))
-        _purge_dependents_conn(conn, [key])
+        deps = _purge_dependents_conn(conn, [key])
         if cur.rowcount == 0:
             raise HarnessError(f"no worktree link for {key}", exit_code=2)
+    return {"runs": run_count, **deps}
 
 
 def soft_delete_worktree(path: Path, key: str) -> str:
@@ -422,11 +427,14 @@ def gc_soft_deleted(path: Path, retention_days: int = SOFT_DELETE_RETENTION_DAYS
         rows = [r for r in rows if r not in kept]
         for r in kept:
             del r["payload"]
-        gone = [r["ref_key"] for r in rows]
-        for key in gone:
-            conn.execute("DELETE FROM worktrees WHERE ref_key = ?", (key,))
-        _purge_dependents_conn(conn, gone)
         for r in rows:
+            key = r["ref_key"]
+            run_count = conn.execute(
+                "SELECT COUNT(*) FROM runs WHERE worktree_ref = ?", (key,)
+            ).fetchone()[0]
+            conn.execute("DELETE FROM worktrees WHERE ref_key = ?", (key,))
+            deps = _purge_dependents_conn(conn, [key])
+            r["cascaded"] = {"runs": run_count, **deps}
             r.pop("payload", None)
     return rows
 

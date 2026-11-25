@@ -302,10 +302,18 @@ def run_cleanup_step(key: str, config: dict, json_output: bool,
     entry = _store.load_links().get(key) or {}
     if not key or not entry:
         raise _HE(f"no linked state for {key}", exit_code=2)
-    _mod._cleanup_one(key, dict(entry), bool(config.get("force", False)),
-                      True, False, json_output,
-                      squash=True, merge=None, hard_delete=False)
-    return {"key": key, "status": "cleaned"}
+    res = _mod._cleanup_one(key, dict(entry), bool(config.get("force", False)),
+                            True, False, json_output,
+                            squash=True, merge=None, hard_delete=False)
+    out = {"key": key, "status": "cleaned"}
+    if isinstance(res, dict):
+        if "removed" in res:
+            out["removed"] = res["removed"]
+        if "remote_deleted" in res:
+            out["remote_deleted"] = res["remote_deleted"]
+        if "deleted_at" in res:
+            out["deleted_at"] = res["deleted_at"]
+    return out
 
 
 def run_release_step(repo_snapshot: dict, config: dict, json_output: bool,

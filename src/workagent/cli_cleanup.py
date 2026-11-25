@@ -52,9 +52,47 @@ from .cli_prodtest_gate import (  # noqa: F401 (re-export)
     run_validate,
 )
 from .cli_cleanup_gc import (  # noqa: F401 (re-export)
-    destroy_deleted, gc_soft_deleted, purge_orphans)
+    _dry_run_local_items, _format_cascade_items, destroy_deleted,
+    gc_soft_deleted, purge_orphans)
 _COMP = _init_completions()
 _complete_refs = _COMP["refs"]
+
+
+def _format_removed_col(row: dict) -> dict:
+    """Format list-valued ``removed``/``would_remove`` for Rich table display."""
+    out = dict(row)
+    items = row.get("removed") if "removed" in row else row.get("would_remove")
+    if isinstance(items, list):
+        out["removed"] = ", ".join(str(x) for x in items) if items else "-"
+    return out
+
+
+def _print_cleanup_report(result: dict, json_output: bool) -> None:
+    """Print a compact cleanup report (JSON on --json, concise key-value lines otherwise)."""
+    if json_output:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+    order = ("key", "branch", "mode", "status", "pr_url", "deleted_at",
+             "removed", "would_remove", "kept", "repo")
+    seen: set[str] = set()
+    for k in order:
+        if k not in result:
+            continue
+        seen.add(k)
+        v = result[k]
+        if v == "" or v is None:
+            continue
+        if isinstance(v, list):
+            print(f"{k}: {', '.join(str(x) for x in v) if v else 'none'}")
+        else:
+            print(f"{k}: {v}")
+    for k, v in result.items():
+        if k in seen or k in ("cleanup", "cascaded", "force", "merge", "dry_run",
+                              "remote_deleted", "transcripts_removed"):
+            continue
+        if v == "" or v is None:
+            continue
+        print(f"{k}: {v}")
 
 # ── cleanup ───────────────────────────────────────────────────────────
 
@@ -130,10 +168,12 @@ def cleanup(
                 return None
             if dry_run:
                 return {"key": key, "branch": entry.get("branch", ""),
-                        "status": "dry-run"}
+                        "status": "dry-run",
+                        "would_remove": [f"issue {stored}"]}
             ok = _st.set_issue_status(stored, "done", dry_run=False)
             return {"key": key, "branch": entry.get("branch", ""),
-                    "status": "closed" if ok else "failed"}
+                    "status": "closed" if ok else "failed",
+                    "removed": [f"issue {stored}"] if ok else []}
 
         targets = dict(links)
         if ref:
@@ -152,16 +192,17 @@ def cleanup(
                     _fail(f"no linked state for {ref}.", EXIT_USAGE)
             targets = {rkey: rentry} if rkey and rentry else {}
         rows = []
+        rkey_key = "would_remove" if dry_run else "removed"
         for key, entry in targets.items():
             if entry.get("deleted_at"):
                 decided = _close_if_jira_release_mark(key, entry)
                 rows.append(decided or {"key": key, "branch": entry.get("branch", ""),
-                                        "status": "skipped:deleted"})
+                                        "status": "skipped:deleted", rkey_key: []})
                 continue
             if entry.get("active", 1) == 0:
                 decided = _close_if_jira_release_mark(key, entry)
                 rows.append(decided or {"key": key, "branch": entry.get("branch", ""),
-                                        "status": "skipped:deactivated"})
+                                        "status": "skipped:deactivated", rkey_key: []})
                 continue
             repo = str(entry.get("repo", "") or "")
             branch = str(entry.get("branch", "") or "")
@@ -170,7 +211,8 @@ def cleanup(
             if not repo or not branch or not rel_branch:
                 decided = _close_if_jira_release_mark(key, entry)
                 rows.append(decided or {"key": key, "branch": branch,
-                                        "status": "skipped:no-release-branch"})
+                                        "status": "skipped:no-release-branch",
+                                        rkey_key: []})
                 continue
             wt = str(entry.get("worktree", "") or "")
             tip = ""
@@ -190,33 +232,43 @@ def cleanup(
                 except Exception:
                     contained = False
             if not contained:
-                rows.append({"key": key, "branch": branch, "status": "skipped:unreleased"})
+                rows.append({"key": key, "branch": branch,
+                             "status": "skipped:unreleased", rkey_key: []})
                 continue
             stored = entry.get("issue", "") or key
             if dry_run:
                 try:
                     from . import refs as _refs
                     _refs.parse_ref(stored)
-                    rows.append({"key": key, "branch": branch, "status": "dry-run"})
+                    rows.append({"key": key, "branch": branch, "status": "dry-run",
+                                 "would_remove": [f"issue {stored}"]})
                 except Exception:
-                    rows.append({"key": key, "branch": branch, "status": "skipped:no-issue"})
+                    rows.append({"key": key, "branch": branch,
+                                 "status": "skipped:no-issue", "would_remove": []})
                 continue
             ok = _st.set_issue_status(stored, "done", dry_run=False)
             rows.append({"key": key, "branch": branch,
-                         "status": "closed" if ok else "failed"})
+                         "status": "closed" if ok else "failed",
+                         "removed": [f"issue {stored}"] if ok else []})
         if json_output:
             print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
         else:
+            acted = sum(1 for r in rows if r.get("status") in ("closed", "dry-run"))
+            skipped = len(rows) - acted
+            label = "would close" if dry_run else "closed"
             _print_rows(rows, json_output=False, csv_output=False,
-                        columns=["key", "branch", "status"],
+                        columns=["key", "branch", "status", "removed"],
                         title="Close released",
-                        empty="no linked worktrees")
+                        empty="no linked worktrees",
+                        caption=f"{acted} {label}, {skipped} skipped" if rows else None,
+                        colorize=_format_removed_col)
         return
 
     if merged:
         # _status_cells(refresh_pr=True) is the merged/closed source of truth;
         # live harnesses and invalid worktrees are skipped, never torn down.
         rows = []
+        rkey_key = "would_remove" if dry_run else "removed"
         for key, entry in links.items():
             branch = entry.get("branch", "")
             from . import cli as _cli
@@ -225,20 +277,21 @@ def cleanup(
                      or {}).get("state", "") or "").upper()
             if state not in ("MERGED", "CLOSED"):
                 rows.append({"key": key, "branch": branch,
-                             "status": f"skipped:{state.lower() or 'no-pr'}"})
+                             "status": f"skipped:{state.lower() or 'no-pr'}",
+                             rkey_key: []})
                 continue
             if store.active_harness(key):
                 rows.append({"key": key, "branch": branch,
-                             "status": "skipped:live-harness"})
+                             "status": "skipped:live-harness", rkey_key: []})
                 continue
             if entry.get("active", 1) == 0:
                 rows.append({"key": key, "branch": branch,
-                             "status": "skipped:deactivated"})
+                             "status": "skipped:deactivated", rkey_key: []})
                 continue
             wt = entry.get("worktree", "")
             if not wt or not worktrees.is_valid_worktree(wt):
                 rows.append({"key": key, "branch": branch,
-                             "status": "skipped:invalid"})
+                             "status": "skipped:invalid", rkey_key: []})
                 continue
             # Run-only gate (issue #50): --merged proceeds regardless of a
             # stale/invalid plan — prodtest state no longer blocks teardown.
@@ -250,10 +303,15 @@ def cleanup(
         if json_output:
             print(json.dumps({"results": rows}, indent=2, ensure_ascii=False))
         else:
+            acted = sum(1 for r in rows if r.get("status") in ("cleaned", "dry-run"))
+            skipped = len(rows) - acted
+            label = "would clean" if dry_run else "cleaned"
             _print_rows(rows, json_output=False, csv_output=False,
-                        columns=["key", "branch", "status"],
+                        columns=["key", "branch", "status", "removed"],
                         title="Cleanup (merged/closed)",
-                        empty="no linked worktrees")
+                        empty="no linked worktrees",
+                        caption=f"{acted} {label}, {skipped} skipped" if rows else None,
+                        colorize=_format_removed_col)
         return
 
     try:
@@ -283,16 +341,28 @@ def cleanup(
             _fail("aborted", EXIT_USAGE)
 
     if dry_run:
-        _print_result({"dry_run": True, "key": key, "repo": str(repo), "branch": branch,
-                       "pr_url": entry.get("pr_url", ""), "force": force,
-                       "merge": entry.get("pr_url", "")}, json_output)
+        mode = ("merge-only" if merge_only
+                else ("hard-delete" if hard_delete else "soft-delete"))
+        wt_path = str(entry.get("worktree", "") or "")
+        if merge_only:
+            would_remove: list[str] = []
+        elif hard_delete:
+            would_remove = _dry_run_local_items(key, branch, wt_path)
+        else:
+            would_remove = [f"worktree row {key} (soft-deleted)"]
+        _print_cleanup_report(
+            {"dry_run": True, "mode": mode, "status": "dry-run", "key": key,
+             "repo": str(repo), "branch": branch,
+             "pr_url": entry.get("pr_url", ""), "force": force,
+             "merge": entry.get("pr_url", ""), "would_remove": would_remove},
+            json_output,
+        )
         return
 
     if merge_only:
         result = _merge_only_one(key, dict(entry), force, json_output,
                                  squash=not no_squash)
-        if json_output:
-            print(json.dumps(result, indent=2, ensure_ascii=False))
+        _print_cleanup_report(result, json_output)
         return
     if not yes and not force and sys.stdin.isatty():
         try:
@@ -306,8 +376,7 @@ def cleanup(
         _ensure_prodtest_row(key, dict(entry))
     result = _cleanup_one(key, dict(entry), force, True, False, json_output,
                           squash=not no_squash, hard_delete=hard_delete)
-    if json_output:
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+    _print_cleanup_report(result, json_output)
 
 
 def _merge_only_one(key: str, entry: dict, force: bool, json_output: bool,
@@ -364,18 +433,22 @@ def _merge_only_one(key: str, entry: dict, force: bool, json_output: bool,
         except HarnessError as e:
             if force and not _pr_missing(str(e)):
                 eprint(f"note: {pr_url} could not be merged ({e}); left open.")
-                return {"key": key, "branch": branch, "status": "merge-failed",
-                        "pr_url": pr_url}
+                return {"key": key, "branch": branch, "mode": "merge-only",
+                        "status": "merge-failed", "pr_url": pr_url,
+                        "removed": [], "kept": ["worktree", "local branch", "worktree row"]}
             raise
         if not json_output:
             eprint(f"{key}: merged {pr_url} (worktree/branch/link kept)")
-        return {"key": key, "branch": branch, "status": "merged",
-                "pr_url": pr_url}
+        return {"key": key, "branch": branch, "mode": "merge-only",
+                "status": "merged", "pr_url": pr_url,
+                "removed": [f"merged PR {pr_url}"],
+                "kept": ["worktree", "local branch", "worktree row"]}
     if pr_url and fresh_state in ("merged", "closed"):
         if not json_output:
             eprint(f"note: {pr_url} already {fresh_state}; nothing to merge.")
-        return {"key": key, "branch": branch, "status": "already-merged",
-                "pr_url": pr_url}
+        return {"key": key, "branch": branch, "mode": "merge-only",
+                "status": "already-merged", "pr_url": pr_url,
+                "removed": [], "kept": ["worktree", "local branch", "worktree row"]}
     parsed_kind = parsed.get("kind", "")
     _fail(f"no open PR/MR to merge for {key} ({parsed_kind or 'no PR tracked'}).\n"
           "  Push the branch and open a PR first, then re-run --merge-only.",
@@ -430,9 +503,13 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
             parsed = {"kind": "", "tool": "", "repo": "", "number": "",
                       "url": pr_url or stored_ref}
     if dry_run:
+        mode = "hard-delete" if hard_delete else "soft-delete"
+        would_remove = (_dry_run_local_items(key, branch, worktree)
+                        if hard_delete else [f"worktree row {key} (soft-deleted)"])
         return {"key": key, "branch": branch, "repo": str(repo),
-                "pr_url": pr_url, "force": force, "status": "dry-run",
-                "merge": pr_url or ""}
+                "pr_url": pr_url, "force": force, "mode": mode,
+                "status": "dry-run", "merge": pr_url or "",
+                "would_remove": would_remove}
     _sc2 = _cli._status_cells
     state = (_sc2(key, dict(entry), refresh_pr=False).get("pr_data")
              or {}).get("state", "")
@@ -478,6 +555,8 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
               EXIT_GENERAL)
     # Run-only gate (issue #50): cleanup proceeds regardless of a
     # stale/invalid plan — prodtest state no longer blocks teardown.
+    issue_closed: str | None = None
+    pr_closed: str | None = None
     if merge:
         try:
             remote_deleted = bool(_cli._merge_pr(
@@ -487,7 +566,7 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
             if force and not _pr_missing(str(e)):
                 # Rule 3: --force merge failed (e.g. conflicts) → leave the
                 # PR open, keep the remote branch, continue local cleanup.
-                _cli._close_issue(parsed, force)
+                issue_closed = _cli._close_issue(parsed, force)
                 eprint(f"note: {pr_url} could not be merged ({e}); left open.")
                 merged_now = False
             else:
@@ -497,14 +576,14 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
         else:
             merged_now = True
     else:
-        _cli._close_issue(parsed, force)
+        issue_closed = _cli._close_issue(parsed, force)
         if state_norm in ("merged", "closed"):
             # Already terminal on the host: closing is a no-op (glab fails
             # "already been merged"), so skip straight to local teardown.
             eprint(f"note: {pr_url} already {state_norm}; skipping remote close.")
         else:
             try:
-                _cli._close_pr(parsed, pr_url, force, cwd=host_cwd)
+                pr_closed = _cli._close_pr(parsed, pr_url, force, cwd=host_cwd)
             except HarnessError as e:
                 if _pr_missing(str(e)):
                     # 404: host PR is gone; keep the remote branch and the
@@ -536,6 +615,13 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
     delete_remote = (not remote_deleted and deletable_remote
         and (merged_now or fresh_state == "merged")
         and head_verified and head_ref == branch)
+    removed: list[str] = []
+    if merged_now and pr_url:
+        removed.append(f"merged PR {pr_url}")
+    if pr_closed:
+        removed.append(f"closed PR {pr_closed}")
+    if issue_closed:
+        removed.append(f"closed {issue_closed}")
     if not hard_delete:
         # Issue #124: a merged feature PR must not leave its remote branch
         # behind — delete it BEFORE the soft-delete stamp so recovery only
@@ -555,6 +641,9 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
         # branch survive. Only the row is stamped (plus the merged remote
         # delete above).
         deleted_at = store.soft_delete_worktree(key)
+        if remote_deleted:
+            removed.append(f"remote branch {branch}")
+        removed.append(f"worktree row {key} (soft-deleted)")
         tail = (" (soft-deleted; remote branch deleted; local state recoverable "
                 "within 7 days via `link undelete`)") if remote_deleted else \
                " (soft-deleted; recover within 7 days via `link undelete`)"
@@ -570,8 +659,9 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
                                        "soft_deleted": True})
         except Exception:
             pass
-        return {"key": key, "branch": branch, "status": "cleaned",
-                "deleted_at": deleted_at, "remote_deleted": remote_deleted}
+        return {"key": key, "branch": branch, "mode": "soft-delete",
+                "status": "cleaned", "deleted_at": deleted_at,
+                "remote_deleted": remote_deleted, "removed": removed}
     from .cli_cleanup_gc import (
         _harness_run_info, _is_main_repo_path, _remove_transcripts,
         _worktree_for_branch,
@@ -579,17 +669,23 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
     wt_raw = str(entry.get("worktree", "") or "")
     wt_path = Path(wt_raw).expanduser() if wt_raw else None
     guard_path = wt_path if wt_path is not None else _worktree_for_branch(repo, branch)
+    local_branch_deleted = False
     if guard_path is not None and _is_main_repo_path(guard_path, repo):
         eprint(f"warning: refusing to delete main repo folder {guard_path} for {key}")
         cleanup = {"actions": [], "skipped": "main-repo"}
     else:
         cleanup = gitwt.cleanup_worktree(repo, branch, delete_branch=False,
                                          force=force, yes=yes)
+        if wt_raw:
+            removed.append(f"worktree dir {wt_raw}")
         try:
             _cli.run_cmd("git", "-C", str(repo), "branch", "-D", branch)
             cleanup.setdefault("actions", []).append(f"deleted local branch {branch}")
+            local_branch_deleted = True
         except HarnessError:
             pass
+        if local_branch_deleted:
+            removed.append(f"local branch {branch}")
     if delete_remote:
         # Remote branch goes LAST: local cleanup already succeeded.
         try:
@@ -601,17 +697,23 @@ def _cleanup_one(key: str, entry: dict, force: bool, yes: bool,
                 remote_deleted = True  # host-side delete won the race
             else:
                 eprint(f"warning: remote branch delete failed: {e}")
+    if remote_deleted:
+        removed.append(f"remote branch {branch}")
     # Snapshot the transcript targets before the row (and via FK its runs)
     # goes: cleanup --hard-delete cascades to the AI harness sessions too.
     targets, scoped_dirs = _harness_run_info(key)
-    store.delete_worktree_row(key)
-    _remove_transcripts(targets, key, scoped_dirs=scoped_dirs)
+    cascaded = store.delete_worktree_row(key)
+    t_count = _remove_transcripts(targets, key, scoped_dirs=scoped_dirs) or 0
+    removed.append(f"worktree row {key}")
+    removed.extend(_format_cascade_items(cascaded, t_count))
     if not json_output:
         tail = " (remote branch deleted)" if remote_deleted \
             else " (remote branch kept)"
         eprint(f"{key}: cleaned{tail}")
-    return {"key": key, "branch": branch, "status": "cleaned", "cleanup": cleanup,
-            "remote_deleted": remote_deleted}
+    return {"key": key, "branch": branch, "mode": "hard-delete",
+            "status": "cleaned", "cleanup": cleanup,
+            "remote_deleted": remote_deleted, "cascaded": cascaded,
+            "transcripts_removed": t_count, "removed": removed}
 
 
 def _ensure_prodtest_row(key: str, entry: dict) -> None:

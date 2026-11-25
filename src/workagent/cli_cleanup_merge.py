@@ -236,7 +236,7 @@ def _merge_pr(pr_url: str, squash: bool = True, cwd: str | None = None,
     return False
 
 
-def _close_issue(parsed: dict, force: bool) -> None:
+def _close_issue(parsed: dict, force: bool) -> str | None:
     if parsed["tool"] == "jira":
         # Best effort: comment the resolution; transitions vary per project,
         # so leave status change to the user unless --force.
@@ -244,6 +244,7 @@ def _close_issue(parsed: dict, force: bool) -> None:
             from .errors import run_cmd as _run
             _run("jira", "issue", "comment", "add", parsed["number"],
                  "Resolved via workagent cleanup.", "--no-input")
+            return f"jira comment {parsed['number']}"
         except HarnessError as e:
             if not force:
                 raise
@@ -254,7 +255,9 @@ def _close_issue(parsed: dict, force: bool) -> None:
             target = [parsed["number"], "--repo", parsed["repo"]] if parsed["kind"] == "issue_or_pr" \
                 else [parsed["url"]]
             _run("gh", "issue", "close", *target)
-            eprint(f"closed issue {parsed['url'] or parsed['number']}")
+            label = parsed["url"] or parsed["number"]
+            eprint(f"closed issue {label}")
+            return f"issue {label}"
         except HarnessError as e:
             msg = str(e).lower()
             # Note: `gh issue close` on an already-closed issue exits 0
@@ -263,18 +266,19 @@ def _close_issue(parsed: dict, force: bool) -> None:
             if ("already closed" in msg or "already been closed" in msg
                     or "not found" in msg or "404" in msg or "could not resolve" in msg):
                 eprint(f"note: issue {parsed['url'] or parsed['number']} already closed; continuing.")
-                return
+                return None
             if not force:
                 raise
             eprint(f"warning: {e}")
     elif parsed["tool"] == "glab":
         eprint("note: glab issue close not automated in v1; close it in the UI.")
+    return None
 
 
-def _close_pr(parsed: dict, pr_url: str, force: bool, cwd: str | None = None) -> None:
+def _close_pr(parsed: dict, pr_url: str, force: bool, cwd: str | None = None) -> str | None:
     url = pr_url or (parsed.get("url", "") if parsed.get("kind") in ("pr", "mr") else "")
     if not url:
-        return
+        return None
     try:
         from .errors import run_cmd as _run
         if "github.com" in url:
@@ -282,13 +286,15 @@ def _close_pr(parsed: dict, pr_url: str, force: bool, cwd: str | None = None) ->
         else:
             _run("glab", "mr", "close", url, cwd=cwd)
         eprint(f"closed {url}")
+        return url
     except HarnessError as e:
         msg = str(e).lower()
         if ("already closed" in msg or "already been closed" in msg
                 or "already been merged" in msg or "already merged" in msg
                 or "404" in msg or "not found" in msg):
             eprint(f"note: {url} already closed; continuing with local cleanup.")
-            return
+            return None
         if not force:
             raise
         eprint(f"warning: {e}")
+    return None

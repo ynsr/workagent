@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Cleanup commands and subcommands now return a compact report of removed items, cascades, and transcripts across soft and hard deletes [211]
 - Automatically retry AI runs without `--effort` when the selected model does not support effort levels [204]
 - Drop the in-app diff viewer feature from the web UI and API [200]
 - Fix web runs staying stuck in Running state after a serve restart by persisting their database ID and reconciling orphaned rows [207]
