@@ -21,7 +21,7 @@ import { hasAcpStructuredEvents } from "@/lib/harness"
 import { useConfirm } from "@/lib/confirm"
 import { queryKeys, useCancelRun, useRun } from "@/lib/queries"
 import { copyToClipboard, formatCostUsd, formatDurationMs, formatTokens, relativeTime, shortId } from "@/lib/format"
-import { commandAction, commandLabel, needsConfirm, runKind } from "@/lib/runs"
+import { buildRerunArgs, commandAction, commandLabel, hasChainChangeError, needsConfirm, runKind } from "@/lib/runs"
 import { RunResumeActions } from "@/components/RunActions"
 import { AcpTranscript } from "@/components/AcpTranscript"
 import { SpawnedWorkersCard } from "@/components/SpawnedWorkersCard"
@@ -233,15 +233,17 @@ export function RunDetail() {
   async function handleRerun() {
     const run = runQ.data
     if (!run) return
-    // Strip the leading -v (re-added per current Settings) and any appended --yes.
-    const stripped = run.args[0] === "-v" ? run.args.slice(1) : [...run.args]
-    const args = stripped.filter((a) => a !== "--yes")
+    const args = buildRerunArgs(run.command, run.args, lines)
+    const addedFresh =
+      !run.args.includes("--fresh") && args.includes("--fresh")
     const destructive = needsConfirm(run.command, args)
     if (destructive) {
       const ok = await confirm({
         action: commandAction(run.command, args),
         title: `Re-run ${commandLabel(run.command)}${run.target ? ` (${run.target})` : ""}`,
-        description: "Same command and arguments as the original run.",
+        description: addedFresh
+          ? "Same command and arguments as the original run, with --fresh added to start a new run on the new chain."
+          : "Same command and arguments as the original run.",
         destructive: true,
         confirmLabel: "Re-run",
         details: [
@@ -408,7 +410,14 @@ export function RunDetail() {
               The command exited with code 2 — usually an unparseable ref, no
               linked state, a missing flag, or a --force-required conflict.
               Check the captured output below, then re-run with the same
-              arguments.
+              arguments
+              {run.command === "flow" &&
+              (run.args[0] === "-v" ? run.args[1] : run.args[0]) === "run" &&
+              hasChainChangeError(lines) &&
+              !run.args.includes("--fresh")
+                ? " (--fresh will be added automatically to start a new run on the new chain)"
+                : ""}
+              .
             </CardDescription>
           </CardHeader>
         </Card>
