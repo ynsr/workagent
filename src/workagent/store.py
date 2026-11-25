@@ -542,6 +542,43 @@ def _update_pr_cache_entry_sqlite(
         conn.close()
 
 
+def _update_pr_cache_entry_json(
+    key: str,
+    fallback_branch: str,
+    build_entry: Callable[[dict | None, dict | None], dict | None],
+) -> None:
+    """Read and update a single pr_cache entry in ``pr_cache.json`` under the file lock."""
+    path = config_dir() / "pr_cache.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.parent / (path.name + ".lock"), "w") as lock:
+        def _update() -> None:
+            cache = _read_json(path, {})
+            prev_key = cache.get(key)
+            prev_branch = (
+                cache.get(fallback_branch)
+                if fallback_branch and fallback_branch != key
+                else None
+            )
+            updated = build_entry(prev_key, prev_branch)
+            if updated is None:
+                return
+            cache[key] = updated
+            _atomic_replace(path, cache)
+        _locked(lock, _update)
+
+
+def _update_pr_cache_entry(
+    key: str,
+    fallback_branch: str,
+    build_entry: Callable[[dict | None, dict | None], dict | None],
+) -> None:
+    """Atomically read-modify-write a single pr_cache entry in SQLite or JSON."""
+    if _sqlite_path() is not None:
+        _update_pr_cache_entry_sqlite(key, fallback_branch, build_entry)
+    else:
+        _update_pr_cache_entry_json(key, fallback_branch, build_entry)
+
+
 def save_pr_cache(cache: dict) -> None:
     if _sqlite_path() is not None:
         _write_pr_cache(cache)
@@ -580,35 +617,17 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
                  ("behind", behind), ("ahead", ahead)):
         if v is not None:
             entry[k] = v
-    if _sqlite_path() is not None:
-        def _merge(prev_key: dict | None, _prev_branch: dict | None) -> dict:
-            prev = prev_key or {}
-            merged = dict(entry)
-            for k in ("ci", "ci_checked_at", "ci_sha", "ci_url",
-                      "reviews", "unresolved", "resolved",
-                      "reviews_checked_at", "reviews_sha",
-                      "issue_status", "issue_status_checked_at"):
-                if k in prev and k not in merged:
-                    merged[k] = prev[k]
-            return merged
-        _update_pr_cache_entry_sqlite(key, branch, _merge)
-        return
-    path = config_dir() / "pr_cache.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path.parent / (path.name + ".lock"), "w") as lock:
-        def _update() -> None:
-            cache = _read_json(path, {})
-            prev = cache.get(key) or {}
-            merged = dict(entry)
-            for k in ("ci", "ci_checked_at", "ci_sha", "ci_url",
-                      "reviews", "unresolved", "resolved",
-                      "reviews_checked_at", "reviews_sha",
-                      "issue_status", "issue_status_checked_at"):
-                if k in prev and k not in merged:
-                    merged[k] = prev[k]
-            cache[key] = merged
-            _atomic_replace(path, cache)
-        _locked(lock, _update)
+    def _merge(prev_key: dict | None, _prev_branch: dict | None) -> dict:
+        prev = prev_key or {}
+        merged = dict(entry)
+        for k in ("ci", "ci_checked_at", "ci_sha", "ci_url",
+                  "reviews", "unresolved", "resolved",
+                  "reviews_checked_at", "reviews_sha",
+                  "issue_status", "issue_status_checked_at"):
+            if k in prev and k not in merged:
+                merged[k] = prev[k]
+        return merged
+    _update_pr_cache_entry(key, branch, _merge)
 
 
 def get_cached_pr_status(branch: str, repo: str = "") -> dict | None:
@@ -635,43 +654,21 @@ def cache_ci_status(branch: str, ci: str | None, sha: str | None = None,
         return None
     key = pr_cache_key(repo, branch)
     prev_snapshot: dict = {}
-    if _sqlite_path() is not None:
-        def _set_ci(prev_key: dict | None, prev_branch: dict | None) -> dict:
-            nonlocal prev_snapshot
-            base = prev_key if prev_key is not None else (prev_branch or {})
-            prev_snapshot = dict(base)
-            entry = dict(base)
-            entry["ci"] = ci
-            entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
-            if sha:
-                entry["ci_sha"] = sha
-            if ci_url is not None:
-                entry["ci_url"] = ci_url
-            return entry
-        _update_pr_cache_entry_sqlite(key, branch, _set_ci)
-        return prev_snapshot
-    path = config_dir() / "pr_cache.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path.parent / (path.name + ".lock"), "w") as lock:
-        def _update() -> None:
-            nonlocal prev_snapshot
-            cache = _read_json(path, {})
-            prev = cache.get(branch) or {}
-            entry = cache.get(key)
-            if entry is None:
-                prev_snapshot = dict(prev)
-                entry = dict(prev)
-                cache[key] = entry
-            else:
-                prev_snapshot = dict(entry)
-            entry["ci"] = ci
-            entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
-            if sha:
-                entry["ci_sha"] = sha
-            if ci_url is not None:
-                entry["ci_url"] = ci_url
-            _atomic_replace(path, cache)
-        _locked(lock, _update)
+
+    def _set_ci(prev_key: dict | None, prev_branch: dict | None) -> dict:
+        nonlocal prev_snapshot
+        base = prev_key if prev_key is not None else (prev_branch or {})
+        prev_snapshot = dict(base)
+        entry = dict(base)
+        entry["ci"] = ci
+        entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
+        if sha:
+            entry["ci_sha"] = sha
+        if ci_url is not None:
+            entry["ci_url"] = ci_url
+        return entry
+
+    _update_pr_cache_entry(key, branch, _set_ci)
     return prev_snapshot
 
 def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None,
@@ -688,43 +685,21 @@ def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None,
         return None
     key = pr_cache_key(repo, branch)
     prev_snapshot: dict = {}
-    if _sqlite_path() is not None:
-        def _set_reviews(prev_key: dict | None, prev_branch: dict | None) -> dict:
-            nonlocal prev_snapshot
-            base = prev_key if prev_key is not None else (prev_branch or {})
-            prev_snapshot = dict(base)
-            entry = dict(base)
-            entry["reviews"] = int(stats.get("reviews") or 0)
-            entry["unresolved"] = int(stats.get("unresolved") or 0)
-            entry["resolved"] = int(stats.get("resolved") or 0)
-            entry["reviews_checked_at"] = datetime.now(timezone.utc).isoformat()
-            if sha:
-                entry["reviews_sha"] = sha
-            return entry
-        _update_pr_cache_entry_sqlite(key, branch, _set_reviews)
-        return prev_snapshot
-    path = config_dir() / "pr_cache.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path.parent / (path.name + ".lock"), "w") as lock:
-        def _update() -> None:
-            nonlocal prev_snapshot
-            cache = _read_json(path, {})
-            prev = cache.get(branch) or {}
-            entry = cache.get(key)
-            if entry is None:
-                prev_snapshot = dict(prev)
-                entry = dict(prev)
-                cache[key] = entry
-            else:
-                prev_snapshot = dict(entry)
-            entry["reviews"] = int(stats.get("reviews") or 0)
-            entry["unresolved"] = int(stats.get("unresolved") or 0)
-            entry["resolved"] = int(stats.get("resolved") or 0)
-            entry["reviews_checked_at"] = datetime.now(timezone.utc).isoformat()
-            if sha:
-                entry["reviews_sha"] = sha
-            _atomic_replace(path, cache)
-        _locked(lock, _update)
+
+    def _set_reviews(prev_key: dict | None, prev_branch: dict | None) -> dict:
+        nonlocal prev_snapshot
+        base = prev_key if prev_key is not None else (prev_branch or {})
+        prev_snapshot = dict(base)
+        entry = dict(base)
+        entry["reviews"] = int(stats.get("reviews") or 0)
+        entry["unresolved"] = int(stats.get("unresolved") or 0)
+        entry["resolved"] = int(stats.get("resolved") or 0)
+        entry["reviews_checked_at"] = datetime.now(timezone.utc).isoformat()
+        if sha:
+            entry["reviews_sha"] = sha
+        return entry
+
+    _update_pr_cache_entry(key, branch, _set_reviews)
     return prev_snapshot
 
 def cache_issue_status(branch: str, issue_status: str | None, repo: str = "") -> None:
@@ -742,28 +717,14 @@ def cache_issue_status(branch: str, issue_status: str | None, repo: str = "") ->
     if issue_status is None:
         return
     key = pr_cache_key(repo, branch)
-    if _sqlite_path() is not None:
-        def _set_issue_status(prev_key: dict | None, prev_branch: dict | None) -> dict:
-            entry = dict(prev_key) if prev_key is not None else dict(prev_branch or {})
-            entry["issue_status"] = issue_status
-            entry["issue_status_checked_at"] = datetime.now(timezone.utc).isoformat()
-            return entry
-        _update_pr_cache_entry_sqlite(key, branch, _set_issue_status)
-        return
-    path = config_dir() / "pr_cache.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path.parent / (path.name + ".lock"), "w") as lock:
-        def _update() -> None:
-            cache = _read_json(path, {})
-            prev = cache.get(branch) or {}
-            entry = cache.get(key)
-            if entry is None:
-                entry = dict(prev)
-                cache[key] = entry
-            entry["issue_status"] = issue_status
-            entry["issue_status_checked_at"] = datetime.now(timezone.utc).isoformat()
-            _atomic_replace(path, cache)
-        _locked(lock, _update)
+
+    def _set_issue_status(prev_key: dict | None, prev_branch: dict | None) -> dict:
+        entry = dict(prev_key) if prev_key is not None else dict(prev_branch or {})
+        entry["issue_status"] = issue_status
+        entry["issue_status_checked_at"] = datetime.now(timezone.utc).isoformat()
+        return entry
+
+    _update_pr_cache_entry(key, branch, _set_issue_status)
 
 
 def _pid_alive(pid: int) -> bool:

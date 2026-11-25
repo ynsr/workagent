@@ -237,8 +237,12 @@ def append_worktree_event(
     ev_type_s = str(event_type)
     summary_s = str(summary or "")
     payload = json.dumps(details or {}, sort_keys=True)
-    with sq.connect(path) as conn:
+    conn = sq.connect(path)
+    conn.isolation_level = None
+    try:
+        conn.execute("BEGIN IMMEDIATE")
         if not _worktree_exists(conn, worktree_ref):
+            conn.execute("COMMIT")
             return None
         if ev_type_s in _STATE_TRANSITION_EVENTS:
             last = conn.execute(
@@ -248,6 +252,7 @@ def append_worktree_event(
                 (worktree_ref,),
             ).fetchone()
             if last is not None and last[1] == ev_type_s and last[2] == summary_s:
+                conn.execute("COMMIT")
                 return int(last[0])
         cur = conn.execute(
             "INSERT INTO worktree_events"
@@ -255,7 +260,17 @@ def append_worktree_event(
             " VALUES (?, ?, ?, ?, ?)",
             (worktree_ref, ev_type_s, summary_s, payload, ts),
         )
-        return int(cur.lastrowid) if cur.lastrowid is not None else None
+        row_id = int(cur.lastrowid) if cur.lastrowid is not None else None
+        conn.execute("COMMIT")
+        return row_id
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
 
 
 def list_worktree_events(

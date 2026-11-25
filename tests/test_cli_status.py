@@ -669,6 +669,34 @@ def test_append_worktree_event_dedupes_consecutive_state_transitions(isolated_co
     ]
 
 
+def test_append_worktree_event_concurrent_dedupes_under_contention(isolated_config, tmp_path):
+    """Issue #206: direct concurrent store.append_worktree_event calls serialize via BEGIN IMMEDIATE."""
+    import concurrent.futures
+    import threading
+    from workagent import store, store_sqlite
+
+    store_sqlite.init_db(isolated_config / "state.db")
+    wt_dir = tmp_path / "wt"
+    wt_dir.mkdir()
+    key = "github:o/r#206-concurrent"
+    store.record_link(key, {"worktree": str(wt_dir), "branch": "feat/206c", "repo": "/repo"})
+
+    n_workers = 8
+    barrier = threading.Barrier(n_workers)
+
+    def _emit() -> int | None:
+        barrier.wait(timeout=5)
+        return store.append_worktree_event(key, "ci_passed", "CI passed")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
+        ids = [f.result(timeout=10) for f in [pool.submit(_emit) for _ in range(n_workers)]]
+
+    assert all(eid is not None and eid == ids[0] for eid in ids)
+    events = store.list_worktree_events(key)
+    assert len(events) == 1
+    assert (events[0]["event_type"], events[0]["summary"]) == ("ci_passed", "CI passed")
+
+
 def test_ci_cell_passes_ci_url_fallback_to_populate_failing_check_logs(
     isolated_config, tmp_path, monkeypatch
 ):
