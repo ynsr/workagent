@@ -81,7 +81,15 @@ export function HarnessPicker({
 
   const { data, isPending, isError } = useHarnessOptions(harness, !harnessOnly)
   const models = useMemo(() => data?.models ?? [], [data?.models])
-  const efforts = data?.efforts ?? []
+  const effectiveModel = model || data?.current_model || ""
+  const perModelEfforts =
+    effectiveModel &&
+    data?.model_efforts &&
+    Object.prototype.hasOwnProperty.call(data.model_efforts, effectiveModel)
+      ? data.model_efforts[effectiveModel]
+      : undefined
+  const modelUnsupportedEffort = perModelEfforts !== undefined && perModelEfforts.length === 0
+  const efforts = perModelEfforts !== undefined ? perModelEfforts : (data?.efforts ?? [])
 
   const modelsDisabled = isPending || isError || !data?.supported || models.length === 0
   const modelDisabledReason = isPending
@@ -99,7 +107,9 @@ export function HarnessPicker({
       ? "Effort discovery failed — using harness default"
       : !data.supported
         ? "This harness does not support effort discovery — using harness default"
-        : "No efforts reported — using harness default"
+        : modelUnsupportedEffort
+          ? "Selected model does not support effort levels"
+          : "No efforts reported — using harness default"
 
   const filteredModels = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -127,6 +137,13 @@ export function HarnessPicker({
   const clampedActiveIdx = filteredModels.length > 0 ? Math.min(activeIdx, filteredModels.length - 1) : 0
 
   useEffect(() => {
+    if (!effort || perModelEfforts === undefined) return
+    if (!perModelEfforts.some((e) => e.id === effort)) {
+      onEffortChange?.("")
+    }
+  }, [effort, perModelEfforts, onEffortChange])
+
+  useEffect(() => {
     if (!open || modelsDisabled) return
     const el = modelListRef.current?.children[clampedActiveIdx] as HTMLElement | undefined
     el?.scrollIntoView?.({ block: "nearest" })
@@ -152,6 +169,20 @@ export function HarnessPicker({
     }
   }
 
+  function selectModel(nextModelId: string) {
+    onModelChange?.(nextModelId)
+    if (effort && data?.model_efforts) {
+      const nextEffective = nextModelId || data.current_model || ""
+      if (nextEffective && Object.prototype.hasOwnProperty.call(data.model_efforts, nextEffective)) {
+        const nextEfforts = data.model_efforts[nextEffective] ?? []
+        if (!nextEfforts.some((e) => e.id === effort)) {
+          onEffortChange?.("")
+        }
+      }
+    }
+    setOpen(false)
+  }
+
   function handleSearchKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (modelsDisabled || filteredModels.length === 0) return
     if (e.key === "ArrowDown") {
@@ -164,8 +195,7 @@ export function HarnessPicker({
       e.preventDefault()
       const picked = filteredModels[clampedActiveIdx]
       if (picked) {
-        onModelChange?.(picked.id)
-        setOpen(false)
+        selectModel(picked.id)
       }
     }
   }
@@ -283,10 +313,7 @@ export function HarnessPicker({
                       id={`${optionIdBase}-model-${idx}`}
                       role="option"
                       aria-selected={selected}
-                      onClick={() => {
-                        onModelChange?.(item.id)
-                        setOpen(false)
-                      }}
+                      onClick={() => selectModel(item.id)}
                       className={cn(idx === clampedActiveIdx && "bg-accent/60")}
                     >
                       <span className="truncate">{item.name || item.id}</span>
@@ -303,7 +330,9 @@ export function HarnessPicker({
                 <Tooltip content={effortDisabledReason} className="w-full">
                   <Pressable aria-disabled="true" aria-label="Effort">
                     <span className="font-medium">Effort</span>
-                    <span className="text-xs text-muted-foreground">Default</span>
+                    <span className="text-xs text-muted-foreground">
+                      {modelUnsupportedEffort ? "Not supported" : "Default"}
+                    </span>
                   </Pressable>
                 </Tooltip>
               ) : (
@@ -331,7 +360,10 @@ export function HarnessPicker({
                       {[
                         {
                           id: "",
-                          name: data?.current_effort ? `Default (${data.current_effort})` : "Default",
+                          name:
+                            data?.current_effort && efforts.some((e) => e.id === data.current_effort)
+                              ? `Default (${data.current_effort})`
+                              : "Default",
                         },
                         ...efforts,
                       ].map((item) => {

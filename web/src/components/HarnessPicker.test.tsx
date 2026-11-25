@@ -197,4 +197,58 @@ describe("HarnessPicker", () => {
       mockOptions.data = { ...mockOptions.data, models: prevModels }
     }
   })
+
+  it("disables Effort and clears selected effort when model does not support effort levels", async () => {
+    const user = userEvent.setup()
+    const onModel = vi.fn()
+    const onEffort = vi.fn()
+    const prevData = mockOptions.data
+    mockOptions.data = {
+      ...prevData,
+      models: [
+        ...prevData.models,
+        { id: "gemini-pro-orchestrator-neon", name: "Orchestrator (Neon)" },
+      ],
+      model_efforts: {
+        "gemini-pro-orchestrator-neon": [],
+      },
+    } as typeof prevData & { model_efforts: Record<string, Array<{ id: string; name: string }>> }
+    try {
+      const { rerender } = renderPicker(
+        <HarnessPicker
+          idPrefix="e"
+          harness="agy"
+          model="claude-sonnet-5.5"
+          effort="medium"
+          onHarnessChange={vi.fn()}
+          onModelChange={onModel}
+          onEffortChange={onEffort}
+        />,
+      )
+      await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
+      await user.click(screen.getByRole("option", { name: "Orchestrator (Neon)" }))
+      expect(onModel).toHaveBeenCalledWith("gemini-pro-orchestrator-neon")
+      expect(onEffort).toHaveBeenCalledWith("")
+
+      rerender(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <HarnessPicker
+            idPrefix="e"
+            harness="agy"
+            model="gemini-pro-orchestrator-neon"
+            effort=""
+            onHarnessChange={vi.fn()}
+            onModelChange={onModel}
+            onEffortChange={onEffort}
+          />
+        </QueryClientProvider>,
+      )
+      await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
+      const effortRow = screen.getByLabelText("Effort")
+      expect(effortRow).toHaveAttribute("aria-disabled", "true")
+      expect(effortRow).toHaveTextContent("Not supported")
+    } finally {
+      mockOptions.data = prevData
+    }
+  })
 })

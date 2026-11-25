@@ -464,7 +464,7 @@ def _cached_harness_options(name: str, refresh: bool = False) -> tuple[dict, boo
         raise ApiError("not_found", f"unknown harness: {name!r}", 404)
     if not getattr(harness, "supports_acp", False):
         return ({"harness": name, "supported": False,
-                "models": [], "efforts": [],
+                "models": [], "efforts": [], "model_efforts": {},
                 "current_model": "", "current_effort": ""}, False, None)
     now = time.monotonic()
     hit = None if refresh else _OPTIONS_CACHE.get(name)
@@ -474,18 +474,30 @@ def _cached_harness_options(name: str, refresh: bool = False) -> tuple[dict, boo
         opts = harness.discover_options()
     except Exception as exc:
         body = {"harness": name, "supported": True,
-                "models": [], "efforts": [],
+                "models": [], "efforts": [], "model_efforts": {},
                 "current_model": "", "current_effort": "",
                 "warning": f"option probe failed: {exc}"}
         return (body, False, str(exc))
+    model_efforts = {
+        str(mid): [{"id": str(e.get("id", "")), "name": str(e.get("name", e.get("id", "")))}
+                   for e in (elist or [])]
+        for mid, elist in (getattr(opts, "model_efforts", None) or {}).items()
+    }
     body = {"harness": name, "supported": True,
             "models": [{"id": str(m.get("id", "")), "name": str(m.get("name", m.get("id", "")))}
                        for m in (opts.models or [])],
             "efforts": [{"id": str(e.get("id", "")), "name": str(e.get("name", e.get("id", "")))}
                         for e in (opts.efforts or [])],
+            "model_efforts": model_efforts,
             "current_model": str(opts.current_model or ""),
             "current_effort": str(opts.current_effort or "")}
     _OPTIONS_CACHE[name] = (now, dict(body))
+    if model_efforts:
+        try:
+            from . import store as _store
+            _store.save_harness_options_cache(name, body)
+        except Exception:
+            pass
     return (body, False, None)
 
 

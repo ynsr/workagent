@@ -760,3 +760,49 @@ def test_launch_acp_raises_on_unrelated_effort_error(tmp_path):
     h.acp_argv = lambda: [sys.executable, str(fake_agent)]
     with pytest.raises(HarnessError, match="internal server error"):
         h.launch_acp("hi", str(tmp_path), model="gemini-pro-orchestrator-neon", effort="medium", no_tty=True)
+
+
+def test_discover_options_populates_model_efforts_and_disk_cache(isolated_config, tmp_path):
+    from workagent import store
+    from workagent.agy_harness import AgyAcpHarness
+    fake_agent = tmp_path / "agent_discover_per_model.py"
+    fake_agent.write_text(
+        "import json, sys\n"
+        "for raw in sys.stdin:\n"
+        "    msg = json.loads(raw)\n"
+        "    m = msg.get('method')\n"
+        "    if m == 'initialize':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'protocolVersion':1}}), flush=True)\n"
+        "    elif m == 'session/new':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'sessionId':'s-disc','configOptions':["
+        "{'id':'model','currentValue':'gemini-4-neon','options':["
+        "{'value':'gemini-4-neon','name':'Gemini 4 Neon'},"
+        "{'value':'gemini-pro-orchestrator-neon','name':'Orchestrator (Neon)'}"
+        "]},"
+        "{'id':'thought_level','currentValue':'high','options':["
+        "{'value':'low','name':'Low'},{'value':'high','name':'High'}"
+        "]}"
+        "]}}), flush=True)\n"
+        "    elif m == 'session/set_config_option':\n"
+        "        val = msg['params']['value']\n"
+        "        if val == 'gemini-pro-orchestrator-neon':\n"
+        "            print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'configOptions':["
+        "{'id':'model','currentValue':val,'options':[]}"
+        "]}}), flush=True)\n"
+        "        else:\n"
+        "            print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'configOptions':["
+        "{'id':'thought_level','options':[{'value':'low','name':'Low'},{'value':'high','name':'High'}]}"
+        "]}}), flush=True)\n"
+    )
+    h = AgyAcpHarness()
+    h.acp_argv = lambda: [sys.executable, str(fake_agent)]
+    opts = h.discover_options()
+    assert opts.model_efforts["gemini-4-neon"] == [
+        {"id": "low", "name": "Low"},
+        {"id": "high", "name": "High"},
+    ]
+    assert opts.model_efforts["gemini-pro-orchestrator-neon"] == []
+    assert store.cached_model_efforts("agy", "gemini-4-neon") == ["low", "high"]
+    assert store.cached_model_efforts("agy", "gemini-pro-orchestrator-neon") == []
+    assert store.cached_model_efforts("agy", "unseen-model") is None
+    assert store.cached_model_efforts("agy", "gemini-4-neon", max_age_s=-1) is None

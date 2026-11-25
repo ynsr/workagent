@@ -56,6 +56,7 @@ class HarnessOptions:
     efforts: list[dict] = field(default_factory=list)
     current_model: str = ""
     current_effort: str = ""
+    model_efforts: dict[str, list[dict]] = field(default_factory=dict)
 
 
 @dataclass
@@ -457,8 +458,9 @@ class AcpHarness(Harness, abc.ABC):
                          env_file=env_file, timeout_s=timeout_s)
 
     def discover_options(self, env_file: str | None = None) -> HarnessOptions:
-        """Probe `<bin> acp` (initialize + session/new in a temp cwd)."""
+        """Probe `<bin> acp` (initialize + session/new + per-model efforts in a temp cwd)."""
         import tempfile
+        import time
         check_binary(self.acp_argv()[0])
         with tempfile.TemporaryDirectory(prefix="workagent-acp-probe-") as directory:
             client = self._open_client(env_file, directory, timeout_s=5)
@@ -468,7 +470,48 @@ class AcpHarness(Harness, abc.ABC):
                 if auth:
                     client.request("authenticate", {"methodId": auth}, timeout_s=5)
                 result = client.request("session/new", {"cwd": directory, "mcpServers": []}, timeout_s=5)
-                return self.parse_options(result if isinstance(result, dict) else {})
+                opts = self.parse_options(result if isinstance(result, dict) else {})
+                sid = str(result.get("sessionId") or "") if isinstance(result, dict) else ""
+                if opts.current_model:
+                    opts.model_efforts[opts.current_model] = list(opts.efforts)
+                if sid and opts.models:
+                    mid_cfg = self.model_config_id()
+                    deadline = time.monotonic() + 5.0
+                    for m in opts.models:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            break
+                        mid_val = str(m.get("id") or "")
+                        if not mid_val or mid_val == opts.current_model:
+                            continue
+                        try:
+                            resp = client.request(
+                                "session/set_config_option",
+                                {"sessionId": sid, "configId": mid_cfg, "value": mid_val},
+                                timeout_s=min(3.0, max(0.2, remaining)),
+                            )
+                        except HarnessTimeout:
+                            break
+                        except Exception:
+                            continue
+                        if isinstance(resp, dict) and "configOptions" in resp:
+                            try:
+                                opts.model_efforts[mid_val] = list(self.parse_options(resp).efforts)
+                            except Exception:
+                                pass
+                if opts.model_efforts:
+                    try:
+                        from . import store as _store
+                        _store.save_harness_options_cache(self.name, {
+                            "models": opts.models,
+                            "efforts": opts.efforts,
+                            "current_model": opts.current_model,
+                            "current_effort": opts.current_effort,
+                            "model_efforts": opts.model_efforts,
+                        })
+                    except Exception:
+                        pass
+                return opts
             finally:
                 client.close()
 

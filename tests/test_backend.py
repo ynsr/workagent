@@ -1285,3 +1285,42 @@ def test_omp_launch_headless_does_not_retry_on_unrelated_error(tmp_path, monkeyp
     rc = h.launch("do work", str(tmp_path), no_tty=True, model="foo", effort="medium")
     assert rc == 1
     assert len(log.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_run_harness_omits_effort_from_cached_model_capabilities(tmp_path, isolated_config, capsys):
+    from workagent import cli_harness as _h, store
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    store.save_harness_options_cache("agy", {
+        "model_efforts": {
+            "gemini-pro-orchestrator-neon": [],
+            "claude-opus-5-5": [{"id": "low", "name": "Low"}, {"id": "high", "name": "High"}],
+        },
+    })
+
+    res_unsupported = {"branch": "feat/x", "command": "start", "key": "k"}
+    _h._run_harness("agy", "do things", str(worktree), str(worktree),
+                    False, False, res_unsupported, False,
+                    model="gemini-pro-orchestrator-neon", effort="medium")
+    assert "--effort" not in res_unsupported["harness_command"]
+    assert "--model gemini-pro-orchestrator-neon" in res_unsupported["harness_command"]
+    assert "omitting --effort" in capsys.readouterr().err
+
+    res_bad_level = {"branch": "feat/x", "command": "start", "key": "k"}
+    _h._run_harness("agy", "do things", str(worktree), str(worktree),
+                    False, False, res_bad_level, False,
+                    model="claude-opus-5-5", effort="xhigh")
+    assert "--effort" not in res_bad_level["harness_command"]
+    assert "supported: low, high" in capsys.readouterr().err
+
+    res_ok = {"branch": "feat/x", "command": "start", "key": "k"}
+    _h._run_harness("agy", "do things", str(worktree), str(worktree),
+                    False, False, res_ok, False,
+                    model="claude-opus-5-5", effort="high")
+    assert "--effort high" in res_ok["harness_command"]
+
+    res_unknown = {"branch": "feat/x", "command": "start", "key": "k"}
+    _h._run_harness("agy", "do things", str(worktree), str(worktree),
+                    False, False, res_unknown, False,
+                    model="future-model", effort="medium")
+    assert "--effort medium" in res_unknown["harness_command"]

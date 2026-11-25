@@ -100,6 +100,82 @@ def load_disabled_tracker_domains() -> list[str]:
     return sorted({str(d).lower().strip().lstrip(".") for d in raw if str(d).strip()})
 
 
+HARNESS_OPTIONS_CACHE_TTL_S = 3600
+
+
+def _harness_options_cache_path() -> Path:
+    return config_dir() / "harness_options_cache.json"
+
+
+def save_harness_options_cache(harness_name: str, payload: dict) -> None:
+    """Persist discovered harness model/effort options for fast CLI pre-flight checks."""
+    if not harness_name or not isinstance(payload, dict):
+        return
+    try:
+        path = _harness_options_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path.parent / (path.name + ".lock"), "w") as lock:
+            def _update() -> None:
+                try:
+                    data = _read_json(path, {})
+                    if not isinstance(data, dict):
+                        data = {}
+                except Exception:
+                    data = {}
+                data[harness_name] = {
+                    "updated_at": time.time(),
+                    "model_efforts": payload.get("model_efforts") or {},
+                }
+                _atomic_replace(path, data)
+            _locked(lock, _update)
+    except Exception:
+        pass
+
+
+def load_harness_options_cache(harness_name: str,
+                               max_age_s: float | None = HARNESS_OPTIONS_CACHE_TTL_S) -> dict | None:
+    """Load cached harness options entry if present and within *max_age_s*."""
+    if not harness_name:
+        return None
+    try:
+        data = _read_json(_harness_options_cache_path(), {})
+    except Exception:
+        return None
+    entry = data.get(harness_name) if isinstance(data, dict) else None
+    if not isinstance(entry, dict):
+        return None
+    if max_age_s is not None:
+        updated_at = entry.get("updated_at")
+        if not isinstance(updated_at, (int, float)) or (time.time() - updated_at) > max_age_s:
+            return None
+    return entry
+
+
+def cached_model_efforts(harness_name: str, model: str,
+                         max_age_s: float | None = HARNESS_OPTIONS_CACHE_TTL_S) -> list[str] | None:
+    """Return cached supported effort IDs for *model* (`[]` = known unsupported, `None` = unknown)."""
+    if not harness_name or not model:
+        return None
+    entry = load_harness_options_cache(harness_name, max_age_s=max_age_s)
+    if not entry:
+        return None
+    me = entry.get("model_efforts")
+    if not isinstance(me, dict) or model not in me:
+        return None
+    raw = me.get(model)
+    if not isinstance(raw, list):
+        return None
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, dict):
+            eid = str(item.get("id") or "").strip()
+            if eid:
+                out.append(eid)
+        elif isinstance(item, str) and item.strip():
+            out.append(item.strip())
+    return out
+
+
 def save_disabled_tracker_domains(domains: list[str]) -> list[str]:
     """Replace the disabled-tracker domain list (normalized, sorted, deduped)."""
     clean = sorted({str(d).lower().strip().lstrip(".") for d in domains if str(d).strip()})
