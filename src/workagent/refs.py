@@ -341,6 +341,43 @@ def require_head_ref(parsed: dict, repo_dir, ref: str) -> tuple[dict, str]:
     return info, head_ref
 
 
+_ISSUE_URL_IN_TEXT = re.compile(
+    r"https?://[^\s)>]+?(?:/browse/[A-Z][A-Z0-9_]*-\d+|/-/issues/\d+|/issues/\d+)"
+)
+_CLOSES_GH_ISSUE = re.compile(
+    r"\b(?:closes|fixes|resolves)\s+#(\d+)\b", re.IGNORECASE
+)
+_JIRA_KEY_IN_TEXT = re.compile(r"\b([A-Z][A-Z0-9_]+-\d+)\b")
+
+
+def derive_issue_url(head_ref: str, info: dict | None = None,
+                     pr_parsed: dict | None = None) -> str:
+    """Best-effort issue URL from a PR/MR branch name, title, or body.
+
+    Returns ``""`` when no issue reference can be inferred.
+    """
+    title = str((info or {}).get("title") or "")
+    body = str((info or {}).get("body") or "")
+    for text in (body, title):
+        m = _ISSUE_URL_IN_TEXT.search(text)
+        if m:
+            return m.group(0).rstrip(".,;:")
+    if pr_parsed and pr_parsed.get("tool") == "gh" and pr_parsed.get("repo"):
+        for text in (body, title):
+            m = _CLOSES_GH_ISSUE.search(text)
+            if m:
+                url = issue_url(f"github:{pr_parsed['repo']}#{m.group(1)}")
+                if url:
+                    return url
+    for text in (head_ref or "", title, body):
+        m = _JIRA_KEY_IN_TEXT.search(text)
+        if m:
+            url = issue_url(f"jira:{m.group(1)}")
+            if url:
+                return url
+    return ""
+
+
 def hostname(url: str) -> str:
     return urlparse(url).netloc.lower()
 
