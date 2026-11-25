@@ -175,6 +175,25 @@ describe("FlowWizard start step constraints", () => {
       args: ["run", "ship", "jira:IPG-1", "--harness", "omp", "--yes"],
       confirm: true,
     })
+    expect(mutateAsync).toHaveBeenCalledWith({
+      command: "flow",
+      args: ["template", "update", "ship", "--harness", "omp", "--model", "", "--effort", "", "--yes"],
+      confirm: false,
+    })
+    unmount()
+  })
+
+  it("seeds harness, model, and effort from template defaults", () => {
+    cleanup()
+    const tpl = {
+      ...TEMPLATE,
+      default_harness: "omp",
+      default_model: "m1",
+      default_effort: "high",
+    } as unknown as FlowTemplateRow
+    const { unmount } = renderWizard(tpl)
+    const trigger = screen.getAllByRole("button", { name: /^Harness, model, and effort/ })[0]!
+    expect(trigger).toHaveTextContent("omp · m1 · high")
     unmount()
   })
 })

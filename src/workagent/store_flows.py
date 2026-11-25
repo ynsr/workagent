@@ -255,6 +255,9 @@ def _row(r: sqlite3.Row | tuple) -> dict:
     d["dedicated_top_bar"] = bool(d.get("dedicated_top_bar", 0))
     d["dedicated_overlay"] = bool(d.get("dedicated_overlay", 0))
     d["run_immediately"] = bool(d.get("run_immediately", 0))
+    d["default_harness"] = str(d.get("default_harness") or "")
+    d["default_model"] = str(d.get("default_model") or "")
+    d["default_effort"] = str(d.get("default_effort") or "")
     return d
 
 
@@ -307,7 +310,10 @@ def create_template(db: Path, *, name: str, label: str = "",
                     dedicated_top_bar: bool = False,
                     dedicated_overlay: bool = False,
                     category: str = "worktree",
-                    run_immediately: bool = False) -> dict:
+                    run_immediately: bool = False,
+                    default_harness: str = "",
+                    default_model: str = "",
+                    default_effort: str = "") -> dict:
     """Insert a flow template; label defaults to the normalized name."""
     from .errors import HarnessError
     if (category or "worktree") not in CATEGORIES:
@@ -336,13 +342,18 @@ def create_template(db: Path, *, name: str, label: str = "",
                 " pre_execution, post_execution, parent_labels,"
                 " protected, sort_order, dedicated_top_bar,"
                 " dedicated_overlay, category, run_immediately,"
+                " default_harness, default_model, default_effort,"
                 " created_at, modified_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (key, name.strip(), icon, json.dumps(norm), pre_execution or "",
                  post_execution or "", json.dumps(parents), int(bool(protected)),
                  int(sort_order or 0), int(bool(dedicated_top_bar)),
                  int(bool(dedicated_overlay)), category or "worktree",
-                 int(bool(run_immediately)), now, now))
+                 int(bool(run_immediately)),
+                 (default_harness or "").strip(),
+                 (default_model or "").strip(),
+                 (default_effort or "").strip(),
+                 now, now))
         except sqlite3.IntegrityError:
             raise HarnessError(
                 f"template label {key!r} already exists",
@@ -365,11 +376,15 @@ def update_template(db: Path, label: str, **fields) -> dict:
     allowed = {"name", "icon", "steps", "pre_execution", "post_execution",
                "parent_labels", "new_label", "protected", "sort_order",
                "dedicated_top_bar", "dedicated_overlay", "category",
-               "run_immediately"}
+               "run_immediately", "default_harness", "default_model",
+               "default_effort"}
     unknown = set(fields) - allowed
     if unknown:
         raise HarnessError(f"unknown fields: {sorted(unknown)}",
                            exit_code=2)
+    for _str_col in ("default_harness", "default_model", "default_effort"):
+        if _str_col in fields:
+            fields[_str_col] = str(fields[_str_col] or "").strip()
     if "name" in fields and not (fields["name"] or "").strip():
         raise HarnessError("template name must not be blank", exit_code=2)
     if "icon" in fields:

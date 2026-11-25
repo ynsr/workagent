@@ -26,6 +26,20 @@ vi.mock("@/lib/queries", () => ({
   useCreateRun: () => ({ mutateAsync }),
 }))
 
+vi.mock("@/hooks/useHarnessOptions", () => ({
+  useHarnessOptions: () => ({
+    data: {
+      supported: true,
+      models: [{ id: "m1", name: "Model One" }],
+      efforts: [{ id: "high", name: "High" }],
+      current_model: "m1",
+      current_effort: "high",
+    },
+    isPending: false,
+    isError: false,
+  }),
+}))
+
 function renderSettings() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -93,6 +107,7 @@ describe("Settings Default AI Harness", () => {
 
     await user.click(screen.getByRole("button", { name: /^Default harness/ }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
+    await user.keyboard("{Escape}")
     expect(screen.getByRole("button", { name: /^Default harness/ })).toHaveTextContent("omp")
 
     // Server config settles to "omp".
@@ -112,6 +127,27 @@ describe("Settings Default AI Harness", () => {
     expect(mutateAsync).toHaveBeenCalledWith({
       command: "config",
       args: ["set", "default-harness", "omp"],
+      confirm: false,
+    })
+  })
+
+  it("sets default model and default effort via config set", async () => {
+    const user = userEvent.setup()
+    renderSettings()
+
+    await user.click(screen.getByRole("button", { name: /^Default harness/ }))
+    await user.click(screen.getByRole("option", { name: "Model One" }))
+    expect(mutateAsync).toHaveBeenCalledWith({
+      command: "config",
+      args: ["set", "default-model", "m1"],
+      confirm: false,
+    })
+
+    await user.click(screen.getByRole("button", { name: /Effort/ }))
+    await user.click(screen.getByRole("option", { name: "High" }))
+    expect(mutateAsync).toHaveBeenCalledWith({
+      command: "config",
+      args: ["set", "default-effort", "high"],
       confirm: false,
     })
   })

@@ -536,6 +536,8 @@ def create_app(static_dir: Path, host: str, port: int,
         ]
         return {
             "default_harness": store.default_harness(),
+            "default_model": store.default_model(),
+            "default_effort": store.default_effort(),
             "supported_harnesses": sorted(backend.HARNESSES),
             "harnesses": harnesses_list,
         }

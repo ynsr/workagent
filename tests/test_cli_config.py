@@ -39,3 +39,24 @@ def test_config_set_human_readable(isolated_config):
     assert r.exit_code == 0
     assert "default_harness: omp" in r.stdout
     assert "default_harness = omp" in r.stderr
+
+
+def test_config_set_default_model_and_effort(isolated_config):
+    r1 = _invoke("config", "set", "default-model", "gemini-pro", "--json")
+    assert r1.exit_code == 0
+    assert json.loads(r1.stdout)["default_model"] == "gemini-pro"
+
+    r2 = _invoke("config", "set", "default-effort", "high", "--json")
+    assert r2.exit_code == 0
+    assert json.loads(r2.stdout)["default_effort"] == "high"
+
+    r3 = _invoke("config", "show", "--json")
+    assert r3.exit_code == 0
+    data = json.loads(r3.stdout)
+    assert data["default_model"] == "gemini-pro"
+    assert data["default_effort"] == "high"
+
+    # Clearing back to empty string works
+    r4 = _invoke("config", "set", "default-model", "", "--json")
+    assert r4.exit_code == 0
+    assert json.loads(r4.stdout)["default_model"] == ""

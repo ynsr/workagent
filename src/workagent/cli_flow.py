@@ -51,6 +51,9 @@ def template_add(
     dedicated_overlay: bool = typer.Option(False, "--dedicated-overlay/--no-dedicated-overlay", help="Show a dedicated worktree-row overlay button."),
     category: str = typer.Option("worktree", "--category", help="Scope: worktree (Dashboard) or message (Messages page)."),
     run_immediately: bool = typer.Option(False, "--run-immediately/--no-run-immediately", help="Run buttons launch immediately (standard confirm); otherwise the run form opens first."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Default coding harness for this template."),
+    model: Optional[str] = typer.Option(None, "--model", help="Default model id for this template."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="Default effort level for this template."),
     yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; add prompts nothing so this is a no-op."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
  ) -> None:
@@ -64,7 +67,10 @@ def template_add(
         post_execution=post_execution or "", protected=protected,
         sort_order=sort_order, dedicated_top_bar=dedicated_top_bar,
         dedicated_overlay=dedicated_overlay, category=category,
-        run_immediately=run_immediately)
+        run_immediately=run_immediately,
+        default_harness=harness or "",
+        default_model=model or "",
+        default_effort=effort or "")
     _print_result({"added": row["label"], "id": row["id"],
                    "name": row["name"]}, json_output)
 
@@ -122,6 +128,9 @@ def template_update(
     dedicated_overlay: Optional[bool] = typer.Option(None, "--dedicated-overlay/--no-dedicated-overlay", help="Set/unset the dedicated overlay button."),
     category: Optional[str] = typer.Option(None, "--category", help="New scope: worktree or message."),
     run_immediately: Optional[bool] = typer.Option(None, "--run-immediately/--no-run-immediately", help="Set/unset immediate runs."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="New default coding harness (empty string clears)."),
+    model: Optional[str] = typer.Option(None, "--model", help="New default model id (empty string clears)."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="New default effort level (empty string clears)."),
     new_label: Optional[str] = typer.Option(None, "--new-label", help="Rename to a new label (^[a-z0-9_]+$; flows history retargeted)."),
     yes: bool = typer.Option(False, "--yes", help="Accepted for API/frontend parity; update prompts nothing so this is a no-op."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
@@ -150,6 +159,12 @@ def template_update(
         fields["category"] = category
     if run_immediately is not None:
         fields["run_immediately"] = run_immediately
+    if harness is not None:
+        fields["default_harness"] = harness
+    if model is not None:
+        fields["default_model"] = model
+    if effort is not None:
+        fields["default_effort"] = effort
     if new_label is not None:
         fields["new_label"] = new_label
     if not fields:
@@ -177,6 +192,9 @@ def template_clone(
         steps=row.get("steps") or [],
         pre_execution=row.get("pre_execution") or "",
         post_execution=row.get("post_execution") or "",
+        default_harness=row.get("default_harness") or "",
+        default_model=row.get("default_model") or "",
+        default_effort=row.get("default_effort") or "",
         parent_labels=[src])
     _print_result({"cloned": new["label"], "id": new["id"], "from": src}, json_output)
 

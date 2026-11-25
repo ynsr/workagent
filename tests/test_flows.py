@@ -416,3 +416,30 @@ def test_execution_mode_survives_template_round_trip(tmp_path, monkeypatch):
     row = sf.get_template(db, "modes")
     assert [s["execution_mode"] for s in row["steps"]] == [
         "parallel", "parallel", "sequential", "sequential"]
+
+
+def test_template_default_harness_model_effort_round_trip(tmp_path, monkeypatch):
+    from workagent import store_flows as sf
+    db = tmp_path / "state.db"
+    monkeypatch.setattr("workagent.store_sqlite.db_path", lambda: db)
+    sf.create_template(
+        db, name="Defaults",
+        steps=[{"kind": "start"}],
+        default_harness="omp",
+        default_model="claude-sonnet",
+        default_effort="high",
+    )
+    row = sf.get_template(db, "defaults")
+    assert row["default_harness"] == "omp"
+    assert row["default_model"] == "claude-sonnet"
+    assert row["default_effort"] == "high"
+
+    updated = sf.update_template(
+        db, "defaults",
+        default_harness="agy",
+        default_model="",
+        default_effort="medium",
+    )
+    assert updated["default_harness"] == "agy"
+    assert updated["default_model"] == ""
+    assert updated["default_effort"] == "medium"

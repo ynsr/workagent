@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { Play, Workflow } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
@@ -12,7 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { errorText } from "@/components/StatusFeedback"
 import { useConfirm } from "@/lib/confirm"
-import { useActions, useCreateRun, useFlowTemplates, useRepos } from "@/lib/queries"
+import { queryKeys, useActions, useCreateRun, useFlowTemplates, useRepos } from "@/lib/queries"
 import { buildMessageArgs } from "@/lib/messageLaunchConfig"
 import {
   ROW_CATEGORIES,
@@ -58,11 +59,15 @@ export function ImmediateRunForm({
   lockCategory = false,
   onDone,
 }: ImmediateRunFormProps) {
+  const qc = useQueryClient()
   const navigate = useNavigate()
   const confirm = useConfirm()
   const createRun = useCreateRun()
   const { data: actionsData } = useActions()
   const { data: templatesData } = useFlowTemplates()
+  const initialTemplate = kind === "flow" && preset
+    ? (templatesData?.templates ?? []).find((t) => t.label === preset)
+    : undefined
   const [category, setCategory] = useState<RowCategory>(initialCategory)
   const [label, setLabel] = useState(preset)
   const [message, setMessage] = useState(messageRef)
@@ -70,10 +75,31 @@ export function ImmediateRunForm({
   const [refOverride, setRefOverride] = useState("")
   const [repo, setRepo] = useState("")
   const [runMode, setRunMode] = useState<RunMode>("headless")
-  const [harness, setHarness] = useState("")
-  const [model, setModel] = useState("")
-  const [effort, setEffort] = useState("")
+  const [harness, setHarness] = useState(() => initialTemplate?.default_harness ?? "")
+  const [model, setModel] = useState(() => initialTemplate?.default_model ?? "")
+  const [effort, setEffort] = useState(() => initialTemplate?.default_effort ?? "")
   const [running, setRunning] = useState(false)
+  const seededPresetRef = useRef(Boolean(initialTemplate))
+
+  useEffect(() => {
+    if (seededPresetRef.current || kind !== "flow" || !preset) return
+    const tpl = (templatesData?.templates ?? []).find((t) => t.label === preset)
+    if (!tpl) return
+    seededPresetRef.current = true
+    setHarness(tpl.default_harness ?? "")
+    setModel(tpl.default_model ?? "")
+    setEffort(tpl.default_effort ?? "")
+  }, [kind, preset, templatesData])
+
+  function handleLabelSelect(nextLabel: string) {
+    setLabel(nextLabel)
+    if (kind === "flow") {
+      const tpl = (templatesData?.templates ?? []).find((t) => t.label === nextLabel)
+      setHarness(tpl?.default_harness ?? "")
+      setModel(tpl?.default_model ?? "")
+      setEffort(tpl?.default_effort ?? "")
+    }
+  }
 
   const rows = useMemo(() => {
     if (kind === "action") {
@@ -133,6 +159,33 @@ export function ImmediateRunForm({
     if (!ok) return
     setRunning(true)
     try {
+      if (kind === "flow") {
+        const lbl = label.trim()
+        const tpl = (templatesData?.templates ?? []).find((t) => t.label === lbl)
+        if (
+          tpl &&
+          (harness !== (tpl.default_harness ?? "") ||
+            model !== (tpl.default_model ?? "") ||
+            effort !== (tpl.default_effort ?? ""))
+        ) {
+          try {
+            await createRun.mutateAsync({
+              command: "flow",
+              args: [
+                "template", "update", lbl,
+                "--harness", harness,
+                "--model", model,
+                "--effort", effort,
+                "--yes",
+              ],
+              confirm: false,
+            })
+            if (queryKeys.flowTemplates) void qc.invalidateQueries({ queryKey: queryKeys.flowTemplates })
+          } catch (err) {
+            toast.error(errorText(err))
+          }
+        }
+      }
       const jobArgSets: { command: "action" | "flow" | "message"; args: string[]; ref: string }[] =
         targets.map((ref) => ({ ...argsFor(ref), ref }))
       for (const { command, args, ref } of jobArgSets) {
@@ -168,7 +221,7 @@ export function ImmediateRunForm({
           id="immediate-run-label"
           className="h-9 rounded-md border bg-background px-2 text-sm"
           value={label}
-          onChange={(e) => setLabel(e.target.value)}
+          onChange={(e) => handleLabelSelect(e.target.value)}
         >
           <option value="">{kind === "action" ? "Run action…" : "Run flow…"}</option>
           {rows.map((r) => (

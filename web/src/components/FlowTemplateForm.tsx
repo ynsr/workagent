@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import { ChainEditor, validateChain } from "@/components/ChainEditor"
 import { SegmentedControl, SuggestIconButton } from "@/components/FormControls"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { IconPicker } from "@/components/IconPicker"
 import { ScriptField } from "@/components/ScriptBlock"
 import { errorText } from "@/components/StatusFeedback"
@@ -31,6 +32,9 @@ export interface FlowTemplateFormSeed {
   lineageNote: string | null
   category: RowCategory
   runImmediately: boolean
+  harness: string
+  model: string
+  effort: string
 }
 
 export const EMPTY_FLOW_TEMPLATE_SEED: FlowTemplateFormSeed = {
@@ -44,6 +48,9 @@ export const EMPTY_FLOW_TEMPLATE_SEED: FlowTemplateFormSeed = {
   lineageNote: null,
   category: "worktree",
   runImmediately: false,
+  harness: "",
+  model: "",
+  effort: "",
 }
 
 /** Seed a draft from an existing template (edit). */
@@ -59,6 +66,9 @@ export function seedFromTemplate(row: FlowTemplateRow): FlowTemplateFormSeed {
     lineageNote: null,
     category: row.category === "message" ? "message" : "worktree",
     runImmediately: isRunImmediateTemplate(row),
+    harness: row.default_harness ?? "",
+    model: row.default_model ?? "",
+    effort: row.default_effort ?? "",
   }
 }
 
@@ -87,6 +97,9 @@ export function FlowTemplateFormCard({ seed, knownActions, usedIcons, onDone }: 
   const [icon, setIcon] = useState(seed.icon?.trim() ? seed.icon : "Zap")
   const [category, setCategory] = useState<RowCategory>(seed.category)
   const [runImmediately, setRunImmediately] = useState(seed.runImmediately)
+  const [harness, setHarness] = useState(seed.harness)
+  const [model, setModel] = useState(seed.model)
+  const [effort, setEffort] = useState(seed.effort)
   const [saving, setSaving] = useState(false)
   const isEdit = seed.editingLabel !== null
   const labelValid = /^[a-z0-9_]+$/.test(label)
@@ -109,7 +122,7 @@ export function FlowTemplateFormCard({ seed, knownActions, usedIcons, onDone }: 
         command: "flow",
         confirm: true,
         args: buildFlowTemplateUpsertArgs(seed.editingLabel, {
-          name, label, icon, steps, pre, post, runImmediately, category,
+          name, label, icon, steps, pre, post, runImmediately, category, harness, model, effort,
         }),
       })
       toast.success(isEdit ? "Flow template update started" : "Flow template add started", {
@@ -190,6 +203,19 @@ export function FlowTemplateFormCard({ seed, knownActions, usedIcons, onDone }: 
           value={category}
           onChange={setCategory}
         />
+        <div className="grid gap-2">
+          <Label>Default harness, model &amp; effort</Label>
+          <HarnessPicker
+            idPrefix="flow-template"
+            harness={harness}
+            model={model}
+            effort={effort}
+            onHarnessChange={(v) => { setHarness(v); setModel(""); setEffort("") }}
+            onModelChange={setModel}
+            onEffortChange={setEffort}
+            allowDefault
+          />
+        </div>
         <div className="grid gap-2">
           <Label>Steps</Label>
           {seed.lineageNote ? (

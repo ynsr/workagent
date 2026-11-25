@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { ChainEditor, startRepoState, validateChain } from "@/components/ChainEditor"
@@ -8,7 +9,7 @@ import { chainRunsParallel, runChainOnWorktrees, summarizeExecution } from "@/li
 import { ActionDialog } from "@/components/LinkDialogs"
 import { Button } from "@/components/ui/button"
 import { errorText } from "@/components/StatusFeedback"
-import { useActions, useCreateRun } from "@/lib/queries"
+import { queryKeys, useActions, useCreateRun } from "@/lib/queries"
 import type { FlowStep, FlowTemplateRow } from "@/lib/api"
 
 
@@ -24,13 +25,14 @@ export function FlowWizard({
   refs: string[]
   onClose: () => void
 }) {
+  const qc = useQueryClient()
   const navigate = useNavigate()
   const createRun = useCreateRun()
   const { data: actionsData } = useActions()
   const [working, setWorking] = useState<FlowStep[]>(() => structuredClone(template.steps ?? []))
-  const [harness, setHarness] = useState("")
-  const [model, setModel] = useState("")
-  const [effort, setEffort] = useState("")
+  const [harness, setHarness] = useState(() => template.default_harness ?? "")
+  const [model, setModel] = useState(() => template.default_model ?? "")
+  const [effort, setEffort] = useState(() => template.default_effort ?? "")
   const [fresh, setFresh] = useState(false)
   const [saving, setSaving] = useState(false)
   const knownActions = (actionsData?.actions ?? []).map((a) => ({ label: a.label, name: a.name }))
@@ -39,15 +41,41 @@ export function FlowWizard({
   const repoState = startRepoState(working)
   const repoMissing = repoState === "missing"
   const runDisabled = sorted.length === 0 || repoMissing || chainErrors.length > 0
-  const dirty = JSON.stringify(working) !== JSON.stringify(template.steps ?? [])
+  const stepsDirty = JSON.stringify(working) !== JSON.stringify(template.steps ?? [])
+  const harnessDirty =
+    harness !== (template.default_harness ?? "") ||
+    model !== (template.default_model ?? "") ||
+    effort !== (template.default_effort ?? "")
+  const dirty = stepsDirty || harnessDirty
   const harnessArgs = [...(harness ? ["--harness", harness] : []), ...modelEffortArgs({ model, effort })]
-  const stepArgs = dirty ? ["--steps", JSON.stringify(working)] : []
+  const stepArgs = stepsDirty ? ["--steps", JSON.stringify(working)] : []
   const freshArgs = fresh ? ["--fresh"] : []
+  async function persistTemplateDefaults() {
+    if (!harnessDirty) return
+    try {
+      await createRun.mutateAsync({
+        command: "flow",
+        args: [
+          "template", "update", template.label,
+          "--harness", harness,
+          "--model", model,
+          "--effort", effort,
+          "--yes",
+        ],
+        confirm: false,
+      })
+      if (queryKeys.flowTemplates) void qc.invalidateQueries({ queryKey: queryKeys.flowTemplates })
+    } catch (err) {
+      toast.error(errorText(err))
+    }
+  }
   function handleConfirm() {
     const parallel = chainRunsParallel(working)
     const label = template.label
     onClose()
-    void runChainOnWorktrees({
+    void (async () => {
+      await persistTemplateDefaults()
+      await runChainOnWorktrees({
       keys: sorted,
       parallel,
       createRun: (key) => createRun.mutateAsync({
@@ -76,6 +104,7 @@ export function FlowWizard({
         },
       },
     })
+    })()
   }
   const saveDisabled = saving || chainErrors.length > 0
   async function handleSave() {
@@ -83,9 +112,17 @@ export function FlowWizard({
     try {
       await createRun.mutateAsync({
         command: "flow",
-        args: ["template", "update", template.label, "--steps", JSON.stringify(working), "--yes"],
+        args: [
+          "template", "update", template.label,
+          "--steps", JSON.stringify(working),
+          "--harness", harness,
+          "--model", model,
+          "--effort", effort,
+          "--yes",
+        ],
         confirm: false,
       })
+      if (queryKeys.flowTemplates) void qc.invalidateQueries({ queryKey: queryKeys.flowTemplates })
       toast.success(`Template ${template.label} updated`)
     } catch (err) {
       toast.error(errorText(err))
@@ -106,9 +143,10 @@ export function FlowWizard({
       await createRun.mutateAsync({
         command: "flow",
         args: ["template", "add", "--name", name.trim(), "--label", label.trim(),
-               "--steps", JSON.stringify(working), "--yes"],
+               "--steps", JSON.stringify(working), ...harnessArgs, "--yes"],
         confirm: false,
       })
+      if (queryKeys.flowTemplates) void qc.invalidateQueries({ queryKey: queryKeys.flowTemplates })
       toast.success(`Template ${label.trim()} created`)
     } catch (err) {
       toast.error(errorText(err))
@@ -118,6 +156,9 @@ export function FlowWizard({
   }
   function handleReset() {
     setWorking(structuredClone(template.steps ?? []))
+    setHarness(template.default_harness ?? "")
+    setModel(template.default_model ?? "")
+    setEffort(template.default_effort ?? "")
   }
 
   return (

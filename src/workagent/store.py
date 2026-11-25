@@ -18,11 +18,21 @@ from pathlib import Path
 
 
 DEFAULT_HARNESS = "agy"
+DEFAULT_MODEL = ""
+DEFAULT_EFFORT = ""
 SUPPORTED_HARNESSES = ("agy", "omp")
 
 
 def default_harness() -> str:
     return str(load_config().get("default_harness") or DEFAULT_HARNESS)
+
+
+def default_model() -> str:
+    return str(load_config().get("default_model") or DEFAULT_MODEL)
+
+
+def default_effort() -> str:
+    return str(load_config().get("default_effort") or DEFAULT_EFFORT)
 
 
 
@@ -85,6 +95,8 @@ def _atomic_replace(path: Path, data: dict) -> None:
 def load_config() -> dict:
     cfg = _read_json(config_dir() / "config.json", {})
     cfg.setdefault("default_harness", DEFAULT_HARNESS)
+    cfg.setdefault("default_model", DEFAULT_MODEL)
+    cfg.setdefault("default_effort", DEFAULT_EFFORT)
     cfg.setdefault("repos", {})
     cfg.setdefault("trackers", {})
     return cfg

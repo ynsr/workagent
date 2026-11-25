@@ -393,6 +393,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
         return
     run_id: int | None = None
     db = _sq.db_path()
+    model, effort = backend.resolve_model_effort(harness_name, model, effort)
     session_path = session_file or ""
     if run_key and is_exec:
         # Atomic one-harness-per-worktree lock: claim first, inside the same

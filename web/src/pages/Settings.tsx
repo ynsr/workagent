@@ -40,15 +40,33 @@ export function Settings() {
   const { data: cfg } = useConfig()
   const createRun = useCreateRun()
   const [pending, setPending] = useState<{ value: string; baseline: string | undefined } | null>(null)
+  const [pendingModel, setPendingModel] = useState<{ value: string; baseline: string | undefined } | null>(null)
+  const [pendingEffort, setPendingEffort] = useState<{ value: string; baseline: string | undefined } | null>(null)
   const optimisticActive = pending !== null && cfg?.default_harness === pending.baseline
   const resolvedHarness = optimisticActive ? pending.value : cfg?.default_harness
   const currentHarness = resolvedHarness && resolvedHarness.length > 0 ? resolvedHarness : "agy"
+  const optimisticModelActive = pendingModel !== null && cfg?.default_model === pendingModel.baseline
+  const currentModel = (optimisticModelActive ? pendingModel.value : cfg?.default_model) ?? ""
+  const optimisticEffortActive = pendingEffort !== null && cfg?.default_effort === pendingEffort.baseline
+  const currentEffort = (optimisticEffortActive ? pendingEffort.value : cfg?.default_effort) ?? ""
 
   useEffect(() => {
     if (pending !== null && cfg?.default_harness !== pending.baseline) {
       setPending(null)
     }
   }, [cfg?.default_harness, pending])
+
+  useEffect(() => {
+    if (pendingModel !== null && cfg?.default_model !== pendingModel.baseline) {
+      setPendingModel(null)
+    }
+  }, [cfg?.default_model, pendingModel])
+
+  useEffect(() => {
+    if (pendingEffort !== null && cfg?.default_effort !== pendingEffort.baseline) {
+      setPendingEffort(null)
+    }
+  }, [cfg?.default_effort, pendingEffort])
 
   const [verbose, setVerboseState] = useState(() => getVerbose())
   const [optOuts, setOptOutsState] = useState<Partial<Record<OptOutAction, boolean>>>(
@@ -58,17 +76,73 @@ export function Settings() {
   async function handleDefaultHarness(next: string) {
     if (next === currentHarness) return
     const baseline = cfg?.default_harness
+    const modelBaseline = cfg?.default_model
+    const effortBaseline = cfg?.default_effort
     setPending({ value: next, baseline })
+    if (currentModel) setPendingModel({ value: "", baseline: modelBaseline })
+    if (currentEffort) setPendingEffort({ value: "", baseline: effortBaseline })
     try {
       await createRun.mutateAsync({
         command: "config",
         args: ["set", "default-harness", next],
         confirm: false,
       })
+      if (currentModel) {
+        await createRun.mutateAsync({
+          command: "config",
+          args: ["set", "default-model", ""],
+          confirm: false,
+        })
+      }
+      if (currentEffort) {
+        await createRun.mutateAsync({
+          command: "config",
+          args: ["set", "default-effort", ""],
+          confirm: false,
+        })
+      }
       toast.success(`Default AI harness set to ${next}`)
       void qc.invalidateQueries({ queryKey: queryKeys.config })
     } catch (err) {
       setPending((cur) => (cur?.value === next && cur.baseline === baseline ? null : cur))
+      setPendingModel((cur) => (cur?.baseline === modelBaseline ? null : cur))
+      setPendingEffort((cur) => (cur?.baseline === effortBaseline ? null : cur))
+      toast.error(errorText(err))
+    }
+  }
+
+  async function handleDefaultModel(next: string) {
+    if (next === currentModel) return
+    const baseline = cfg?.default_model
+    setPendingModel({ value: next, baseline })
+    try {
+      await createRun.mutateAsync({
+        command: "config",
+        args: ["set", "default-model", next],
+        confirm: false,
+      })
+      toast.success(next ? `Default AI model set to ${next}` : "Default AI model reset to harness default")
+      void qc.invalidateQueries({ queryKey: queryKeys.config })
+    } catch (err) {
+      setPendingModel((cur) => (cur?.value === next && cur.baseline === baseline ? null : cur))
+      toast.error(errorText(err))
+    }
+  }
+
+  async function handleDefaultEffort(next: string) {
+    if (next === currentEffort) return
+    const baseline = cfg?.default_effort
+    setPendingEffort({ value: next, baseline })
+    try {
+      await createRun.mutateAsync({
+        command: "config",
+        args: ["set", "default-effort", next],
+        confirm: false,
+      })
+      toast.success(next ? `Default effort set to ${next}` : "Default effort reset to harness default")
+      void qc.invalidateQueries({ queryKey: queryKeys.config })
+    } catch (err) {
+      setPendingEffort((cur) => (cur?.value === next && cur.baseline === baseline ? null : cur))
       toast.error(errorText(err))
     }
   }
@@ -131,16 +205,19 @@ export function Settings() {
         <CardHeader>
           <CardTitle>Default AI Harness</CardTitle>
           <CardDescription>
-            Coding agent CLI used when <span className="font-mono text-[13px]">--harness</span> is not passed.
+            Coding agent CLI, model, and effort used when <span className="font-mono text-[13px]">--harness</span>, <span className="font-mono text-[13px]">--model</span>, or <span className="font-mono text-[13px]">--effort</span> is not passed.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <HarnessPicker
             idPrefix="settings-default"
             allowDefault={false}
-            harnessOnly
             harness={currentHarness}
+            model={currentModel}
+            effort={currentEffort}
             onHarnessChange={(next) => void handleDefaultHarness(next)}
+            onModelChange={(next) => void handleDefaultModel(next)}
+            onEffortChange={(next) => void handleDefaultEffort(next)}
             label="Default harness"
           />
         </CardContent>

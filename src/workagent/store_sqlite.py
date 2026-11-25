@@ -108,7 +108,10 @@ CREATE TABLE IF NOT EXISTS flow_templates (
   dedicated_top_bar INTEGER NOT NULL DEFAULT 0,
   dedicated_overlay INTEGER NOT NULL DEFAULT 0,
   run_immediately INTEGER NOT NULL DEFAULT 0,
-  category TEXT NOT NULL DEFAULT 'worktree');
+  category TEXT NOT NULL DEFAULT 'worktree',
+  default_harness TEXT NOT NULL DEFAULT '',
+  default_model TEXT NOT NULL DEFAULT '',
+  default_effort TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS flows (
   id INTEGER PRIMARY KEY AUTOINCREMENT, template_label TEXT NOT NULL,
   worktree_ref TEXT NOT NULL DEFAULT '',
@@ -600,6 +603,16 @@ def _migrate_flow_template_icon(conn) -> None:
     tcols = {r[1] for r in conn.execute("PRAGMA table_info(flow_templates)")}
     if tcols and "icon" not in tcols:
         conn.execute("ALTER TABLE flow_templates ADD COLUMN icon TEXT NOT NULL DEFAULT 'Zap'")
+
+
+def _migrate_flow_template_harness_defaults(conn) -> None:
+    """Issue #203: flow_templates gains default_harness, default_model, default_effort."""
+    tcols = {r[1] for r in conn.execute("PRAGMA table_info(flow_templates)")}
+    if not tcols:
+        return
+    for col in ("default_harness", "default_model", "default_effort"):
+        if col not in tcols:
+            conn.execute(f"ALTER TABLE flow_templates ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
 
 
 def _migrate_run_immediately(conn) -> None:
@@ -2070,6 +2083,7 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
                 _migrate_category(conn)
                 _migrate_run_immediately(conn)
                 _migrate_flow_template_icon(conn)
+                _migrate_flow_template_harness_defaults(conn)
                 migrate_sessions_into_runs(conn, path.parent)
                 _migrate_prodtest_cols(conn)
                 _migrate_runs_worktree_fk(conn)
