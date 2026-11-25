@@ -457,7 +457,7 @@ function StepConfigForm({
 }
 
 /** Bulk execution-mode buttons: set every parallelizable step at once.
- * start/cleanup/release are untouched (always sequential across worktrees). */
+ * cleanup/release are untouched (always sequential across worktrees). */
 export function ExecutionBulkBar({ steps, onChange }: {
   steps: FlowStep[]
   onChange?: (steps: FlowStep[]) => void

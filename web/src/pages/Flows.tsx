@@ -32,7 +32,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import type { FlowRow } from "@/lib/api"
-import { effectiveExecutionMode } from "@/lib/flowExecution"
+import { defaultExecutionMode, effectiveExecutionMode } from "@/lib/flowExecution"
 import { exactDateTime, relativeDate, copyToClipboard } from "@/lib/format"
 import { useCreateRun, useFlows } from "@/lib/queries"
 
@@ -292,7 +292,7 @@ export function Flows() {
                     {i + 1}. {r.kind} — {r.status}
                     {(() => {
                       const effStep = detail.effective_steps?.[i]
-                      const mode = effStep ? effectiveExecutionMode(effStep) : (r.kind === "start" ? "parallel" : "sequential")
+                      const mode = effStep ? effectiveExecutionMode(effStep) : defaultExecutionMode(r.kind)
                       return (
                         <span
                           title={mode === "parallel" ? "Ran concurrently across worktrees" : "Ran one worktree at a time"}
