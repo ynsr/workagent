@@ -75,7 +75,7 @@ describe("HarnessPicker (issue #112 / #181)", () => {
     expect(onChange).toHaveBeenCalledWith("omp")
   })
 
-  it("renders discovered model and effort options with Default empty", async () => {
+  it("keeps popover open until both model and effort are chosen, or Escape is pressed", async () => {
     const user = userEvent.setup()
     const onModel = vi.fn()
     const onEffort = vi.fn()
@@ -90,15 +90,33 @@ describe("HarnessPicker (issue #112 / #181)", () => {
         onEffortChange={onEffort}
       />,
     )
-    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
+    const trigger = screen.getByRole("button", { name: /^Harness, model, and effort/ })
+    await user.click(trigger)
     expect(screen.getByRole("option", { name: "Model One" })).toBeInTheDocument()
     await user.click(screen.getByRole("option", { name: "Model One" }))
     expect(onModel).toHaveBeenCalledWith("m1")
+    // Still open after picking only Model.
+    expect(trigger).toHaveAttribute("aria-expanded", "true")
 
-    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("button", { name: /Effort/ }))
     await user.click(screen.getByRole("option", { name: "High" }))
     expect(onEffort).toHaveBeenCalledWith("high")
+    // Closes once both Model and Effort have been chosen.
+    expect(trigger).toHaveAttribute("aria-expanded", "false")
+
+    // Reverse order: Effort first stays open, then Model closes.
+    await user.click(trigger)
+    await user.click(screen.getByRole("button", { name: /Effort/ }))
+    await user.click(screen.getByRole("option", { name: "High" }))
+    expect(trigger).toHaveAttribute("aria-expanded", "true")
+    await user.click(screen.getByRole("option", { name: "Model One" }))
+    expect(trigger).toHaveAttribute("aria-expanded", "false")
+
+    // Escape closes without requiring both.
+    await user.click(trigger)
+    expect(trigger).toHaveAttribute("aria-expanded", "true")
+    await user.keyboard("{Escape}")
+    expect(trigger).toHaveAttribute("aria-expanded", "false")
   })
 })
 

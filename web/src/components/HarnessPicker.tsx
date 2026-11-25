@@ -53,6 +53,7 @@ export function HarnessPicker({
   const [activeIdx, setActiveIdx] = useState(0)
   const optionIdBase = useId()
   const modelListRef = useRef<HTMLDivElement>(null)
+  const pickedInSessionRef = useRef({ model: false, effort: false })
 
   const { data: cfg } = useConfig()
   const def = (cfg?.default_harness ?? "") || "agy"
@@ -138,6 +139,7 @@ export function HarnessPicker({
       setSearch("")
       setActiveIdx(0)
       setEffortOpen(false)
+      pickedInSessionRef.current = { model: false, effort: false }
     }
   }
 
@@ -146,8 +148,26 @@ export function HarnessPicker({
     if (next !== harness) {
       setSearch("")
       setActiveIdx(0)
+      pickedInSessionRef.current = { model: false, effort: false }
     }
     if (harnessOnly) {
+      setOpen(false)
+    }
+  }
+
+  function pickModel(id: string) {
+    onModelChange?.(id)
+    pickedInSessionRef.current.model = true
+    if (pickedInSessionRef.current.effort || effortsDisabled) {
+      setOpen(false)
+    }
+  }
+
+  function pickEffort(id: string) {
+    onEffortChange?.(id)
+    setEffortOpen(false)
+    pickedInSessionRef.current.effort = true
+    if (pickedInSessionRef.current.model || modelsDisabled) {
       setOpen(false)
     }
   }
@@ -164,8 +184,7 @@ export function HarnessPicker({
       e.preventDefault()
       const picked = filteredModels[clampedActiveIdx]
       if (picked) {
-        onModelChange?.(picked.id)
-        setOpen(false)
+        pickModel(picked.id)
       }
     }
   }
@@ -283,10 +302,7 @@ export function HarnessPicker({
                       id={`${optionIdBase}-model-${idx}`}
                       role="option"
                       aria-selected={selected}
-                      onClick={() => {
-                        onModelChange?.(item.id)
-                        setOpen(false)
-                      }}
+                      onClick={() => pickModel(item.id)}
                       className={cn(idx === clampedActiveIdx && "bg-accent/60")}
                     >
                       <span className="truncate">{item.name || item.id}</span>
@@ -342,11 +358,7 @@ export function HarnessPicker({
                             role="option"
                             aria-selected={selected}
                             className="pl-5 text-xs"
-                            onClick={() => {
-                              onEffortChange?.(item.id)
-                              setEffortOpen(false)
-                              setOpen(false)
-                            }}
+                            onClick={() => pickEffort(item.id)}
                           >
                             <span className="truncate">{item.name || item.id}</span>
                             {selected ? <Check aria-hidden className="size-3.5 shrink-0 text-primary" /> : null}

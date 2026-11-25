@@ -296,6 +296,7 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
             result["session_file"] = session_file
         except Exception:
             pass
+    model, effort = backend.resolve_model_effort(harness_name, model, effort)
     preview_extra = harness.session_file_flag(session_file) if session_file else []
     preview_args = _HARNESS_ARGS + preview_extra if preview_extra else _HARNESS_ARGS
     preview_no_tty = no_tty and launch
