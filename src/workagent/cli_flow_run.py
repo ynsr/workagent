@@ -352,6 +352,8 @@ def flow_run(
             _fail(f"no linked state for {ref}", EXIT_USAGE)
         from . import cli_review as _cr
         key, entry = _cr.auto_register_pr_worktree(ref, parsed, yes=True)
+    if not key and not any(s["kind"] == "start" for s in merged_steps):
+        _fail(f"no linked worktree for {ref}", EXIT_USAGE)
     flow = None if fresh else _find_resumable(tpl["label"], ref, key)
     if flow is not None:
         stored = flow.get("effective_steps")

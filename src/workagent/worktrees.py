@@ -55,18 +55,21 @@ def resolve_worktree(ref: str, links: dict) -> str | list[str] | None:
     match, then path match, then substring over keys/branches/paths.
     Returns the key, a list on ambiguity, or None.
     """
+    if not ref or not ref.strip():
+        return None
     if ref in links:
         return ref
-    if ref:
+    norm_ref = refs.normalize_pr_url(ref)
+    if norm_ref:
         url_hits = [k for k, v in links.items()
-                    if isinstance(v, dict) and v.get("issue_url") == ref
+                    if isinstance(v, dict)
+                    and (refs.normalize_pr_url(str(v.get("issue_url", "") or "")) == norm_ref
+                         or refs.normalize_pr_url(str(v.get("pr_url", "") or "")) == norm_ref)
                     and v.get("worktree")]
         if len(url_hits) == 1:
-            # A stored issue_url match wins outright: the substring scan
+            # A stored issue_url/pr_url match wins outright: the substring scan
             # (bare "69" matching "IPG-1069", "69" in branch slugs, ...)
-            # must not dilute it into an ambiguous list (flow #71: the
-            # GitHub issue URL matched both its jira:IPG-1069@... and
-            # github:o/r#69 kin rows under --yes).
+            # must not dilute it into an ambiguous list (flow #71, #188).
             return url_hits[0]
         norm_ref = refs.normalize_pr_url(ref) if ref.startswith("http") else ""
         pr_hits = [k for k, v in links.items()
@@ -105,28 +108,36 @@ def resolve_worktree(ref: str, links: dict) -> str | list[str] | None:
         for k, v in links.items():
             if want and want == _norm_path(v.get("worktree", "") or ""):
                 return k
-    matches = [k for k, v in links.items()
-               if needle in k
-               or needle in (v.get("worktree", "") or "")
-               or needle in (v.get("branch", "") or "")]
-    if not matches:
-        bare = needle.split("/")[-1].split("--")[0].strip()
-        if bare and bare != needle:
-            matches = [k for k, v in links.items()
-                       if bare in k
-                       or bare in (v.get("worktree", "") or "")
-                       or bare in (v.get("branch", "") or "")]
+    matches: list[str] = []
+    if needle:
+        matches = [k for k, v in links.items()
+                   if needle in k
+                   or needle in (v.get("worktree", "") or "")
+                   or needle in (v.get("branch", "") or "")]
+        if not matches:
+            bare = needle.split("/")[-1].split("--")[0].strip()
+            if bare and bare != needle:
+                matches = [k for k, v in links.items()
+                           if bare in k
+                           or bare in (v.get("worktree", "") or "")
+                           or bare in (v.get("branch", "") or "")]
     if exact is not None and exact not in matches:
         matches = [exact, *matches]
     if not matches:
         return None
     if len(matches) == 1:
         return matches[0]
-    stored_url = str((links.get(exact, {}) or {}).get("issue_url", "") or "")
-    if exact is not None and ref and ref == stored_url:
-        # The canonical row's own stored issue_url confirms this URL ref:
-        # hand it back instead of the ambiguous substring list (flow #71).
-        return exact
+    if exact is not None:
+        exact_entry = links.get(exact, {}) or {}
+        stored_urls = {refs.normalize_pr_url(str(exact_entry.get("issue_url", "") or "")),
+                       refs.normalize_pr_url(str(exact_entry.get("pr_url", "") or ""))} - {""}
+        cand_urls = ({norm_ref} if norm_ref else set()) | (
+            {refs.normalize_pr_url(str(parsed.get("url", "") or ""))} - {""} if parsed else set()
+        )
+        if stored_urls & cand_urls:
+            # The canonical row's own stored issue_url/pr_url confirms this URL ref:
+            # hand it back instead of the ambiguous substring list (flow #71, #188).
+            return exact
     return matches
 
 
@@ -168,6 +179,8 @@ def pick_worktree(ref: str, resolved: str | list[str], links: dict | None = None
     from .cli import _fail, EXIT_USAGE
     if isinstance(resolved, str):
         return resolved
+    if not ref or not ref.strip() or not resolved:
+        _fail(f"no linked state for {ref}", EXIT_USAGE)
     if not sys.stdin.isatty():
         _fail(f"ambiguous ref {ref!r} matches: {', '.join(resolved)}.\n"
               "  Re-run with the exact worktree key.", EXIT_USAGE)
