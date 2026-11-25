@@ -1409,4 +1409,131 @@ def test_flow_run_without_start_step_fails_fast_when_unlinked(tmp_path, monkeypa
     assert created == []
 
 
+def test_flow_template_add_and_update_default_harness_model_effort(isolated_config):
+    import json as _json
+    from typer.testing import CliRunner
+    from workagent import cli_flow as cli_mod
+
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, [
+        "flow", "template", "add",
+        "--name", "With Defaults",
+        "--label", "with_defaults",
+        "--steps", '[{"kind": "review"}]',
+        "--harness", "omp",
+        "--model", "claude-sonnet",
+        "--effort", "high",
+        "--json",
+    ])
+    assert res.exit_code == 0, res.output
+    show1 = runner.invoke(cli_mod.app, ["flow", "template", "show", "with_defaults", "--json"])
+    assert show1.exit_code == 0, show1.output
+    added = _json.loads(show1.stdout)
+    assert added["default_harness"] == "omp"
+    assert added["default_model"] == "claude-sonnet"
+    assert added["default_effort"] == "high"
+
+    res2 = runner.invoke(cli_mod.app, [
+        "flow", "template", "update", "with_defaults",
+        "--harness", "agy",
+        "--model", "",
+        "--effort", "medium",
+        "--json",
+    ])
+    assert res2.exit_code == 0, res2.output
+    show2 = runner.invoke(cli_mod.app, ["flow", "template", "show", "with_defaults", "--json"])
+    assert show2.exit_code == 0, show2.output
+    updated = _json.loads(show2.stdout)
+    assert updated["default_harness"] == "agy"
+    assert updated["default_model"] == ""
+    assert updated["default_effort"] == "medium"
+
+
+def test_flow_run_resume_uses_template_default_harness_for_cascade(monkeypatch):
+    from typer.testing import CliRunner
+    from workagent import cli_flow as cli_mod
+
+    tpl = {
+        "label": "t1", "name": "T1",
+        "default_harness": "omp",
+        "steps": [{"kind": "start"}, {"kind": "review"}],
+    }
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.default_harness", lambda: "agy")
+    existing = {
+        "id": 78,
+        "template_label": "t1",
+        "worktree_ref": "jira:X-1",
+        "repo_snapshot": {"repo": "projectx"},
+        "status": "running",
+        "current_step": 0,
+        "step_results": [],
+        "effective_steps": [
+            {"kind": "start", "execution_mode": "sequential", "config": {"harness": "agy"}},
+            {"kind": "review", "execution_mode": "parallel", "config": {}},
+        ],
+    }
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [existing])
+    monkeypatch.setattr("workagent.store.update_flow", lambda fid, **f: {**existing, **f})
+    monkeypatch.setattr(cli_mod, "_resolve_ref", lambda ref: ("jira:X-1", {"repo": "projectx"}, None))
+    cascade_default_harnesses = []
+    from workagent import cli_flow_run as cfr_mod
+    orig_apply = cfr_mod._apply_cascade
+    def spy_apply(steps_arg, cascade_arg, dh_arg):
+        cascade_default_harnesses.append(dh_arg)
+        return orig_apply(steps_arg, cascade_arg, dh_arg)
+    monkeypatch.setattr(cfr_mod, "_apply_cascade", spy_apply)
+    seen_cfgs = {}
+    monkeypatch.setattr(
+        cli_mod, "_run_start_step",
+        lambda ref, wt, cfg, no_tty: seen_cfgs.setdefault("start", dict(cfg)) and {"status": "ok"} or {"status": "ok"},
+    )
+    monkeypatch.setattr(
+        cli_mod, "_run_review_step",
+        lambda wt, cfg, seq, no_tty: seen_cfgs.setdefault("review", dict(cfg)) and {"status": "ok"} or {"status": "ok"},
+    )
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, [
+        "flow", "run", "t1", "jira:X-1", "--yes",
+        "--model", "m1", "--effort", "high",
+    ])
+    assert res.exit_code == 0, res.output
+    assert cascade_default_harnesses == ["omp", "omp"]
+    assert seen_cfgs["review"]["harness"] == "omp"
+    assert seen_cfgs["review"]["model"] == "m1"
+    assert seen_cfgs["review"]["effort"] == "high"
+
+
+def test_flow_run_harness_override_clears_template_model_effort(monkeypatch):
+    from typer.testing import CliRunner
+    from workagent import cli_flow as cli_mod
+
+    tpl = {
+        "label": "t2", "name": "T2",
+        "default_harness": "omp",
+        "default_model": "claude-sonnet",
+        "default_effort": "high",
+        "steps": [{"kind": "review"}],
+    }
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.default_harness", lambda: "agy")
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [])
+    monkeypatch.setattr("workagent.store.create_flow", lambda **f: {"id": 79, "current_step": 0, "step_results": [], **f})
+    monkeypatch.setattr("workagent.store.update_flow", lambda fid, **f: {"id": fid, **f})
+    monkeypatch.setattr(cli_mod, "_resolve_ref", lambda ref: ("jira:X-1", {"repo": "projectx"}, None))
+    seen_cfg = {}
+    monkeypatch.setattr(
+        cli_mod, "_run_review_step",
+        lambda wt, cfg, seq, no_tty: seen_cfg.update(cfg) or {"status": "ok"},
+    )
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, [
+        "flow", "run", "t2", "jira:X-1", "--yes", "--harness", "agy",
+    ])
+    assert res.exit_code == 0, res.output
+    assert seen_cfg["harness"] == "agy"
+    assert "model" not in seen_cfg
+    assert "effort" not in seen_cfg
+
+
 

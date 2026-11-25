@@ -385,7 +385,7 @@ def flow_run(
                 merged_steps = [{**s, "config": _merge_config(
                     s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
                     for i, s in enumerate(steps)]
-                _apply_cascade(merged_steps, _cascade, _default_harness)
+                _apply_cascade(merged_steps, _cascade, eff_harness or _default_harness)
         elif steps_override:
             # Legacy/template-launched row: no stored chain, so the old
             # cursor cannot be trusted against a new --steps chain either.

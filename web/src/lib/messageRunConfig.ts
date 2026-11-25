@@ -155,6 +155,21 @@ export function buildFlowTemplateUpsertArgs(editingLabel: string | null, f: Flow
   ]
 }
 
+/** CLI argv (after `command: "flow"`) for updating template harness/model/effort (and optional steps). */
+export function buildFlowTemplateDefaultsArgs(
+  label: string,
+  opts: { harness: string; model: string; effort: string; steps?: FlowStep[] },
+): string[] {
+  return [
+    "template", "update", label,
+    ...(opts.steps !== undefined ? ["--steps", JSON.stringify(opts.steps)] : []),
+    "--harness", opts.harness,
+    "--model", opts.model,
+    "--effort", opts.effort,
+    "--yes",
+  ]
+}
+
 /** True when the action row opts into immediate (confirm-only) runs. */
 export function isRunImmediateAction(row: { run_immediately?: unknown }): boolean {
   return row.run_immediately === true

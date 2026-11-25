@@ -158,7 +158,7 @@ export function HarnessPicker({
   function pickModel(id: string) {
     onModelChange?.(id)
     pickedInSessionRef.current.model = true
-    if (pickedInSessionRef.current.effort) {
+    if (pickedInSessionRef.current.effort || effortsDisabled) {
       setOpen(false)
     }
   }
@@ -167,7 +167,7 @@ export function HarnessPicker({
     onEffortChange?.(id)
     setEffortOpen(false)
     pickedInSessionRef.current.effort = true
-    if (pickedInSessionRef.current.model) {
+    if (pickedInSessionRef.current.model || modelsDisabled) {
       setOpen(false)
     }
   }

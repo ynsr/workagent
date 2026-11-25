@@ -17,6 +17,7 @@ import { queryKeys, useActions, useCreateRun, useFlowTemplates, useRepos } from 
 import { buildMessageArgs } from "@/lib/messageLaunchConfig"
 import {
   ROW_CATEGORIES,
+  buildFlowTemplateDefaultsArgs,
   buildImmediateActionArgs,
   buildImmediateFlowArgs,
   buildImmediateWorktreeFlowArgs,
@@ -171,13 +172,7 @@ export function ImmediateRunForm({
           try {
             await createRun.mutateAsync({
               command: "flow",
-              args: [
-                "template", "update", lbl,
-                "--harness", harness,
-                "--model", model,
-                "--effort", effort,
-                "--yes",
-              ],
+              args: buildFlowTemplateDefaultsArgs(lbl, { harness, model, effort }),
               confirm: false,
             })
             if (queryKeys.flowTemplates) void qc.invalidateQueries({ queryKey: queryKeys.flowTemplates })

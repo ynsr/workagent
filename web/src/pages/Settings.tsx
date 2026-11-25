@@ -87,20 +87,6 @@ export function Settings() {
         args: ["set", "default-harness", next],
         confirm: false,
       })
-      if (currentModel) {
-        await createRun.mutateAsync({
-          command: "config",
-          args: ["set", "default-model", ""],
-          confirm: false,
-        })
-      }
-      if (currentEffort) {
-        await createRun.mutateAsync({
-          command: "config",
-          args: ["set", "default-effort", ""],
-          confirm: false,
-        })
-      }
       toast.success(`Default AI harness set to ${next}`)
       void qc.invalidateQueries({ queryKey: queryKeys.config })
     } catch (err) {

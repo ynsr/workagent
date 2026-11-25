@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { ChainEditor, startRepoState, validateChain } from "@/components/ChainEditor"
 import { HarnessPicker } from "@/components/HarnessPicker"
 import { modelEffortArgs } from "@/lib/harness"
+import { buildFlowTemplateDefaultsArgs } from "@/lib/messageRunConfig"
 import { chainRunsParallel, runChainOnWorktrees, summarizeExecution } from "@/lib/flowExecution"
 import { ActionDialog } from "@/components/LinkDialogs"
 import { Button } from "@/components/ui/button"
@@ -55,13 +56,7 @@ export function FlowWizard({
     try {
       await createRun.mutateAsync({
         command: "flow",
-        args: [
-          "template", "update", template.label,
-          "--harness", harness,
-          "--model", model,
-          "--effort", effort,
-          "--yes",
-        ],
+        args: buildFlowTemplateDefaultsArgs(template.label, { harness, model, effort }),
         confirm: false,
       })
       if (queryKeys.flowTemplates) void qc.invalidateQueries({ queryKey: queryKeys.flowTemplates })
@@ -112,14 +107,7 @@ export function FlowWizard({
     try {
       await createRun.mutateAsync({
         command: "flow",
-        args: [
-          "template", "update", template.label,
-          "--steps", JSON.stringify(working),
-          "--harness", harness,
-          "--model", model,
-          "--effort", effort,
-          "--yes",
-        ],
+        args: buildFlowTemplateDefaultsArgs(template.label, { steps: working, harness, model, effort }),
         confirm: false,
       })
       if (queryKeys.flowTemplates) void qc.invalidateQueries({ queryKey: queryKeys.flowTemplates })

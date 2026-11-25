@@ -1132,3 +1132,16 @@ def test_spawn_in_terminal_keeps_user_no_color(monkeypatch):
     seen = _spawn(monkeypatch, False)
     assert "env" not in seen
     assert "unset NO_COLOR" not in seen["argv"][-1]
+
+
+def test_resolve_model_effort_uses_defaults_only_for_default_harness(monkeypatch, isolated_config):
+    from workagent import store
+    monkeypatch.setattr(store, "default_harness", lambda: "agy")
+    monkeypatch.setattr(store, "default_model", lambda: "gemini-pro")
+    monkeypatch.setattr(store, "default_effort", lambda: "high")
+
+    assert backend.resolve_model_effort("agy", None, None) == ("gemini-pro", "high")
+    assert backend.resolve_model_effort(None, None, None) == ("gemini-pro", "high")
+    assert backend.resolve_model_effort("omp", None, None) == (None, None)
+    assert backend.resolve_model_effort("agy", "claude", None) == ("claude", "high")
+    assert backend.resolve_model_effort("agy", None, "low") == ("gemini-pro", "low")
