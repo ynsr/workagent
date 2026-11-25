@@ -176,7 +176,7 @@ describe("Dashboard bulk confirm harness", () => {
     const user = userEvent.setup()
     renderDashboard()
 
-    await user.click(screen.getAllByRole("button", { name: "Sync jira:IPG-1" })[0])
+    await user.click(screen.getAllByRole("button", { name: "Sync jira:IPG-1" })[0]!)
 
     expect(mutateAsync).not.toHaveBeenCalled()
     expect(screen.getByTestId("location-echo")).toHaveTextContent(
