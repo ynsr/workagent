@@ -251,4 +251,29 @@ describe("HarnessPicker", () => {
       mockOptions.data = prevData
     }
   })
+
+  it("auto-closes popover on model pick when efforts are empty", async () => {
+    const user = userEvent.setup()
+    const onModel = vi.fn()
+    const prevEfforts = mockOptions.data.efforts
+    mockOptions.data = { ...mockOptions.data, efforts: [] }
+    try {
+      renderPicker(
+        <HarnessPicker
+          idPrefix="noeff"
+          harness="agy"
+          onHarnessChange={vi.fn()}
+          onModelChange={onModel}
+        />,
+      )
+      const trigger = screen.getByRole("button", { name: /^Harness, model, and effort/ })
+      await user.click(trigger)
+      expect(trigger).toHaveAttribute("aria-expanded", "true")
+      await user.click(screen.getByRole("option", { name: /Claude Sonnet 5.5/ }))
+      expect(onModel).toHaveBeenCalledWith("claude-sonnet-5.5")
+      expect(trigger).toHaveAttribute("aria-expanded", "false")
+    } finally {
+      mockOptions.data = { ...mockOptions.data, efforts: prevEfforts }
+    }
+  })
 })

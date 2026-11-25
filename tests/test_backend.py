@@ -1338,3 +1338,16 @@ def test_warn_effort_retry_quotes_argv(capsys):
     backend.warn_effort_retry("m1", "high", ["agy", "-p", "hello world\nline2"])
     err = capsys.readouterr().err
     assert "$ agy -p 'hello world\nline2'" in err
+
+
+def test_resolve_model_effort_uses_defaults_only_for_default_harness(monkeypatch, isolated_config):
+    from workagent import store
+    monkeypatch.setattr(store, "default_harness", lambda: "agy")
+    monkeypatch.setattr(store, "default_model", lambda: "gemini-pro")
+    monkeypatch.setattr(store, "default_effort", lambda: "high")
+
+    assert backend.resolve_model_effort("agy", None, None) == ("gemini-pro", "high")
+    assert backend.resolve_model_effort(None, None, None) == ("gemini-pro", "high")
+    assert backend.resolve_model_effort("omp", None, None) == (None, None)
+    assert backend.resolve_model_effort("agy", "claude", None) == ("claude", "high")
+    assert backend.resolve_model_effort("agy", None, "low") == ("gemini-pro", "low")

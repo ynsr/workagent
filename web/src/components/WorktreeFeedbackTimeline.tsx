@@ -54,6 +54,35 @@ export interface WorktreeFeedbackTimelineProps {
   onCleanup?: () => void
 }
 
+const STATE_TRANSITION_EVENTS = new Set([
+  "ci_passed",
+  "ci_failed",
+  "ci_running",
+  "review_comments_arrived",
+  "review_comments_resolved",
+])
+
+/**
+ * Collapse consecutive duplicate state-transition events (same event_type and
+ * summary) so pre-existing redundant rows in worktree_events render cleanly.
+ */
+function dedupeConsecutiveEvents(events: WorktreeEventRow[]): WorktreeEventRow[] {
+  const out: WorktreeEventRow[] = []
+  for (const ev of events) {
+    const prev = out[out.length - 1]
+    if (
+      prev &&
+      STATE_TRANSITION_EVENTS.has(ev.event_type) &&
+      prev.event_type === ev.event_type &&
+      (prev.summary || prev.event_type) === (ev.summary || ev.event_type)
+    ) {
+      continue
+    }
+    out.push(ev)
+  }
+  return out
+}
+
 /**
  * Closed-loop feedback timeline for a single worktree:
  * - Failing normalized PR checks with inline "Fix CI" action
@@ -76,7 +105,7 @@ export function WorktreeFeedbackTimeline({
 
   const checks: PrCheckRow[] = data?.checks ?? []
   const threads: PrReviewThreadRow[] = data?.threads ?? []
-  const events: WorktreeEventRow[] = data?.events ?? []
+  const events: WorktreeEventRow[] = dedupeConsecutiveEvents(data?.events ?? [])
 
   const failingChecks = checks.filter(isFailingCheck)
   const unresolvedThreads = threads.filter((t) => !t.resolved)

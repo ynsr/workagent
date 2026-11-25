@@ -315,14 +315,24 @@ def flow_run(
     merged_steps = [{**s, "config": _merge_config(
         s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
         for i, s in enumerate(steps)]
-    _cascade = {"harness": harness, "acp": acp or None,
-                "run_mode": run_mode, "model": model, "effort": effort}
+    _default_harness = store.default_harness()
+    tpl_harness = str(tpl.get("default_harness") or "").strip() or None
+    tpl_model = str(tpl.get("default_model") or "").strip() or None
+    tpl_effort = str(tpl.get("default_effort") or "").strip() or None
+    eff_harness = harness or tpl_harness
+    if harness and ((tpl_harness and harness != tpl_harness)
+                    or (not tpl_harness and harness != _default_harness)):
+        tpl_model = None
+        tpl_effort = None
+    eff_model = model if model is not None else tpl_model
+    eff_effort = effort if effort is not None else tpl_effort
+    _cascade = {"harness": eff_harness, "acp": acp or None,
+                "run_mode": run_mode, "model": eff_model, "effort": eff_effort}
     _cascade = {k: v for k, v in _cascade.items()
                 if v is not None and v is not False}
     if run_mode == "acp":
         _cascade["acp"] = True
-    _default_harness = store.default_harness()
-    _apply_cascade(merged_steps, _cascade, _default_harness)
+    _apply_cascade(merged_steps, _cascade, eff_harness or _default_harness)
     for s in merged_steps:
         s["config"] = _futil.normalize_config(s.get("config") or {})
     # Fail fast on per-run overrides (before any flow row exists): banned
@@ -375,7 +385,7 @@ def flow_run(
                 merged_steps = [{**s, "config": _merge_config(
                     s, overrides.get(str(i)) if isinstance(overrides.get(str(i)), dict) else {})}
                     for i, s in enumerate(steps)]
-                _apply_cascade(merged_steps, _cascade, _default_harness)
+                _apply_cascade(merged_steps, _cascade, eff_harness or _default_harness)
         elif steps_override:
             # Legacy/template-launched row: no stored chain, so the old
             # cursor cannot be trusted against a new --steps chain either.

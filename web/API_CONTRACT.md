@@ -20,6 +20,8 @@ same-origin check passes).
 ```json
 {
   "default_harness": "agy",
+  "default_model": "",
+  "default_effort": "",
   "supported_harnesses": ["agy", "omp"],
   "harnesses": [
     {"name": "agy", "label": "Antigravity (agy-guard)", "binary": "agy-guard", "available": true},
@@ -28,8 +30,9 @@ same-origin check passes).
 }
 ```
 Read-only runtime harness configuration (`store.default_harness()` — defaults
-to `"agy"` — plus every registered `Harness` in `backend.HARNESSES` with
-`shutil.which(binary)` availability). Always 200.
+to `"agy"` — plus `store.default_model()`, `store.default_effort()`, and every
+registered `Harness` in `backend.HARNESSES` with `shutil.which(binary)` availability).
+Always 200.
 
 ### `GET /api/status` → all worktrees
 Map of worktree key → entry (same shape as `workagent status --json`).
@@ -341,7 +344,7 @@ Request:
 ```
  - `action suggest-icon [--name --label --prompt --pre-execution --post-execution --used-icons --harness --json]` / `flow template suggest-icon [--name --label --steps --pre-execution --post-execution --used-icons --harness --json]`: Ask-AI Lucide icon (issues #62, #84) — ONE bare judge-style harness session (temp dir, no checkout; uses `Harness.judge_argv`, e.g. `agy-guard --model gemini-3.8-flash-low --disable-slash-commands --mode plan` or `omp --smol --no-skills --no-tools ...`), stdout `{"icon": "Rocket"}`; target keys `suggest-icon:action` / `suggest-icon:flow` so long AI runs never 409-block saves; the prompt lists all 1611 Lucide icons (pinned lucide-react 0.525.0 registry) plus the already-used icons of other actions/templates (explicit `--used-icons` unioned with the store-collected fallback) so the model avoids duplicates; parsed against `SUGGEST_ICON_CHOICES`, never confirmed.
  - `command`: one of `start | review | cleanup | release | sync | open | register |
-   repo | link | tracker | action | flow | message | backup | prodtest | adhoc | orchestrate | config` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`; prodtest: `["plan", REF, …]` / `["run", REF, …]`; adhoc: `[REF, --prompt P, …]`; orchestrate: `[--repo R…, --prompt P, …]` (single-flight key `orchestrate:<repos>:<prompt-hash>`); config: `["show"]` or `["set", "default-harness", "agy|omp"]`, non-destructive under target key `"config"`).
+   repo | link | tracker | action | flow | message | backup | prodtest | adhoc | orchestrate | config` (subcommand goes first in `args`: `["add", "--name", …]`; flow template CRUD nests two deep: `["template", "add", …]`; prodtest: `["plan", REF, …]` / `["run", REF, …]`; adhoc: `[REF, --prompt P, …]`; orchestrate: `[--repo R…, --prompt P, …]` (single-flight key `orchestrate:<repos>:<prompt-hash>`); config: `["show"]` or `["set", "default-harness|default-model|default-effort", VALUE]`, non-destructive under target key `"config"`).
  - `sync [REF]` accepts `--rebase` (default: remote rebase; mutually exclusive with `-m/--merge`), `--harness <name>` (selects the conflict-resolution harness; default: configured `default_harness`) and `--no-auto-register` (skip auto-registering an unlinked PR/MR worktree). `agy` (`agy-guard`) is the default AI harness (`DEFAULT_HARNESS = "agy"`): headless uses `agy-guard --dangerously-skip-permissions --output-format stream-json -p=<prompt>` and preview/interactive uses `agy-guard -i=<prompt>` (or bare `agy-guard`). `adhoc` also accepts `--no-auto-register`.
 - Global `-v` may be passed as `args[0]`.
 - `start`/`review`/`sync`/`release` take `--env-file <script>`: a shell script sourced before every harness command including the preview (`source <file> && …`; headless children also get it parsed into their environment) and before the release pre-release gate. Default: `env_file` in `config.json` (auto-created as `<config_dir>/env.sh` on first launch with `VISUAL`/`EDITOR`/`NO_PROXY`/`PI_EDIT_VARIANT` defaults). Delete the file to opt out; run resume reuses the originating run's explicit `--env-file` or the configured default.

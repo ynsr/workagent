@@ -84,5 +84,10 @@ describe("ImmediateRunForm harness", () => {
       args: ["run", "ship", "jira:IPG-1", "--harness", "agy", "--yes"],
       confirm: true,
     })
+    expect(mutateAsync).toHaveBeenCalledWith({
+      command: "flow",
+      args: ["template", "update", "ship", "--harness", "agy", "--model", "", "--effort", "", "--yes"],
+      confirm: false,
+    })
   })
 })

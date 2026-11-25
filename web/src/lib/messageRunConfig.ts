@@ -108,6 +108,9 @@ export interface FlowTemplateUpsertForm {
   post: string
   runImmediately: boolean
   category: RowCategory
+  harness?: string
+  model?: string
+  effort?: string
 }
 
 /** CLI argv (after `command: "flow"`) for the template add/update form. */
@@ -116,6 +119,9 @@ export function buildFlowTemplateUpsertArgs(editingLabel: string | null, f: Flow
   const pre = f.pre.trim()
   const post = f.post.trim()
   const icon = f.icon.trim() || "Zap"
+  const harness = f.harness?.trim() ?? ""
+  const model = f.model?.trim() ?? ""
+  const effort = f.effort?.trim() ?? ""
   const flag = f.runImmediately ? "--run-immediately" : "--no-run-immediately"
   if (editingLabel !== null) {
     return [
@@ -127,6 +133,9 @@ export function buildFlowTemplateUpsertArgs(editingLabel: string | null, f: Flow
       "--pre-execution", f.pre,
       "--post-execution", f.post,
       "--category", f.category,
+      "--harness", harness,
+      "--model", model,
+      "--effort", effort,
       flag,
     ]
   }
@@ -138,8 +147,26 @@ export function buildFlowTemplateUpsertArgs(editingLabel: string | null, f: Flow
     "--steps", steps,
     ...(pre ? ["--pre-execution", pre] : []),
     ...(post ? ["--post-execution", post] : []),
+    ...(harness ? ["--harness", harness] : []),
+    ...(model ? ["--model", model] : []),
+    ...(effort ? ["--effort", effort] : []),
     "--category", f.category,
     flag,
+  ]
+}
+
+/** CLI argv (after `command: "flow"`) for updating template harness/model/effort (and optional steps). */
+export function buildFlowTemplateDefaultsArgs(
+  label: string,
+  opts: { harness: string; model: string; effort: string; steps?: FlowStep[] },
+): string[] {
+  return [
+    "template", "update", label,
+    ...(opts.steps !== undefined ? ["--steps", JSON.stringify(opts.steps)] : []),
+    "--harness", opts.harness,
+    "--model", opts.model,
+    "--effort", opts.effort,
+    "--yes",
   ]
 }
 

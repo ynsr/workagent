@@ -250,10 +250,26 @@ def get_harness(name: str | None = None) -> Harness:
         exit_code=2)
 
 
+def resolve_model_effort(harness: str | None = None,
+                         model: str | None = None,
+                         effort: str | None = None) -> tuple[str | None, str | None]:
+    """Fall back to configured default_model/default_effort when targeting default_harness."""
+    from . import store as _store
+    def_h = _store.default_harness()
+    eff_h = harness or def_h
+    if eff_h == def_h:
+        if not model:
+            model = _store.default_model() or None
+        if not effort:
+            effort = _store.default_effort() or None
+    return model, effort
+
+
 def command_argv(harness: str | None = None, prompt: str = "", no_tty: bool = False,
                  extra_args: list[str] | None = None,
                  model: str | None = None, effort: str | None = None) -> list[str]:
     """Full harness argv — shared by launch() and the preview (no --launch)."""
+    model, effort = resolve_model_effort(harness, model, effort)
     return get_harness(harness).command_argv(prompt, no_tty, extra_args,
                                              model=model, effort=effort)
 
@@ -291,6 +307,7 @@ def launch(harness: str | None = None, prompt: str = "", workdir: str = "", no_t
     the env file parsed into the child environment.
     The full argv is echoed to stderr first so run logs capture it.
     """
+    model, effort = resolve_model_effort(harness, model, effort)
     argv = get_harness(harness).command_argv(prompt, no_tty, extra_args,
                                                 model=model, effort=effort)
     print(f"$ {' '.join(argv)}", file=sys.stderr, flush=True)

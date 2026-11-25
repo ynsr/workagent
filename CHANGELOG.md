@@ -2,6 +2,8 @@
 ## Unreleased
 - Automatically retry AI runs without `--effort` when the selected model does not support effort levels [204]
 - Drop the in-app diff viewer feature from the web UI and API [200]
+- Fix web runs staying stuck in Running state after a serve restart by persisting their database ID and reconciling orphaned rows [207]
+- Support default AI model and effort in Settings, keep model chooser open until both are picked, and persist flow template harness defaults [203]
 - Support selecting Rebase (default) or Merge locally for Sync in the Launch Sync tab and flow step editor, plus `--rebase` CLI flag [196]
 - Fix high idle CPU caused by full-table PR cache rewrites, missing-worktree cache misses, and status enrichment errors
 - Re-run button on the web run page now adds `--fresh` automatically when a flow run fails with a `--steps` chain-change error [183]
@@ -633,6 +635,7 @@
 - Add in-app Git diff viewer with inline line annotations, prodtest YAML plan viewer, and read-only diff/plan API endpoints [145]
 - Add dedicated Worktree Workspace view (/worktrees/:ref) with collapsible inspector, ACP session/load resume, and multi-turn follow-up composer [144]
 - Serialize sequential flow steps per repo with a cross-process lock held across contiguous steps to prevent PR merge conflicts [163]
+- Drop the in-app diff viewer feature from the web UI and API [200]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config
