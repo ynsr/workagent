@@ -6,10 +6,13 @@ Layout (~/.config/workagent/, override with WORKAGENT_CONFIG_DIR):
                                    "branch": ..., "repo": ...}}
 """
 
+from __future__ import annotations
+
 import json
 import os
 import tempfile
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -424,21 +427,107 @@ def load_pr_cache() -> dict:
 
 def _write_pr_cache(cache: dict) -> None:
     import json as _json
-    import sqlite3 as _sqlite3
     from . import store_sqlite as sq
     db = _sqlite_path()
     assert db is not None
     sq.init_db(db)
-    with _sqlite3.connect(str(db)) as conn:
-        conn.execute("DELETE FROM pr_cache")
-        for branch, entry in cache.items():
-            payload = dict(entry) if isinstance(entry, dict) else {"pr": entry}
-            checked = str(payload.pop("checked_at", "")
-                          or datetime.now(timezone.utc).isoformat())
-            conn.execute(
-                "INSERT INTO pr_cache (branch, payload, checked_at)"
-                " VALUES (?, ?, ?)",
-                (branch, _json.dumps(payload), checked))
+    conn = sq.connect(db)
+    conn.isolation_level = None
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if not cache:
+            conn.execute("DELETE FROM pr_cache")
+        else:
+            existing = {
+                r[0] for r in conn.execute("SELECT branch FROM pr_cache").fetchall()
+            }
+            for stale_key in existing - set(cache.keys()):
+                conn.execute("DELETE FROM pr_cache WHERE branch = ?", (stale_key,))
+            for branch, entry in cache.items():
+                payload = dict(entry) if isinstance(entry, dict) else {"pr": entry}
+                checked = str(payload.pop("checked_at", "")
+                              or datetime.now(timezone.utc).isoformat())
+                conn.execute(
+                    "INSERT INTO pr_cache (branch, payload, checked_at)"
+                    " VALUES (?, ?, ?)"
+                    " ON CONFLICT(branch) DO UPDATE SET"
+                    " payload = excluded.payload, checked_at = excluded.checked_at"
+                    " WHERE pr_cache.payload != excluded.payload"
+                    " OR pr_cache.checked_at != excluded.checked_at",
+                    (branch, _json.dumps(payload), checked))
+        conn.execute("COMMIT")
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+def _update_pr_cache_entry_sqlite(
+    key: str,
+    fallback_branch: str,
+    build_entry: Callable[[dict | None, dict | None], dict | None],
+) -> None:
+    """Read and upsert a single pr_cache row in SQLite without churning other rows."""
+    import json as _json
+    import sqlite3 as _sqlite3
+    from . import store_sqlite as sq
+
+    db = _sqlite_path()
+    assert db is not None
+    sq.init_db(db)
+    conn = sq.connect(db)
+    conn.isolation_level = None
+    conn.row_factory = _sqlite3.Row
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if fallback_branch and fallback_branch != key:
+            rows = conn.execute(
+                "SELECT branch, payload, checked_at FROM pr_cache WHERE branch IN (?, ?)",
+                (key, fallback_branch),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT branch, payload, checked_at FROM pr_cache WHERE branch = ?",
+                (key,),
+            ).fetchall()
+        by_branch: dict[str, dict] = {}
+        for row in rows:
+            r = dict(row)
+            try:
+                parsed = _json.loads(r.get("payload") or "{}")
+            except ValueError:
+                parsed = {}
+            entry = parsed if isinstance(parsed, dict) else {"pr": parsed}
+            entry.setdefault("pr", None)
+            entry.setdefault("checked_at", r.get("checked_at", ""))
+            by_branch[r["branch"]] = entry
+        updated = build_entry(by_branch.get(key), by_branch.get(fallback_branch))
+        if updated is None:
+            conn.execute("COMMIT")
+            return
+        payload = dict(updated)
+        checked = str(payload.pop("checked_at", "")
+                      or datetime.now(timezone.utc).isoformat())
+        conn.execute(
+            "INSERT INTO pr_cache (branch, payload, checked_at)"
+            " VALUES (?, ?, ?)"
+            " ON CONFLICT(branch) DO UPDATE SET"
+            " payload = excluded.payload, checked_at = excluded.checked_at",
+            (key, _json.dumps(payload), checked),
+        )
+        conn.execute("COMMIT")
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
 
 
 def save_pr_cache(cache: dict) -> None:
@@ -480,17 +569,17 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
         if v is not None:
             entry[k] = v
     if _sqlite_path() is not None:
-        cache = load_pr_cache()
-        prev = cache.get(key) or {}
-        merged = dict(entry)
-        for k in ("ci", "ci_checked_at", "ci_sha", "ci_url",
-                  "reviews", "unresolved", "resolved",
-                  "reviews_checked_at", "reviews_sha",
-                  "issue_status", "issue_status_checked_at"):
-            if k in prev and k not in merged:
-                merged[k] = prev[k]
-        cache[key] = merged
-        _write_pr_cache(cache)
+        def _merge(prev_key: dict | None, _prev_branch: dict | None) -> dict:
+            prev = prev_key or {}
+            merged = dict(entry)
+            for k in ("ci", "ci_checked_at", "ci_sha", "ci_url",
+                      "reviews", "unresolved", "resolved",
+                      "reviews_checked_at", "reviews_sha",
+                      "issue_status", "issue_status_checked_at"):
+                if k in prev and k not in merged:
+                    merged[k] = prev[k]
+            return merged
+        _update_pr_cache_entry_sqlite(key, branch, _merge)
         return
     path = config_dir() / "pr_cache.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -531,16 +620,16 @@ def cache_ci_status(branch: str, ci: str | None, sha: str | None = None,
         return
     key = pr_cache_key(repo, branch)
     if _sqlite_path() is not None:
-        cache = load_pr_cache()
-        entry = cache.get(key) or dict(cache.get(branch) or {})
-        cache[key] = entry
-        entry["ci"] = ci
-        entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
-        if sha:
-            entry["ci_sha"] = sha
-        if ci_url is not None:
-            entry["ci_url"] = ci_url
-        _write_pr_cache(cache)
+        def _set_ci(prev_key: dict | None, prev_branch: dict | None) -> dict:
+            entry = dict(prev_key) if prev_key is not None else dict(prev_branch or {})
+            entry["ci"] = ci
+            entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
+            if sha:
+                entry["ci_sha"] = sha
+            if ci_url is not None:
+                entry["ci_url"] = ci_url
+            return entry
+        _update_pr_cache_entry_sqlite(key, branch, _set_ci)
         return
     path = config_dir() / "pr_cache.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -572,16 +661,16 @@ def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None,
         return
     key = pr_cache_key(repo, branch)
     if _sqlite_path() is not None:
-        cache = load_pr_cache()
-        entry = cache.get(key) or dict(cache.get(branch) or {})
-        cache[key] = entry
-        entry["reviews"] = int(stats.get("reviews") or 0)
-        entry["unresolved"] = int(stats.get("unresolved") or 0)
-        entry["resolved"] = int(stats.get("resolved") or 0)
-        entry["reviews_checked_at"] = datetime.now(timezone.utc).isoformat()
-        if sha:
-            entry["reviews_sha"] = sha
-        _write_pr_cache(cache)
+        def _set_reviews(prev_key: dict | None, prev_branch: dict | None) -> dict:
+            entry = dict(prev_key) if prev_key is not None else dict(prev_branch or {})
+            entry["reviews"] = int(stats.get("reviews") or 0)
+            entry["unresolved"] = int(stats.get("unresolved") or 0)
+            entry["resolved"] = int(stats.get("resolved") or 0)
+            entry["reviews_checked_at"] = datetime.now(timezone.utc).isoformat()
+            if sha:
+                entry["reviews_sha"] = sha
+            return entry
+        _update_pr_cache_entry_sqlite(key, branch, _set_reviews)
         return
     path = config_dir() / "pr_cache.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -618,12 +707,12 @@ def cache_issue_status(branch: str, issue_status: str | None, repo: str = "") ->
         return
     key = pr_cache_key(repo, branch)
     if _sqlite_path() is not None:
-        cache = load_pr_cache()
-        entry = cache.get(key) or dict(cache.get(branch) or {})
-        cache[key] = entry
-        entry["issue_status"] = issue_status
-        entry["issue_status_checked_at"] = datetime.now(timezone.utc).isoformat()
-        _write_pr_cache(cache)
+        def _set_issue_status(prev_key: dict | None, prev_branch: dict | None) -> dict:
+            entry = dict(prev_key) if prev_key is not None else dict(prev_branch or {})
+            entry["issue_status"] = issue_status
+            entry["issue_status_checked_at"] = datetime.now(timezone.utc).isoformat()
+            return entry
+        _update_pr_cache_entry_sqlite(key, branch, _set_issue_status)
         return
     path = config_dir() / "pr_cache.json"
     path.parent.mkdir(parents=True, exist_ok=True)

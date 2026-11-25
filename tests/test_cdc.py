@@ -94,3 +94,44 @@ def test_api_events_replay_and_shutdown(tmp_path, isolated_config):
     assert '"row_key": "m-101"' in body
     assert ": heartbeat" in body
     assert f'"row_key": "m-100"' not in body
+
+
+def test_cdc_hub_idle_backoff_and_wake_on_subscribe(tmp_path):
+    """CdcHub must not busy-poll when idle (0 subscribers) and must wake on subscribe()."""
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+
+    poll_count = 0
+    hub = CdcHub(lambda: db, poll_interval=0.02, prune_interval=60.0)
+    orig_poll = hub.poll_once
+
+    def counting_poll():
+        nonlocal poll_count
+        poll_count += 1
+        return orig_poll()
+
+    hub.poll_once = counting_poll  # type: ignore[method-assign]
+    loop = asyncio.new_event_loop()
+    try:
+        hub.start()
+        time.sleep(0.15)
+        # Only the initial cursor sync poll should run while no subscribers exist.
+        assert poll_count == 1
+
+        q = hub.subscribe(loop)
+        with sq.connect(db) as conn:
+            conn.execute(
+                "INSERT INTO prodtest_items (issue_key, updated_at) VALUES (?, ?)",
+                ("IPG-99", "2026-01-01T00:00:00Z"),
+            )
+
+        async def _recv():
+            return await asyncio.wait_for(q.get(), timeout=1.0)
+
+        ev = loop.run_until_complete(_recv())
+        assert ev is not None
+        assert ev["row_key"] == "IPG-99"
+        assert poll_count >= 2
+    finally:
+        hub.stop()
+        loop.close()

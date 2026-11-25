@@ -1661,14 +1661,16 @@ _NOT_DELETED = ("(r.worktree_ref IS NULL OR w.ref_key IS NULL"
 
 
 def list_runs(path: Path, limit: int = 200,
-              include_deleted_worktrees: bool = False) -> list[dict]:
+              include_deleted_worktrees: bool = False,
+              include_output: bool = True) -> list[dict]:
     """Persisted runs, newest first (drives GET /api/runs)."""
     if not path.exists():
         return []
     with connect(path) as conn:
         conn.row_factory = sqlite3.Row
+        out_col = " r.output," if include_output else ""
         q = ("SELECT r.id, r.command, r.args, r.exit_code,"
-             " r.created_at, r.output, r.truncated, r.validation, r.flow_id,"
+             f" r.created_at,{out_col} r.truncated, r.validation, r.flow_id,"
              " r.file_path, r.worktree_ref,"
              " r.session_type, r.state, r.harness_name, r.initiator_command,"
              " r.metadata, r.continued_from_run_id,"

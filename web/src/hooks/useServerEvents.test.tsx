@@ -174,4 +174,36 @@ describe("useServerEvents", () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: ["messages"] })
     expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.prodtests })
   })
+
+  it("coalesces burst pr_cache events into a single status invalidation", () => {
+    vi.useFakeTimers()
+    try {
+      const qc = new QueryClient()
+      const spy = vi.spyOn(qc, "invalidateQueries")
+
+      render(
+        <QueryClientProvider client={qc}>
+          <Harness />
+        </QueryClientProvider>,
+      )
+      const es = MockEventSource.instances[0]!
+
+      act(() => {
+        es.emit("change", { seq: 10, table: "pr_cache", row_key: "a", op: "update", created_at: 10 })
+        es.emit("change", { seq: 11, table: "pr_cache", row_key: "b", op: "update", created_at: 10 })
+        es.emit("change", { seq: 12, table: "pr_cache", row_key: "c", op: "update", created_at: 10 })
+      })
+      expect(spy).not.toHaveBeenCalled()
+
+      act(() => {
+        vi.advanceTimersByTime(500)
+      })
+      expect(spy).toHaveBeenCalledTimes(3)
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusAll })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusInactive })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusDeleted })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

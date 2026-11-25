@@ -1261,3 +1261,20 @@ def test_schedules_table_crud_and_lease(tmp_path):
     assert toggled["enabled"] is False
     assert sq.remove_schedule(db, created["id"]) is True
     assert sq.list_schedules(db) == []
+
+
+def test_pr_cache_single_row_update_does_not_churn_other_rows(isolated_config):
+    """Updating one branch in pr_cache must upsert only that row (no full-table DELETE+INSERT)."""
+    from workagent import store
+
+    db = sq.db_path()
+    sq.init_db(db)
+    store.cache_pr_status("feat/one", {"number": 1, "state": "open"}, repo="/repo")
+    store.cache_pr_status("feat/two", {"number": 2, "state": "open"}, repo="/repo")
+    seq_before = sq.latest_change_seq(db)
+
+    store.cache_ci_status("feat/one", "success", sha="abc123", repo="/repo")
+    events = sq.read_change_log(db, after_seq=seq_before)
+    pr_events = [e for e in events if e["table"] == "pr_cache"]
+    assert len(pr_events) == 1
+    assert "/repo\x1ffeat/one" in pr_events[0]["row_key"]

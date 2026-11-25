@@ -71,7 +71,7 @@ def _delivery_status(
     flows = active_flows
     if flows is None and key:
         try:
-            if _store._use_sqlite():
+            if _store._sqlite_path() is not None:
                 flows = _store.list_flows(worktree=key)
             else:
                 flows = []

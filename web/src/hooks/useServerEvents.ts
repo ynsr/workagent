@@ -62,6 +62,17 @@ export function useServerEvents(): void {
 
     const es = new EventSource("/api/events")
     let hadError = false
+    let prCacheTimer: ReturnType<typeof setTimeout> | null = null
+
+    const schedulePrCacheInvalidate = () => {
+      if (prCacheTimer !== null) return
+      prCacheTimer = setTimeout(() => {
+        prCacheTimer = null
+        void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
+        void qc.invalidateQueries({ queryKey: queryKeys.statusInactive })
+        void qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
+      }, 500)
+    }
 
     const onOpen = () => {
       setConnected(true)
@@ -99,9 +110,7 @@ export function useServerEvents(): void {
           void qc.invalidateQueries({ queryKey: queryKeys.links })
           break
         case "pr_cache":
-          void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
-          void qc.invalidateQueries({ queryKey: queryKeys.statusInactive })
-          void qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
+          schedulePrCacheInvalidate()
           break
         case "runs":
           void qc.invalidateQueries({ queryKey: queryKeys.runs })
@@ -138,6 +147,10 @@ export function useServerEvents(): void {
     es.addEventListener("change", onChange as EventListener)
 
     return () => {
+      if (prCacheTimer !== null) {
+        clearTimeout(prCacheTimer)
+        prCacheTimer = null
+      }
       es.removeEventListener("open", onOpen)
       es.removeEventListener("error", onError)
       es.removeEventListener("change", onChange as EventListener)

@@ -415,6 +415,34 @@ def test_service_endpoint_no_unit_no_bus(client, monkeypatch, tmp_path):
                     "state": "unknown: systemctl"}
 
 
+def test_api_status_enrichment_no_registry_or_store_errors(client, caplog):
+    """GET /api/status must enrich runs/flows without AttributeError warnings."""
+    import logging
+    from workagent import store_sqlite as sq
+
+    db = sq.db_path()
+    sq.init_db(db)
+    store.record_link("jira:IPG-1", {"issue": "IPG-1",
+                                     "worktree": "/tmp/wt", "branch": "b",
+                                     "repo": "/tmp/repo"})
+    store.record_link("jira:IPG-2", {"issue": "IPG-2",
+                                     "worktree": "/tmp/wt2", "branch": "b2",
+                                     "repo": "/tmp/repo"})
+    sq.insert_run(db, "review", ["IPG-1"], exit_code=1, worktree_ref="jira:IPG-1", state="failed")
+    store.create_template(name="Quick", label="quick", steps='[{"kind": "start"}, {"kind": "review"}]')
+    flow = store.create_flow(template_label="quick", worktree_ref="jira:IPG-2")
+    store.update_flow(flow["id"], status="running")
+    with caplog.at_level(logging.WARNING, logger="workagent.webapp"):
+        resp = client.get("/api/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["jira:IPG-1"]["kanban_column"] == "needs_you"
+    assert body["jira:IPG-1"]["attention_reason"] == "run_failed"
+    assert body["jira:IPG-2"]["kanban_column"] == "working"
+    assert "Failed to list runs for status enrichment" not in caplog.text
+    assert "Failed to list flows for status enrichment" not in caplog.text
+
+
 # ── argv building (same-code child) ──────────────────────────────────
 
 

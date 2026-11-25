@@ -39,8 +39,8 @@ _JIRA_KEY_RE = re.compile(r"\b([A-Z][A-Z0-9_]*-\d+)\b")
 _GH_REF_RE = re.compile(r"\b([\w.\-]+/[\w.\-]+)#(\d+)\b")
 
 
-def _parse(key_or_ref: str) -> dict | None:
-    """Parse an issue ref; None + warning when unparseable or not an issue.
+def _parse(key_or_ref: str, *, quiet: bool = False) -> dict | None:
+    """Parse an issue ref; None (+ optional warning) when unparseable or not an issue.
 
     Link-key-shaped `IPG-934@projectx` refs are tolerated (repo suffix
     stripped): link rows rebuild `issue` from the suffixed ref_key.
@@ -51,7 +51,8 @@ def _parse(key_or_ref: str) -> dict | None:
     try:
         parsed = _refs.parse_ref(ref)
     except HarnessError as e:
-        eprint(f"warning: cannot set issue status ({e})")
+        if not quiet:
+            eprint(f"warning: cannot set issue status ({e})")
         return None
     if parsed.get("kind") != "issue":
         return None

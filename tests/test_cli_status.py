@@ -632,3 +632,58 @@ def test_ci_cell_passes_ci_url_fallback_to_populate_failing_check_logs(
     saved = store.list_pr_checks(key)
     assert saved[0]["url"] == "https://git.jibit.cloud/server/projectx/-/pipelines/500"
     assert saved[0]["log_tail"] == "FAILED test_cli_fallback"
+
+
+def test_status_cells_missing_deleted_worktree_reuses_cache_without_remote_calls(
+    isolated_config, tmp_path, monkeypatch, capsys
+):
+    """Missing/deleted worktrees with cached PR/CI/reviews must not re-query host CLIs or warn."""
+    from workagent import refs, store, store_sqlite
+
+    store_sqlite.init_db(isolated_config / "state.db")
+    gone_wt = tmp_path / "deleted-wt"
+    repo_dir = str(tmp_path / "repo")
+    branch = "feat-branch-only"
+    entry = {
+        "worktree": str(gone_wt),
+        "branch": branch,
+        "repo": repo_dir,
+        "deleted_at": "2026-11-25T06:00:00+00:00",
+    }
+    store.record_link(branch, entry)
+    store.cache_pr_status(
+        branch,
+        {"number": 42, "state": "open", "url": "https://git.jibit.cloud/g/p/-/merge_requests/42"},
+        tool="glab",
+        base_branch="develop",
+        branch_tip="deadbeef",
+        base_tip="cafebabe",
+        behind=0,
+        ahead=1,
+        repo=repo_dir,
+    )
+    store.cache_ci_status(branch, "success", sha="deadbeef", ci_url="https://ci/1", repo=repo_dir)
+    store.cache_review_stats(
+        branch, {"reviews": 1, "unresolved": 0, "resolved": 2}, sha="deadbeef", repo=repo_dir
+    )
+
+    remote_calls: list[str] = []
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
+    monkeypatch.setattr(
+        refs, "fetch_pr_list_for_branch", lambda *a, **kw: remote_calls.append("pr") or []
+    )
+    monkeypatch.setattr(
+        refs, "fetch_ci_details", lambda *a, **kw: remote_calls.append("ci") or ("success", "", [])
+    )
+    monkeypatch.setattr(
+        refs, "fetch_pr_review_details", lambda *a, **kw: remote_calls.append("rev") or ({}, [])
+    )
+
+    cells = cli._status_cells(branch, entry)
+    err = capsys.readouterr().err
+    assert remote_calls == []
+    assert "cannot set issue status" not in err
+    assert cells["commits"] == "gone"
+    assert cells["pr"] == "MR #42 (open)"
+    assert cells["ci"] == "success"
+    assert cells["reviews"] == "1|0|2"

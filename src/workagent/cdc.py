@@ -46,6 +46,7 @@ class CdcHub:
         self._lock = threading.Lock()
         self._subscribers: set[tuple[asyncio.AbstractEventLoop, asyncio.Queue[dict[str, Any] | None]]] = set()
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._thread: threading.Thread | None = None
         self._cursor: int = 0
         self._cursor_initialized: bool = False
@@ -81,6 +82,7 @@ class CdcHub:
                 q.put_nowait(None)
                 return q
             self._subscribers.add((loop, q))
+        self._wake.set()
         return q
 
     def unsubscribe(self, loop: asyncio.AbstractEventLoop, q: asyncio.Queue[dict[str, Any] | None]) -> None:
@@ -142,14 +144,30 @@ class CdcHub:
 
     def _run_loop(self) -> None:
         while not self._stop.is_set():
-            self.poll_once()
-            self._stop.wait(self.poll_interval)
+            with self._lock:
+                has_subs = bool(self._subscribers)
+            if has_subs or not self._cursor_initialized:
+                self.poll_once()
+            else:
+                now = time.monotonic()
+                if now - self._last_prune >= self.prune_interval:
+                    self._last_prune = now
+                    db = self._db_path()
+                    if db.exists():
+                        try:
+                            _sq.prune_change_log(db, max_rows=self.max_rows)
+                        except Exception as exc:
+                            logger.debug("cdc prune failed: %s", exc)
+            wait_for = self.poll_interval if has_subs else self.prune_interval
+            self._wake.wait(wait_for)
+            self._wake.clear()
 
     def start(self) -> None:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 return
             self._stop.clear()
+            self._wake.clear()
             self._cursor_initialized = False
             self._thread = threading.Thread(
                 target=self._run_loop,
@@ -160,6 +178,7 @@ class CdcHub:
 
     def stop(self, timeout: float = 2.0) -> None:
         self._stop.set()
+        self._wake.set()
         self._broadcast(None)
         with self._lock:
             t = self._thread

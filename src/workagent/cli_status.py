@@ -161,6 +161,13 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
     use_cache = (cached and _cache_usable(cached)
                  and (not cached_target
                       or cached_target == (cached.get("base_branch") or "")))
+    if not wt_ok and branch and not refresh_pr and (use_cache or entry.get("deleted_at")):
+        if cached:
+            base_branch = cached.get("base_branch") or ""
+            pr = cached.get("pr")
+            cells["_tool"] = cached.get("tool")
+            cells.update(pr=_fmt_pr(pr), pr_data=pr, base_branch=base_branch or None)
+        return _seed_recorded_pr(cells, entry)
     if wt_ok and branch and use_cache:
         base_branch = cached.get("base_branch") or ""
         branch_tip = _patched("_git_tip")(wt, branch) or _patched("_git_tip")(wt, "HEAD")
@@ -208,6 +215,10 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
                                   ahead=(ab or {}).get("ahead", 0))
             cells["_tip"], cells["_tool"] = branch_tip, used if pr else None
             cells.update(commits=_fmt_counts(ab), ab=ab)
+        elif pr is not None or used is not None:
+            store.cache_pr_status(branch, pr, tool=used if pr else None, repo=repo,
+                                  base_branch=db)
+            cells["_tool"] = used if pr else None
         cells.update(pr=_fmt_pr(pr), pr_data=pr, base_branch=db)
     return _seed_recorded_pr(cells, entry)
 
@@ -304,13 +315,16 @@ def _ci_cell(entry: dict, cells: dict, refresh_pr: bool, key: str = "") -> tuple
     branch = entry.get("branch", "")
     repo = entry.get("repo", "")
     cached = store.lookup_pr_cache(branch, repo)
+    wt_ok = bool(entry.get("worktree")) and Path(entry["worktree"]).exists()
     branch_tip = cells.get("_tip")
-    if branch_tip is None and entry.get("worktree") \
-            and Path(entry["worktree"]).exists():
+    if branch_tip is None and wt_ok:
         branch_tip = _patched("_git_tip")(entry["worktree"], "HEAD")
-    if not refresh_pr and cached and _ci_usable(cached) \
-            and cached.get("ci_sha") == branch_tip:
+    tip_matches = (not wt_ok) or (cached.get("ci_sha") == branch_tip if cached else False)
+    if not refresh_pr and cached and ((_ci_usable(cached) and tip_matches)
+                                      or (entry.get("deleted_at") and "ci" in cached)):
         return cached.get("ci"), cached.get("ci_url") or ""
+    if not refresh_pr and entry.get("deleted_at"):
+        return None, ""
     url = pr["url"]
     tool = ((cached or {}).get("tool")
             or ("gh" if "github.com" in url else "glab"))
@@ -379,16 +393,20 @@ def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool, key: str = "") -> 
     branch = entry.get("branch", "")
     repo = entry.get("repo", "")
     cached = store.lookup_pr_cache(branch, repo)
+    wt_ok = bool(entry.get("worktree")) and Path(entry["worktree"]).exists()
     branch_tip = cells.get("_tip")
-    if branch_tip is None and entry.get("worktree") \
-            and Path(entry["worktree"]).exists():
+    if branch_tip is None and wt_ok:
         branch_tip = _patched("_git_tip")(entry["worktree"], "HEAD")
-    if not refresh_pr and cached and _reviews_usable(cached) \
-            and cached.get("reviews_sha") == branch_tip \
-            and all(k in cached for k in ("reviews", "unresolved", "resolved")):
+    tip_matches = (not wt_ok) or (cached.get("reviews_sha") == branch_tip if cached else False)
+    has_rev = bool(cached and all(k in cached for k in ("reviews", "unresolved", "resolved")))
+    if not refresh_pr and cached and has_rev and (
+        (_reviews_usable(cached) and tip_matches) or entry.get("deleted_at")
+    ):
         return {"reviews": int(cached.get("reviews") or 0),
                 "unresolved": int(cached.get("unresolved") or 0),
                 "resolved": int(cached.get("resolved") or 0)}
+    if not refresh_pr and entry.get("deleted_at"):
+        return None
     url = pr["url"]
     tool = ((cached or {}).get("tool")
             or ("gh" if "github.com" in url else "glab"))
@@ -454,18 +472,20 @@ def _issue_cell(key: str, entry: dict, refresh_pr: bool = False) -> str | None:
     branch = entry.get("branch", "")
     repo = entry.get("repo", "")
     cached = store.lookup_pr_cache(branch, repo) if branch else None
-    if not refresh_pr and cached and _issue_usable(cached) \
+    if not refresh_pr and cached and (_issue_usable(cached) or entry.get("deleted_at")) \
             and "issue_status" in cached:
         # store normalizes a cached None to "": a present-but-empty value
         # is a usable negative (lookup succeeded, no status label).
         return cached.get("issue_status") or None
+    if not refresh_pr and entry.get("deleted_at"):
+        return None
     from . import issue_status as _st
     parsed = None
     for cand in (stored, key, stored_url or None):
         if not cand:
             continue
         try:
-            parsed = _st._parse(cand)
+            parsed = _st._parse(cand, quiet=True)
         except Exception:
             parsed = None
         if parsed is not None:

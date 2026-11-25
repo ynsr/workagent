@@ -300,7 +300,63 @@ def create_app(static_dir: Path, host: str, port: int,
         runs_by_key: dict[str, list[dict]] = {}
         seen_latest: set[str] = set()
         try:
-            for r in registry.list():
+            from datetime import datetime
+            from . import store_sqlite as _sq
+            from .web_runs import _finish_state, _pending_question_from_texts
+
+            with registry.lock:
+                live_runs = list(registry.runs.values())
+            items: list[dict] = []
+            seen_db_ids: set[int] = set()
+            for r in live_runs:
+                if r.db_run_id:
+                    seen_db_ids.add(r.db_run_id)
+                wref = str(r.db_worktree_ref or "").strip()
+                if not wref:
+                    continue
+                pending = None
+                if r.state == "running":
+                    with r.lock:
+                        src = [txt for _, txt in r.lines]
+                    pending = _pending_question_from_texts(src)
+                items.append({
+                    "worktree_ref": wref,
+                    "state": r.state,
+                    "command": r.command,
+                    "pending_question": pending,
+                    "_sort_ts": float(r.created or 0.0),
+                    "_sort_id": int(r.db_run_id or 0),
+                })
+            if store._sqlite_path() is not None:
+                for row in _sq.list_runs(_sq.db_path(), include_output=False):
+                    rid = int(row.get("id") or 0)
+                    if rid in seen_db_ids:
+                        continue
+                    wref = str(row.get("worktree_ref") or "").strip()
+                    if not wref:
+                        continue
+                    exit_code = row.get("exit_code")
+                    stored = str(row.get("state") or "")
+                    if exit_code is None:
+                        state = "failed" if stored == "failed" else (
+                            "succeeded" if stored in ("finished", "preview") else "running"
+                        )
+                    else:
+                        state = _finish_state(exit_code)
+                    try:
+                        ts = datetime.fromisoformat(str(row.get("created_at") or "")).timestamp()
+                    except Exception:
+                        ts = 0.0
+                    items.append({
+                        "worktree_ref": wref,
+                        "state": state,
+                        "command": str(row.get("command") or ""),
+                        "pending_question": None,
+                        "_sort_ts": ts,
+                        "_sort_id": rid,
+                    })
+            items.sort(key=lambda r: (r["_sort_ts"], r["_sort_id"]), reverse=True)
+            for r in items:
                 wref = str(r.get("worktree_ref") or "").strip()
                 if not wref:
                     continue
@@ -315,7 +371,7 @@ def create_app(static_dir: Path, host: str, port: int,
             logger.warning("Failed to list runs for status enrichment: %s", exc)
         flows_by_key: dict[str, list[dict]] = {}
         try:
-            if store._use_sqlite():
+            if store._sqlite_path() is not None:
                 for fl in store.list_flows():
                     wref = str(fl.get("worktree_ref") or fl.get("worktree") or "").strip()
                     if not wref:
