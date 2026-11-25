@@ -21,7 +21,7 @@ import { hasAcpStructuredEvents } from "@/lib/harness"
 import { useConfirm } from "@/lib/confirm"
 import { queryKeys, useCancelRun, useRun } from "@/lib/queries"
 import { copyToClipboard, formatCostUsd, formatDurationMs, formatTokens, relativeTime, shortId } from "@/lib/format"
-import { buildRerunArgs, commandAction, commandLabel, hasChainChangeError, needsConfirm, runKind } from "@/lib/runs"
+import { buildRerunArgs, commandAction, commandLabel, needsConfirm, runKind } from "@/lib/runs"
 import { RunResumeActions } from "@/components/RunActions"
 import { AcpTranscript } from "@/components/AcpTranscript"
 import { SpawnedWorkersCard } from "@/components/SpawnedWorkersCard"
@@ -291,6 +291,10 @@ export function RunDetail() {
   const run = runQ.data
   const isRunning = state === "running"
   const isNeedsInput = state === "needs_input"
+  const willAddFresh =
+    isNeedsInput &&
+    !run.args.includes("--fresh") &&
+    buildRerunArgs(run.command, run.args, lines).includes("--fresh")
   const terminal = state !== null && state !== "running"
 
   return (
@@ -411,10 +415,7 @@ export function RunDetail() {
               linked state, a missing flag, or a --force-required conflict.
               Check the captured output below, then re-run with the same
               arguments
-              {run.command === "flow" &&
-              (run.args[0] === "-v" ? run.args[1] : run.args[0]) === "run" &&
-              hasChainChangeError(lines) &&
-              !run.args.includes("--fresh")
+              {willAddFresh
                 ? " (--fresh will be added automatically to start a new run on the new chain)"
                 : ""}
               .

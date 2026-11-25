@@ -163,15 +163,18 @@ export function hasChainChangeError(
 }
 
 /** Build the args array for Re-running a `needs_input` run.
- * Strips the leading `-v` (re-added per current Settings) and any appended
- * `--yes`, and appends `--fresh` for `flow run` when the captured output
- * failed with a `--steps` chain-change error. */
+ * Strips the leading `-v`/`--verbose` (re-added per current Settings) and any
+ * appended `--yes`, and appends `--fresh` for `flow run` when the captured
+ * output failed with a `--steps` chain-change error. */
 export function buildRerunArgs(
   command: string,
   rawArgs: readonly string[],
   lines: readonly (string | RunLine)[],
 ): string[] {
-  const stripped = rawArgs[0] === "-v" ? rawArgs.slice(1) : [...rawArgs]
+  const stripped =
+    rawArgs[0] === "-v" || rawArgs[0] === "--verbose"
+      ? rawArgs.slice(1)
+      : [...rawArgs]
   const args = stripped.filter((a) => a !== "--yes")
   if (
     command === "flow" &&

@@ -95,6 +95,13 @@ describe("buildRerunArgs / hasChainChangeError (issue #183)", () => {
         [{ seq: 1, text: STEP_DIFF_LINE }],
       ),
     ).toEqual(["run", "review_fix", "ao/wave2-iban/root", "--steps", "[]", "--fresh"])
+    expect(
+      buildRerunArgs(
+        "flow",
+        ["--verbose", "run", "review_fix", "ao/wave2-iban/root", "--steps", "[]", "--yes"],
+        [CONFIG_DIFF_LINE],
+      ),
+    ).toEqual(["run", "review_fix", "ao/wave2-iban/root", "--steps", "[]", "--fresh"])
   })
 
   it("does not duplicate --fresh if already present", () => {
