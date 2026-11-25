@@ -45,7 +45,7 @@ subcommand. `-q` is deliberately not exposed in the UI (prompt exclusion).
 | `status --json/--csv` | read-only | same | — | no | | |
 | `cd REF` | read-only | `_resolve_session_key` + links | — | no | unknown ref (2), missing worktree (1) | none |
 | `sync [REF] [--no-auto-register]` | mutating | `<HarnessPicker>` (Dashboard Sync confirm) | `sync:<ref>` | yes-ish (rebase/merge + push) | ref resolution; dirty worktree (1); `--no-auto-register` w/o link (2) | conflict: TTY confirm; `--harness`/`--yes` run selected/default harness; unlinked PR/MR auto-registers unless `--no-auto-register` |
-| `sync -m/--merge` | mutating | — | `sync:<ref>` | yes-ish | | |
+| `sync -m/--merge` / `--rebase` | mutating | `<SyncActionSelect>` (Launch Sync tab), Sync method select (`ChainEditor`), `<BulkConfirmExtras>` | `sync:<ref>` | yes-ish | | `--rebase` is default; mutually exclusive with `--merge` |
 | `sync --harness NAME` | mutating | `<HarnessPicker>` (Dashboard Sync / Sync-all confirms, Launch Sync tab) | `sync:<ref>` | yes-ish | unsupported harness name | launches selected harness on conflicts (default: configured `default_harness`) |
 | `sync --all` | mutating | — | `sync:all` | yes-ish | | implies `--yes` |
 | `sync --yes/--force/-y` | mutating | — | `sync:<ref>` | yes-ish | | runs configured/selected harness headless on conflicts |

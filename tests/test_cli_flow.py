@@ -416,6 +416,31 @@ def test_seam_sync_calls_runner_headless_skips_preview(monkeypatch):
     assert len(calls) == before
 
 
+def test_seam_sync_forwards_rebase_and_rejects_merge_with_rebase(monkeypatch, capsys):
+    import pytest
+    import typer
+    import workagent.cli_flow as m
+    import workagent.cli_sync as s
+
+    calls = []
+    monkeypatch.setattr(s.sync_cmd, "__wrapped__",
+                        lambda *a, **k: calls.append((a, k)) or None)
+    out = m._run_sync_step("wt-1", {"rebase": True}, False)
+    assert calls and calls[0][0][0] == "wt-1"
+    assert calls[0][1].get("rebase") is True
+    assert "preview" not in out and out["status"] == "synced"
+
+    preview = m._run_sync_step("wt-1", {"rebase": True, "dry_run": True}, False)
+    assert preview["preview"] is True
+    assert "--rebase" in preview["command"]
+
+    monkeypatch.undo()
+    with pytest.raises(typer.Exit) as exc_info:
+        m._run_sync_step("wt-1", {"merge": True, "rebase": True}, False)
+    assert exc_info.value.exit_code == 2
+    assert "cannot combine --rebase and --merge" in capsys.readouterr().err
+
+
 def test_seam_action_calls_runner_headless_skips_preview(monkeypatch):
     import workagent.cli_flow as m
     import workagent.cli_action as a

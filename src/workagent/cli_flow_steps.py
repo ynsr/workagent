@@ -199,7 +199,7 @@ def run_sync_step(key: str, config: dict, json_output: bool,
             and not any(config.get(k) for k in ("preview", "dry_run", "terminal"))):
         return manual("sync", [key, *extra])
     _call(_mod.sync_cmd.__wrapped__, key, yes=True, json_output=json_output,
-          **pick(config, "merge", "harness", "acp", "model", "effort",
+          **pick(config, "merge", "rebase", "harness", "acp", "model", "effort",
                  "session_file", "env_file",
                  "extra_prompt"))
     return {"key": key, "status": "synced"}

@@ -207,6 +207,7 @@ function StepConfigForm({
   const showMergeOnly = kind === "cleanup"
   const showUpdate = kind === "prodtest_plan"
   const showRelease = kind === "release"
+  const showSyncStrategy = kind === "sync"
   const showHarness =
     kind === "start" ||
     kind === "review" ||
@@ -361,6 +362,30 @@ function StepConfigForm({
             </select>
           </div>
         </>
+      ) : null}
+      {showSyncStrategy ? (
+        <div className="grid gap-1.5 sm:col-span-2">
+          <Label htmlFor={`${idPrefix}-sync-strategy`}>Sync method</Label>
+          <select
+            id={`${idPrefix}-sync-strategy`}
+            value={config.merge === true ? "merge" : "rebase"}
+            onChange={(e) => {
+              const next = { ...config }
+              if (e.target.value === "merge") {
+                next.merge = true
+                delete next.rebase
+              } else {
+                delete next.merge
+                delete next.rebase
+              }
+              onChange(next)
+            }}
+            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring"
+          >
+            <option value="rebase">Rebase (default)</option>
+            <option value="merge">Merge locally (--merge)</option>
+          </select>
+        </div>
       ) : null}
       {showHarness ? (
         <div className="sm:col-span-2">

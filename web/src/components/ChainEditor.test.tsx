@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react"
+import { cleanup, render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 import { ChainEditor, nextStartConfigForRepo, startRepoState, validateChain } from "@/components/ChainEditor"
@@ -340,5 +340,27 @@ describe("ChainEditor step harness", () => {
     await user.click(trigger)
     await user.click(screen.getByRole("radio", { name: /^Default/ }))
     expect(next[0]?.config).toEqual({})
+  })
+
+  it("defaults sync step strategy to Rebase and toggles Merge locally", async () => {
+    cleanup()
+    const user = userEvent.setup()
+    let next: FlowStep[] = []
+    const { container } = render(
+      <ChainEditor
+        mode="edit"
+        steps={[{ kind: "sync", config: {} }]}
+        onChange={(s) => { next = s }}
+        knownActions={[]}
+      />,
+    )
+    const select = within(container).getByLabelText("Sync method") as HTMLSelectElement
+    expect(select.value).toBe("rebase")
+
+    await user.selectOptions(select, "merge")
+    expect(next[0]?.config?.merge).toBe(true)
+
+    await user.selectOptions(select, "rebase")
+    expect(next[0]?.config?.merge).toBeUndefined()
   })
 })

@@ -39,6 +39,27 @@ def test_sync_rebase_strategy_with_open_pr(isolated_config, tmp_path, monkeypatc
     assert pulled == [(str(wt_dir), "feat/IPG-929--x")]
 
 
+def test_sync_explicit_rebase_flag_and_mutual_exclusion(isolated_config, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
+    wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
+    _link_session(repo_dir, wt_dir, monkeypatch)
+    store.cache_pr_status("feat/IPG-929--x", {"number": 9, "state": "open",
+                                              "title": "T", "author": "a",
+                                              "created_at": "2026-09-15",
+                                              "url": "https://x/mr/9",
+                                              "target_branch": "main"},
+                              repo=str(repo_dir))
+    rebase, local, pulled = [], [], []
+    _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase,
+                pulled=pulled)
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
+    r = _invoke("sync", "IPG-929", "--rebase", "--yes", "--json")
+    assert r.exit_code == 0
+    assert json.loads(r.stdout)["strategy"] == "remote-rebase"
+    r_bad = _invoke("sync", "IPG-929", "--rebase", "--merge", "--yes")
+    assert r_bad.exit_code == 2
+
+
 def test_sync_merge_flag_uses_local_merge(isolated_config, tmp_path, monkeypatch):
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)

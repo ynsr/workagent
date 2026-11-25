@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils"
 
 import { CheckRow, FieldHelp } from "@/components/FieldHelp"
 import { HarnessPicker } from "@/components/HarnessPicker"
-import { ReviewActionSelect, RunModeSelect, StartFormFields, buildRegisterArgs, buildReviewArgs, buildStartArgs, registerFlagList } from "@/components/StartForm"
+import { ReviewActionSelect, RunModeSelect, StartFormFields, SyncActionSelect, buildRegisterArgs, buildReviewArgs, buildStartArgs, registerFlagList } from "@/components/StartForm"
 import { COPY, INITIAL, MODES, adhocArgs, extraPromptArgs, isPrShaped, runModeArgs, splitAdhocRefs } from "@/lib/launchConfig"
 import type { LaunchForm, Mode } from "@/lib/launchConfig"
 import { loadLaunchPrefs, lookupStartPrefsByRepo, saveLaunchPrefs, saveStartPrefsForRepo } from "@/lib/launchPrefs"
@@ -135,13 +135,10 @@ function LaunchOtherFields({ mode, form, onChange, copy, repoNames }: {
 }) {
   if (mode === "sync") {
     return (
-      <CheckRow
-        id="launch-merge"
-        checked={form.merge}
-        onChange={(v) => onChange("merge", v)}
-        label="Merge locally"
-        flag="--merge"
-        description="Merge locally instead of the remote rebase."
+      <SyncActionSelect
+        idPrefix="launch"
+        value={form.merge ? "merge" : "rebase"}
+        onChange={(v) => onChange("merge", v === "merge")}
       />
     )
   }
