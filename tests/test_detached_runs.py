@@ -119,3 +119,127 @@ def test_rehydrate_partial_trailing_line(isolated_config, monkeypatch):
     run = reg.get("partial1")
     assert [txt for _, txt in run.lines] == ["line1"]
     assert captured["initial_offset"] == len(b"line1\n")
+
+
+def test_rehydrate_live_run_finalizes_precreated_db_row(isolated_config):
+    """A precreated DB row survives rehydrate and is finalized when the run exits 0."""
+    import time
+    from workagent import run_store, store_sqlite as _sq, web_runs
+    from workagent.webapp import Registry
+
+    db = _sq.db_path()
+    _sq.connect(db).close()
+    reg1 = Registry()
+    run = web_runs.Run(id="dbreh1", command="review", args=["IPG-1"],
+                       target="review:IPG-1",
+                       argv=["/bin/sh", "-c", "echo started; sleep 0.5; echo done"])
+    reg1.runs[run.id] = run
+    web_runs._spawn(run, reg1)
+    assert web_runs._wait_log(run, "started", timeout=5)
+    assert run.db_run_id > 0
+    rid = run.db_run_id
+    meta = run_store.read_meta(run_store.runs_root() / "dbreh1")
+    assert meta.get("db_run_id") == rid
+
+    reg2 = Registry()
+    out = web_runs.rehydrate(reg2)
+    assert "dbreh1" in out["adopted"]
+    run2 = reg2.get("dbreh1")
+    assert run2.db_run_id == rid
+
+    deadline = time.time() + 5
+    while run2.state == "running" and time.time() < deadline:
+        time.sleep(0.05)
+    assert run2.state == "succeeded"
+
+    deadline = time.time() + 5
+    row = None
+    while time.time() < deadline:
+        row = _sq.get_run(db, rid, include_deleted_worktrees=True)
+        if row and row["state"] != "running":
+            break
+        time.sleep(0.05)
+    assert row is not None
+    assert row["state"] == "finished"
+    assert row["exit_code"] == 0
+
+
+def test_rehydrate_finalizes_run_finished_during_downtime(isolated_config):
+    """If a detached run exits while serve is down, rehydrate still finalizes its DB row."""
+    from workagent import run_store, store_sqlite as _sq, web_runs
+    from workagent.webapp import Registry
+
+    db = _sq.db_path()
+    _sq.connect(db).close()
+    rid = _sq.insert_run(
+        db, "review", ["IPG-2"], None,
+        metadata={"origin": "web-run", "web_run_id": "downfin1", "target": "review:IPG-2"},
+        state="running",
+    )
+    d = run_store.new_run_dir("downfin1")
+    run_store.write_meta(d, {
+        "command": "review", "args": ["IPG-2"], "target": "review:IPG-2",
+        "created": 100.0, "db_run_id": rid,
+    })
+    (d / "output.log").write_text("JOB_DONE\n")
+    run_store.write_exit(d, 0)
+
+    web_runs.rehydrate(Registry())
+    row = _sq.get_run(db, rid, include_deleted_worktrees=True)
+    assert row is not None
+    assert row["state"] == "finished"
+    assert row["exit_code"] == 0
+    assert "JOB_DONE" in (row["output"] or "")
+
+
+def test_rehydrate_finalizes_dead_run_db_row(isolated_config):
+    """If a detached run's process died while serve was down, rehydrate marks its DB row failed."""
+    from workagent import run_store, store_sqlite as _sq, web_runs
+    from workagent.webapp import Registry
+
+    db = _sq.db_path()
+    _sq.connect(db).close()
+    rid = _sq.insert_run(
+        db, "review", ["IPG-3"], None,
+        metadata={"origin": "web-run", "web_run_id": "downdead1", "target": "review:IPG-3"},
+        state="running",
+    )
+    d = run_store.new_run_dir("downdead1")
+    run_store.write_meta(d, {
+        "command": "review", "args": ["IPG-3"], "target": "review:IPG-3",
+        "created": 100.0,
+    })
+    out = web_runs.rehydrate(Registry())
+    assert "downdead1" in out["closed"]
+    row = _sq.get_run(db, rid, include_deleted_worktrees=True)
+    assert row is not None
+    assert row["state"] == "failed"
+    assert row["exit_code"] == -1
+
+
+def test_rehydrate_reconciles_orphaned_web_run_rows(isolated_config):
+    """Orphaned web-run rows whose run_dir was already pruned are reconciled from child runs."""
+    from workagent import store_sqlite as _sq, web_runs
+    from workagent.webapp import Registry
+
+    db = _sq.db_path()
+    _sq.connect(db).close()
+    ok_parent = _sq.insert_run(
+        db, "review", ["IPG-4"], None,
+        metadata={"origin": "web-run", "web_run_id": "pruned_ok", "target": "review:IPG-4"},
+        state="running",
+    )
+    _sq.insert_run(db, "review", ["IPG-4"], 0, state="finished",
+                   parent_run_id=ok_parent)
+
+    fail_parent = _sq.insert_run(
+        db, "review", ["IPG-5"], None,
+        metadata={"origin": "web-run", "web_run_id": "pruned_fail", "target": "review:IPG-5"},
+        state="running",
+    )
+
+    web_runs.rehydrate(Registry())
+    ok_row = _sq.get_run(db, ok_parent, include_deleted_worktrees=True)
+    fail_row = _sq.get_run(db, fail_parent, include_deleted_worktrees=True)
+    assert ok_row is not None and ok_row["state"] == "finished" and ok_row["exit_code"] == 0
+    assert fail_row is not None and fail_row["state"] == "failed" and fail_row["exit_code"] == -1
