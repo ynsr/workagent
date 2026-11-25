@@ -119,16 +119,17 @@ def resolve_worktree(ref: str, links: dict) -> str | list[str] | None:
         return None
     if len(matches) == 1:
         return matches[0]
-    exact_entry = links.get(exact, {}) or {}
-    stored_urls = {refs.normalize_pr_url(str(exact_entry.get("issue_url", "") or "")),
-                   refs.normalize_pr_url(str(exact_entry.get("pr_url", "") or ""))} - {""}
-    cand_urls = ({norm_ref} if norm_ref else set()) | (
-        {refs.normalize_pr_url(str(parsed.get("url", "") or ""))} - {""} if parsed else set()
-    )
-    if exact is not None and (stored_urls & cand_urls):
-        # The canonical row's own stored issue_url/pr_url confirms this URL ref:
-        # hand it back instead of the ambiguous substring list (flow #71, #188).
-        return exact
+    if exact is not None:
+        exact_entry = links.get(exact, {}) or {}
+        stored_urls = {refs.normalize_pr_url(str(exact_entry.get("issue_url", "") or "")),
+                       refs.normalize_pr_url(str(exact_entry.get("pr_url", "") or ""))} - {""}
+        cand_urls = ({norm_ref} if norm_ref else set()) | (
+            {refs.normalize_pr_url(str(parsed.get("url", "") or ""))} - {""} if parsed else set()
+        )
+        if stored_urls & cand_urls:
+            # The canonical row's own stored issue_url/pr_url confirms this URL ref:
+            # hand it back instead of the ambiguous substring list (flow #71, #188).
+            return exact
     return matches
 
 
