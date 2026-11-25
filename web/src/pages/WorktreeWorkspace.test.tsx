@@ -100,9 +100,9 @@ describe("WorktreeWorkspace", () => {
     expect(await screen.findByText("Done implementing.")).toBeTruthy()
     expect(screen.getByTestId("inspector-summary")).toBeTruthy()
 
-    // Switch inspector tab to Diff / Files
-    fireEvent.click(screen.getByRole("tab", { name: /Diff \/ Files/i }))
-    expect(screen.getByTestId("inspector-diff")).toBeTruthy()
+    // Switch inspector tab to Flows & Runs
+    fireEvent.click(screen.getByRole("tab", { name: /Flows & Runs/i }))
+    expect(screen.getByTestId("inspector-flows")).toBeTruthy()
 
     // Use quick action chip and submit follow-up
     fireEvent.click(screen.getByRole("button", { name: "Run tests" }))
