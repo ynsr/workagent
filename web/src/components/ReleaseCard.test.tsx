@@ -78,11 +78,13 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe("FixDefaultDialog harness", () => {
-  it("renders HarnessSelect and emits --harness in release fix-default args", async () => {
+  it("renders HarnessPicker and emits --harness in release fix-default args", async () => {
     const user = userEvent.setup()
     renderDialog()
 
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
+    await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Fix default" }))
     await user.click(screen.getByRole("button", { name: "Fix default" }))
 

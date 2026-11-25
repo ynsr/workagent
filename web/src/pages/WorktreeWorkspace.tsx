@@ -17,8 +17,7 @@ import {
 import { AcpTranscript } from "@/components/AcpTranscript"
 import { SpawnedWorkersCard } from "@/components/SpawnedWorkersCard"
 import { WorktreeWatcherOverrides } from "@/components/WorktreeWatcherOverrides"
-import { HarnessSelect } from "@/components/HarnessSelect"
-import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { QuestionCard } from "@/components/QuestionCard"
 import { RunModeSelect } from "@/components/StartForm"
 import { CiBadge, PrBadge, RunStateBadge } from "@/components/StateBadge"
@@ -336,25 +335,21 @@ export function WorktreeWorkspace() {
               </div>
 
               {/* Harness / RunMode / Model / Effort selectors */}
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                <HarnessSelect idPrefix="workspace-followup" value={harness} onChange={setHarness} />
+              <div className="flex flex-wrap items-center gap-3">
+                <HarnessPicker
+                  idPrefix="workspace-followup"
+                  harness={harness}
+                  model={model}
+                  effort={effort}
+                  onHarnessChange={(v) => { setHarness(v); setModel(""); setEffort("") }}
+                  onModelChange={setModel}
+                  onEffortChange={setEffort}
+                />
                 <RunModeSelect
                   idPrefix="workspace-followup"
                   value={runMode}
                   onChange={setRunMode}
                   hidePreview
-                />
-                <ModelSelect
-                  idPrefix="workspace-followup"
-                  harness={harness}
-                  value={model}
-                  onChange={setModel}
-                />
-                <EffortSelect
-                  idPrefix="workspace-followup"
-                  harness={harness}
-                  value={effort}
-                  onChange={setEffort}
                 />
               </div>
 

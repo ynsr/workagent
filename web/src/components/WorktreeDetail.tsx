@@ -20,8 +20,7 @@ import { CiBadge } from "@/components/StateBadge"
 import { CopyCell } from "@/components/CopyCell"
 import { ReviewsCell } from "@/components/StatusCells"
 import { ActionsMenu } from "@/components/ActionsMenu"
-import { HarnessSelect } from "@/components/HarnessSelect"
-import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { WorktreeFeedbackTimeline } from "@/components/WorktreeFeedbackTimeline"
 import { WorktreeWatcherOverrides } from "@/components/WorktreeWatcherOverrides"
 import { WorkspaceDiffView } from "@/components/WorkspaceDiffView"
@@ -387,31 +386,17 @@ export function WorktreeDetail({
         {worktreeKey ? (
           <>
             <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden />
-            <div className="w-36 [&_label]:sr-only [&_select]:h-8">
-              <HarnessSelect
-                idPrefix="wd-terminal"
-                variant="select"
-                allowDefault
-                value={terminalHarness}
-                onChange={(v) => { setTerminalHarness(v); setTerminalModel(""); setTerminalEffort("") }}
-              />
-            </div>
-            <div className="w-36 [&_label]:sr-only [&_select]:h-8">
-              <ModelSelect
-                idPrefix="wd-terminal"
-                harness={terminalHarness}
-                value={terminalModel}
-                onChange={setTerminalModel}
-              />
-            </div>
-            <div className="w-36 [&_label]:sr-only [&_select]:h-8">
-              <EffortSelect
-                idPrefix="wd-terminal"
-                harness={terminalHarness}
-                value={terminalEffort}
-                onChange={setTerminalEffort}
-              />
-            </div>
+            <HarnessPicker
+              idPrefix="wd-terminal"
+              compact
+              allowDefault
+              harness={terminalHarness}
+              model={terminalModel}
+              effort={terminalEffort}
+              onHarnessChange={(v) => { setTerminalHarness(v); setTerminalModel(""); setTerminalEffort("") }}
+              onModelChange={setTerminalModel}
+              onEffortChange={setTerminalEffort}
+            />
             <Button variant="outline" size="sm" disabled={launchTerminal.isPending || networkExposed} title="Open a bare AI harness in the OS terminal (no initial prompt)" onClick={() => launchMode("harness")}>
               <SquareTerminal aria-hidden className="size-4" />
               {pendingMode === "harness" && launchTerminal.isPending ? "Opening…" : "Harness"}

@@ -1,10 +1,20 @@
-import { api, type FlowStep } from "@/lib/api"
+import { api, type FlowExecutionMode, type FlowStep } from "@/lib/api"
 
 export const EXECUTION_MODES = ["sequential", "parallel"] as const
-export const SEQUENTIAL_ONLY_STEPS = ["start", "cleanup", "release"] as const
+export const SEQUENTIAL_ONLY_STEPS = ["cleanup", "release"] as const
+
+export function defaultExecutionMode(kind: string): FlowExecutionMode {
+  return kind === "start" ? "parallel" : "sequential"
+}
+
+export function effectiveExecutionMode(
+  step: Pick<FlowStep, "kind" | "execution_mode">,
+): FlowExecutionMode {
+  return step.execution_mode ?? defaultExecutionMode(step.kind)
+}
 
 /** Counts parallelizable steps by mode for summary lines/badges. `forced`
- * counts start/cleanup/release steps (always sequential across worktrees). */
+ * counts cleanup/release steps (always sequential across worktrees). */
 export function summarizeExecution(steps: FlowStep[]): {
   parallel: number
   sequential: number
@@ -19,14 +29,14 @@ export function summarizeExecution(steps: FlowStep[]): {
       forced += 1
       continue
     }
-    if ((s.execution_mode ?? "sequential") === "parallel") parallel += 1
+    if (effectiveExecutionMode(s) === "parallel") parallel += 1
     else sequential += 1
   }
   return { parallel, sequential, forced, runsParallel: chainRunsParallel(steps) }
 }
 
 /** True when every parallelizable step may run concurrently across worktrees.
- * start/cleanup/release always run sequentially (backend forces it), so they
+ * cleanup/release always run sequentially (backend forces it), so they
  * are excluded — otherwise any realistic chain would force sequential mode
  * and the concurrent fan-out would be dead code. Any remaining sequential
  * step forces worktree-by-worktree execution. */
@@ -35,7 +45,7 @@ export function chainRunsParallel(steps: FlowStep[]): boolean {
     (s) => !(SEQUENTIAL_ONLY_STEPS as readonly string[]).includes(s.kind),
   )
   if (parallelizable.length === 0) return false
-  return parallelizable.every((s) => (s.execution_mode ?? "sequential") === "parallel")
+  return parallelizable.every((s) => effectiveExecutionMode(s) === "parallel")
 }
 
 /** Poll a just-created run until it leaves `running`. Returns true when the

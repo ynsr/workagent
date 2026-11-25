@@ -50,7 +50,9 @@ describe("ActionFormCard harness", () => {
 
     await user.type(screen.getByLabelText("Name"), "Audit")
     await user.type(screen.getByLabelText("Prompt"), "audit repo")
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
+    await user.keyboard("{Escape}")
 
     await user.click(screen.getByRole("button", { name: "Suggest icon" }))
     const suggestCall = mutateAsync.mock.calls[0]?.[0]
@@ -74,7 +76,8 @@ describe("ActionFormCard harness", () => {
     expect(JSON.parse(args[idx + 1] ?? "{}")).toEqual({ run_mode: "preview", harness: "omp" })
   })
 
-  it("hydrates default_options.harness when editing an existing action", () => {
+  it("hydrates default_options.harness when editing an existing action", async () => {
+    const user = userEvent.setup()
     renderForm({
       id: 1,
       label: "audit",
@@ -87,6 +90,9 @@ describe("ActionFormCard harness", () => {
       created_at: "",
       modified_at: "",
     })
+    const trigger = screen.getByRole("button", { name: /^Harness, model, and effort/ })
+    expect(trigger).toHaveTextContent("omp")
+    await user.click(trigger)
     expect(screen.getByRole("radio", { name: "omp" })).toHaveAttribute("aria-checked", "true")
   })
 })

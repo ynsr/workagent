@@ -215,7 +215,7 @@ describe("ChainEditor execution mode", () => {
 })
 describe("ChainEditor execution bulk bar", () => {
   it("disables both bulk actions for forced-only steps", () => {
-    const { unmount } = renderChain([{ kind: "start", config: {} }, { kind: "cleanup", config: {} }])
+    const { unmount } = renderChain([{ kind: "cleanup", config: {} }, { kind: "release", config: {} }])
     expect(screen.getByRole("button", { name: "All parallel" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "All sequential" })).toBeDisabled()
     unmount()
@@ -224,14 +224,14 @@ describe("ChainEditor execution bulk bar", () => {
   it("sets every parallelizable step parallel, skipping forced kinds", async () => {
     const user = userEvent.setup()
     const steps: FlowStep[] = [
-      { kind: "start", config: {} },
+      { kind: "start", config: {}, execution_mode: "sequential" },
       { kind: "review", config: {} },
       { kind: "cleanup", config: {} },
     ]
     const { unmount, next } = renderChain(steps)
     await user.click(screen.getByRole("button", { name: "All parallel" }))
-    expect(next()[1]?.execution_mode).toBe("parallel")
     expect(next()[0]?.execution_mode).toBeUndefined()
+    expect(next()[1]?.execution_mode).toBe("parallel")
     expect(next()[2]?.execution_mode).toBeUndefined()
     expect(summarizeExecution(next()).runsParallel).toBe(true)
     unmount()
@@ -304,8 +304,9 @@ describe("ChainEditor step harness", () => {
           knownActions={ACTIONS}
         />,
       )
-      const select = within(container).getByLabelText<HTMLSelectElement>("Harness")
-      await user.selectOptions(select, "omp")
+      const trigger = within(container).getByRole("button", { name: /^Harness, model, and effort/ })
+      await user.click(trigger)
+      await user.click(screen.getByRole("radio", { name: "omp" }))
       expect(next[0]?.config?.harness).toBe("omp")
       unmount()
     }
@@ -318,7 +319,7 @@ describe("ChainEditor step harness", () => {
           knownActions={[]}
         />,
       )
-      expect(within(container).queryByLabelText("Harness")).not.toBeInTheDocument()
+      expect(within(container).queryByRole("button", { name: /^Harness, model, and effort/ })).not.toBeInTheDocument()
       unmount()
     }
   })
@@ -334,9 +335,10 @@ describe("ChainEditor step harness", () => {
         knownActions={[]}
       />,
     )
-    const select = within(container).getByLabelText<HTMLSelectElement>("Harness")
-    expect(select.value).toBe("omp")
-    await user.selectOptions(select, "")
+    const trigger = within(container).getByRole("button", { name: /^Harness, model, and effort/ })
+    expect(trigger).toHaveTextContent("omp")
+    await user.click(trigger)
+    await user.click(screen.getByRole("radio", { name: /^Default/ }))
     expect(next[0]?.config).toEqual({})
   })
 })

@@ -3,8 +3,7 @@ import { Play, Workflow } from "lucide-react"
 import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import { ActionDialog } from "@/components/LinkDialogs"
-import { HarnessSelect } from "@/components/HarnessSelect"
-import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { RunModeSelect } from "@/components/StartForm"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { SegmentedControl } from "@/components/FormControls"
@@ -224,9 +223,16 @@ export function ImmediateRunForm({
       {kind === "action" ? (
         <RunModeSelect idPrefix="immediate-run" value={runMode} onChange={setRunMode} />
       ) : null}
-      <HarnessSelect idPrefix="immediate-run" value={harness} onChange={(v) => { setHarness(v); setModel(""); setEffort("") }} allowDefault />
-      <ModelSelect idPrefix="immediate-run" harness={harness} value={model} onChange={setModel} />
-      <EffortSelect idPrefix="immediate-run" harness={harness} value={effort} onChange={setEffort} />
+      <HarnessPicker
+        idPrefix="immediate-run"
+        harness={harness}
+        model={model}
+        effort={effort}
+        onHarnessChange={(v) => { setHarness(v); setModel(""); setEffort("") }}
+        onModelChange={setModel}
+        onEffortChange={setEffort}
+        allowDefault
+      />
       <Button type="button" disabled={!valid || running} onClick={() => void handleRun()}>
         {kind === "action" ? <Play aria-hidden /> : <Workflow aria-hidden />}
         {running ? "Launching…" : `Run ${kind} now`}

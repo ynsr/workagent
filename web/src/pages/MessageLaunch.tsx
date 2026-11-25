@@ -3,8 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { Rocket } from "lucide-react"
 import { PageHeader } from "@/components/PageHeader"
-import { HarnessSelect } from "@/components/HarnessSelect"
-import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { RunModeSelect } from "@/components/StartForm"
 import { SearchableSelect } from "@/components/SearchableSelect"
 import { Button } from "@/components/ui/button"
@@ -386,22 +385,14 @@ export function MessageLaunch({ embedded = false }: { embedded?: boolean } = {})
                 onChange={(v: RunMode) => update("runMode", v)}
               />
             ) : null}
-            <HarnessSelect
-              idPrefix="message-launch"
-              value={form.harness}
-              onChange={(v) => { update("harness", v); update("model", ""); update("effort", "") }}
-            />
-            <ModelSelect
+            <HarnessPicker
               idPrefix="message-launch"
               harness={form.harness}
-              value={form.model}
-              onChange={(v) => update("model", v)}
-            />
-            <EffortSelect
-              idPrefix="message-launch"
-              harness={form.harness}
-              value={form.effort}
-              onChange={(v) => update("effort", v)}
+              model={form.model}
+              effort={form.effort}
+              onHarnessChange={(v) => { update("harness", v); update("model", ""); update("effort", "") }}
+              onModelChange={(v) => update("model", v)}
+              onEffortChange={(v) => update("effort", v)}
             />
           </div>
 

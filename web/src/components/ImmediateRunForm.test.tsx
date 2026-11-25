@@ -52,11 +52,13 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe("ImmediateRunForm harness", () => {
-  it("renders HarnessSelect for action runs and emits --harness", async () => {
+  it("renders HarnessPicker for action runs and emits --harness", async () => {
     const user = userEvent.setup()
     renderRunForm("action", "audit")
 
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("radio", { name: "omp" }))
+    await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Run action now" }))
     await user.click(screen.getByRole("button", { name: "Run now" }))
 
@@ -67,11 +69,13 @@ describe("ImmediateRunForm harness", () => {
     })
   })
 
-  it("renders HarnessSelect for flow runs and emits --harness", async () => {
+  it("renders HarnessPicker for flow runs and emits --harness", async () => {
     const user = userEvent.setup()
     renderRunForm("flow", "ship")
 
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     await user.click(screen.getByRole("radio", { name: "agy" }))
+    await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Run flow now" }))
     await user.click(screen.getByRole("button", { name: "Run now" }))
 

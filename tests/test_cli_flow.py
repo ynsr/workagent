@@ -303,7 +303,7 @@ def test_run_creates_child_row_per_step(tmp_path, monkeypatch, isolated_config):
     monkeypatch.setattr("workagent.store.load_links", lambda **k: {})
     monkeypatch.setattr("workagent.store.load_repos", lambda: {})
     monkeypatch.setattr(cli_mod, "_resolve_ref",
-                        lambda ref: ("", {}, {"kind": "issue"}))
+                        lambda ref: ("k", {}, None))
     monkeypatch.setattr(cli_mod, "_run_sync_step",
                         lambda *a, **k: {"status": "ok"})
     runner = CliRunner()
@@ -1307,6 +1307,81 @@ def test_flow_run_steps_starts_fresh_after_step0_failure(monkeypatch):
     ])
     assert res3.exit_code == 2, res3.output
     assert "--step-config" in res3.output
+
+
+def test_flow_run_review_fix_with_mr_url_resolves_via_pr_url(tmp_path, monkeypatch, isolated_config):
+    """Issue #188: review_fix <MR URL> resolves branch-keyed link via pr_url."""
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401
+    import workagent.cli_flow as cli_mod
+
+    mr_url = "https://git.jibit.cloud/server/projectx/-/merge_requests/1824"
+    links = {
+        "ao/terminal-priority/ipg-1076": {
+            "branch": "ao/terminal-priority/ipg-1076",
+            "worktree": str(tmp_path / "wt"),
+            "repo": "/repos/projectx",
+            "pr_url": mr_url,
+            "issue_url": "",
+        },
+        "other-wt": {
+            "branch": "feat/other",
+            "worktree": str(tmp_path / "other"),
+            "repo": "/repos/other",
+        },
+    }
+    tpl = {"label": "review_fix", "name": "Review + Fix",
+           "steps": [{"kind": "review", "config": {}},
+                     {"kind": "fix_comments", "config": {}}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.get_action", lambda l: {"label": l})
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [])
+    monkeypatch.setattr("workagent.store.load_links", lambda **k: links)
+    monkeypatch.setattr("workagent.store.load_repos", lambda: {})
+    created = []
+    monkeypatch.setattr("workagent.store.create_flow",
+                        lambda **f: (created.append(f), {
+                            "id": 1, **f, "status": "pending",
+                            "current_step": 0, "step_results": [],
+                        })[1])
+    monkeypatch.setattr("workagent.store.update_flow", lambda fid, **f: {"id": fid, **f})
+    monkeypatch.setattr("workagent.store.get_flow", lambda *a, **k: None)
+    seen_keys = []
+    monkeypatch.setattr(cli_mod, "_run_review_step",
+                        lambda key, cfg, fix, j: (seen_keys.append((key, fix)), {"status": "reviewed"})[1])
+
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["flow", "run", "review_fix", mr_url, "--yes"])
+    assert res.exit_code == 0, res.output
+    assert created and created[0]["worktree_ref"] == "ao/terminal-priority/ipg-1076"
+    assert seen_keys == [
+        ("ao/terminal-priority/ipg-1076", False),
+        ("ao/terminal-priority/ipg-1076", True),
+    ]
+
+
+def test_flow_run_without_start_step_fails_fast_when_unlinked(tmp_path, monkeypatch, isolated_config):
+    """Issue #188: flow without a start step fails fast instead of running with key=''."""
+    from typer.testing import CliRunner
+    import workagent.cli  # noqa: F401
+    import workagent.cli_flow as cli_mod
+
+    ref = "jira:IPG-9999"
+    tpl = {"label": "review_fix", "name": "Review + Fix",
+           "steps": [{"kind": "review", "config": {}},
+                     {"kind": "fix_comments", "config": {}}]}
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.get_action", lambda l: {"label": l})
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [])
+    monkeypatch.setattr("workagent.store.load_links", lambda **k: {})
+    created = []
+    monkeypatch.setattr("workagent.store.create_flow", lambda **f: created.append(f))
+
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["flow", "run", "review_fix", ref, "--yes"])
+    assert res.exit_code == 2, res.output
+    assert "no linked worktree" in res.output
+    assert created == []
 
 
 

@@ -19,8 +19,7 @@ import { ReleaseCard } from "@/components/ReleaseCard"
 import { ActionsMenu } from "@/components/ActionsMenu"
 import { DashboardBulkMenu } from "@/components/DashboardBulkMenu"
 import { FlowsMenu } from "@/components/FlowsMenu"
-import { HarnessSelect } from "@/components/HarnessSelect"
-import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
+import { HarnessPicker } from "@/components/HarnessPicker"
 import { CleanupDialog } from "@/components/CleanupDialog"
 import { DeactivatedTable } from "@/components/DeactivatedTable"
 import { DeletedTable } from "@/components/DeletedTable"
@@ -144,10 +143,12 @@ function BulkConfirmExtras({
           description={checkbox.description}
         />
       ) : null}
-      <HarnessSelect
+      <HarnessPicker
         idPrefix={idPrefix}
-        value={harness}
-        onChange={(v) => {
+        harness={harness}
+        model={model}
+        effort={effort}
+        onHarnessChange={(v) => {
           setHarness(v)
           harnessRef.current = v
           setModel("")
@@ -155,25 +156,15 @@ function BulkConfirmExtras({
           modelRef.current = ""
           effortRef.current = ""
         }}
-        allowDefault
-      />
-      <ModelSelect
-        idPrefix={idPrefix}
-        harness={harness}
-        value={model}
-        onChange={(v) => {
+        onModelChange={(v) => {
           setModel(v)
           modelRef.current = v
         }}
-      />
-      <EffortSelect
-        idPrefix={idPrefix}
-        harness={harness}
-        value={effort}
-        onChange={(v) => {
+        onEffortChange={(v) => {
           setEffort(v)
           effortRef.current = v
         }}
+        allowDefault
       />
     </div>
   )
