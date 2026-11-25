@@ -346,6 +346,8 @@ def flow_run(
         if (_sys.stdin.readline() or "").strip().lower() not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)
     key, entry, parsed = _resolve_ref(ref)
+    if not key and not any(s["kind"] == "start" for s in merged_steps):
+        _fail(f"no linked worktree for {ref}", EXIT_USAGE)
     flow = None if fresh else _find_resumable(tpl["label"], ref, key)
     if flow is not None:
         stored = flow.get("effective_steps")
