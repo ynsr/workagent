@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Automatically retry AI runs without `--effort` when the selected model does not support effort levels [204]
 - Drop the in-app diff viewer feature from the web UI and API [200]
 - Support selecting Rebase (default) or Merge locally for Sync in the Launch Sync tab and flow step editor, plus `--rebase` CLI flag [196]
 - Fix high idle CPU caused by full-table PR cache rewrites, missing-worktree cache misses, and status enrichment errors

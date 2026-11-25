@@ -673,3 +673,90 @@ def test_launch_acp_uses_resume_context_without_resume_session_id(tmp_path):
     sent = prompt_log.read_text()
     assert "[Previous summary] headless output" in sent
     assert "continue from headless run" in sent
+
+
+def test_launch_acp_skips_effort_when_model_update_drops_effort_options(tmp_path, capsys):
+    from workagent.agy_harness import AgyAcpHarness
+    seen_log = tmp_path / "set_opts.log"
+    fake_agent = tmp_path / "agent_drop_effort.py"
+    fake_agent.write_text(
+        "import json, sys\n"
+        "for raw in sys.stdin:\n"
+        "    msg = json.loads(raw)\n"
+        "    m = msg.get('method')\n"
+        "    if m == 'initialize':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'protocolVersion':1}}), flush=True)\n"
+        "    elif m == 'session/new':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'sessionId':'s1','configOptions':["
+        "{'id':'model','options':[{'value':'gemini-pro-orchestrator-neon','name':'Orch'}]},"
+        "{'id':'thought_level','options':[{'value':'medium','name':'Medium'}]}"
+        "]}}), flush=True)\n"
+        "    elif m == 'session/set_config_option':\n"
+        "        p = msg['params']\n"
+        f"        open({str(seen_log)!r}, 'a').write(p['configId'] + '=' + p['value'] + '\\n')\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'configOptions':["
+        "{'id':'model','currentValue':'gemini-pro-orchestrator-neon','options':[{'value':'gemini-pro-orchestrator-neon','name':'Orch'}]}"
+        "]}}), flush=True)\n"
+        "    elif m == 'session/prompt':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'stopReason':'end_turn'}}), flush=True)\n"
+    )
+    h = AgyAcpHarness()
+    h.acp_argv = lambda: [sys.executable, str(fake_agent)]
+    rc = h.launch_acp("hi", str(tmp_path), model="gemini-pro-orchestrator-neon", effort="medium", no_tty=True)
+    assert rc == 0
+    assert seen_log.read_text().splitlines() == ["model=gemini-pro-orchestrator-neon"]
+    assert "does not support --effort" in capsys.readouterr().err
+
+
+def test_launch_acp_continues_when_effort_rejected_as_unsupported(tmp_path, capsys):
+    from workagent.agy_harness import AgyAcpHarness
+    fake_agent = tmp_path / "agent_reject_effort.py"
+    fake_agent.write_text(
+        "import json, sys\n"
+        "for raw in sys.stdin:\n"
+        "    msg = json.loads(raw)\n"
+        "    m = msg.get('method')\n"
+        "    if m == 'initialize':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'protocolVersion':1}}), flush=True)\n"
+        "    elif m == 'session/new':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'sessionId':'s2'}}), flush=True)\n"
+        "    elif m == 'session/set_config_option':\n"
+        "        p = msg['params']\n"
+        "        if p['configId'] == 'thought_level':\n"
+        "            print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'error':{'code':-32602,'message':'--effort is not supported for model gemini-pro-orchestrator-neon'}}), flush=True)\n"
+        "        else:\n"
+        "            print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{}}), flush=True)\n"
+        "    elif m == 'session/prompt':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'stopReason':'end_turn'}}), flush=True)\n"
+    )
+    h = AgyAcpHarness()
+    h.acp_argv = lambda: [sys.executable, str(fake_agent)]
+    rc = h.launch_acp("hi", str(tmp_path), model="gemini-pro-orchestrator-neon", effort="medium", no_tty=True)
+    assert rc == 0
+    assert "does not support --effort" in capsys.readouterr().err
+
+
+def test_launch_acp_raises_on_unrelated_effort_error(tmp_path):
+    from workagent.agy_harness import AgyAcpHarness
+    from workagent.errors import HarnessError
+    fake_agent = tmp_path / "agent_fail_effort.py"
+    fake_agent.write_text(
+        "import json, sys\n"
+        "for raw in sys.stdin:\n"
+        "    msg = json.loads(raw)\n"
+        "    m = msg.get('method')\n"
+        "    if m == 'initialize':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'protocolVersion':1}}), flush=True)\n"
+        "    elif m == 'session/new':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{'sessionId':'s3'}}), flush=True)\n"
+        "    elif m == 'session/set_config_option':\n"
+        "        p = msg['params']\n"
+        "        if p['configId'] == 'thought_level':\n"
+        "            print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'error':{'code':-32000,'message':'internal server error'}}), flush=True)\n"
+        "        else:\n"
+        "            print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{}}), flush=True)\n"
+    )
+    h = AgyAcpHarness()
+    h.acp_argv = lambda: [sys.executable, str(fake_agent)]
+    with pytest.raises(HarnessError, match="internal server error"):
+        h.launch_acp("hi", str(tmp_path), model="gemini-pro-orchestrator-neon", effort="medium", no_tty=True)

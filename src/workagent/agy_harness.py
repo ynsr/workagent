@@ -14,7 +14,13 @@ from pathlib import Path
 from typing import Callable
 
 from .acp_harness import AcpHarness, HarnessOptions, Question, _AgyOptionMixin
-from .backend import check_binary, exec_tty
+from .backend import (
+    check_binary,
+    exec_tty,
+    is_effort_unsupported_error,
+    start_stderr_tee,
+    warn_effort_retry,
+)
 
 
 def antigravity_home() -> Path:
@@ -324,9 +330,14 @@ class AgyAcpHarness(_AgyOptionMixin, AcpHarness):
         merged = _env.merged_env(env_file)
         proc = subprocess.Popen(
             argv, cwd=workdir, env=merged,
-            stdout=subprocess.PIPE, stderr=None, text=True, bufsize=1,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE if effort else None,
+            text=True, bufsize=1,
             start_new_session=(timeout_s is not None),
         )
+        err_thread, err_lines = (start_stderr_tee(getattr(proc, "stderr", None))
+                                 if effort else (None, []))
+        stdout_err_lines: list[str] = []
         cid = ""
         result_status = "SUCCESS"
         saw_delta = False
@@ -370,6 +381,8 @@ class AgyAcpHarness(_AgyOptionMixin, AcpHarness):
                         ev = json.loads(line)
                     except ValueError:
                         print(line, file=sys.stderr, flush=True)
+                        if effort and len(stdout_err_lines) < 64:
+                            stdout_err_lines.append(line)
                         continue
                     if not isinstance(ev, dict):
                         continue
@@ -414,11 +427,26 @@ class AgyAcpHarness(_AgyOptionMixin, AcpHarness):
             done.set()
             if timer is not None:
                 timer.cancel()
+            if err_thread is not None:
+                err_thread.join(timeout=2.0)
         if timed_out:
             raise _HarnessTimeout(f"command timed out: {' '.join(argv)}")
         if cid and session_file:
             mirror_brain_transcript(cid, session_file)
         if rc != 0:
+            if effort and is_effort_unsupported_error("\n".join([*err_lines, *stdout_err_lines])):
+                retry_argv = self.command_argv(prompt, no_tty, extra_args, model, None)
+                warn_effort_retry(model, effort, retry_argv)
+                return self.launch(
+                    prompt, workdir, no_tty,
+                    extra_args=extra_args,
+                    env_file=env_file,
+                    timeout_s=timeout_s,
+                    session_file=session_file,
+                    on_conversation_id=on_conversation_id,
+                    model=model,
+                    effort=None,
+                )
             return rc
         return 0 if (result_status.upper() == "SUCCESS" or has_response) else 1
 
