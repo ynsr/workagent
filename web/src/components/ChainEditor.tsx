@@ -7,7 +7,13 @@ import { HarnessSelect } from "@/components/HarnessSelect"
 import { EffortSelect, ModelSelect } from "@/components/ModelEffortSelect"
 import { RelatedReposSelect } from "@/components/RelatedReposSelect"
 import { SearchableSelect } from "@/components/SearchableSelect"
-import { EXECUTION_MODES, SEQUENTIAL_ONLY_STEPS, summarizeExecution } from "@/lib/flowExecution"
+import {
+  defaultExecutionMode,
+  effectiveExecutionMode,
+  EXECUTION_MODES,
+  SEQUENTIAL_ONLY_STEPS,
+  summarizeExecution,
+} from "@/lib/flowExecution"
 import { cn } from "@/lib/utils"
 import type { FlowStep } from "@/lib/api"
 import { useRepos } from "@/lib/queries"
@@ -101,7 +107,7 @@ export function validateChain(steps: FlowStep[]): string[] {
     if (step.kind === "cleanup" && /hard_delete|hard-delete|no_squash|no-squash/.test(cfg)) {
       errors.push(`Step ${i + 1}: cleanup is fixed to squash + soft-delete — hard-delete/no-squash overrides are rejected.`)
     }
-    const mode = step.execution_mode ?? "sequential"
+    const mode = effectiveExecutionMode(step)
     if (!(EXECUTION_MODES as readonly string[]).includes(mode)) {
       errors.push(`Step ${i + 1}: invalid execution mode ${JSON.stringify(mode)} (expected sequential | parallel).`)
     } else if (mode === "parallel" && (SEQUENTIAL_ONLY_STEPS as readonly string[]).includes(step.kind)) {
@@ -461,13 +467,14 @@ export function ExecutionBulkBar({ steps, onChange }: {
     if (!onChange) return
     onChange(steps.map((s) => {
       if ((SEQUENTIAL_ONLY_STEPS as readonly string[]).includes(s.kind)) return s
-      if (mode === "sequential") {
+      const def = defaultExecutionMode(s.kind)
+      if (mode === def) {
         if (!s.execution_mode) return s
         const next = { ...s }
         delete next.execution_mode
         return next
       }
-      if (s.execution_mode === "parallel") return s
+      if (s.execution_mode === mode) return s
       return { ...s, execution_mode: mode }
     }))
   }
@@ -613,16 +620,19 @@ export function ChainEditor({
                     ) : null}
                   </span>
                 )}
-                {mode === "launch" && showExecutionMode ? (
-                  <span
-                    title={(step.execution_mode ?? "sequential") === "parallel" ? "Runs concurrently across worktrees" : (SEQUENTIAL_ONLY_STEPS as readonly string[]).includes(step.kind) ? `${step.kind} steps always run sequentially across worktrees` : "Runs one worktree at a time"}
-                    className={(step.execution_mode ?? "sequential") === "parallel"
-                      ? "shrink-0 rounded-full bg-primary px-2 py-0.5 font-mono text-[11px] font-medium text-primary-foreground"
-                      : "shrink-0 rounded-full border px-2 py-0.5 font-mono text-[11px] text-muted-foreground"}
-                  >
-                    {(step.execution_mode ?? "sequential") === "parallel" ? "∥ parallel" : "→ sequential"}
-                  </span>
-                ) : null}
+                {mode === "launch" && showExecutionMode ? (() => {
+                  const eff = effectiveExecutionMode(step)
+                  return (
+                    <span
+                      title={eff === "parallel" ? "Runs concurrently across worktrees" : (SEQUENTIAL_ONLY_STEPS as readonly string[]).includes(step.kind) ? `${step.kind} steps always run sequentially across worktrees` : "Runs one worktree at a time"}
+                      className={eff === "parallel"
+                        ? "shrink-0 rounded-full bg-primary px-2 py-0.5 font-mono text-[11px] font-medium text-primary-foreground"
+                        : "shrink-0 rounded-full border px-2 py-0.5 font-mono text-[11px] text-muted-foreground"}
+                    >
+                      {eff === "parallel" ? "∥ parallel" : "→ sequential"}
+                    </span>
+                  )
+                })() : null}
                 {mode === "edit" ? (
                   <Button
                     variant="ghost"
@@ -654,7 +664,7 @@ export function ChainEditor({
                 <div className="mb-2 flex items-center gap-2" role="radiogroup" aria-label={`Step ${i + 1} execution mode`}>
                   <span className="text-xs text-muted-foreground">Runs</span>
                   {EXECUTION_MODES.map((m) => {
-                    const active = (step.execution_mode ?? "sequential") === m
+                    const active = effectiveExecutionMode(step) === m
                     const forced = (SEQUENTIAL_ONLY_STEPS as readonly string[]).includes(step.kind)
                     return (
                       <button
@@ -666,7 +676,7 @@ export function ChainEditor({
                         disabled={forced && m === "parallel"}
                         title={forced && m === "parallel" ? `${step.kind} steps always run sequentially across worktrees` : m === "parallel" ? "Run concurrently across worktrees" : "Run one worktree at a time"}
                         onClick={() => {
-                          if (m === "sequential") {
+                          if (m === defaultExecutionMode(step.kind)) {
                             const next = { ...step }
                             delete next.execution_mode
                             setStep(i, next)

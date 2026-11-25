@@ -297,3 +297,29 @@ def test_flow_run_releases_lock_on_preview_pause(tmp_path, monkeypatch):
     res = runner.invoke(app, ["flow", "run", "seq_pause", "github:ynsr/workagent#160", "--yes", "--json"])
     assert res.exit_code == 0, res.output
     assert released == [flow_lock._slug(str(tmp_path.resolve()))]
+
+
+def test_flow_run_start_runs_unlocked_by_default(tmp_path, monkeypatch):
+    """Default start step (parallel) does not acquire the sequential execution lock."""
+    store.create_template(
+        name="Start Parallel",
+        label="start_par",
+        steps=[{"kind": "start"}],
+    )
+    repos.register_repo("workagent", tmp_path, tracker_key="github:ynsr/workagent", default_branch_name="main")
+    monkeypatch.setattr(
+        cli_flow, "_resolve_ref",
+        lambda ref: ("", {}, {"tool": "github", "number": "190"}),
+    )
+    acquired: list[str] = []
+    monkeypatch.setattr(
+        flow_lock.SequentialStepLock, "acquire",
+        lambda self, scope, **kw: acquired.append(scope),
+    )
+    monkeypatch.setattr(
+        cli_flow, "_run_start_step",
+        lambda *a, **k: {"key": "github:ynsr/workagent#190", "status": "started"},
+    )
+    res = runner.invoke(app, ["flow", "run", "start_par", "github:ynsr/workagent#190", "--yes", "--json"])
+    assert res.exit_code == 0, res.output
+    assert acquired == []

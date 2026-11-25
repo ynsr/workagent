@@ -367,17 +367,19 @@ def test_template_category_rejects_bad_value(tmp_path):
     else:
         raise AssertionError("expected HarnessError")
 
-def test_execution_mode_defaults_sequential(tmp_path):
+def test_execution_mode_defaults(tmp_path):
     from workagent import store_flows as sf
-    ok = sf.validate_template([{"kind": "start"}, {"kind": "cleanup"}])
-    assert [s["execution_mode"] for s in ok] == ["sequential", "sequential"]
+    ok = sf.validate_template([{"kind": "start"}, {"kind": "sync"}, {"kind": "cleanup"}])
+    assert [s["execution_mode"] for s in ok] == ["parallel", "sequential", "sequential"]
 
 
 def test_execution_mode_parallel_allowed(tmp_path):
     from workagent import store_flows as sf
     ok = sf.validate_template(
-        [{"kind": "start"}, {"kind": "review", "execution_mode": "parallel"},
+        [{"kind": "start", "execution_mode": "sequential"},
+         {"kind": "review", "execution_mode": "parallel"},
          {"kind": "fix_comments"}, {"kind": "cleanup"}])
+    assert ok[0]["execution_mode"] == "sequential"
     assert ok[1]["execution_mode"] == "parallel"
     assert ok[3]["execution_mode"] == "sequential"
 
@@ -385,8 +387,6 @@ def test_execution_mode_parallel_allowed(tmp_path):
 def test_execution_mode_rejects_unknown_and_forced_sequential():
     _rejects([{"kind": "review", "execution_mode": "sometimes"},
               {"kind": "fix_comments"}, {"kind": "cleanup"}], "execution_mode")
-    _rejects([{"kind": "start", "execution_mode": "parallel"},
-              {"kind": "cleanup"}], "sequentially")
     _rejects([{"kind": "review", "execution_mode": "parallel"},
               {"kind": "fix_comments"},
               {"kind": "cleanup", "execution_mode": "parallel"}],
@@ -401,6 +401,7 @@ def test_execution_mode_case_insensitive(tmp_path):
     ok = sf.validate_template(
         [{"kind": "start"}, {"kind": "review", "execution_mode": "Parallel"},
          {"kind": "fix_comments"}, {"kind": "cleanup"}])
+    assert ok[0]["execution_mode"] == "parallel"
     assert ok[1]["execution_mode"] == "parallel"
 
 
@@ -414,4 +415,4 @@ def test_execution_mode_survives_template_round_trip(tmp_path, monkeypatch):
                               {"kind": "fix_comments"}, {"kind": "cleanup"}])
     row = sf.get_template(db, "modes")
     assert [s["execution_mode"] for s in row["steps"]] == [
-        "sequential", "parallel", "sequential", "sequential"]
+        "parallel", "parallel", "sequential", "sequential"]

@@ -4,7 +4,7 @@ import { awaitRunSettled, chainRunsParallel, runChainOnWorktrees, summarizeExecu
 import { validateChain } from "@/components/ChainEditor"
 
 describe("chainRunsParallel", () => {
-  it("ignores forced-sequential start/cleanup steps", () => {
+  it("ignores forced-sequential cleanup steps and defaults start to parallel", () => {
     const steps: FlowStep[] = [
       { kind: "start", config: {} },
       { kind: "review", config: {}, execution_mode: "parallel" },
@@ -14,7 +14,7 @@ describe("chainRunsParallel", () => {
     expect(chainRunsParallel(steps)).toBe(true)
   })
 
-  it("returns false when any parallelizable step is sequential", () => {
+  it("returns false when start is explicitly sequential or any parallelizable step is sequential", () => {
     const steps: FlowStep[] = [
       { kind: "start", config: {} },
       { kind: "review", config: {}, execution_mode: "parallel" },
@@ -22,11 +22,16 @@ describe("chainRunsParallel", () => {
       { kind: "cleanup", config: {} },
     ]
     expect(chainRunsParallel(steps)).toBe(false)
+    expect(chainRunsParallel([
+      { kind: "start", config: {}, execution_mode: "sequential" },
+      { kind: "review", config: {}, execution_mode: "parallel" },
+    ])).toBe(false)
   })
 
-  it("returns false for empty or sequential-only chains", () => {
+  it("returns false for empty or forced-sequential-only chains, and true for start-only", () => {
     expect(chainRunsParallel([])).toBe(false)
-    expect(chainRunsParallel([{ kind: "start", config: {} }])).toBe(false)
+    expect(chainRunsParallel([{ kind: "cleanup", config: {} }])).toBe(false)
+    expect(chainRunsParallel([{ kind: "start", config: {} }])).toBe(true)
   })
 })
 
@@ -144,8 +149,9 @@ describe("summarizeExecution", () => {
       { kind: "start", config: {} },
       { kind: "review", config: {}, execution_mode: "parallel" },
       { kind: "fix_comments", config: {} },
+      { kind: "cleanup", config: {} },
     ]
-    expect(summarizeExecution(steps)).toEqual({ parallel: 1, sequential: 1, forced: 1, runsParallel: false })
+    expect(summarizeExecution(steps)).toEqual({ parallel: 2, sequential: 1, forced: 1, runsParallel: false })
   })
 
   it("flags fan-out when every parallelizable step is parallel", () => {

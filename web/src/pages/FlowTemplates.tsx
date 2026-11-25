@@ -41,7 +41,7 @@ import { getVerbose } from "@/lib/settings"
 import { copyToClipboard, downloadText, exactDateTime, relativeDate, toCsv } from "@/lib/format"
 import { useActions, useCreateRun, useFlowTemplates } from "@/lib/queries"
 import type { FlowStep, FlowTemplateRow } from "@/lib/api"
-import { summarizeExecution } from "@/lib/flowExecution"
+import { effectiveExecutionMode, summarizeExecution } from "@/lib/flowExecution"
 import { isRunImmediateTemplate, type RowCategory } from "@/lib/messageRunConfig"
 export function FlowTemplates() {
   const navigate = useNavigate()
@@ -396,14 +396,19 @@ export function FlowTemplates() {
                     {s.kind}
                     {s.action_label ? <span className="text-muted-foreground"> · {s.action_label}</span> : null}
                   </span>
-                  <span
-                    title={(s.execution_mode ?? "sequential") === "parallel" ? "Runs concurrently across worktrees" : "Runs one worktree at a time"}
-                    className={(s.execution_mode ?? "sequential") === "parallel"
-                      ? "shrink-0 rounded-full bg-primary px-2 py-0.5 font-mono text-[11px] font-medium text-primary-foreground"
-                      : "shrink-0 rounded-full border px-2 py-0.5 font-mono text-[11px] text-muted-foreground"}
-                  >
-                    {(s.execution_mode ?? "sequential") === "parallel" ? "∥ parallel" : "→ sequential"}
-                  </span>
+                  {(() => {
+                    const eff = effectiveExecutionMode(s)
+                    return (
+                      <span
+                        title={eff === "parallel" ? "Runs concurrently across worktrees" : "Runs one worktree at a time"}
+                        className={eff === "parallel"
+                          ? "shrink-0 rounded-full bg-primary px-2 py-0.5 font-mono text-[11px] font-medium text-primary-foreground"
+                          : "shrink-0 rounded-full border px-2 py-0.5 font-mono text-[11px] text-muted-foreground"}
+                      >
+                        {eff === "parallel" ? "∥ parallel" : "→ sequential"}
+                      </span>
+                    )
+                  })()}
                 </li>
               ))}
               {(detail.steps ?? []).length === 0 ? (

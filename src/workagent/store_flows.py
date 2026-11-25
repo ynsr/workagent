@@ -12,7 +12,12 @@ EXECUTION_MODES = ("sequential", "parallel")
 
 #: Steps whose side effects cannot be parallelized across worktrees
 #: (teardown/creation ordering, branch races). Forced to sequential.
-SEQUENTIAL_ONLY_STEPS = ("start", "cleanup", "release")
+SEQUENTIAL_ONLY_STEPS = ("cleanup", "release")
+
+
+def default_execution_mode(kind: str) -> str:
+    """Default execution mode for a step kind ('parallel' for start, else 'sequential')."""
+    return "parallel" if kind == "start" else "sequential"
 
 STEP_KINDS = ("start", "review", "fix_comments", "sync", "action",
               "prodtest_plan", "cleanup", "release")
@@ -172,8 +177,10 @@ def validate_template(steps: list[dict] | str,
                 raise HarnessError(
                     f"invalid release diff {cfg['diff']!r} (expected remote|local)",
                     exit_code=2)
-    modes = [str(s.get("execution_mode", "") or "sequential").lower()
-             for s in steps]
+    modes = [
+        str(s.get("execution_mode", "") or default_execution_mode(k)).lower()
+        for s, k in zip(steps, kinds)
+    ]
     for i, m in enumerate(modes):
         if m not in EXECUTION_MODES:
             raise HarnessError(

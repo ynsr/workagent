@@ -490,7 +490,7 @@ def flow_run(
         for idx in range(current, len(merged_steps)):
             step = merged_steps[idx]
             kind = step["kind"]
-            exec_mode = str(step.get("execution_mode") or "sequential").lower()
+            exec_mode = str(step.get("execution_mode") or sf.default_execution_mode(kind)).lower()
             if exec_mode == "parallel":
                 seq_lock.release()
             else:
