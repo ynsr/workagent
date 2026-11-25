@@ -594,6 +594,81 @@ def test_ci_and_review_cells_emit_worktree_events(isolated_config, tmp_path, mon
     assert "review_comments_resolved" in ev_types
 
 
+def test_concurrent_ci_and_review_cells_emit_single_event(isolated_config, tmp_path, monkeypatch):
+    """Issue #206: concurrent _ci_cell / _reviews_cell refreshes emit at most one event per transition."""
+    import concurrent.futures
+    import threading
+    from workagent import cli_status, refs, store, store_sqlite
+
+    store_sqlite.init_db(isolated_config / "state.db")
+    wt_dir = tmp_path / "wt"
+    wt_dir.mkdir()
+    key = "github:o/r#206"
+    entry = {"worktree": str(wt_dir), "branch": "feat/206", "repo": "/repo"}
+    store.record_link(key, entry)
+    cells = {"pr_data": {"url": "https://github.com/o/r/pull/206"}, "_tip": "abc206"}
+
+    n_workers = 4
+    ci_barrier = threading.Barrier(n_workers)
+    rev_barrier = threading.Barrier(n_workers)
+
+    def _fetch_ci(tool, url, repo):
+        ci_barrier.wait(timeout=5)
+        return (
+            "running",
+            "https://ci/206",
+            [{"name": "unit-tests", "status": "in_progress", "conclusion": "", "url": "https://ci/206"}],
+        )
+
+    def _fetch_reviews(tool, url, repo):
+        rev_barrier.wait(timeout=5)
+        return (
+            {"reviews": 1, "unresolved": 5, "resolved": 0},
+            [{"thread_id": f"t{i}", "author": "alice", "body": f"fix {i}", "resolved": False} for i in range(5)],
+        )
+
+    monkeypatch.setattr(refs, "fetch_ci_details", _fetch_ci)
+    monkeypatch.setattr(refs, "fetch_pr_review_details", _fetch_reviews)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
+        ci_futs = [pool.submit(cli_status._ci_cell, entry, cells, True, key) for _ in range(n_workers)]
+        rev_futs = [pool.submit(cli_status._reviews_cell, entry, cells, True, key) for _ in range(n_workers)]
+        for f in ci_futs + rev_futs:
+            f.result(timeout=10)
+
+    events = store.list_worktree_events(key)
+    ci_events = [e for e in events if e["event_type"] == "ci_running"]
+    rev_events = [e for e in events if e["event_type"] == "review_comments_arrived"]
+    assert len(ci_events) == 1
+    assert len(rev_events) == 1
+
+
+def test_append_worktree_event_dedupes_consecutive_state_transitions(isolated_config, tmp_path):
+    """Issue #206: consecutive identical state-transition events are deduplicated, non-consecutive kept."""
+    from workagent import store, store_sqlite
+
+    store_sqlite.init_db(isolated_config / "state.db")
+    wt_dir = tmp_path / "wt"
+    wt_dir.mkdir()
+    key = "github:o/r#206-dedupe"
+    store.record_link(key, {"worktree": str(wt_dir), "branch": "feat/206d", "repo": "/repo"})
+
+    id1 = store.append_worktree_event(key, "ci_passed", "CI passed")
+    id2 = store.append_worktree_event(key, "ci_passed", "CI passed")
+    assert id1 is not None and id2 == id1
+
+    id3 = store.append_worktree_event(key, "ci_running", "CI running")
+    id4 = store.append_worktree_event(key, "ci_passed", "CI passed")
+    assert id3 != id1 and id4 != id1
+
+    events = store.list_worktree_events(key)
+    assert [(e["event_type"], e["summary"]) for e in events] == [
+        ("ci_passed", "CI passed"),
+        ("ci_running", "CI running"),
+        ("ci_passed", "CI passed"),
+    ]
+
+
 def test_ci_cell_passes_ci_url_fallback_to_populate_failing_check_logs(
     isolated_config, tmp_path, monkeypatch
 ):

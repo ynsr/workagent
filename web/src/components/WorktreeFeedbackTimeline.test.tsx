@@ -328,4 +328,30 @@ describe("WorktreeFeedbackTimeline", () => {
     expect(prompt).toContain("https://github.com/o/r/actions/runs/50/job/60")
     expect(prompt).toContain("E AssertionError: 1 != 2")
   })
+
+  it("collapses consecutive duplicate state-transition events in History", () => {
+    const timeline: WorktreeTimeline = {
+      ref: "ao/replace-iban/ipg-1075",
+      checks: [],
+      threads: [],
+      events: [
+        { id: 1, worktree_ref: "ao/replace-iban/ipg-1075", event_type: "ci_passed", summary: "CI passed", details: {}, created_at: "2026-11-25T06:22:01Z" },
+        { id: 2, worktree_ref: "ao/replace-iban/ipg-1075", event_type: "ci_passed", summary: "CI passed", details: {}, created_at: "2026-11-25T06:22:02Z" },
+        { id: 3, worktree_ref: "ao/replace-iban/ipg-1075", event_type: "ci_passed", summary: "CI passed", details: {}, created_at: "2026-11-25T06:22:03Z" },
+        { id: 4, worktree_ref: "ao/replace-iban/ipg-1075", event_type: "ci_running", summary: "CI running", details: {}, created_at: "2026-11-25T06:52:01Z" },
+        { id: 5, worktree_ref: "ao/replace-iban/ipg-1075", event_type: "ci_running", summary: "CI running", details: {}, created_at: "2026-11-25T06:52:02Z" },
+        { id: 6, worktree_ref: "ao/replace-iban/ipg-1075", event_type: "review_comments_arrived", summary: "5 unresolved review comments", details: {}, created_at: "2026-11-25T06:52:03Z" },
+        { id: 7, worktree_ref: "ao/replace-iban/ipg-1075", event_type: "review_comments_arrived", summary: "5 unresolved review comments", details: {}, created_at: "2026-11-25T06:52:04Z" },
+        { id: 8, worktree_ref: "ao/replace-iban/ipg-1075", event_type: "ci_passed", summary: "CI passed", details: {}, created_at: "2026-11-25T07:05:00Z" },
+      ],
+      summary: { failing_checks: [], unresolved_threads: 0 },
+    }
+    mockTimeline.mockReturnValue({ data: timeline, isLoading: false, isError: false })
+
+    wrap(<WorktreeFeedbackTimeline worktreeKey="ao/replace-iban/ipg-1075" />)
+
+    expect(screen.getAllByText("CI passed")).toHaveLength(2)
+    expect(screen.getAllByText("CI running")).toHaveLength(1)
+    expect(screen.getAllByText("5 unresolved review comments")).toHaveLength(1)
+  })
 })

@@ -621,19 +621,26 @@ def get_cached_pr_tool(branch: str, repo: str = "") -> str | None:
     return (cached or {}).get("tool")
 
 def cache_ci_status(branch: str, ci: str | None, sha: str | None = None,
-                    ci_url: str | None = None, repo: str = "") -> None:
+                    ci_url: str | None = None, repo: str = "") -> dict | None:
     """Record CI pipeline status (+ latest job URL) on a branch's entry.
 
     Reads-modifies the branch entry under the cache lock so the PR fields
     written by ``cache_pr_status`` survive. A ``None`` ci (lookup failed)
     writes nothing, so the next run retries the lookup.
+
+    Returns the previous cache entry snapshot observed atomically under the
+    lock (``{}`` when none existed), or ``None`` when ``ci is None``.
     """
     if ci is None:
-        return
+        return None
     key = pr_cache_key(repo, branch)
+    prev_snapshot: dict = {}
     if _sqlite_path() is not None:
         def _set_ci(prev_key: dict | None, prev_branch: dict | None) -> dict:
-            entry = dict(prev_key) if prev_key is not None else dict(prev_branch or {})
+            nonlocal prev_snapshot
+            base = prev_key if prev_key is not None else (prev_branch or {})
+            prev_snapshot = dict(base)
+            entry = dict(base)
             entry["ci"] = ci
             entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
             if sha:
@@ -642,17 +649,21 @@ def cache_ci_status(branch: str, ci: str | None, sha: str | None = None,
                 entry["ci_url"] = ci_url
             return entry
         _update_pr_cache_entry_sqlite(key, branch, _set_ci)
-        return
+        return prev_snapshot
     path = config_dir() / "pr_cache.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path.parent / (path.name + ".lock"), "w") as lock:
         def _update() -> None:
+            nonlocal prev_snapshot
             cache = _read_json(path, {})
             prev = cache.get(branch) or {}
             entry = cache.get(key)
             if entry is None:
+                prev_snapshot = dict(prev)
                 entry = dict(prev)
                 cache[key] = entry
+            else:
+                prev_snapshot = dict(entry)
             entry["ci"] = ci
             entry["ci_checked_at"] = datetime.now(timezone.utc).isoformat()
             if sha:
@@ -661,20 +672,28 @@ def cache_ci_status(branch: str, ci: str | None, sha: str | None = None,
                 entry["ci_url"] = ci_url
             _atomic_replace(path, cache)
         _locked(lock, _update)
+    return prev_snapshot
 
 def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None,
-                       repo: str = "") -> None:
+                       repo: str = "") -> dict | None:
     """Record {reviews, unresolved, resolved} on a branch's pr_cache entry.
 
     Mirrors cache_ci_status: a None stats (lookup failed) writes nothing so
     the next run retries.
+
+    Returns the previous cache entry snapshot observed atomically under the
+    lock (``{}`` when none existed), or ``None`` when ``stats is None``.
     """
     if stats is None:
-        return
+        return None
     key = pr_cache_key(repo, branch)
+    prev_snapshot: dict = {}
     if _sqlite_path() is not None:
         def _set_reviews(prev_key: dict | None, prev_branch: dict | None) -> dict:
-            entry = dict(prev_key) if prev_key is not None else dict(prev_branch or {})
+            nonlocal prev_snapshot
+            base = prev_key if prev_key is not None else (prev_branch or {})
+            prev_snapshot = dict(base)
+            entry = dict(base)
             entry["reviews"] = int(stats.get("reviews") or 0)
             entry["unresolved"] = int(stats.get("unresolved") or 0)
             entry["resolved"] = int(stats.get("resolved") or 0)
@@ -683,17 +702,21 @@ def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None,
                 entry["reviews_sha"] = sha
             return entry
         _update_pr_cache_entry_sqlite(key, branch, _set_reviews)
-        return
+        return prev_snapshot
     path = config_dir() / "pr_cache.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path.parent / (path.name + ".lock"), "w") as lock:
         def _update() -> None:
+            nonlocal prev_snapshot
             cache = _read_json(path, {})
             prev = cache.get(branch) or {}
             entry = cache.get(key)
             if entry is None:
+                prev_snapshot = dict(prev)
                 entry = dict(prev)
                 cache[key] = entry
+            else:
+                prev_snapshot = dict(entry)
             entry["reviews"] = int(stats.get("reviews") or 0)
             entry["unresolved"] = int(stats.get("unresolved") or 0)
             entry["resolved"] = int(stats.get("resolved") or 0)
@@ -702,6 +725,7 @@ def cache_review_stats(branch: str, stats: dict | None, sha: str | None = None,
                 entry["reviews_sha"] = sha
             _atomic_replace(path, cache)
         _locked(lock, _update)
+    return prev_snapshot
 
 def cache_issue_status(branch: str, issue_status: str | None, repo: str = "") -> None:
     """Record the linked-issue status on a branch's pr_cache entry.

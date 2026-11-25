@@ -202,6 +202,15 @@ def list_pr_review_threads(
     ]
 
 
+_STATE_TRANSITION_EVENTS = frozenset({
+    "ci_passed",
+    "ci_failed",
+    "ci_running",
+    "review_comments_arrived",
+    "review_comments_resolved",
+})
+
+
 def append_worktree_event(
     path: Path,
     worktree_ref: str,
@@ -212,7 +221,12 @@ def append_worktree_event(
 ) -> int | None:
     """Append a chronological event for *worktree_ref*.
 
-    Returns the new row id, or ``None`` if *worktree_ref* does not exist.
+    Consecutive identical state-transition events (same ``event_type`` and
+    ``summary``) are deduplicated so concurrent status refreshes cannot
+    record redundant history lines.
+
+    Returns the new (or existing deduplicated) row id, or ``None`` if
+    *worktree_ref* does not exist.
     """
     from . import store_sqlite as sq
 
@@ -220,15 +234,26 @@ def append_worktree_event(
         return None
     sq.init_db(path)
     ts = created_at or _now_iso()
+    ev_type_s = str(event_type)
+    summary_s = str(summary or "")
     payload = json.dumps(details or {}, sort_keys=True)
     with sq.connect(path) as conn:
         if not _worktree_exists(conn, worktree_ref):
             return None
+        if ev_type_s in _STATE_TRANSITION_EVENTS:
+            last = conn.execute(
+                "SELECT id, event_type, summary FROM worktree_events"
+                " WHERE worktree_ref = ?"
+                " ORDER BY created_at DESC, id DESC LIMIT 1",
+                (worktree_ref,),
+            ).fetchone()
+            if last is not None and last[1] == ev_type_s and last[2] == summary_s:
+                return int(last[0])
         cur = conn.execute(
             "INSERT INTO worktree_events"
             " (worktree_ref, event_type, summary, details, created_at)"
             " VALUES (?, ?, ?, ?, ?)",
-            (worktree_ref, str(event_type), str(summary or ""), payload, ts),
+            (worktree_ref, ev_type_s, summary_s, payload, ts),
         )
         return int(cur.lastrowid) if cur.lastrowid is not None else None
 

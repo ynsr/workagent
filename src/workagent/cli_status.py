@@ -338,15 +338,17 @@ def _ci_cell(entry: dict, cells: dict, refresh_pr: bool, key: str = "") -> tuple
     else:
         ci, ci_url = refs.fetch_ci(tool, url, entry.get("repo", ""))
         checks = []
+    prev_cached: dict | None = None
     if branch:
-        store.cache_ci_status(branch, ci, sha=branch_tip or "", ci_url=ci_url, repo=repo)
+        prev_cached = store.cache_ci_status(branch, ci, sha=branch_tip or "", ci_url=ci_url, repo=repo)
     if key and ci is not None:
         try:
             for c in checks:
                 if not c.get("commit_sha") and branch_tip:
                     c["commit_sha"] = branch_tip
             store.replace_pr_checks(key, checks)
-            prior_ci = (cached or {}).get("ci")
+            prior_source = prev_cached if prev_cached is not None else (cached or {})
+            prior_ci = prior_source.get("ci")
             if ci != prior_ci and ci in ("failure", "success", "running"):
                 from . import store_timeline
                 ev_type = {"failure": "ci_failed", "success": "ci_passed", "running": "ci_running"}[ci]
@@ -416,12 +418,14 @@ def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool, key: str = "") -> 
     else:
         stats = refs.fetch_pr_comment_stats(tool, url, entry.get("repo", ""))
         threads = []
+    prev_cached: dict | None = None
     if branch:
-        store.cache_review_stats(branch, stats, sha=branch_tip or "", repo=repo)
+        prev_cached = store.cache_review_stats(branch, stats, sha=branch_tip or "", repo=repo)
     if key and stats is not None:
         try:
             store.replace_pr_review_threads(key, threads)
-            prior_unres = int((cached or {}).get("unresolved") or 0)
+            prior_source = prev_cached if prev_cached is not None else (cached or {})
+            prior_unres = int(prior_source.get("unresolved") or 0)
             new_unres = int(stats.get("unresolved") or 0)
             if new_unres > prior_unres:
                 noun = "comment" if new_unres == 1 else "comments"
