@@ -137,4 +137,15 @@ describe("Dashboard bulk confirm harness", () => {
     expect(screen.queryByRole("dialog", { name: "New Task" })).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
   })
+
+  it("does not execute Sync all immediately — opens confirm dialog first", async () => {
+    const user = userEvent.setup()
+    renderDashboard()
+
+    await user.click(screen.getByRole("button", { name: "Bulk actions" }))
+    await user.click(screen.getByRole("button", { name: "Sync all" }))
+
+    expect(mutateAsync).not.toHaveBeenCalled()
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument()
+  })
 })

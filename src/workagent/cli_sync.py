@@ -37,6 +37,7 @@ def sync_cmd(
     ref: Optional[str] = typer.Argument(None, autocompletion=_complete_refs,
                                         help="Issue/PR ref or worktree key (omit: interactive pick, or --all)."),
     merge: bool = typer.Option(False, "-m", "--merge", help="Merge locally in the worktree instead of the default remote rebase. The branch is pushed to origin afterwards."),
+    rebase: bool = typer.Option(False, "--rebase", help="Rebase via remote host (default). Mutually exclusive with -m/--merge."),
     harness: Optional[str] = typer.Option(None, "--harness", help="On unresolvable conflicts, launch the coding harness in the worktree."),
     acp: bool = typer.Option(False, "--acp", help="Run this step via ACP stdio (JSON-RPC) instead of CLI argv."),
     run_mode: Optional[str] = typer.Option(None, "--run-mode", help="Run mode: preview|headless|acp|terminal (default: derived from --launch/--terminal/--acp)."),
@@ -65,6 +66,8 @@ def sync_cmd(
       workagent sync IPG-929 --merge
       workagent sync --all --dry-run
     """
+    if merge and rebase:
+        _fail("cannot combine --rebase and --merge", EXIT_USAGE)
     if harness:
         backend.get_harness(harness)
     if not isinstance(session_file, str):

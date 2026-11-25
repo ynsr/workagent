@@ -119,7 +119,7 @@ BOOL_FLAGS: dict[str, tuple[str, ...]] = {
     "cleanup": ("--force", "--yes", "--dry-run", "--json", "--merged", "--released", "--no-squash", "--hard-delete", "--merge-only", "--create-prodtest"),
     "release": ("--yes", "--dry-run", "--json", "--no-status", "--acp"),
     "open": (),
-    "sync": ("-m", "--merge", "--all", "--yes", "--force",
+    "sync": ("-m", "--merge", "--rebase", "--all", "--yes", "--force",
              "-y", "--dry-run", "--json", "--acp", "--no-auto-register"),
     "register": ("--yes", "-y", "--force", "--json"),
     "repo add": ("--json", "--fetch", "--no-fetch"),

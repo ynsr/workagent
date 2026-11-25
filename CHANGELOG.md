@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Support selecting Rebase (default) or Merge locally for Sync in the Launch Sync tab and flow step editor, plus `--rebase` CLI flag [196]
 - Fix high idle CPU caused by full-table PR cache rewrites, missing-worktree cache misses, and status enrichment errors
 - Re-run button on the web run page now adds `--fresh` automatically when a flow run fails with a `--steps` chain-change error [183]
 - Replace separate harness, model, and effort selectors with a single combined popover picker across the web UI [181]

@@ -127,7 +127,26 @@ describe("Launch harness integration", () => {
     expect(trigger).toHaveTextContent("omp")
     await user.click(trigger)
     expect(screen.getByRole("radio", { name: "omp" })).toHaveAttribute("aria-checked", "true")
-    expect(screen.getByRole("checkbox", { name: /Merge locally/ })).toBeChecked()
+    expect(screen.getByRole("radio", { name: "Merge" })).toHaveAttribute("aria-checked", "true")
+    expect(screen.getByRole("radio", { name: "Rebase" })).toHaveAttribute("aria-checked", "false")
+  })
+
+  it("defaults Sync method to Rebase and emits --merge only when Merge is selected", async () => {
+    const user = userEvent.setup()
+    renderLaunch("/launch?mode=sync&ref=jira%3AIPG-1")
+
+    expect(screen.getByRole("radio", { name: "Rebase" })).toHaveAttribute("aria-checked", "true")
+    expect(screen.getByRole("radio", { name: "Merge" })).toHaveAttribute("aria-checked", "false")
+
+    await user.click(screen.getByRole("radio", { name: "Merge" }))
+    await user.click(screen.getByRole("button", { name: "Launch Sync" }))
+    await user.click(screen.getByRole("button", { name: "Launch" }))
+
+    expect(mutateAsync).toHaveBeenCalledWith({
+      command: "sync",
+      args: ["jira:IPG-1", "--merge"],
+      confirm: true,
+    })
   })
 
   it("does not clobber sync prefs when mounted directly on ?mode=flow", () => {

@@ -76,6 +76,13 @@ export const START_ACTION_OPTIONS: readonly { value: StartAction; label: string;
   { value: "plan", label: "Plan", hint: "start --plan — spec + plan only, no implementation" },
 ]
 
+/** Sync-tab strategy selector: Rebase (default, remote rebase) vs Merge (local merge). */
+export type SyncAction = "rebase" | "merge"
+export const SYNC_ACTION_OPTIONS: readonly { value: SyncAction; label: string; hint: string }[] = [
+  { value: "rebase", label: "Rebase", hint: "--rebase — rebase via remote host (default)" },
+  { value: "merge", label: "Merge", hint: "--merge — merge locally in the worktree" },
+]
+
 /** Prodtest action selector (Prodtest Launch page): Plan (generate the plan
  * via the harness agent) vs Run (execute the stored plan at its release SHA;
  * empty ref runs every released plan via `prodtest run --all`). */

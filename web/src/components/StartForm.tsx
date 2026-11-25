@@ -6,9 +6,9 @@ import { Label } from "@/components/ui/label"
 import { errorText } from "@/components/StatusFeedback"
 import { useRepos } from "@/lib/queries"
 import { api } from "@/lib/api"
-import { RUN_MODE_OPTIONS, REVIEW_ACTION_OPTIONS, PRODTEST_ACTION_OPTIONS, START_ACTION_OPTIONS, INITIAL, extraPromptArgs, runModeArgs } from "@/lib/launchConfig"
+import { RUN_MODE_OPTIONS, REVIEW_ACTION_OPTIONS, PRODTEST_ACTION_OPTIONS, START_ACTION_OPTIONS, SYNC_ACTION_OPTIONS, INITIAL, extraPromptArgs, runModeArgs } from "@/lib/launchConfig"
 import { modelEffortArgs } from "@/lib/harness"
-import type { LaunchForm, RunMode, ReviewAction, ProdtestAction, StartAction } from "@/lib/launchConfig"
+import type { LaunchForm, RunMode, ReviewAction, ProdtestAction, StartAction, SyncAction } from "@/lib/launchConfig"
 import { RelatedReposSelect } from "@/components/RelatedReposSelect"
 import { HarnessPicker } from "@/components/HarnessPicker"
 import { loadLaunchPrefs, lookupStartPrefsByRepo, saveStartPrefsForRepo } from "@/lib/launchPrefs"
@@ -128,6 +128,44 @@ export function StartActionSelect({ idPrefix, value, onChange }: {
             key={opt.value}
             type="button"
             id={`${idPrefix}-start-${opt.value}`}
+            role="radio"
+            aria-checked={value === opt.value}
+            title={opt.hint}
+            onClick={() => onChange(opt.value)}
+            className={value === opt.value
+              ? "bg-primary px-3 py-1.5 font-medium text-primary-foreground"
+              : "bg-transparent px-3 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** Two-option Rebase/Merge segmented control for the Sync tab. Rebase
+ * runs remote rebase (default); Merge runs `sync --merge` locally. */
+export function SyncActionSelect({ idPrefix, value, onChange }: {
+  idPrefix: string
+  value: SyncAction
+  onChange: (v: SyncAction) => void
+}) {
+  return (
+    <div className="grid gap-1">
+      <Label>
+        Sync method
+      </Label>
+      <div
+        role="radiogroup"
+        aria-label="Sync method"
+        className="flex w-fit divide-x overflow-hidden rounded-md border text-sm"
+      >
+        {SYNC_ACTION_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            id={`${idPrefix}-sync-${opt.value}`}
             role="radio"
             aria-checked={value === opt.value}
             title={opt.hint}

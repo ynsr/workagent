@@ -56,6 +56,7 @@ REVIEW_FLAGS = (("repo", "--repo", "str"),
 
 #: sync-step config keys for the terminal/manual handoff.
 SYNC_FLAGS = (("merge", "--merge", "bool"),
+              ("rebase", "--rebase", "bool"),
               ("harness", "--harness", "str"),
               ("acp", "--acp", "bool"),
               ("model", "--model", "str"),
