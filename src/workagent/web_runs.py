@@ -926,6 +926,32 @@ def _resolve_db_run_id(d: Path, meta: dict) -> int:
     return 0
 
 
+def _run_from_meta(d: Path, meta: dict, db_run_id: int) -> Run:
+    """Construct a Run hydrated from disk meta.json and a resolved DB row id."""
+    cmd = str(meta.get("command", ""))
+    args = [str(a) for a in (meta.get("args") or [])]
+    run = Run(
+        id=d.name,
+        command=cmd,
+        args=args,
+        target=str(meta.get("target", f"run:{d.name}")),
+        argv=[cmd, *args] if cmd else list(args),
+    )
+    run.run_dir = str(d)
+    if meta.get("created") is not None:
+        try:
+            run.created = float(meta["created"])
+        except (TypeError, ValueError):
+            pass
+    run.session_file = str(meta.get("session_file", ""))
+    run.worktree = str(meta.get("worktree", ""))
+    run.harness_name = str(meta.get("harness_name", ""))
+    run.db_run_id = db_run_id
+    run.db_worktree_ref = str(meta.get("db_worktree_ref", ""))
+    run.session_type = meta.get("session_type")
+    return run
+
+
 def _finalize_rehydrated_run(d: Path, meta: dict, exit_code: int) -> None:
     """Finalize a precreated DB row if it is still 'running' after a serve restart."""
     rid = _resolve_db_run_id(d, meta)
@@ -941,21 +967,7 @@ def _finalize_rehydrated_run(d: Path, meta: dict, exit_code: int) -> None:
             return
     except Exception:
         return
-    run = Run(id=d.name, command=str(meta.get("command", "")),
-              args=list(meta.get("args", [])),
-              target=str(meta.get("target", f"run:{d.name}")))
-    run.run_dir = str(d)
-    if meta.get("created") is not None:
-        try:
-            run.created = float(meta["created"])
-        except (TypeError, ValueError):
-            pass
-    run.session_file = str(meta.get("session_file", ""))
-    run.worktree = str(meta.get("worktree", ""))
-    run.harness_name = str(meta.get("harness_name", ""))
-    run.db_run_id = rid
-    run.db_worktree_ref = str(meta.get("db_worktree_ref", ""))
-    run.session_type = meta.get("session_type")
+    run = _run_from_meta(d, meta, rid)
     try:
         data = (d / "output.log").read_bytes()
         all_lines = data.decode(errors="replace").splitlines()
@@ -965,11 +977,14 @@ def _finalize_rehydrated_run(d: Path, meta: dict, exit_code: int) -> None:
             run.append(ln + "\n")
     except OSError:
         pass
-    now = time.time()
+    try:
+        finished = (d / "exit_code").stat().st_mtime
+    except OSError:
+        finished = time.time()
     run.exit_code = exit_code
     run.state = _finish_state(exit_code)
-    run.finished = now
-    run.duration_ms = max(0, int((now - run.created) * 1000))
+    run.finished = finished
+    run.duration_ms = max(0, int((finished - run.created) * 1000))
     try:
         usage = _resolve_usage([t for _, t in run.lines], run.truncated, run.session_file)
         if usage.get("input_tokens") is not None:
@@ -1011,21 +1026,7 @@ def rehydrate(registry: Registry) -> dict:
                 _finalize_rehydrated_run(d, meta, -1)
                 closed.append(d.name)
                 continue
-            run = Run(id=d.name, command=str(meta.get("command", "")),
-                      args=list(meta.get("args", [])),
-                      target=str(meta.get("target", f"run:{d.name}")))
-            run.run_dir = str(d)
-            if meta.get("created") is not None:
-                try:
-                    run.created = float(meta["created"])
-                except (TypeError, ValueError):
-                    pass
-            run.session_file = str(meta.get("session_file", ""))
-            run.worktree = str(meta.get("worktree", ""))
-            run.harness_name = str(meta.get("harness_name", ""))
-            run.db_run_id = _resolve_db_run_id(d, meta)
-            run.db_worktree_ref = str(meta.get("db_worktree_ref", ""))
-            run.session_type = meta.get("session_type")
+            run = _run_from_meta(d, meta, _resolve_db_run_id(d, meta))
             with registry.lock:
                 registry.runs[run.id] = run
                 registry.targets.setdefault(run.target, run.id)

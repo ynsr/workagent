@@ -243,3 +243,101 @@ def test_rehydrate_reconciles_orphaned_web_run_rows(isolated_config):
     fail_row = _sq.get_run(db, fail_parent, include_deleted_worktrees=True)
     assert ok_row is not None and ok_row["state"] == "finished" and ok_row["exit_code"] == 0
     assert fail_row is not None and fail_row["state"] == "failed" and fail_row["exit_code"] == -1
+
+    # Child still running -> parent marked failed (-1).
+    running_child_parent = _sq.insert_run(
+        db, "review", ["IPG-6"], None,
+        metadata={"origin": "web-run", "web_run_id": "pruned_running_child", "target": "review:IPG-6"},
+        state="running",
+    )
+    _sq.insert_run(db, "review", ["IPG-6"], None, state="running",
+                   parent_run_id=running_child_parent)
+
+    # Failed child alongside a newer finished child -> parent marked failed (-1).
+    mixed_child_parent = _sq.insert_run(
+        db, "review", ["IPG-7"], None,
+        metadata={"origin": "web-run", "web_run_id": "pruned_mixed_child", "target": "review:IPG-7"},
+        state="running",
+    )
+    _sq.insert_run(db, "review", ["IPG-7"], 1, state="failed",
+                   parent_run_id=mixed_child_parent)
+    _sq.insert_run(db, "review", ["IPG-7"], 0, state="finished",
+                   parent_run_id=mixed_child_parent)
+
+    web_runs.rehydrate(Registry())
+    rc_row = _sq.get_run(db, running_child_parent, include_deleted_worktrees=True)
+    mc_row = _sq.get_run(db, mixed_child_parent, include_deleted_worktrees=True)
+    assert rc_row is not None and rc_row["state"] == "failed" and rc_row["exit_code"] == -1
+    assert mc_row is not None and mc_row["state"] == "failed" and mc_row["exit_code"] == -1
+
+
+def test_rehydrate_live_run_find_web_run_fallback_without_db_run_id(isolated_config, monkeypatch):
+    """Live adopted run whose meta.json lacks db_run_id resolves it via find_web_run and populates argv."""
+    import os
+    from workagent import run_store, store, store_sqlite as _sq, web_runs
+    from workagent.webapp import Registry
+
+    db = _sq.db_path()
+    _sq.connect(db).close()
+    rid = _sq.insert_run(
+        db, "review", ["IPG-8"], None,
+        metadata={"origin": "web-run", "web_run_id": "livefallback1", "target": "review:IPG-8"},
+        state="running",
+    )
+    d = run_store.new_run_dir("livefallback1")
+    run_store.write_meta(d, {
+        "command": "review", "args": ["IPG-8", "--fix-comments"],
+        "target": "review:IPG-8", "created": 100.0,
+    })
+    (d / "pid").write_text(f"{os.getpid()} {store._proc_start_ticks(os.getpid())}\n")
+    monkeypatch.setattr(web_runs, "_start_tailer", lambda *a, **kw: None)
+
+    reg = Registry()
+    out = web_runs.rehydrate(reg)
+    assert "livefallback1" in out["adopted"]
+    run = reg.get("livefallback1")
+    assert run is not None
+    assert run.db_run_id == rid
+    assert run.argv == ["review", "IPG-8", "--fix-comments"]
+
+
+def test_rehydrate_finalized_fix_run_stamps_review_and_uses_exit_mtime(isolated_config):
+    """Rehydrated fix-comments run populates argv (stamping parent review) and uses exit_code mtime."""
+    import os
+    from workagent import run_store, store_sqlite as _sq, web_runs
+    from workagent.webapp import Registry
+
+    db = _sq.db_path()
+    _sq.connect(db).close()
+    sfile = str(isolated_config / "review.jsonl")
+    review_id = _sq.insert_run(
+        db, "review", ["IPG-9"], 0, file_path=sfile,
+        session_type="review", state="finished",
+    )
+    fix_id = _sq.insert_run(
+        db, "review", ["IPG-9", "--fix-comments", "--use-review-session"], None,
+        file_path=sfile,
+        metadata={"origin": "web-run", "web_run_id": "fixrehyd1", "target": "review:IPG-9"},
+        state="running",
+    )
+    d = run_store.new_run_dir("fixrehyd1")
+    run_store.write_meta(d, {
+        "command": "review",
+        "args": ["IPG-9", "--fix-comments", "--use-review-session"],
+        "target": "review:IPG-9",
+        "created": 100.0,
+        "session_file": sfile,
+        "db_run_id": fix_id,
+    })
+    run_store.write_exit(d, 0)
+    os.utime(d / "exit_code", (125.0, 125.0))
+
+    web_runs.rehydrate(Registry())
+    fix_row = _sq.get_run(db, fix_id, include_deleted_worktrees=True)
+    review_row = _sq.get_run(db, review_id, include_deleted_worktrees=True)
+    assert fix_row is not None
+    assert fix_row["state"] == "finished"
+    assert fix_row["duration_ms"] == 25000
+    assert review_row is not None
+    assert review_row["metadata"].get("review_comments_fixed_at")
+    assert review_row["metadata"].get("fixed_by_run_id") == "fixrehyd1"
