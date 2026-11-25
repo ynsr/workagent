@@ -660,12 +660,12 @@ def create_app(static_dir: Path, host: str, port: int,
     @app.get("/api/prodtests/{issue_key}/plan")
     def prodtest_plan_view(issue_key: str) -> dict:
         """Read-only prodtest YAML plan content + parsed cases/metadata."""
-        from . import git_diff
+        from . import prodtest_plan
         try:
-            return git_diff.read_prodtest_plan(issue_key)
+            return prodtest_plan.read_prodtest_plan(issue_key)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
-        except git_diff.DiffPathError as exc:
+        except prodtest_plan.PlanPathError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
     @app.get("/api/prodtests/{ref}")

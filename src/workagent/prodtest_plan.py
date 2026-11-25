@@ -10,7 +10,7 @@ from . import store
 DEFAULT_MAX_PLAN_BYTES = 512 * 1024
 
 
-class DiffPathError(ValueError):
+class PlanPathError(ValueError):
     """Raised when a requested plan path is not a readable YAML file."""
 
 
@@ -21,7 +21,7 @@ def read_prodtest_plan(
     """Read and parse the prodtest YAML plan for *issue_key*.
 
     Raises ``FileNotFoundError`` when no prodtest item or plan file exists, or
-    ``DiffPathError`` if the stored path is not a readable YAML file.
+    ``PlanPathError`` if the stored path is not a readable YAML file.
     """
     from .cli_prodtest import _prodtest_key_for_status
 
@@ -39,7 +39,7 @@ def read_prodtest_plan(
 
     plan_path = Path(plan_path_str).expanduser()
     if plan_path.suffix.lower() not in (".yaml", ".yml"):
-        raise DiffPathError(f"plan_path is not a YAML file: {plan_path_str!r}")
+        raise PlanPathError(f"plan_path is not a YAML file: {plan_path_str!r}")
     if not plan_path.is_file():
         raise FileNotFoundError(f"plan file not found on disk: {plan_path_str}")
 

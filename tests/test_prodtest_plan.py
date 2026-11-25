@@ -1,4 +1,4 @@
-"""Tests for src/workagent/git_diff.py (prodtest YAML plan reader)."""
+"""Tests for src/workagent/prodtest_plan.py (prodtest YAML plan reader)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from workagent import git_diff, store
+from workagent import prodtest_plan, store
 
 
 def test_read_prodtest_plan(isolated_config: Path, tmp_path: Path) -> None:
@@ -34,7 +34,7 @@ def test_read_prodtest_plan(isolated_config: Path, tmp_path: Path) -> None:
         plan_revision=2,
         plan_risk="medium",
     )
-    out = git_diff.read_prodtest_plan("IPG-42")
+    out = prodtest_plan.read_prodtest_plan("IPG-42")
     assert out["issue_key"] == "IPG-42"
     assert out["plan_revision"] == 2
     assert out["plan_risk"] == "medium"
@@ -45,4 +45,4 @@ def test_read_prodtest_plan(isolated_config: Path, tmp_path: Path) -> None:
     assert len(out["preconditions"]) == 1
 
     with pytest.raises(FileNotFoundError):
-        git_diff.read_prodtest_plan("UNKNOWN-999")
+        prodtest_plan.read_prodtest_plan("UNKNOWN-999")
