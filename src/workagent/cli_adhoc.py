@@ -8,6 +8,7 @@ import typer
 from . import store, worktrees
 from .cli_core import EXIT_USAGE, _catch_harness_errors, _fail, _print_result, app, eprint
 from .cli_harness import _guard_harness, _run_harness, append_extra_prompt
+from .errors import HarnessError
 
 
 @app.command("adhoc")
@@ -57,15 +58,23 @@ def adhoc(
             rows.append({"ref": ref, "skipped": str(e)})
             failed = True
             continue
+        did_auto_register = False
         if not key:
             if parsed is not None and parsed.get("kind") in ("pr", "mr") and not no_auto_register:
                 from . import cli_review as _cr
-                if dry_run:
-                    _, preview = _cr.auto_register_pr_worktree(ref, parsed, yes=yes, dry_run=True)
-                    rows.append({"ref": ref, "mode": mode, "dry_run": True,
-                                 "auto_register": preview})
+                try:
+                    if dry_run:
+                        _, preview = _cr.auto_register_pr_worktree(ref, parsed, yes=yes, dry_run=True)
+                        rows.append({"ref": ref, "mode": mode, "dry_run": True,
+                                     "auto_register": preview})
+                        continue
+                    key, entry = _cr.auto_register_pr_worktree(ref, parsed, yes=yes)
+                except HarnessError as e:
+                    eprint(f"{ref}: {e} — skipping")
+                    rows.append({"ref": ref, "skipped": str(e)})
+                    failed = True
                     continue
-                key, entry = _cr.auto_register_pr_worktree(ref, parsed, yes=yes)
+                did_auto_register = True
                 links = store.load_links()
             else:
                 eprint(f"{ref}: no linked state for {ref} — skipping")
@@ -91,7 +100,7 @@ def adhoc(
                          "dry_run": True, "prompt_chars": len(body)})
             continue
         import sys as _sys
-        if not yes and _sys.stdin.isatty():
+        if not yes and not did_auto_register and _sys.stdin.isatty():
             eprint(f"run adhoc prompt on {key} ({wt})? [y/N] ", end="")
             if (_sys.stdin.readline() or "").strip().lower() not in ("y", "yes"):
                 _fail("aborted", EXIT_USAGE)

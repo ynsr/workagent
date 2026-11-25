@@ -509,27 +509,31 @@ def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
     (UNIQUE (repo_key, branch)), so the same branch in another repo is
     simply a different row — e.g. IPG-1002 in projectx vs ipg-commons.
     """
-    links = store.load_links(include_deleted=True)
+    links = store.load_links(include_inactive=True, include_deleted=True)
     reuse = worktrees.recorded_key("", head_ref, links, repo=str(repo_dir))
     if isinstance(reuse, str):
         entry = links.get(reuse, {})
         worktree = entry.get("worktree", "")
-        branch = entry.get("branch", head_ref)
-        rec = {"pr_url": pr_url, "worktree": worktree,
-               "branch": branch, "repo": str(repo_dir)}
-        if issue_url and not entry.get("issue_url"):
-            rec["issue_url"] = issue_url
-        store.record_link(reuse, rec)
-        return reuse, worktree, branch
+        if (not entry.get("deleted_at")
+                and entry.get("active", 1) != 0
+                and worktrees.is_valid_worktree(worktree)):
+            branch = entry.get("branch", head_ref)
+            rec = {"pr_url": pr_url, "worktree": worktree,
+                   "branch": branch, "repo": str(repo_dir)}
+            if issue_url and not entry.get("issue_url"):
+                rec["issue_url"] = issue_url
+            store.record_link(reuse, rec)
+            return reuse, worktree, branch
     wt = gitwt.start_worktree(repo_dir, branch=head_ref, base=base_branch)
     worktree = wt.get("worktree_path", "")
     branch = wt.get("branch", head_ref)
-    links_now = store.load_links(include_deleted=True)
+    links_now = store.load_links(include_inactive=True, include_deleted=True)
     prior = worktrees.recorded_key(
         worktree, branch, links_now, repo=str(repo_dir))
     use_key = prior if isinstance(prior, str) else head_ref
     rec = {"pr_url": pr_url, "worktree": worktree,
-           "branch": branch, "repo": str(repo_dir)}
+           "branch": branch, "repo": str(repo_dir),
+           "active": 1, "deleted_at": ""}
     if issue_url and not (links_now.get(use_key) or {}).get("issue_url"):
         rec["issue_url"] = issue_url
     store.record_link(use_key, rec)

@@ -319,6 +319,7 @@ def action_run(
         key, entry, parsed = worktrees.resolve_any(ref, links)
     except worktrees.NoLinkedState as e:
         _fail(str(e), EXIT_USAGE)
+    did_auto_register = False
     if not key:
         if parsed is not None and parsed.get("kind") in ("pr", "mr") and not no_auto_register:
             from . import cli_review as _cr
@@ -328,7 +329,7 @@ def action_run(
                                "auto_register": preview}, json_output)
                 return
             key, entry = _cr.auto_register_pr_worktree(ref, parsed, yes=yes)
-            links = store.load_links()
+            did_auto_register = True
         else:
             _fail(f"no linked state for {ref}", EXIT_USAGE)
     if (entry.get("active", 1) == 0):
@@ -351,7 +352,7 @@ def action_run(
                       json_output)
         return
     import sys as _sys
-    if not yes and not no_tty and _sys.stdin.isatty():
+    if not yes and not did_auto_register and not no_tty and _sys.stdin.isatty():
         eprint(f"run action {label} on {key} ({wt})? [y/N] ", end="")
         if (_sys.stdin.readline() or "").strip().lower() not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)

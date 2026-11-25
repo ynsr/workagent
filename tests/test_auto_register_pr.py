@@ -35,6 +35,24 @@ def test_derive_issue_url_variants(monkeypatch):
         refs.derive_issue_url("feat/IPG-1076--terminal-priority", {"title": "x", "body": ""})
         == "https://tribe.jibit.cloud/browse/IPG-1076"
     )
+    assert (
+        refs.derive_issue_url("ao/terminal-priority/ipg-1076", {"title": "x", "body": ""})
+        == "https://tribe.jibit.cloud/browse/IPG-1076"
+    )
+    assert (
+        refs.derive_issue_url(
+            "feat/no-issue",
+            {"title": "UTF-8 and HTTP-404 handling", "body": "Uses SHA-256 and ISO-8601."},
+        )
+        == ""
+    )
+    assert (
+        refs.derive_issue_url(
+            "feat/no-issue",
+            {"title": "UTF-8 fix", "body": "Implements IPG-1076 with SHA-256."},
+        )
+        == "https://tribe.jibit.cloud/browse/IPG-1076"
+    )
     assert refs.derive_issue_url("feat/no-issue", {"title": "plain", "body": ""}) == ""
 
 
@@ -220,3 +238,134 @@ def test_sync_no_auto_register_fails_fast(isolated_config, tmp_path, monkeypatch
     res = runner.invoke(app, ["sync", MR_URL, "--yes", "--no-auto-register"])
     assert res.exit_code == 2
     assert "no linked state" in res.output
+
+
+def test_auto_register_recreates_deleted_inactive_or_invalid_worktree(isolated_config, tmp_path, monkeypatch):
+    repo_dir, wt_dir, start_calls = _stub_pr_env(monkeypatch, tmp_path)
+    parsed = refs.parse_ref(MR_URL)
+    branch = "ao/terminal-priority/ipg-1076"
+
+    # 1. Soft-deleted row: must recreate via start_worktree and revive as live
+    store.record_link(branch, {
+        "worktree": str(wt_dir),
+        "branch": branch,
+        "repo": str(repo_dir),
+        "deleted_at": "2026-11-24T00:00:00+00:00",
+    })
+    key, entry = cli_review.auto_register_pr_worktree(MR_URL, parsed, yes=True)
+    assert key == branch
+    assert len(start_calls) == 1
+    assert not entry.get("deleted_at")
+    assert branch in store.load_links()
+
+    # 2. Deactivated row: must recreate via start_worktree and reactivate
+    store.record_link(branch, {
+        "worktree": str(wt_dir),
+        "branch": branch,
+        "repo": str(repo_dir),
+        "active": 0,
+    })
+    key2, entry2 = cli_review.auto_register_pr_worktree(MR_URL, parsed, yes=True)
+    assert key2 == branch
+    assert len(start_calls) == 2
+    assert entry2.get("active", 1) == 1
+
+    # 3. Missing worktree on disk: must recreate via start_worktree
+    missing_wt = tmp_path / "gone-wt"
+    store.record_link(branch, {
+        "worktree": str(missing_wt),
+        "branch": branch,
+        "repo": str(repo_dir),
+        "active": 1,
+    })
+    key3, entry3 = cli_review.auto_register_pr_worktree(MR_URL, parsed, yes=True)
+    assert key3 == branch
+    assert len(start_calls) == 3
+    assert entry3["worktree"] == str(wt_dir)
+
+
+def test_adhoc_continues_when_auto_register_raises_harness_error(isolated_config, tmp_path, monkeypatch):
+    import json as _json
+    from workagent import cli_adhoc as _cad
+
+    _repo_dir, _wt_dir, _start_calls = _stub_pr_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(_cad, "_guard_harness", lambda *a, **k: None)
+    monkeypatch.setattr(_cad, "_run_harness", lambda *a, **k: {"status": "ok"})
+
+    def _fake_auto_register(ref, parsed, **kwargs):
+        if ref == PR_URL:
+            raise HarnessError("branch gone", exit_code=2)
+        return "ao/terminal-priority/ipg-1076", {
+            "worktree": str(_wt_dir),
+            "branch": "ao/terminal-priority/ipg-1076",
+            "repo": str(_repo_dir),
+            "active": 1,
+        }
+
+    monkeypatch.setattr(cli_review, "auto_register_pr_worktree", _fake_auto_register)
+
+    runner = CliRunner()
+    res = runner.invoke(
+        app, ["adhoc", PR_URL, MR_URL, "--prompt", "hi", "--yes", "--json"]
+    )
+    assert res.exit_code == 1
+    data = _json.loads(res.stdout)
+    results = data["results"]
+    assert results[0] == {"ref": PR_URL, "skipped": "branch gone"}
+    assert results[1]["key"] == "ao/terminal-priority/ipg-1076"
+
+
+def test_interactive_action_and_adhoc_prompt_once_on_auto_register(isolated_config, tmp_path, monkeypatch):
+    import io
+    import sys as _sys
+    from workagent import cli_action as _ca
+    from workagent import cli_adhoc as _cad
+
+    _stub_pr_env(monkeypatch, tmp_path)
+    store.create_action(
+        name="Preview",
+        label="prev",
+        prompt="Preview it.",
+        default_options='{"run_mode": "preview"}',
+    )
+    monkeypatch.setattr(_ca, "_run_harness", lambda *a, **k: {"status": "ok"})
+    monkeypatch.setattr(_cad, "_run_harness", lambda *a, **k: {"status": "ok"})
+    monkeypatch.setattr(_cad, "_guard_harness", lambda *a, **k: None)
+
+    class _FakeTTY(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    prompts = []
+
+    def _fake_eprint(*args, **kwargs):
+        msg = " ".join(str(a) for a in args)
+        if "[y/N]" in msg:
+            prompts.append(msg)
+
+    monkeypatch.setattr(cli_review, "eprint", _fake_eprint)
+    monkeypatch.setattr(_ca, "eprint", _fake_eprint)
+    monkeypatch.setattr(_cad, "eprint", _fake_eprint)
+
+    monkeypatch.setattr(_sys, "stdin", _FakeTTY("y\n"))
+    _ca.action_run(
+        label="prev", ref=MR_URL, launch=False, terminal=False, harness=None,
+        acp=False, run_mode=None, model=None, effort=None, extra_prompt=None,
+        env_file=None, session_file=None, dry_run=False, yes=False,
+        json_output=False, no_auto_register=False,
+    )
+    assert len(prompts) == 1
+    assert "auto-register worktree" in prompts[0]
+
+    # Reset link so adhoc also auto-registers and prompts once
+    store.save_links({})
+    prompts.clear()
+    monkeypatch.setattr(_sys, "stdin", _FakeTTY("y\n"))
+    _cad.adhoc(
+        refs=[MR_URL], prompt="hi", launch=False, terminal=False, harness=None,
+        acp=False, run_mode=None, model=None, effort=None, extra_prompt=None,
+        env_file=None, session_file=None, continue_run=None, follow_up=False,
+        dry_run=False, yes=False, json_output=False, no_auto_register=False,
+    )
+    assert len(prompts) == 1
+    assert "auto-register worktree" in prompts[0]

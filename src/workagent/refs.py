@@ -348,6 +348,12 @@ _CLOSES_GH_ISSUE = re.compile(
     r"\b(?:closes|fixes|resolves)\s+#(\d+)\b", re.IGNORECASE
 )
 _JIRA_KEY_IN_TEXT = re.compile(r"\b([A-Z][A-Z0-9_]+-\d+)\b")
+_JIRA_KEY_IN_BRANCH = re.compile(r"\b([a-zA-Z][a-zA-Z0-9_]+-\d+)\b")
+_NON_ISSUE_PREFIXES = frozenset({
+    "UTF", "SHA", "MD", "ISO", "HTTP", "HTTPS", "RFC", "CVE", "CWE",
+    "TLS", "SSL", "AES", "RSA", "CRC", "IEEE", "ANSI", "POSIX", "ECMA",
+    "PEP", "PSR", "JDK", "JRE", "ECDSA", "HSTS", "CORS", "UUID",
+})
 
 
 def derive_issue_url(head_ref: str, info: dict | None = None,
@@ -369,10 +375,16 @@ def derive_issue_url(head_ref: str, info: dict | None = None,
                 url = issue_url(f"github:{pr_parsed['repo']}#{m.group(1)}")
                 if url:
                     return url
-    for text in (head_ref or "", title, body):
-        m = _JIRA_KEY_IN_TEXT.search(text)
-        if m:
-            url = issue_url(f"jira:{m.group(1)}")
+    for text, pattern in (
+        (head_ref or "", _JIRA_KEY_IN_BRANCH),
+        (title, _JIRA_KEY_IN_TEXT),
+        (body, _JIRA_KEY_IN_TEXT),
+    ):
+        for m in pattern.finditer(text):
+            candidate = m.group(1).upper()
+            if candidate.split("-", 1)[0] in _NON_ISSUE_PREFIXES:
+                continue
+            url = issue_url(f"jira:{candidate}")
             if url:
                 return url
     return ""

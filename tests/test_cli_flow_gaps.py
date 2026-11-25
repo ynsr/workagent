@@ -412,6 +412,8 @@ def test_review_key_for_reuses_soft_deleted_row(tmp_path, monkeypatch):
     # INSERTing a branch-name row that collides on UNIQUE(repo, branch).
     import pathlib as _pl
     wt = _pl.Path("/tmp/wt-x"); wt.mkdir(exist_ok=True)
+    monkeypatch.setattr("workagent.worktrees.is_valid_worktree",
+                        lambda p: _pl.Path(p).is_dir())
     key, _w, _b = r._ensure_branch_worktree(_pl.Path("myrepo"), "b",
                                             "main", "https://x/mr/1")
     assert key == "jira:X-1@myrepo"
