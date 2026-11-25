@@ -3,15 +3,74 @@
 from __future__ import annotations
 
 import abc
+import collections
 import os
+import re
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Callable
 
 from .errors import HarnessError, HarnessTimeout
+
+_EFFORT_UNSUPPORTED_RE = re.compile(
+    r"(?:"
+    r"(?:--?(?:effort|thinking)|\b(?:effort|thinking|thought_level)\b|reasoning[\s_-]+effort)"
+    r"[^\n]{0,80}"
+    r"(?:is\s+not\s+supported|not\s+supported|unsupported|does\s+not\s+support|doesn't\s+support)"
+    r"|"
+    r"(?:does\s+not\s+support|doesn't\s+support|not\s+supported|unsupported)"
+    r"[^\n]{0,80}"
+    r"(?:--?(?:effort|thinking)|\b(?:effort|thinking|thought_level)\b|reasoning[\s_-]+effort)"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def is_effort_unsupported_error(text: str) -> bool:
+    """True when harness error text indicates the model does not support --effort/--thinking."""
+    return bool(text and _EFFORT_UNSUPPORTED_RE.search(text))
+
+
+def warn_effort_retry(model: str | None, effort: str,
+                      retry_argv: list[str] | None = None) -> None:
+    target = f"model {model!r}" if model else "selected model"
+    print(f"warning: {target} does not support --effort {effort!r}; "
+          "retrying without --effort", file=sys.stderr, flush=True)
+    if retry_argv:
+        quoted = " ".join(shlex.quote(a) for a in retry_argv)
+        print(f"$ {quoted}", file=sys.stderr, flush=True)
+
+
+def start_stderr_tee(stream, max_lines: int = 64) -> tuple[threading.Thread | None, collections.deque[str]]:
+    """Forward *stream* lines to sys.stderr while keeping the last *max_lines*."""
+    captured: collections.deque[str] = collections.deque(maxlen=max_lines)
+    if stream is None:
+        return None, captured
+
+    def _pump() -> None:
+        try:
+            for raw in stream:
+                sys.stderr.write(raw)
+                sys.stderr.flush()
+                line = raw.rstrip("\r\n")
+                if line:
+                    captured.append(line)
+        except Exception:
+            pass
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_pump, name="harness-stderr-tee", daemon=True)
+    t.start()
+    return t, captured
 
 VERDICT_SUFFIX = (
     "\n\nAt the very end of your reply, print exactly one line containing "
@@ -47,6 +106,38 @@ def run_blocking_cmd(argv: list[str], workdir: str, env_file: str | None = None,
             os.killpg(proc.pid, signal.SIGKILL)
             proc.wait()
         raise HarnessTimeout(f"command timed out: {' '.join(argv)}")
+
+
+def run_blocking_cmd_tee_stderr(argv: list[str], workdir: str,
+                                env_file: str | None = None,
+                                timeout_s: int | None = None) -> tuple[int, str]:
+    """Run *argv* blocking, streaming stderr to sys.stderr while capturing it."""
+    from . import env as _env
+    merged = _env.merged_env(env_file)
+    proc = subprocess.Popen(
+        argv, cwd=workdir, env=merged,
+        stderr=subprocess.PIPE, text=True, bufsize=1,
+        start_new_session=(timeout_s is not None),
+    )
+    t, captured = start_stderr_tee(getattr(proc, "stderr", None))
+    try:
+        if timeout_s is None:
+            rc = proc.wait()
+        else:
+            try:
+                rc = proc.wait(timeout=timeout_s)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGTERM)
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.wait()
+                raise HarnessTimeout(f"command timed out: {' '.join(argv)}")
+    finally:
+        if t is not None:
+            t.join(timeout=2.0)
+    return rc, "\n".join(captured)
 
 
 def exec_tty(argv: list[str], workdir: str, env_file: str | None = None) -> int:

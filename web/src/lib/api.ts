@@ -414,6 +414,7 @@ export interface HarnessOptions {
   supported: boolean
   models: HarnessOption[]
   efforts: HarnessOption[]
+  model_efforts?: Record<string, HarnessOption[]>
   current_model: string
   current_effort: string
   warning?: string

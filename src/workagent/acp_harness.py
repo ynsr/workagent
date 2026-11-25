@@ -37,7 +37,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from .backend import Harness, check_binary, exec_tty, run_blocking_cmd
+from .backend import (
+    Harness,
+    check_binary,
+    exec_tty,
+    is_effort_unsupported_error,
+    run_blocking_cmd,
+    run_blocking_cmd_tee_stderr,
+    warn_effort_retry,
+)
 from .errors import HarnessError, HarnessTimeout
 
 
@@ -48,6 +56,7 @@ class HarnessOptions:
     efforts: list[dict] = field(default_factory=list)
     current_model: str = ""
     current_effort: str = ""
+    model_efforts: dict[str, list[dict]] = field(default_factory=dict)
 
 
 @dataclass
@@ -449,8 +458,9 @@ class AcpHarness(Harness, abc.ABC):
                          env_file=env_file, timeout_s=timeout_s)
 
     def discover_options(self, env_file: str | None = None) -> HarnessOptions:
-        """Probe `<bin> acp` (initialize + session/new in a temp cwd)."""
+        """Probe `<bin> acp` (initialize + session/new + per-model efforts in a temp cwd)."""
         import tempfile
+        import time
         check_binary(self.acp_argv()[0])
         with tempfile.TemporaryDirectory(prefix="workagent-acp-probe-") as directory:
             client = self._open_client(env_file, directory, timeout_s=5)
@@ -460,7 +470,48 @@ class AcpHarness(Harness, abc.ABC):
                 if auth:
                     client.request("authenticate", {"methodId": auth}, timeout_s=5)
                 result = client.request("session/new", {"cwd": directory, "mcpServers": []}, timeout_s=5)
-                return self.parse_options(result if isinstance(result, dict) else {})
+                opts = self.parse_options(result if isinstance(result, dict) else {})
+                sid = str(result.get("sessionId") or "") if isinstance(result, dict) else ""
+                if opts.current_model:
+                    opts.model_efforts[opts.current_model] = list(opts.efforts)
+                if sid and opts.models:
+                    mid_cfg = self.model_config_id()
+                    deadline = time.monotonic() + 5.0
+                    for m in opts.models:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            break
+                        mid_val = str(m.get("id") or "")
+                        if not mid_val or mid_val == opts.current_model:
+                            continue
+                        try:
+                            resp = client.request(
+                                "session/set_config_option",
+                                {"sessionId": sid, "configId": mid_cfg, "value": mid_val},
+                                timeout_s=min(3.0, max(0.2, remaining)),
+                            )
+                        except HarnessTimeout:
+                            break
+                        except Exception:
+                            continue
+                        if isinstance(resp, dict) and "configOptions" in resp:
+                            try:
+                                opts.model_efforts[mid_val] = list(self.parse_options(resp).efforts)
+                            except Exception:
+                                pass
+                if opts.model_efforts:
+                    try:
+                        from . import store as _store
+                        _store.save_harness_options_cache(self.name, {
+                            "models": opts.models,
+                            "efforts": opts.efforts,
+                            "current_model": opts.current_model,
+                            "current_effort": opts.current_effort,
+                            "model_efforts": opts.model_efforts,
+                        })
+                    except Exception:
+                        pass
+                return opts
             finally:
                 client.close()
 
@@ -470,20 +521,44 @@ class AcpHarness(Harness, abc.ABC):
         mid, eid = self.model_config_id(), self.effort_config_id()
         known_models = {m["id"] for m in (known.models if known else [])}
         known_efforts = {e["id"] for e in (known.efforts if known else [])}
+        model_had_config_update = False
         if model:
             if known is not None and known_models and model not in known_models:
                 print(f"warning: unknown --model {model!r} for {self.name} "
                       f"(using harness default)", file=sys.stderr)
             else:
-                client.request("session/set_config_option",
-                               {"sessionId": session_id, "configId": mid, "value": model})
+                resp = client.request("session/set_config_option",
+                                      {"sessionId": session_id, "configId": mid, "value": model})
+                if isinstance(resp, dict) and "configOptions" in resp:
+                    try:
+                        updated = self.parse_options(resp)
+                        known = updated
+                        known_efforts = {e["id"] for e in updated.efforts}
+                        model_had_config_update = True
+                    except Exception:
+                        pass
         if effort:
+            if model_had_config_update and not known_efforts:
+                print(f"warning: model {model!r} does not support --effort {effort!r}; "
+                      f"continuing without effort", file=sys.stderr)
+                return
             if known is not None and known_efforts and effort not in known_efforts:
                 print(f"warning: unknown --effort {effort!r} for {self.name} "
                       f"(using harness default)", file=sys.stderr)
             else:
-                client.request("session/set_config_option",
-                               {"sessionId": session_id, "configId": eid, "value": effort})
+                try:
+                    client.request("session/set_config_option",
+                                   {"sessionId": session_id, "configId": eid, "value": effort})
+                except HarnessTimeout:
+                    raise
+                except HarnessError as e:
+                    err_text = f"{e}\n{client.stderr_tail()}"
+                    if is_effort_unsupported_error(err_text):
+                        target = f"model {model!r}" if model else self.name
+                        print(f"warning: {target} does not support --effort {effort!r}; "
+                              f"continuing without effort", file=sys.stderr)
+                    else:
+                        raise
 
     def _update_to_events(self, session_id: str, update: dict) -> list[dict]:
         """session/update notification → structured ACP: events."""
@@ -801,6 +876,15 @@ class OmpAcpHarness(_OmpOptionMixin, AcpHarness):
         check_binary(self.binary)
         argv = self.command_argv(prompt, no_tty, extra_args, model, effort)
         if no_tty:
+            if effort:
+                rc, err_text = run_blocking_cmd_tee_stderr(
+                    argv, workdir, env_file=env_file, timeout_s=timeout_s)
+                if rc != 0 and is_effort_unsupported_error(err_text):
+                    retry_argv = self.command_argv(prompt, no_tty, extra_args, model, None)
+                    warn_effort_retry(model, effort, retry_argv)
+                    return run_blocking_cmd(retry_argv, workdir, env_file=env_file,
+                                            timeout_s=timeout_s)
+                return rc
             return run_blocking_cmd(argv, workdir, env_file=env_file,
                                     timeout_s=timeout_s)
         return exec_tty(argv, workdir, env_file=env_file)

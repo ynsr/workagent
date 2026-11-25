@@ -513,8 +513,12 @@ temp cwd, 10-min server TTL). 404 unknown harness (`{"error": {"code":
 "not_found"}}`); 200 + `supported: false` for non-ACP harnesses (no probe);
 200 + `warning` when the probe fails. Shape:
 `{"harness", "supported", "models": [{"id", "name"}], "efforts": [...],
+"model_efforts": {"<model_id>": [{"id", "name"}]},
 "current_model", "current_effort", "cached"}` (`warning` only on probe
-failure). `?refresh=1` bypasses the TTL cache and re-probes the harness
+failure). `model_efforts` maps each discovered model id to its supported
+effort options (empty array when the model does not support effort levels;
+also persisted to `harness_options_cache.json` for fast CLI pre-flight
+checks). `?refresh=1` bypasses the TTL cache and re-probes the harness
 (`cached` is false on the re-probed response). The UI disables the
 Model/Effort selects when `supported` is
 false or the lists are empty.

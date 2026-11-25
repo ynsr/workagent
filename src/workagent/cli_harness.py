@@ -274,6 +274,16 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
     # the preview shows the exact same wrapped command.
     env_path = _env.ensure_env_file(env_file)
     harness = backend.get_harness(harness_name)
+    if model and effort:
+        supported_efforts = store.cached_model_efforts(harness.name, model)
+        if supported_efforts is not None:
+            if not supported_efforts:
+                eprint(f"warning: model {model!r} does not support --effort {effort!r}; omitting --effort")
+                effort = None
+            elif effort not in supported_efforts:
+                eprint(f"warning: model {model!r} does not support --effort {effort!r} "
+                       f"(supported: {', '.join(supported_efforts)}); omitting --effort")
+                effort = None
     if no_tty and is_exec and not terminal:
         prompt += backend.VERDICT_SUFFIX
     action = _session_action(result)

@@ -30,6 +30,23 @@ function HarnessIcon({ name, className }: { name: string; className?: string }) 
   return <Cpu aria-hidden className={cn("size-3.5 shrink-0", className)} />
 }
 
+function getPerModelEfforts(
+  modelEfforts: Record<string, Array<{ id: string; name: string }>> | undefined,
+  effectiveModel: string,
+): Array<{ id: string; name: string }> | undefined {
+  if (!effectiveModel || !modelEfforts) return undefined
+  return Object.prototype.hasOwnProperty.call(modelEfforts, effectiveModel)
+    ? modelEfforts[effectiveModel]
+    : undefined
+}
+
+function isEffortUnsupportedForModel(
+  perModelEfforts: Array<{ id: string; name: string }> | undefined,
+  effort: string,
+): boolean {
+  return Boolean(effort && perModelEfforts !== undefined && !perModelEfforts.some((e) => e.id === effort))
+}
+
 /** Combined minimalist popover picker for Harness, Model, and Effort.
  * Replaces HarnessSelect, ModelSelect, and EffortSelect with a single compact trigger. */
 export function HarnessPicker({
@@ -82,7 +99,10 @@ export function HarnessPicker({
 
   const { data, isPending, isError } = useHarnessOptions(harness, !harnessOnly)
   const models = useMemo(() => data?.models ?? [], [data?.models])
-  const efforts = data?.efforts ?? []
+  const effectiveModel = model || data?.current_model || ""
+  const perModelEfforts = getPerModelEfforts(data?.model_efforts, effectiveModel)
+  const modelUnsupportedEffort = perModelEfforts !== undefined && perModelEfforts.length === 0
+  const efforts = perModelEfforts !== undefined ? perModelEfforts : (data?.efforts ?? [])
 
   const modelsDisabled = isPending || isError || !data?.supported || models.length === 0
   const modelDisabledReason = isPending
@@ -100,7 +120,9 @@ export function HarnessPicker({
       ? "Effort discovery failed — using harness default"
       : !data.supported
         ? "This harness does not support effort discovery — using harness default"
-        : "No efforts reported — using harness default"
+        : modelUnsupportedEffort
+          ? "Selected model does not support effort levels"
+          : "No efforts reported — using harness default"
 
   const filteredModels = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -126,6 +148,12 @@ export function HarnessPicker({
     : `${harnessDisplay} · ${modelDisplay} · ${effortDisplay}`
 
   const clampedActiveIdx = filteredModels.length > 0 ? Math.min(activeIdx, filteredModels.length - 1) : 0
+
+  useEffect(() => {
+    if (isEffortUnsupportedForModel(perModelEfforts, effort)) {
+      onEffortChange?.("")
+    }
+  }, [effort, perModelEfforts, onEffortChange])
 
   useEffect(() => {
     if (!open || modelsDisabled) return
@@ -157,8 +185,14 @@ export function HarnessPicker({
 
   function pickModel(id: string) {
     onModelChange?.(id)
+    const nextEfforts = getPerModelEfforts(data?.model_efforts, id || data?.current_model || "")
+    if (isEffortUnsupportedForModel(nextEfforts, effort)) {
+      onEffortChange?.("")
+    }
+    const nextEffortsDisabled =
+      isPending || isError || !data?.supported || (nextEfforts !== undefined ? nextEfforts : (data?.efforts ?? [])).length === 0
     pickedInSessionRef.current.model = true
-    if (pickedInSessionRef.current.effort || effortsDisabled) {
+    if (pickedInSessionRef.current.effort || nextEffortsDisabled) {
       setOpen(false)
     }
   }
@@ -319,7 +353,9 @@ export function HarnessPicker({
                 <Tooltip content={effortDisabledReason} className="w-full">
                   <Pressable aria-disabled="true" aria-label="Effort">
                     <span className="font-medium">Effort</span>
-                    <span className="text-xs text-muted-foreground">Default</span>
+                    <span className="text-xs text-muted-foreground">
+                      {modelUnsupportedEffort ? "Not supported" : "Default"}
+                    </span>
                   </Pressable>
                 </Tooltip>
               ) : (
@@ -347,7 +383,10 @@ export function HarnessPicker({
                       {[
                         {
                           id: "",
-                          name: data?.current_effort ? `Default (${data.current_effort})` : "Default",
+                          name:
+                            data?.current_effort && efforts.some((e) => e.id === data.current_effort)
+                              ? `Default (${data.current_effort})`
+                              : "Default",
                         },
                         ...efforts,
                       ].map((item) => {

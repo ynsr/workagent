@@ -1134,6 +1134,212 @@ def test_spawn_in_terminal_keeps_user_no_color(monkeypatch):
     assert "unset NO_COLOR" not in seen["argv"][-1]
 
 
+def test_is_effort_unsupported_error():
+    assert backend.is_effort_unsupported_error(
+        'error: invalid model selection (--model "gemini-pro-orchestrator-neon" --effort "medium"): '
+        '--effort is not supported for model "gemini-pro-orchestrator-neon"'
+    )
+    assert backend.is_effort_unsupported_error("--thinking is not supported for model foo")
+    assert backend.is_effort_unsupported_error("Model foo does not support thought_level")
+    assert backend.is_effort_unsupported_error("reasoning effort unsupported by this model")
+    assert not backend.is_effort_unsupported_error("")
+    assert not backend.is_effort_unsupported_error("error: connection refused")
+    assert not backend.is_effort_unsupported_error('error: unknown model "foo"')
+
+
+def test_agy_launch_headless_retries_without_effort_when_unsupported(tmp_path, monkeypatch, capsys):
+    import io, json
+    from workagent import agy_harness
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "agy-home"))
+    monkeypatch.setattr("workagent.backend.shutil.which", lambda n: f"/usr/bin/{n}")
+    monkeypatch.setattr("workagent.env.merged_env", lambda *a, **k: dict(os.environ))
+    session = tmp_path / "runs" / "agy" / "feat" / "run.jsonl"
+    session.parent.mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    class FailProc:
+        stdout = io.StringIO("")
+        stderr = io.StringIO(
+            'error: invalid model selection (--model "gemini-pro-orchestrator-neon" --effort "medium"): '
+            '--effort is not supported for model "gemini-pro-orchestrator-neon"\n'
+        )
+        returncode = 1
+        pid = 12345
+        def wait(self, timeout=None): return 1
+
+    ok_ndjson = "\n".join([
+        json.dumps({"event": "init", "conversation_id": "conv-retry"}),
+        json.dumps({"event": "result", "result": {"conversation_id": "conv-retry", "status": "SUCCESS", "response": "Done\nJOB_DONE"}}),
+    ]) + "\n"
+
+    class OkProc:
+        stdout = io.StringIO(ok_ndjson)
+        stderr = None
+        returncode = 0
+        pid = 12346
+        def wait(self, timeout=None): return 0
+
+    def fake_popen(argv, **kw):
+        calls.append(list(argv))
+        return FailProc() if len(calls) == 1 else OkProc()
+
+    monkeypatch.setattr(agy_harness.subprocess, "Popen", fake_popen)
+    code = agy_harness.AgyAcpHarness().launch(
+        "do work", str(tmp_path), no_tty=True,
+        session_file=str(session),
+        model="gemini-pro-orchestrator-neon", effort="medium",
+    )
+    assert code == 0
+    assert len(calls) == 2
+    assert "--effort" in calls[0] and "medium" in calls[0]
+    assert "--effort" not in calls[1]
+    assert "--model" in calls[1] and "gemini-pro-orchestrator-neon" in calls[1]
+    err = capsys.readouterr().err
+    assert "--effort is not supported" in err
+    assert "retrying without --effort" in err
+    assert agy_harness.resolve_conversation_id(str(session)) == "conv-retry"
+
+
+def test_agy_launch_headless_does_not_retry_on_unrelated_error(tmp_path, monkeypatch):
+    import io
+    from workagent import agy_harness
+    monkeypatch.setattr("workagent.backend.shutil.which", lambda n: f"/usr/bin/{n}")
+    monkeypatch.setattr("workagent.env.merged_env", lambda *a, **k: dict(os.environ))
+    calls: list[list[str]] = []
+
+    class FailProc:
+        stdout = io.StringIO("")
+        stderr = io.StringIO("error: network timeout\n")
+        returncode = 1
+        pid = 12345
+        def wait(self, timeout=None): return 1
+
+    def fake_popen(argv, **kw):
+        calls.append(list(argv))
+        return FailProc()
+
+    monkeypatch.setattr(agy_harness.subprocess, "Popen", fake_popen)
+    code = agy_harness.AgyAcpHarness().launch(
+        "do work", str(tmp_path), no_tty=True,
+        model="gemini-pro-orchestrator-neon", effort="medium",
+    )
+    assert code == 1
+    assert len(calls) == 1
+
+
+def test_omp_launch_headless_retries_without_effort_when_unsupported(tmp_path, monkeypatch, capsys):
+    import sys
+    from workagent.acp_harness import OmpAcpHarness
+    fake_omp = tmp_path / "fake_omp.py"
+    log = tmp_path / "calls.log"
+    fake_omp.write_text(
+        "import sys\n"
+        f"open({str(log)!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+        "if any(a.startswith('--thinking=') for a in sys.argv[1:]):\n"
+        "    sys.stderr.write('error: --thinking is not supported for model foo\\n')\n"
+        "    sys.exit(1)\n"
+        "sys.exit(0)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("workagent.backend.shutil.which", lambda n: f"/usr/bin/{n}")
+    h = OmpAcpHarness()
+    orig_cmd = h.command_argv
+    monkeypatch.setattr(
+        h, "command_argv",
+        lambda prompt, no_tty, extra_args=None, model=None, effort=None: [
+            sys.executable, str(fake_omp), *orig_cmd(prompt, no_tty, extra_args, model, effort)[1:]
+        ],
+    )
+    rc = h.launch("do work", str(tmp_path), no_tty=True, model="foo", effort="medium")
+    assert rc == 0
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert "--thinking=medium" in lines[0]
+    assert "--thinking=" not in lines[1]
+    assert "--model=foo" in lines[1]
+    err = capsys.readouterr().err
+    assert "retrying without --effort" in err
+
+
+def test_omp_launch_headless_does_not_retry_on_unrelated_error(tmp_path, monkeypatch):
+    import sys
+    from workagent.acp_harness import OmpAcpHarness
+    fake_omp = tmp_path / "fake_omp_fail.py"
+    log = tmp_path / "calls.log"
+    fake_omp.write_text(
+        "import sys\n"
+        f"open({str(log)!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+        "sys.stderr.write('error: rate limit exceeded\\n')\n"
+        "sys.exit(1)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("workagent.backend.shutil.which", lambda n: f"/usr/bin/{n}")
+    h = OmpAcpHarness()
+    orig_cmd = h.command_argv
+    monkeypatch.setattr(
+        h, "command_argv",
+        lambda prompt, no_tty, extra_args=None, model=None, effort=None: [
+            sys.executable, str(fake_omp), *orig_cmd(prompt, no_tty, extra_args, model, effort)[1:]
+        ],
+    )
+    rc = h.launch("do work", str(tmp_path), no_tty=True, model="foo", effort="medium")
+    assert rc == 1
+    assert len(log.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_run_harness_omits_effort_from_cached_model_capabilities(tmp_path, isolated_config, capsys):
+    from workagent import cli_harness as _h, store
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    store.save_harness_options_cache("agy", {
+        "model_efforts": {
+            "gemini-pro-orchestrator-neon": [],
+            "claude-opus-5-5": [{"id": "low", "name": "Low"}, {"id": "high", "name": "High"}],
+        },
+    })
+
+    res_unsupported = {"branch": "feat/x", "command": "start", "key": "k"}
+    _h._run_harness("agy", "do things", str(worktree), str(worktree),
+                    False, False, res_unsupported, False,
+                    model="gemini-pro-orchestrator-neon", effort="medium")
+    assert "--effort" not in res_unsupported["harness_command"]
+    assert "--model gemini-pro-orchestrator-neon" in res_unsupported["harness_command"]
+    assert "omitting --effort" in capsys.readouterr().err
+
+    res_bad_level = {"branch": "feat/x", "command": "start", "key": "k"}
+    _h._run_harness("agy", "do things", str(worktree), str(worktree),
+                    False, False, res_bad_level, False,
+                    model="claude-opus-5-5", effort="xhigh")
+    assert "--effort" not in res_bad_level["harness_command"]
+    assert "supported: low, high" in capsys.readouterr().err
+
+    res_ok = {"branch": "feat/x", "command": "start", "key": "k"}
+    _h._run_harness("agy", "do things", str(worktree), str(worktree),
+                    False, False, res_ok, False,
+                    model="claude-opus-5-5", effort="high")
+    assert "--effort high" in res_ok["harness_command"]
+
+    res_unknown = {"branch": "feat/x", "command": "start", "key": "k"}
+    _h._run_harness("agy", "do things", str(worktree), str(worktree),
+                    False, False, res_unknown, False,
+                    model="future-model", effort="medium")
+    assert "--effort medium" in res_unknown["harness_command"]
+
+    # Empty harness_name resolves to default harness ("agy") and still hits the "agy" cache.
+    res_alias = {"branch": "feat/x", "command": "start", "key": "k"}
+    _h._run_harness("", "do things", str(worktree), str(worktree),
+                    False, False, res_alias, False,
+                    model="gemini-pro-orchestrator-neon", effort="medium")
+    assert "--effort" not in res_alias["harness_command"]
+    assert "omitting --effort" in capsys.readouterr().err
+
+
+def test_warn_effort_retry_quotes_argv(capsys):
+    backend.warn_effort_retry("m1", "high", ["agy", "-p", "hello world\nline2"])
+    err = capsys.readouterr().err
+    assert "$ agy -p 'hello world\nline2'" in err
+
+
 def test_resolve_model_effort_uses_defaults_only_for_default_harness(monkeypatch, isolated_config):
     from workagent import store
     monkeypatch.setattr(store, "default_harness", lambda: "agy")
