@@ -300,6 +300,7 @@ def action_run(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print plan without acting."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts."),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON (stdout; logs go to stderr)."),
+    no_auto_register: bool = typer.Option(False, "--no-auto-register", help="Do not auto-register a worktree when ref is an unlinked PR/MR."),
 ) -> None:
     """Run a custom action against one linked worktree.
 
@@ -315,9 +316,22 @@ def action_run(
               EXIT_USAGE)
     links = store.load_links()
     try:
-        key, entry, _ = worktrees.resolve_any(ref, links)
+        key, entry, parsed = worktrees.resolve_any(ref, links)
     except worktrees.NoLinkedState as e:
         _fail(str(e), EXIT_USAGE)
+    did_auto_register = False
+    if not key:
+        if parsed is not None and parsed.get("kind") in ("pr", "mr") and not no_auto_register:
+            from . import cli_review as _cr
+            if dry_run:
+                _, preview = _cr.auto_register_pr_worktree(ref, parsed, yes=yes, dry_run=True)
+                _print_result({"label": label, "ref": ref, "dry_run": True,
+                               "auto_register": preview}, json_output)
+                return
+            key, entry = _cr.auto_register_pr_worktree(ref, parsed, yes=yes)
+            did_auto_register = True
+        else:
+            _fail(f"no linked state for {ref}", EXIT_USAGE)
     if (entry.get("active", 1) == 0):
         _fail(f"{key}: deactivated — skipping", EXIT_USAGE)
     wt = str(entry.get("worktree", ""))
@@ -338,7 +352,7 @@ def action_run(
                       json_output)
         return
     import sys as _sys
-    if not yes and not no_tty and _sys.stdin.isatty():
+    if not yes and not did_auto_register and not no_tty and _sys.stdin.isatty():
         eprint(f"run action {label} on {key} ({wt})? [y/N] ", end="")
         if (_sys.stdin.readline() or "").strip().lower() not in ("y", "yes"):
             _fail("aborted", EXIT_USAGE)
