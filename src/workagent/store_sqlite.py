@@ -409,6 +409,13 @@ CDC_TABLES: tuple[tuple[str, str], ...] = (
     ("pr_cache", "branch"),
     ("prodtest_items", "issue_key"),
     ("schedules", "id"),
+    ("pr_candidates_cache", "source"),
+    ("issue_cache", "source"),
+    ("release_diff_cache", "repo_key"),
+    ("repos", "name"),
+    ("trackers", "key_ref"),
+    ("pr_checks", "worktree_ref"),
+    ("pr_review_threads", "worktree_ref"),
 )
 
 _CDC_TRIGGER_NAMES: frozenset[str] = frozenset(

@@ -135,3 +135,14 @@ def test_cdc_hub_idle_backoff_and_wake_on_subscribe(tmp_path):
     finally:
         hub.stop()
         loop.close()
+
+
+def test_cdc_triggers_cover_cache_and_metadata_tables(isolated_config):
+    db = sq.db_path()
+    sq.init_db(db)
+    sq.set_pr_candidates_cache(db, [], source="prs")
+    sq.set_issue_cache(db, "jira:mine90", [])
+    sq.set_release_diff_cache(db, "demo", 1)
+    with sq.connect(db) as conn:
+        tables = {r[0] for r in conn.execute("SELECT DISTINCT table_name FROM change_log")}
+    assert {"pr_candidates_cache", "issue_cache", "release_diff_cache"} <= tables
