@@ -640,6 +640,7 @@
 - Add dedicated Worktree Workspace view (/worktrees/:ref) with collapsible inspector, ACP session/load resume, and multi-turn follow-up composer [144]
 - Serialize sequential flow steps per repo with a cross-process lock held across contiguous steps to prevent PR merge conflicts [163]
 - Retry live PR/MR branch lookups on transient EOF and transport errors so flow review steps do not fail prematurely [215]
+- Use each flow template's configured icon for Dashboard top bar and StatusTable row overlay buttons [218]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config
