@@ -1185,10 +1185,59 @@ def test_change_log_triggers_and_pruning(tmp_path):
         conn.execute("UPDATE schedules SET enabled = 0 WHERE name = 'nightly'")
         conn.execute("DELETE FROM schedules WHERE name = 'nightly'")
 
+        conn.execute(
+            "INSERT INTO pr_candidates_cache (source, payload, fetched_at) VALUES (?, ?, ?)",
+            ("prs", "[]", "2026-01-01T00:00:00Z"),
+        )
+        conn.execute("UPDATE pr_candidates_cache SET payload = '[{}]' WHERE source = 'prs'")
+        conn.execute("DELETE FROM pr_candidates_cache WHERE source = 'prs'")
+
+        conn.execute(
+            "INSERT INTO issue_cache (source, payload, fetched_at) VALUES (?, ?, ?)",
+            ("jira:mine90", "[]", "2026-01-01T00:00:00Z"),
+        )
+        conn.execute("UPDATE issue_cache SET payload = '[{}]' WHERE source = 'jira:mine90'")
+        conn.execute("DELETE FROM issue_cache WHERE source = 'jira:mine90'")
+
+        conn.execute(
+            "INSERT INTO release_diff_cache (repo_key, count, fetched_at) VALUES (?, ?, ?)",
+            ("demo", 1, "2026-01-01T00:00:00Z"),
+        )
+        conn.execute("UPDATE release_diff_cache SET count = 2 WHERE repo_key = 'demo'")
+        conn.execute("DELETE FROM release_diff_cache WHERE repo_key = 'demo'")
+
+        conn.execute(
+            "INSERT INTO repos (key_ref, path, name) VALUES (?, ?, ?)",
+            ("demo", "/tmp/demo", "demo"),
+        )
+        conn.execute("UPDATE repos SET tool = 'gh' WHERE key_ref = 'demo'")
+        conn.execute("DELETE FROM repos WHERE key_ref = 'demo'")
+
+        conn.execute(
+            "INSERT INTO trackers (key_ref, remote_url, vendor) VALUES (?, ?, ?)",
+            ("jira:IPG", "https://jira.example.com", "jira"),
+        )
+        conn.execute("UPDATE trackers SET is_enabled = 0 WHERE key_ref = 'jira:IPG'")
+        conn.execute("DELETE FROM trackers WHERE key_ref = 'jira:IPG'")
+
+        conn.execute(
+            "INSERT INTO pr_checks (worktree_ref, name, updated_at) VALUES (?, ?, ?)",
+            ("jira:IPG-1", "lint", "2026-01-01T00:00:00Z"),
+        )
+        conn.execute("UPDATE pr_checks SET conclusion = 'success' WHERE worktree_ref = 'jira:IPG-1'")
+        conn.execute("DELETE FROM pr_checks WHERE worktree_ref = 'jira:IPG-1'")
+
+        conn.execute(
+            "INSERT INTO pr_review_threads (worktree_ref, thread_id, updated_at) VALUES (?, ?, ?)",
+            ("jira:IPG-1", "t-1", "2026-01-01T00:00:00Z"),
+        )
+        conn.execute("UPDATE pr_review_threads SET resolved = 1 WHERE worktree_ref = 'jira:IPG-1'")
+        conn.execute("DELETE FROM pr_review_threads WHERE worktree_ref = 'jira:IPG-1'")
+
         conn.execute("DELETE FROM worktrees WHERE ref_key = 'jira:IPG-1'")
 
     events = sq.read_change_log(db, after_seq=0, limit=100)
-    assert len(events) == 21
+    assert len(events) == 42
     by_table_op = {(e["table"], e["op"]) for e in events}
     for tbl, _ in sq.CDC_TABLES:
         for op in ("insert", "update", "delete"):
@@ -1197,7 +1246,7 @@ def test_change_log_triggers_and_pruning(tmp_path):
 
     # Pruning keeps at most max_rows newest entries
     deleted = sq.prune_change_log(db, max_rows=5)
-    assert deleted == 16
+    assert deleted == 37
     remaining = sq.read_change_log(db, after_seq=0, limit=100)
     assert len(remaining) == 5
     assert [e["seq"] for e in remaining] == [e["seq"] for e in events[-5:]]

@@ -1,6 +1,6 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import type { QueryClient } from "@tanstack/react-query"
-import { api, type CreateRunInput } from "./api"
+import { api, type CreateRunInput, type WorktreeEntry, type WorktreeMap } from "./api"
 import { getVerbose } from "./settings"
 import { useServerEventsConnected } from "@/hooks/useServerEvents"
 
@@ -11,6 +11,7 @@ export const queryKeys = {
   statusInactive: ["status", "inactive"] as const,
   statusDeleted: ["status", "deleted"] as const,
   worktreeTimeline: (ref: string) => ["worktree", "timeline", ref] as const,
+  worktreeWatcher: (ref: string) => ["worktree", "watcher", ref] as const,
   path: (ref: string) => ["path", ref] as const,
   repos: ["repos"] as const,
   trackers: ["trackers"] as const,
@@ -48,11 +49,11 @@ const RELEASE_SWR_MS = 3600 * 1000            // release diff: 1h fresh
 /** Safety-fallback poll interval when the global SSE stream is connected. */
 const SSE_FALLBACK_POLL_MS = 60_000
 /** Poll /api/status every 15 s (or 60 s fallback when SSE is connected). */
-function filterStatusMap<T extends { active?: boolean; deleted_at?: string }>(
-  data: Record<string, T>,
-  predicate: (entry: T) => boolean,
-): Record<string, T> {
-  const out: Record<string, T> = {}
+function filterStatusMap(
+  data: WorktreeMap,
+  predicate: (entry: WorktreeEntry) => boolean,
+): WorktreeMap {
+  const out: WorktreeMap = {}
   for (const [k, v] of Object.entries(data)) {
     if (predicate(v)) out[k] = v
   }
@@ -81,7 +82,7 @@ function useSharedStatusBase(refresh?: boolean) {
 export function useStatusAll(refresh?: boolean) {
   return useQuery({
     ...useSharedStatusBase(refresh),
-    select: (data) => filterStatusMap(data, (e) => e.active !== false && !e.deleted_at),
+    select: (data) => filterStatusMap(data, (e) => e.active !== 0 && !e.deleted_at),
   })
 }
 
@@ -111,6 +112,15 @@ export function useWorktreeTimeline(ref: string | undefined, limit = 100) {
     enabled: !!ref,
     refetchInterval: 15_000,
     refetchIntervalInBackground: false,
+  })
+}
+
+export function useWorktreeWatcher(ref: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.worktreeWatcher(ref ?? ""),
+    queryFn: () => api.worktreeWatcher(ref ?? ""),
+    enabled: Boolean(ref),
+    retry: false,
   })
 }
 export function useConfig() {

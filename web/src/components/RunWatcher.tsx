@@ -39,16 +39,18 @@ export function RunWatcher() {
     const prev = prevStatesRef.current
     prevStatesRef.current = new Map(data.map((r) => [r.id, r.state]))
     if (!prev) return
-    const finished = data.find(
+    const finished = data.filter(
       (r) => prev.get(r.id) === "running" && r.state !== "running",
     )
-    if (!finished) return
+    if (finished.length === 0) return
     invalidateAfterRun(qc)
-    const { message, kind } = stateToast(
-      finished.state,
-      runLabel(finished.command, finished.args),
-    )
-    toast[kind](message)
+    for (const run of finished) {
+      const { message, kind } = stateToast(
+        run.state,
+        runLabel(run.command, run.args),
+      )
+      toast[kind](message)
+    }
   }, [data, qc])
 
   return null

@@ -271,17 +271,19 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
         except HarnessError:
             query_failed = True
             pr, used = (cached or {}).get("pr"), (cached or {}).get("tool")
+        no_cli_fallback = False
         if pr is None and used is None and cached and cached.get("pr"):
-            query_failed = True
+            no_cli_fallback = True
             pr, used = cached["pr"], cached.get("tool")
         target = (pr or {}).get("target_branch") or ""
         db = (target
               or (cached or {}).get("base_branch")
               or _patched("_repo_default_branch")(repo)) or None
         ab = repos.ahead_behind(Path(wt), db, branch) if (wt_ok and db) else None
+        needs_base_heal = bool(cached and db and db != (cached.get("base_branch") or ""))
         if wt_ok:
             branch_tip = _patched("_git_tip")(wt, branch) or _patched("_git_tip")(wt, "HEAD")
-            if not query_failed:
+            if not query_failed and (not no_cli_fallback or needs_base_heal):
                 store.cache_pr_status(branch, pr, tool=used if pr else None, repo=repo,
                                       base_branch=db,
                                       branch_tip=branch_tip,

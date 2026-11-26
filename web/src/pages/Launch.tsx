@@ -355,6 +355,8 @@ export function Launch({ embedded = false }: { embedded?: boolean } = {}) {
         staleTime: 0,
       })
       qc.setQueryData(queryKeys.issues(), fresh)
+      void qc.invalidateQueries({ queryKey: queryKeys.candidatesIssues(false, 90, true) })
+      void qc.invalidateQueries({ queryKey: ["issues"] })
       // Remount the Issue ref dropdown so its first-open fetch reloads
       // the now-fresh server cache immediately.
       setIssuesNonce((n) => n + 1)

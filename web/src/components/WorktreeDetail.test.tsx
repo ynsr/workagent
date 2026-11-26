@@ -20,6 +20,7 @@ const { mockConfig } = vi.hoisted(() => ({
 vi.mock("@/lib/queries", () => ({
   queryKeys: { runs: ["runs"], harnessOptions: (name: string) => ["harnesses", "options", name] },
   useActions: () => ({ data: { actions: [] } }),
+  useWorktreeWatcher: () => ({ data: null }),
   useConfig: () => ({ data: mockConfig }),
   useCreateRun: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
   useWorktreeTimeline: () => ({

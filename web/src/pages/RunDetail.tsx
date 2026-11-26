@@ -19,7 +19,7 @@ import { mergeLines, useRunEvents } from "@/hooks/useRunEvents"
 import { api, type CreateRunInput, type RunDetail as RunDetailData, type RunLine } from "@/lib/api"
 import { hasAcpStructuredEvents } from "@/lib/harness"
 import { useConfirm } from "@/lib/confirm"
-import { queryKeys, useCancelRun, useRun } from "@/lib/queries"
+import { queryKeys, useCancelRun, useCreateRun, useRun } from "@/lib/queries"
 import { copyToClipboard, formatCostUsd, formatDurationMs, formatTokens, relativeTime, shortId } from "@/lib/format"
 import { buildRerunArgs, commandAction, commandLabel, needsConfirm, runKind } from "@/lib/runs"
 import { RunResumeActions } from "@/components/RunActions"
@@ -178,6 +178,7 @@ export function RunDetail() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const cancel = useCancelRun()
+  const createRun = useCreateRun()
   const runQ = useRun(runId)
 
   const sse = useRunEvents(runId || null, {
@@ -254,7 +255,7 @@ export function RunDetail() {
       if (!ok) return
     }
     try {
-      const { run_id } = await api.createRun({
+      const { run_id } = await createRun.mutateAsync({
         command: run.command as CreateRunInput["command"],
         args,
         confirm: destructive ? true : undefined,

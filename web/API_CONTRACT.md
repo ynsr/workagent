@@ -324,6 +324,7 @@ overlay Updating badge in the top-right corner; skeletons render only on
 first load):
 
 ### `GET /api/candidates` → `{prs, issues, worktrees, warnings}`
+`GET /api/candidates/prs?force=bool` serves cached unlinked open PR/MRs with read-time link filtering (`force=true` bypasses cache and fetches live).
 `issues` rows carry `repo_hint`: the Launch default repo for that ref
 (linked worktree's repo, else the tracker's single linked repo, else
 `""`). Shown in the Link page issue rows.
@@ -332,7 +333,7 @@ first load):
 `is_enabled` 0 = disabled (skipped by issue/PR fetching); updates run
 through `POST /api/runs` with `tracker update KEY [--vendor] [--remote-url] [--fetch/--no-fetch] [--enable/--disable]`.
 ### `GET /api/tracker-domains` → `{disabled_domains: [...]}`; `POST /api/tracker-domains` `{domains: [...]}` replaces the list (normalized lowercase/sorted; empty = all enabled). Trackers on a listed host (or subdomain) are skipped by fetching.
-### `GET /api/release/status?name=` → `{repo, path, default_branch, release_branch, diff_count, behind, releasable, reason, stale, ci, ci_url, fetched_at, releasing, dirty, dirty_files, has_remote_diff}`
+### `GET /api/release/status?name=&force=bool` → `{repo, path, default_branch, release_branch, diff_count, behind, releasable, reason, stale, ci, ci_url, fetched_at, releasing, dirty, dirty_files, has_remote_diff}`
 Read-only releasability for one repo (1h fresh / 1d SWR diff cache). Always serves the cached row instantly and revalidates the diff in the background -- the ReleaseCard polls every 30 s, so fresh diffs swap in on the next poll without blocking or clearing the rendered rows. `releasable` = release branch set + diff > 0. `behind` = commits the release branch has that default lacks (local rev-list, 0 on unknown refs: drives the Fix-default button, never a gate); `ci`/`ci_url` are the release branch's newest pipeline (`success|failure|running|not_started`, empty when the lookup soft-fails); `fetched_at` is the diff-cache stamp. `releasing` is True while the repo's release lock is held (a release is running). `dirty` is True when the local checkout has uncommitted changes (`dirty_files` lists the `git status --porcelain` lines), disabling the ReleaseRow Pull button with a `(!)` tooltip; `has_remote_diff` is True when local `HEAD` differs from its `origin/<branch>` tracking ref (False hides the Pull button when local and remote match); when shown and clean, Pull runs `createRun({command: "repo", args: ["pull", repo]})`. `POST /api/runs` `{command: "release", args: [repo, "--yes"]}` runs the release (confirm dialog appends `--yes`). New flags: `--checks ci|local|both|none` (default `ci`: local pre-release gate in a detached worktree at the pinned SHA, pinned-commit CI poll, or both), `--diff remote|local` (default `remote`), `--pre-release-timeout` (default `10m`), `--ci-timeout` (default `15m`), `--env-file <script>` (default `env_file` in `config.json`; sourced before the pre-release gate). Result summary: `{repo, pinned_sha, checks, strategy, mr_url, merged}` + stderr `released <sha> via <strategy> checks=<checks> <url>`. `release fix-default REPO [--action rebase|ci|both] [--run-mode preview|headless|terminal] [--harness NAME] [--extra-prompt] [--dry-run] [--json] [--yes]`: rebase default onto release (remote rebase, harness fallback rewriting origin/default with force-push) and/or fix failing CI via the harness (checks both the default and the release branch pipelines; `release_ci`/`release_ci_url` carry the release-branch result); no-op (exit 0) when `behind` = 0 and neither branch CI is failing. The ReleaseCard shows a "Fix default" button per releasable repo row when `behind > 0 || ci === "failure"`; its dialog (action segmented Both/Rebase/CI default Both, run-mode control, `<HarnessPicker>`, extra-prompt input, force-push warning for rebase/both) runs `createRun({command: "release", args: ["fix-default", repo, "--action", a, "--run-mode", m, ...extra]})` (`release` also accepts `--harness <name>`).
 - `start REF [--register-only]` creates/registers the worktree and checks preconditions without launching an AI harness (used by Launch/New Task `Register` tab and Candidate Issues/PR/MR `Register` buttons).
 ## Runs (mutating CLI commands as child processes)
@@ -546,7 +547,9 @@ only an `answer` event resolves it.
 
 ### `GET /api/events` — Global CDC invalidation SSE stream (issue #147)
 Streams real-time SQLite `change_log` events (`worktrees`, `runs`, `flows`,
-`messages`, `pr_cache`, `prodtest_items`) tailed every 250 ms.
+`messages`, `pr_cache`, `prodtest_items`, `schedules`, `pr_candidates_cache`,
+`issue_cache`, `release_diff_cache`, `repos`, `trackers`, `pr_checks`,
+`pr_review_threads`) tailed every 250 ms.
 - `event: change`, `id: <seq>`, `data: {"seq": N, "table": "worktrees", "row_key": "…", "op": "insert"|"update"|"delete", "created_at": 1700000000.123}`.
 - Replays missed events when `Last-Event-ID` header (or `?last_event_id=N`) is supplied.
 - Emits `: heartbeat` SSE comments every 15 s while idle; closes cleanly on server shutdown.
