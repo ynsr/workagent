@@ -215,6 +215,10 @@ class Harness(abc.ABC):
         """Non-ACP CLI flags for --model/--effort (default: none)."""
         return []
 
+    def need_judgment(self) -> bool:
+        """Whether headless validation should run the LLM judgment step."""
+        return True
+
 
 HARNESSES: dict[str, Harness] = {}
 

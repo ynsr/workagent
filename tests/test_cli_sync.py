@@ -79,28 +79,33 @@ def test_sync_merge_flag_uses_local_merge(isolated_config, tmp_path, monkeypatch
     assert local == [(str(wt_dir), "main")] and rebase == []
 
 
-def test_sync_no_pr_falls_back_to_local(isolated_config, tmp_path, monkeypatch):
+def test_sync_no_pr_falls_back_to_local_rebase_harness(isolated_config, tmp_path, monkeypatch):
+    """Issue #223: without a PR, Rebase mode skips local_merge and invokes the AI harness."""
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
     local = []
-    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     monkeypatch.setattr(cli.sync_mod, "local_merge",
-                        lambda wt, db, branch="": (local.append((str(wt), db))
-                                        or {"status": "merged", "conflicts": []}))
-    monkeypatch.setattr(cli.sync_mod, "push", lambda wt, br: None)
+                        lambda *a, **k: local.append(a))
+    prompts = []
+    monkeypatch.setattr(cli, "_run_harness",
+                        lambda name, prompt, *a, **k: prompts.append((name, prompt)))
     r = _invoke("sync", "IPG-929", "--yes", "--json")
-    assert r.exit_code == 0
-    assert json.loads(r.stdout)["strategy"] == "local-merge"
-    assert local == [(str(wt_dir), "main")]
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert out["strategy"] == "local-rebase"
+    assert out["result"] == "rebase-harness"
+    assert local == []
+    assert len(prompts) == 1
+    assert "Rebase branch feat/IPG-929--x onto origin/main" in prompts[0][1]
 
 
-def test_sync_recorded_pr_seed_uses_local_merge(isolated_config, tmp_path,
-                                                monkeypatch):
-    """A recorded pr_url seed (state unknown) is display-only: sync must
-    take the local-merge fallback, never remote-rebase an unverified URL."""
+def test_sync_recorded_pr_seed_uses_local_rebase_harness(isolated_config, tmp_path,
+                                                         monkeypatch):
+    """A recorded pr_url seed (state unknown) is display-only: Rebase sync must
+    skip remote-rebase and local_merge, invoking the AI rebase harness instead."""
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
     _link_session(repo_dir, wt_dir, monkeypatch)
@@ -110,20 +115,19 @@ def test_sync_recorded_pr_seed_uses_local_merge(isolated_config, tmp_path,
     store.save_links(links)
     monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
     monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
-    rebase, local = [], []
-    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
+    rebase, local, prompts = [], [], []
     monkeypatch.setattr(cli.sync_mod, "local_merge",
-                        lambda wt, db, branch="": (local.append((str(wt), db))
-                                        or {"status": "merged", "conflicts": []}))
-    monkeypatch.setattr(cli.sync_mod, "push", lambda wt, br: None)
+                        lambda *a, **k: local.append(a))
     monkeypatch.setattr(cli.sync_mod, "rebase_remote",
-                        lambda *a, **k: rebase.append(a) or {"status": "rebased"})
-    monkeypatch.setattr(cli.sync_mod, "pull_rebased",
-                        lambda *a, **k: {"status": "reset"})
+                        lambda *a, **k: rebase.append(a))
+    monkeypatch.setattr(cli, "_run_harness",
+                        lambda name, prompt, *a, **k: prompts.append(prompt))
     r = _invoke("sync", "IPG-929", "--yes", "--json")
     assert r.exit_code == 0, r.output
-    assert json.loads(r.stdout)["strategy"] == "local-merge"
-    assert local == [(str(wt_dir), "main")] and rebase == []
+    out = json.loads(r.stdout)
+    assert out["strategy"] == "local-rebase"
+    assert out["result"] == "rebase-harness"
+    assert local == [] and rebase == [] and len(prompts) == 1
 
 
 def test_sync_dry_run_touches_nothing(isolated_config, tmp_path, monkeypatch):
@@ -182,8 +186,10 @@ def test_sync_all_missing_worktree_skipped(isolated_config, tmp_path, monkeypatc
     assert out[0]["result"] == "missing-worktree"
 
 
-def test_sync_rebase_failure_falls_back_to_local_merge(
+def test_sync_rebase_failure_falls_back_to_local_rebase_harness(
         isolated_config, tmp_path, monkeypatch):
+    """Issue #223: when remote rebase fails, Rebase mode skips local_merge
+    and invokes the AI harness to rebase."""
     from workagent.errors import HarnessError
     repo_dir = tmp_path / "proj"; wt_dir = tmp_path / "wt"
     wt_dir.mkdir(); subprocess.run(["git", "init", "-q", str(wt_dir)], check=True)
@@ -194,17 +200,20 @@ def test_sync_rebase_failure_falls_back_to_local_merge(
                                               "url": "https://x/mr/9",
                                               "target_branch": "main"},
                               repo=str(repo_dir))
-    rebase, local = [], []
+    rebase, local, prompts = [], [], []
     _sync_mocks(monkeypatch, local_calls=local, rebase_calls=rebase)
     monkeypatch.setattr(cli.sync_mod, "rebase_remote",
                         lambda tool, pr, wt: (_ for _ in ()).throw(
                             HarnessError("glab mr rebase failed: conflict")))
+    monkeypatch.setattr(cli, "_run_harness",
+                        lambda name, prompt, *a, **k: prompts.append(prompt))
     r = _invoke("sync", "IPG-929", "--yes", "--json")
-    assert r.exit_code == 0
+    assert r.exit_code == 0, r.output
     out = json.loads(r.stdout)
-    assert out["strategy"] == "local-merge" and out["fallback"] is True
-    assert out["result"] == "merged" and out.get("pushed") is True
-    assert local == [(str(wt_dir), "main")] and rebase == []
+    assert out["strategy"] == "local-rebase" and out["fallback"] is True
+    assert out["result"] == "rebase-harness"
+    assert local == [] and rebase == [] and len(prompts) == 1
+    assert "Rebase branch feat/IPG-929--x onto origin/main" in prompts[0]
 
 
 # ── register: register an existing worktree by path ────────────────────
@@ -336,8 +345,8 @@ def test_sync_unknown_harness(isolated_config, tmp_path, monkeypatch):
 
 def test_sync_rebase_fallback_conflict_prompt_requests_rebase(
         isolated_config, tmp_path, monkeypatch):
-    """When Sync method is Rebase (default) and remote rebase falls back to
-    local_merge with conflicts, the harness prompt requests a rebase."""
+    """When Sync method is Rebase (default) and remote rebase fails,
+    it skips local_merge and asks the harness to rebase."""
     from workagent.errors import HarnessError
     repo_dir = tmp_path / "proj"
     wt = tmp_path / "wt"
@@ -356,18 +365,18 @@ def test_sync_rebase_fallback_conflict_prompt_requests_rebase(
     monkeypatch.setattr(cli.sync_mod, "rebase_remote",
                         lambda *a, **k: (_ for _ in ()).throw(
                             HarnessError("glab mr rebase failed: conflict")))
-    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda *a: "up-to-date")
+    local = []
     monkeypatch.setattr(cli.sync_mod, "local_merge",
-                        lambda *a, **k: {"status": "conflict", "conflicts": ["a.txt"]})
-    monkeypatch.setattr(cli.sync_mod, "auto_resolve_changelog", lambda *a: False)
+                        lambda *a, **k: local.append(a))
     prompts = []
     monkeypatch.setattr(cli, "_run_harness",
                         lambda name, prompt, *a, **k: prompts.append(prompt))
     r = _invoke("sync", "IPG-929", "--harness", "omp")
     assert r.exit_code == 0, r.output
+    assert local == []
     assert len(prompts) == 1
-    assert "Perform a rebase instead of a merge" in prompts[0]
-    assert "git merge --abort" in prompts[0]
+    assert "Rebase branch feat/IPG-929--x onto origin/main" in prompts[0]
+    assert "git merge --abort" not in prompts[0]
     assert "git push --force-with-lease origin feat/IPG-929--x" in prompts[0]
     assert "complete the merge" not in prompts[0]
 
@@ -375,23 +384,53 @@ def test_sync_rebase_fallback_conflict_prompt_requests_rebase(
 @pytest.mark.parametrize("extra_args", [[], ["--rebase"]], ids=["default", "explicit-rebase"])
 def test_sync_no_pr_default_rebase_conflict_prompt_requests_rebase(
         isolated_config, tmp_path, monkeypatch, extra_args):
-    """Without a PR, default Sync method (Rebase) still asks the harness to rebase."""
+    """Without a PR, default Sync method (Rebase) skips local_merge and asks the harness to rebase."""
     wt = tmp_path / "wt"
     wt.mkdir()
     subprocess.run(["git", "init", "-q", str(wt)], check=True)
     _link_session(tmp_path / "proj", wt, monkeypatch)
-    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda *a: "up-to-date")
+    local = []
     monkeypatch.setattr(cli.sync_mod, "local_merge",
-                        lambda *a, **k: {"status": "conflict", "conflicts": ["a.txt"]})
-    monkeypatch.setattr(cli.sync_mod, "auto_resolve_changelog", lambda *a: False)
+                        lambda *a, **k: local.append(a))
     prompts = []
     monkeypatch.setattr(cli, "_run_harness",
                         lambda name, prompt, *a, **k: prompts.append(prompt))
     r = _invoke("sync", "IPG-929", *extra_args, "--harness", "omp")
     assert r.exit_code == 0, r.output
+    assert local == []
     assert len(prompts) == 1
-    assert "Perform a rebase instead of a merge" in prompts[0]
+    assert "Rebase branch feat/IPG-929--x onto origin/main" in prompts[0]
     assert "complete the merge" not in prompts[0]
+
+
+def test_sync_no_pr_rebase_dry_run(isolated_config, tmp_path, monkeypatch):
+    """Rebase mode --dry-run without a PR reports would-rebase without calling local_merge."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    subprocess.run(["git", "init", "-q", str(wt)], check=True)
+    _link_session(tmp_path / "proj", wt, monkeypatch)
+    local = []
+    monkeypatch.setattr(cli.sync_mod, "local_merge", lambda *a, **k: local.append(a))
+    r = _invoke("sync", "IPG-929", "--dry-run", "--json")
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert out["strategy"] == "local-rebase" and out["result"] == "would-rebase"
+    assert local == []
+
+
+def test_sync_no_pr_rebase_non_tty_needs_harness(isolated_config, tmp_path, monkeypatch):
+    """Rebase mode in non-TTY without --yes/--harness reports needs-harness and fails."""
+    from workagent.cli_sync import result_failed
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    subprocess.run(["git", "init", "-q", str(wt)], check=True)
+    _link_session(tmp_path / "proj", wt, monkeypatch)
+    r = _invoke("sync", "IPG-929", "--json")
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.stdout)
+    assert out["strategy"] == "local-rebase"
+    assert out["result"] == "needs-harness"
+    assert result_failed(out) is True
 
 
 def test_sync_merge_flag_conflict_prompt_requests_merge(

@@ -1024,3 +1024,103 @@ def test_real_git_push_without_upstream_passes_gates(tmp_path):
     assert res["checks"]["pushed"]["ok"] is True
     assert res["checks"]["diff"] == {
         "ok": True, "detail": "pushed and clean; work delivered"}
+
+
+def test_harness_need_judgment_defaults():
+    """Issue #223: Agy skips judgment, OMP requires judgment."""
+    from workagent.acp_harness import OmpAcpHarness
+    from workagent.agy_harness import AgyAcpHarness
+    assert AgyAcpHarness().need_judgment() is False
+    assert OmpAcpHarness().need_judgment() is True
+
+
+def test_validate_headless_ignores_judge_when_harness_disables_it(monkeypatch):
+    """Issue #223: agy (need_judgment=False) never invokes run_judge."""
+    from workagent import cli_validate as cv
+    monkeypatch.setenv("WORKAGENT_ALWAYS_JUDGE", "1")
+    monkeypatch.setattr(cv, "dirty_gate", lambda *a, **k: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(cv, "run_deterministic_gates",
+                        lambda *a, **k: {"passed": True, "checks": {}, "reasons": []})
+    judge_calls = []
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="review this",
+        session_type="review",
+        run_once=lambda p: {"exit_code": 0, "transcript": "done"},
+        run_judge=lambda p: (judge_calls.append(p) or "JOB_DONE"),
+        harness_name="agy")
+    assert res["verdict"] == "JOB_DONE"
+    assert judge_calls == []
+    assert res["runs"][0]["trace"]["phase"] == "judge-skipped"
+
+
+def test_validate_headless_runs_judge_for_omp(monkeypatch):
+    """Issue #223: omp (need_judgment=True) invokes run_judge on review."""
+    from workagent import cli_validate as cv
+    monkeypatch.setattr(cv, "dirty_gate", lambda *a, **k: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(cv, "run_deterministic_gates",
+                        lambda *a, **k: {"passed": True, "checks": {}, "reasons": []})
+    judge_calls = []
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="review this",
+        session_type="review",
+        run_once=lambda p: {"exit_code": 0, "transcript": "done\nJOB_DONE"},
+        run_judge=lambda p: (judge_calls.append(p) or "ok\nJOB_DONE"),
+        harness_name="omp")
+    assert res["verdict"] == "JOB_DONE"
+    assert len(judge_calls) == 1
+    assert res["runs"][0]["trace"]["phase"] == "judge"
+
+
+def test_validate_headless_no_judge_retries_on_incomplete(monkeypatch):
+    """Issue #223: when need_judgment=False, INCOMPLETE_OR_FAILED_JOB retries without judge."""
+    from workagent import cli_validate as cv
+    monkeypatch.setattr(cv, "dirty_gate", lambda *a, **k: {"dirty": False, "porcelain": ""})
+    monkeypatch.setattr(cv, "run_deterministic_gates",
+                        lambda *a, **k: {"passed": True, "checks": {}, "reasons": []})
+    attempts = []
+    judge_calls = []
+
+    def run_once(p):
+        attempts.append(p)
+        if len(attempts) == 1:
+            return {"exit_code": 0, "transcript": "not done\nINCOMPLETE_OR_FAILED_JOB"}
+        return {"exit_code": 0, "transcript": "fixed\nJOB_DONE"}
+
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do it",
+        session_type="sync", run_once=run_once,
+        run_judge=lambda p: (judge_calls.append(p) or "JOB_DONE"),
+        harness_name="agy")
+    assert res["verdict"] == "JOB_DONE"
+    assert len(attempts) == 2
+    assert judge_calls == []
+
+
+def test_run_harness_passes_none_run_judge_when_need_judgment_false(isolated_config, tmp_path, monkeypatch):
+    """Issue #223: cli_harness._run_harness passes run_judge=None when need_judgment() is False."""
+    from workagent import cli_harness, cli_validate, backend
+    seen = {}
+
+    class _FakeAgy:
+        name = "agy"
+        watches_headless = False
+
+        def need_judgment(self):
+            return False
+
+        def command_argv(self, *a, **k):
+            return ["agy-guard", "-p=hi"]
+
+        def session_file_flag(self, *a, **k):
+            return []
+
+        def extract_last_assistant_text(self, *a, **k):
+            return "JOB_DONE"
+
+    monkeypatch.setattr(backend, "get_harness", lambda name=None: _FakeAgy())
+    monkeypatch.setattr(cli_validate, "validate_headless",
+                        lambda **kw: (seen.update(kw), {"verdict": "JOB_DONE", "runs": []})[1])
+    cli_harness._run_harness("agy", "hi", str(tmp_path), str(tmp_path),
+                             no_tty=True, launch=True, result={},
+                             json_output=False, run_mode="headless")
+    assert seen["run_judge"] is None

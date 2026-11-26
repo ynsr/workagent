@@ -324,6 +324,17 @@ def judge_prompt(original: str, previous: str, gates: dict, diff_stat: str) -> s
         "INCOMPLETE_OR_FAILED_JOB (put 1-3 reason lines directly above it)."
     )
 
+def _harness_needs_judgment(harness_name: str | None) -> bool:
+    """Return False when the configured harness opts out of LLM judgment."""
+    if not harness_name:
+        return True
+    try:
+        from . import backend as _backend
+        return bool(_backend.get_harness(harness_name).need_judgment())
+    except Exception:
+        return True
+
+
 def _judge_may_skip(token: str | None, mode: str, gates: dict,
                     expect_changes: bool,
                     session_type: str | None = None) -> bool:
@@ -658,6 +669,19 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                 f"{'; '.join(reasons)[:2000]}\n"
                 f"End your reply with only JOB_DONE as the last line.")
             continue
+        if not _harness_needs_judgment(harness_name) or run_judge is None:
+            if token == "INCOMPLETE_OR_FAILED_JOB":
+                done = _retry("gates", mode, transcript,
+                              ["harness reported INCOMPLETE_OR_FAILED_JOB"])
+                if done is not None:
+                    return done
+                current_prompt = (
+                    "Continue the unfinished job. You previously reported "
+                    "INCOMPLETE_OR_FAILED_JOB.\n"
+                    "End your reply with only JOB_DONE as the last line.")
+                continue
+            _decide("judge-skipped", token or "JOB_DONE", mode, transcript)
+            return _finish(token or "JOB_DONE")
         if _judge_may_skip(token, mode, gates, expect_changes, session_type):
             _decide("judge-skipped", token, mode, transcript)
             return _finish(token)

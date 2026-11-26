@@ -849,6 +849,9 @@ class OmpAcpHarness(_OmpOptionMixin, AcpHarness):
     def authenticate_method(self) -> str | None:
         return "agent"
 
+    def need_judgment(self) -> bool:
+        return True
+
     def extract_question(self, update: dict) -> Question | None:
         return None  # omp asks in plain text; turn ends end_turn
 
