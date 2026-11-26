@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react"
-import { Sparkles } from "lucide-react"
+import { CircleHelp, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { errorText } from "@/components/StatusFeedback"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
+import { Tooltip } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
 import { useCreateRun } from "@/lib/queries"
 
@@ -19,11 +20,24 @@ export function SegmentedControl<T extends string>({ idPrefix, label, hint, opti
   value: T
   onChange: (v: T) => void
 }) {
+  const cleanHint = hint?.replace(/^—\s*/, "").trim()
   return (
     <div className="grid gap-1.5">
-      <Label id={`${idPrefix}-label`} title={hint}>
-        {label}
-      </Label>
+      <div className="flex items-center gap-1">
+        <Label id={`${idPrefix}-label`}>{label}</Label>
+        {cleanHint ? (
+          <Tooltip label={cleanHint}>
+            <span
+              role="img"
+              tabIndex={0}
+              className="inline-flex cursor-help items-center rounded-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              aria-label={`${label}: ${cleanHint}`}
+            >
+              <CircleHelp aria-hidden className="size-3.5" />
+            </span>
+          </Tooltip>
+        ) : null}
+      </div>
       <div
         role="radiogroup"
         aria-labelledby={`${idPrefix}-label`}

@@ -42,17 +42,17 @@ export function Tooltip({
   const tooltipContent = label ?? content
   if (!tooltipContent) return <>{children}</>
 
-  const triggerChild =
-    className || !React.isValidElement(children) ? (
-      <span
-        className={cn("inline-flex", className)}
-        title={typeof tooltipContent === "string" ? tooltipContent : undefined}
-      >
-        {children}
-      </span>
+  const triggerChild = React.isValidElement<{ className?: string }>(children) ? (
+    className ? (
+      React.cloneElement(children, {
+        className: cn(children.props.className, className),
+      })
     ) : (
       children
     )
+  ) : (
+    <span className={cn("inline-flex", className)}>{children}</span>
+  )
 
   const tooltip = (
     <TooltipPrimitive.Root>

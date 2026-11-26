@@ -9,20 +9,23 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return { ...mod, api: { ...(mod as { api: object }).api, submitRunInput: vi.fn(async () => ({ id: "r1", ok: true })) } }
 })
 
-function renderCard() {
+function renderCard(options: string[] = ["yes", "no"]) {
   const qc = new QueryClient()
   const view = render(
     <QueryClientProvider client={qc}>
       <QuestionCard
         runId="r1"
-        question={{ qid: "q1", text: "proceed?", options: ["yes", "no"], multi: false }}
+        question={{ qid: "q1", text: "proceed?", options, multi: false }}
       />
     </QueryClientProvider>,
   )
   return { ...view, card: within(view.getByTestId("question-card")) }
 }
 
-afterEach(() => cleanup())
+afterEach(() => {
+  vi.clearAllMocks()
+  cleanup()
+})
 
 describe("QuestionCard", () => {
   it("sends the picked option", async () => {
@@ -39,8 +42,25 @@ describe("QuestionCard", () => {
     await waitFor(() => expect(api.submitRunInput).toHaveBeenCalledWith("r1", { text: "custom answer", qid: "q1" }))
   })
 
-  it("disables Send with no answer", () => {
+  it("marks Send aria-disabled with no answer, blocks click, and shows Radix tooltip", async () => {
     const { card } = renderCard()
-    expect(card.getByRole("button", { name: /send/i })).toBeDisabled()
+    const sendBtn = card.getByRole("button", { name: /send/i })
+    expect(sendBtn).toHaveAttribute("aria-disabled", "true")
+    expect(sendBtn).not.toHaveAttribute("title")
+
+    fireEvent.click(sendBtn)
+    expect(api.submitRunInput).not.toHaveBeenCalled()
+
+    fireEvent.focus(sendBtn)
+    const tooltip = await screen.findByRole("tooltip")
+    expect(tooltip).toHaveTextContent("Pick or type an answer first")
+    expect(sendBtn).toHaveAttribute("aria-describedby", tooltip.id)
+  })
+
+  it("preserves focus indication on the free-text row and omits role=group when options are empty", () => {
+    const { card } = renderCard([])
+    expect(card.queryByRole("group", { name: "Answer options" })).not.toBeInTheDocument()
+    const input = card.getByLabelText("Answer")
+    expect(input.parentElement?.className).toMatch(/focus-within:ring-\[3px\]/)
   })
 })

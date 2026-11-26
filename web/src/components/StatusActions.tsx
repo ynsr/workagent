@@ -34,9 +34,10 @@ export function ActionIcon({
         variant={destructive ? "destructive-ghost" : "quiet"}
         size="icon-sm"
         aria-label={title}
-        disabled={disabled}
+        aria-disabled={disabled ? true : undefined}
         onClick={(e) => {
           e.stopPropagation()
+          if (disabled) return
           onClick()
         }}
       >

@@ -68,10 +68,34 @@ describe("ui primitives", () => {
     expect(el.className).not.toMatch(/scale|active:/)
   })
 
+  it("Tooltip merges className onto interactive child without span wrapper or native title", async () => {
+    render(
+      <Tooltip label="Helpful tip" className="w-full">
+        <Button aria-label="Action" size="icon-sm" variant="quiet" />
+      </Tooltip>,
+    )
+    const btn = screen.getByRole("button", { name: "Action" })
+    expect(btn.className).toMatch(/\bw-full\b/)
+    expect(btn).not.toHaveAttribute("title")
+    expect(btn.parentElement?.tagName).not.toBe("SPAN")
+
+    fireEvent.focus(btn)
+    const tooltip = await screen.findByRole("tooltip")
+    expect(tooltip).toHaveTextContent("Helpful tip")
+    expect(btn).toHaveAttribute("aria-describedby", tooltip.id)
+  })
+
   it("ghost-family variants use the growing pill and quiet size is 28px", () => {
     render(<Button variant="quiet" size="icon-sm" aria-label="q" />)
     const cls = screen.getByRole("button", { name: "q" }).className
     expect(cls).toMatch(/before:inset-1/)
     expect(cls).toMatch(/size-7/)
+  })
+
+  it("accent variant uses status-working-foreground token for dark-mode contrast", () => {
+    render(<Button variant="accent">Run</Button>)
+    const cls = screen.getByRole("button", { name: "Run" }).className
+    expect(cls).toMatch(/bg-status-working/)
+    expect(cls).toMatch(/text-status-working-foreground/)
   })
 })

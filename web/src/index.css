@@ -44,6 +44,7 @@
   /* Status colors: the only place hue is spent (design/02 section 2.7). Light values are
    * darker variants chosen for contrast on white; dark values follow AO. */
   --status-working: #2563eb;
+  --status-working-foreground: #ffffff;
   --status-needs-you: #d9441f;
   --status-in-review: #b45309;
   --status-ready: #16a34a;
@@ -83,6 +84,7 @@
   --sidebar-border: oklch(0.292 0.014 267);
   --sidebar-ring: oklch(0.56 0.115 277);
   --status-working: #60a5fa;
+  --status-working-foreground: #020617;
   --status-needs-you: #f06445;
   --status-in-review: #f59e0b;
   --status-ready: #4ade80;
@@ -122,6 +124,7 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-status-working: var(--status-working);
+  --color-status-working-foreground: var(--status-working-foreground);
   --color-status-needs-you: var(--status-needs-you);
   --color-status-in-review: var(--status-in-review);
   --color-status-ready: var(--status-ready);

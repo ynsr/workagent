@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Pressable } from "@/components/ui/pressable"
+import { Tooltip } from "@/components/ui/tooltip"
 import { StatusGlyph } from "@/components/StatusGlyph"
 import { errorText } from "@/components/StatusFeedback"
 import { api, type PendingQuestion } from "@/lib/api"
@@ -43,7 +44,11 @@ export function QuestionCard({ runId, question }: { runId: string; question: Pen
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {/* One shared list: rows with dividers, "Type your own answer" last (design/03 section 4). */}
-        <div className="divide-y divide-border overflow-hidden rounded-md bg-secondary/60" role="group" aria-label="Answer options">
+        <div
+          className="divide-y divide-border overflow-hidden rounded-md bg-secondary/60"
+          role={question.options.length > 0 ? "group" : undefined}
+          aria-label={question.options.length > 0 ? "Answer options" : undefined}
+        >
           {question.options.map((o) => {
             const active = question.multi ? picked.includes(o) : choice === o
             return (
@@ -63,7 +68,11 @@ export function QuestionCard({ runId, question }: { runId: string; question: Pen
               </Pressable>
             )
           })}
-          <div className="px-3 py-1">
+          <div
+            className={`px-3 py-1 focus-within:ring-[3px] focus-within:ring-inset focus-within:ring-ring/50 ${
+              question.options.length > 0 ? "rounded-b-md" : "rounded-md"
+            }`}
+          >
             <Label className="sr-only" htmlFor="acp-answer">
               Answer
             </Label>
@@ -80,14 +89,18 @@ export function QuestionCard({ runId, question }: { runId: string; question: Pen
           </div>
         </div>
         <div className="flex justify-end">
-          <Button
-            size="sm"
-            disabled={!canSend || submit.isPending}
-            title={canSend ? undefined : "Pick or type an answer first"}
-            onClick={() => submit.mutate()}
-          >
-            <Send aria-hidden /> Send answer
-          </Button>
+          <Tooltip label={canSend ? undefined : "Pick or type an answer first"}>
+            <Button
+              size="sm"
+              aria-disabled={!canSend || submit.isPending ? true : undefined}
+              onClick={() => {
+                if (!canSend || submit.isPending) return
+                submit.mutate()
+              }}
+            >
+              <Send aria-hidden /> Send answer
+            </Button>
+          </Tooltip>
         </div>
       </CardContent>
     </Card>

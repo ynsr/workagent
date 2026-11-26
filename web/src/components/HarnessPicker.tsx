@@ -263,7 +263,7 @@ export function HarnessPicker({
                 type="button"
                 role="radio"
                 aria-checked={checked}
-                title={opt.hint}
+                title={opt.available ? opt.hint : undefined}
                 onClick={() => selectHarness(opt.value)}
                 className={cn(
                   "inline-flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -278,7 +278,7 @@ export function HarnessPicker({
               </button>
             )
             return !opt.available ? (
-              <Tooltip key={opt.value} content={opt.hint} className="flex-1">
+              <Tooltip key={opt.value} content={opt.hint}>
                 {btn}
               </Tooltip>
             ) : (
@@ -314,7 +314,7 @@ export function HarnessPicker({
 
             {/* Divided model list */}
             {modelsDisabled ? (
-              <Tooltip content={modelDisabledReason} className="w-full">
+              <Tooltip content={modelDisabledReason}>
                 <Pressable aria-disabled="true" aria-label="Model" className="text-xs text-muted-foreground">
                   <span className="truncate">{modelDisabledReason}</span>
                 </Pressable>
@@ -350,7 +350,7 @@ export function HarnessPicker({
             {/* Trailing Effort row (progressive disclosure) */}
             <div className="border-t border-border">
               {effortsDisabled ? (
-                <Tooltip content={effortDisabledReason} className="w-full">
+                <Tooltip content={effortDisabledReason}>
                   <Pressable aria-disabled="true" aria-label="Effort">
                     <span className="font-medium">Effort</span>
                     <span className="text-xs text-muted-foreground">

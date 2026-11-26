@@ -11,7 +11,7 @@ const PILL =
   "relative isolate before:absolute before:inset-1 before:-z-10 before:rounded-[inherit] before:bg-foreground/[0.06] before:opacity-0 hover:before:inset-0 hover:before:opacity-100 hover:before:transition-[inset,opacity] hover:before:duration-150 hover:before:ease-out focus-visible:before:inset-0 focus-visible:before:opacity-100 data-[state=open]:before:inset-0 data-[state=open]:before:opacity-100 aria-pressed:before:inset-0 aria-pressed:before:opacity-100 motion-reduce:before:transition-none"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 aria-invalid:border-destructive",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 aria-[disabled=true]:cursor-not-allowed aria-[disabled=true]:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 aria-invalid:border-destructive",
   {
     variants: {
       variant: {
@@ -26,7 +26,7 @@ const buttonVariants = cva(
         ghost: `${PILL} bg-transparent`,
         quiet: `${PILL} bg-transparent text-muted-foreground hover:text-foreground`,
         "destructive-ghost": `${PILL} bg-transparent text-muted-foreground hover:text-destructive before:bg-destructive/10`,
-        accent: "bg-status-working text-white shadow-xs hover:bg-status-working/90",
+        accent: "bg-status-working text-status-working-foreground shadow-xs hover:bg-status-working/90",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

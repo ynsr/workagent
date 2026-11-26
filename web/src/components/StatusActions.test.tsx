@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { RowActions } from "@/components/StatusActions"
+import { ActionIcon, RowActions } from "@/components/StatusActions"
 import type { FlowTemplateRow, WorktreeMap } from "@/lib/api"
 import type * as QueriesModule from "@/lib/queries"
 
@@ -92,5 +92,25 @@ describe("StatusActions DedicatedOverlay icons", () => {
 
     const fallbackBtn = screen.getByRole("button", { name: "Run flow No Icon on jira:DEMO-1" })
     expect(fallbackBtn.querySelector("svg.lucide-zap")).not.toBeNull()
+  })
+
+  it("keeps disabled ActionIcon focusable so its tooltip reason opens and guards clicks", async () => {
+    const onClick = vi.fn()
+    render(
+      <ActionIcon title="Resume transcript: none yet" disabled onClick={onClick}>
+        <span>H</span>
+      </ActionIcon>,
+    )
+    const btn = screen.getByRole("button", { name: "Resume transcript: none yet" })
+    expect(btn).toHaveAttribute("aria-disabled", "true")
+    expect(btn).not.toBeDisabled()
+
+    fireEvent.click(btn)
+    expect(onClick).not.toHaveBeenCalled()
+
+    fireEvent.focus(btn)
+    const tooltip = await screen.findByRole("tooltip")
+    expect(tooltip).toHaveTextContent("Resume transcript: none yet")
+    expect(btn).toHaveAttribute("aria-describedby", tooltip.id)
   })
 })

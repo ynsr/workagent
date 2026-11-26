@@ -83,7 +83,11 @@ describe("HarnessPicker", () => {
 
     await user.click(trigger)
     const ompRadio = screen.getByRole("radio", { name: "omp (missing)" })
-    expect(ompRadio).toHaveAttribute("title", "omp not found on PATH")
+    expect(ompRadio).not.toHaveAttribute("title")
+    ompRadio.focus()
+    const tooltip = await screen.findByRole("tooltip")
+    expect(tooltip).toHaveTextContent("omp not found on PATH")
+    expect(ompRadio).toHaveAttribute("aria-describedby", tooltip.id)
     await user.click(ompRadio)
     expect(onHarness).toHaveBeenCalledWith("omp")
   })
