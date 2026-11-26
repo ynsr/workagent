@@ -8,8 +8,6 @@ export const queryKeys = {
   info: ["info"] as const,
   config: ["config"] as const,
   statusAll: ["status", "all"] as const,
-  statusInactive: ["status", "inactive"] as const,
-  statusDeleted: ["status", "deleted"] as const,
   worktreeTimeline: (ref: string) => ["worktree", "timeline", ref] as const,
   worktreeWatcher: (ref: string) => ["worktree", "watcher", ref] as const,
   path: (ref: string) => ["path", ref] as const,

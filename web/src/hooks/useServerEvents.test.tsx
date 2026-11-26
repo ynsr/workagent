@@ -197,8 +197,6 @@ describe("useServerEvents", () => {
       es.emit("open")
     })
     expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusAll })
-    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusInactive })
-    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusDeleted })
     expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.links })
     expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.runs })
     expect(spy).toHaveBeenCalledWith({ queryKey: ["flows"] })
@@ -229,10 +227,8 @@ describe("useServerEvents", () => {
       act(() => {
         vi.advanceTimersByTime(500)
       })
-      expect(spy).toHaveBeenCalledTimes(3)
+      expect(spy).toHaveBeenCalledTimes(1)
       expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusAll })
-      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusInactive })
-      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusDeleted })
     } finally {
       vi.useRealTimers()
     }

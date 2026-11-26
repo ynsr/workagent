@@ -327,6 +327,53 @@ def set_worktree_active(path: Path, key: str, active: bool) -> None:
             raise HarnessError(f"no worktree link for {key}", exit_code=2)
 
 
+def _pr_cache_keys_for_row(
+    branch: str, repo_key: str, repo_path: str, payload_raw: str | None
+) -> set[str]:
+    """All pr_cache keys (repo-scoped + legacy bare) associated with one worktree row."""
+    b = str(branch or "")
+    if not b:
+        return set()
+    keys = {b}
+    repos_set = {str(repo_key or ""), str(repo_path or "")}
+    if payload_raw:
+        try:
+            payload = json.loads(payload_raw)
+            if isinstance(payload, dict) and payload.get("repo"):
+                repos_set.add(str(payload["repo"]))
+        except Exception:
+            pass
+    for r in repos_set:
+        if r:
+            keys.add(f"{r}\x1f{b}")
+    return keys
+
+
+def _purge_worktree_pr_cache_conn(
+    conn, branch: str, repo_key: str, repo_path: str, payload_raw: str | None
+) -> None:
+    """Delete pr_cache keys for a removed worktree unless still used by another row."""
+    b = str(branch or "")
+    if not b:
+        return
+    candidates = _pr_cache_keys_for_row(b, repo_key, repo_path, payload_raw)
+    remaining = conn.execute(
+        "SELECT w.repo_key, COALESCE(r.path, ''), w.payload"
+        " FROM worktrees w LEFT JOIN repos r ON r.key_ref = w.repo_key"
+        " WHERE w.branch = ?",
+        (b,),
+    ).fetchall()
+    live: set[str] = set()
+    for rem_repo_key, rem_repo_path, rem_payload in remaining:
+        live.update(_pr_cache_keys_for_row(b, rem_repo_key, rem_repo_path, rem_payload))
+    to_delete = sorted(candidates - live)
+    if to_delete:
+        conn.execute(
+            f"DELETE FROM pr_cache WHERE branch IN ({','.join('?' for _ in to_delete)})",
+            to_delete,
+        )
+
+
 def delete_worktree_row(path: Path, key: str) -> dict:
     """Delete a worktree row and every dependent record; files/branch/PR stay.
 
@@ -339,7 +386,7 @@ def delete_worktree_row(path: Path, key: str) -> dict:
     init_db(path)
     with connect(path) as conn:
         wrow = conn.execute(
-            "SELECT w.branch, COALESCE(r.path, w.repo_key), w.payload"
+            "SELECT w.branch, w.repo_key, COALESCE(r.path, ''), w.payload"
             " FROM worktrees w LEFT JOIN repos r ON r.key_ref = w.repo_key"
             " WHERE w.ref_key = ?",
             (key,),
@@ -352,12 +399,7 @@ def delete_worktree_row(path: Path, key: str) -> dict:
         if cur.rowcount == 0:
             raise HarnessError(f"no worktree link for {key}", exit_code=2)
         if wrow and wrow[0]:
-            b, repo_p = str(wrow[0]), str(wrow[1] or "")
-            pr_keys = [k for k in dict.fromkeys((f"{repo_p}\x1f{b}" if repo_p else b, b)) if k]
-            conn.execute(
-                f"DELETE FROM pr_cache WHERE branch IN ({','.join('?' for _ in pr_keys)})",
-                pr_keys,
-            )
+            _purge_worktree_pr_cache_conn(conn, wrow[0], wrow[1] or "", wrow[2] or "", wrow[3])
     return {"runs": run_count, **deps}
 
 
@@ -438,6 +480,7 @@ def gc_soft_deleted(path: Path, retention_days: int = SOFT_DELETE_RETENTION_DAYS
             return []
         rows = [dict(r) for r in conn.execute(
             "SELECT w.ref_key, w.path, w.branch, w.payload,"
+            " w.repo_key, COALESCE(r.path, '') AS repo_path,"
             " COALESCE(r.path, w.repo_key) AS repo"
             " FROM worktrees w LEFT JOIN repos r ON r.key_ref = w.repo_key"
             " WHERE w.deleted_at IS NOT NULL AND w.deleted_at != ''"
@@ -461,15 +504,13 @@ def gc_soft_deleted(path: Path, retention_days: int = SOFT_DELETE_RETENTION_DAYS
             conn.execute("DELETE FROM worktrees WHERE ref_key = ?", (key,))
             deps = _purge_dependents_conn(conn, [key])
             if r.get("branch"):
-                b = str(r["branch"])
-                rp = str(r.get("repo") or "")
-                pr_keys = [k for k in dict.fromkeys((f"{rp}\x1f{b}" if rp else b, b)) if k]
-                conn.execute(
-                    f"DELETE FROM pr_cache WHERE branch IN ({','.join('?' for _ in pr_keys)})",
-                    pr_keys,
+                _purge_worktree_pr_cache_conn(
+                    conn, r["branch"], r.get("repo_key") or "", r.get("repo_path") or "", r.get("payload")
                 )
             r["cascaded"] = {"runs": run_count, **deps}
             r.pop("payload", None)
+            r.pop("repo_key", None)
+            r.pop("repo_path", None)
     return rows
 
 

@@ -442,7 +442,10 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
             elif ci_age < _ci_swr():
                 base["ci"] = str(cached_ci_data.get("ci") or cached_ci_data.get("status") or "")
                 base["ci_url"] = str(cached_ci_data.get("ci_url") or "")
-                _swr.serve_stale_or_refresh(cached_ci_data, False, _refresh_ci_bg, f"release-ci:{repo_name}")
+                _swr.serve_stale_or_refresh(
+                    cached_ci_data, False, _refresh_ci_bg, f"release-ci:{repo_name}",
+                    allow_background=background,
+                )
                 ci_served = True
         except Exception:
             ci_served = False
@@ -504,7 +507,8 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
                 except Exception:
                     pass
             _swr.serve_stale_or_refresh(stale=True, is_fresh=False, refresh=_refresh,
-                                        key=f"release:{repo_name}")
+                                        key=f"release:{repo_name}",
+                                        allow_background=background)
             return _finish(cached, True)
     try:
         count = _live()

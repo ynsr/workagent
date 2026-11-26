@@ -7,10 +7,12 @@ import { FixDefaultDialog, ReleaseCard } from "@/components/ReleaseCard"
 import { ConfirmProvider } from "@/lib/confirm"
 import type { ReleaseStatus, RunLine } from "@/lib/api"
 
-const { mutateAsync, mockRun, mockToastSuccess, mockConfig, mockRepos, mockStatuses } = vi.hoisted(() => ({
+const { mutateAsync, mockRun, mockReleaseStatus, mockToastSuccess, mockToastError, mockConfig, mockRepos, mockStatuses } = vi.hoisted(() => ({
   mutateAsync: vi.fn(() => Promise.resolve({ run_id: "run-1" })),
   mockRun: vi.fn(() => Promise.resolve({ state: "succeeded", lines: [] as RunLine[] })),
+  mockReleaseStatus: vi.fn(),
   mockToastSuccess: vi.fn(),
+  mockToastError: vi.fn(),
   mockConfig: {
     default_harness: "agy",
     supported_harnesses: ["agy", "omp"],
@@ -25,11 +27,11 @@ const { mutateAsync, mockRun, mockToastSuccess, mockConfig, mockRepos, mockStatu
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api")
-  return { ...actual, api: { ...actual.api, run: mockRun } }
+  return { ...actual, api: { ...actual.api, run: mockRun, releaseStatus: mockReleaseStatus } }
 })
 
 vi.mock("sonner", () => ({
-  toast: { success: mockToastSuccess, error: vi.fn(), info: vi.fn() },
+  toast: { success: mockToastSuccess, error: mockToastError, info: vi.fn() },
 }))
 
 vi.mock("@/lib/queries", () => ({
@@ -73,6 +75,8 @@ beforeEach(() => {
   localStorage.clear()
   mutateAsync.mockClear()
   mockToastSuccess.mockClear()
+  mockToastError.mockClear()
+  mockReleaseStatus.mockReset()
 })
 
 afterEach(cleanup)
@@ -196,5 +200,31 @@ describe("ReleaseCard manual Refresh", () => {
       </MemoryRouter>,
     )
     expect(screen.getByRole("button", { name: /Refresh/i })).toBeInTheDocument()
+  })
+
+  it("updates fulfilled repos in cache even when another repo refresh fails", async () => {
+    const user = userEvent.setup()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const setSpy = vi.spyOn(qc, "setQueryData")
+    mockRepos.value = [
+      { name: "alpha", path: "/repos/alpha", release_branch: "release" },
+      { name: "beta", path: "/repos/beta", release_branch: "release" },
+    ]
+    const alphaFresh: ReleaseStatus = { ...STATUS, repo: "alpha", diff_count: 7 }
+    mockStatuses.value = {
+      alpha: { ...STATUS, repo: "alpha", diff_count: 1 },
+      beta: { ...STATUS, repo: "beta", diff_count: 1 },
+    }
+    mockReleaseStatus.mockImplementation(async (name: string) => {
+      if (name === "alpha") return alphaFresh
+      throw new Error("beta offline")
+    })
+    renderCard(qc)
+
+    await user.click(screen.getByRole("button", { name: /Refresh/i }))
+
+    expect(setSpy).toHaveBeenCalledWith(["release", "alpha"], alphaFresh)
+    expect(mockToastError).toHaveBeenCalledWith("beta offline")
+    expect(mockToastSuccess).not.toHaveBeenCalled()
   })
 })

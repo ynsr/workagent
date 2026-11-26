@@ -129,8 +129,7 @@ def _ci_freshness(
     """Tri-state freshness for cached CI status."""
     if not cached:
         return "expired"
-    sha = branch_tip or ""
-    if (cached.get("ci_sha") or "") != sha:
+    if branch_tip is not None and (cached.get("ci_sha") or "") != branch_tip:
         return "expired"
     return _age_freshness(str(cached.get("ci_checked_at", "") or ""), _ci_ttl(), _ci_swr())
 
@@ -294,7 +293,7 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
                                       ahead=(ab or {}).get("ahead", 0))
             cells["_tip"], cells["_tool"] = branch_tip, used if pr else None
             cells.update(commits=_fmt_counts(ab), ab=ab)
-        elif not query_failed and (pr is not None or used is not None):
+        elif not query_failed and (pr is not None or used is not None) and (not no_cli_fallback or needs_base_heal):
             store.cache_pr_status(branch, pr, tool=used if pr else None, repo=repo,
                                   base_branch=db)
             cells["_tool"] = used if pr else None
@@ -462,8 +461,7 @@ def _reviews_freshness(
     """Tri-state freshness for cached review-comment stats."""
     if not cached or not all(k in cached for k in ("reviews", "unresolved", "resolved")):
         return "expired"
-    sha = branch_tip or ""
-    if (cached.get("reviews_sha") or "") != sha:
+    if branch_tip is not None and (cached.get("reviews_sha") or "") != branch_tip:
         return "expired"
     return _age_freshness(str(cached.get("reviews_checked_at", "") or ""), _ci_ttl(), _ci_swr())
 

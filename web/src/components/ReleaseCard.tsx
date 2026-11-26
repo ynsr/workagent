@@ -62,18 +62,25 @@ export function ReleaseCard() {
     if (!branchedNames.length) return
     setRefreshing(true)
     try {
-      const results = await Promise.all(
+      const settled = await Promise.allSettled(
         branchedNames.map(async (name) => ({
           name,
           fresh: await api.releaseStatus(name, { force: true }),
         })),
       )
-      for (const { name, fresh } of results) {
-        qc.setQueryData(queryKeys.release(name), fresh)
+      const errors: string[] = []
+      for (const r of settled) {
+        if (r.status === "fulfilled") {
+          qc.setQueryData(queryKeys.release(r.value.name), r.value.fresh)
+        } else {
+          errors.push(errorText(r.reason))
+        }
       }
-      toast.success("Release status refreshed")
-    } catch (err) {
-      toast.error(errorText(err))
+      if (errors.length === 0) {
+        toast.success("Release status refreshed")
+      } else {
+        toast.error(errors[0])
+      }
     } finally {
       setRefreshing(false)
     }

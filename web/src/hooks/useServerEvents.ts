@@ -81,8 +81,6 @@ export function useServerEvents(): void {
       if (hadError) {
         hadError = false
         void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
-        void qc.invalidateQueries({ queryKey: queryKeys.statusInactive })
-        void qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
         void qc.invalidateQueries({ queryKey: queryKeys.links })
         void qc.invalidateQueries({ queryKey: queryKeys.runs })
         void qc.invalidateQueries({ queryKey: ["flows"] })
@@ -113,16 +111,12 @@ export function useServerEvents(): void {
       switch (payload.table) {
         case "worktrees":
           scheduleInvalidate(queryKeys.statusAll)
-          scheduleInvalidate(queryKeys.statusInactive)
-          scheduleInvalidate(queryKeys.statusDeleted)
           scheduleInvalidate(queryKeys.links)
           scheduleInvalidate(queryKeys.candidatesPrs)
           scheduleInvalidate(queryKeys.candidatesWorktrees)
           break
         case "pr_cache":
           scheduleInvalidate(queryKeys.statusAll)
-          scheduleInvalidate(queryKeys.statusInactive)
-          scheduleInvalidate(queryKeys.statusDeleted)
           break
         case "pr_candidates_cache":
           scheduleInvalidate(queryKeys.candidatesPrs)

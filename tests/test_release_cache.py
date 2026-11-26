@@ -119,3 +119,42 @@ def test_release_branch_change_clears_stale_ci_json(isolated_config):
     assert entry["release_branch"] == "release-v2"
     assert entry["ci_json"] == ""
     assert entry["ci_fetched_at"] == ""
+
+
+def test_release_status_background_false_disables_swr_threads_even_in_serve(isolated_config, monkeypatch, tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    db = sq.db_path()
+    sq.init_db(db)
+    stale_ts = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    sq.set_release_diff_cache(
+        db,
+        "demo",
+        5,
+        default_branch="main",
+        release_branch="release",
+        ci_json='{"ci":"success","ci_url":"https://ci/5"}',
+        ci_fetched_at=stale_ts,
+    )
+    with sq.connect(db) as conn:
+        conn.execute("UPDATE release_diff_cache SET fetched_at = ? WHERE repo_key = ?", (stale_ts, "demo"))
+    bg_calls: list[str] = []
+    monkeypatch.setattr(swr, "_background", lambda key, refresh: bg_calls.append(key))
+    monkeypatch.setattr(
+        store,
+        "load_repos",
+        lambda: {"demo": {"path": str(tmp_path), "default_branch": "main", "release_branch": "release"}},
+    )
+    monkeypatch.setattr(repos_release, "_behind_count", lambda *a, **kw: 0)
+    swr.set_background_enabled(True)
+    try:
+        res = repos_release.release_status("demo", background=False)
+        assert res["diff_count"] == 5
+        assert res["ci"] == "success"
+        assert bg_calls == []
+
+        res_bg = repos_release.release_status("demo", background=True)
+        assert res_bg["diff_count"] == 5
+        assert set(bg_calls) == {"release-ci:demo", "release:demo"}
+    finally:
+        swr.set_background_enabled(False)
