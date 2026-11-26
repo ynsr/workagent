@@ -763,6 +763,11 @@ def test_skip_bar_for_review_and_clean_sync():
                               "review") is False
     assert cv._judge_may_skip("JOB_DONE", "exact", delivered, True,
                               "start") is False
+    delivered_origin = {"passed": True, "checks": {
+        "pushed": {"detail": "in sync with origin/feat/x"},
+        "diff": {"detail": "pushed and clean; work delivered"}}}
+    assert cv._judge_may_skip("JOB_DONE", "exact", delivered_origin, True,
+                              "fix_comments") is False
 
 
 def test_max_retries_defaults_and_precedence(monkeypatch, isolated_config):
@@ -911,9 +916,6 @@ def test_diff_gate_passes_when_pushed_to_origin_without_upstream(tmp_path, monke
         ("rev-parse", "@{u}"): (128, "fatal: no upstream"),
         ("ls-remote", "origin", "refs/heads/feat/IPG-1083"): (
             0, "9eed84d\trefs/heads/feat/IPG-1083"),
-        ("rev-list", "--count", "@{u}..HEAD"): (128, "fatal: no upstream"),
-        ("rev-list", "--count", "origin/feat/IPG-1083..HEAD"): (
-            128, "fatal: unknown revision"),
         ("diff", "--stat", "HEAD"): (0, ""),
     })
     res = cv.run_deterministic_gates(
@@ -978,9 +980,6 @@ def test_fix_comments_pushed_without_upstream_does_not_retry(tmp_path, monkeypat
         ("rev-parse", "@{u}"): (128, "fatal: no upstream"),
         ("ls-remote", "origin", "refs/heads/feat/IPG-1083"): (
             0, "9eed84d\trefs/heads/feat/IPG-1083"),
-        ("rev-list", "--count", "@{u}..HEAD"): (128, "fatal: no upstream"),
-        ("rev-list", "--count", "origin/feat/IPG-1083..HEAD"): (
-            128, "fatal: unknown revision"),
         ("diff", "--stat", "HEAD"): (0, ""),
     })
     run_calls = []

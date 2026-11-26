@@ -252,30 +252,31 @@ def run_deterministic_gates(worktree: str, exit_code: int,
         # there is no sign of work at all (behind/diverged, or clean with
         # nothing delivered).
         try:
-            ahead = _unpushed_count(worktree)
-            if ahead is None and branch:
-                ahead = _unpushed_count(worktree, f"origin/{branch}")
             stat = _git_diff_stat(worktree)
+            dirty = bool(stat.strip())
+            # _branch_pushed verifies HEAD == origin/<branch> even when local @{u}
+            # is unset (e.g. `git push origin <branch>` without `-u`, or a stale
+            # local remote-tracking ref). Only an unverified "no upstream" state
+            # means nothing was pushed.
+            verified_push = pushed and not pdetail.startswith("no upstream")
+            if verified_push and not dirty:
+                ok = True
+                detail = "pushed and clean; work delivered"
+            else:
+                ahead = _unpushed_count(worktree)
+                if ahead is None and branch:
+                    ahead = _unpushed_count(worktree, f"origin/{branch}")
+                if ahead is None:
+                    # No upstream: clean tree means nothing verifiable was delivered.
+                    ok = dirty
+                    detail = stat[:500] if dirty else "no upstream; no uncommitted changes"
+                else:
+                    ok = ahead > 0 or dirty
+                    detail = stat[:500] if ok else "behind/diverged; no unpushed or uncommitted changes"
         except RuntimeError as e:
             checks["diff"] = {"ok": False, "detail": f"git error: {e}"}
             reasons.append(f"git error during diff check: {e}")
             return {"passed": False, "checks": checks, "reasons": reasons}
-        dirty = bool(stat.strip())
-        # _branch_pushed verifies HEAD == origin/<branch> even when local @{u}
-        # is unset (e.g. `git push origin <branch>` without `-u`, or a stale
-        # local remote-tracking ref). Only an unverified "no upstream" state
-        # means nothing was pushed.
-        verified_push = pushed and not pdetail.startswith("no upstream")
-        if verified_push and not dirty:
-            ok = True
-            detail = "pushed and clean; work delivered"
-        elif ahead is None:
-            # No upstream: clean tree means nothing verifiable was delivered.
-            ok = dirty
-            detail = stat[:500] if dirty else "no upstream; no uncommitted changes"
-        else:
-            ok = ahead > 0 or dirty
-            detail = stat[:500] if ok else "behind/diverged; no unpushed or uncommitted changes"
         checks["diff"] = {"ok": ok, "detail": detail}
         if not ok:
             reasons.append("expected code changes but none found (no unpushed commits, no uncommitted changes)")
