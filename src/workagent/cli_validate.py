@@ -253,19 +253,26 @@ def run_deterministic_gates(worktree: str, exit_code: int,
         # nothing delivered).
         try:
             ahead = _unpushed_count(worktree)
+            if ahead is None and branch:
+                ahead = _unpushed_count(worktree, f"origin/{branch}")
             stat = _git_diff_stat(worktree)
         except RuntimeError as e:
             checks["diff"] = {"ok": False, "detail": f"git error: {e}"}
             reasons.append(f"git error during diff check: {e}")
             return {"passed": False, "checks": checks, "reasons": reasons}
         dirty = bool(stat.strip())
-        if ahead is None:
+        # _branch_pushed verifies HEAD == origin/<branch> even when local @{u}
+        # is unset (e.g. `git push origin <branch>` without `-u`, or a stale
+        # local remote-tracking ref). Only an unverified "no upstream" state
+        # means nothing was pushed.
+        verified_push = pushed and not pdetail.startswith("no upstream")
+        if verified_push and not dirty:
+            ok = True
+            detail = "pushed and clean; work delivered"
+        elif ahead is None:
             # No upstream: clean tree means nothing verifiable was delivered.
             ok = dirty
             detail = stat[:500] if dirty else "no upstream; no uncommitted changes"
-        elif pushed and not dirty:
-            ok = True
-            detail = "pushed and clean; work delivered"
         else:
             ok = ahead > 0 or dirty
             detail = stat[:500] if ok else "behind/diverged; no unpushed or uncommitted changes"
@@ -354,9 +361,10 @@ def _judge_may_skip(token: str | None, mode: str, gates: dict,
         if "no upstream" in str(diff_detail):
             return False
         # Clean-at-upstream with no diff signal is a do-nothing run: the
-        # pushed gate passes ("in sync") and the diff gate passes on the
-        # verified push — but nothing proves the task did anything.
-        if str(pushed_detail) == "in sync" and "work delivered" in str(diff_detail):
+        # pushed gate passes ("in sync" / "in sync with origin/<branch>") and
+        # the diff gate passes on the verified push — but nothing proves the
+        # task did anything.
+        if str(pushed_detail).startswith("in sync") and "work delivered" in str(diff_detail):
             return False
     return True
 

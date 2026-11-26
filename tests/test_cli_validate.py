@@ -898,3 +898,130 @@ def test_intentional_skips_judge_when_gates_pass(monkeypatch):
                               gates, False) is True
     assert cv._judge_may_skip("INTENTIONALLY_UNCOMMITTED_CHANGES", "tolerant",
                               gates, False) is False
+
+
+def test_diff_gate_passes_when_pushed_to_origin_without_upstream(tmp_path, monkeypatch):
+    """Issue #217: when @{u} is unset but _branch_pushed verifies HEAD matches
+    origin/<branch> (e.g. via ls-remote after git push origin <branch>), the
+    diff gate must treat the clean tree as delivered work instead of failing
+    with 'expected code changes but none found'."""
+    from workagent import cli_validate as cv
+    _git_seq(monkeypatch, {
+        ("rev-parse", "HEAD"): (0, "9eed84d"),
+        ("rev-parse", "@{u}"): (128, "fatal: no upstream"),
+        ("ls-remote", "origin", "refs/heads/feat/IPG-1083"): (
+            0, "9eed84d\trefs/heads/feat/IPG-1083"),
+        ("rev-list", "--count", "@{u}..HEAD"): (128, "fatal: no upstream"),
+        ("rev-list", "--count", "origin/feat/IPG-1083..HEAD"): (
+            128, "fatal: unknown revision"),
+        ("diff", "--stat", "HEAD"): (0, ""),
+    })
+    res = cv.run_deterministic_gates(
+        str(tmp_path), 0, "fixed comments\nJOB_DONE", True,
+        branch="feat/IPG-1083")
+    assert res["passed"] is True, res["reasons"]
+    assert res["checks"]["pushed"] == {
+        "ok": True, "detail": "in sync with origin/feat/IPG-1083"}
+    assert res["checks"]["diff"] == {
+        "ok": True, "detail": "pushed and clean; work delivered"}
+
+
+def test_diff_gate_passes_on_unpushed_commits_without_upstream(tmp_path, monkeypatch):
+    """Issue #217: when @{u} is unset and HEAD is ahead of origin/<branch>,
+    the diff gate must recognise the unpushed commits so only the pushed gate
+    blocks."""
+    from workagent import cli_validate as cv
+    _git_seq(monkeypatch, {
+        ("rev-parse", "HEAD"): (0, "9eed84d"),
+        ("rev-parse", "@{u}"): (128, "fatal: no upstream"),
+        ("ls-remote", "origin", "refs/heads/feat/x"): (0, "1111111\trefs/heads/feat/x"),
+        ("rev-list", "--count", "@{u}..HEAD"): (128, "fatal: no upstream"),
+        ("rev-list", "--count", "origin/feat/x..HEAD"): (0, "2"),
+        ("diff", "--stat", "HEAD"): (0, ""),
+    })
+    res = cv.run_deterministic_gates(
+        str(tmp_path), 0, "committed locally\nJOB_DONE", True,
+        branch="feat/x")
+    assert res["checks"]["diff"]["ok"] is True
+    assert res["reasons"] == ["not pushed: ahead of origin/feat/x by 2 (unpushed)"]
+
+
+def test_diff_gate_still_fails_when_never_pushed_and_clean(tmp_path, monkeypatch):
+    """Issue #217: a clean branch with neither @{u} nor origin/<branch> still
+    fails the diff gate because nothing verifiable was delivered."""
+    from workagent import cli_validate as cv
+    _git_seq(monkeypatch, {
+        ("rev-parse", "HEAD"): (0, "9eed84d"),
+        ("rev-parse", "@{u}"): (128, "fatal: no upstream"),
+        ("ls-remote", "origin", "refs/heads/feat/new"): (0, ""),
+        ("rev-parse", "--verify", "refs/remotes/origin/feat/new"): (128, "fatal"),
+        ("status", "--porcelain"): (0, ""),
+        ("rev-list", "--count", "@{u}..HEAD"): (128, "fatal: no upstream"),
+        ("rev-list", "--count", "origin/feat/new..HEAD"): (128, "fatal"),
+        ("diff", "--stat", "HEAD"): (0, ""),
+    })
+    res = cv.run_deterministic_gates(
+        str(tmp_path), 0, "done\nJOB_DONE", True, branch="feat/new")
+    assert res["passed"] is False
+    assert res["checks"]["diff"]["ok"] is False
+    assert "no upstream" in res["checks"]["diff"]["detail"]
+
+
+def test_fix_comments_pushed_without_upstream_does_not_retry(tmp_path, monkeypatch):
+    """Issue #217 end-to-end: validate_headless on fix_comments finishes in 1
+    attempt (no 4x MAX_RETRIES_EXCEEDED loop) when pushed to origin/<branch>
+    without @{u} configured."""
+    from workagent import cli_validate as cv
+    _git_seq(monkeypatch, {
+        ("status", "--porcelain"): (0, ""),
+        ("rev-parse", "HEAD"): (0, "9eed84d"),
+        ("rev-parse", "@{u}"): (128, "fatal: no upstream"),
+        ("ls-remote", "origin", "refs/heads/feat/IPG-1083"): (
+            0, "9eed84d\trefs/heads/feat/IPG-1083"),
+        ("rev-list", "--count", "@{u}..HEAD"): (128, "fatal: no upstream"),
+        ("rev-list", "--count", "origin/feat/IPG-1083..HEAD"): (
+            128, "fatal: unknown revision"),
+        ("diff", "--stat", "HEAD"): (0, ""),
+    })
+    run_calls = []
+    judge_calls = []
+    res = cv.validate_headless(
+        worktree=str(tmp_path), branch="feat/IPG-1083",
+        prompt="Fix all open review comments",
+        session_type="fix_comments",
+        run_once=lambda p: (run_calls.append(p) or {
+            "exit_code": 0, "transcript": "Committed and pushed 9eed84d\nJOB_DONE"}),
+        run_judge=lambda p: (judge_calls.append(p) or "Verified\nJOB_DONE"))
+    assert res["verdict"] == "JOB_DONE"
+    assert res["attempts"] == 1
+    assert len(run_calls) == 1
+    assert len(judge_calls) == 1
+
+
+def test_real_git_push_without_upstream_passes_gates(tmp_path):
+    """Issue #217 integration: real git repo + bare origin where a feature
+    branch is pushed via `git push origin <branch>` (no `-u` / no `@{u}`)."""
+    import subprocess
+    from workagent import cli_validate as cv
+
+    origin = tmp_path / "origin.git"
+    wt = tmp_path / "wt"
+    subprocess.run(["git", "init", "--bare", str(origin)], check=True, capture_output=True)
+    subprocess.run(["git", "clone", str(origin), str(wt)], check=True, capture_output=True)
+    for cfg in (["user.email", "t@example.com"], ["user.name", "Test"]):
+        subprocess.run(["git", "-C", str(wt), "config", *cfg], check=True, capture_output=True)
+    (wt / "a.txt").write_text("base\n")
+    subprocess.run(["git", "-C", str(wt), "add", "a.txt"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(wt), "commit", "-m", "init"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(wt), "checkout", "-b", "feat/no-u"], check=True, capture_output=True)
+    (wt / "a.txt").write_text("fixed\n")
+    subprocess.run(["git", "-C", str(wt), "commit", "-am", "fix"], check=True, capture_output=True)
+    # Push WITHOUT -u so @{u} is unset while origin/feat/no-u matches HEAD.
+    subprocess.run(["git", "-C", str(wt), "push", "origin", "feat/no-u"], check=True, capture_output=True)
+
+    res = cv.run_deterministic_gates(
+        str(wt), 0, "Committed and pushed\nJOB_DONE", True, branch="feat/no-u")
+    assert res["passed"] is True, res["reasons"]
+    assert res["checks"]["pushed"]["ok"] is True
+    assert res["checks"]["diff"] == {
+        "ok": True, "detail": "pushed and clean; work delivered"}
