@@ -1,6 +1,6 @@
 # Workagent Cache Architecture & Audit
 
-> Last audited: 2026-11-23 (issue [#171](https://github.com/ynsr/workagent/issues/171))
+> Last audited: 2026-11-23 (issue [#171](https://github.com/ynsr/workagent/issues/171)); revalidated against `main` @ `7a0220a` on 2026-11-26 (see [§6 Post-audit changes](#6-post-audit-changes-2026-11-232026-11-26)). Line numbers in §3 are from the original audit and have drifted.
 
 This document catalogs every cache and caching coordinator across Workagent's backend (`src/workagent/`) and web frontend (`web/src/`): why each exists, how it works, how it affects user experience, its corner cases and known unknowns, and the prioritized bugs and improvements identified during the audit.
 
@@ -51,7 +51,7 @@ All TTL/SWR overrides are parsed by `swr.cache_ttl` / `swr.cache_swr` (`src/work
 
 ---
 
-## 3. Backend Caches (14 Mechanisms)
+## 3. Backend Caches (15 Mechanisms)
 
 ### 3.1 `pr_cache` (Persistent SQLite / Legacy JSON)
 - **Locations:** `store_sqlite.py:49-50, 401`, `store.py:395-637`, `cli_repo_util.py:20-58`, `cli_status.py:58-481`, `watcher.py:42-92, 263, 300-313`, `cli_review.py:91-102`, `cli_sync.py:233-235`.
@@ -62,6 +62,7 @@ All TTL/SWR overrides are parsed by `swr.cache_ttl` / `swr.cache_swr` (`src/work
   - `payload` JSON stores PR metadata (`pr`, `tool`, `base_branch`, `branch_tip`, `base_tip`, `behind`, `ahead`), CI (`ci`, `ci_checked_at`, `ci_sha`, `ci_url`), review stats (`reviews`, `unresolved`, `resolved`, `reviews_checked_at`, `reviews_sha`), and linked issue status (`issue_status`, `issue_status_checked_at`).
   - Bypassed via `--refresh-pr` (CLI) or `?refresh=true` (Web `/api/status`).
 - **Frontend UX impact:** Drives the main Dashboard `StatusTable` (PR state, CI badge, review count, Jira status) and `WorktreeDetail`/`WorktreeWorkspace` headers. Because SWR is unimplemented, remote merges, CI transitions (`running` → `failure`), new review comments, and Jira moves can stay stale for **1–30 days** unless the user manually clicks "Refresh PRs". Conversely, clicking "Refresh PRs" causes a full-table wipe/rewrite that emits `2N` CDC events and triggers redundant Dashboard refetches.
+- **Post-audit (`702c7a2`, partial fix of Critical #1):** `store._write_pr_cache` now uses `sq.connect` (busy_timeout), skips unchanged rows (`ON CONFLICT … WHERE payload/checked_at differ`) and deletes only stale keys; `cache_pr_status`/`cache_ci_status`/`cache_review_stats`/`cache_issue_status` go through `_update_pr_cache_entry_sqlite` (single-row `BEGIN IMMEDIATE` read-modify-write). Remaining: `load_pr_cache()` still deserializes the whole table; `lookup_pr_cache` is still O(N); CI-only writes still stamp `checked_at = now` for new rows; no pruning. `cli_status` now serves cached PR/CI/reviews/issue status for gone/soft-deleted worktrees (`deleted_at`) regardless of TTL, without live queries, and persists a PR-lookup result when tips are unavailable.
 - **Corner cases:**
   - Gone worktrees (`branch_tip is None`) store `ci_sha=""` / `reviews_sha=""`, which never equals `None`, causing a cache miss on every status call.
   - `refresh_pr=True` with unchanged git tips does not update `base_branch` or ahead/behind counts if the PR's target branch changed remotely.
@@ -70,7 +71,7 @@ All TTL/SWR overrides are parsed by `swr.cache_ttl` / `swr.cache_swr` (`src/work
   - Entries are never pruned when worktrees are cleaned up, hard-deleted, or garbage-collected.
 - **Known unknowns:**
   - Actual `pr_cache` table size on long-lived installations (unbounded growth across deleted branches).
-  - Frequency of `sqlite3.OperationalError: database is locked` during concurrent `watcher` + `serve` + CLI writes (raw `sqlite3.connect` without `busy_timeout`).
+  - Frequency of `sqlite3.OperationalError: database is locked` during concurrent `watcher` + `serve` + CLI writes (write path now uses `sq.connect`; `load_pr_cache` read path should be re-checked).
 
 ### 3.2 `issue_cache` (Persistent SQLite)
 - **Locations:** `store_sqlite.py:77-79, 2297-2330`, `trackers.py:677-749`, `cli_candidates.py:183-208, 342-345`, `webapp.py:860-896`.
@@ -116,7 +117,7 @@ All TTL/SWR overrides are parsed by `swr.cache_ttl` / `swr.cache_swr` (`src/work
   - Keyed only by `repo_key`, not `(repo_key, default_branch, release_branch)` — `repo update` changing branches serves stale counts.
   - Not deleted on `repo remove`.
   - When `force=True`, `cached` is not loaded, losing offline stale fallback; offline fallback also leaves `fetched_at` as `None`.
-  - `_behind_count` runs local `git rev-list` on every call (not cached alongside `count`).
+  - `_behind_count` runs local `git rev-list` on every call (not cached alongside `count`); since `[178]` `_has_remote_diff` (2–3 local `git` calls) also runs uncached on every call, twice on the non-force path.
 - **Known unknowns:**
   - How much GitHub/GitLab API quota is consumed by uncached `fetch_branch_ci` running every 30s per repo while the Dashboard is open.
 
@@ -170,6 +171,7 @@ All TTL/SWR overrides are parsed by `swr.cache_ttl` / `swr.cache_swr` (`src/work
 - **Locations:** `web_runs_routes.py:450-489, 948`.
 - **Why it exists:** Probing ACP harness models/efforts spawns a subprocess (`omp`/`agy`); caching avoids repeated probes when opening Launch / Worktree composer.
 - **How it works:** Keyed by `harness_name`, hardcoded 600s TTL (not env-overridable), bypassed with `?refresh=1`. Errors are not cached.
+- **Post-audit (`b13b314`):** body now carries `model_efforts` per model; it is also persisted to the new file cache `harness_options_cache.json` (§3.15) for CLI pre-flight. The two caches have different TTLs (600s memory vs 3600s file) and are written independently.
 - **Corner cases:** No lock or single-flight (concurrent cold opens spawn parallel ACP subprocesses); shallow `dict(hit[1])` shares nested lists; `now` captured before probe latency; expired probe failure does not fall back to last-known options.
 
 ### 3.12 `env._SOURCED_CACHE` (In-Memory Dict)
@@ -188,6 +190,13 @@ All TTL/SWR overrides are parsed by `swr.cache_ttl` / `swr.cache_swr` (`src/work
   - Lock-retry exhaustion (`line 2064-2071`) forgets `last = e` and executes `raise None` (`TypeError`).
   - Backfill flags are global instead of per-DB-path and unlocked.
 
+### 3.15 `harness_options_cache.json` (Persistent JSON file, added `b13b314`)
+- **Locations:** `store.py` (`save_harness_options_cache`, `load_harness_options_cache`, `cached_model_efforts`, `HARNESS_OPTIONS_CACHE_TTL_S = 3600`), `backend.py`, `acp_harness.py`, `cli_harness.py`.
+- **Why it exists:** Let the CLI pre-flight check whether a model supports `--effort` without spawning an ACP probe; the web `HarnessPicker` uses the same data via `/api/.../options`.
+- **How it works:** `{harness: {updated_at, model_efforts}}` in `<config>/harness_options_cache.json`, written under a file lock + atomic replace; reads honor `max_age_s` (default 1h). `[]` = known unsupported, `None` = unknown.
+- **Corner cases:** TTL is hardcoded (not env-overridable, unlike the planned `WORKAGENT_OPTIONS_TTL_SECONDS`); all write errors are swallowed; single file, never pruned; not covered by the test isolation note unless `WORKAGENT_CONFIG_DIR` is used (it is, via `config_dir()`).
+- **Known unknowns:** Behavior when the file is corrupt (read falls back to `None`).
+
 ### 3.14 `backend.HARNESSES` & `web_runs.Registry` (In-Memory Singletons/Buffers)
 - **`backend.HARNESSES`** (`backend.py:128-158`): Lazy singleton registry for `omp`/`agy`. Bounded, benign unlocked init.
 - **`web_runs.Registry`** (`web_runs.py`): Lock-protected in-memory run state & log buffer (`MAX_RUNS = 100`, `MAX_LINES = 10_000`). Bounded and thread-safe; included for completeness.
@@ -203,15 +212,16 @@ All TTL/SWR overrides are parsed by `swr.cache_ttl` / `swr.cache_swr` (`src/work
   - **24 hours:** `flows` (poll 15s / 60s), `candidatesPrs`, `candidatesIssues`, `candidatesWorktrees`, `issues`, `candidates`.
   - **1 hour:** `releaseStatus` / `releaseStatuses` (fixed 30s poll, ignores SSE).
   - **10 min:** `harnessOptions`.
-  - **5s–60s:** `runs` (poll 10s / 60s), `worktreeTimeline` (fixed 15s poll), `info`, `config`, `path`, `repos`, `trackers`, `links`, `prodtests`, `messages`, `worktreeDiff`, `schedules`, etc.
+  - **5s–60s:** `runs` (poll 10s / 60s), `worktreeTimeline` (fixed 15s poll), `info`, `config`, `path`, `repos`, `trackers`, `links`, `prodtests`, `messages`, `schedules`, etc.
 - **UX issues:**
   - `refetchOnWindowFocus: true` is **dead** on 30d/24h/1h queries (TanStack Query v5 only refetches *stale* queries on focus unless `"always"`).
   - `Dashboard.tsx:191-193` mounts `useStatusAll()`, `useStatusInactive()`, and `useStatusDeleted()` simultaneously, firing **3 concurrent `/api/status` calls** even though `include_inactive=true&include_deleted=true` is a superset of the other two.
 
 ### 4.2 Global CDC SSE (`web/src/hooks/useServerEvents.ts`) & Per-Run SSE (`useRunEvents.ts`)
+- **Post-audit (`702c7a2`):** `pr_cache` events are now coalesced by a 500ms trailing-edge timer (`schedulePrCacheInvalidate`) before invalidating `statusAll`/`statusInactive`/`statusDeleted`; server-side `CdcHub` only polls while it has subscribers (wake event on subscribe). Other tables are still invalidated immediately.
 - Subscribes to `GET /api/events` for `CDC_TABLES` (`worktrees`, `runs`, `flows`, `messages`, `pr_cache`, `prodtest_items`, `schedules`).
 - **UX issues:**
-  - No debouncing/coalescing: a bulk `pr_cache` update fires N events and triggers repeated refetches right after `handleRefreshPr` lands.
+  - Debouncing exists only for `pr_cache` (500ms); `worktrees`, `runs`, `flows`, etc. are not coalesced, and the 3 status queries are still invalidated separately.
   - Missing CDC coverage for `pr_candidates_cache`, `issue_cache`, `release_diff_cache`, `repos`, `trackers`, `pr_checks`, `pr_review_threads` → background SWR updates and CLI mutations never push to UI.
   - `WorktreeWorkspace.tsx:90` calls `useRunEvents` without syncing terminal state to `useRun` cache.
 
@@ -225,7 +235,7 @@ All TTL/SWR overrides are parsed by `swr.cache_ttl` / `swr.cache_swr` (`src/work
 ## 5. Prioritized Bug & Improvement Catalog
 
 ### Critical (6)
-1. **`pr_cache` wipe-and-rewrite + lost-update race + CDC storm + missing `busy_timeout`** (`store.py:420-437`) → Replace with atomic per-row `INSERT ... ON CONFLICT DO UPDATE` via `sq.connect(db)` + single-row `lookup_pr_cache`.
+1. **`pr_cache` wipe-and-rewrite + lost-update race + CDC storm + missing `busy_timeout`** (`store.py:420-437`) — **PARTIALLY FIXED in `702c7a2`** (busy_timeout, no full wipe, per-row merges, unchanged rows skipped; O(N) reads remain) → Replace with atomic per-row `INSERT ... ON CONFLICT DO UPDATE` via `sq.connect(db)` + single-row `lookup_pr_cache`.
 2. **`pr_cache` SWR unimplemented (1–30d hard TTLs)** (`cli_status.py:58-431`) → Enforce fresh TTLs (10m open PR / 30d merged-closed / 30m negative / 10m CI-reviews-issue), serve stale + background refresh in `serve`, safe non-spawning stale read in CLI.
 3. **`watcher.py` wrong `pr_cache` key & JSON path** (`watcher.py:64-65, 300-313`) → Use `store.lookup_pr_cache(branch, repo)` and read `cached["pr"]["url"]`.
 4. **`CandidatesCard` passes `needsBroad` as `force=true`** (`CandidatesCard.tsx:76-93`) → Pass `force=false` so prefetch and backend 1h cache actually work.
@@ -238,7 +248,7 @@ All TTL/SWR overrides are parsed by `swr.cache_ttl` / `swr.cache_swr` (`src/work
 9. **`pr_candidates_cache` ignores SWR, leaks newly-linked PRs, bypassed by CLI/`/api/candidates`** (`cli_candidates.py:122-181, 224`) → Enforce `_prs_cache_swr()`, filter `_linked_sets()` on read, share cache with `/api/candidates`, clear on `--reset-cache`.
 10. **`release_status` blocks on uncached CI fetch + triggers `git fetch` when fresh + incomplete key** (`repos_release.py:266-312`) → Cache branch CI in `release_diff_cache` (10m TTL + SWR), only kick background refresh when stale, key by `(repo_key, default_branch, release_branch)`, add `?force=true`, preserve `fetched_at` on offline fallback.
 11. **`swr.py` footguns** (`swr.py:93-128`, `trackers.py:746`) → Fix `is_fresh=True` to return `(stale, False)` without calling `refresh()`, log background exceptions, add `allow_background: bool` (False in CLI, True in `serve`), isolate background `warn` list in `trackers.py`, propagate `stale` flag.
-12. **Dashboard triple `/api/status` fetch + dead `refetchOnWindowFocus` + CDC storm** (`Dashboard.tsx:191-193, 269-284`, `queries.ts:53-96`) → Single `/api/status?include_inactive=true&include_deleted=true` query with `select` projections + debounced CDC invalidations.
+12. **Dashboard triple `/api/status` fetch + dead `refetchOnWindowFocus` + CDC storm** (`Dashboard.tsx:191-193, 269-284`, `queries.ts:53-96`) → Single `/api/status?include_inactive=true&include_deleted=true` query with `select` projections + debounced CDC invalidations (`pr_cache` 500ms debounce already landed in `702c7a2`; extend it to other tables).
 13. **Systematic missing invalidations & CDC gaps** (`store_sqlite.py:396-404`, `useServerEvents.ts`, `queries.ts:390-402`, `Trackers.tsx`, `Launch.tsx`, `WorktreeDetail.tsx`, `RunDetail.tsx`, `Settings.tsx`) → Expand `CDC_TABLES` + complete `invalidateAfterRun` & mutation handlers.
 
 ### Medium (7)
@@ -249,3 +259,27 @@ All TTL/SWR overrides are parsed by `swr.cache_ttl` / `swr.cache_swr` (`src/work
 18. **`release_caps._CACHE` & `web_runs_routes._OPTIONS_CACHE` concurrency & leakage** → Add locks, single-flight, `copy.deepcopy`, post-probe timestamp, stale fallback on probe error, stop caching non-auth GH error as `pr_required: False`.
 19. **`useRun("")` bogus request + `WorktreeWorkspace` SSE state lag** (`queries.ts:301-303`, `WorktreeWorkspace.tsx:90`) → Add `enabled: Boolean(id)` and sync terminal SSE state in `WorktreeWorkspace`.
 20. **`ReleaseCard` UX & ad-hoc fetches** (`ReleaseCard.tsx`, `SearchableSelect.tsx`, `WorktreeWatcherOverrides.tsx`, `RunWatcher.tsx`, `Dashboard.tsx:779`, `CandidatesCard.tsx:180`) → Add manual Refresh button + accurate overlay on `ReleaseCard`, back `SearchableSelect` & `WorktreeWatcherOverrides` with TanStack Query, fix `RunWatcher` multi-completion toast, align stale UI copy.
+
+---
+
+## 6. Post-Audit Changes (2026-11-23 → 2026-11-26)
+
+Commits on `main` after the audit that touch caching; each was checked against the findings above.
+
+| Commit | Change | Effect on audit |
+|---|---|---|
+| `702c7a2` | `pr_cache` per-row merge + unchanged-row skip + `sq.connect`; CDC hub idle-polling; 500ms `pr_cache` SSE debounce; gone/deleted worktrees served from cache | Critical #1 partially fixed, #12/#13 partially mitigated; #2 (SWR), #3 (watcher key), #17 (pruning) unchanged |
+| `b13b314` | New `harness_options_cache.json` (§3.15); `model_efforts` in `_OPTIONS_CACHE` body | New cache, new item #21 below |
+| `983896a` | `ReleaseCard` invalidates `release(repo)` + `repos` after Pull | Partial item #13 (one mutation covered) |
+| `be4bbf7` / `repos_release.py` | `has_remote_diff` computed uncached per `release_status` call | Adds to #10 |
+| `88b7b76`, `108447b`, `82c15af` | Side-CI filtering, `repos.ci_ignore`, `populate_failing_check_logs` in watcher | Cache semantics unchanged; CI payload/`pr_checks` may now carry `log_tail`; `ci_ignore` edits do not invalidate `pr_cache.ci` (new item #22) |
+| `6a35967` | Diff viewer removed (`worktreeFiles`/`worktreeDiff` queries and endpoints) | Drop `["worktree-files"]`/`["worktree-diff"]` from planned invalidations |
+| `206855e` | `/api/status` run enrichment reads persisted runs (`list_runs(include_output=False)`) | No new cache; extra DB read per status call |
+| `487e155` | Live PR lookup retries on transient EOF | Reduces trigger for the "stale fallback bumps `checked_at`" corner case, does not fix it |
+
+### New items
+21. **Two uncoordinated harness-options caches** (memory 600s, file 3600s) → derive both from one source with one TTL (`WORKAGENT_OPTIONS_TTL_SECONDS`).
+22. **`ci_ignore` change does not invalidate cached CI** (`repo update --ci-ignore`) → drop `ci`/`ci_checked_at` for that repo's `pr_cache` rows (or key CI freshness on the ignore list hash).
+
+### Still open (verified on `main` @ `7a0220a`)
+`watcher.py` still reads `store.load_pr_cache().get(branch)` (bare key); `swr.py` footguns and `_BACKGROUND_ENABLED` absent; `pr_cache` fresh-TTL constants still unused; `issue_cache` / `pr_candidates_cache` issues; permanent `_NO_TOOL_DIRS` / `_DB_CACHE`; `_INIT_CACHE` PRAGMA cost.

@@ -35,6 +35,7 @@ Fix all 20 Critical, High, and Medium cache bugs across Workagent's backend (`sr
 ## 2. Phase 1 — Core SQLite & SWR Primitives
 
 ### 2.1 Atomic Per-Row `pr_cache` Operations (`src/workagent/store.py`, `src/workagent/store_sqlite.py`)
+- **Baseline update (2026-11-26):** `702c7a2` already landed `_update_pr_cache_entry_sqlite` (single-row `BEGIN IMMEDIATE` merge via `sq.connect`) and made `_write_pr_cache` skip unchanged rows. This phase now only moves that logic into `store_sqlite` helpers (`get/upsert/delete_pr_cache_entry`), fixes the CI-only `checked_at` stamping, and replaces whole-table `load_pr_cache()` reads in `lookup_pr_cache`.
 - Replace `_write_pr_cache`'s raw `sqlite3.connect` + `DELETE FROM pr_cache` + full re-insert with single-row SQLite helpers in `store_sqlite.py`:
   - `get_pr_cache_entry(path: Path, key: str, fallback_key: str = "") -> dict | None`: single `SELECT payload, checked_at FROM pr_cache WHERE branch = ?` (checking `key`, then `fallback_key` if different).
   - `upsert_pr_cache_entry(path: Path, key: str, updater: Callable[[dict], dict], *, touch_checked_at: bool = False) -> dict`: runs inside a single `BEGIN IMMEDIATE` transaction via `sq.connect(path)`, reads current row (if any), merges via `updater`, and executes `INSERT INTO pr_cache (branch, payload, checked_at) VALUES (?, ?, ?) ON CONFLICT(branch) DO UPDATE SET payload = excluded.payload, checked_at = excluded.checked_at`.
@@ -139,7 +140,7 @@ Fix all 20 Critical, High, and Medium cache bugs across Workagent's backend (`sr
 | `repos._NO_TOOL_DIRS` | `repos.py` | Replace `set[str]` with lock-guarded `dict[str, float]` with 300s (5m) TTL so transient auth/network failures or newly added remotes self-heal. |
 | `cli_repo_util._DB_CACHE` | `cli_repo_util.py` | Replace `dict[str, str]` with lock-guarded `dict[str, tuple[float, str]]` — 600s TTL for positive default branch, 60s TTL for negative `""`. |
 | `release_caps._CACHE` | `release_caps.py` | Add `threading.Lock`, per-key single-flight, `copy.deepcopy` on read/write, remove dead `_TTL`, and stop caching non-auth `_gh_caps` `HarnessError` as `pr_required: False`. |
-| `web_runs_routes._OPTIONS_CACHE` | `web_runs_routes.py` | Add `threading.Lock`, per-key single-flight, `copy.deepcopy`, `swr.cache_ttl("WORKAGENT_OPTIONS_TTL_SECONDS", 600)`, capture timestamp *after* `discover_options()`, and fall back to last-known cached options on probe error (with warning). |
+| `harness_options_cache.json` + `web_runs_routes._OPTIONS_CACHE` | `store.py`, `web_runs_routes.py` | Single TTL source for both (see audit §3.15); add `threading.Lock`, per-key single-flight, `copy.deepcopy`, `swr.cache_ttl("WORKAGENT_OPTIONS_TTL_SECONDS", 600)`, capture timestamp *after* `discover_options()`, and fall back to last-known cached options on probe error (with warning). |
 | `env._SOURCED_CACHE` | `env.py` | Add `threading.Lock` + 60s TTL alongside `mtime_ns` check (`WORKAGENT_ENV_CACHE_TTL_SECONDS`, default `60`) so edits to transitively `source`d files (e.g., `~/.secrets/.env`) or proxy restarts are picked up automatically. |
 
 ---
@@ -158,6 +159,7 @@ Fix all 20 Critical, High, and Medium cache bugs across Workagent's backend (`sr
 - Existing `_migrate_change_log` + `_CDC_TRIGGER_NAMES` check in `_schema_current` automatically installs the new triggers idempotently on startup.
 
 ### 6.2 Debounced CDC Invalidation (`web/src/hooks/useServerEvents.ts`)
+- **Baseline update:** a single-purpose 500ms `schedulePrCacheInvalidate` timer for `pr_cache` already exists (`702c7a2`). Generalize it into the per-key queue below (keep 500ms or lower to 150ms; keep the existing test passing) rather than adding a second mechanism.
 - Add a lightweight per-query-key debounce queue (150ms window) inside `useServerEvents.ts` so bursts of `pr_cache` / `pr_checks` / `worktrees` CDC events coalesce into a single `qc.invalidateQueries` call per key.
 - Map the new CDC tables:
   - `pr_candidates_cache` → `queryKeys.candidatesPrs`
@@ -180,7 +182,7 @@ Fix all 20 Critical, High, and Medium cache bugs across Workagent's backend (`sr
   - Remove dead `refetchOnWindowFocus: true` from 30d/1h queries (or set `refetchOnWindowFocus: false` where CDC + polling own freshness).
   - Fix copy at `Dashboard.tsx:779` to reflect SSE live updates vs fallback polling.
 - **Complete `invalidateAfterRun` & mutation handlers (`queries.ts`, `Trackers.tsx`, `Launch.tsx`, `WorktreeDetail.tsx`, `RunDetail.tsx`, `Settings.tsx`):**
-  - `invalidateAfterRun`: add `candidatesPrs`, `candidatesWorktrees`, `["candidates", "issues"]`, `prodtests`, `["release"]`, `["worktree-files"]`, `["worktree-diff"]`, `["worktree-timeline"]`.
+  - `invalidateAfterRun`: add `candidatesPrs`, `candidatesWorktrees`, `["candidates", "issues"]`, `prodtests`, `["release"]`, `["worktree-timeline"]` (diff viewer queries were removed in `6a35967`).
   - `Trackers.tsx`: invalidate `["candidates", "issues"]`, `["issues"]`, `candidatesPrs`, and `statusAll` on domain updates.
   - `Launch.tsx`: `handleRefreshIssues` updates `queryKeys.candidatesIssues(false, 90, true)` and invalidates `["issues"]`.
   - `WorktreeDetail.tsx`: `launchTerminal` invalidates `statusAll` as well as `runs`.

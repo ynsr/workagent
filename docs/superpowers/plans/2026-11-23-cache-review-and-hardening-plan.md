@@ -39,6 +39,8 @@
 
 ### Task 1: Atomic Per-Row `pr_cache` Operations
 
+> **Baseline update (2026-11-26):** `main` already has `store._update_pr_cache_entry_sqlite` (per-row `BEGIN IMMEDIATE`, `sq.connect`) and an unchanged-row-skipping `_write_pr_cache` (`702c7a2`). Rebase onto `main` first; the CDC-count and concurrency tests below should pass partly already — keep them as regression pins, and scope the implementation to moving logic into `store_sqlite` helpers, the `checked_at` fix, and O(1) `lookup_pr_cache`.
+
 **Files:**
 - Modify: `src/workagent/store_sqlite.py` (add `get_pr_cache_entry`, `upsert_pr_cache_entry`, `delete_pr_cache_entry`)
 - Modify: `src/workagent/store.py:395-637`
@@ -944,6 +946,8 @@ git commit -m "[171] Expand SQLite CDC triggers to cache and metadata tables"
 
 ### Task 11: Debounced `useServerEvents.ts` + Single-Fetch Dashboard Status
 
+> **Baseline update:** a 500ms `pr_cache`-only debounce already exists in `useServerEvents.ts` (`702c7a2`, test `coalesces burst pr_cache events…`). Generalize it; do not break that test.
+
 **Files:**
 - Modify: `web/src/hooks/useServerEvents.ts`
 - Modify: `web/src/lib/queries.ts:53-96, 301-303, 390-402`
@@ -982,7 +986,7 @@ Expected: FAIL (`statusCalls` length is 10 instead of 1).
   - Make `useStatusAll()`, `useStatusInactive()`, `useStatusDeleted()` share `["status", "all", Boolean(refresh)]` fetching `api.statusAll({ includeInactive: true, includeDeleted: true, refresh })`, with `select` projections for inactive/deleted rows.
   - Remove dead `refetchOnWindowFocus: true` from 30d/1h queries (set `refetchOnWindowFocus: false` where CDC + polling own freshness).
   - Add `enabled: Boolean(id)` to `useRun(id)`.
-  - Expand `invalidateAfterRun(qc)` to include `candidatesPrs`, `candidatesWorktrees`, `["candidates", "issues"]`, `prodtests`, `["release"]`, `["worktree-files"]`, `["worktree-diff"]`, `["worktree-timeline"]`.
+  - Expand `invalidateAfterRun(qc)` to include `candidatesPrs`, `candidatesWorktrees`, `["candidates", "issues"]`, `prodtests`, `["release"]`, `["worktree-timeline"]` (do NOT add `worktree-files`/`worktree-diff`: removed in `6a35967`).
 - In `Dashboard.tsx`: update stale `"Refreshes every 15 s"` copy to reflect SSE live updates.
 
 - [ ] **Step 4: Run Vitest to verify pass**
