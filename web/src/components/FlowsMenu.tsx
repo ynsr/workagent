@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { Workflow } from "lucide-react"
+import { ActionIcon } from "@/components/ActionIcon"
 import { chainRunsParallel, runChainOnWorktrees } from "@/lib/flowExecution"
 import { FlowWizard } from "@/components/FlowWizard"
 import { Button } from "@/components/ui/button"
@@ -99,7 +100,7 @@ export function FlowsMenu({ selected }: { selected: Set<string> }) {
           title={hasSelection ? `Run ${t.name} on ${selected.size} selected worktrees` : `Open ${t.name} in Launch → Flow tab`}
           onClick={() => handlePick(t)}
         >
-          <Workflow aria-hidden className="size-4" />
+          <ActionIcon name={t.icon} className="size-4" />
           {t.name}
         </Button>
       ))}
@@ -139,7 +140,7 @@ export function FlowsMenu({ selected }: { selected: Set<string> }) {
                     : `Open ${t.name} in Launch → Flow tab`
                 }
               >
-                <Workflow aria-hidden className="size-4 shrink-0" />
+                <ActionIcon name={t.icon} className="size-4 shrink-0" />
                 <span className="min-w-0 flex-1 truncate">{t.name}</span>
                 <span className="shrink-0 font-mono text-xs text-muted-foreground">
                   {t.steps?.length ?? 0}

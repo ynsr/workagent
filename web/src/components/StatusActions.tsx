@@ -3,6 +3,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { FileCheck, GitPullRequest, History, Play, RefreshCw, Rocket, Square, Trash2, Undo2, Workflow, Wrench, Zap } from "lucide-react"
+import { ActionIcon as TemplateIcon } from "@/components/ActionIcon"
 import { FlowWizard } from "@/components/FlowWizard"
 import { ImmediateRunDialog, runsImmediately } from "@/components/ImmediateRunForm"
 import type { ActionRow, FlowTemplateRow, WorktreeMap } from "@/lib/api"
@@ -113,7 +114,7 @@ function DedicatedOverlay({ worktreeKey, hidden }: { worktreeKey: string; hidden
     <>
       {visTemplates.map((t) => (
         <ActionIcon key={`flow-${t.label}`} title={`Run flow ${t.name} on ${worktreeKey}`} onClick={() => handleTemplateClick(t)}>
-          <Workflow aria-hidden />
+          <TemplateIcon name={t.icon} />
         </ActionIcon>
       ))}
       {visActions.map((a) => (
