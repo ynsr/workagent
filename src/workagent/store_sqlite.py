@@ -2428,6 +2428,102 @@ def migrate_json(config_dir: Path, db_path: Path) -> dict:
             p.unlink()
     return counts
 
+def get_pr_cache_entry(path: Path, key: str, fallback_key: str = "") -> dict | None:
+    """Read one pr_cache entry by key (falling back to bare branch key)."""
+    init_db(path)
+    keys = (key, fallback_key) if fallback_key and fallback_key != key else (key,)
+    with connect(path) as conn:
+        for k in keys:
+            row = conn.execute(
+                "SELECT payload, checked_at FROM pr_cache WHERE branch = ?", (k,)
+            ).fetchone()
+            if row is not None:
+                try:
+                    payload = json.loads(row[0] or "{}")
+                except ValueError:
+                    payload = {}
+                entry = payload if isinstance(payload, dict) else {"pr": payload}
+                entry.setdefault("pr", None)
+                entry.setdefault("checked_at", row[1] or "")
+                return entry
+    return None
+
+
+def upsert_pr_cache_entry(
+    path: Path,
+    key: str,
+    updater,
+    *,
+    fallback_key: str = "",
+    touch_checked_at: bool = False,
+) -> dict | None:
+    """Atomically read-modify-write one pr_cache row under BEGIN IMMEDIATE."""
+    init_db(path)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    conn = connect(path)
+    conn.isolation_level = None
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT payload, checked_at FROM pr_cache WHERE branch = ?", (key,)
+        ).fetchone()
+        if row is None and fallback_key and fallback_key != key:
+            row = conn.execute(
+                "SELECT payload, checked_at FROM pr_cache WHERE branch = ?", (fallback_key,)
+            ).fetchone()
+        existing: dict = {}
+        checked_at = ""
+        if row is not None:
+            try:
+                raw = json.loads(row[0] or "{}")
+                if isinstance(raw, dict):
+                    existing = raw
+            except ValueError:
+                existing = {}
+            checked_at = row[1] or ""
+            existing["checked_at"] = checked_at
+        res = updater(existing)
+        if res is None:
+            conn.execute("COMMIT")
+            return None
+        updated = dict(res)
+        if touch_checked_at:
+            new_checked = now_iso
+            updated.pop("checked_at", None)
+        else:
+            new_checked = str(updated.pop("checked_at", checked_at) or "")
+        conn.execute(
+            "INSERT INTO pr_cache (branch, payload, checked_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(branch) DO UPDATE SET payload = excluded.payload, checked_at = excluded.checked_at",
+            (key, json.dumps(updated), new_checked),
+        )
+        conn.execute("COMMIT")
+        updated["checked_at"] = new_checked
+        return updated
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+def delete_pr_cache_entry(path: Path, key: str, fallback_key: str = "") -> int:
+    """Delete pr_cache row(s) for key and optional bare fallback_key."""
+    init_db(path)
+    keys = [k for k in dict.fromkeys((key, fallback_key)) if k]
+    if not keys:
+        return 0
+    with connect(path) as conn:
+        cur = conn.execute(
+            f"DELETE FROM pr_cache WHERE branch IN ({','.join('?' for _ in keys)})",
+            keys,
+        )
+        return cur.rowcount
+
+
 def get_issue_cache(path: Path, source: str) -> tuple[list, str | None]:
     """Cached issue rows for *source* + fetched_at ISO, or ([], None)."""
     import json

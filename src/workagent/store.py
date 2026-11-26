@@ -493,20 +493,20 @@ def load_pr_cache() -> dict:
     if db is not None:
         import json as _json
         import sqlite3 as _sqlite3
+        from . import store_sqlite as sq
         try:
-            with _sqlite3.connect(str(db)) as conn:
-                conn.row_factory = _sqlite3.Row
+            sq.init_db(db)
+            with sq.connect(db) as conn:
                 out = {}
-                for row in conn.execute("SELECT * FROM pr_cache"):
-                    r = dict(row)
+                for row in conn.execute("SELECT branch, payload, checked_at FROM pr_cache"):
                     try:
-                        payload = _json.loads(r.get("payload") or "{}")
+                        payload = _json.loads(row[1] or "{}")
                     except ValueError:
                         payload = {}
                     entry = payload if isinstance(payload, dict) else {"pr": payload}
                     entry.setdefault("pr", None)
-                    entry.setdefault("checked_at", r.get("checked_at", ""))
-                    out[r["branch"]] = entry
+                    entry.setdefault("checked_at", row[2] or "")
+                    out[row[0]] = entry
                 return out
         except _sqlite3.OperationalError:
             return _read_json(config_dir() / "pr_cache.json", {})
@@ -554,70 +554,6 @@ def _write_pr_cache(cache: dict) -> None:
         conn.close()
 
 
-def _update_pr_cache_entry_sqlite(
-    key: str,
-    fallback_branch: str,
-    build_entry: Callable[[dict | None, dict | None], dict | None],
-) -> None:
-    """Read and upsert a single pr_cache row in SQLite without churning other rows."""
-    import json as _json
-    import sqlite3 as _sqlite3
-    from . import store_sqlite as sq
-
-    db = _sqlite_path()
-    assert db is not None
-    sq.init_db(db)
-    conn = sq.connect(db)
-    conn.isolation_level = None
-    conn.row_factory = _sqlite3.Row
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        if fallback_branch and fallback_branch != key:
-            rows = conn.execute(
-                "SELECT branch, payload, checked_at FROM pr_cache WHERE branch IN (?, ?)",
-                (key, fallback_branch),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT branch, payload, checked_at FROM pr_cache WHERE branch = ?",
-                (key,),
-            ).fetchall()
-        by_branch: dict[str, dict] = {}
-        for row in rows:
-            r = dict(row)
-            try:
-                parsed = _json.loads(r.get("payload") or "{}")
-            except ValueError:
-                parsed = {}
-            entry = parsed if isinstance(parsed, dict) else {"pr": parsed}
-            entry.setdefault("pr", None)
-            entry.setdefault("checked_at", r.get("checked_at", ""))
-            by_branch[r["branch"]] = entry
-        updated = build_entry(by_branch.get(key), by_branch.get(fallback_branch))
-        if updated is None:
-            conn.execute("COMMIT")
-            return
-        payload = dict(updated)
-        checked = str(payload.pop("checked_at", "")
-                      or datetime.now(timezone.utc).isoformat())
-        conn.execute(
-            "INSERT INTO pr_cache (branch, payload, checked_at)"
-            " VALUES (?, ?, ?)"
-            " ON CONFLICT(branch) DO UPDATE SET"
-            " payload = excluded.payload, checked_at = excluded.checked_at",
-            (key, _json.dumps(payload), checked),
-        )
-        conn.execute("COMMIT")
-    except BaseException:
-        try:
-            conn.execute("ROLLBACK")
-        except Exception:
-            pass
-        raise
-    finally:
-        conn.close()
-
-
 def _update_pr_cache_entry_json(
     key: str,
     fallback_branch: str,
@@ -647,10 +583,22 @@ def _update_pr_cache_entry(
     key: str,
     fallback_branch: str,
     build_entry: Callable[[dict | None, dict | None], dict | None],
+    *,
+    touch_checked_at: bool = False,
+    use_fallback: bool = True,
 ) -> None:
     """Atomically read-modify-write a single pr_cache entry in SQLite or JSON."""
-    if _sqlite_path() is not None:
-        _update_pr_cache_entry_sqlite(key, fallback_branch, build_entry)
+    db = _sqlite_path()
+    if db is not None:
+        from . import store_sqlite as sq
+        fb = fallback_branch if use_fallback else ""
+        sq.upsert_pr_cache_entry(
+            db,
+            key,
+            lambda existing: build_entry(existing or None, existing or None),
+            fallback_key=fb,
+            touch_checked_at=touch_checked_at,
+        )
     else:
         _update_pr_cache_entry_json(key, fallback_branch, build_entry)
 
@@ -677,8 +625,39 @@ def lookup_pr_cache(branch: str, repo: str = "") -> dict | None:
     """Cache entry for (repo, branch), falling back to the bare branch key."""
     if not branch:
         return None
+    db = _sqlite_path()
+    if db is not None:
+        from . import store_sqlite as sq
+        return sq.get_pr_cache_entry(db, pr_cache_key(repo, branch), branch)
     cache = load_pr_cache()
     return cache.get(pr_cache_key(repo, branch), cache.get(branch))
+
+
+def delete_pr_cache_entry(branch: str, repo: str = "") -> int:
+    """Delete pr_cache entry for (repo, branch) and bare branch fallback."""
+    if not branch:
+        return 0
+    key = pr_cache_key(repo, branch)
+    db = _sqlite_path()
+    if db is not None:
+        from . import store_sqlite as sq
+        return sq.delete_pr_cache_entry(db, key, branch)
+    path = config_dir() / "pr_cache.json"
+    if not path.exists():
+        return 0
+    removed = 0
+    with open(path.parent / (path.name + ".lock"), "w") as lock:
+        def _rm() -> None:
+            nonlocal removed
+            cache = _read_json(path, {})
+            for k in dict.fromkeys((key, branch)):
+                if k in cache:
+                    del cache[k]
+                    removed += 1
+            if removed:
+                _atomic_replace(path, cache)
+        _locked(lock, _rm)
+    return removed
 
 def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
                     base_branch: str | None = None, branch_tip: str | None = None,
@@ -703,7 +682,7 @@ def cache_pr_status(branch: str, pr: dict | None, tool: str | None = None,
             if k in prev and k not in merged:
                 merged[k] = prev[k]
         return merged
-    _update_pr_cache_entry(key, branch, _merge)
+    _update_pr_cache_entry(key, branch, _merge, touch_checked_at=True, use_fallback=False)
 
 
 def get_cached_pr_status(branch: str, repo: str = "") -> dict | None:
