@@ -372,8 +372,9 @@ def test_sync_rebase_fallback_conflict_prompt_requests_rebase(
     assert "complete the merge" not in prompts[0]
 
 
+@pytest.mark.parametrize("extra_args", [[], ["--rebase"]], ids=["default", "explicit-rebase"])
 def test_sync_no_pr_default_rebase_conflict_prompt_requests_rebase(
-        isolated_config, tmp_path, monkeypatch):
+        isolated_config, tmp_path, monkeypatch, extra_args):
     """Without a PR, default Sync method (Rebase) still asks the harness to rebase."""
     wt = tmp_path / "wt"
     wt.mkdir()
@@ -386,7 +387,7 @@ def test_sync_no_pr_default_rebase_conflict_prompt_requests_rebase(
     prompts = []
     monkeypatch.setattr(cli, "_run_harness",
                         lambda name, prompt, *a, **k: prompts.append(prompt))
-    r = _invoke("sync", "IPG-929", "--rebase", "--harness", "omp")
+    r = _invoke("sync", "IPG-929", *extra_args, "--harness", "omp")
     assert r.exit_code == 0, r.output
     assert len(prompts) == 1
     assert "Perform a rebase instead of a merge" in prompts[0]
