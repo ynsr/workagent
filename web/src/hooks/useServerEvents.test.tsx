@@ -94,51 +94,82 @@ describe("useServerEvents", () => {
   })
 
   it("invalidates exact TanStack Query keys for each tracked table", () => {
-    const qc = new QueryClient()
-    const spy = vi.spyOn(qc, "invalidateQueries")
+    vi.useFakeTimers()
+    try {
+      const qc = new QueryClient()
+      const spy = vi.spyOn(qc, "invalidateQueries")
 
-    render(
-      <QueryClientProvider client={qc}>
-        <Harness />
-      </QueryClientProvider>,
-    )
-    const es = MockEventSource.instances[0]!
+      render(
+        <QueryClientProvider client={qc}>
+          <Harness />
+        </QueryClientProvider>,
+      )
+      const es = MockEventSource.instances[0]!
 
-    act(() => {
-      es.emit("change", { seq: 1, table: "worktrees", row_key: "jira:IPG-1", op: "update", created_at: 1 })
-    })
-    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusAll })
-    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.links })
+      act(() => {
+        es.emit("change", { seq: 1, table: "worktrees", row_key: "jira:IPG-1", op: "update", created_at: 1 })
+        vi.advanceTimersByTime(200)
+      })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusAll })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.links })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.candidatesPrs })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.candidatesWorktrees })
 
-    spy.mockClear()
-    act(() => {
-      es.emit("change", { seq: 2, table: "runs", row_key: "42", op: "insert", created_at: 2 })
-    })
-    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.runs })
-    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusAll })
-    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.run("42") })
-    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.run("db-42") })
+      spy.mockClear()
+      act(() => {
+        es.emit("change", { seq: 2, table: "runs", row_key: "42", op: "insert", created_at: 2 })
+        vi.advanceTimersByTime(200)
+      })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.runs })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusAll })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.run("42") })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.run("db-42") })
 
-    spy.mockClear()
-    act(() => {
-      es.emit("change", { seq: 3, table: "flows", row_key: "7", op: "update", created_at: 3 })
-    })
-    expect(spy).toHaveBeenCalledWith({ queryKey: ["flows"] })
-    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusAll })
+      spy.mockClear()
+      act(() => {
+        es.emit("change", { seq: 3, table: "flows", row_key: "7", op: "update", created_at: 3 })
+        vi.advanceTimersByTime(200)
+      })
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["flows"] })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusAll })
 
-    spy.mockClear()
-    act(() => {
-      es.emit("change", { seq: 4, table: "messages", row_key: "m-1", op: "insert", created_at: 4 })
-    })
-    expect(spy).toHaveBeenCalledWith({ queryKey: ["messages"] })
+      spy.mockClear()
+      act(() => {
+        es.emit("change", { seq: 4, table: "messages", row_key: "m-1", op: "insert", created_at: 4 })
+        vi.advanceTimersByTime(200)
+      })
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["messages"] })
 
-    spy.mockClear()
-    act(() => {
-      es.emit("change", { seq: 5, table: "prodtest_items", row_key: "IPG-9", op: "update", created_at: 5 })
-    })
-    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.prodtests })
-    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusAll })
-    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.prodtestDetail("IPG-9") })
+      spy.mockClear()
+      act(() => {
+        es.emit("change", { seq: 5, table: "prodtest_items", row_key: "IPG-9", op: "update", created_at: 5 })
+        vi.advanceTimersByTime(200)
+      })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.prodtests })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.statusAll })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.prodtestDetail("IPG-9") })
+
+      spy.mockClear()
+      act(() => {
+        es.emit("change", { seq: 6, table: "pr_candidates_cache", row_key: "prs", op: "update", created_at: 6 })
+        es.emit("change", { seq: 7, table: "issue_cache", row_key: "jira:mine90", op: "update", created_at: 7 })
+        es.emit("change", { seq: 8, table: "release_diff_cache", row_key: "demo", op: "update", created_at: 8 })
+        es.emit("change", { seq: 9, table: "repos", row_key: "demo", op: "update", created_at: 9 })
+        es.emit("change", { seq: 10, table: "trackers", row_key: "jira:IPG", op: "update", created_at: 10 })
+        es.emit("change", { seq: 11, table: "pr_checks", row_key: "jira:IPG-1", op: "insert", created_at: 11 })
+        vi.advanceTimersByTime(200)
+      })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.candidatesPrs })
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["candidates", "issues"] })
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["issues"] })
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["release"] })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.repos })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.trackers })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.trackerDomains })
+      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.worktreeTimeline("jira:IPG-1") })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("invalidates core queries on reconnect after an error, but not on initial open", () => {

@@ -262,7 +262,7 @@ export function Dashboard({ initialLaunchOpen = false }: { initialLaunchOpen?: b
     try {
       const fresh = await qc.fetchQuery({
         queryKey: [...queryKeys.statusAll, true],
-        queryFn: () => api.statusAll({ refresh: true }),
+        queryFn: () => api.statusAll({ includeInactive: true, includeDeleted: true, refresh: true }),
         staleTime: 0,
       })
       qc.setQueryData([...queryKeys.statusAll, false], fresh)
@@ -767,7 +767,7 @@ export function Dashboard({ initialLaunchOpen = false }: { initialLaunchOpen?: b
     <div className="min-w-0">
       <PageHeader
         title="Dashboard"
-        description="Linked issue ↔ PR ↔ worktrees. Refreshes every 15 s while the tab is visible."
+        description="Linked issue ↔ PR ↔ worktrees. Updates live over SSE with periodic fallback polling."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" onClick={() => setLaunchOpen(true)}>

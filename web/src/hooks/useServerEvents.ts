@@ -46,6 +46,8 @@ export function _resetServerEventsConnectedForTest(): void {
   setConnected(false)
 }
 
+const DEBOUNCE_MS = 150
+
 /**
  * Subscribe to the global GET /api/events CDC SSE stream and invalidate
  * exact TanStack Query keys when underlying SQLite tables change.
@@ -62,16 +64,16 @@ export function useServerEvents(): void {
 
     const es = new EventSource("/api/events")
     let hadError = false
-    let prCacheTimer: ReturnType<typeof setTimeout> | null = null
+    const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-    const schedulePrCacheInvalidate = () => {
-      if (prCacheTimer !== null) return
-      prCacheTimer = setTimeout(() => {
-        prCacheTimer = null
-        void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
-        void qc.invalidateQueries({ queryKey: queryKeys.statusInactive })
-        void qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
-      }, 500)
+    const scheduleInvalidate = (queryKey: readonly unknown[]) => {
+      const k = JSON.stringify(queryKey)
+      if (pendingTimers.has(k)) return
+      const timer = setTimeout(() => {
+        pendingTimers.delete(k)
+        void qc.invalidateQueries({ queryKey })
+      }, DEBOUNCE_MS)
+      pendingTimers.set(k, timer)
     }
 
     const onOpen = () => {
@@ -87,6 +89,12 @@ export function useServerEvents(): void {
         void qc.invalidateQueries({ queryKey: queryKeys.schedules })
         void qc.invalidateQueries({ queryKey: ["messages"] })
         void qc.invalidateQueries({ queryKey: queryKeys.prodtests })
+        void qc.invalidateQueries({ queryKey: queryKeys.repos })
+        void qc.invalidateQueries({ queryKey: queryKeys.trackers })
+        void qc.invalidateQueries({ queryKey: queryKeys.candidatesPrs })
+        void qc.invalidateQueries({ queryKey: ["candidates", "issues"] })
+        void qc.invalidateQueries({ queryKey: queryKeys.candidatesWorktrees })
+        void qc.invalidateQueries({ queryKey: ["release"] })
       }
     }
 
@@ -104,37 +112,70 @@ export function useServerEvents(): void {
       }
       switch (payload.table) {
         case "worktrees":
-          void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
-          void qc.invalidateQueries({ queryKey: queryKeys.statusInactive })
-          void qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
-          void qc.invalidateQueries({ queryKey: queryKeys.links })
+          scheduleInvalidate(queryKeys.statusAll)
+          scheduleInvalidate(queryKeys.statusInactive)
+          scheduleInvalidate(queryKeys.statusDeleted)
+          scheduleInvalidate(queryKeys.links)
+          scheduleInvalidate(queryKeys.candidatesPrs)
+          scheduleInvalidate(queryKeys.candidatesWorktrees)
           break
         case "pr_cache":
-          schedulePrCacheInvalidate()
+          scheduleInvalidate(queryKeys.statusAll)
+          scheduleInvalidate(queryKeys.statusInactive)
+          scheduleInvalidate(queryKeys.statusDeleted)
+          break
+        case "pr_candidates_cache":
+          scheduleInvalidate(queryKeys.candidatesPrs)
+          break
+        case "issue_cache":
+          scheduleInvalidate(["candidates", "issues"])
+          scheduleInvalidate(["issues"])
+          break
+        case "release_diff_cache":
+          scheduleInvalidate(["release"])
+          break
+        case "repos":
+          scheduleInvalidate(queryKeys.repos)
+          scheduleInvalidate(["release"])
+          scheduleInvalidate(queryKeys.candidatesPrs)
+          break
+        case "trackers":
+          scheduleInvalidate(queryKeys.trackers)
+          scheduleInvalidate(queryKeys.trackerDomains)
+          scheduleInvalidate(["candidates", "issues"])
+          scheduleInvalidate(["issues"])
+          break
+        case "pr_checks":
+        case "pr_review_threads":
+          if (payload.row_key) {
+            scheduleInvalidate(queryKeys.worktreeTimeline(payload.row_key))
+          } else {
+            scheduleInvalidate(["worktree", "timeline"])
+          }
           break
         case "runs":
-          void qc.invalidateQueries({ queryKey: queryKeys.runs })
-          void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
+          scheduleInvalidate(queryKeys.runs)
+          scheduleInvalidate(queryKeys.statusAll)
           if (payload.row_key) {
-            void qc.invalidateQueries({ queryKey: queryKeys.run(payload.row_key) })
-            void qc.invalidateQueries({ queryKey: queryKeys.run(`db-${payload.row_key}`) })
+            scheduleInvalidate(queryKeys.run(payload.row_key))
+            scheduleInvalidate(queryKeys.run(`db-${payload.row_key}`))
           }
           break
         case "flows":
-          void qc.invalidateQueries({ queryKey: ["flows"] })
-          void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
+          scheduleInvalidate(["flows"])
+          scheduleInvalidate(queryKeys.statusAll)
           break
         case "schedules":
-          void qc.invalidateQueries({ queryKey: queryKeys.schedules })
+          scheduleInvalidate(queryKeys.schedules)
           break
         case "messages":
-          void qc.invalidateQueries({ queryKey: ["messages"] })
+          scheduleInvalidate(["messages"])
           break
         case "prodtest_items":
-          void qc.invalidateQueries({ queryKey: queryKeys.prodtests })
-          void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
+          scheduleInvalidate(queryKeys.prodtests)
+          scheduleInvalidate(queryKeys.statusAll)
           if (payload.row_key) {
-            void qc.invalidateQueries({ queryKey: queryKeys.prodtestDetail(payload.row_key) })
+            scheduleInvalidate(queryKeys.prodtestDetail(payload.row_key))
           }
           break
         default:
@@ -147,10 +188,10 @@ export function useServerEvents(): void {
     es.addEventListener("change", onChange as EventListener)
 
     return () => {
-      if (prCacheTimer !== null) {
-        clearTimeout(prCacheTimer)
-        prCacheTimer = null
+      for (const timer of pendingTimers.values()) {
+        clearTimeout(timer)
       }
+      pendingTimers.clear()
       es.removeEventListener("open", onOpen)
       es.removeEventListener("error", onError)
       es.removeEventListener("change", onChange as EventListener)
