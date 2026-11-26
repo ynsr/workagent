@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Fix headless validation retrying successful `fix_comments` and `start` runs when a branch is pushed without a local upstream tracking ref [217]
 - Append repo name to worktree keys when starting or registering worktrees from PR or MR links [213]
 - Cleanup commands and subcommands now return a compact report of removed items, cascades, and transcripts across soft and hard deletes [211]
 - Automatically retry AI runs without `--effort` when the selected model does not support effort levels [204]
