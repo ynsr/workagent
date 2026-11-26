@@ -977,12 +977,12 @@ def create_app(static_dir: Path, host: str, port: int,
                 "worktrees": out["worktrees"], "warnings": out["warnings"]}
 
     @app.get("/api/candidates/prs")
-    def candidates_prs() -> dict:
+    def candidates_prs(force: bool = False) -> dict:
         """Unlinked open PR/MRs: fresh cache serves instantly; expired cache
         serves stale rows (`stale: True`) while one background thread
-        revalidates; empty cache fetches live. Read-only."""
+        revalidates; empty cache or `force=true` fetches live. Read-only."""
         from . import cli_candidates as _cand
-        prs, warnings, stale = _cand._candidate_prs_cached()
+        prs, warnings, stale = _cand._candidate_prs_cached(force=force)
         return {"prs": prs, "warnings": warnings, "stale": stale}
 
     @app.get("/api/candidates/issues")

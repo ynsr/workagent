@@ -2659,6 +2659,15 @@ def set_pr_candidates_cache(path: Path, rows: list[dict], source: str = "prs") -
             " fetched_at=excluded.fetched_at",
             (source, json.dumps(rows),
              datetime.now(timezone.utc).isoformat()))
+
+
+def clear_pr_candidates_cache(path: Path) -> None:
+    """Drop all cached PR/MR candidate rows (reset-cache path)."""
+    init_db(path)
+    with connect(path) as conn:
+        conn.execute("DELETE FROM pr_candidates_cache")
+
+
 def get_release_diff_cache(path: Path, repo_key: str) -> tuple[int | None, str]:
     """Cached release diff (count, fetched_at ISO); (None, '') on miss."""
     init_db(path)

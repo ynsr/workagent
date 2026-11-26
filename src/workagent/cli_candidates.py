@@ -67,12 +67,17 @@ def _linked_sets(include_inactive: bool = True, include_deleted: bool = True) ->
     return linked_urls, linked_issue_urls, linked_branches, linked_paths, links
 
 
-def _candidate_prs() -> tuple[list[dict], list[str]]:
-    """Unlinked open PR/MRs across registered repos (slowest source: live host-CLI calls)."""
+def _fetch_raw_open_prs() -> tuple[list[dict], list[str], bool]:
+    """Fetch open non-release PR/MRs across enabled repos without link filtering.
+
+    Returns ``(raw_prs, warnings, any_ok)``. ``any_ok`` is False only when at
+    least one repo was attempted and every attempted repo failed.
+    """
     from . import cli as _cli  # shim: tests patch cli._repo_tool
     warnings: list[str] = []
-    linked_urls, _, linked_branches, linked_paths, _ = _linked_sets()
     prs: list[dict] = []
+    attempted = False
+    any_ok = False
     for name, entry in store.load_repos().items():
         if not entry.get("fetch_enabled", True):
             continue
@@ -81,18 +86,12 @@ def _candidate_prs() -> tuple[list[dict], list[str]]:
             tool = _cli._repo_tool(path)
             if tool not in ("gh", "glab"):
                 continue
+            attempted = True
             default_branch = str(entry.get("default_branch", "") or "")
             release_branch = str(entry.get("release_branch", "") or "")
             for p in refs.fetch_open_prs(tool, path):
                 url = str(p.get("url", ""))
-                if url and refs.normalize_pr_url(url) in linked_urls:
-                    continue
                 branch = str(p.get("branch", "") or "")
-                if branch and branch in linked_branches:
-                    continue
-                wt_path = str(p.get("worktree_path", "") or "")
-                if wt_path and wt_path in linked_paths:
-                    continue
                 target = str(p.get("target_branch", "") or "")
                 # Release plumbing is never review work: drop default→release
                 # MRs (target == release, or source == default when the
@@ -105,12 +104,40 @@ def _candidate_prs() -> tuple[list[dict], list[str]]:
                 prs.append({**p, "url": url, "key": key,
                             "repo": key.split(":", 1)[-1].rsplit("#", 1)[0],
                             "repo_name": name})
+            any_ok = True
         except HarnessError as e:
             warnings.append(f"{name}: {e}")
         except Exception as e:  # one bad repo must not kill the listing
             warnings.append(f"{name}: {e}")
     prs.sort(key=lambda p: p.get("updated", ""), reverse=True)
-    return prs, warnings
+    return prs, warnings, (any_ok or not attempted)
+
+
+def _filter_unlinked(raw_prs: list[dict]) -> list[dict]:
+    """Drop PR/MRs already linked to a worktree (read-time filtering)."""
+    linked_urls, _, linked_branches, linked_paths, _ = _linked_sets()
+    out: list[dict] = []
+    for p in raw_prs:
+        url = str(p.get("url", ""))
+        if url and refs.normalize_pr_url(url) in linked_urls:
+            continue
+        branch = str(p.get("branch", "") or "")
+        if branch and branch in linked_branches:
+            continue
+        wt_path = str(p.get("worktree_path", "") or "")
+        if wt_path and wt_path in linked_paths:
+            continue
+        out.append(p)
+    return out
+
+
+def _candidate_prs() -> tuple[list[dict], list[str]]:
+    """Unlinked open PR/MRs across registered repos (slowest source: live host-CLI calls)."""
+    raw, warnings, _ = _fetch_raw_open_prs()
+    return _filter_unlinked(raw), warnings
+
+
+_ORIG_CANDIDATE_PRS = _candidate_prs
 
 
 def _prs_cache_ttl() -> int:
@@ -125,60 +152,60 @@ def _prs_cache_swr() -> int:
     return _swr_window(_prs_cache_ttl(), "WORKAGENT_PRS_CACHE_SWR_SECONDS")
 
 
-_PRS_CACHE_TTL_SECONDS = _prs_cache_ttl()  # 10min fresh — mirrors the per-PR lookup TTL
-_PRS_CACHE_SWR_SECONDS = _prs_cache_swr()  # 1d floor
-
-
 def _candidate_prs_cached(force: bool = False) -> tuple[list[dict], list[str], bool]:
-    """(prs, warnings, stale): stale-while-revalidate over the PR cache.
+    """(prs, warnings, stale): stale-while-revalidate over pr_candidates_cache.
 
-    Fresh cache (< 10min) or `force` → live fetch inline (and the cache is
-    refreshed). Expired-but-present cache → served instantly with
-    `stale=True` while one background thread revalidates (exactly-once per
-    key, see `swr`). Empty cache → live fetch inline (first load has
-    nothing to show yet). Pre-cutover (no state.db) → live fetch.
+    Stores raw open PRs and filters linked worktrees on read.
+    Distinguishes cached empty list ``[]`` (fetched_at is not None) from
+    missing cache (fetched_at is None). Enforces SWR upper bound and preserves
+    existing cache when all upstream repos fail.
     """
     from datetime import datetime, timezone
     from . import store_sqlite as sq, swr as _swr
+
     db = sq.db_path()
-    if force or not db.exists():
-        prs, warnings = _candidate_prs()
-        if db.exists():
-            try:
-                sq.set_pr_candidates_cache(db, prs)
-            except Exception:
-                pass
-        return prs, warnings, False
-    try:
-        cached, fetched_at = sq.get_pr_candidates_cache(db)
-    except Exception:
-        cached, fetched_at = [], None
-    fresh = False
-    if cached and fetched_at:
+    has_db = db.exists()
+    cached: list[dict] = []
+    fetched_at: str | None = None
+    if has_db:
+        try:
+            cached, fetched_at = sq.get_pr_candidates_cache(db)
+        except Exception:
+            cached, fetched_at = [], None
+
+    def _refresh() -> tuple[list[dict], list[str], bool]:
+        raw, warnings, any_ok = _fetch_raw_open_prs()
+        if any_ok:
+            if has_db:
+                try:
+                    sq.set_pr_candidates_cache(db, raw)
+                except Exception:
+                    pass
+            return raw, warnings, False
+        if fetched_at is not None:
+            return cached, warnings, True
+        return raw, warnings, False
+
+    if not force and fetched_at is not None:
         try:
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(fetched_at)).total_seconds()
-            fresh = age < _prs_cache_ttl()
         except ValueError:
-            pass
-    if fresh:
-        return cached, [], False
+            age = float("inf")
+        if age < _prs_cache_ttl():
+            return _filter_unlinked(cached), [], False
+        if age < _prs_cache_swr():
+            payload, _stale = _swr.serve_stale_or_refresh(
+                (cached, ["serving cached PR/MRs while refreshing in the background"]),
+                False,
+                _refresh,
+                "prs",
+            )
+            raw_out, warnings = payload
+            return _filter_unlinked(raw_out), warnings, True
 
-    def _refresh() -> tuple[list[dict], list[str]]:
-        prs, warnings = _candidate_prs()
-        try:
-            sq.set_pr_candidates_cache(db, prs)
-        except Exception:
-            pass
-        return prs, warnings
+    raw, warnings, served_stale = _refresh()
+    return _filter_unlinked(raw), warnings, served_stale
 
-    if cached:
-        payload, _stale = _swr.serve_stale_or_refresh(
-            (cached, ["serving cached PR/MRs while refreshing in the background"]),
-            False, _refresh, "prs")
-        prs, warnings = payload
-        return prs, warnings, True
-    prs, warnings = _refresh()
-    return prs, warnings, False
 
 def _candidate_issues(force: bool = False, days: int = 90,
                       mine: bool = True) -> tuple[list[dict], list[str]]:
@@ -221,7 +248,10 @@ def _candidates(force: bool = False, days: int = 90, mine: bool = True) -> dict:
     worktrees come from `_scan_worktrees`, which already excludes linked
     paths.
     """
-    prs, pr_warnings = _candidate_prs()
+    if _candidate_prs is _ORIG_CANDIDATE_PRS:
+        prs, pr_warnings, _ = _candidate_prs_cached(force=force)
+    else:
+        prs, pr_warnings = _candidate_prs()
     recent, issue_warnings = _candidate_issues(force=force, days=days, mine=mine)
     return {"prs": prs, "issues": recent, "worktrees": _scan_worktrees(),
             "warnings": pr_warnings + issue_warnings}
@@ -342,6 +372,7 @@ def candidates_cmd(
     if reset_cache:
         from . import store_sqlite as _sq
         _sq.clear_issue_cache(_sq.db_path())
+        _sq.clear_pr_candidates_cache(_sq.db_path())
     out = _candidates(force=reset_cache, days=issues_days,
                       mine=issues_scope == "mine")
     for w in out["warnings"]:
