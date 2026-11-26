@@ -2000,7 +2000,18 @@ def _rebuild_required_columns(conn) -> list[str]:
     return rebuilt
 
 
-_INIT_CACHE: dict[str, bool] = {}
+_INIT_LOCK = threading.Lock()
+_INIT_CACHE: dict[str, tuple[int, int]] = {}
+_BACKFILL_DONE: set[str] = set()
+_BACKFILL_STARTED: set[str] = set()
+
+
+def _file_sig(path: Path) -> tuple[int, int] | None:
+    try:
+        st = path.stat()
+        return (st.st_ino, st.st_dev)
+    except OSError:
+        return None
 
 
 def _schema_current(path: Path) -> bool:
@@ -2134,8 +2145,13 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
     thread runs backfill_async(). Every other caller keeps the default:
     backfill inline, same as before.
     """
-    if _INIT_CACHE.get(str(path)) and _schema_current(path):
-        if not _INIT_CACHE.get("backfill") and not _INIT_CACHE.get("backfill:started"):
+    key = str(path)
+    sig = _file_sig(path)
+    with _INIT_LOCK:
+        cached_sig = _INIT_CACHE.get(key)
+        backfill_needed = key not in _BACKFILL_DONE and key not in _BACKFILL_STARTED
+    if sig is not None and cached_sig == sig:
+        if backfill_needed:
             if defer_backfill:
                 backfill_async()
             else:
@@ -2184,14 +2200,20 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
                 _migrate_runs_telemetry(conn)
                 _migrate_change_log(conn)
         except sqlite3.OperationalError as e:
+            last = e
             if "locked" not in str(e).lower():
                 raise
             if _schema_current(path):
                 break
             time.sleep(0.05 * (2 ** attempt))
+        else:
+            break
     else:
         raise last  # type: ignore[misc]
-    _INIT_CACHE[str(path)] = True
+    new_sig = _file_sig(path)
+    if new_sig is not None:
+        with _INIT_LOCK:
+            _INIT_CACHE[key] = new_sig
     if defer_backfill:
         backfill_async()
     else:
@@ -2200,8 +2222,12 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
 
 
 def _run_backfill() -> None:
-    """Synchronous release-branch backfill (never raises; once per process)."""
-    _INIT_CACHE["backfill"] = True
+    """Synchronous release-branch backfill (never raises; once per DB path)."""
+    k = str(db_path())
+    with _INIT_LOCK:
+        if k in _BACKFILL_DONE:
+            return
+        _BACKFILL_DONE.add(k)
     try:
         from . import repos_release as _rel
         _rel.backfill_release_branches()
@@ -2210,10 +2236,12 @@ def _run_backfill() -> None:
 
 
 def backfill_async() -> "threading.Thread | None":
-    """Fire-and-forget _run_backfill (daemon; at most once per process)."""
-    if _INIT_CACHE.get("backfill:started"):
-        return None
-    _INIT_CACHE["backfill:started"] = True
+    """Fire-and-forget _run_backfill (daemon; at most once per DB path)."""
+    k = str(db_path())
+    with _INIT_LOCK:
+        if k in _BACKFILL_STARTED or k in _BACKFILL_DONE:
+            return None
+        _BACKFILL_STARTED.add(k)
     t = threading.Thread(target=_run_backfill,
                          name="workagent-backfill", daemon=True)
     t.start()
