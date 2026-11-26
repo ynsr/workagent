@@ -246,7 +246,7 @@ def _sync_one(key: str, entry: dict, merge: bool,
                                 dry_run=dry_run, json_output=json_output,
                                 session_file=session_file, extra_prompt=extra_prompt,
                                 env_file=env_file, acp=acp, run_mode=run_mode,
-                                model=model, effort=effort)
+                                model=model, effort=effort, merge=merge)
         if out.get("result") in ("merged", "up-to-date"):
             _record_no_harness_run(key, out)
         return out
@@ -270,7 +270,7 @@ def _sync_one(key: str, entry: dict, merge: bool,
                                 dry_run=False, json_output=json_output,
                                 session_file=session_file, extra_prompt=extra_prompt,
                                 env_file=env_file, acp=acp, run_mode=run_mode,
-                                model=model, effort=effort)
+                                model=model, effort=effort, merge=merge)
         if out.get("result") in ("merged", "up-to-date"):
             _record_no_harness_run(key, out)
         return out
@@ -290,7 +290,8 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
                       env_file: str | None = None,
                       use_harness: str | bool | None = None,
                       acp: bool = False, run_mode: "str | None" = None,
-                      model: "str | None" = None, effort: "str | None" = None) -> dict:
+                      model: "str | None" = None, effort: "str | None" = None,
+                      merge: bool = True) -> dict:
     """Local-merge flow shared by --merge, no-PR fallback, and rebase
     failure fallback."""
     from . import cli as _cli  # shim: tests patch cli._run_harness/_guard_harness
@@ -318,7 +319,7 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
         return _handle_merge_conflict(key, wt, branch, db, result,
                                       harness, yes, json_output,
                                       session_file, conflicts or ["<unknown>"], extra_prompt,
-                                      env_file, None, acp, run_mode, model, effort)
+                                      env_file, None, acp, run_mode, model, effort, merge=merge)
     out = sync_mod.local_merge(Path(wt), db)
     if out["status"] == "conflict":
         handled = sync_mod.auto_resolve_changelog(Path(wt), out["conflicts"])
@@ -327,7 +328,7 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
             return _handle_merge_conflict(key, wt, branch, db, result,
                                           harness, yes, json_output,
                                           session_file, out["conflicts"], extra_prompt,
-                                          env_file, None, acp, run_mode, model, effort)
+                                          env_file, None, acp, run_mode, model, effort, merge=merge)
         result["result"] = "merged"
     elif out["status"] == "up-to-date" and result.get("pulled") == "merged":
         result["result"] = "merged"
@@ -361,6 +362,25 @@ _PUSH_PROOF = (" After resolving: show `git status` clean and "
                "— never stop on 'committed but unpushed'.")
 
 
+def _sync_conflict_prompt(branch: str, db: str, conflicts: list[str] | None,
+                          *, merge: bool, extra_prompt: str | None = None) -> str:
+    """Build the conflict-resolution prompt for merge or rebase sync mode."""
+    files = ", ".join(conflicts or ["<unknown>"])
+    if merge:
+        body = (f"The branch {branch} has merge conflicts with "
+                f"{db} in files: {files}. "
+                "Resolve them, complete the merge, commit, push to "
+                f"origin/{branch}, and stop.")
+    else:
+        body = (f"The branch {branch} has conflicts with "
+                f"{db} in files: {files}. "
+                "Perform a rebase instead of a merge: abort any in-progress merge "
+                "(`git merge --abort`), rebase "
+                f"{branch} onto origin/{db} (resolving conflicts and running `git rebase --continue`), "
+                f"force-push (`git push --force-with-lease origin {branch}`), and stop.")
+    return append_extra_prompt(body + _CHANGELOG_RULE + _PUSH_PROOF, extra_prompt)
+
+
 def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
                            result: dict, harness: str | None = None,
                            yes: bool = False,
@@ -369,7 +389,8 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
                            env_file: str | None = None,
                            use_harness: str | bool | None = None,
                    acp: bool = False, run_mode: "str | None" = None,
-                   model: "str | None" = None, effort: "str | None" = None) -> dict:
+                   model: "str | None" = None, effort: "str | None" = None,
+                   merge: bool = True) -> dict:
     """Harness/prompt resolution for a merge left in progress."""
     from . import cli as _cli  # shim: tests patch cli._run_harness/_guard_harness
     if harness is None and use_harness is not None:
@@ -379,10 +400,7 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
     if run_harness_now:
         result["result"] = "conflict-harness"
         result["command"] = "sync"
-        prompt = append_extra_prompt(f"The branch {branch} has merge conflicts with "
-                  f"{db} in files: {', '.join(conflicts or ['<unknown>'])}. "
-                  "Resolve them, complete the merge, commit, push to "
-                  f"origin/{branch}, and stop." + _CHANGELOG_RULE + _PUSH_PROOF, extra_prompt)
+        prompt = _sync_conflict_prompt(branch, db, conflicts, merge=merge, extra_prompt=extra_prompt)
         use_acp = bool(acp or (run_mode or "").strip().lower() == "acp")
         _cli._guard_harness(key, wt)
         _cli._run_harness(selected_harness, prompt, wt, wt,
@@ -394,10 +412,7 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
         if typer.confirm("launch the harness to resolve?"):
             result["result"] = "conflict-harness"
             result["command"] = "sync"
-            prompt = append_extra_prompt(f"The branch {branch} has merge conflicts with "
-                      f"{db} in files: {', '.join(conflicts or ['<unknown>'])}. "
-                      "Resolve them, complete the merge, commit, push to "
-                      f"origin/{branch}, and stop." + _CHANGELOG_RULE + _PUSH_PROOF, extra_prompt)
+            prompt = _sync_conflict_prompt(branch, db, conflicts, merge=merge, extra_prompt=extra_prompt)
             use_acp = bool(acp or (run_mode or "").strip().lower() == "acp")
             _cli._guard_harness(key, wt)
             _cli._run_harness(selected_harness, prompt, wt, wt,

@@ -1,6 +1,6 @@
 # Changelog
 ## Unreleased
-- Use each flow template's configured icon for Dashboard top bar and StatusTable row overlay buttons [218]
+- Request a rebase instead of a merge in the Sync conflict prompt when the selected Sync method is Rebase [221]
 - Fix headless validation retrying successful `fix_comments` and `start` runs when a branch is pushed without a local upstream tracking ref [217]
 - Append repo name to worktree keys when starting or registering worktrees from PR or MR links [213]
 - Cleanup commands and subcommands now return a compact report of removed items, cascades, and transcripts across soft and hard deletes [211]
@@ -640,6 +640,7 @@
 - Add dedicated Worktree Workspace view (/worktrees/:ref) with collapsible inspector, ACP session/load resume, and multi-turn follow-up composer [144]
 - Serialize sequential flow steps per repo with a cross-process lock held across contiguous steps to prevent PR merge conflicts [163]
 - Retry live PR/MR branch lookups on transient EOF and transport errors so flow review steps do not fail prematurely [215]
+- Use each flow template's configured icon for Dashboard top bar and StatusTable row overlay buttons [218]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config
