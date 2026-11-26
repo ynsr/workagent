@@ -150,8 +150,11 @@ def save_harness_options_cache(harness_name: str, payload: dict) -> None:
         pass
 
 
+_DEFAULT_OPTIONS_TTL = object()
+
+
 def load_harness_options_cache(harness_name: str,
-                               max_age_s: float | None = HARNESS_OPTIONS_CACHE_TTL_S) -> dict | None:
+                               max_age_s: float | None | object = _DEFAULT_OPTIONS_TTL) -> dict | None:
     """Load cached harness options entry if present and within *max_age_s*."""
     if not harness_name:
         return None
@@ -162,15 +165,16 @@ def load_harness_options_cache(harness_name: str,
     entry = data.get(harness_name) if isinstance(data, dict) else None
     if not isinstance(entry, dict):
         return None
-    if max_age_s is not None:
+    eff_max_age = harness_options_ttl_s() if max_age_s is _DEFAULT_OPTIONS_TTL else max_age_s
+    if eff_max_age is not None:
         updated_at = entry.get("updated_at")
-        if not isinstance(updated_at, (int, float)) or (time.time() - updated_at) > max_age_s:
+        if not isinstance(updated_at, (int, float)) or (time.time() - updated_at) > eff_max_age:
             return None
     return entry
 
 
 def cached_model_efforts(harness_name: str, model: str,
-                         max_age_s: float | None = HARNESS_OPTIONS_CACHE_TTL_S) -> list[str] | None:
+                         max_age_s: float | None | object = _DEFAULT_OPTIONS_TTL) -> list[str] | None:
     """Return cached supported effort IDs for *model* (`[]` = known unsupported, `None` = unknown)."""
     if not harness_name or not model:
         return None

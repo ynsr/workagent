@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react"
-import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { Monitor, Moon, RotateCcw, Sun } from "lucide-react"
 import { HarnessPicker } from "@/components/HarnessPicker"
@@ -15,7 +14,7 @@ import {
 } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { queryKeys, useConfig, useCreateRun } from "@/lib/queries"
+import { useConfig, useCreateRun } from "@/lib/queries"
 import {
   OPTOUT_ACTIONS,
   OPTOUT_LABELS,
@@ -35,7 +34,6 @@ const THEME_OPTIONS = [
   { value: "system", label: "System", icon: Monitor },
 ] as const
 export function Settings() {
-  const qc = useQueryClient()
   const { theme, setTheme } = useTheme()
   const { data: cfg } = useConfig()
   const createRun = useCreateRun()
@@ -88,7 +86,6 @@ export function Settings() {
         confirm: false,
       })
       toast.success(`Default AI harness set to ${next}`)
-      void qc.invalidateQueries({ queryKey: queryKeys.config })
     } catch (err) {
       setPending((cur) => (cur?.value === next && cur.baseline === baseline ? null : cur))
       setPendingModel((cur) => (cur?.baseline === modelBaseline ? null : cur))
@@ -108,7 +105,6 @@ export function Settings() {
         confirm: false,
       })
       toast.success(next ? `Default AI model set to ${next}` : "Default AI model reset to harness default")
-      void qc.invalidateQueries({ queryKey: queryKeys.config })
     } catch (err) {
       setPendingModel((cur) => (cur?.value === next && cur.baseline === baseline ? null : cur))
       toast.error(errorText(err))
@@ -126,7 +122,6 @@ export function Settings() {
         confirm: false,
       })
       toast.success(next ? `Default effort set to ${next}` : "Default effort reset to harness default")
-      void qc.invalidateQueries({ queryKey: queryKeys.config })
     } catch (err) {
       setPendingEffort((cur) => (cur?.value === next && cur.baseline === baseline ? null : cur))
       toast.error(errorText(err))

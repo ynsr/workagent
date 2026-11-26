@@ -46,3 +46,17 @@ def test_set_issue_cache_prunes_rows_older_than_max_age(isolated_config):
     sq.set_issue_cache(db, "jira:mine90", [{"key": "NEW-1"}], max_age_seconds=86400)
     old_rows, old_ts = sq.get_issue_cache(db, "jira:old365")
     assert old_rows == [] and old_ts is None
+
+
+def test_tracker_upsert_and_delete_clear_issue_cache(isolated_config):
+    db = sq.db_path()
+    sq.init_db(db)
+    sq.set_issue_cache(db, "jira:mine90", [{"key": "IPG-1"}])
+    sq.upsert_tracker(db, "jira:IPG", vendor="jira", remote_url="https://jira.example.com", is_enabled=False)
+    rows, ts = sq.get_issue_cache(db, "jira:mine90")
+    assert rows == [] and ts is None
+
+    sq.set_issue_cache(db, "jira:mine90", [{"key": "IPG-2"}])
+    assert sq.delete_tracker(db, "jira:IPG") is True
+    rows2, ts2 = sq.get_issue_cache(db, "jira:mine90")
+    assert rows2 == [] and ts2 is None

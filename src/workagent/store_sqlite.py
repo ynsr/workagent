@@ -2175,7 +2175,8 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
     sig = _file_sig(path)
     with _INIT_LOCK:
         cached_sig = _INIT_CACHE.get(key)
-        backfill_needed = key not in _BACKFILL_DONE and key not in _BACKFILL_STARTED
+        bf_key = str(db_path())
+        backfill_needed = bf_key not in _BACKFILL_DONE and bf_key not in _BACKFILL_STARTED
     if sig is not None and cached_sig == sig:
         if backfill_needed:
             if defer_backfill:
@@ -2789,7 +2790,11 @@ def set_release_diff_cache(
                 " VALUES (?, ?, ?, ?, ?)"
                 " ON CONFLICT(repo_key) DO UPDATE SET"
                 " count=excluded.count, fetched_at=excluded.fetched_at,"
-                " default_branch=excluded.default_branch, release_branch=excluded.release_branch",
+                " default_branch=excluded.default_branch, release_branch=excluded.release_branch,"
+                " ci_json=CASE WHEN release_diff_cache.release_branch != excluded.release_branch"
+                " THEN '' ELSE release_diff_cache.ci_json END,"
+                " ci_fetched_at=CASE WHEN release_diff_cache.release_branch != excluded.release_branch"
+                " THEN '' ELSE release_diff_cache.ci_fetched_at END",
                 (repo_key, int(count), now_iso, default_branch, release_branch),
             )
 

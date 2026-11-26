@@ -398,18 +398,18 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
     fetched_at: str = cached_entry["fetched_at"] if branches_match else ""
 
     # Branch CI with SWR over release_diff_cache.ci_json / ci_fetched_at
-    ci_fetched_live: tuple[str, str, str] | None = None  # (ci_json, ci_fetched_at, ...)
-    def _fetch_branch_ci_live() -> tuple[str, str]:
+    ci_fetched_live: tuple[str, str] | None = None
+    def _fetch_branch_ci_live() -> tuple[str | None, str]:
         from . import refs_ci as _ci
         tool = str(info.get("tool", "") or "")
         remote = str(info.get("remote", "") or "")
         ci, ci_url = _ci.fetch_branch_ci(tool, remote, release, str(info.get("path", "")))
-        return ci or "", ci_url or ""
+        return ci, ci_url or ""
 
     def _refresh_ci_bg() -> None:
         try:
             ci, ci_url = _fetch_branch_ci_live()
-            if db is not None:
+            if ci is not None and db is not None:
                 _sq.set_release_branch_ci_cache(
                     db,
                     repo_name,
@@ -422,41 +422,54 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
 
     cached_ci_json = cached_entry.get("ci_json", "") if branches_match else ""
     cached_ci_ts = cached_entry.get("ci_fetched_at", "") if branches_match else ""
+    cached_ci_data: dict | None = None
+    if cached_ci_json:
+        try:
+            parsed = _json.loads(cached_ci_json)
+            if isinstance(parsed, dict):
+                cached_ci_data = parsed
+        except Exception:
+            cached_ci_data = None
+
     ci_served = False
-    if not force and cached_ci_json and cached_ci_ts:
+    if not force and cached_ci_data is not None and cached_ci_ts:
         try:
             ci_age = (datetime.now(timezone.utc) - datetime.fromisoformat(cached_ci_ts)).total_seconds()
-            ci_data = _json.loads(cached_ci_json)
-            if isinstance(ci_data, dict):
-                if ci_age < _ci_ttl():
-                    base["ci"] = str(ci_data.get("ci") or ci_data.get("status") or "")
-                    base["ci_url"] = str(ci_data.get("ci_url") or "")
-                    ci_served = True
-                elif ci_age < _ci_swr():
-                    base["ci"] = str(ci_data.get("ci") or ci_data.get("status") or "")
-                    base["ci_url"] = str(ci_data.get("ci_url") or "")
-                    _swr.serve_stale_or_refresh(ci_data, False, _refresh_ci_bg, f"release-ci:{repo_name}")
-                    ci_served = True
+            if ci_age < _ci_ttl():
+                base["ci"] = str(cached_ci_data.get("ci") or cached_ci_data.get("status") or "")
+                base["ci_url"] = str(cached_ci_data.get("ci_url") or "")
+                ci_served = True
+            elif ci_age < _ci_swr():
+                base["ci"] = str(cached_ci_data.get("ci") or cached_ci_data.get("status") or "")
+                base["ci_url"] = str(cached_ci_data.get("ci_url") or "")
+                _swr.serve_stale_or_refresh(cached_ci_data, False, _refresh_ci_bg, f"release-ci:{repo_name}")
+                ci_served = True
         except Exception:
             ci_served = False
 
     if not ci_served:
         try:
             ci, ci_url = _fetch_branch_ci_live()
-            base["ci"], base["ci_url"] = ci, ci_url
-            now_ci_ts = datetime.now(timezone.utc).isoformat()
-            ci_payload = _json.dumps({"ci": ci, "ci_url": ci_url})
-            ci_fetched_live = (ci_payload, now_ci_ts)
-            if db is not None and branches_match:
-                try:
-                    _sq.set_release_branch_ci_cache(
-                        db, repo_name, ci_payload, now_ci_ts,
-                        default_branch=default, release_branch=release,
-                    )
-                except Exception:
-                    pass
+            if ci is not None:
+                base["ci"], base["ci_url"] = ci, ci_url
+                now_ci_ts = datetime.now(timezone.utc).isoformat()
+                ci_payload = _json.dumps({"ci": ci, "ci_url": ci_url})
+                ci_fetched_live = (ci_payload, now_ci_ts)
+                if db is not None and branches_match:
+                    try:
+                        _sq.set_release_branch_ci_cache(
+                            db, repo_name, ci_payload, now_ci_ts,
+                            default_branch=default, release_branch=release,
+                        )
+                    except Exception:
+                        pass
+            elif cached_ci_data is not None:
+                base["ci"] = str(cached_ci_data.get("ci") or cached_ci_data.get("status") or "")
+                base["ci_url"] = str(cached_ci_data.get("ci_url") or "")
         except Exception:
-            pass
+            if cached_ci_data is not None:
+                base["ci"] = str(cached_ci_data.get("ci") or cached_ci_data.get("status") or "")
+                base["ci_url"] = str(cached_ci_data.get("ci_url") or "")
 
     def _live() -> int:
         return release_diff_count(Path(str(info["path"])).expanduser(), default, release)

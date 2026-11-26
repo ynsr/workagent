@@ -637,7 +637,7 @@ export function Dashboard({ initialLaunchOpen = false }: { initialLaunchOpen?: b
         confirm: true,
       })
       runCreated(run_id, `Destroyed ${key}`)
-      void qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
+      void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
     } catch (err) {
       toast.error(errorText(err))
     }
@@ -697,7 +697,7 @@ export function Dashboard({ initialLaunchOpen = false }: { initialLaunchOpen?: b
         // Refresh per row: a destroyed row must leave the table (and the
         // selection) before the next create — a stale list keeps the row
         // selectable and a second Destroy click queues an overlapping loop.
-        await qc.invalidateQueries({ queryKey: queryKeys.statusDeleted })
+        await qc.invalidateQueries({ queryKey: queryKeys.statusAll })
       }
     }
   }

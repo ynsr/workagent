@@ -228,6 +228,8 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
                             p, u = _query_pr(repo, branch)
                         except HarnessError:
                             return
+                        if p is None and u is None and cached.get("pr"):
+                            return
                         new_base = (p or {}).get("target_branch") or base_branch
                         if new_base != base_branch:
                             new_ab = repos.ahead_behind(Path(wt), new_base, branch) if new_base else ab

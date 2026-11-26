@@ -182,3 +182,19 @@ describe("ReleaseRow Pull button", () => {
     )
   })
 })
+
+describe("ReleaseCard manual Refresh", () => {
+  it("renders Refresh button on Ready to release header", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <ConfirmProvider>
+            <ReleaseCard />
+          </ConfirmProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole("button", { name: /Refresh/i })).toBeInTheDocument()
+  })
+})
