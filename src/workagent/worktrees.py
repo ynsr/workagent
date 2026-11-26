@@ -250,7 +250,9 @@ def _sleep_for_pr_retry(secs: float) -> None:
 _TRANSIENT_PR_ERRORS = ("timed out", "timeout", "timedout", "connection",
                         "connect", "tls", "ssl", "dns", "proxy", "reset",
                         "refused", "unreachable", "temporar", "econn",
-                        "socket", "network", "502", "503", "504")
+                        "socket", "network", ": eof", "unexpected eof",
+                        "broken pipe", "deadline exceeded", "stream error",
+                        "502", "503", "504")
 
 
 def _transient_pr_error(err: Exception) -> bool:

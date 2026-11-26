@@ -1,4 +1,6 @@
 """Issue #60: live PR lookup retry (transient gh/proxy blip swallowed → bogus "no recorded PR/MR")."""
+import pytest
+
 from workagent import refs, store, worktrees
 from workagent.errors import HarnessError
 
@@ -76,3 +78,36 @@ def test_live_lookup_unexpected_crash_returns_none(monkeypatch, tmp_path, capsys
     monkeypatch.setattr(worktrees, "_repo_tool_for_pr_lookup", lambda repo: "gh")
     assert worktrees.worktree_pr_url("k", entry) is None
     assert "live PR lookup" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("err_msg", [
+    'gh pr list --head feat/213 failed: Post "https://api.github.com/graphql": EOF',
+    "gh pr list failed: unexpected EOF",
+    "gh pr list failed: write tcp: broken pipe",
+    "gh pr list failed: context deadline exceeded",
+    "gh pr list failed: stream error: stream ID 1; INTERNAL_ERROR",
+])
+def test_live_lookup_retries_eof_and_transport_errors(monkeypatch, tmp_path, err_msg):
+    """Issue #215: Go net/http 'Post ...: EOF' (and similar transport blips)
+    must retry instead of failing fast and causing review to exit 2."""
+    entry = {"repo": str(tmp_path), "branch": "feat/213", "pr_url": ""}
+    calls = []
+
+    def flaky_eof(tool, branch, cwd=None, timeout=None):
+        calls.append(branch)
+        if len(calls) == 1:
+            raise HarnessError(err_msg)
+        return [{"number": 214, "state": "open",
+                 "url": "https://github.com/ynsr/workagent/pull/214"}]
+
+    monkeypatch.setattr(refs, "fetch_pr_list_for_branch", flaky_eof)
+    recorded = {}
+    monkeypatch.setattr(worktrees, "_repo_tool_for_pr_lookup", lambda repo: "gh")
+    monkeypatch.setattr(worktrees, "_sleep_for_pr_retry", lambda secs: None)
+    monkeypatch.setattr(store, "record_link",
+                        lambda k, rec: recorded.update({k: rec}))
+    url = worktrees.worktree_pr_url("k", entry)
+    assert url == "https://github.com/ynsr/workagent/pull/214"
+    assert len(calls) == 2
+    assert recorded["k"]["pr_url"] == "https://github.com/ynsr/workagent/pull/214"
+
