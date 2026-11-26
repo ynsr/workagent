@@ -686,10 +686,6 @@ def _cache_swr_seconds() -> int:
     return _swr_window(_cache_ttl_seconds(), "WORKAGENT_ISSUES_SWR_SECONDS")
 
 
-_CACHE_TTL_SECONDS = _cache_ttl_seconds()
-_CACHE_SWR_SECONDS = _cache_swr_seconds()
-
-
 def _cache_key(source: str, days: int, mine: bool) -> str:
     """Cache variant for a (source, window, scope) query — selections
     outside the initial superset land on their own key, so a broad
@@ -701,51 +697,59 @@ def _cached_source(source: str, fetch, warn: list,
                    force: bool, cache_key: str | None = None) -> list[dict]:
     """Per-source issue rows, stale-while-revalidate.
 
-    Fresh cache (< 1h) → served instantly. Expired-but-present cache →
-    served instantly with one background revalidation (exactly-once per
-    key, see `swr`); the table renders stale rows + overlay instead of
-    blocking on the tracker CLIs. Empty cache → live fetch inline (first
-    load has nothing to show yet). `force` always fetches live inline.
-    Pre-cutover (no state.db) or any cache failure → live fetch, never raise.
+    Distinguishes cached empty list ``[]`` (fetched_at is not None) from
+    missing cache (fetched_at is None). Preserves existing cached rows on
+    upstream error, isolates background `warn` lists, and prunes rows older
+    than the SWR window on write.
     """
     from datetime import datetime, timezone
     from . import store_sqlite as sq
     from . import swr as _swr
     db = sq.db_path()
     key = cache_key or source
+    has_db = db.exists()
+    cached: list[dict] = []
+    fetched_at: str | None = None
+    if has_db:
+        try:
+            cached, fetched_at = sq.get_issue_cache(db, key)
+        except Exception:
+            cached, fetched_at = [], None
 
-    def _live() -> list[dict]:
+    def _live(target_warn: list[str]) -> list[dict]:
+        local_warn: list[str] = []
+        failed = False
         try:
-            rows = fetch(warn)
+            rows = fetch(local_warn)
         except Exception as e:
-            warn.append(f"{source}: {e}")
-            return []
+            local_warn.append(f"{source}: {e}")
+            rows = []
+            failed = True
+        target_warn.extend(local_warn)
+        if failed or (local_warn and not rows):
+            return cached if fetched_at is not None else rows
         try:
-            if db.exists():
-                sq.set_issue_cache(db, key, rows)
+            if has_db:
+                sq.set_issue_cache(db, key, rows, max_age_seconds=_cache_swr_seconds())
         except Exception:
             pass
         return rows
 
-    if force or not db.exists():
-        return _live()
-    try:
-        cached, fetched_at = sq.get_issue_cache(db, key)
-    except Exception:
-        return _live()
-    if not cached or not fetched_at:
-        return _live()
+    if force or not has_db or fetched_at is None:
+        return _live(warn)
     try:
         age = (datetime.now(timezone.utc)
                - datetime.fromisoformat(fetched_at)).total_seconds()
     except ValueError:
-        return _live()
+        return _live(warn)
     if age < _cache_ttl_seconds():
         return cached
     if age < _cache_swr_seconds():
-        payload, _stale = _swr.serve_stale_or_refresh(cached, False, _live, key)
+        payload, _stale = _swr.serve_stale_or_refresh(
+            cached, False, lambda: _live([]), key
+        )
         return payload
-    return _live()
+    return _live(warn)
 
 
 def _tracker_host(url: str) -> str:

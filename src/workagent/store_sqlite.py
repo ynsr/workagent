@@ -2611,19 +2611,47 @@ def get_issue_cache(path: Path, source: str) -> tuple[list, str | None]:
     return json.loads(row[0]), row[1]
 
 
-def set_issue_cache(path: Path, source: str, rows: list[dict]) -> None:
-    """Upsert cached issue rows for *source* with a fresh fetched_at."""
+def set_issue_cache(
+    path: Path,
+    source: str,
+    rows: list[dict],
+    *,
+    max_age_seconds: int | None = None,
+) -> None:
+    """Upsert cached issue rows for *source* with a fresh fetched_at.
+
+    When *max_age_seconds* is set, prunes stale rows older than that window.
+    """
     import json
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     init_db(path)
+    now = datetime.now(timezone.utc)
     with connect(path) as conn:
         conn.execute(
             "INSERT INTO issue_cache (source, payload, fetched_at)"
             " VALUES (?, ?, ?)"
             " ON CONFLICT(source) DO UPDATE SET payload=excluded.payload,"
             " fetched_at=excluded.fetched_at",
-            (source, json.dumps(rows),
-             datetime.now(timezone.utc).isoformat()))
+            (source, json.dumps(rows), now.isoformat()),
+        )
+        if max_age_seconds is not None and max_age_seconds >= 0:
+            cutoff = now - timedelta(seconds=max_age_seconds)
+            stale_sources: list[str] = []
+            for src, ts in conn.execute("SELECT source, fetched_at FROM issue_cache").fetchall():
+                if src == source:
+                    continue
+                try:
+                    dt = datetime.fromisoformat(ts or "")
+                except ValueError:
+                    stale_sources.append(src)
+                    continue
+                if dt < cutoff:
+                    stale_sources.append(src)
+            if stale_sources:
+                conn.execute(
+                    f"DELETE FROM issue_cache WHERE source IN ({','.join('?' for _ in stale_sources)})",
+                    stale_sources,
+                )
 
 
 def clear_issue_cache(path: Path) -> None:

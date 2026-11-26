@@ -307,6 +307,8 @@ def test_expired_issue_cache_serves_stale_without_fetch(monkeypatch, tmp_path):
     from datetime import datetime, timedelta, timezone
     from workagent import trackers
     from workagent import store_sqlite as sq
+    from workagent import swr
+    swr.set_background_enabled(True)
     monkeypatch.setattr(sq, "db_path", lambda: tmp_path / "state.db")
     stale_rows = [{"key": "jira:OLD-1", "title": "stale"}]
     sq.set_issue_cache(sq.db_path(), "jira:mine90", stale_rows)

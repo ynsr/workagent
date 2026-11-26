@@ -892,7 +892,14 @@ def create_app(static_dir: Path, host: str, port: int,
         if not isinstance(domains, list) or any(not isinstance(d, str) for d in domains):
             from fastapi import HTTPException
             raise HTTPException(status_code=400, detail="domains must be a list of strings")
-        return {"disabled_domains": store.save_disabled_tracker_domains(domains)}
+        saved = store.save_disabled_tracker_domains(domains)
+        try:
+            from . import store_sqlite as _sq
+            if _sq.db_path().exists():
+                _sq.clear_issue_cache(_sq.db_path())
+        except Exception:
+            pass
+        return {"disabled_domains": saved}
 
     @app.get("/api/links")
     def links_list() -> dict:
