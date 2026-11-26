@@ -871,8 +871,24 @@ def test_start_accepts_pr_ref(isolated_config, tmp_path, monkeypatch):
     assert r.exit_code == 0, r.output
     assert launched != []
     links = store.load_links()
-    assert set(links) == {"feat/88"}
-    assert links["feat/88"]["pr_url"] == url
+    assert set(links) == {"feat/88@proj"}
+    assert links["feat/88@proj"]["pr_url"] == url
+
+
+def test_start_pr_dry_run_suffixes_key_with_repo(isolated_config, tmp_path, monkeypatch):
+    """start <PR-url> --dry-run reports `<branch>@<repo>` as key."""
+    repo_dir = tmp_path / "proj"
+    repo_dir.mkdir()
+    monkeypatch.setattr(cli.trackers, "resolve_for_tracker",
+                        lambda tid, explicit, cwd, depth=7, yes=False, persist=True: (repo_dir, "recorded"))
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"title": "T", "body": "B",
+                                                  "head_ref": "feat/88"})
+    r = runner.invoke(cli.app, ["start", "https://github.com/o/r/pull/88", "--dry-run", "--json"])
+    assert r.exit_code == 0, r.output
+    import json as _json
+    assert _json.loads(r.stdout)["key"] == "feat/88@proj"
 
 
 def test_start_register_only_skips_harness(tmp_path, monkeypatch, isolated_config):

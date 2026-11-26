@@ -417,7 +417,8 @@ def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
         _fail(str(e), EXIT_USAGE)
     if dry_run:
         _print_result({"dry_run": True, "repo": str(repo_dir), "pr_url": pr_url,
-                       "key": head_ref, "branch": head_ref,
+                       "key": refs.branch_key(head_ref, repo_dir),
+                       "branch": head_ref,
                        "harness": harness_name,
                        "tracker": tid, "tracker_link": outcome}, json_output)
         return

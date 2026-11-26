@@ -230,7 +230,7 @@ def test_review_launch_failure_clears_reviewed(isolated_config, tmp_path,
 
     monkeypatch.setattr(cli.backend, "launch", boom)
     url = "https://github.com/o/r/pull/33"
-    key = "feat/33"
+    key = "feat/33@proj"
     r = runner.invoke(cli.app, ["review", url, "--no-tty", "--launch", "--json"])
     assert r.exit_code == 1
     entry = store.load_links()[key]

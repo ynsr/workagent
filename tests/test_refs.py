@@ -65,6 +65,14 @@ def test_issue_key_jira_repo_suffix():
     assert refs.issue_key(g, "other") == "github:o/r#22"
 
 
+def test_branch_key_repo_suffix():
+    from pathlib import Path
+    assert refs.branch_key("feat/33", "proj") == "feat/33@proj"
+    assert refs.branch_key("feat/33", Path("/home/x/My Repo!")) == "feat/33@my-repo"
+    assert refs.branch_key("feat/33", "") == "feat/33"
+    assert refs.branch_key("", "proj") == ""
+
+
 def test_split_issue_key_round_trip():
     assert refs.split_issue_key("jira:IPG-1011@saman-ipg") == ("jira:IPG-1011", "saman-ipg")
     assert refs.split_issue_key("jira:IPG-1011") == ("jira:IPG-1011", None)

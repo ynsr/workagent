@@ -129,6 +129,14 @@ def issue_key(parsed: dict, repo: str = "") -> str:
     return f"{host}:{r}#{parsed['number']}"
 
 
+def branch_key(branch: str, repo: "str | Path" = "") -> str:
+    """Worktree ref key for a PR/MR-initiated branch: ``<branch>@<repo-slug>``."""
+    r = str(repo or "")
+    name = Path(r).name if ("/" in r or "\\" in r) else r
+    suffix = slugify_repo(name) if name else ""
+    return f"{branch}{_KEY_REPO_SEP}{suffix}" if (branch and suffix) else branch
+
+
 def split_issue_key(key: str) -> tuple[str, str | None]:
     """Split a link key into ``(base_key, repo_suffix | None)``."""
     host, _, ident = key.partition(":")
