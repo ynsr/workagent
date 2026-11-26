@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Skip AI judgment for Agy harness (keep for OMP) and run AI rebase directly without git merge when Sync method is Rebase [223]
 - Request a rebase instead of a merge in the Sync conflict prompt when the selected Sync method is Rebase [221]
 - Fix headless validation retrying successful `fix_comments` and `start` runs when a branch is pushed without a local upstream tracking ref [217]
 - Append repo name to worktree keys when starting or registering worktrees from PR or MR links [213]

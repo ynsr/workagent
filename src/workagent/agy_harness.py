@@ -266,6 +266,9 @@ class AgyAcpHarness(_AgyOptionMixin, AcpHarness):
     def authenticate_method(self) -> str | None:
         return None
 
+    def need_judgment(self) -> bool:
+        return False
+
     def extract_question(self, update: dict) -> Question | None:
         inner = update.get("update") or {}
         if inner.get("sessionUpdate") not in ("tool_call", "tool_call_update"):

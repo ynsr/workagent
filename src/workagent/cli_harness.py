@@ -633,9 +633,11 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                         raise RuntimeError(f"judge failed (exit {code}) or produced no transcript")
                     return harness.extract_last_assistant_text(str(target), max_chars=None)
 
+            needs_judge = getattr(harness, "need_judgment", lambda: True)()
             validation = _cv.validate_headless(
                 worktree=worktree or fallback_dir, branch=branch, prompt=prompt,
-                session_type=stype, run_once=run_once, run_judge=run_judge,
+                session_type=stype, run_once=run_once,
+                run_judge=run_judge if needs_judge else None,
                 run_db=db if db.exists() else None,
                 # The attempt counter belongs to the transcript, not to this
                 # invocation's fresh row: key it on the chain head so a

@@ -146,7 +146,7 @@ def _sync_create_pr_worktree(ref: str, parsed: dict, dry_run: bool,
 
 def result_failed(result: dict) -> bool:
     """True when a sync result reports a failure state."""
-    return result.get("result") in ("conflict", "missing-worktree", "error") \
+    return result.get("result") in ("conflict", "needs-harness", "missing-worktree", "error") \
         or result.get("result", "").startswith("conflict-") \
         or result.get("result") is None
 
@@ -260,8 +260,8 @@ def _sync_one(key: str, entry: dict, merge: bool,
         sync_mod.rebase_remote(tool, pr, Path(wt))
     except HarnessError as e:
         eprint(f"{key}: {tool} rebase failed ({e}) — falling back to "
-               "local merge")
-        result["strategy"] = "local-merge"
+               "local rebase")
+        result["strategy"] = "local-rebase"
         result["fallback"] = True
         if not db:
             _fail(f"{key}: cannot determine default branch for {repo}", EXIT_GENERAL)
@@ -292,13 +292,23 @@ def _sync_local_merge(key: str, wt: str, branch: str, db: str, result: dict,
                       acp: bool = False, run_mode: "str | None" = None,
                       model: "str | None" = None, effort: "str | None" = None,
                       merge: bool = True) -> dict:
-    """Local-merge flow shared by --merge, no-PR fallback, and rebase
-    failure fallback."""
+    """Local sync flow shared by --merge, no-PR fallback, and rebase
+    failure fallback (runs AI rebase directly when merge=False)."""
     from . import cli as _cli  # shim: tests patch cli._run_harness/_guard_harness
     if harness is None and use_harness is not None:
         harness = store.default_harness() if use_harness is True else (str(use_harness) if use_harness else None)
     if not isinstance(session_file, str):
         session_file = None
+    if not merge:
+        result["strategy"] = "local-rebase"
+        if dry_run:
+            result["result"] = "would-rebase"
+            eprint(f"{key}: would rebase {branch} onto origin/{db} via harness in {wt}")
+            return result
+        return _handle_merge_conflict(key, wt, branch, db, result,
+                                      harness, yes, json_output,
+                                      session_file, None, extra_prompt,
+                                      env_file, None, acp, run_mode, model, effort, merge=False)
     result["strategy"] = "local-merge"
     if dry_run:
         result["result"] = "would-merge"
@@ -365,18 +375,16 @@ _PUSH_PROOF = (" After resolving: show `git status` clean and "
 def _sync_conflict_prompt(branch: str, db: str, conflicts: list[str] | None,
                           *, merge: bool, extra_prompt: str | None = None) -> str:
     """Build the conflict-resolution prompt for merge or rebase sync mode."""
-    files = ", ".join(conflicts or ["<unknown>"])
     if merge:
+        files = ", ".join(conflicts or ["<unknown>"])
         body = (f"The branch {branch} has merge conflicts with "
                 f"{db} in files: {files}. "
                 "Resolve them, complete the merge, commit, push to "
                 f"origin/{branch}, and stop.")
     else:
-        body = (f"The branch {branch} has conflicts with "
-                f"{db} in files: {files}. "
-                "Perform a rebase instead of a merge: abort any in-progress merge "
-                "(`git merge --abort`), rebase "
-                f"{branch} onto origin/{db} (resolving conflicts and running `git rebase --continue`), "
+        body = (f"Rebase branch {branch} onto origin/{db} "
+                "(fetching origin first if needed, resolving any conflicts and "
+                "running `git rebase --continue`), "
                 f"force-push (`git push --force-with-lease origin {branch}`), and stop.")
     return append_extra_prompt(body + _CHANGELOG_RULE + _PUSH_PROOF, extra_prompt)
 
@@ -391,42 +399,35 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
                    acp: bool = False, run_mode: "str | None" = None,
                    model: "str | None" = None, effort: "str | None" = None,
                    merge: bool = True) -> dict:
-    """Harness/prompt resolution for a merge left in progress."""
+    """Harness/prompt resolution for a merge left in progress or AI rebase."""
     from . import cli as _cli  # shim: tests patch cli._run_harness/_guard_harness
     if harness is None and use_harness is not None:
         harness = store.default_harness() if use_harness is True else (str(use_harness) if use_harness else None)
     run_harness_now = bool(harness) or yes
     selected_harness = harness or store.default_harness()
-    if run_harness_now:
-        result["result"] = "conflict-harness"
+    harness_result = "conflict-harness" if merge else "rebase-harness"
+    confirm_msg = ("launch the harness to resolve?" if merge
+                   else "launch the harness to rebase?")
+    if run_harness_now or (sys.stdin.isatty() and typer.confirm(confirm_msg)):
+        result["result"] = harness_result
         result["command"] = "sync"
         prompt = _sync_conflict_prompt(branch, db, conflicts, merge=merge, extra_prompt=extra_prompt)
         use_acp = bool(acp or (run_mode or "").strip().lower() == "acp")
         _cli._guard_harness(key, wt)
         _cli._run_harness(selected_harness, prompt, wt, wt,
-                     no_tty=bool(yes), launch=not use_acp,
+                     no_tty=bool(yes),
+                     launch=not use_acp,
                      result=result, json_output=json_output, run_key=key,
                      session_file=session_file, env_file=env_file,
                      acp=use_acp, run_mode=run_mode, model=model, effort=effort)
     elif sys.stdin.isatty():
-        if typer.confirm("launch the harness to resolve?"):
-            result["result"] = "conflict-harness"
-            result["command"] = "sync"
-            prompt = _sync_conflict_prompt(branch, db, conflicts, merge=merge, extra_prompt=extra_prompt)
-            use_acp = bool(acp or (run_mode or "").strip().lower() == "acp")
-            _cli._guard_harness(key, wt)
-            _cli._run_harness(selected_harness, prompt, wt, wt,
-                         no_tty=False, launch=not use_acp,
-                         result=result, json_output=json_output, run_key=key,
-                         session_file=session_file, env_file=env_file,
-                         acp=use_acp, run_mode=run_mode, model=model, effort=effort)
-        else:
-            _fail("aborted (merge left in progress; abort with "
-                  "`git merge --abort`)", EXIT_USAGE)
+        _fail("aborted (merge left in progress; abort with `git merge --abort`)"
+              if merge else "aborted", EXIT_USAGE)
     else:
-        result["result"] = "conflict"
-        eprint(f"{key}: conflicts need human resolution — re-run "
-               "with --harness or --yes to auto-launch the harness")
+        result["result"] = "conflict" if merge else "needs-harness"
+        msg = ("conflicts need human resolution" if merge
+               else "rebase needs AI harness")
+        eprint(f"{key}: {msg} — re-run with --harness or --yes to auto-launch the harness")
         _record_no_harness_run(key, result, exit_code=1)
     return result
 
