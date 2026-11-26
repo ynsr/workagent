@@ -2552,6 +2552,52 @@ def delete_pr_cache_entry(path: Path, key: str, fallback_key: str = "") -> int:
         return cur.rowcount
 
 
+def _live_pr_cache_keys_conn(conn) -> set[str]:
+    """Build set of pr_cache keys referenced by any row in worktrees."""
+    live: set[str] = set()
+    rows = conn.execute(
+        "SELECT w.branch, w.repo_key, COALESCE(r.path, ''), w.payload"
+        " FROM worktrees w LEFT JOIN repos r ON r.key_ref = w.repo_key"
+    ).fetchall()
+    for branch, repo_key, repo_path, payload_raw in rows:
+        b = str(branch or "")
+        if not b:
+            continue
+        live.add(b)
+        repos_set = {str(repo_key or ""), str(repo_path or "")}
+        if payload_raw:
+            try:
+                p = json.loads(payload_raw)
+                if isinstance(p, dict) and p.get("repo"):
+                    repos_set.add(str(p["repo"]))
+            except Exception:
+                pass
+        for r in repos_set:
+            if r:
+                live.add(f"{r}\x1f{b}")
+    return live
+
+
+def prune_orphan_pr_cache(path: Path) -> int:
+    """Delete pr_cache rows not referenced by any row in worktrees."""
+    init_db(path)
+    with connect(path) as conn:
+        live = _live_pr_cache_keys_conn(conn)
+        existing = [r[0] for r in conn.execute("SELECT branch FROM pr_cache").fetchall()]
+        orphans = [k for k in existing if k not in live]
+        if not orphans:
+            return 0
+        deleted = 0
+        for i in range(0, len(orphans), 200):
+            batch = orphans[i:i + 200]
+            cur = conn.execute(
+                f"DELETE FROM pr_cache WHERE branch IN ({','.join('?' for _ in batch)})",
+                batch,
+            )
+            deleted += cur.rowcount
+        return deleted
+
+
 def get_issue_cache(path: Path, source: str) -> tuple[list, str | None]:
     """Cached issue rows for *source* + fetched_at ISO, or ([], None)."""
     import json

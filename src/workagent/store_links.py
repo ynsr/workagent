@@ -119,10 +119,17 @@ def purge_orphans_conn(conn, dry_run: bool = False) -> dict:
         "SELECT COUNT(*) FROM worktrees WHERE parent_key_ref <> ''"
         " AND parent_key_ref NOT IN (SELECT ref_key FROM worktrees)").fetchone()[0]
 
+    from .store_sqlite import _live_pr_cache_keys_conn
+    live_pr_keys = _live_pr_cache_keys_conn(conn)
+    orphan_pr_keys = [
+        r[0] for r in conn.execute("SELECT branch FROM pr_cache").fetchall()
+        if r[0] not in live_pr_keys
+    ]
     out = {"runs": run_count, "flows": flow_count, "messages": msg_count,
-           "parent_links": parent_count, "transcripts": sorted(targets),
+           "parent_links": parent_count, "pr_cache": len(orphan_pr_keys),
+           "transcripts": sorted(targets),
            "scoped_dirs": sorted(scoped_dirs)}
-    if dry_run or not any(out[k] for k in ("runs", "flows", "messages", "parent_links")):
+    if dry_run or not any(out[k] for k in ("runs", "flows", "messages", "parent_links", "pr_cache")):
         return out
     # Correlated predicates, not the precomputed ref sets: linked/runs were
     # read in autocommit, so a worktree created in between must not have its
@@ -136,6 +143,12 @@ def purge_orphans_conn(conn, dry_run: bool = False) -> dict:
     conn.execute("UPDATE worktrees SET parent_key_ref = ''"
                  " WHERE parent_key_ref <> ''"
                  " AND parent_key_ref NOT IN (SELECT ref_key FROM worktrees)")
+    for i in range(0, len(orphan_pr_keys), 200):
+        batch = orphan_pr_keys[i:i + 200]
+        conn.execute(
+            f"DELETE FROM pr_cache WHERE branch IN ({','.join('?' for _ in batch)})",
+            batch,
+        )
     return out
 
 
@@ -325,6 +338,12 @@ def delete_worktree_row(path: Path, key: str) -> dict:
     from .errors import HarnessError
     init_db(path)
     with connect(path) as conn:
+        wrow = conn.execute(
+            "SELECT w.branch, COALESCE(r.path, w.repo_key), w.payload"
+            " FROM worktrees w LEFT JOIN repos r ON r.key_ref = w.repo_key"
+            " WHERE w.ref_key = ?",
+            (key,),
+        ).fetchone()
         run_count = conn.execute(
             "SELECT COUNT(*) FROM runs WHERE worktree_ref = ?", (key,)
         ).fetchone()[0]
@@ -332,6 +351,13 @@ def delete_worktree_row(path: Path, key: str) -> dict:
         deps = _purge_dependents_conn(conn, [key])
         if cur.rowcount == 0:
             raise HarnessError(f"no worktree link for {key}", exit_code=2)
+        if wrow and wrow[0]:
+            b, repo_p = str(wrow[0]), str(wrow[1] or "")
+            pr_keys = [k for k in dict.fromkeys((f"{repo_p}\x1f{b}" if repo_p else b, b)) if k]
+            conn.execute(
+                f"DELETE FROM pr_cache WHERE branch IN ({','.join('?' for _ in pr_keys)})",
+                pr_keys,
+            )
     return {"runs": run_count, **deps}
 
 
@@ -434,6 +460,14 @@ def gc_soft_deleted(path: Path, retention_days: int = SOFT_DELETE_RETENTION_DAYS
             ).fetchone()[0]
             conn.execute("DELETE FROM worktrees WHERE ref_key = ?", (key,))
             deps = _purge_dependents_conn(conn, [key])
+            if r.get("branch"):
+                b = str(r["branch"])
+                rp = str(r.get("repo") or "")
+                pr_keys = [k for k in dict.fromkeys((f"{rp}\x1f{b}" if rp else b, b)) if k]
+                conn.execute(
+                    f"DELETE FROM pr_cache WHERE branch IN ({','.join('?' for _ in pr_keys)})",
+                    pr_keys,
+                )
             r["cascaded"] = {"runs": run_count, **deps}
             r.pop("payload", None)
     return rows
