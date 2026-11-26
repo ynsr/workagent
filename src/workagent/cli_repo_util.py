@@ -1,6 +1,8 @@
 """Repo/tool display helpers shared by status/cleanup/sync (from cli.py)."""
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 from . import repos, store
@@ -12,7 +14,10 @@ from .swr import cache_ttl as _cache_ttl
 _PR_STYLES = {"open": "bright_green", "merged": "bright_magenta", "closed": "bright_red"}
 _CI_SYMBOLS = {"success": "✓", "failure": "✗", "running": "●"}
 _CI_STYLES = {"success": "bright_green", "failure": "bright_red", "running": "cyan"}
-_DB_CACHE: dict[str, str] = {}
+_DB_LOCK = threading.Lock()
+_DB_POS_TTL_S = 600.0
+_DB_NEG_TTL_S = 60.0
+_DB_CACHE: dict[str, tuple[float, str]] = {}
 # Fresh TTLs (seconds), each overridable via its WORKAGENT_* env var
 # (unset/invalid → default). SWR windows: explicit WORKAGENT_*_SWR_SECONDS
 # wins, else max(ttl * 10, 1 day) — cached rows stay servable while a
@@ -58,12 +63,22 @@ def _ci_swr() -> int:
 
 
 def _repo_default_branch(repo: str) -> str | None:
-    if repo not in _DB_CACHE:
-        try:
-            _DB_CACHE[repo] = repos.default_branch(Path(repo))
-        except HarnessError:
-            _DB_CACHE[repo] = ""
-    return _DB_CACHE[repo] or None
+    now = time.monotonic()
+    with _DB_LOCK:
+        hit = _DB_CACHE.get(repo)
+        if hit is not None:
+            ts, val = hit
+            ttl = _DB_POS_TTL_S if val else _DB_NEG_TTL_S
+            if now - ts < ttl:
+                return val or None
+            _DB_CACHE.pop(repo, None)
+    try:
+        val = repos.default_branch(Path(repo))
+    except HarnessError:
+        val = ""
+    with _DB_LOCK:
+        _DB_CACHE[repo] = (time.monotonic(), val)
+    return val or None
 
 
 def _repo_tool(repo: str) -> str | None:

@@ -6,8 +6,10 @@ of the pinned SHA), "github-pr-merge-commit" (gh pr merge --merge
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
+import threading
 import time
 
 from .errors import HarnessError, run_cmd
@@ -18,7 +20,8 @@ def _ttl() -> int:
     return _cache_ttl("WORKAGENT_RELEASE_CAPS_TTL_SECONDS", 600)
 
 
-_TTL = _ttl()
+_CACHE_LOCK = threading.Lock()
+_KEY_LOCKS: dict[tuple[str, str, str], threading.Lock] = {}
 _CACHE: dict[tuple[str, str, str], tuple[float, dict]] = {}
 _AUTH_RE = re.compile(r"401|403|auth|token|unauthorized", re.IGNORECASE)
 
@@ -76,32 +79,43 @@ def _gh_caps(path: str, release_branch: str) -> dict:
         caps["pr_required"] = bool((prot or "").strip() not in ("", "null"))
     except HarnessError as e:
         _check_auth(e)
+        if "404" not in str(e):
+            raise
     return caps
 
 
 def invalidate(tool: str, path: str, release_branch: str) -> None:
-    _CACHE.pop((tool, path, release_branch), None)
+    with _CACHE_LOCK:
+        _CACHE.pop((tool, path, release_branch), None)
 
 
 def get_caps(tool: str, path: str, release_branch: str) -> dict:
     key = (tool, path, release_branch)
-    hit = _CACHE.get(key)
-    if hit and time.monotonic() - hit[0] < _ttl():
-        return hit[1]
-    if tool == "glab":
-        method = _glab_merge_method(path)
-        strategy = ["gitlab-mr-ff"] if method == "ff" else ["ff-push"]
-        raw: dict = {"merge_method": method}
-    elif tool == "gh":
-        caps = _gh_caps(path, release_branch)
-        strategy = ["ff-push"]
-        if caps.get("allow_merge_commit"):
-            strategy.append("github-pr-merge-commit")
-        raw = dict(caps)
-    else:
-        raise HarnessError(f"unknown host CLI: {tool}", exit_code=2)
-    if not strategy:
-        raise HarnessError(f"no merge strategy available for {path}", exit_code=1)
-    result = {"strategy": strategy, "raw": raw}
-    _CACHE[key] = (time.monotonic(), result)
-    return result
+    with _CACHE_LOCK:
+        hit = _CACHE.get(key)
+        if hit and time.monotonic() - hit[0] < _ttl():
+            return copy.deepcopy(hit[1])
+        key_lock = _KEY_LOCKS.setdefault(key, threading.Lock())
+    with key_lock:
+        with _CACHE_LOCK:
+            hit = _CACHE.get(key)
+            if hit and time.monotonic() - hit[0] < _ttl():
+                return copy.deepcopy(hit[1])
+        if tool == "glab":
+            method = _glab_merge_method(path)
+            strategy = ["gitlab-mr-ff"] if method == "ff" else ["ff-push"]
+            raw: dict = {"merge_method": method}
+        elif tool == "gh":
+            caps = _gh_caps(path, release_branch)
+            strategy = ["ff-push"]
+            if caps.get("allow_merge_commit"):
+                strategy.append("github-pr-merge-commit")
+            raw = dict(caps)
+        else:
+            raise HarnessError(f"unknown host CLI: {tool}", exit_code=2)
+        if not strategy:
+            raise HarnessError(f"no merge strategy available for {path}", exit_code=1)
+        result = {"strategy": strategy, "raw": raw}
+        with _CACHE_LOCK:
+            _CACHE[key] = (time.monotonic(), copy.deepcopy(result))
+        return copy.deepcopy(result)

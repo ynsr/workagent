@@ -112,7 +112,13 @@ def load_disabled_tracker_domains() -> list[str]:
     return sorted({str(d).lower().strip().lstrip(".") for d in raw if str(d).strip()})
 
 
-HARNESS_OPTIONS_CACHE_TTL_S = 3600
+HARNESS_OPTIONS_CACHE_TTL_S = 600
+
+
+def harness_options_ttl_s() -> int:
+    """Shared TTL for in-memory and file harness-options caches (default 600s)."""
+    from .swr import cache_ttl as _cache_ttl
+    return _cache_ttl("WORKAGENT_OPTIONS_TTL_SECONDS", HARNESS_OPTIONS_CACHE_TTL_S)
 
 
 def _harness_options_cache_path() -> Path:

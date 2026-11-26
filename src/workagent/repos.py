@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 from . import store
@@ -437,26 +439,29 @@ def _known_glab_hosts(path: Path | None = None) -> set[str]:
     return hosts
 
 
-_NO_TOOL_DIRS: set[str] = set()
+_NO_TOOL_LOCK = threading.Lock()
+_NO_TOOL_TTL_S = 300.0
+_NO_TOOL_DIRS: dict[str, float] = {}
 
 
 def _detect_host_cli(path: Path) -> str | None:
     """Host CLI for *path*'s remote: gh only for GitHub hosts, glab otherwise.
 
-    The origin host is matched against each CLI's known hosts (gh
-    hosts.yml, glab config.yml); unknown hosts fall back to the legacy
-    auth-status probe (gh first). Local file reads only — no CLI spawn
-    unless the host is unknown. Probe misses are memoized per directory
-    for the process lifetime so repeated status/sync calls in one run
-    pay it once; hits are never cached (the remote can change).
+    Probe misses are memoized per directory for 5 minutes (self-healing if
+    auth or remotes change while `serve` is running).
     """
-    if str(path) in _NO_TOOL_DIRS:
-        return None
+    key = str(path)
+    now = time.monotonic()
+    with _NO_TOOL_LOCK:
+        ts = _NO_TOOL_DIRS.get(key)
+        if ts is not None:
+            if now - ts < _NO_TOOL_TTL_S:
+                return None
+            _NO_TOOL_DIRS.pop(key, None)
     url = remote_url(path)
     if not url:
-        # No origin remote: nothing to match and the auth-status probe
-        # (gh+glab, ~15s+ offline) cannot attribute a host — skip it.
-        _NO_TOOL_DIRS.add(str(path))
+        with _NO_TOOL_LOCK:
+            _NO_TOOL_DIRS[key] = time.monotonic()
         return None
     host = _remote_host(url)
     if host:
@@ -472,5 +477,6 @@ def _detect_host_cli(path: Path) -> str | None:
                 return cli
         except (FileNotFoundError, subprocess.TimeoutExpired):
             continue
-    _NO_TOOL_DIRS.add(str(path))
+    with _NO_TOOL_LOCK:
+        _NO_TOOL_DIRS[key] = time.monotonic()
     return None
