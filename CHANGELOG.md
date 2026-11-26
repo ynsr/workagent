@@ -637,7 +637,7 @@
 - Add in-app Git diff viewer with inline line annotations, prodtest YAML plan viewer, and read-only diff/plan API endpoints [145]
 - Add dedicated Worktree Workspace view (/worktrees/:ref) with collapsible inspector, ACP session/load resume, and multi-turn follow-up composer [144]
 - Serialize sequential flow steps per repo with a cross-process lock held across contiguous steps to prevent PR merge conflicts [163]
-- Drop the in-app diff viewer feature from the web UI and API [200]
+- Retry live PR/MR branch lookups on transient EOF and transport errors so flow review steps do not fail prematurely [215]
 
 - Rename project to workagent (Fix #25): package `src/harness` →
   `src/workagent`, binary `harness` → `workagent`, config
