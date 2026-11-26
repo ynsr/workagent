@@ -163,8 +163,6 @@ def default_branch(path: Path) -> str:
                 continue
     raise HarnessError(f"cannot determine default branch for {path}", exit_code=2)
 from .repos_release import (  # noqa: F401,E402 — public re-exports
-    _RELEASE_DIFF_SWR_SECONDS,
-    _RELEASE_DIFF_TTL_SECONDS,
     backfill_release_branches,
     detect_release_branch,
     release_diff_count,
@@ -383,7 +381,12 @@ def unregister_repo(name: str) -> bool:
     """Drop *name* from the registry; True when it existed."""
     if store._sqlite_path() is not None:
         from . import store_sqlite as sq
-        return sq.remove_repo_row(sq.db_path(), name)
+        removed = sq.remove_repo_row(sq.db_path(), name)
+        try:
+            sq.delete_release_diff_cache(sq.db_path(), name)
+        except Exception:
+            pass
+        return removed
     cfg = store.load_config()
     if name not in cfg.get("repos", {}):
         return False

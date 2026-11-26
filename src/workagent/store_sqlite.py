@@ -83,7 +83,11 @@ CREATE TABLE IF NOT EXISTS pr_candidates_cache (
   fetched_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS release_diff_cache (
   repo_key TEXT PRIMARY KEY NOT NULL, count INTEGER NOT NULL,
-  fetched_at TEXT NOT NULL);
+  fetched_at TEXT NOT NULL,
+  default_branch TEXT NOT NULL DEFAULT '',
+  release_branch TEXT NOT NULL DEFAULT '',
+  ci_json TEXT NOT NULL DEFAULT '',
+  ci_fetched_at TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS custom_actions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL, icon TEXT NOT NULL DEFAULT 'Zap',
@@ -2014,6 +2018,18 @@ def _file_sig(path: Path) -> tuple[int, int] | None:
         return None
 
 
+def _migrate_release_diff_cache(conn) -> None:
+    """Idempotently add branch-key and branch-CI columns to release_diff_cache."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(release_diff_cache)")}
+    if not cols:
+        return
+    for col in ("default_branch", "release_branch", "ci_json", "ci_fetched_at"):
+        if col not in cols:
+            conn.execute(
+                f"ALTER TABLE release_diff_cache ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
+            )
+
+
 def _schema_current(path: Path) -> bool:
     """Read-only probe: True when all canonical tables exist with the
     post-migration columns (v16 fold included). Read-only connections can
@@ -2096,6 +2112,9 @@ def _schema_current(path: Path) -> bool:
                 "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'repos'")}:
             return False
         if "release_diff_cache" not in tables:
+            return False
+        rdcols = {r[1] for r in conn.execute("PRAGMA table_info(release_diff_cache)")}
+        if not {"default_branch", "release_branch", "ci_json", "ci_fetched_at"} <= rdcols:
             return False
         if "custom_actions" not in tables:
             return False
@@ -2198,6 +2217,7 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
                 _migrate_runs_parent(conn)
                 _migrate_schedules(conn)
                 _migrate_runs_telemetry(conn)
+                _migrate_release_diff_cache(conn)
                 _migrate_change_log(conn)
         except sqlite3.OperationalError as e:
             last = e
@@ -2696,32 +2716,106 @@ def clear_pr_candidates_cache(path: Path) -> None:
         conn.execute("DELETE FROM pr_candidates_cache")
 
 
-def get_release_diff_cache(path: Path, repo_key: str) -> tuple[int | None, str]:
-    """Cached release diff (count, fetched_at ISO); (None, '') on miss."""
+def get_release_diff_cache_entry(path: Path, repo_key: str) -> dict | None:
+    """Full cached release_diff_cache row or None on miss."""
     init_db(path)
     try:
         with connect(path) as conn:
             row = conn.execute(
-                "SELECT count, fetched_at FROM release_diff_cache WHERE repo_key = ?",
-                (repo_key,)).fetchone()
+                "SELECT count, fetched_at, default_branch, release_branch, ci_json, ci_fetched_at"
+                " FROM release_diff_cache WHERE repo_key = ?",
+                (repo_key,),
+            ).fetchone()
     except Exception:
-        return None, ""
+        return None
     if row is None:
+        return None
+    return {
+        "count": int(row[0]),
+        "fetched_at": str(row[1] or ""),
+        "default_branch": str(row[2] or ""),
+        "release_branch": str(row[3] or ""),
+        "ci_json": str(row[4] or ""),
+        "ci_fetched_at": str(row[5] or ""),
+    }
+
+
+def get_release_diff_cache(path: Path, repo_key: str) -> tuple[int | None, str]:
+    """Cached release diff (count, fetched_at ISO); (None, '') on miss."""
+    entry = get_release_diff_cache_entry(path, repo_key)
+    if entry is None:
         return None, ""
-    return int(row[0]), str(row[1] or "")
+    return entry["count"], entry["fetched_at"]
 
 
-def set_release_diff_cache(path: Path, repo_key: str, count: int) -> None:
-    """Upsert cached release diff count with a fresh fetched_at."""
+def set_release_diff_cache(
+    path: Path,
+    repo_key: str,
+    count: int,
+    *,
+    default_branch: str = "",
+    release_branch: str = "",
+    ci_json: str | None = None,
+    ci_fetched_at: str | None = None,
+) -> None:
+    """Upsert cached release diff count (and optional branch/CI fields)."""
     from datetime import datetime, timezone
     init_db(path)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with connect(path) as conn:
+        if ci_json is not None or ci_fetched_at is not None:
+            conn.execute(
+                "INSERT INTO release_diff_cache"
+                " (repo_key, count, fetched_at, default_branch, release_branch, ci_json, ci_fetched_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(repo_key) DO UPDATE SET"
+                " count=excluded.count, fetched_at=excluded.fetched_at,"
+                " default_branch=excluded.default_branch, release_branch=excluded.release_branch,"
+                " ci_json=excluded.ci_json, ci_fetched_at=excluded.ci_fetched_at",
+                (repo_key, int(count), now_iso, default_branch, release_branch,
+                 ci_json or "", ci_fetched_at or ""),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO release_diff_cache"
+                " (repo_key, count, fetched_at, default_branch, release_branch)"
+                " VALUES (?, ?, ?, ?, ?)"
+                " ON CONFLICT(repo_key) DO UPDATE SET"
+                " count=excluded.count, fetched_at=excluded.fetched_at,"
+                " default_branch=excluded.default_branch, release_branch=excluded.release_branch",
+                (repo_key, int(count), now_iso, default_branch, release_branch),
+            )
+
+
+def set_release_branch_ci_cache(
+    path: Path,
+    repo_key: str,
+    ci_json: str,
+    ci_fetched_at: str | None = None,
+    *,
+    default_branch: str = "",
+    release_branch: str = "",
+) -> None:
+    """Update cached branch CI on an existing release_diff_cache row."""
+    from datetime import datetime, timezone
+    init_db(path)
+    ts = ci_fetched_at if ci_fetched_at is not None else datetime.now(timezone.utc).isoformat()
     with connect(path) as conn:
         conn.execute(
-            "INSERT INTO release_diff_cache (repo_key, count, fetched_at)"
-            " VALUES (?, ?, ?)"
-            " ON CONFLICT(repo_key) DO UPDATE SET count=excluded.count,"
-            " fetched_at=excluded.fetched_at",
-            (repo_key, int(count), datetime.now(timezone.utc).isoformat()))
+            "UPDATE release_diff_cache SET ci_json = ?, ci_fetched_at = ?"
+            " WHERE repo_key = ?"
+            " AND (default_branch = '' OR default_branch = ?)"
+            " AND (release_branch = '' OR release_branch = ?)",
+            (ci_json, ts, repo_key, default_branch, release_branch),
+        )
+
+
+def delete_release_diff_cache(path: Path, repo_key: str) -> int:
+    """Delete cached release diff entry for *repo_key*."""
+    init_db(path)
+    with connect(path) as conn:
+        cur = conn.execute("DELETE FROM release_diff_cache WHERE repo_key = ?", (repo_key,))
+        return cur.rowcount
 #: Allowed prodtest item statuses — an enum, never free text.
 PRODTEST_STATUSES = ("pending", "pending_prodtest", "running",
                      "passed", "failed", "blocked")

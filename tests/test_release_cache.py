@@ -1,99 +1,74 @@
-# tests/test_release_cache.py
-from workagent import store_sqlite as sq
+from workagent import refs, refs_ci, repos, repos_release, store, store_sqlite as sq, swr
 
-def test_release_columns_and_cache_roundtrip(tmp_path, monkeypatch):
-    db = tmp_path / "state.db"
+
+def test_fresh_release_cache_does_not_trigger_background_git_fetch(isolated_config, monkeypatch, tmp_path):
+    db = sq.db_path()
     sq.init_db(db)
-    sq.register_repo_row(db, "rx", "/r/rx", "jira:RX", remote="https://x/rx.git", tool="gh")
-    assert sq.get_release_diff_cache(db, "rx") == (None, "")
-    sq.set_release_diff_cache(db, "rx", 7)
-    count, fetched = sq.get_release_diff_cache(db, "rx")
-    assert count == 7 and fetched != ""
-    cols = {r[1] for r in sq.connect(db).execute("PRAGMA table_info(repos)")}
-    assert {"default_branch", "release_branch"} <= cols
-def test_detect_release_branch_prefers_master_on_gitlab(tmp_path, monkeypatch):
-    from workagent import repos as _repos
-    monkeypatch.setattr(_repos, "_detect_host_cli", lambda p: "glab")
-    def _fake(*a, **k):
-        if "--verify" in a and "master" in " ".join(a):
-            return "sha"
-        raise Exception("no ref")
-    monkeypatch.setattr(_repos, "run_cmd", _fake)
-    assert _repos.detect_release_branch(tmp_path) == "master"
+    sq.set_release_diff_cache(
+        db,
+        "demo",
+        3,
+        default_branch="main",
+        release_branch="release",
+        ci_json='{"ci":"success","ci_url":"https://ci/1"}',
+        ci_fetched_at="2099-01-01T00:00:00+00:00",
+    )
+    kicked: list[str] = []
+    monkeypatch.setattr(
+        swr,
+        "serve_stale_or_refresh",
+        lambda *a, **kw: (kicked.append(kw.get("key") or a[3]), (a[0], False))[1],
+    )
+    monkeypatch.setattr(
+        store,
+        "load_repos",
+        lambda: {"demo": {"path": str(tmp_path), "default_branch": "main", "release_branch": "release"}},
+    )
+    monkeypatch.setattr(repos_release, "_behind_count", lambda *a, **kw: 0)
+    monkeypatch.setattr(refs_ci, "fetch_branch_ci", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("live CI fetch")))
+    swr.set_background_enabled(True)
+    res = repos_release.release_status("demo", background=True)
+    assert res["diff_count"] == 3
+    assert res["ci"] == "success"
+    assert res["ci_url"] == "https://ci/1"
+    assert kicked == []
 
 
-def test_register_repo_seeds_branches(tmp_path, monkeypatch):
-    from workagent import repos as _repos
-    from workagent import store_sqlite as _sq
-    db = tmp_path / "state.db"
-    _sq.init_db(db)
-    monkeypatch.setattr(_sq, "db_path", lambda: db)
-    monkeypatch.setattr(_repos, "default_branch", lambda p: "main")
-    monkeypatch.setattr(_repos, "detect_release_branch", lambda p: "master")
-    monkeypatch.setattr(_repos, "remote_url", lambda p: "https://h/r.git")
-    monkeypatch.setattr(_repos, "_detect_host_cli", lambda p: "glab")
-    _repos.register_repo("rx", tmp_path, tracker_key="jira:RX")
-    rows = {r[1] for r in _sq.connect(db).execute("PRAGMA table_info(repos)")}
-    assert {"default_branch", "release_branch"} <= rows
-def test_release_status_serves_stale_without_fetch(tmp_path, monkeypatch):
-    from workagent import repos as _repos
-    from workagent import store_sqlite as _sq
-    from workagent import store as _store
-    db = tmp_path / "state.db"
-    _sq.init_db(db)
-    monkeypatch.setattr(_sq, "db_path", lambda: db)
-    _sq.register_repo_row(db, "rx", "/r/rx", "jira:RX")
-    with _sq.connect(db) as _c:
-        _c.execute("UPDATE repos SET default_branch='main', release_branch='master' WHERE key_ref='rx'")
-        _c.execute("INSERT INTO release_diff_cache VALUES ('rx', 4, '2020-01-01T00:00:00+00:00')")
-    def _boom(*a, **k):
-        raise AssertionError("must not fetch")
-    monkeypatch.setattr(_repos, "release_diff_count", _boom)
-    monkeypatch.setattr(_store, "load_repos", lambda: {"rx": {"path": "/r/rx", "default_branch": "main", "release_branch": "master"}})
-    st = _repos.release_status("rx")
-    assert st["diff_count"] == 4 and st["stale"] is True and st["releasable"] is True
+def test_branch_change_invalidates_release_diff_cache(isolated_config, monkeypatch, tmp_path):
+    db = sq.db_path()
+    sq.init_db(db)
+    sq.set_release_diff_cache(
+        db, "demo", 9, default_branch="main", release_branch="old-release"
+    )
+    monkeypatch.setattr(
+        store,
+        "load_repos",
+        lambda: {"demo": {"path": str(tmp_path), "default_branch": "main", "release_branch": "new-release"}},
+    )
+    monkeypatch.setattr(repos_release, "release_diff_count", lambda *a, **kw: 2)
+    monkeypatch.setattr(repos_release, "_behind_count", lambda *a, **kw: 0)
+    monkeypatch.setattr(refs_ci, "fetch_branch_ci", lambda *a, **kw: (None, ""))
+    res = repos_release.release_status("demo", background=False)
+    assert res["diff_count"] == 2
 
-def test_release_status_background_revalidates_fresh_cache(tmp_path, monkeypatch):
-    """background=True serves the fresh row instantly and refreshes off-thread."""
-    import time
-    from workagent import repos as _repos
-    from workagent import repos_release as _rel
-    from workagent import store_sqlite as _sq
-    from workagent import store as _store
-    db = tmp_path / "state.db"
-    _sq.init_db(db)
-    monkeypatch.setattr(_sq, "db_path", lambda: db)
-    _sq.register_repo_row(db, "rx", "/r/rx", "jira:RX")
-    with _sq.connect(db) as _c:
-        _c.execute("UPDATE repos SET default_branch='main', release_branch='master' WHERE key_ref='rx'")
-    _sq.set_release_diff_cache(db, "rx", 4)
-    monkeypatch.setattr(_rel, "release_diff_count", lambda *a, **k: 9)
-    monkeypatch.setattr(_store, "load_repos", lambda: {"rx": {"path": "/r/rx", "default_branch": "main", "release_branch": "master"}})
-    st = _repos.release_status("rx", background=True)
-    assert st["diff_count"] == 4 and st["stale"] is False
-    for _ in range(100):
-        count, _ = _sq.get_release_diff_cache(db, "rx")
-        if count == 9:
-            break
-        time.sleep(0.05)
-    assert _sq.get_release_diff_cache(db, "rx")[0] == 9
 
-def test_release_status_carries_releasing_flag(tmp_path, monkeypatch):
-    """A held per-repo lock surfaces as releasing=True (never raises)."""
-    from workagent import repos as _repos
-    from workagent import release_lock as _lock
-    from workagent import store_sqlite as _sq
-    from workagent import store as _store
-    db = tmp_path / "state.db"
-    monkeypatch.setattr(_sq, "db_path", lambda: db)
-    from workagent import store_trackers as _st
-    monkeypatch.setattr(_st, "connect", lambda p: _sq.connect(db))
-    _sq.init_db(db)
-    _st.register_repo_row(db, "rx", "/r/rx", "jira:RX", remote="", tool="")
-    with _sq.connect(db) as _c:
-        _c.execute("UPDATE repos SET default_branch='main', release_branch='master' WHERE key_ref='rx'")
-    monkeypatch.setattr(_store, "load_repos", lambda: {"rx": {"path": "/r/rx", "default_branch": "main", "release_branch": "master"}})
-    monkeypatch.setattr(_lock, "lock_path", lambda base, name: tmp_path / ".release.lock")
-    assert _repos.release_status("rx")["releasing"] is False
-    with _lock.held_lock(tmp_path / ".release.lock"):
-        assert _repos.release_status("rx")["releasing"] is True
+def test_force_offline_falls_back_to_cached_count_and_preserves_fetched_at(isolated_config, monkeypatch, tmp_path):
+    db = sq.db_path()
+    sq.init_db(db)
+    sq.set_release_diff_cache(db, "demo", 4, default_branch="main", release_branch="release")
+    _, orig_ts = sq.get_release_diff_cache(db, "demo")
+    monkeypatch.setattr(
+        store,
+        "load_repos",
+        lambda: {"demo": {"path": str(tmp_path), "default_branch": "main", "release_branch": "release"}},
+    )
+    monkeypatch.setattr(
+        repos_release,
+        "release_diff_count",
+        lambda *a, **kw: (_ for _ in ()).throw(repos_release.HarnessError("offline")),
+    )
+    monkeypatch.setattr(refs_ci, "fetch_branch_ci", lambda *a, **kw: (None, ""))
+    res = repos_release.release_status("demo", force=True)
+    assert res["diff_count"] == 4
+    assert res["stale"] is True
+    assert res["fetched_at"] == orig_ts

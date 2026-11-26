@@ -1008,11 +1008,11 @@ def create_app(static_dir: Path, host: str, port: int,
         return {"worktrees": _cand._scan_worktrees(), "warnings": []}
 
     @app.get("/api/release/status")
-    def release_status(name: str = "") -> dict:
-        """Releasability for one repo; always serves the cached row instantly
-        and revalidates the diff in the background (never blocks)."""
+    def release_status(name: str = "", force: bool = False) -> dict:
+        """Releasability for one repo; serves fresh cache instantly, revalidates
+        stale rows in the background, or fetches live when `force=true`."""
         from . import repos as _repos
-        return _repos.release_status(name, background=True)
+        return _repos.release_status(name, force=force, background=not force)
 
     @app.get("/api/events")
     async def events_stream(request: Request, last_event_id: int | None = None):
