@@ -333,3 +333,84 @@ def test_sync_unknown_harness(isolated_config, tmp_path, monkeypatch):
     r = _invoke("sync", "IPG-929", "--harness", "unknown-harness")
     assert r.exit_code == 2
 
+
+def test_sync_rebase_fallback_conflict_prompt_requests_rebase(
+        isolated_config, tmp_path, monkeypatch):
+    """When Sync method is Rebase (default) and remote rebase falls back to
+    local_merge with conflicts, the harness prompt requests a rebase."""
+    from workagent.errors import HarnessError
+    repo_dir = tmp_path / "proj"
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    subprocess.run(["git", "init", "-q", str(wt)], check=True)
+    _link_session(repo_dir, wt, monkeypatch)
+    store.cache_pr_status("feat/IPG-929--x", {"number": 9, "state": "open",
+                                              "title": "T", "author": "a",
+                                              "created_at": "2026-09-15",
+                                              "url": "https://x/mr/9",
+                                              "target_branch": "main"},
+                              repo=str(repo_dir))
+    monkeypatch.setattr(cli, "_repo_tool", lambda repo: "glab")
+    monkeypatch.setattr(cli.repos, "default_branch", lambda repo: "main")
+    monkeypatch.setattr(cli.repos, "ahead_behind", lambda wt, db, branch="": None)
+    monkeypatch.setattr(cli.sync_mod, "rebase_remote",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            HarnessError("glab mr rebase failed: conflict")))
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda *a: "up-to-date")
+    monkeypatch.setattr(cli.sync_mod, "local_merge",
+                        lambda *a, **k: {"status": "conflict", "conflicts": ["a.txt"]})
+    monkeypatch.setattr(cli.sync_mod, "auto_resolve_changelog", lambda *a: False)
+    prompts = []
+    monkeypatch.setattr(cli, "_run_harness",
+                        lambda name, prompt, *a, **k: prompts.append(prompt))
+    r = _invoke("sync", "IPG-929", "--harness", "omp")
+    assert r.exit_code == 0, r.output
+    assert len(prompts) == 1
+    assert "Perform a rebase instead of a merge" in prompts[0]
+    assert "git merge --abort" in prompts[0]
+    assert "git push --force-with-lease origin feat/IPG-929--x" in prompts[0]
+    assert "complete the merge" not in prompts[0]
+
+
+def test_sync_no_pr_default_rebase_conflict_prompt_requests_rebase(
+        isolated_config, tmp_path, monkeypatch):
+    """Without a PR, default Sync method (Rebase) still asks the harness to rebase."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    subprocess.run(["git", "init", "-q", str(wt)], check=True)
+    _link_session(tmp_path / "proj", wt, monkeypatch)
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda *a: "up-to-date")
+    monkeypatch.setattr(cli.sync_mod, "local_merge",
+                        lambda *a, **k: {"status": "conflict", "conflicts": ["a.txt"]})
+    monkeypatch.setattr(cli.sync_mod, "auto_resolve_changelog", lambda *a: False)
+    prompts = []
+    monkeypatch.setattr(cli, "_run_harness",
+                        lambda name, prompt, *a, **k: prompts.append(prompt))
+    r = _invoke("sync", "IPG-929", "--rebase", "--harness", "omp")
+    assert r.exit_code == 0, r.output
+    assert len(prompts) == 1
+    assert "Perform a rebase instead of a merge" in prompts[0]
+    assert "complete the merge" not in prompts[0]
+
+
+def test_sync_merge_flag_conflict_prompt_requests_merge(
+        isolated_config, tmp_path, monkeypatch):
+    """When --merge is explicitly selected, conflict prompt asks to complete the merge."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    subprocess.run(["git", "init", "-q", str(wt)], check=True)
+    _link_session(tmp_path / "proj", wt, monkeypatch)
+    monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda *a: "up-to-date")
+    monkeypatch.setattr(cli.sync_mod, "local_merge",
+                        lambda *a, **k: {"status": "conflict", "conflicts": ["a.txt"]})
+    monkeypatch.setattr(cli.sync_mod, "auto_resolve_changelog", lambda *a: False)
+    prompts = []
+    monkeypatch.setattr(cli, "_run_harness",
+                        lambda name, prompt, *a, **k: prompts.append(prompt))
+    r = _invoke("sync", "IPG-929", "--merge", "--harness", "omp")
+    assert r.exit_code == 0, r.output
+    assert len(prompts) == 1
+    assert "complete the merge" in prompts[0]
+    assert "Perform a rebase instead of a merge" not in prompts[0]
+
+
