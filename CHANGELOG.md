@@ -1,5 +1,6 @@
 # Changelog
 ## Unreleased
+- Retry live PR/MR branch lookups on transient EOF and transport errors so flow review steps do not fail prematurely [215]
 - Cleanup commands and subcommands now return a compact report of removed items, cascades, and transcripts across soft and hard deletes [211]
 - Automatically retry AI runs without `--effort` when the selected model does not support effort levels [204]
 - Drop the in-app diff viewer feature from the web UI and API [200]
