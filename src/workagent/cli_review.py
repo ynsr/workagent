@@ -220,7 +220,7 @@ def _pinned_repo_for_pr(ref: str, parsed: dict | None) -> str:
 
 def _review_key_for(pr_url: str, worktree: str, branch: str, repo: str = "") -> str:
     """Link key review state lives under: the recorded row for this
-    worktree/branch when one exists, else the source branch name.
+    worktree/branch when one exists, else ``<branch>@<repo>``.
 
     Reviewing an already-tracked worktree must reuse its row (stamping
     pr_url on it) — never insert a second row for the same path/(repo,
@@ -229,7 +229,7 @@ def _review_key_for(pr_url: str, worktree: str, branch: str, repo: str = "") -> 
     worktree (e.g. IPG-1002 in projectx vs ipg-commons).
     """
     return (worktrees.recorded_key(worktree, branch, store.load_links(include_deleted=True), repo=repo)
-            or branch)
+            or refs.branch_key(branch, repo))
 
 
 def _adopt_fix_reuse(result: dict, review_key: str) -> bool:
@@ -505,7 +505,8 @@ def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
     Returns (key, worktree, branch): an already-recorded row for this
     (repo, branch) wins (its key is reused with pr_url stamped on it);
     otherwise a fresh worktree is created via git-wt and recorded under
-    the bare branch name. Branch names are unique per repo
+    ``<branch>@<repo>`` (falling back to bare branch if no repo name).
+    Branch names are unique per repo
     (UNIQUE (repo_key, branch)), so the same branch in another repo is
     simply a different row — e.g. IPG-1002 in projectx vs ipg-commons.
     """
@@ -526,11 +527,11 @@ def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
             return reuse, worktree, branch
     wt = gitwt.start_worktree(repo_dir, branch=head_ref, base=base_branch)
     worktree = wt.get("worktree_path", "")
-    branch = wt.get("branch", head_ref)
+    branch = wt.get("branch") or head_ref
     links_now = store.load_links(include_inactive=True, include_deleted=True)
     prior = worktrees.recorded_key(
         worktree, branch, links_now, repo=str(repo_dir))
-    use_key = prior if isinstance(prior, str) else head_ref
+    use_key = prior if isinstance(prior, str) else refs.branch_key(branch, repo_dir)
     rec = {"pr_url": pr_url, "worktree": worktree,
            "branch": branch, "repo": str(repo_dir),
            "active": 1, "deleted_at": ""}
@@ -542,6 +543,13 @@ def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
     except HarnessError:
         pass
     return use_key, worktree, branch
+
+
+def _preview_branch_key(repo_dir: Path, head_ref: str) -> str:
+    """Resolve the key a PR/MR branch would use without mutating state."""
+    links = store.load_links(include_inactive=True, include_deleted=True)
+    prior = worktrees.recorded_key("", head_ref, links, repo=str(repo_dir))
+    return prior if isinstance(prior, str) else refs.branch_key(head_ref, repo_dir)
 
 
 def auto_register_pr_worktree(
@@ -573,7 +581,8 @@ def auto_register_pr_worktree(
     info, head_ref = refs.require_head_ref(parsed, repo_dir, ref)
     if dry_run:
         return "", {"dry_run": True, "repo": str(repo_dir),
-                    "pr_url": parsed["url"], "key": head_ref,
+                    "pr_url": parsed["url"],
+                    "key": _preview_branch_key(repo_dir, head_ref),
                     "branch": head_ref}
     issue_url = refs.derive_issue_url(head_ref, info, parsed)
     key, worktree, branch = _ensure_branch_worktree(

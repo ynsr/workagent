@@ -24,7 +24,7 @@ from .cli_core import (
     eprint,
 )
 from .cli_harness import _guard_harness, _launch_in_worktree, _run_harness, append_extra_prompt, is_exec_mode
-from .cli_review import _ensure_branch_worktree
+from .cli_review import _ensure_branch_worktree, _preview_branch_key
 from .errors import HarnessError
 
 def _resolve_repo_for_compare(explicit: str) -> str:
@@ -417,7 +417,8 @@ def _start_from_pr(ref: str, parsed: dict, repo: str | None, depth: int,
         _fail(str(e), EXIT_USAGE)
     if dry_run:
         _print_result({"dry_run": True, "repo": str(repo_dir), "pr_url": pr_url,
-                       "key": head_ref, "branch": head_ref,
+                       "key": _preview_branch_key(repo_dir, head_ref),
+                       "branch": head_ref,
                        "harness": harness_name,
                        "tracker": tid, "tracker_link": outcome}, json_output)
         return

@@ -154,7 +154,7 @@ def test_review_preview_persists_run_row(isolated_config, tmp_path, monkeypatch)
     assert row["state"] == "preview"
     assert row["session_type"] == "review"
     assert "/runs/agy/feat/33/review/" in row["file_path"]
-    assert row["worktree_ref"] == "feat/33"
+    assert row["worktree_ref"] == "feat/33@proj"
     # prompt is not part of the polled list projection; the detail read has it.
     detail = store_sqlite.get_run(store_sqlite.db_path(), row["id"])
     assert "https://github.com/o/r/pull/33" in detail["prompt"]
@@ -790,7 +790,7 @@ def test_review_marks_reviewed_with_tip(isolated_config, tmp_path, monkeypatch):
     monkeypatch.setattr(cli.backend, "launch", _headless_launch_tip)
     monkeypatch.setattr(cli.sync_mod, "pull_branch", lambda wt, br: "up-to-date")
     url = "https://github.com/o/r/pull/33"
-    key = "feat/33"
+    key = "feat/33@proj"
 
     # Preview (no --launch) starts nothing: must not mark reviewed (Task 2 precedent).
     r0 = runner.invoke(cli.app, ["review", url, "--no-tty", "--json"])
@@ -880,9 +880,9 @@ def test_review_new_pr_keys_row_by_branch(isolated_config, tmp_path, monkeypatch
     r = runner.invoke(cli.app, ["review", url, "--harness", "omp", "--no-tty", "--launch", "--json"])
     assert r.exit_code == 0, r.output
     links = store.load_links()
-    assert set(links) == {"feat/77"}
-    assert links["feat/77"]["pr_url"] == url
-    assert links["feat/77"]["reviewed"] is True
+    assert set(links) == {"feat/77@proj"}
+    assert links["feat/77@proj"]["pr_url"] == url
+    assert links["feat/77@proj"]["reviewed"] is True
 
 
 def test_review_same_branch_other_repo_creates_own_row(isolated_config, tmp_path, monkeypatch):
@@ -1127,12 +1127,12 @@ def test_ensure_branch_worktree_replaces_existing_path_collision(isolated_config
     key, worktree, branch = _cr._ensure_branch_worktree(
         repo_dir, "fix/new-feature", "main", "https://github.com/o/r/pull/2"
     )
-    assert key == "fix/new-feature"
+    assert key == "fix/new-feature@rulesmith"
     assert worktree == str(repo_dir)
     assert branch == "fix/new-feature"
 
     links = store.load_links(include_deleted=True)
-    assert "fix/new-feature" in links
+    assert "fix/new-feature@rulesmith" in links
     assert "feat/old" not in links
 
 

@@ -107,7 +107,7 @@ def test_auto_register_creates_and_adopts_without_duplicate(isolated_config, tmp
     parsed = refs.parse_ref(MR_URL)
 
     key1, entry1 = cli_review.auto_register_pr_worktree(MR_URL, parsed, yes=True)
-    assert key1 == "ao/terminal-priority/ipg-1076"
+    assert key1 == "ao/terminal-priority/ipg-1076@projectx"
     assert entry1["worktree"] == str(wt_dir)
     assert entry1["pr_url"] == MR_URL
     assert entry1["issue_url"] == "https://tribe.jibit.cloud/browse/IPG-1076"
@@ -175,17 +175,20 @@ def test_flow_run_auto_registers_mr_url_and_no_auto_register_fails(isolated_conf
     # Default auto-registers, links pr_url + issue_url, and runs flow with non-empty key
     res_ok = runner.invoke(app, ["flow", "run", "review_fix", MR_URL, "--yes", "--json"])
     assert res_ok.exit_code == 0, res_ok.output
-    assert seen_keys == ["ao/terminal-priority/ipg-1076"]
+    assert seen_keys == ["ao/terminal-priority/ipg-1076@projectx"]
     assert len(start_calls) == 1
     links = store.load_links()
-    assert links["ao/terminal-priority/ipg-1076"]["pr_url"] == MR_URL
-    assert links["ao/terminal-priority/ipg-1076"]["issue_url"] == "https://tribe.jibit.cloud/browse/IPG-1076"
+    assert links["ao/terminal-priority/ipg-1076@projectx"]["pr_url"] == MR_URL
+    assert links["ao/terminal-priority/ipg-1076@projectx"]["issue_url"] == "https://tribe.jibit.cloud/browse/IPG-1076"
 
     # Re-running adopts the existing worktree (no second start_worktree)
     res_again = runner.invoke(app, ["flow", "run", "review_fix", MR_URL, "--yes", "--fresh", "--json"])
     assert res_again.exit_code == 0, res_again.output
     assert len(start_calls) == 1
-    assert seen_keys == ["ao/terminal-priority/ipg-1076", "ao/terminal-priority/ipg-1076"]
+    assert seen_keys == [
+        "ao/terminal-priority/ipg-1076@projectx",
+        "ao/terminal-priority/ipg-1076@projectx",
+    ]
 
 
 def test_action_run_and_adhoc_auto_register_and_opt_out(isolated_config, tmp_path, monkeypatch):
@@ -217,13 +220,13 @@ def test_action_run_and_adhoc_auto_register_and_opt_out(isolated_config, tmp_pat
     # action run auto-registers
     res_act = runner.invoke(app, ["action", "run", "chk", MR_URL, "--yes"])
     assert res_act.exit_code == 0, res_act.output
-    assert action_keys == ["ao/terminal-priority/ipg-1076"]
+    assert action_keys == ["ao/terminal-priority/ipg-1076@projectx"]
     assert len(start_calls) == 1
 
     # adhoc adopts the registered worktree (and --no-auto-register skips unlinked)
     res_adhoc = runner.invoke(app, ["adhoc", MR_URL, "--prompt", "hi", "--yes"])
     assert res_adhoc.exit_code == 0, res_adhoc.output
-    assert adhoc_keys == ["ao/terminal-priority/ipg-1076"]
+    assert adhoc_keys == ["ao/terminal-priority/ipg-1076@projectx"]
     assert len(start_calls) == 1
 
     res_adhoc_no = runner.invoke(
@@ -369,3 +372,79 @@ def test_interactive_action_and_adhoc_prompt_once_on_auto_register(isolated_conf
     )
     assert len(prompts) == 1
     assert "auto-register worktree" in prompts[0]
+
+
+def test_auto_register_dry_run_suffixes_key_with_repo(isolated_config, tmp_path, monkeypatch):
+    _stub_pr_env(monkeypatch, tmp_path)
+    parsed = refs.parse_ref(MR_URL)
+    key, info = cli_review.auto_register_pr_worktree(MR_URL, parsed, yes=True, dry_run=True)
+    assert key == ""
+    assert info["key"] == "ao/terminal-priority/ipg-1076@projectx"
+    assert info["branch"] == "ao/terminal-priority/ipg-1076"
+
+
+def test_auto_register_dry_run_reuses_existing_recorded_key(isolated_config, tmp_path, monkeypatch):
+    repo_dir, wt_dir, _start_calls = _stub_pr_env(monkeypatch, tmp_path)
+    store.record_link("jira:IPG-1076@projectx", {
+        "worktree": str(wt_dir),
+        "branch": "ao/terminal-priority/ipg-1076",
+        "repo": str(repo_dir),
+    })
+    parsed = refs.parse_ref(MR_URL)
+    key, info = cli_review.auto_register_pr_worktree(MR_URL, parsed, yes=True, dry_run=True)
+    assert key == ""
+    assert info["key"] == "jira:IPG-1076@projectx"
+    assert info["branch"] == "ao/terminal-priority/ipg-1076"
+
+
+def test_ensure_branch_worktree_uses_normalized_branch_for_key(isolated_config, tmp_path, monkeypatch):
+    repo_dir, wt_dir, _start_calls = _stub_pr_env(monkeypatch, tmp_path, head_ref="feat/Raw-Branch")
+    monkeypatch.setattr(
+        cli_review.gitwt,
+        "start_worktree",
+        lambda rdir, branch, base: {"worktree_path": str(wt_dir), "branch": "feat/raw-branch"},
+    )
+    key, _wt, branch = cli_review._ensure_branch_worktree(repo_dir, "feat/Raw-Branch", "main", MR_URL)
+    assert branch == "feat/raw-branch"
+    assert key == "feat/raw-branch@projectx"
+    links = store.load_links()
+    assert links[key]["branch"] == "feat/raw-branch"
+
+
+def test_auto_register_same_branch_across_repos_no_collision(isolated_config, tmp_path, monkeypatch):
+    """Two repos with the same PR head_ref register distinct `<branch>@<repo>` rows."""
+    repo_a = tmp_path / "projectx"
+    repo_b = tmp_path / "ipg-commons"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    wt_a = tmp_path / "wt-a"
+    wt_b = tmp_path / "wt-b"
+    wt_a.mkdir()
+    wt_b.mkdir()
+
+    mr_a = "https://git.jibit.cloud/server/projectx/-/merge_requests/10"
+    mr_b = "https://git.jibit.cloud/server/ipg-commons/-/merge_requests/20"
+
+    def _resolve(parsed, repo, cwd, depth=7, yes=False, persist=True, pinned=""):
+        r = repo_a if "projectx" in parsed["repo"] else repo_b
+        return r, "main", f"gitlab:git.jibit.cloud/{parsed['repo']}", "existing"
+
+    monkeypatch.setattr(trackers, "resolve_repo_for_ref", _resolve)
+    monkeypatch.setattr(cli_review.repos, "default_branch", lambda p: "main")
+    monkeypatch.setattr(cli_review.repos, "register_repo", lambda *a, **k: None)
+    monkeypatch.setattr(refs, "fetch_pr_info",
+                        lambda parsed, cwd=None: {"title": "T", "head_ref": "feat/shared", "body": ""})
+    monkeypatch.setattr(cli_review.gitwt, "start_worktree",
+                        lambda rdir, branch, base: {
+                            "worktree_path": str(wt_a if rdir == repo_a else wt_b),
+                            "branch": branch,
+                        })
+    monkeypatch.setattr(worktrees, "is_valid_worktree", lambda p: Path(p).is_dir())
+
+    key_a, _ = cli_review.auto_register_pr_worktree(mr_a, refs.parse_ref(mr_a), yes=True)
+    key_b, _ = cli_review.auto_register_pr_worktree(mr_b, refs.parse_ref(mr_b), yes=True)
+    assert key_a == "feat/shared@projectx"
+    assert key_b == "feat/shared@ipg-commons"
+    links = store.load_links()
+    assert links[key_a]["pr_url"] == mr_a
+    assert links[key_b]["pr_url"] == mr_b

@@ -230,9 +230,9 @@ def test_sync_creates_worktree_for_new_pr_ref(isolated_config, tmp_path, monkeyp
     url = "https://github.com/o/r/pull/99"
     r = runner.invoke(cli.app, ["sync", url, "--json"])
     assert r.exit_code == 0, r.output
-    assert synced == ["feat/99"]
+    assert synced == ["feat/99@proj"]
     links = store.load_links()
-    assert links["feat/99"]["pr_url"] == url
+    assert links["feat/99@proj"]["pr_url"] == url
 
 
 def test_sync_pr_ref_dry_run_creates_nothing(isolated_config, tmp_path, monkeypatch):
