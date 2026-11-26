@@ -260,8 +260,8 @@ def _sync_one(key: str, entry: dict, merge: bool,
         sync_mod.rebase_remote(tool, pr, Path(wt))
     except HarnessError as e:
         eprint(f"{key}: {tool} rebase failed ({e}) — falling back to "
-               f"local {'merge' if merge else 'rebase'}")
-        result["strategy"] = "local-merge" if merge else "local-rebase"
+               "local rebase")
+        result["strategy"] = "local-rebase"
         result["fallback"] = True
         if not db:
             _fail(f"{key}: cannot determine default branch for {repo}", EXIT_GENERAL)
@@ -415,7 +415,7 @@ def _handle_merge_conflict(key: str, wt: str, branch: str, db: str,
         use_acp = bool(acp or (run_mode or "").strip().lower() == "acp")
         _cli._guard_harness(key, wt)
         _cli._run_harness(selected_harness, prompt, wt, wt,
-                     no_tty=bool(yes) if run_harness_now else False,
+                     no_tty=bool(yes),
                      launch=not use_acp,
                      result=result, json_output=json_output, run_key=key,
                      session_file=session_file, env_file=env_file,
