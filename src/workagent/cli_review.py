@@ -527,11 +527,11 @@ def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
             return reuse, worktree, branch
     wt = gitwt.start_worktree(repo_dir, branch=head_ref, base=base_branch)
     worktree = wt.get("worktree_path", "")
-    branch = wt.get("branch", head_ref)
+    branch = wt.get("branch") or head_ref
     links_now = store.load_links(include_inactive=True, include_deleted=True)
     prior = worktrees.recorded_key(
         worktree, branch, links_now, repo=str(repo_dir))
-    use_key = prior if isinstance(prior, str) else refs.branch_key(head_ref, repo_dir)
+    use_key = prior if isinstance(prior, str) else refs.branch_key(branch, repo_dir)
     rec = {"pr_url": pr_url, "worktree": worktree,
            "branch": branch, "repo": str(repo_dir),
            "active": 1, "deleted_at": ""}
@@ -543,6 +543,13 @@ def _ensure_branch_worktree(repo_dir: Path, head_ref: str, base_branch: str,
     except HarnessError:
         pass
     return use_key, worktree, branch
+
+
+def _preview_branch_key(repo_dir: Path, head_ref: str) -> str:
+    """Resolve the key a PR/MR branch would use without mutating state."""
+    links = store.load_links(include_inactive=True, include_deleted=True)
+    prior = worktrees.recorded_key("", head_ref, links, repo=str(repo_dir))
+    return prior if isinstance(prior, str) else refs.branch_key(head_ref, repo_dir)
 
 
 def auto_register_pr_worktree(
@@ -575,7 +582,7 @@ def auto_register_pr_worktree(
     if dry_run:
         return "", {"dry_run": True, "repo": str(repo_dir),
                     "pr_url": parsed["url"],
-                    "key": refs.branch_key(head_ref, repo_dir),
+                    "key": _preview_branch_key(repo_dir, head_ref),
                     "branch": head_ref}
     issue_url = refs.derive_issue_url(head_ref, info, parsed)
     key, worktree, branch = _ensure_branch_worktree(

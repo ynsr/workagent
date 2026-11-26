@@ -383,6 +383,34 @@ def test_auto_register_dry_run_suffixes_key_with_repo(isolated_config, tmp_path,
     assert info["branch"] == "ao/terminal-priority/ipg-1076"
 
 
+def test_auto_register_dry_run_reuses_existing_recorded_key(isolated_config, tmp_path, monkeypatch):
+    repo_dir, wt_dir, _start_calls = _stub_pr_env(monkeypatch, tmp_path)
+    store.record_link("jira:IPG-1076@projectx", {
+        "worktree": str(wt_dir),
+        "branch": "ao/terminal-priority/ipg-1076",
+        "repo": str(repo_dir),
+    })
+    parsed = refs.parse_ref(MR_URL)
+    key, info = cli_review.auto_register_pr_worktree(MR_URL, parsed, yes=True, dry_run=True)
+    assert key == ""
+    assert info["key"] == "jira:IPG-1076@projectx"
+    assert info["branch"] == "ao/terminal-priority/ipg-1076"
+
+
+def test_ensure_branch_worktree_uses_normalized_branch_for_key(isolated_config, tmp_path, monkeypatch):
+    repo_dir, wt_dir, _start_calls = _stub_pr_env(monkeypatch, tmp_path, head_ref="feat/Raw-Branch")
+    monkeypatch.setattr(
+        cli_review.gitwt,
+        "start_worktree",
+        lambda rdir, branch, base: {"worktree_path": str(wt_dir), "branch": "feat/raw-branch"},
+    )
+    key, _wt, branch = cli_review._ensure_branch_worktree(repo_dir, "feat/Raw-Branch", "main", MR_URL)
+    assert branch == "feat/raw-branch"
+    assert key == "feat/raw-branch@projectx"
+    links = store.load_links()
+    assert links[key]["branch"] == "feat/raw-branch"
+
+
 def test_auto_register_same_branch_across_repos_no_collision(isolated_config, tmp_path, monkeypatch):
     """Two repos with the same PR head_ref register distinct `<branch>@<repo>` rows."""
     repo_a = tmp_path / "projectx"
