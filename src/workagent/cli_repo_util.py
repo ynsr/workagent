@@ -18,8 +18,18 @@ _DB_CACHE: dict[str, str] = {}
 # wins, else max(ttl * 10, 1 day) — cached rows stay servable while a
 # background refetch refreshes them (Dashboard tables render instantly).
 def _status_ttl() -> int:
-    """Fresh TTL for positive PR cells (default 3d)."""
+    """Fresh TTL for terminal (merged/closed) PR cells (default 3d)."""
     return _cache_ttl("WORKAGENT_STATUS_TTL_SECONDS", 3 * 24 * 3600)
+
+
+def _status_open_ttl() -> int:
+    """Fresh TTL for open PR cells (default 10m; falls back to explicit WORKAGENT_STATUS_TTL_SECONDS)."""
+    import os
+    if str(os.environ.get("WORKAGENT_STATUS_OPEN_TTL_SECONDS", "")).strip():
+        return _cache_ttl("WORKAGENT_STATUS_OPEN_TTL_SECONDS", 600)
+    if str(os.environ.get("WORKAGENT_STATUS_TTL_SECONDS", "")).strip():
+        return _cache_ttl("WORKAGENT_STATUS_TTL_SECONDS", 600)
+    return 600
 
 
 def _negative_ttl() -> int:
@@ -30,16 +40,6 @@ def _negative_ttl() -> int:
 def _ci_ttl() -> int:
     """Fresh TTL for CI/review/issue cells (default 10m)."""
     return _cache_ttl("WORKAGENT_CI_TTL_SECONDS", 600)
-
-
-# Module-level defaults (import-time snapshot; callers needing live env
-# overrides use the _*_swr() functions below).
-_STATUS_TTL_SECONDS = _status_ttl()
-_NEGATIVE_TTL_SECONDS = _negative_ttl()
-_CI_TTL_SECONDS = _ci_ttl()
-_STATUS_SWR_SECONDS = _cache_swr(_STATUS_TTL_SECONDS, "WORKAGENT_STATUS_SWR_SECONDS")
-_NEGATIVE_SWR_SECONDS = _cache_swr(_NEGATIVE_TTL_SECONDS, "WORKAGENT_NEGATIVE_SWR_SECONDS")
-_CI_SWR_SECONDS = _cache_swr(_CI_TTL_SECONDS, "WORKAGENT_CI_SWR_SECONDS")
 
 
 def _status_swr() -> int:

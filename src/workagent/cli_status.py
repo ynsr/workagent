@@ -8,11 +8,11 @@ import shutil
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import typer
 
-from . import backend, refs, repos, store, worktrees
+from . import backend, refs, repos, store, swr, worktrees
 from .cli_core import (
     EXIT_GENERAL,
     EXIT_USAGE,
@@ -30,10 +30,14 @@ from .cli_repo_util import (
     _CI_SYMBOLS,
     _PR_STYLES,
     _ci_swr,
+    _ci_ttl,
     _negative_swr,
+    _negative_ttl,
     _repo_default_branch,
     _repo_tool,
+    _status_open_ttl,
     _status_swr,
+    _status_ttl,
 )
 from .errors import HarnessError, run_cmd
 
@@ -55,22 +59,46 @@ from .cli_status_cells import (  # noqa: F401,E402
     _seed_recorded_pr,
 )
 
-def _cache_usable(cached: dict) -> bool:
-    """Cached PR cell still servable (stale-while-revalidate): age within
-    max(fresh TTL * 10, 1 day) — 30d for a cached PR, 1d for a cached
-    no-PR result. Reused only while branch/base tips are unchanged.
-
-    TTL/SWR windows resolve from WORKAGENT_* env (see swr helpers).
-    """
-    ts = cached.get("checked_at", "")
+def _age_freshness(ts: str, fresh_ttl: int, swr_win: int) -> Literal["fresh", "stale", "expired"]:
     if not ts:
-        return False
+        return "expired"
     try:
         age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
     except ValueError:
-        return False
-    swr = _status_swr() if cached.get("pr") else _negative_swr()
-    return age < timedelta(seconds=swr)
+        return "expired"
+    if age < timedelta(seconds=fresh_ttl):
+        return "fresh"
+    if age < timedelta(seconds=swr_win):
+        return "stale"
+    return "expired"
+
+
+def _pr_freshness(
+    cached: dict | None,
+    branch_tip: str | None = None,
+    base_tip: str | None = None,
+) -> Literal["fresh", "stale", "expired"]:
+    """Tri-state freshness for a pr_cache entry: fresh | stale | expired."""
+    if not cached:
+        return "expired"
+    if branch_tip is not None and cached.get("branch_tip") != branch_tip:
+        return "expired"
+    if base_tip is not None and cached.get("base_tip") != base_tip:
+        return "expired"
+    pr = cached.get("pr")
+    if pr:
+        state = str((pr or {}).get("state") or "").lower()
+        fresh_ttl = _status_ttl() if state in ("merged", "closed") else _status_open_ttl()
+        swr_win = _status_swr()
+    else:
+        fresh_ttl = _negative_ttl()
+        swr_win = _negative_swr()
+    return _age_freshness(str(cached.get("checked_at", "") or ""), fresh_ttl, swr_win)
+
+
+def _cache_usable(cached: dict) -> bool:
+    """Cached PR cell still servable (within its SWR window)."""
+    return _pr_freshness(cached) != "expired"
 
 
 def _fetch_origins(links: dict, refresh: bool) -> None:
@@ -94,17 +122,22 @@ def _fetch_origins(links: dict, refresh: bool) -> None:
             eprint(f"warning: fetch failed for {repo}: {err}")
 
 
+def _ci_freshness(
+    cached: dict | None,
+    branch_tip: str | None = None,
+) -> Literal["fresh", "stale", "expired"]:
+    """Tri-state freshness for cached CI status."""
+    if not cached:
+        return "expired"
+    sha = branch_tip or ""
+    if (cached.get("ci_sha") or "") != sha:
+        return "expired"
+    return _age_freshness(str(cached.get("ci_checked_at", "") or ""), _ci_ttl(), _ci_swr())
+
+
 def _ci_usable(cached: dict) -> bool:
-    """Cached CI still servable (stale-while-revalidate): checked within
-    max(10 min * 10, 1 day) (WORKAGENT_CI_*_SECONDS override)."""
-    ts = cached.get("ci_checked_at", "")
-    if not ts:
-        return False
-    try:
-        age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
-    except ValueError:
-        return False
-    return age < timedelta(seconds=_ci_swr())
+    """Cached CI still servable within its SWR window."""
+    return _age_freshness(str(cached.get("ci_checked_at", "") or ""), _ci_ttl(), _ci_swr()) != "expired"
 
 
 def _query_pr(repo: str, branch: str) -> tuple[dict | None, str | None]:
@@ -133,18 +166,15 @@ def _query_pr(repo: str, branch: str) -> tuple[dict | None, str | None]:
 
 
 def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
-    """Commits + PR cells for one session, backed by pr_cache.json.
+    """Commits + PR cells for one session, backed by pr_cache.
 
-    A cache entry (keyed by branch) is reused while the session-branch tip
-    and the remote-tracking base tip are unchanged and the entry is within
-    its stale-while-revalidate window (max(fresh TTL * 10, 1 day) — 30d
-    for a cached PR, 1d for a cached no-PR result), and --refresh-pr is
-    not given. Valid cache: two `git rev-parse` calls, no host-CLI spawn,
-    no API call. --refresh-pr re-queries only the PR (counts still reuse
-    when tips are unchanged). When the cache or the live query yields no PR
-    but the link records a `pr_url`, the recorded URL fills the PR cell.
-    ``_tip``/``_tool`` are internal, consumed by the CI cell resolution in
-    :func:`_status_cells`.
+    Uses tri-state freshness (fresh | stale | expired):
+    - fresh: within fresh TTL (10m open PR, 3d merged/closed PR, 30m negative)
+      and git tips match -> return cached immediately.
+    - stale: past fresh TTL, within SWR window, tips match -> return cached
+      immediately and revalidate via swr.serve_stale_or_refresh (background
+      thread in `serve`, non-spawning in CLI).
+    - expired (or tips changed / --refresh-pr): query inline.
     """
     wt = entry.get("worktree", "")
     branch = entry.get("branch", "")
@@ -155,25 +185,36 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
     wt_ok = bool(wt) and Path(wt).exists()
     if wt and not wt_ok:
         cells["commits"] = "gone"
-    # Cached base must agree with the PR/MR target branch; a mismatch
-    # (e.g. base cached as `main` while the MR targets `develop`) is stale.
     cached_target = ((cached or {}).get("pr") or {}).get("target_branch") or ""
-    use_cache = (cached and _cache_usable(cached)
-                 and (not cached_target
-                      or cached_target == (cached.get("base_branch") or "")))
-    if not wt_ok and branch and not refresh_pr and (use_cache or entry.get("deleted_at")):
-        if cached:
-            base_branch = cached.get("base_branch") or ""
-            pr = cached.get("pr")
-            cells["_tool"] = cached.get("tool")
-            cells.update(pr=_fmt_pr(pr), pr_data=pr, base_branch=base_branch or None)
-        return _seed_recorded_pr(cells, entry)
-    if wt_ok and branch and use_cache:
+    target_ok = bool(cached) and (
+        not cached_target or cached_target == (cached.get("base_branch") or "")
+    )
+    if not wt_ok and branch and not refresh_pr:
+        freshness = _pr_freshness(cached) if target_ok else "expired"
+        if freshness in ("fresh", "stale") or entry.get("deleted_at"):
+            if cached:
+                base_branch = cached.get("base_branch") or ""
+                pr = cached.get("pr")
+                cells["_tool"] = cached.get("tool")
+                cells.update(pr=_fmt_pr(pr), pr_data=pr, base_branch=base_branch or None)
+                if freshness == "stale" and not entry.get("deleted_at"):
+                    def _bg_pr_gone() -> None:
+                        try:
+                            p, u = _query_pr(repo, branch)
+                        except HarnessError:
+                            return
+                        if p is not None or u is not None:
+                            tgt = (p or {}).get("target_branch") or base_branch or _patched("_repo_default_branch")(repo) or None
+                            store.cache_pr_status(branch, p, tool=u if p else None, repo=repo, base_branch=tgt)
+                    swr.serve_stale_or_refresh(cached, False, _bg_pr_gone, f"pr:pr:{store.pr_cache_key(repo, branch)}")
+            return _seed_recorded_pr(cells, entry)
+    if wt_ok and branch and target_ok and cached:
         base_branch = cached.get("base_branch") or ""
         branch_tip = _patched("_git_tip")(wt, branch) or _patched("_git_tip")(wt, "HEAD")
         base_tip = _patched("_git_tip")(wt, f"origin/{base_branch}") if base_branch else None
-        if (cached.get("branch_tip") == branch_tip
-                and cached.get("base_tip") == base_tip):
+        tips_match = (cached.get("branch_tip") == branch_tip and cached.get("base_tip") == base_tip)
+        freshness = _pr_freshness(cached, branch_tip, base_tip) if tips_match else "expired"
+        if tips_match and (freshness in ("fresh", "stale") or refresh_pr):
             ab = {"behind": int(cached.get("behind") or 0),
                   "ahead": int(cached.get("ahead") or 0)}
             pr = cached.get("pr")
@@ -181,24 +222,57 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
             cells.update(commits=_fmt_counts(ab), ab=ab, pr=_fmt_pr(pr),
                          pr_data=pr, base_branch=base_branch or None)
             if not refresh_pr:
+                if freshness == "stale":
+                    def _bg_pr() -> None:
+                        try:
+                            p, u = _query_pr(repo, branch)
+                        except HarnessError:
+                            return
+                        new_base = (p or {}).get("target_branch") or base_branch
+                        if new_base != base_branch:
+                            new_ab = repos.ahead_behind(Path(wt), new_base, branch) if new_base else ab
+                            new_base_tip = _patched("_git_tip")(wt, f"origin/{new_base}") if new_base else None
+                        else:
+                            new_ab = ab
+                            new_base_tip = base_tip
+                        store.cache_pr_status(
+                            branch, p, tool=u if p else None, repo=repo,
+                            base_branch=new_base, branch_tip=branch_tip,
+                            base_tip=new_base_tip,
+                            behind=(new_ab or {}).get("behind", 0),
+                            ahead=(new_ab or {}).get("ahead", 0),
+                        )
+                    swr.serve_stale_or_refresh(cached, False, _bg_pr, f"pr:pr:{store.pr_cache_key(repo, branch)}")
                 return _seed_recorded_pr(cells, entry)
             try:
                 pr, used = _query_pr(repo, branch)
             except HarnessError:
                 return _seed_recorded_pr(cells, entry)
+            if pr is None and used is None and cached and cached.get("pr"):
+                return _seed_recorded_pr(cells, entry)
+            new_base = (pr or {}).get("target_branch") or base_branch
+            if new_base != base_branch:
+                base_branch = new_base
+                base_tip = _patched("_git_tip")(wt, f"origin/{base_branch}") if base_branch else None
+                ab = repos.ahead_behind(Path(wt), base_branch, branch) if base_branch else ab
             store.cache_pr_status(branch, pr, tool=used, repo=repo,
                                   base_branch=base_branch,
                                   branch_tip=branch_tip, base_tip=base_tip,
-                                  behind=ab["behind"], ahead=ab["ahead"])
+                                  behind=(ab or {}).get("behind", 0),
+                                  ahead=(ab or {}).get("ahead", 0))
             cells["_tip"], cells["_tool"] = branch_tip, used
-            cells.update(pr=_fmt_pr(pr), pr_data=pr)
+            cells.update(commits=_fmt_counts(ab), ab=ab, pr=_fmt_pr(pr),
+                         pr_data=pr, base_branch=base_branch or None)
             return _seed_recorded_pr(cells, entry)
     if branch:
+        query_failed = False
         try:
             pr, used = _query_pr(repo, branch)
         except HarnessError:
+            query_failed = True
             pr, used = (cached or {}).get("pr"), (cached or {}).get("tool")
         if pr is None and used is None and cached and cached.get("pr"):
+            query_failed = True
             pr, used = cached["pr"], cached.get("tool")
         target = (pr or {}).get("target_branch") or ""
         db = (target
@@ -207,18 +281,21 @@ def _pr_cells(entry: dict, refresh_pr: bool = False) -> dict:
         ab = repos.ahead_behind(Path(wt), db, branch) if (wt_ok and db) else None
         if wt_ok:
             branch_tip = _patched("_git_tip")(wt, branch) or _patched("_git_tip")(wt, "HEAD")
-            store.cache_pr_status(branch, pr, tool=used if pr else None, repo=repo,
-                                  base_branch=db,
-                                  branch_tip=branch_tip,
-                                  base_tip=_patched("_git_tip")(wt, f"origin/{db}") if db else None,
-                                  behind=(ab or {}).get("behind", 0),
-                                  ahead=(ab or {}).get("ahead", 0))
+            if not query_failed:
+                store.cache_pr_status(branch, pr, tool=used if pr else None, repo=repo,
+                                      base_branch=db,
+                                      branch_tip=branch_tip,
+                                      base_tip=_patched("_git_tip")(wt, f"origin/{db}") if db else None,
+                                      behind=(ab or {}).get("behind", 0),
+                                      ahead=(ab or {}).get("ahead", 0))
             cells["_tip"], cells["_tool"] = branch_tip, used if pr else None
             cells.update(commits=_fmt_counts(ab), ab=ab)
-        elif pr is not None or used is not None:
+        elif not query_failed and (pr is not None or used is not None):
             store.cache_pr_status(branch, pr, tool=used if pr else None, repo=repo,
                                   base_branch=db)
             cells["_tool"] = used if pr else None
+        elif pr is not None:
+            cells["_tool"] = used
         cells.update(pr=_fmt_pr(pr), pr_data=pr, base_branch=db)
     return _seed_recorded_pr(cells, entry)
 
@@ -302,13 +379,7 @@ def _fmt_prodtest(item: dict | None) -> str:
 
 
 def _ci_cell(entry: dict, cells: dict, refresh_pr: bool, key: str = "") -> tuple[str | None, str]:
-    """(status, job_url) for the resolved PR's latest CI pipeline.
-
-    Status is success|failure|running|not_started; None when there is no PR
-    (no url) or the lookup failed (soft failure — fetch_ci warns on stderr
-    and returns None; nothing is cached so the next run retries). job_url is
-    the latest job's page ("" when unknown).
-    """
+    """(status, job_url) for the resolved PR's latest CI pipeline."""
     pr = cells.get("pr_data")
     if not pr or not pr.get("url"):
         return None, ""
@@ -319,76 +390,87 @@ def _ci_cell(entry: dict, cells: dict, refresh_pr: bool, key: str = "") -> tuple
     branch_tip = cells.get("_tip")
     if branch_tip is None and wt_ok:
         branch_tip = _patched("_git_tip")(entry["worktree"], "HEAD")
-    tip_matches = (not wt_ok) or (cached.get("ci_sha") == branch_tip if cached else False)
-    if not refresh_pr and cached and ((_ci_usable(cached) and tip_matches)
-                                      or (entry.get("deleted_at") and "ci" in cached)):
-        return cached.get("ci"), cached.get("ci_url") or ""
-    if not refresh_pr and entry.get("deleted_at"):
-        return None, ""
+    tip_for_cache = branch_tip if wt_ok else None
     url = pr["url"]
     tool = ((cached or {}).get("tool")
             or ("gh" if "github.com" in url else "glab"))
-    from . import refs_ci as _refs_ci
-    if refs.fetch_ci is _refs_ci.fetch_ci:
-        ci, ci_url, checks = refs.fetch_ci_details(tool, url, entry.get("repo", ""))
-        if ci == "failure" and checks:
-            _refs_ci.populate_failing_check_logs(
-                tool, checks, cwd=entry.get("repo", ""), fallback_url=ci_url
-            )
-    else:
-        ci, ci_url = refs.fetch_ci(tool, url, entry.get("repo", ""))
-        checks = []
-    prev_cached: dict | None = None
-    if branch:
-        prev_cached = store.cache_ci_status(branch, ci, sha=branch_tip or "", ci_url=ci_url, repo=repo)
-    if key and ci is not None:
-        try:
-            for c in checks:
-                if not c.get("commit_sha") and branch_tip:
-                    c["commit_sha"] = branch_tip
-            store.replace_pr_checks(key, checks)
-            prior_source = prev_cached if prev_cached is not None else (cached or {})
-            prior_ci = prior_source.get("ci")
-            if ci != prior_ci and ci in ("failure", "success", "running"):
-                from . import store_timeline
-                ev_type = {"failure": "ci_failed", "success": "ci_passed", "running": "ci_running"}[ci]
-                failed_names = store_timeline.failing_check_names(checks)
-                if ci == "failure" and failed_names:
-                    summary = f"CI failed: {', '.join(failed_names[:3])}"
-                elif ci == "failure":
-                    summary = "CI failed"
-                elif ci == "success":
-                    summary = "CI passed"
-                else:
-                    summary = "CI running"
-                store.append_worktree_event(
-                    key, ev_type, summary,
-                    {"ci": ci, "prior_ci": prior_ci, "ci_url": ci_url, "failing_checks": failed_names},
+
+    def _fetch_and_store_ci() -> tuple[str | None, str]:
+        from . import refs_ci as _refs_ci
+        if refs.fetch_ci is _refs_ci.fetch_ci:
+            ci, ci_url, checks = refs.fetch_ci_details(tool, url, entry.get("repo", ""))
+            if ci == "failure" and checks:
+                _refs_ci.populate_failing_check_logs(
+                    tool, checks, cwd=entry.get("repo", ""), fallback_url=ci_url
                 )
-        except Exception:
-            pass
-    return ci, ci_url
+        else:
+            ci, ci_url = refs.fetch_ci(tool, url, entry.get("repo", ""))
+            checks = []
+        prev_cached: dict | None = None
+        if branch:
+            prev_cached = store.cache_ci_status(branch, ci, sha=branch_tip or "", ci_url=ci_url, repo=repo)
+        if key and ci is not None:
+            try:
+                for c in checks:
+                    if not c.get("commit_sha") and branch_tip:
+                        c["commit_sha"] = branch_tip
+                store.replace_pr_checks(key, checks)
+                prior_source = prev_cached if prev_cached is not None else (cached or {})
+                prior_ci = prior_source.get("ci")
+                if ci != prior_ci and ci in ("failure", "success", "running"):
+                    from . import store_timeline
+                    ev_type = {"failure": "ci_failed", "success": "ci_passed", "running": "ci_running"}[ci]
+                    failed_names = store_timeline.failing_check_names(checks)
+                    if ci == "failure" and failed_names:
+                        summary = f"CI failed: {', '.join(failed_names[:3])}"
+                    elif ci == "failure":
+                        summary = "CI failed"
+                    elif ci == "success":
+                        summary = "CI passed"
+                    else:
+                        summary = "CI running"
+                    store.append_worktree_event(
+                        key, ev_type, summary,
+                        {"ci": ci, "prior_ci": prior_ci, "ci_url": ci_url, "failing_checks": failed_names},
+                    )
+            except Exception:
+                pass
+        return ci, ci_url
+
+    if not refresh_pr and cached:
+        if entry.get("deleted_at") and "ci" in cached:
+            return cached.get("ci"), cached.get("ci_url") or ""
+        freshness = _ci_freshness(cached, tip_for_cache)
+        if freshness == "fresh":
+            return cached.get("ci"), cached.get("ci_url") or ""
+        if freshness == "stale":
+            swr.serve_stale_or_refresh(cached, False, _fetch_and_store_ci, f"pr:ci:{store.pr_cache_key(repo, branch)}")
+            return cached.get("ci"), cached.get("ci_url") or ""
+    if not refresh_pr and entry.get("deleted_at"):
+        return None, ""
+    return _fetch_and_store_ci()
+
+
+def _reviews_freshness(
+    cached: dict | None,
+    branch_tip: str | None = None,
+) -> Literal["fresh", "stale", "expired"]:
+    """Tri-state freshness for cached review-comment stats."""
+    if not cached or not all(k in cached for k in ("reviews", "unresolved", "resolved")):
+        return "expired"
+    sha = branch_tip or ""
+    if (cached.get("reviews_sha") or "") != sha:
+        return "expired"
+    return _age_freshness(str(cached.get("reviews_checked_at", "") or ""), _ci_ttl(), _ci_swr())
+
 
 def _reviews_usable(cached: dict) -> bool:
-    """Cached review-comment stats still servable (stale-while-revalidate):
-    checked within max(10 min * 10, 1 day) (WORKAGENT_CI_*_SECONDS override)."""
-    ts = cached.get("reviews_checked_at", "")
-    if not ts:
-        return False
-    try:
-        age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
-    except ValueError:
-        return False
-    return age < timedelta(seconds=_ci_swr())
+    """Cached review-comment stats still servable within SWR window."""
+    return _age_freshness(str(cached.get("reviews_checked_at", "") or ""), _ci_ttl(), _ci_swr()) != "expired"
 
 
 def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool, key: str = "") -> dict | None:
-    """{reviews, unresolved, resolved} for the resolved PR (issue #28).
-
-    None when there is no PR (no url) or the lookup failed (soft failure —
-    fetch_pr_comment_stats warns on stderr and returns None; nothing is
-    cached so the next run retries). Cached 10 min while the tip matches.
-    """
+    """{reviews, unresolved, resolved} for the resolved PR (issue #28)."""
     pr = cells.get("pr_data")
     if not pr or not pr.get("url"):
         return None
@@ -399,114 +481,121 @@ def _reviews_cell(entry: dict, cells: dict, refresh_pr: bool, key: str = "") -> 
     branch_tip = cells.get("_tip")
     if branch_tip is None and wt_ok:
         branch_tip = _patched("_git_tip")(entry["worktree"], "HEAD")
-    tip_matches = (not wt_ok) or (cached.get("reviews_sha") == branch_tip if cached else False)
-    has_rev = bool(cached and all(k in cached for k in ("reviews", "unresolved", "resolved")))
-    if not refresh_pr and cached and has_rev and (
-        (_reviews_usable(cached) and tip_matches) or entry.get("deleted_at")
-    ):
-        return {"reviews": int(cached.get("reviews") or 0),
-                "unresolved": int(cached.get("unresolved") or 0),
-                "resolved": int(cached.get("resolved") or 0)}
-    if not refresh_pr and entry.get("deleted_at"):
-        return None
+    tip_for_cache = branch_tip if wt_ok else None
     url = pr["url"]
     tool = ((cached or {}).get("tool")
             or ("gh" if "github.com" in url else "glab"))
-    from . import refs_reviews as _refs_reviews
-    if refs.fetch_pr_comment_stats is _refs_reviews.fetch_pr_comment_stats:
-        stats, threads = refs.fetch_pr_review_details(tool, url, entry.get("repo", ""))
-    else:
-        stats = refs.fetch_pr_comment_stats(tool, url, entry.get("repo", ""))
-        threads = []
-    prev_cached: dict | None = None
-    if branch:
-        prev_cached = store.cache_review_stats(branch, stats, sha=branch_tip or "", repo=repo)
-    if key and stats is not None:
-        try:
-            store.replace_pr_review_threads(key, threads)
-            prior_source = prev_cached if prev_cached is not None else (cached or {})
-            prior_unres = int(prior_source.get("unresolved") or 0)
-            new_unres = int(stats.get("unresolved") or 0)
-            if new_unres > prior_unres:
-                noun = "comment" if new_unres == 1 else "comments"
-                store.append_worktree_event(
-                    key, "review_comments_arrived",
-                    f"{new_unres} unresolved review {noun}",
-                    {"unresolved": new_unres, "prior_unresolved": prior_unres},
-                )
-            elif prior_unres > 0 and new_unres == 0:
-                store.append_worktree_event(
-                    key, "review_comments_resolved",
-                    "All review comments resolved",
-                    {"unresolved": 0, "prior_unresolved": prior_unres},
-                )
-        except Exception:
-            pass
-    return stats
+
+    def _fetch_and_store_reviews() -> dict | None:
+        from . import refs_reviews as _refs_reviews
+        if refs.fetch_pr_comment_stats is _refs_reviews.fetch_pr_comment_stats:
+            stats, threads = refs.fetch_pr_review_details(tool, url, entry.get("repo", ""))
+        else:
+            stats = refs.fetch_pr_comment_stats(tool, url, entry.get("repo", ""))
+            threads = []
+        prev_cached: dict | None = None
+        if branch:
+            prev_cached = store.cache_review_stats(branch, stats, sha=branch_tip or "", repo=repo)
+        if key and stats is not None:
+            try:
+                store.replace_pr_review_threads(key, threads)
+                prior_source = prev_cached if prev_cached is not None else (cached or {})
+                prior_unres = int(prior_source.get("unresolved") or 0)
+                new_unres = int(stats.get("unresolved") or 0)
+                if new_unres > prior_unres:
+                    noun = "comment" if new_unres == 1 else "comments"
+                    store.append_worktree_event(
+                        key, "review_comments_arrived",
+                        f"{new_unres} unresolved review {noun}",
+                        {"unresolved": new_unres, "prior_unresolved": prior_unres},
+                    )
+                elif prior_unres > 0 and new_unres == 0:
+                    store.append_worktree_event(
+                        key, "review_comments_resolved",
+                        "All review comments resolved",
+                        {"unresolved": 0, "prior_unresolved": prior_unres},
+                    )
+            except Exception:
+                pass
+        return stats
+
+    has_rev = bool(cached and all(k in cached for k in ("reviews", "unresolved", "resolved")))
+    if not refresh_pr and cached and has_rev:
+        cached_stats = {
+            "reviews": int(cached.get("reviews") or 0),
+            "unresolved": int(cached.get("unresolved") or 0),
+            "resolved": int(cached.get("resolved") or 0),
+        }
+        if entry.get("deleted_at"):
+            return cached_stats
+        freshness = _reviews_freshness(cached, tip_for_cache)
+        if freshness == "fresh":
+            return cached_stats
+        if freshness == "stale":
+            swr.serve_stale_or_refresh(cached, False, _fetch_and_store_reviews, f"pr:reviews:{store.pr_cache_key(repo, branch)}")
+            return cached_stats
+    if not refresh_pr and entry.get("deleted_at"):
+        return None
+    return _fetch_and_store_reviews()
+
+
+def _issue_freshness(cached: dict | None) -> Literal["fresh", "stale", "expired"]:
+    """Tri-state freshness for cached linked-issue status."""
+    if not cached or "issue_status" not in cached:
+        return "expired"
+    return _age_freshness(str(cached.get("issue_status_checked_at", "") or ""), _ci_ttl(), _ci_swr())
+
 
 def _issue_usable(cached: dict) -> bool:
-    """Cached issue status still servable (stale-while-revalidate):
-    checked within max(10 min * 10, 1 day) (WORKAGENT_CI_*_SECONDS override)."""
-    ts = cached.get("issue_status_checked_at", "")
-    if not ts:
-        return False
-    try:
-        age = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
-    except ValueError:
-        return False
-    return age < timedelta(seconds=_ci_swr())
+    """Cached issue status still servable within SWR window."""
+    return _age_freshness(str(cached.get("issue_status_checked_at", "") or ""), _ci_ttl(), _ci_swr()) != "expired"
 
 
 def _issue_cell(key: str, entry: dict, refresh_pr: bool = False) -> str | None:
-    """Lowercased tracker status for the linked issue, else None.
-
-    Optional: only worktrees with a linked issue (``issue``/``issue_url``
-    or the link key itself) get a status; branch-only rows stay None.
-    Cached within the same SWR window as CI/reviews, keyed by
-    (repo, branch); --refresh-pr forces a live re-query. Never raises.
-    Unknown/empty lookups (e.g. a gh issue with no ``status:`` label)
-    are cached as a negative for the same window, so a status poll does
-    not re-query the host CLI for every worktree on every run. Lookup
-    failures (``_issue_state`` returns None) cache nothing and preserve
-    the prior cached value, so the next run retries. Jira + GitHub only
-    (no glab status reader exists).
-    """
+    """Lowercased tracker status for the linked issue, else None."""
     stored = str(entry.get("issue", "") or "").strip()
     stored_url = str(entry.get("issue_url", "") or "").strip()
     branch = entry.get("branch", "")
     repo = entry.get("repo", "")
     cached = store.lookup_pr_cache(branch, repo) if branch else None
-    if not refresh_pr and cached and (_issue_usable(cached) or entry.get("deleted_at")) \
-            and "issue_status" in cached:
-        # store normalizes a cached None to "": a present-but-empty value
-        # is a usable negative (lookup succeeded, no status label).
-        return cached.get("issue_status") or None
+
+    def _fetch_and_store_issue() -> str | None:
+        from . import issue_status as _st
+        parsed = None
+        for cand in (stored, key, stored_url or None):
+            if not cand:
+                continue
+            try:
+                parsed = _st._parse(cand, quiet=True)
+            except Exception:
+                parsed = None
+            if parsed is not None:
+                break
+        if parsed is None:
+            return (cached or {}).get("issue_status") or None
+        tool = parsed.get("tool", "")
+        if tool not in ("jira", "gh"):
+            return (cached or {}).get("issue_status") or None
+        cur = _st._issue_state(parsed.get("number", ""), tool,
+                               parsed.get("url", "") or parsed.get("number", ""))
+        if cur is None:
+            return (cached or {}).get("issue_status") or None
+        if branch:
+            store.cache_issue_status(branch, cur, repo=repo)
+        return cur or None
+
+    if not refresh_pr and cached and "issue_status" in cached:
+        if entry.get("deleted_at"):
+            return cached.get("issue_status") or None
+        freshness = _issue_freshness(cached)
+        if freshness == "fresh":
+            return cached.get("issue_status") or None
+        if freshness == "stale":
+            swr.serve_stale_or_refresh(cached, False, _fetch_and_store_issue, f"pr:issue:{store.pr_cache_key(repo, branch)}")
+            return cached.get("issue_status") or None
     if not refresh_pr and entry.get("deleted_at"):
         return None
-    from . import issue_status as _st
-    parsed = None
-    for cand in (stored, key, stored_url or None):
-        if not cand:
-            continue
-        try:
-            parsed = _st._parse(cand, quiet=True)
-        except Exception:
-            parsed = None
-        if parsed is not None:
-            break
-    if parsed is None:
-        return (cached or {}).get("issue_status") or None
-    tool = parsed.get("tool", "")
-    if tool not in ("jira", "gh"):
-        return (cached or {}).get("issue_status") or None
-    cur = _st._issue_state(parsed.get("number", ""), tool,
-                           parsed.get("url", "") or parsed.get("number", ""))
-    if cur is None:
-        return (cached or {}).get("issue_status") or None
-    if branch:
-        store.cache_issue_status(branch, cur, repo=repo)
-    return cur or None
-
+    return _fetch_and_store_issue()
 
 
 def _fmt_reviews(stats: dict | None) -> str:
