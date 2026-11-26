@@ -204,6 +204,8 @@ def create_app(static_dir: Path, host: str, port: int,
                allowed_hosts: list[str],
                enable_watcher: bool | None = None,
                watch_interval: float = 60.0) -> FastAPI:
+    from . import swr as _swr
+    _swr.set_background_enabled(True)
     from .cdc import CdcHub
     from . import watcher as _watcher
     from .scheduler import SchedulerLoop

@@ -73,9 +73,12 @@ def _isolate_workagent_env(tmp_path, monkeypatch):
     # host env nor a test calling run_server() leaks into later tests.
     monkeypatch.setenv("WORKAGENT_SERVICE", "")
     monkeypatch.delenv("WORKAGENT_SERVICE", raising=False)
+    from workagent import swr as _swr
+    _swr.set_background_enabled(False)
     try:
         yield cfg
     finally:
+        _swr.set_background_enabled(False)
         os.environ.pop("WORKAGENT_SERVICE", None)
 
 
