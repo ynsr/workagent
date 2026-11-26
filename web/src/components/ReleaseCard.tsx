@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { AlertCircle, Download, Rocket, Wrench } from "lucide-react"
+import { AlertCircle, Download, RefreshCw, Rocket, Wrench } from "lucide-react"
 import { toast } from "sonner"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -51,7 +51,40 @@ function relativeFetchMs(iso: string | null | undefined): string {
 }
 
 export function ReleaseCard() {
-  const { data: repos, isPending, isError, isFetching } = useRepos()
+  const qc = useQueryClient()
+  const { data: repos, isPending, isError } = useRepos()
+  const [refreshing, setRefreshing] = useState(false)
+  const branchedNames = (repos ?? []).filter((r) => r.release_branch).map((r) => r.name)
+  const releaseQueries = useReleaseStatuses(branchedNames)
+  const anyFetching = refreshing || (Array.isArray(releaseQueries) && releaseQueries.some((q) => q?.isFetching))
+
+  async function handleRefresh() {
+    if (!branchedNames.length) return
+    setRefreshing(true)
+    try {
+      const settled = await Promise.allSettled(
+        branchedNames.map(async (name) => ({
+          name,
+          fresh: await api.releaseStatus(name, { force: true }),
+        })),
+      )
+      const errors: string[] = []
+      for (const r of settled) {
+        if (r.status === "fulfilled") {
+          qc.setQueryData(queryKeys.release(r.value.name), r.value.fresh)
+        } else {
+          errors.push(errorText(r.reason))
+        }
+      }
+      if (errors.length === 0) {
+        toast.success("Release status refreshed")
+      } else {
+        toast.error(errors[0])
+      }
+    } finally {
+      setRefreshing(false)
+    }
+  }
   if (isPending && !repos) {
     return (
       <Card>
@@ -106,19 +139,32 @@ export function ReleaseCard() {
   return (
     <Card className="relative">
       <CardHeader>
-        <CardTitle>
-          Ready to release <ReleaseReadyCount names={branched.map((r) => r.name)} />
-        </CardTitle>
-        <CardDescription>
-          Repos with commits on the default branch ahead of the release branch.
-        </CardDescription>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <CardTitle>
+              Ready to release <ReleaseReadyCount names={branchedNames} />
+            </CardTitle>
+            <CardDescription>
+              Repos with commits on the default branch ahead of the release branch.
+            </CardDescription>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void handleRefresh()}
+            disabled={anyFetching}
+          >
+            <RefreshCw className={anyFetching ? "animate-spin" : undefined} aria-hidden />
+            Refresh
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
         {branched.map((r) => (
           <ReleaseRow key={r.name} name={r.name} />
         ))}
       </CardContent>
-      {isFetching ? <RefreshOverlay label="Checking repos…" /> : null}
+      {anyFetching ? <RefreshOverlay label="Checking repos…" /> : null}
     </Card>
   )
 }

@@ -94,7 +94,14 @@ export function WorktreeWorkspace() {
 
   const runQ = useRun(activeRunId)
   const isRunning = runQ.data?.state === "running"
-  const events = useRunEvents(isRunning ? activeRunId : "")
+  const events = useRunEvents(isRunning ? activeRunId : "", {
+    onState: () => {
+      if (activeRunId) {
+        void qc.invalidateQueries({ queryKey: queryKeys.run(activeRunId) })
+      }
+      void qc.invalidateQueries({ queryKey: queryKeys.runs })
+    },
+  })
   const mergedLines = useMemo(
     () => mergeLines(runQ.data?.lines ?? [], events.lines),
     [runQ.data?.lines, events.lines],

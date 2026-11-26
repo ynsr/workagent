@@ -83,7 +83,11 @@ CREATE TABLE IF NOT EXISTS pr_candidates_cache (
   fetched_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS release_diff_cache (
   repo_key TEXT PRIMARY KEY NOT NULL, count INTEGER NOT NULL,
-  fetched_at TEXT NOT NULL);
+  fetched_at TEXT NOT NULL,
+  default_branch TEXT NOT NULL DEFAULT '',
+  release_branch TEXT NOT NULL DEFAULT '',
+  ci_json TEXT NOT NULL DEFAULT '',
+  ci_fetched_at TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS custom_actions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL, icon TEXT NOT NULL DEFAULT 'Zap',
@@ -405,6 +409,13 @@ CDC_TABLES: tuple[tuple[str, str], ...] = (
     ("pr_cache", "branch"),
     ("prodtest_items", "issue_key"),
     ("schedules", "id"),
+    ("pr_candidates_cache", "source"),
+    ("issue_cache", "source"),
+    ("release_diff_cache", "repo_key"),
+    ("repos", "name"),
+    ("trackers", "key_ref"),
+    ("pr_checks", "worktree_ref"),
+    ("pr_review_threads", "worktree_ref"),
 )
 
 _CDC_TRIGGER_NAMES: frozenset[str] = frozenset(
@@ -2000,7 +2011,30 @@ def _rebuild_required_columns(conn) -> list[str]:
     return rebuilt
 
 
-_INIT_CACHE: dict[str, bool] = {}
+_INIT_LOCK = threading.Lock()
+_INIT_CACHE: dict[str, tuple[int, int]] = {}
+_BACKFILL_DONE: set[str] = set()
+_BACKFILL_STARTED: set[str] = set()
+
+
+def _file_sig(path: Path) -> tuple[int, int] | None:
+    try:
+        st = path.stat()
+        return (st.st_ino, st.st_dev)
+    except OSError:
+        return None
+
+
+def _migrate_release_diff_cache(conn) -> None:
+    """Idempotently add branch-key and branch-CI columns to release_diff_cache."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(release_diff_cache)")}
+    if not cols:
+        return
+    for col in ("default_branch", "release_branch", "ci_json", "ci_fetched_at"):
+        if col not in cols:
+            conn.execute(
+                f"ALTER TABLE release_diff_cache ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
+            )
 
 
 def _schema_current(path: Path) -> bool:
@@ -2086,6 +2120,9 @@ def _schema_current(path: Path) -> bool:
             return False
         if "release_diff_cache" not in tables:
             return False
+        rdcols = {r[1] for r in conn.execute("PRAGMA table_info(release_diff_cache)")}
+        if not {"default_branch", "release_branch", "ci_json", "ci_fetched_at"} <= rdcols:
+            return False
         if "custom_actions" not in tables:
             return False
         if "flow_templates" not in tables or "flows" not in tables:
@@ -2134,8 +2171,14 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
     thread runs backfill_async(). Every other caller keeps the default:
     backfill inline, same as before.
     """
-    if _INIT_CACHE.get(str(path)) and _schema_current(path):
-        if not _INIT_CACHE.get("backfill") and not _INIT_CACHE.get("backfill:started"):
+    key = str(path)
+    sig = _file_sig(path)
+    with _INIT_LOCK:
+        cached_sig = _INIT_CACHE.get(key)
+        bf_key = str(db_path())
+        backfill_needed = bf_key not in _BACKFILL_DONE and bf_key not in _BACKFILL_STARTED
+    if sig is not None and cached_sig == sig:
+        if backfill_needed:
             if defer_backfill:
                 backfill_async()
             else:
@@ -2182,16 +2225,23 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
                 _migrate_runs_parent(conn)
                 _migrate_schedules(conn)
                 _migrate_runs_telemetry(conn)
+                _migrate_release_diff_cache(conn)
                 _migrate_change_log(conn)
         except sqlite3.OperationalError as e:
+            last = e
             if "locked" not in str(e).lower():
                 raise
             if _schema_current(path):
                 break
             time.sleep(0.05 * (2 ** attempt))
+        else:
+            break
     else:
         raise last  # type: ignore[misc]
-    _INIT_CACHE[str(path)] = True
+    new_sig = _file_sig(path)
+    if new_sig is not None:
+        with _INIT_LOCK:
+            _INIT_CACHE[key] = new_sig
     if defer_backfill:
         backfill_async()
     else:
@@ -2200,8 +2250,12 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
 
 
 def _run_backfill() -> None:
-    """Synchronous release-branch backfill (never raises; once per process)."""
-    _INIT_CACHE["backfill"] = True
+    """Synchronous release-branch backfill (never raises; once per DB path)."""
+    k = str(db_path())
+    with _INIT_LOCK:
+        if k in _BACKFILL_DONE:
+            return
+        _BACKFILL_DONE.add(k)
     try:
         from . import repos_release as _rel
         _rel.backfill_release_branches()
@@ -2210,10 +2264,12 @@ def _run_backfill() -> None:
 
 
 def backfill_async() -> "threading.Thread | None":
-    """Fire-and-forget _run_backfill (daemon; at most once per process)."""
-    if _INIT_CACHE.get("backfill:started"):
-        return None
-    _INIT_CACHE["backfill:started"] = True
+    """Fire-and-forget _run_backfill (daemon; at most once per DB path)."""
+    k = str(db_path())
+    with _INIT_LOCK:
+        if k in _BACKFILL_STARTED or k in _BACKFILL_DONE:
+            return None
+        _BACKFILL_STARTED.add(k)
     t = threading.Thread(target=_run_backfill,
                          name="workagent-backfill", daemon=True)
     t.start()
@@ -2428,6 +2484,148 @@ def migrate_json(config_dir: Path, db_path: Path) -> dict:
             p.unlink()
     return counts
 
+def get_pr_cache_entry(path: Path, key: str, fallback_key: str = "") -> dict | None:
+    """Read one pr_cache entry by key (falling back to bare branch key)."""
+    init_db(path)
+    keys = (key, fallback_key) if fallback_key and fallback_key != key else (key,)
+    with connect(path) as conn:
+        for k in keys:
+            row = conn.execute(
+                "SELECT payload, checked_at FROM pr_cache WHERE branch = ?", (k,)
+            ).fetchone()
+            if row is not None:
+                try:
+                    payload = json.loads(row[0] or "{}")
+                except ValueError:
+                    payload = {}
+                entry = payload if isinstance(payload, dict) else {"pr": payload}
+                entry.setdefault("pr", None)
+                entry.setdefault("checked_at", row[1] or "")
+                return entry
+    return None
+
+
+def upsert_pr_cache_entry(
+    path: Path,
+    key: str,
+    updater,
+    *,
+    fallback_key: str = "",
+    touch_checked_at: bool = False,
+) -> dict | None:
+    """Atomically read-modify-write one pr_cache row under BEGIN IMMEDIATE."""
+    init_db(path)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    conn = connect(path)
+    conn.isolation_level = None
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT payload, checked_at FROM pr_cache WHERE branch = ?", (key,)
+        ).fetchone()
+        if row is None and fallback_key and fallback_key != key:
+            row = conn.execute(
+                "SELECT payload, checked_at FROM pr_cache WHERE branch = ?", (fallback_key,)
+            ).fetchone()
+        existing: dict = {}
+        checked_at = ""
+        if row is not None:
+            try:
+                raw = json.loads(row[0] or "{}")
+                if isinstance(raw, dict):
+                    existing = raw
+            except ValueError:
+                existing = {}
+            checked_at = row[1] or ""
+            existing["checked_at"] = checked_at
+        res = updater(existing)
+        if res is None:
+            conn.execute("COMMIT")
+            return None
+        updated = dict(res)
+        if touch_checked_at:
+            new_checked = now_iso
+            updated.pop("checked_at", None)
+        else:
+            new_checked = str(updated.pop("checked_at", checked_at) or "")
+        conn.execute(
+            "INSERT INTO pr_cache (branch, payload, checked_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(branch) DO UPDATE SET payload = excluded.payload, checked_at = excluded.checked_at",
+            (key, json.dumps(updated), new_checked),
+        )
+        conn.execute("COMMIT")
+        updated["checked_at"] = new_checked
+        return updated
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+def delete_pr_cache_entry(path: Path, key: str, fallback_key: str = "") -> int:
+    """Delete pr_cache row(s) for key and optional bare fallback_key."""
+    init_db(path)
+    keys = [k for k in dict.fromkeys((key, fallback_key)) if k]
+    if not keys:
+        return 0
+    with connect(path) as conn:
+        cur = conn.execute(
+            f"DELETE FROM pr_cache WHERE branch IN ({','.join('?' for _ in keys)})",
+            keys,
+        )
+        return cur.rowcount
+
+
+def _live_pr_cache_keys_conn(conn) -> set[str]:
+    """Build set of pr_cache keys referenced by any row in worktrees."""
+    live: set[str] = set()
+    rows = conn.execute(
+        "SELECT w.branch, w.repo_key, COALESCE(r.path, ''), w.payload"
+        " FROM worktrees w LEFT JOIN repos r ON r.key_ref = w.repo_key"
+    ).fetchall()
+    for branch, repo_key, repo_path, payload_raw in rows:
+        b = str(branch or "")
+        if not b:
+            continue
+        live.add(b)
+        repos_set = {str(repo_key or ""), str(repo_path or "")}
+        if payload_raw:
+            try:
+                p = json.loads(payload_raw)
+                if isinstance(p, dict) and p.get("repo"):
+                    repos_set.add(str(p["repo"]))
+            except Exception:
+                pass
+        for r in repos_set:
+            if r:
+                live.add(f"{r}\x1f{b}")
+    return live
+
+
+def prune_orphan_pr_cache(path: Path) -> int:
+    """Delete pr_cache rows not referenced by any row in worktrees."""
+    init_db(path)
+    with connect(path) as conn:
+        live = _live_pr_cache_keys_conn(conn)
+        existing = [r[0] for r in conn.execute("SELECT branch FROM pr_cache").fetchall()]
+        orphans = [k for k in existing if k not in live]
+        if not orphans:
+            return 0
+        deleted = 0
+        for i in range(0, len(orphans), 200):
+            batch = orphans[i:i + 200]
+            cur = conn.execute(
+                f"DELETE FROM pr_cache WHERE branch IN ({','.join('?' for _ in batch)})",
+                batch,
+            )
+            deleted += cur.rowcount
+        return deleted
+
+
 def get_issue_cache(path: Path, source: str) -> tuple[list, str | None]:
     """Cached issue rows for *source* + fetched_at ISO, or ([], None)."""
     import json
@@ -2441,19 +2639,47 @@ def get_issue_cache(path: Path, source: str) -> tuple[list, str | None]:
     return json.loads(row[0]), row[1]
 
 
-def set_issue_cache(path: Path, source: str, rows: list[dict]) -> None:
-    """Upsert cached issue rows for *source* with a fresh fetched_at."""
+def set_issue_cache(
+    path: Path,
+    source: str,
+    rows: list[dict],
+    *,
+    max_age_seconds: int | None = None,
+) -> None:
+    """Upsert cached issue rows for *source* with a fresh fetched_at.
+
+    When *max_age_seconds* is set, prunes stale rows older than that window.
+    """
     import json
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     init_db(path)
+    now = datetime.now(timezone.utc)
     with connect(path) as conn:
         conn.execute(
             "INSERT INTO issue_cache (source, payload, fetched_at)"
             " VALUES (?, ?, ?)"
             " ON CONFLICT(source) DO UPDATE SET payload=excluded.payload,"
             " fetched_at=excluded.fetched_at",
-            (source, json.dumps(rows),
-             datetime.now(timezone.utc).isoformat()))
+            (source, json.dumps(rows), now.isoformat()),
+        )
+        if max_age_seconds is not None and max_age_seconds >= 0:
+            cutoff = now - timedelta(seconds=max_age_seconds)
+            stale_sources: list[str] = []
+            for src, ts in conn.execute("SELECT source, fetched_at FROM issue_cache").fetchall():
+                if src == source:
+                    continue
+                try:
+                    dt = datetime.fromisoformat(ts or "")
+                except ValueError:
+                    stale_sources.append(src)
+                    continue
+                if dt < cutoff:
+                    stale_sources.append(src)
+            if stale_sources:
+                conn.execute(
+                    f"DELETE FROM issue_cache WHERE source IN ({','.join('?' for _ in stale_sources)})",
+                    stale_sources,
+                )
 
 
 def clear_issue_cache(path: Path) -> None:
@@ -2489,32 +2715,119 @@ def set_pr_candidates_cache(path: Path, rows: list[dict], source: str = "prs") -
             " fetched_at=excluded.fetched_at",
             (source, json.dumps(rows),
              datetime.now(timezone.utc).isoformat()))
-def get_release_diff_cache(path: Path, repo_key: str) -> tuple[int | None, str]:
-    """Cached release diff (count, fetched_at ISO); (None, '') on miss."""
+
+
+def clear_pr_candidates_cache(path: Path) -> None:
+    """Drop all cached PR/MR candidate rows (reset-cache path)."""
+    init_db(path)
+    with connect(path) as conn:
+        conn.execute("DELETE FROM pr_candidates_cache")
+
+
+def get_release_diff_cache_entry(path: Path, repo_key: str) -> dict | None:
+    """Full cached release_diff_cache row or None on miss."""
     init_db(path)
     try:
         with connect(path) as conn:
             row = conn.execute(
-                "SELECT count, fetched_at FROM release_diff_cache WHERE repo_key = ?",
-                (repo_key,)).fetchone()
+                "SELECT count, fetched_at, default_branch, release_branch, ci_json, ci_fetched_at"
+                " FROM release_diff_cache WHERE repo_key = ?",
+                (repo_key,),
+            ).fetchone()
     except Exception:
-        return None, ""
+        return None
     if row is None:
+        return None
+    return {
+        "count": int(row[0]),
+        "fetched_at": str(row[1] or ""),
+        "default_branch": str(row[2] or ""),
+        "release_branch": str(row[3] or ""),
+        "ci_json": str(row[4] or ""),
+        "ci_fetched_at": str(row[5] or ""),
+    }
+
+
+def get_release_diff_cache(path: Path, repo_key: str) -> tuple[int | None, str]:
+    """Cached release diff (count, fetched_at ISO); (None, '') on miss."""
+    entry = get_release_diff_cache_entry(path, repo_key)
+    if entry is None:
         return None, ""
-    return int(row[0]), str(row[1] or "")
+    return entry["count"], entry["fetched_at"]
 
 
-def set_release_diff_cache(path: Path, repo_key: str, count: int) -> None:
-    """Upsert cached release diff count with a fresh fetched_at."""
+def set_release_diff_cache(
+    path: Path,
+    repo_key: str,
+    count: int,
+    *,
+    default_branch: str = "",
+    release_branch: str = "",
+    ci_json: str | None = None,
+    ci_fetched_at: str | None = None,
+) -> None:
+    """Upsert cached release diff count (and optional branch/CI fields)."""
     from datetime import datetime, timezone
     init_db(path)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with connect(path) as conn:
+        if ci_json is not None or ci_fetched_at is not None:
+            conn.execute(
+                "INSERT INTO release_diff_cache"
+                " (repo_key, count, fetched_at, default_branch, release_branch, ci_json, ci_fetched_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(repo_key) DO UPDATE SET"
+                " count=excluded.count, fetched_at=excluded.fetched_at,"
+                " default_branch=excluded.default_branch, release_branch=excluded.release_branch,"
+                " ci_json=excluded.ci_json, ci_fetched_at=excluded.ci_fetched_at",
+                (repo_key, int(count), now_iso, default_branch, release_branch,
+                 ci_json or "", ci_fetched_at or ""),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO release_diff_cache"
+                " (repo_key, count, fetched_at, default_branch, release_branch)"
+                " VALUES (?, ?, ?, ?, ?)"
+                " ON CONFLICT(repo_key) DO UPDATE SET"
+                " count=excluded.count, fetched_at=excluded.fetched_at,"
+                " default_branch=excluded.default_branch, release_branch=excluded.release_branch,"
+                " ci_json=CASE WHEN release_diff_cache.release_branch != excluded.release_branch"
+                " THEN '' ELSE release_diff_cache.ci_json END,"
+                " ci_fetched_at=CASE WHEN release_diff_cache.release_branch != excluded.release_branch"
+                " THEN '' ELSE release_diff_cache.ci_fetched_at END",
+                (repo_key, int(count), now_iso, default_branch, release_branch),
+            )
+
+
+def set_release_branch_ci_cache(
+    path: Path,
+    repo_key: str,
+    ci_json: str,
+    ci_fetched_at: str | None = None,
+    *,
+    default_branch: str = "",
+    release_branch: str = "",
+) -> None:
+    """Update cached branch CI on an existing release_diff_cache row."""
+    from datetime import datetime, timezone
+    init_db(path)
+    ts = ci_fetched_at if ci_fetched_at is not None else datetime.now(timezone.utc).isoformat()
     with connect(path) as conn:
         conn.execute(
-            "INSERT INTO release_diff_cache (repo_key, count, fetched_at)"
-            " VALUES (?, ?, ?)"
-            " ON CONFLICT(repo_key) DO UPDATE SET count=excluded.count,"
-            " fetched_at=excluded.fetched_at",
-            (repo_key, int(count), datetime.now(timezone.utc).isoformat()))
+            "UPDATE release_diff_cache SET ci_json = ?, ci_fetched_at = ?"
+            " WHERE repo_key = ?"
+            " AND (default_branch = '' OR default_branch = ?)"
+            " AND (release_branch = '' OR release_branch = ?)",
+            (ci_json, ts, repo_key, default_branch, release_branch),
+        )
+
+
+def delete_release_diff_cache(path: Path, repo_key: str) -> int:
+    """Delete cached release diff entry for *repo_key*."""
+    init_db(path)
+    with connect(path) as conn:
+        cur = conn.execute("DELETE FROM release_diff_cache WHERE repo_key = ?", (repo_key,))
+        return cur.rowcount
 #: Allowed prodtest item statuses — an enum, never free text.
 PRODTEST_STATUSES = ("pending", "pending_prodtest", "running",
                      "passed", "failed", "blocked")

@@ -12,6 +12,8 @@ The default file content is seeded on first launch (ensure_env_file).
 """
 from __future__ import annotations
 import os
+import threading
+import time
 import shlex
 import socket
 from pathlib import Path
@@ -105,7 +107,13 @@ def resolve_env_file(explicit: str | None = None) -> Path | None:
     return target if target.is_file() else None
 
 
-_SOURCED_CACHE: dict = {}
+_SOURCED_LOCK = threading.Lock()
+_SOURCED_CACHE: dict[str, tuple[int, float, dict[str, str]]] = {}
+
+
+def _env_cache_ttl_s() -> float:
+    from .swr import cache_ttl as _cache_ttl
+    return float(_cache_ttl("WORKAGENT_ENV_CACHE_TTL_SECONDS", 60))
 
 
 def sourced_env(env_file: str | Path | None) -> dict[str, str]:
@@ -114,7 +122,8 @@ def sourced_env(env_file: str | Path | None) -> dict[str, str]:
     Runs `set -a; source <file>; env` so shell logic (conditionals,
     `source ~/.secrets/.env`, proxy guards) evaluates exactly as a login
     shell would — unlike parse_env_file, which only handles static
-    `KEY=VAL` lines. Result cached by (path, mtime_ns); failures return {}.
+    `KEY=VAL` lines. Result cached by (path, mtime_ns) with a short TTL
+    (default 60s) so edits to transitively sourced files are picked up.
     """
     if not env_file:
         return {}
@@ -127,9 +136,12 @@ def sourced_env(env_file: str | Path | None) -> dict[str, str]:
     except OSError:
         return {}
     key = str(p)
-    hit = _SOURCED_CACHE.get(key)
-    if hit and hit[0] == mtime:
-        return dict(hit[1])
+    ttl = _env_cache_ttl_s()
+    now = time.monotonic()
+    with _SOURCED_LOCK:
+        hit = _SOURCED_CACHE.get(key)
+    if hit and hit[0] == mtime and (now - hit[1]) < ttl:
+        return dict(hit[2])
     import shlex as _shlex
     try:
         proc = subprocess.run(
@@ -137,9 +149,9 @@ def sourced_env(env_file: str | Path | None) -> dict[str, str]:
             capture_output=True, timeout=10, env=dict(os.environ),
         )
     except Exception:
-        return dict(hit[1]) if hit else {}
+        return dict(hit[2]) if hit else {}
     if proc.returncode != 0:
-        return dict(hit[1]) if hit else {}
+        return dict(hit[2]) if hit else {}
     raw = getattr(proc, "stdout", b"")
     if isinstance(raw, str):
         # Test fakes (monkeypatched subprocess.run) return str stdout —
@@ -147,7 +159,7 @@ def sourced_env(env_file: str | Path | None) -> dict[str, str]:
         # mocked runs still see KEY=VAL lines without executing bash.
         return dict(parse_env_file(p))
     if not isinstance(raw, (bytes, bytearray)):
-        return dict(hit[1]) if hit else {}
+        return dict(hit[2]) if hit else {}
     before = dict(os.environ)
     out: dict[str, str] = {}
     for chunk in bytes(raw).split(b"\0"):
@@ -161,7 +173,8 @@ def sourced_env(env_file: str | Path | None) -> dict[str, str]:
         if not k or before.get(k) == v:
             continue
         out[k] = v
-    _SOURCED_CACHE[key] = (mtime, dict(out))
+    with _SOURCED_LOCK:
+        _SOURCED_CACHE[key] = (mtime, time.monotonic(), dict(out))
     return dict(out)
 
 

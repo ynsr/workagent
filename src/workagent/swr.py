@@ -82,12 +82,25 @@ def cache_swr(ttl_value: int, swr_env_name: str) -> int:
     return max(ttl_value * 10, _SWR_FLOOR_SECONDS)
 
 
+import logging
 import threading
 from collections.abc import Callable
 from typing import Any
 
+_LOG = logging.getLogger("workagent.swr")
 _IN_FLIGHT: set[str] = set()
 _LOCK = threading.Lock()
+_BACKGROUND_ENABLED = False
+
+
+def set_background_enabled(enabled: bool) -> None:
+    """Enable/disable background SWR threads (True in serve, False in CLI)."""
+    global _BACKGROUND_ENABLED
+    _BACKGROUND_ENABLED = bool(enabled)
+
+
+def is_background_enabled() -> bool:
+    return _BACKGROUND_ENABLED
 
 
 def _background(key: str, refresh: Callable[[], Any]) -> None:
@@ -100,8 +113,8 @@ def _background(key: str, refresh: Callable[[], Any]) -> None:
     def _run() -> None:
         try:
             refresh()
-        except Exception:
-            pass
+        except Exception as exc:
+            _LOG.warning("swr refresh failed for %s: %s", key, exc)
         finally:
             with _LOCK:
                 _IN_FLIGHT.discard(key)
@@ -109,20 +122,31 @@ def _background(key: str, refresh: Callable[[], Any]) -> None:
     threading.Thread(target=_run, name=f"swr-{key}", daemon=True).start()
 
 
-def serve_stale_or_refresh(stale: Any, is_fresh: bool,
-                           refresh: Callable[[], Any],
-                           key: str) -> tuple[Any, bool]:
-    """(payload, served_stale): stale rows now + background refresh, or a
-    live refresh when nothing stale exists.
+def serve_stale_or_refresh(
+    stale: Any,
+    is_fresh: bool,
+    refresh: Callable[[], Any],
+    key: str,
+    *,
+    allow_background: bool | None = None,
+) -> tuple[Any, bool]:
+    """(payload, served_stale): cached/stale rows now + optional background
+    refresh, or a live refresh when nothing cached exists.
 
-    - `stale` is not None and not fresh → return it immediately, kick one
-      background `refresh` (exactly-once per key). Caller marks the
-      response stale (the frontend shows its overlay badge).
-    - Otherwise → run `refresh()` inline and return its result (first load
-      or an explicit force-refresh has nothing to show yet / was asked to
-      wait).
+    - `stale` is not None and `is_fresh` → return `(stale, False)` without
+      calling `refresh`.
+    - `stale` is not None and not fresh → return `(stale, True)` immediately;
+      kick one background `refresh` (exactly-once per key) only when
+      background refreshes are enabled (`allow_background` or
+      `is_background_enabled()`).
+    - Otherwise (`stale is None`) → run `refresh()` inline and return
+      `(result, False)`.
     """
+    if stale is not None and is_fresh:
+        return stale, False
     if stale is not None and not is_fresh:
-        _background(key, refresh)
+        bg = _BACKGROUND_ENABLED if allow_background is None else allow_background
+        if bg:
+            _background(key, refresh)
         return stale, True
     return refresh(), False

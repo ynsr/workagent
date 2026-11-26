@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -447,16 +448,23 @@ def _spawn(run, registry) -> None:
     from . import webapp as _w
     return _w._spawn(run, registry)
 
+_OPTIONS_LOCK = threading.Lock()
+_OPTIONS_KEY_LOCKS: dict[str, threading.Lock] = {}
 _OPTIONS_CACHE: dict[str, tuple[float, dict]] = {}
-_OPTIONS_TTL_S = 600.0
+
+
+def _options_ttl_s() -> float:
+    from . import store as _store
+    return float(_store.harness_options_ttl_s())
 
 
 def _cached_harness_options(name: str, refresh: bool = False) -> tuple[dict, bool, str | None]:
-    """ACP-discovered model/effort options (10-min TTL).
+    """ACP-discovered model/effort options (WORKAGENT_OPTIONS_TTL_SECONDS, default 10m).
 
     Returns (body, cached, warning). Unknown harness raises ApiError 404;
     non-ACP harnesses return supported:False without probing.
     """
+    import copy
     from . import backend as _backend
     _backend._load_harnesses()
     harness = _backend.HARNESSES.get(name)
@@ -466,33 +474,45 @@ def _cached_harness_options(name: str, refresh: bool = False) -> tuple[dict, boo
         return ({"harness": name, "supported": False,
                 "models": [], "efforts": [], "model_efforts": {},
                 "current_model": "", "current_effort": ""}, False, None)
-    now = time.monotonic()
-    hit = None if refresh else _OPTIONS_CACHE.get(name)
-    if hit is not None and now - hit[0] < _OPTIONS_TTL_S:
-        return (dict(hit[1]), True, None)
-    try:
-        opts = harness.discover_options()
-    except Exception as exc:
+    ttl = _options_ttl_s()
+    with _OPTIONS_LOCK:
+        hit = _OPTIONS_CACHE.get(name)
+        if not refresh and hit is not None and time.monotonic() - hit[0] < ttl:
+            return (copy.deepcopy(hit[1]), True, None)
+        key_lock = _OPTIONS_KEY_LOCKS.setdefault(name, threading.Lock())
+    with key_lock:
+        with _OPTIONS_LOCK:
+            hit = _OPTIONS_CACHE.get(name)
+            if not refresh and hit is not None and time.monotonic() - hit[0] < ttl:
+                return (copy.deepcopy(hit[1]), True, None)
+        try:
+            opts = harness.discover_options()
+        except Exception as exc:
+            if hit is not None:
+                fallback = copy.deepcopy(hit[1])
+                fallback["warning"] = f"option probe failed: {exc}"
+                return (fallback, True, str(exc))
+            body = {"harness": name, "supported": True,
+                    "models": [], "efforts": [], "model_efforts": {},
+                    "current_model": "", "current_effort": "",
+                    "warning": f"option probe failed: {exc}"}
+            return (body, False, str(exc))
+        model_efforts = {
+            str(mid): [{"id": str(e.get("id", "")), "name": str(e.get("name", e.get("id", "")))}
+                       for e in (elist or [])]
+            for mid, elist in (getattr(opts, "model_efforts", None) or {}).items()
+        }
         body = {"harness": name, "supported": True,
-                "models": [], "efforts": [], "model_efforts": {},
-                "current_model": "", "current_effort": "",
-                "warning": f"option probe failed: {exc}"}
-        return (body, False, str(exc))
-    model_efforts = {
-        str(mid): [{"id": str(e.get("id", "")), "name": str(e.get("name", e.get("id", "")))}
-                   for e in (elist or [])]
-        for mid, elist in (getattr(opts, "model_efforts", None) or {}).items()
-    }
-    body = {"harness": name, "supported": True,
-            "models": [{"id": str(m.get("id", "")), "name": str(m.get("name", m.get("id", "")))}
-                       for m in (opts.models or [])],
-            "efforts": [{"id": str(e.get("id", "")), "name": str(e.get("name", e.get("id", "")))}
-                        for e in (opts.efforts or [])],
-            "model_efforts": model_efforts,
-            "current_model": str(opts.current_model or ""),
-            "current_effort": str(opts.current_effort or "")}
-    _OPTIONS_CACHE[name] = (now, dict(body))
-    return (body, False, None)
+                "models": [{"id": str(m.get("id", "")), "name": str(m.get("name", m.get("id", "")))}
+                           for m in (opts.models or [])],
+                "efforts": [{"id": str(e.get("id", "")), "name": str(e.get("name", e.get("id", "")))}
+                            for e in (opts.efforts or [])],
+                "model_efforts": model_efforts,
+                "current_model": str(opts.current_model or ""),
+                "current_effort": str(opts.current_effort or "")}
+        with _OPTIONS_LOCK:
+            _OPTIONS_CACHE[name] = (time.monotonic(), copy.deepcopy(body))
+        return (copy.deepcopy(body), False, None)
 
 
 

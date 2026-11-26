@@ -171,8 +171,6 @@ def _diff_swr_seconds() -> int:
     return _swr_window(_diff_ttl_seconds(), "WORKAGENT_RELEASE_DIFF_SWR_SECONDS")
 
 
-_RELEASE_DIFF_TTL_SECONDS = _diff_ttl_seconds()
-_RELEASE_DIFF_SWR_SECONDS = _diff_swr_seconds()
 
 
 def backfill_release_branches() -> None:
@@ -376,27 +374,109 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
     if default == release:
         base["reason"] = "default and release branch are the same"
         return base
-    try:
-        from . import refs_ci as _ci
-        tool = str(info.get("tool", "") or "")
-        remote = str(info.get("remote", "") or "")
-        ci, ci_url = _ci.fetch_branch_ci(tool, remote, release, str(info.get("path", "")))
-        base["ci"], base["ci_url"] = ci or "", ci_url or ""
-    except Exception:
-        pass
     from . import store_sqlite as _sq
+    from .cli_repo_util import _ci_swr, _ci_ttl
+    import json as _json
+
     try:
         db = _sq.db_path()
     except Exception:
         db = None
-    cached, fetched_at = (None, "")
-    if db is not None and not force:
+    cached_entry: dict | None = None
+    if db is not None:
         try:
-            cached, fetched_at = _sq.get_release_diff_cache(db, repo_name)
+            cached_entry = _sq.get_release_diff_cache_entry(db, repo_name)
         except Exception:
-            cached, fetched_at = (None, "")
+            cached_entry = None
+
+    branches_match = (
+        cached_entry is not None
+        and (not cached_entry.get("default_branch") or cached_entry.get("default_branch") == default)
+        and (not cached_entry.get("release_branch") or cached_entry.get("release_branch") == release)
+    )
+    cached: int | None = cached_entry["count"] if branches_match else None
+    fetched_at: str = cached_entry["fetched_at"] if branches_match else ""
+
+    # Branch CI with SWR over release_diff_cache.ci_json / ci_fetched_at
+    ci_fetched_live: tuple[str, str] | None = None
+    def _fetch_branch_ci_live() -> tuple[str | None, str]:
+        from . import refs_ci as _ci
+        tool = str(info.get("tool", "") or "")
+        remote = str(info.get("remote", "") or "")
+        ci, ci_url = _ci.fetch_branch_ci(tool, remote, release, str(info.get("path", "")))
+        return ci, ci_url or ""
+
+    def _refresh_ci_bg() -> None:
+        try:
+            ci, ci_url = _fetch_branch_ci_live()
+            if ci is not None and db is not None:
+                _sq.set_release_branch_ci_cache(
+                    db,
+                    repo_name,
+                    _json.dumps({"ci": ci, "ci_url": ci_url}),
+                    default_branch=default,
+                    release_branch=release,
+                )
+        except Exception:
+            pass
+
+    cached_ci_json = cached_entry.get("ci_json", "") if branches_match else ""
+    cached_ci_ts = cached_entry.get("ci_fetched_at", "") if branches_match else ""
+    cached_ci_data: dict | None = None
+    if cached_ci_json:
+        try:
+            parsed = _json.loads(cached_ci_json)
+            if isinstance(parsed, dict):
+                cached_ci_data = parsed
+        except Exception:
+            cached_ci_data = None
+
+    ci_served = False
+    if not force and cached_ci_data is not None and cached_ci_ts:
+        try:
+            ci_age = (datetime.now(timezone.utc) - datetime.fromisoformat(cached_ci_ts)).total_seconds()
+            if ci_age < _ci_ttl():
+                base["ci"] = str(cached_ci_data.get("ci") or cached_ci_data.get("status") or "")
+                base["ci_url"] = str(cached_ci_data.get("ci_url") or "")
+                ci_served = True
+            elif ci_age < _ci_swr():
+                base["ci"] = str(cached_ci_data.get("ci") or cached_ci_data.get("status") or "")
+                base["ci_url"] = str(cached_ci_data.get("ci_url") or "")
+                _swr.serve_stale_or_refresh(
+                    cached_ci_data, False, _refresh_ci_bg, f"release-ci:{repo_name}",
+                    allow_background=background,
+                )
+                ci_served = True
+        except Exception:
+            ci_served = False
+
+    if not ci_served:
+        try:
+            ci, ci_url = _fetch_branch_ci_live()
+            if ci is not None:
+                base["ci"], base["ci_url"] = ci, ci_url
+                now_ci_ts = datetime.now(timezone.utc).isoformat()
+                ci_payload = _json.dumps({"ci": ci, "ci_url": ci_url})
+                ci_fetched_live = (ci_payload, now_ci_ts)
+                if db is not None and branches_match:
+                    try:
+                        _sq.set_release_branch_ci_cache(
+                            db, repo_name, ci_payload, now_ci_ts,
+                            default_branch=default, release_branch=release,
+                        )
+                    except Exception:
+                        pass
+            elif cached_ci_data is not None:
+                base["ci"] = str(cached_ci_data.get("ci") or cached_ci_data.get("status") or "")
+                base["ci_url"] = str(cached_ci_data.get("ci_url") or "")
+        except Exception:
+            if cached_ci_data is not None:
+                base["ci"] = str(cached_ci_data.get("ci") or cached_ci_data.get("status") or "")
+                base["ci_url"] = str(cached_ci_data.get("ci_url") or "")
+
     def _live() -> int:
         return release_diff_count(Path(str(info["path"])).expanduser(), default, release)
+
     def _finish(count: int, stale: bool, reason: str = "") -> dict:
         try:
             behind = _behind_count(str(info["path"]), default, release)
@@ -409,49 +489,50 @@ def release_status(repo_name: str, force: bool = False, background: bool = False
         if reason:
             base["reason"] = reason
         return base
+
     if cached is not None and not force:
         try:
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(fetched_at)).total_seconds()
         except Exception:
             age = float("inf")
         if age < _diff_ttl_seconds():
-            if background and db is not None:
-                def _refresh() -> None:
-                    try:
-                        _sq.set_release_diff_cache(db, repo_name, _live())
-                    except Exception:
-                        pass
-                _swr.serve_stale_or_refresh(stale=True, is_fresh=False, refresh=_refresh,
-                                            key=f"release:{repo_name}")
             return _finish(cached, False)
         if age < _diff_swr_seconds():
             def _refresh() -> None:
                 try:
-                    _sq.set_release_diff_cache(db, repo_name, _live())
+                    _sq.set_release_diff_cache(
+                        db, repo_name, _live(),
+                        default_branch=default, release_branch=release,
+                    )
                 except Exception:
                     pass
             _swr.serve_stale_or_refresh(stale=True, is_fresh=False, refresh=_refresh,
-                                        key=f"release:{repo_name}")
+                                        key=f"release:{repo_name}",
+                                        allow_background=background)
             return _finish(cached, True)
     try:
         count = _live()
-    except HarnessError as e:
+    except (HarnessError, Exception) as e:
         if cached is not None:
             base.update(diff_count=cached, releasable=cached > 0, stale=True,
-                        reason=f"cannot reach remote ({e}); showing cached count")
-            return base
-        base["reason"] = f"cannot reach remote ({e})"
-        return base
-    except Exception as e:
-        if cached is not None:
-            base.update(diff_count=cached, releasable=cached > 0, stale=True,
+                        fetched_at=fetched_at or None,
                         reason=f"cannot reach remote ({e}); showing cached count")
             return base
         base["reason"] = f"cannot reach remote ({e})"
         return base
     if db is not None:
         try:
-            _sq.set_release_diff_cache(db, repo_name, count)
+            if ci_fetched_live is not None:
+                _sq.set_release_diff_cache(
+                    db, repo_name, count,
+                    default_branch=default, release_branch=release,
+                    ci_json=ci_fetched_live[0], ci_fetched_at=ci_fetched_live[1],
+                )
+            else:
+                _sq.set_release_diff_cache(
+                    db, repo_name, count,
+                    default_branch=default, release_branch=release,
+                )
             _, fetched_at = _sq.get_release_diff_cache(db, repo_name)
         except Exception:
             pass

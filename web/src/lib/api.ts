@@ -711,10 +711,15 @@ export const api = {
       `/api/candidates${qs({ force: opts?.force ? "true" : undefined, days: opts?.days === undefined ? undefined : String(opts.days), mine: opts?.mine === false ? "false" : undefined })}`,
     ),
   /** GET /api/candidates/prs — unlinked PR/MRs only (slowest source; loads independently). */
-  candidatesPrs: () => request<CandidatesPrsResponse>("/api/candidates/prs"),
+  candidatesPrs: (opts?: { force?: boolean }) =>
+    request<CandidatesPrsResponse>(
+      `/api/candidates/prs${qs({ force: opts?.force ? "true" : undefined })}`,
+    ),
   /** GET /api/release/status?name= — releasability for one repo (SWR). */
-  releaseStatus: (name: string) =>
-    request<ReleaseStatus>(`/api/release/status${qs({ name })}`),
+  releaseStatus: (name: string, opts?: { force?: boolean }) =>
+    request<ReleaseStatus>(
+      `/api/release/status${qs({ name, force: opts?.force ? "true" : undefined })}`,
+    ),
   /** GET /api/candidates/issues — issues only (`force` bypasses the variant cache). */
   candidatesIssues: (opts?: { force?: boolean; days?: number; mine?: boolean }) =>
     request<CandidatesIssuesResponse>(

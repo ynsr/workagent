@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { Bot } from "lucide-react"
-import { api, type WorktreeWatcherSettings } from "@/lib/api"
+import { api } from "@/lib/api"
+import { queryKeys, useWorktreeWatcher } from "@/lib/queries"
 import { errorText } from "@/components/StatusFeedback"
 
 type TriState = "inherit" | "on" | "off"
@@ -20,16 +22,9 @@ function fromTri(v: TriState): boolean | null {
 
 /** Per-worktree auto-watcher override controls (Inherit / On / Off). */
 export function WorktreeWatcherOverrides({ worktreeKey }: { worktreeKey: string }) {
-  const [settings, setSettings] = useState<WorktreeWatcherSettings | null>(null)
+  const qc = useQueryClient()
+  const { data: settings } = useWorktreeWatcher(worktreeKey)
   const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    let active = true
-    api.worktreeWatcher(worktreeKey)
-      .then((res) => { if (active) setSettings(res) })
-      .catch(() => { /* best-effort; hide if unavailable */ })
-    return () => { active = false }
-  }, [worktreeKey])
 
   if (!settings) return null
 
@@ -37,7 +32,7 @@ export function WorktreeWatcherOverrides({ worktreeKey }: { worktreeKey: string 
     setSaving(true)
     try {
       const updated = await api.setWorktreeWatcher(worktreeKey, { [field]: fromTri(next) })
-      setSettings(updated)
+      qc.setQueryData(queryKeys.worktreeWatcher(worktreeKey), updated)
       toast.success("Watcher override updated")
     } catch (err) {
       toast.error(errorText(err))

@@ -55,6 +55,10 @@ function TrackerDomainsCard() {
     try {
       const res = await api.setTrackerDomains(domains)
       qc.setQueryData(queryKeys.trackerDomains, res)
+      void qc.invalidateQueries({ queryKey: ["candidates", "issues"] })
+      void qc.invalidateQueries({ queryKey: ["issues"] })
+      void qc.invalidateQueries({ queryKey: queryKeys.candidatesPrs })
+      void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
       setDraft(null)
       toast.success(res.disabled_domains.length ? "Disabled domains saved" : "All tracker domains enabled")
     } catch (err) {

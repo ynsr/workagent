@@ -1,6 +1,6 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import type { QueryClient } from "@tanstack/react-query"
-import { api, type CreateRunInput } from "./api"
+import { api, type CreateRunInput, type WorktreeEntry, type WorktreeMap } from "./api"
 import { getVerbose } from "./settings"
 import { useServerEventsConnected } from "@/hooks/useServerEvents"
 
@@ -8,9 +8,8 @@ export const queryKeys = {
   info: ["info"] as const,
   config: ["config"] as const,
   statusAll: ["status", "all"] as const,
-  statusInactive: ["status", "inactive"] as const,
-  statusDeleted: ["status", "deleted"] as const,
   worktreeTimeline: (ref: string) => ["worktree", "timeline", ref] as const,
+  worktreeWatcher: (ref: string) => ["worktree", "watcher", ref] as const,
   path: (ref: string) => ["path", ref] as const,
   repos: ["repos"] as const,
   trackers: ["trackers"] as const,
@@ -48,48 +47,55 @@ const RELEASE_SWR_MS = 3600 * 1000            // release diff: 1h fresh
 /** Safety-fallback poll interval when the global SSE stream is connected. */
 const SSE_FALLBACK_POLL_MS = 60_000
 /** Poll /api/status every 15 s (or 60 s fallback when SSE is connected). */
+function filterStatusMap(
+  data: WorktreeMap,
+  predicate: (entry: WorktreeEntry) => boolean,
+): WorktreeMap {
+  const out: WorktreeMap = {}
+  for (const [k, v] of Object.entries(data)) {
+    if (predicate(v)) out[k] = v
+  }
+  return out
+}
+
+function useSharedStatusBase(refresh?: boolean) {
+  const sseConnected = useServerEventsConnected()
+  const doRefresh = Boolean(refresh)
+  return {
+    queryKey: [...queryKeys.statusAll, doRefresh] as const,
+    queryFn: () =>
+      api.statusAll({
+        includeInactive: true,
+        includeDeleted: true,
+        ...(doRefresh ? { refresh: true } : {}),
+      }),
+    refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : 15_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    staleTime: SWR_STATUS_MS,
+    gcTime: SWR_STATUS_MS,
+  }
+}
+
 export function useStatusAll(refresh?: boolean) {
-  const sseConnected = useServerEventsConnected()
   return useQuery({
-    queryKey: [...queryKeys.statusAll, refresh ?? false],
-    queryFn: () => api.statusAll(refresh ? { refresh: true } : undefined),
-    refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : 15_000,
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: true,
-    staleTime: SWR_STATUS_MS,
-    // Cache retention must match the SWR window: the default gcTime (5min)
-    // garbage-collects rows after an idle tab, so an expired-but-usable
-    // backend cache still blocks on skeleton instead of rendering stale
-    // rows + overlay. Keep them for the full 30d SWR window.
-    gcTime: SWR_STATUS_MS,
+    ...useSharedStatusBase(refresh),
+    select: (data) => filterStatusMap(data, (e) => e.active !== 0 && !e.deleted_at),
   })
 }
 
-/** Deactivated worktrees (active-only /api/status hides them). Same poll policy. */
+/** Deactivated + active worktrees (non-deleted projection over shared status query). */
 export function useStatusInactive() {
-  const sseConnected = useServerEventsConnected()
   return useQuery({
-    queryKey: queryKeys.statusInactive,
-    queryFn: () => api.statusAll({ includeInactive: true }),
-    refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : 15_000,
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: true,
-    staleTime: SWR_STATUS_MS,
-    gcTime: SWR_STATUS_MS,
+    ...useSharedStatusBase(false),
+    select: (data) => filterStatusMap(data, (e) => !e.deleted_at),
   })
 }
 
-/** Soft-deleted worktrees (default /api/status hides them). Same poll policy. */
+/** All worktrees including soft-deleted (shared status query, zero extra HTTP request). */
 export function useStatusDeleted() {
-  const sseConnected = useServerEventsConnected()
   return useQuery({
-    queryKey: queryKeys.statusDeleted,
-    queryFn: () => api.statusAll({ includeInactive: true, includeDeleted: true }),
-    refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : 15_000,
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: true,
-    staleTime: SWR_STATUS_MS,
-    gcTime: SWR_STATUS_MS,
+    ...useSharedStatusBase(false),
   })
 }
 
@@ -104,6 +110,15 @@ export function useWorktreeTimeline(ref: string | undefined, limit = 100) {
     enabled: !!ref,
     refetchInterval: 15_000,
     refetchIntervalInBackground: false,
+  })
+}
+
+export function useWorktreeWatcher(ref: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.worktreeWatcher(ref ?? ""),
+    queryFn: () => api.worktreeWatcher(ref ?? ""),
+    enabled: Boolean(ref),
+    retry: false,
   })
 }
 export function useConfig() {
@@ -244,29 +259,31 @@ export function useCandidatesWorktrees() {
  * background refetch only swaps in fresh data (no skeleton/block). */
 const RELEASE_POLL_MS = 30_000
 export function useReleaseStatus(name: string) {
+  const sseConnected = useServerEventsConnected()
   return useQuery({
     queryKey: queryKeys.release(name),
     queryFn: () => api.releaseStatus(name),
     staleTime: RELEASE_SWR_MS,
     gcTime: RELEASE_SWR_MS,
     enabled: !!name,
-    refetchInterval: RELEASE_POLL_MS,
+    refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : RELEASE_POLL_MS,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
   })
 }
 
 /** Release releasability for several repos (one query each; same poll policy). */
 export function useReleaseStatuses(names: string[]) {
+  const sseConnected = useServerEventsConnected()
   return useQueries({
     queries: names.map((name) => ({
       queryKey: queryKeys.release(name),
       queryFn: () => api.releaseStatus(name),
       staleTime: RELEASE_SWR_MS,
       gcTime: RELEASE_SWR_MS,
-      refetchInterval: RELEASE_POLL_MS,
+      refetchInterval: sseConnected ? SSE_FALLBACK_POLL_MS : RELEASE_POLL_MS,
       refetchIntervalInBackground: false,
-      refetchOnWindowFocus: true,
+      refetchOnWindowFocus: false,
     })),
   })
 }
@@ -282,7 +299,11 @@ export function useRuns() {
 }
 
 export function useRun(id: string) {
-  return useQuery({ queryKey: queryKeys.run(id), queryFn: () => api.run(id) })
+  return useQuery({
+    queryKey: queryKeys.run(id),
+    queryFn: () => api.run(id),
+    enabled: Boolean(id),
+  })
 }
 
 export function usePath(ref: string) {
@@ -382,4 +403,10 @@ export function invalidateAfterRun(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: queryKeys.flowTemplates })
   void qc.invalidateQueries({ queryKey: ["flows"] })
   void qc.invalidateQueries({ queryKey: ["messages"] })
+  void qc.invalidateQueries({ queryKey: queryKeys.candidatesPrs })
+  void qc.invalidateQueries({ queryKey: queryKeys.candidatesWorktrees })
+  void qc.invalidateQueries({ queryKey: ["candidates", "issues"] })
+  void qc.invalidateQueries({ queryKey: queryKeys.prodtests })
+  void qc.invalidateQueries({ queryKey: ["release"] })
+  void qc.invalidateQueries({ queryKey: ["worktree", "timeline"] })
 }

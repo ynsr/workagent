@@ -158,6 +158,7 @@ def upsert_tracker(path: Path, tid: str, vendor: str = "", remote_url: str = "",
                      " remote_url=excluded.remote_url, fetch_enabled=excluded.fetch_enabled,"
                      " is_enabled=excluded.is_enabled",
                      (tid, vendor, remote_url, fe, ie))
+        conn.execute("DELETE FROM issue_cache")
         conn.row_factory = sqlite3.Row
         return dict(conn.execute("SELECT key_ref AS key, vendor, remote_url, fetch_enabled, is_enabled FROM trackers"
                                  " WHERE key_ref = ?", (tid,)).fetchone())
@@ -193,7 +194,10 @@ def delete_tracker(path: Path, tid: str) -> bool:
     """Delete a tracker row (links cascade); True when it existed."""
     init_db(path)
     with connect(path) as conn:
-        return conn.execute("DELETE FROM trackers WHERE key_ref = ?", (tid,)).rowcount > 0
+        deleted = conn.execute("DELETE FROM trackers WHERE key_ref = ?", (tid,)).rowcount > 0
+        if deleted:
+            conn.execute("DELETE FROM issue_cache")
+        return deleted
 
 
 def load_repos(path: Path) -> dict:

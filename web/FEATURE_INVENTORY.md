@@ -194,3 +194,5 @@ API passes `--yes` only when the request carries `confirm: true`
 
 ## Recurring Schedules (T13)
 - `schedule` (`add|list|update|remove|run-due`) — `run-due` requires `confirm: true` (`schedule:run-due` target key); CRUD endpoints live under `/api/schedules` and the `Schedules` tab of Automation Library (`/library`).
+
+- Cache controls (#171): `GET /api/candidates/prs?force=true` and `GET /api/release/status?name=<repo>&force=true` (manual Refresh buttons in `CandidatesCard` and `ReleaseCard`); `workagent candidates --reset-cache` clears both `issue_cache` and `pr_candidates_cache`; expanded CDC SSE triggers (`pr_candidates_cache`, `issue_cache`, `release_diff_cache`, `repos`, `trackers`, `pr_checks`, `pr_review_threads`).

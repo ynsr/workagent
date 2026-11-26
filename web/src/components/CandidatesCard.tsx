@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useConfirmedRun, useCopyFeedback } from "@/components/RunActions"
 import { CopyCell } from "@/components/CopyCell"
@@ -47,21 +47,6 @@ export function CandidatesCard() {
   // immediately while the rest streams in (per-tab skeletons below).
   // Unmount-safe: react-query cancels in-flight fetches on unmount.
   const prsQuery = useCandidatesPrs()
-  // Stale serve: the backend returns expired-cache rows instantly with
-  // `stale: True` while one thread revalidates. Re-fetch once per stale
-  // payload so the tab swaps in the fresh rows when they land (overlay
-  // shows meanwhile). The ref guards the loop: until the background
-  // thread lands, every response is still `stale: True`.
-  const prsStale = prsQuery.data?.stale === true
-  const prsStaleSeen = useRef(false)
-  useEffect(() => {
-    if (!prsStale || prsStaleSeen.current) return
-    prsStaleSeen.current = true
-    void prsQuery.refetch().finally(() => {
-      prsStaleSeen.current = false
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prsStale])
   // always warming its cache key. The client-side filter rides on it —
   // plus, when the user's selection is NOT covered by it (range "Last
   // year", scope "all"), a second gated query requeries the tracker with
@@ -89,7 +74,7 @@ export function CandidatesCard() {
   const broadRange = filterProbe.range === "365" ? 365 : 90
   const broadMine = !filterProbe.scope.all
   const needsBroad = filterProbe.range === "365" || filterProbe.scope.all
-  const broadIssuesQuery = useCandidatesIssues(needsBroad, broadRange, broadMine, needsBroad)
+  const broadIssuesQuery = useCandidatesIssues(false, broadRange, broadMine, needsBroad)
   const issuesQuery = broadIssuesQuery.data ? broadIssuesQuery : initialIssuesQuery
   const issues = issuesQuery.data?.issues ?? []
   const filter: IssuesFilterState = {
@@ -110,20 +95,20 @@ export function CandidatesCard() {
   async function handleRefresh() {
     setRefreshing(true)
     try {
-      await Promise.all([
-        qc.fetchQuery({ queryKey: queryKeys.candidatesPrs, queryFn: () => api.candidatesPrs() }),
-        qc.fetchQuery({
-          queryKey: queryKeys.candidatesIssues(true, 90, true),
-          queryFn: () => api.candidatesIssues({ force: true, days: 90, mine: true }),
-          staleTime: 0,
-        }),
-        ...(needsBroad ? [qc.fetchQuery({
-          queryKey: queryKeys.candidatesIssues(true, broadRange, broadMine),
-          queryFn: () => api.candidatesIssues({ force: true, days: broadRange, mine: broadMine }),
-          staleTime: 0,
-        })] : []),
-        qc.fetchQuery({ queryKey: queryKeys.candidatesWorktrees, queryFn: () => api.candidatesWorktrees() }),
+      const [freshPrs, freshBaseIssues, freshWts, freshBroadIssues] = await Promise.all([
+        api.candidatesPrs({ force: true }),
+        api.candidatesIssues({ force: true, days: 90, mine: true }),
+        api.candidatesWorktrees(),
+        needsBroad
+          ? api.candidatesIssues({ force: true, days: broadRange, mine: broadMine })
+          : Promise.resolve(null),
       ])
+      qc.setQueryData(queryKeys.candidatesPrs, freshPrs)
+      qc.setQueryData(queryKeys.candidatesIssues(false, 90, true), freshBaseIssues)
+      qc.setQueryData(queryKeys.candidatesWorktrees, freshWts)
+      if (needsBroad && freshBroadIssues) {
+        qc.setQueryData(queryKeys.candidatesIssues(false, broadRange, broadMine), freshBroadIssues)
+      }
       toast.success("Candidates re-fetched live")
     } catch (err) {
       toast.error(errorText(err))
@@ -178,9 +163,14 @@ export function CandidatesCard() {
           <div>
             <CardTitle>Candidates</CardTitle>
             <CardDescription>
-              Unlinked open PR/MRs across every registered repo, plus my issues
-              created in the last 30 days. Issue rows show the Launch default
-              repo when one resolves.
+              Unlinked open PR/MRs across every registered repo, plus issues
+              from the{" "}
+              {filterProbe.range === "365"
+                ? "last year"
+                : filterProbe.range === "90"
+                  ? "last 90 days"
+                  : "last 30 days"}
+              . Issue rows show the Launch default repo when one resolves.
             </CardDescription>
           </div>
           <Button

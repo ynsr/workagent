@@ -33,6 +33,15 @@ def _tool_for_pr_url(pr_url: str, cached: dict[str, Any] | None = None) -> str |
     return refs_ci.infer_pr_tool(pr_url, cached) or None
 
 
+def _cached_pr_url(cached: dict[str, Any] | None) -> str:
+    """Extract PR/MR URL from a pr_cache entry (nested pr.url or top-level fallback)."""
+    if not isinstance(cached, dict):
+        return ""
+    pr = cached.get("pr")
+    nested = pr.get("url") if isinstance(pr, dict) else ""
+    return str(nested or cached.get("url") or cached.get("pr_url") or "").strip()
+
+
 def _refresh_worktree_inputs(
     ref_key: str,
     entry: dict[str, Any],
@@ -56,7 +65,7 @@ def _refresh_worktree_inputs(
         return refresh_fn(ref_key, entry, branch, cached, head_sha)
     pr_url = str(entry.get("pr_url") or "").strip()
     if not pr_url.startswith("http"):
-        pr_url = str((cached or {}).get("url") or (cached or {}).get("pr_url") or "").strip()
+        pr_url = _cached_pr_url(cached)
     tool = _tool_for_pr_url(pr_url, cached)
     if not pr_url or not tool:
         return None, "", [], None, []
@@ -266,7 +275,6 @@ def run_watch_once(
     """
     links = store.load_links()
     repos_map = store.load_repos()
-    pr_cache = store.load_pr_cache()
     db_path = store._sqlite_path()
     dispatcher = dispatch_fn or _default_dispatch
 
@@ -303,7 +311,8 @@ def run_watch_once(
             continue
 
         branch = str(entry.get("branch") or "")
-        cached = pr_cache.get(branch) if branch else None
+        repo_path = str(entry.get("repo") or "")
+        cached = store.lookup_pr_cache(branch, repo_path) if branch else None
         head_sha = _head_sha_for_entry(entry, cached)
 
         stale_inputs = False
@@ -316,7 +325,7 @@ def run_watch_once(
                 stale_inputs = True
             else:
                 # Re-read the persisted snapshots updated by the refresh.
-                cached = store.load_pr_cache().get(branch) if branch else cached
+                cached = store.lookup_pr_cache(branch, repo_path) if branch else cached
 
         checks = store_timeline.list_pr_checks(db_path, ref_key) if db_path else []
         failing = [c for c in checks if store_timeline.is_failing_check(c)]

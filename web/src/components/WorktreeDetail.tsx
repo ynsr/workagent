@@ -103,6 +103,7 @@ export function WorktreeDetail({
     onSuccess: () => {
       toast.success("Terminal opened")
       void qc.invalidateQueries({ queryKey: queryKeys.runs })
+      void qc.invalidateQueries({ queryKey: queryKeys.statusAll })
     },
     onError: (err: unknown) => toast.error(errorText(err)),
   })

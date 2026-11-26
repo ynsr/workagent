@@ -204,6 +204,8 @@ def create_app(static_dir: Path, host: str, port: int,
                allowed_hosts: list[str],
                enable_watcher: bool | None = None,
                watch_interval: float = 60.0) -> FastAPI:
+    from . import swr as _swr
+    _swr.set_background_enabled(True)
     from .cdc import CdcHub
     from . import watcher as _watcher
     from .scheduler import SchedulerLoop
@@ -890,7 +892,14 @@ def create_app(static_dir: Path, host: str, port: int,
         if not isinstance(domains, list) or any(not isinstance(d, str) for d in domains):
             from fastapi import HTTPException
             raise HTTPException(status_code=400, detail="domains must be a list of strings")
-        return {"disabled_domains": store.save_disabled_tracker_domains(domains)}
+        saved = store.save_disabled_tracker_domains(domains)
+        try:
+            from . import store_sqlite as _sq
+            if _sq.db_path().exists():
+                _sq.clear_issue_cache(_sq.db_path())
+        except Exception:
+            pass
+        return {"disabled_domains": saved}
 
     @app.get("/api/links")
     def links_list() -> dict:
@@ -975,12 +984,12 @@ def create_app(static_dir: Path, host: str, port: int,
                 "worktrees": out["worktrees"], "warnings": out["warnings"]}
 
     @app.get("/api/candidates/prs")
-    def candidates_prs() -> dict:
+    def candidates_prs(force: bool = False) -> dict:
         """Unlinked open PR/MRs: fresh cache serves instantly; expired cache
         serves stale rows (`stale: True`) while one background thread
-        revalidates; empty cache fetches live. Read-only."""
+        revalidates; empty cache or `force=true` fetches live. Read-only."""
         from . import cli_candidates as _cand
-        prs, warnings, stale = _cand._candidate_prs_cached()
+        prs, warnings, stale = _cand._candidate_prs_cached(force=force)
         return {"prs": prs, "warnings": warnings, "stale": stale}
 
     @app.get("/api/candidates/issues")
@@ -999,11 +1008,11 @@ def create_app(static_dir: Path, host: str, port: int,
         return {"worktrees": _cand._scan_worktrees(), "warnings": []}
 
     @app.get("/api/release/status")
-    def release_status(name: str = "") -> dict:
-        """Releasability for one repo; always serves the cached row instantly
-        and revalidates the diff in the background (never blocks)."""
+    def release_status(name: str = "", force: bool = False) -> dict:
+        """Releasability for one repo; serves fresh cache instantly, revalidates
+        stale rows in the background, or fetches live when `force=true`."""
         from . import repos as _repos
-        return _repos.release_status(name, background=True)
+        return _repos.release_status(name, force=force, background=not force)
 
     @app.get("/api/events")
     async def events_stream(request: Request, last_event_id: int | None = None):

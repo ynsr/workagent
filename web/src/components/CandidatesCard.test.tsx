@@ -6,8 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { CandidatesCard } from "@/components/CandidatesCard"
 import { ConfirmProvider } from "@/lib/confirm"
 
-const { mutateAsync } = vi.hoisted(() => ({
+const { mutateAsync, useCandidatesIssuesSpy } = vi.hoisted(() => ({
   mutateAsync: vi.fn(() => Promise.resolve({ run_id: "run-1" })),
+  useCandidatesIssuesSpy: vi.fn(),
 }))
 
 vi.mock("@/lib/queries", () => ({
@@ -42,7 +43,9 @@ vi.mock("@/lib/queries", () => ({
     isError: false,
     isFetching: false,
   }),
-  useCandidatesIssues: () => ({
+  useCandidatesIssues: (...args: unknown[]) => {
+    useCandidatesIssuesSpy(...args)
+    return ({
     data: {
       issues: [
         {
@@ -61,7 +64,8 @@ vi.mock("@/lib/queries", () => ({
     isPending: false,
     isError: false,
     isFetching: false,
-  }),
+  })
+  },
   useCandidatesWorktrees: () => ({
     data: { worktrees: [], warnings: [] },
     isPending: false,
@@ -86,6 +90,7 @@ function renderCard() {
 beforeEach(() => {
   localStorage.clear()
   mutateAsync.mockClear()
+  useCandidatesIssuesSpy.mockClear()
 })
 
 afterEach(cleanup)
@@ -124,5 +129,19 @@ describe("CandidatesCard Register buttons", () => {
       args: ["IPG-77", "--register-only", "--repo", "proj", "--depth", "7"],
       confirm: true,
     })
+  })
+})
+
+describe("CandidatesCard cache behavior", () => {
+  it("passes force=false for broad issues even when range=365 is persisted", () => {
+    localStorage.setItem(
+      "workagent.issuesFilter",
+      JSON.stringify({ range: "365", scope: { mine: true, all: false } }),
+    )
+    renderCard()
+    expect(useCandidatesIssuesSpy).toHaveBeenCalled()
+    for (const call of useCandidatesIssuesSpy.mock.calls) {
+      expect(call[0]).toBe(false)
+    }
   })
 })
