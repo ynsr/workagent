@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react"
-import { Sparkles } from "lucide-react"
+import { CircleHelp, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { errorText } from "@/components/StatusFeedback"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
+import { Tooltip } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
 import { useCreateRun } from "@/lib/queries"
 
@@ -19,16 +20,28 @@ export function SegmentedControl<T extends string>({ idPrefix, label, hint, opti
   value: T
   onChange: (v: T) => void
 }) {
+  const cleanHint = hint?.replace(/^—\s*/, "").trim()
   return (
-    <div className="grid gap-1">
-      <Label id={`${idPrefix}-label`}>
-        {label}
-        {hint ? <span className="ml-1 font-normal text-muted-foreground">{hint}</span> : null}
-      </Label>
+    <div className="grid gap-1.5">
+      <div className="flex items-center gap-1">
+        <Label id={`${idPrefix}-label`}>{label}</Label>
+        {cleanHint ? (
+          <Tooltip label={cleanHint}>
+            <span
+              role="img"
+              tabIndex={0}
+              className="inline-flex cursor-help items-center rounded-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              aria-label={`${label}: ${cleanHint}`}
+            >
+              <CircleHelp aria-hidden className="size-3.5" />
+            </span>
+          </Tooltip>
+        ) : null}
+      </div>
       <div
         role="radiogroup"
         aria-labelledby={`${idPrefix}-label`}
-        className="flex w-fit divide-x overflow-hidden rounded-md border text-sm"
+        className="flex w-fit gap-0.5 rounded-md bg-secondary p-0.5 text-[13px]"
       >
         {options.map((opt) => (
           <button
@@ -39,9 +52,11 @@ export function SegmentedControl<T extends string>({ idPrefix, label, hint, opti
             aria-checked={value === opt.value}
             title={opt.hint}
             onClick={() => onChange(opt.value)}
-            className={value === opt.value
-              ? "bg-primary px-3 py-1.5 font-medium text-primary-foreground"
-              : "bg-transparent px-3 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"}
+            className={
+              value === opt.value
+                ? "rounded-[5px] bg-background px-2.5 py-1 font-medium text-foreground shadow-xs"
+                : "rounded-[5px] bg-transparent px-2.5 py-1 text-muted-foreground hover:text-foreground"
+            }
           >
             {opt.label}
           </button>

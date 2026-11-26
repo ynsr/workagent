@@ -1,0 +1,354 @@
+/*
+ * workagent design tokens
+ * =======================
+ * Derived from OrchestratorInc/agent-orchestrator @ faa1f180 (dev, Apache-2.0):
+ *   frontend/src/styles/tokens.css, ui/button.css, ui/button.tsx
+ * Trimmed to what a web app needs. AO's window-chrome, settings-dialog, import-flow,
+ * terminal and legacy uppercase/wide-tracking tokens are intentionally omitted.
+ * Token NAMES are kept identical to AO so upstream diffs stay readable.
+ *
+ * REFERENCE ONLY: not imported by the app (live theme: web/src/index.css).
+ * Theme: dark by default; :root[data-theme="light"] overrides (AO's convention).
+ * workagent toggles a `.dark` class instead (src/lib/theme.tsx) and defaults to light;
+ * invert the selectors when migrating (see design/03-workagent-application.md).
+ * Do not add one-off hex values; map to the nearest role or add a role here first.
+ */
+
+:root,
+:root.dark {
+	color-scheme: dark;
+
+	/* ── Base roles (shadcn vocabulary) ── near-neutral graphite, trace of blue-gray */
+	--background: oklch(0.210 0.002 250);
+	--foreground: oklch(0.970 0.002 250);
+	--card: oklch(0.250 0.002 250);
+	--card-foreground: oklch(0.970 0.002 250);
+	--popover: oklch(0.300 0.002 250);
+	--popover-foreground: oklch(0.970 0.002 250);
+	--primary: oklch(0.900 0.002 250);          /* NEUTRAL: near-white in dark. Not a brand color. */
+	--primary-foreground: oklch(0.210 0.002 250);
+	--secondary: oklch(0.295 0.002 250);
+	--secondary-foreground: oklch(0.970 0.002 250);
+	--muted: oklch(0.295 0.002 250);
+	--muted-foreground: oklch(0.720 0.002 250);
+	--accent: oklch(0.295 0.002 250);
+	--accent-foreground: oklch(0.970 0.002 250);
+	--destructive: #fb4934;                      /* Gruvbox red, shared across themes */
+	--border: oklch(1 0 0 / 7%);                 /* hairline overlay; never an opaque stroke */
+	--input: oklch(1 0 0 / 4%);
+	--ring: oklch(0.620 0.002 250);
+	--chart-1: oklch(0.84 0 0);
+	--chart-2: oklch(0.6 0 0);
+	--chart-3: oklch(0.48 0 0);
+	--chart-4: oklch(0.4 0 0);
+	--chart-5: oklch(0.29 0 0);
+	--radius: 0.625rem;
+	--sidebar: oklch(0.180 0.002 250);
+
+	/* ── Semantic layer: components consume THESE ── */
+	--color-bg-primary: var(--background);       /* canvas */
+	--color-bg-secondary: var(--card);           /* raised/grouped content */
+	--color-bg-tertiary: var(--muted);
+	--color-bg-elevated: var(--popover);         /* menus, dialogs, tooltips */
+	--color-bg-sidebar: var(--sidebar);
+
+	--color-text-primary: var(--foreground);
+	--color-text-muted: var(--muted-foreground);
+	/* Passive chrome ONLY. ~2.3:1 on canvas (estimate; verify): never for essential info. */
+	--color-text-passive: var(--chart-3);
+
+	--color-border: var(--border);
+	--color-border-strong: var(--input);
+
+	/* Neutral primary is the accent. Brand is a separate, OPTIONAL role.
+	   AO's own brand is #338ad3 (text shade #66a4de / #2f6da4): do not reuse it. Pick your own,
+	   or leave these pointing at neutral. */
+	--color-accent: var(--primary);
+	--color-accent-foreground: var(--primary-foreground);
+	--color-accent-weak: color-mix(in oklch, var(--primary) 16%, transparent);
+	--color-brand: var(--primary);               /* the `accent` button variant */
+	--color-brand-foreground: var(--primary-foreground);
+	--color-brand-text: var(--foreground);       /* small-text shade: links, inline code */
+
+	/* ── Status: the only place color is spent freely ── */
+	--color-status-working: #60a5fa;
+	--color-status-needs-you: #f06445;
+	--color-status-validating: #e58bb5;
+	--color-status-in-review: #f59e0b;
+	--color-status-ready: #4ade80;
+	--color-status-merged: #c084fc;
+	--color-status-idle: var(--muted-foreground);
+	--color-status-exited: var(--destructive);   /* failure */
+	--color-status-unknown: var(--chart-4);
+
+	/* ── Interactive overlays (computed from foreground, so they work on any surface) ── */
+	--color-interactive-hover: color-mix(in oklch, var(--foreground) 4%, transparent);
+	--color-interactive-active: color-mix(in oklch, var(--foreground) 7%, transparent);
+	--color-scrim: color-mix(in oklch, var(--background) 85%, transparent);
+	--color-border-overlay: color-mix(in oklch, var(--foreground) 2%, transparent);
+
+	/* ── Typography ── */
+	--font-family-base: "Geist Variable", "Geist", ui-sans-serif, system-ui, sans-serif;
+	--font-family-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+		Consolas, "Liberation Mono", "Courier New", monospace;
+
+	/* Documented scale only. AO's half-steps (10.5/11.5/12.5) are legacy drift: omitted. */
+	--font-size-nano: 8px;
+	--font-size-xs: 10px;        /* micro */
+	--font-size-caption: 11px;
+	--font-size-sm: 12px;        /* secondary */
+	--font-size-base: 13px;      /* dense controls, rows */
+	--font-size-md: 14px;        /* body */
+	--font-size-subtitle: 15px;  /* dialog/section titles */
+	--font-size-heading-sm: 17px;
+	--font-size-heading: 21px;   /* route-level title only */
+	--font-weight-medium: 500;
+	--font-weight-semibold: 600;
+	--line-height-snug: 1.42;
+	--line-height-normal: 1.5;
+	--line-height-row: 1.25rem;
+	--tracking-tight: -0.01em;
+	--tracking-tight-lg: -0.015em;
+	--tracking-tight-xl: -0.025em;
+
+	/* ── Spacing: 4px base. Normal dense rhythm: 4 6 8 10 12 14 16 18 ── */
+	--space-1: 4px;
+	--space-1_5: 6px;
+	--space-2: 8px;
+	--space-2_5: 10px;
+	--space-3: 12px;
+	--space-3_5: 14px;
+	--space-4: 16px;
+	--space-4_5: 18px;
+	--space-5: 20px;
+	--space-6: 24px;
+	--space-8: 32px;
+	--space-10: 40px;
+
+	/* ── Radius: one variable drives the scale ── */
+	--radius-xs: calc(var(--radius) * 0.4);
+	--radius-sm: calc(var(--radius) * 0.6);
+	--radius-md: calc(var(--radius) * 0.8);   /* buttons, inputs */
+	--radius-lg: calc(var(--radius));         /* max routine component radius */
+	--radius-panel: calc(var(--radius) * 1.4);/* route-level framed surfaces, larger dialogs */
+	--radius-full: 999px;                     /* avatars, dots, intentional pills only */
+
+	/* ── Sizes ── */
+	--size-hairline: 1px;
+	--size-icon-sm: 13px;
+	--size-icon-md: 14px;
+	--size-icon-base: 16px;
+	--size-control-xs: 20px;
+	--size-control-sm: 24px;    /* button xs / icon-xs */
+	--size-control-md: 28px;    /* button sm / icon-sm */
+	--size-control-form: 32px;  /* button default / icon */
+	--size-row: 32px;           /* min pointer target for an ordinary row; use 36px for frequent targets */
+	--size-topbar: 36px;
+	--size-sidebar-default: 240px;
+	--size-sidebar-icon: 48px;
+	--size-dialog-md: 420px;
+	--size-dialog-xl: 560px;
+	--ring-width-focus: 3px;
+	--opacity-control-disabled: 0.35;
+
+	/* ── Motion ── */
+	--duration-fast: 120ms;     /* hover, color, icon, small opacity */
+	--duration-normal: 150ms;   /* small layout/panel state changes */
+	--ease-out: cubic-bezier(0.23, 1, 0.32, 1);       /* entry; the house curve */
+	--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);   /* positional movement */
+
+	/* ── Elevation: transient layers only (menu, popover, dialog, tooltip) ── */
+	--shadow-popover: 0 4px 12px -4px oklch(0 0 0 / 14%);
+	--shadow-control-inset: inset 0 1px 0 oklch(100% 0 0 / 12%), inset 0 -1px 0 oklch(0% 0 0 / 8%), 0 1px 3px oklch(0% 0 0 / 1%);
+
+	/* ── Layers ── */
+	--z-chrome: 10;
+	--z-titlebar: 20;
+	--z-overlay: 50;
+}
+
+:root[data-theme="light"] {
+	color-scheme: light;
+
+	--background: oklch(0.985 0 0);
+	--foreground: oklch(0.18 0 0);
+	--card: oklch(1 0 0);
+	--card-foreground: oklch(0.18 0 0);
+	--popover: oklch(1 0 0);
+	--popover-foreground: oklch(0.18 0 0);
+	--primary: oklch(0.24 0 0);
+	--primary-foreground: oklch(0.97 0 0);
+	--secondary: oklch(0.955 0 0);
+	--secondary-foreground: oklch(0.18 0 0);
+	--muted: oklch(0.955 0 0);
+	--muted-foreground: oklch(0.48 0 0);
+	--accent: oklch(0.945 0 0);
+	--accent-foreground: oklch(0.18 0 0);
+	--destructive: #9d0006;
+	--border: oklch(0 0 0 / 8%);
+	--input: oklch(0 0 0 / 4%);
+	--ring: oklch(0.64 0 0);
+	--chart-1: oklch(0.72 0 0);
+	--chart-2: oklch(0.52 0 0);
+	--chart-3: oklch(0.4 0 0);
+	--chart-4: oklch(0.32 0 0);
+	--chart-5: oklch(0.24 0 0);
+	--sidebar: oklch(0.968 0 0);
+
+	--color-text-passive: oklch(0.62 0 0);
+	--color-accent-weak: color-mix(in oklch, var(--primary) 12%, transparent);
+
+	/* Same six hues, deepened for contrast on a light canvas */
+	--color-status-working: #2563eb;
+	--color-status-needs-you: #c2412d;
+	--color-status-validating: #9b4871;
+	--color-status-in-review: #d97706;
+	--color-status-ready: #16a34a;
+	--color-status-merged: #9333ea;
+
+	--color-scrim: color-mix(in oklch, var(--foreground) 45%, transparent);
+	--shadow-popover: 0 4px 12px -4px color-mix(in oklch, var(--foreground) 5%, transparent);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Primitives (plain CSS, framework-agnostic). Class names are mine, not AO's.
+   Variant = meaning. One .btn for every action; rows/cards/tabs use .pressable.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:where(*):focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
+}
+
+/* Tabular figures wherever columns align */
+.tabular { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--font-family-mono); }
+
+.btn {
+	--button-color: var(--primary);
+	--button-face: var(--button-color);
+	display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+	height: var(--size-control-form); padding-inline: var(--space-3);
+	border: 1px solid transparent; border-radius: var(--radius-md);
+	background-clip: padding-box;
+	font: inherit; font-size: var(--font-size-md); white-space: nowrap; user-select: none;
+	transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast);
+}
+.btn[data-size="sm"] { height: var(--size-control-md); padding-inline: 10px; font-size: var(--font-size-sm); }
+.btn[data-size="xs"] { height: var(--size-control-sm); padding-inline: var(--space-2); font-size: var(--font-size-sm); gap: 4px; }
+.btn[data-size="icon"] { width: var(--size-control-form); padding: 0; }
+.btn[data-size="icon-sm"] { width: var(--size-control-md); height: var(--size-control-md); padding: 0; }
+.btn[data-size="icon-xs"] { width: var(--size-control-sm); height: var(--size-control-sm); padding: 0; }
+.btn svg { width: 16px; height: 16px; flex-shrink: 0; pointer-events: none; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: 0.5; pointer-events: none; }
+
+/* Filled = bevelled (highlight, shade, darker edge, 1% outer shadow). No glow, lift, or press-scale. */
+.btn[data-variant="primary"],
+.btn[data-variant="accent"],
+.btn[data-variant="secondary"],
+.btn[data-variant="destructive"] {
+	background-color: var(--button-face);
+	border-color: color-mix(in oklab, var(--button-color), #000 13%);
+	box-shadow: var(--shadow-control-inset);
+}
+.btn[data-variant="primary"]     { --button-color: var(--primary);     color: var(--primary-foreground); }
+.btn[data-variant="accent"]      { --button-color: var(--color-brand); color: var(--color-brand-foreground); }
+.btn[data-variant="secondary"]   { --button-color: var(--secondary);   color: var(--secondary-foreground); }
+.btn[data-variant="destructive"] { --button-color: var(--destructive); color: #fff; }
+@media (hover: hover) {
+	.btn:is([data-variant="primary"],[data-variant="accent"],[data-variant="secondary"],[data-variant="destructive"]):hover:not(:disabled) {
+		--button-face: color-mix(in oklab, var(--button-color), #000 7%);
+	}
+}
+.btn:is([data-variant="primary"],[data-variant="accent"],[data-variant="secondary"],[data-variant="destructive"]):is(:active,[aria-pressed="true"],[data-state="open"],[data-active="true"]):not(:disabled) {
+	--button-face: color-mix(in oklab, var(--button-color), #000 14%);
+}
+/* Label colour: let the browser pick black/white from the RESTING fill (22% lighter bias), so hover/press never flip it. */
+@supports (color: contrast-color(red)) {
+	.btn[data-variant="primary"], .btn[data-variant="accent"], .btn[data-variant="secondary"], .btn[data-variant="destructive"] {
+		color: contrast-color(color-mix(in srgb-linear, var(--button-color) 49.796664%, black));
+	}
+}
+
+/* Ghost family: the growing hover pill (inset 4px -> 0). Entry animates, exit is instant. */
+.btn[data-variant="ghost"],
+.btn[data-variant="quiet"],
+.btn[data-variant="destructive-ghost"],
+.pressable {
+	position: relative; isolation: isolate; border-color: transparent; background: transparent;
+}
+.btn[data-variant="ghost"] { color: var(--foreground); }
+.btn[data-variant="quiet"],
+.btn[data-variant="destructive-ghost"] { color: var(--muted-foreground); }
+.btn[data-variant="quiet"]:is(:hover,:focus-visible) { color: var(--foreground); }
+.btn[data-variant="destructive-ghost"]:is(:hover,:focus-visible) { color: var(--destructive); }
+
+.btn:is([data-variant="ghost"],[data-variant="quiet"],[data-variant="destructive-ghost"])::before,
+.pressable::before {
+	content: ""; position: absolute; inset: 4px; z-index: -1; border-radius: inherit;
+	background: var(--color-interactive-hover); opacity: 0; pointer-events: none; transition: none;
+}
+.btn[data-variant="destructive-ghost"]::before { background: color-mix(in oklch, var(--destructive) 12%, transparent); }
+.btn:is([data-variant="ghost"],[data-variant="quiet"],[data-variant="destructive-ghost"]):is(:hover,:focus-visible)::before,
+.pressable:is(:hover,:focus-visible)::before {
+	inset: 0; opacity: 1;
+	transition: inset var(--duration-normal) var(--ease-out);
+}
+.btn:is([data-variant="ghost"],[data-variant="quiet"],[data-variant="destructive-ghost"]):active::before,
+.btn:is([data-variant="ghost"],[data-variant="quiet"],[data-variant="destructive-ghost"]):is([aria-pressed="true"],[data-state="open"],[data-active="true"])::before,
+.pressable:is(:active,[aria-pressed="true"],[data-state="open"],[data-active="true"])::before {
+	inset: 0; opacity: 1; background: var(--color-interactive-active);
+}
+.btn[data-variant="destructive-ghost"]:is(:active,[aria-pressed="true"],[data-state="open"],[data-active="true"])::before {
+	background: color-mix(in oklch, var(--destructive) 20%, transparent);
+}
+
+.btn[data-variant="outline"] { border-color: var(--border); background: transparent; color: var(--foreground); } /* contrast fallback only */
+.btn[data-variant="link"] {
+	height: auto; padding: 0; border-radius: var(--radius-sm); font-size: inherit; color: inherit;
+	text-decoration: underline; text-underline-offset: 2px;
+}
+.btn[data-variant="link"]:hover { color: var(--foreground); }
+
+/* Row actions: reserved slot, fade only. Never resize the row, never cover title/status. */
+.row-actions { opacity: 0; transition: opacity var(--duration-fast) var(--ease-out); }
+:is(.row:hover, .row:focus-within) .row-actions { opacity: 1; }
+
+/* Status glyph: ONE fixed slot per row. Pair with a distinct SHAPE; colour is never the only signal. */
+.status-glyph { width: var(--size-icon-base); height: var(--size-icon-base); flex-shrink: 0; display: inline-grid; place-items: center; color: var(--muted-foreground); }
+.status-glyph[data-status="working"]    { color: var(--color-status-working); }
+.status-glyph[data-status="needs-you"]  { color: var(--color-status-needs-you); }
+.status-glyph[data-status="validating"] { color: var(--color-status-validating); }
+.status-glyph[data-status="in-review"]  { color: var(--color-status-in-review); }
+.status-glyph[data-status="ready"]      { color: var(--color-status-ready); }
+.status-glyph[data-status="merged"]     { color: var(--color-status-merged); opacity: 0.7; }
+.status-glyph[data-status="failed"]     { color: var(--color-status-exited); }
+.status-glyph[data-status="unknown"]    { color: var(--color-status-unknown); }
+/* Unread: filled grey dot = changed since last viewed; hollow ring = seen. Stays grey on purpose. */
+
+/* Spinner: compositor-only (transform). */
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Elevated transient surfaces (menus, popovers, dialogs, tooltips) */
+.surface-elevated {
+	background: var(--color-bg-elevated); color: var(--popover-foreground);
+	border: 1px solid var(--color-border-overlay); border-radius: var(--radius-lg); box-shadow: var(--shadow-popover);
+}
+
+/* Shared list: one container, hairline dividers between rows. No per-row border, no gaps. */
+.list > * + * { border-top: 1px solid var(--color-border); }
+.list--card { background: var(--color-bg-secondary); border-radius: var(--radius-lg); }  /* settings-style group: filled, NO outline */
+.list--card > * { padding: 10px var(--space-4); }
+
+/*
+ * Working-title shimmer: copy AO's masked-copy technique rather than animating background-position.
+ *   source: frontend/src/renderer/styles.css  `.sidebar-working-shimmer` (~L2124)
+ * Rule: loops animate ONLY transform/opacity. Hide under reduced motion.
+ */
+
+@media (prefers-reduced-motion: reduce) {
+	.btn, .pressable, .row-actions { transition: none; }
+	.btn::before, .pressable::before { transition: none !important; inset: 0; }
+	.spin { animation-duration: 2.4s; }
+}

@@ -1,48 +1,74 @@
-import { cloneElement, isValidElement, useId, useState, type ReactElement, type ReactNode } from "react"
+import * as React from "react"
+import * as TooltipPrimitive from "@radix-ui/react-tooltip"
+
 import { cn } from "@/lib/utils"
 
-/** Lightweight accessible tooltip for disabled reasons and icon hints.
- * Preserves native `title` fallback alongside a theme-aware floating label. */
+const TooltipProviderContext = React.createContext(false)
+
+/** Shared provider so adjacent tooltips reuse Radix's skipDelayDuration window. */
+export function TooltipProvider({
+  delayDuration = 400,
+  skipDelayDuration = 300,
+  children,
+}: {
+  delayDuration?: number
+  skipDelayDuration?: number
+  children: React.ReactNode
+}) {
+  return (
+    <TooltipProviderContext.Provider value={true}>
+      <TooltipPrimitive.Provider delayDuration={delayDuration} skipDelayDuration={skipDelayDuration}>
+        {children}
+      </TooltipPrimitive.Provider>
+    </TooltipProviderContext.Provider>
+  )
+}
+
+/** One-phrase tooltip for icon-only controls and disabled hints (design/02 section 2.8). Keyboard-focusable via the trigger. */
 export function Tooltip({
+  label,
   content,
   children,
+  side = "top",
   className,
 }: {
-  content?: string
-  children: ReactNode
+  label?: React.ReactNode
+  content?: React.ReactNode
+  children: React.ReactNode
+  side?: "top" | "bottom" | "left" | "right"
   className?: string
 }) {
-  const [open, setOpen] = useState(false)
-  const tooltipId = useId()
-  if (!content) return <>{children}</>
+  const hasProvider = React.useContext(TooltipProviderContext)
+  const tooltipContent = label ?? content
+  if (!tooltipContent) return <>{children}</>
 
-  const child = isValidElement<{ "aria-describedby"?: string }>(children)
-    ? cloneElement(children as ReactElement<{ "aria-describedby"?: string }>, {
-        "aria-describedby": open
-          ? [children.props["aria-describedby"], tooltipId].filter(Boolean).join(" ")
-          : children.props["aria-describedby"],
+  const triggerChild = React.isValidElement<{ className?: string }>(children) ? (
+    className ? (
+      React.cloneElement(children, {
+        className: cn(children.props.className, className),
       })
-    : children
-
-  return (
-    <span
-      className={cn("relative inline-flex", className)}
-      title={content}
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-      onFocus={() => setOpen(true)}
-      onBlur={() => setOpen(false)}
-    >
-      {child}
-      {open ? (
-        <span
-          id={tooltipId}
-          role="tooltip"
-          className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 w-max max-w-60 -translate-x-1/2 rounded-md border border-border bg-popover px-2.5 py-1 text-xs text-popover-foreground shadow-md"
-        >
-          {content}
-        </span>
-      ) : null}
-    </span>
+    ) : (
+      children
+    )
+  ) : (
+    <span className={cn("inline-flex", className)}>{children}</span>
   )
+
+  const tooltip = (
+    <TooltipPrimitive.Root>
+      <TooltipPrimitive.Trigger asChild>{triggerChild}</TooltipPrimitive.Trigger>
+      <TooltipPrimitive.Portal>
+        <TooltipPrimitive.Content
+          side={side}
+          sideOffset={6}
+          className={cn(
+            "z-50 max-w-xs rounded-md bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md ring-1 ring-foreground/5",
+          )}
+        >
+          {tooltipContent}
+        </TooltipPrimitive.Content>
+      </TooltipPrimitive.Portal>
+    </TooltipPrimitive.Root>
+  )
+  return hasProvider ? tooltip : <TooltipProvider>{tooltip}</TooltipProvider>
 }

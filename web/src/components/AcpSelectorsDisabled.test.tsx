@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -33,14 +33,20 @@ describe("HarnessPicker disabled state (issue #112 / #181)", () => {
     await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
     const modelBtn = screen.getByRole("button", { name: "Model" })
     expect(modelBtn).toHaveAttribute("aria-disabled", "true")
-    expect(modelBtn.parentElement).toHaveAttribute("title", expect.stringContaining("failed"))
+    expect(modelBtn).not.toHaveAttribute("title")
+    expect(modelBtn.parentElement).not.toHaveAttribute("title")
     modelBtn.focus()
-    const tooltip = await screen.findByRole("tooltip")
-    expect(tooltip).toHaveTextContent(/failed/)
-    expect(modelBtn).toHaveAttribute("aria-describedby", tooltip.id)
+    const modelTooltip = await screen.findByRole("tooltip")
+    expect(modelTooltip).toHaveTextContent(/Model discovery failed/)
+    expect(modelBtn).toHaveAttribute("aria-describedby", modelTooltip.id)
 
+    fireEvent.blur(modelBtn)
     const effortBtn = screen.getByRole("button", { name: "Effort" })
     expect(effortBtn).toHaveAttribute("aria-disabled", "true")
-    expect(effortBtn.parentElement).toHaveAttribute("title", expect.stringContaining("failed"))
+    expect(effortBtn).not.toHaveAttribute("title")
+    effortBtn.focus()
+    const effortTooltip = await screen.findByRole("tooltip")
+    expect(effortTooltip).toHaveTextContent(/Effort discovery failed/)
+    expect(effortBtn).toHaveAttribute("aria-describedby", effortTooltip.id)
   })
 })
