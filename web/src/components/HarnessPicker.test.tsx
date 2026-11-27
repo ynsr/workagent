@@ -280,4 +280,73 @@ describe("HarnessPicker", () => {
       mockOptions.data = { ...mockOptions.data, efforts: prevEfforts }
     }
   })
+
+  it("supports Flow Default option when allowFlowDefault is enabled", async () => {
+    const user = userEvent.setup()
+    const onFlowDefault = vi.fn()
+    const onHarness = vi.fn()
+    const onModel = vi.fn()
+
+    const { rerender } = renderPicker(
+      <HarnessPicker
+        idPrefix="fd"
+        harness=""
+        allowFlowDefault
+        useFlowDefault
+        flowDefaultHint="omp · claude-sonnet · high"
+        onFlowDefaultChange={onFlowDefault}
+        onHarnessChange={onHarness}
+        onModelChange={onModel}
+      />,
+    )
+
+    const trigger = screen.getByRole("button", { name: "Harness, model, and effort: Flow Default" })
+    expect(trigger).toHaveTextContent("Flow Default")
+
+    await user.click(trigger)
+    const flowDefaultOption = screen.getByRole("option", { name: /Flow Default/ })
+    expect(flowDefaultOption).toHaveAttribute("aria-selected", "true")
+    expect(flowDefaultOption).toHaveTextContent("omp · claude-sonnet · high")
+
+    // Clicking a model while in Flow Default forwards model selection
+    await user.click(screen.getByRole("option", { name: "Gemini 4 Hydrogen" }))
+    expect(onModel).toHaveBeenCalledWith("gemini-4-hydrogen")
+
+    // Re-render with explicit model (not Flow Default), then click Flow Default to revert
+    rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <HarnessPicker
+          idPrefix="fd"
+          harness="agy"
+          model="gemini-4-hydrogen"
+          allowFlowDefault
+          useFlowDefault={false}
+          onFlowDefaultChange={onFlowDefault}
+          onHarnessChange={onHarness}
+          onModelChange={onModel}
+        />
+      </QueryClientProvider>,
+    )
+    const trigger2 = screen.getByRole("button", { name: /^Harness, model, and effort/ })
+    expect(trigger2).toHaveTextContent("agy · Gemini 4 Hydrogen · Default")
+    // Popover remained open after model pick (efforts available); Flow Default is now unselected
+    const fdOpt2 = screen.getByRole("option", { name: /Flow Default/ })
+    expect(fdOpt2).toHaveAttribute("aria-selected", "false")
+    await user.click(fdOpt2)
+    expect(onFlowDefault).toHaveBeenCalledWith(true)
+    expect(trigger2).toHaveAttribute("aria-expanded", "false")
+  })
+
+  it("omits Flow Default option when allowFlowDefault is not enabled", async () => {
+    const user = userEvent.setup()
+    renderPicker(
+      <HarnessPicker
+        idPrefix="nofd"
+        harness="agy"
+        onHarnessChange={vi.fn()}
+      />,
+    )
+    await user.click(screen.getByRole("button", { name: /^Harness, model, and effort/ }))
+    expect(screen.queryByRole("option", { name: /Flow Default/ })).not.toBeInTheDocument()
+  })
 })

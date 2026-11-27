@@ -221,7 +221,7 @@ export function FlowTemplateFormCard({ seed, knownActions, usedIcons, onDone }: 
           {seed.lineageNote ? (
             <p className="text-xs text-muted-foreground">{seed.lineageNote}</p>
           ) : null}
-          <ChainEditor mode="edit" steps={steps} onChange={setSteps} knownActions={knownActions} />
+          <ChainEditor mode="edit" steps={steps} onChange={setSteps} knownActions={knownActions} flowDefaults={{ harness, model, effort }} />
         </div>
         <ScriptField id="flow-pre" label="Pre-execution script" value={pre} onChange={setPre} placeholder={"#!/bin/bash\nmake lint"} />
         <ScriptField id="flow-post" label="Post-execution script" value={post} onChange={setPost} placeholder={"#!/bin/bash\nmake test"} />

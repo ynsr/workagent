@@ -296,7 +296,7 @@ def test_template_rename_retargets_and_delete_prunes_overlay_keys(tmp_path, monk
 
 def test_template_display_columns(tmp_path):
     from workagent import store_flows as sf
-    from workagent import store_sqlite as sq
+    from workagent import store_flows as sf, store_sqlite as sq
     db = tmp_path / "state.db"
     sq.init_db(db)
     row = sf.create_template(db, name="Full", steps=[{"kind": "cleanup"}],
@@ -443,3 +443,67 @@ def test_template_default_harness_model_effort_round_trip(tmp_path, monkeypatch)
     assert updated["default_harness"] == "agy"
     assert updated["default_model"] == ""
     assert updated["default_effort"] == "medium"
+
+
+def test_migrate_flow_step_defaults_backfills_templates_and_flows(tmp_path):
+    """Issue #227: existing steps without explicit harness/model/effort get use_flow_default=True."""
+    import json
+    from workagent import store_flows as sf, store_sqlite as sq
+
+    db = tmp_path / "state.db"
+    sq.init_db(db)
+
+    raw_steps = [
+        {"kind": "start", "execution_mode": "parallel", "config": {"repo": "proj"}},
+        {"kind": "review", "execution_mode": "sequential", "config": {"harness": "omp"}},
+        {"kind": "fix_comments", "execution_mode": "sequential", "config": {"model": "gemini-pro"}},
+        {"kind": "sync", "execution_mode": "sequential", "config": {"effort": "high"}},
+        {"kind": "prodtest_plan", "execution_mode": "sequential", "config": {"use_flow_default": False}},
+        {"kind": "cleanup", "execution_mode": "sequential", "config": {}},
+        {"kind": "release", "execution_mode": "sequential", "config": {}},
+    ]
+    with sq.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO flow_templates (label, name, steps, created_at, modified_at) "
+            "VALUES (?, ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            ("legacy_tpl", "Legacy", json.dumps(raw_steps)),
+        )
+        conn.execute(
+            "INSERT INTO flows (template_label, worktree_ref, repo_snapshot, status, current_step, "
+            "step_results, effective_steps, created_at, modified_at) "
+            "VALUES (?, '', '{}', 'paused', 0, '[]', ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            ("legacy_tpl", json.dumps(raw_steps)),
+        )
+        # Clear init cache so init_db runs migrations against the seeded rows.
+        sq._INIT_CACHE.clear()
+
+    sq.init_db(db)
+
+    tpl = sf.get_template(db, "legacy_tpl")
+    assert tpl is not None
+    steps = tpl["steps"]
+    # start had no harness/model/effort -> backfilled
+    assert steps[0]["config"] == {"repo": "proj", "use_flow_default": True}
+    # review/fix_comments/sync had explicit harness/model/effort -> untouched
+    assert steps[1]["config"] == {"harness": "omp"}
+    assert steps[2]["config"] == {"model": "gemini-pro"}
+    assert steps[3]["config"] == {"effort": "high"}
+    # prodtest_plan explicitly opted out (use_flow_default=False) -> untouched
+    assert steps[4]["config"] == {"use_flow_default": False}
+    # cleanup/release are non-harness steps -> untouched
+    assert steps[5]["config"] == {}
+    assert steps[6]["config"] == {}
+
+    flows = sf.list_flows(db)
+    assert len(flows) == 1
+    eff = flows[0]["effective_steps"]
+    assert eff[0]["config"] == {"repo": "proj", "use_flow_default": True}
+    assert eff[1]["config"] == {"harness": "omp"}
+    assert eff[4]["config"] == {"use_flow_default": False}
+    assert eff[5]["config"] == {}
+
+    # Idempotent: re-running migration does not alter rows.
+    sq._INIT_CACHE.clear()
+    sq.init_db(db)
+    tpl_again = sf.get_template(db, "legacy_tpl")
+    assert tpl_again["steps"] == steps

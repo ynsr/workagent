@@ -18,6 +18,10 @@ export interface HarnessPickerProps {
   onEffortChange?: (effort: string) => void
   allowDefault?: boolean
   defaultLabel?: string
+  allowFlowDefault?: boolean
+  useFlowDefault?: boolean
+  onFlowDefaultChange?: (useFlowDefault: boolean) => void
+  flowDefaultHint?: string
   harnessOnly?: boolean
   label?: string
   compact?: boolean
@@ -59,6 +63,10 @@ export function HarnessPicker({
   onEffortChange,
   allowDefault = true,
   defaultLabel,
+  allowFlowDefault = false,
+  useFlowDefault = false,
+  onFlowDefaultChange,
+  flowDefaultHint,
   harnessOnly = false,
   label,
   compact = false,
@@ -143,17 +151,20 @@ export function HarnessPicker({
   const harnessDisplay = selectedHarnessOpt?.label ?? (harness || (defaultLabel ?? `Default (${def})`))
   const modelDisplay = model ? (models.find((m) => m.id === model)?.name ?? model) : "Default"
   const effortDisplay = effort ? (efforts.find((e) => e.id === effort)?.name ?? effort) : "Default"
-  const triggerText = harnessOnly
-    ? harnessDisplay
-    : `${harnessDisplay} · ${modelDisplay} · ${effortDisplay}`
+  const flowDefaultActive = allowFlowDefault && useFlowDefault
+  const triggerText = flowDefaultActive
+    ? "Flow Default"
+    : harnessOnly
+      ? harnessDisplay
+      : `${harnessDisplay} · ${modelDisplay} · ${effortDisplay}`
 
   const clampedActiveIdx = filteredModels.length > 0 ? Math.min(activeIdx, filteredModels.length - 1) : 0
 
   useEffect(() => {
-    if (isEffortUnsupportedForModel(perModelEfforts, effort)) {
+    if (!flowDefaultActive && isEffortUnsupportedForModel(perModelEfforts, effort)) {
       onEffortChange?.("")
     }
-  }, [effort, perModelEfforts, onEffortChange])
+  }, [flowDefaultActive, effort, perModelEfforts, onEffortChange])
 
   useEffect(() => {
     if (!open || modelsDisabled) return
@@ -169,6 +180,11 @@ export function HarnessPicker({
       setEffortOpen(false)
       pickedInSessionRef.current = { model: false, effort: false }
     }
+  }
+
+  function selectFlowDefault() {
+    onFlowDefaultChange?.(true)
+    setOpen(false)
   }
 
   function selectHarness(next: string) {
@@ -249,6 +265,24 @@ export function HarnessPicker({
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 max-w-[calc(100vw-2rem)] p-0">
+        {allowFlowDefault ? (
+          <div className="border-b border-border">
+            <Pressable
+              role="option"
+              aria-selected={flowDefaultActive}
+              onClick={selectFlowDefault}
+            >
+              <span className="inline-flex min-w-0 items-center gap-1.5 truncate">
+                <span className="font-medium">Flow Default</span>
+                {flowDefaultHint ? (
+                  <span className="truncate text-xs text-muted-foreground">({flowDefaultHint})</span>
+                ) : null}
+              </span>
+              {flowDefaultActive ? <Check aria-hidden className="size-3.5 shrink-0 text-primary" /> : null}
+            </Pressable>
+          </div>
+        ) : null}
+
         {/* Harness icon toggles */}
         <div
           role="radiogroup"
@@ -256,7 +290,7 @@ export function HarnessPicker({
           className={cn("flex items-center gap-1 p-2", !harnessOnly && "border-b border-border")}
         >
           {harnessOptions.map((opt) => {
-            const checked = harness === opt.value
+            const checked = !flowDefaultActive && harness === opt.value
             const btn = (
               <button
                 key={opt.value}
@@ -329,7 +363,7 @@ export function HarnessPicker({
                 className="max-h-56 divide-y divide-border overflow-y-auto"
               >
                 {filteredModels.map((item, idx) => {
-                  const selected = model === item.id
+                  const selected = !flowDefaultActive && model === item.id
                   return (
                     <Pressable
                       key={item.id || "__default__"}
@@ -390,7 +424,7 @@ export function HarnessPicker({
                         },
                         ...efforts,
                       ].map((item) => {
-                        const selected = effort === item.id
+                        const selected = !flowDefaultActive && effort === item.id
                         return (
                           <Pressable
                             key={item.id || "__default__"}

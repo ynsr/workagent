@@ -626,6 +626,59 @@ def _migrate_flow_template_harness_defaults(conn) -> None:
             conn.execute(f"ALTER TABLE flow_templates ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
 
 
+def _backfill_steps_flow_default(raw: str) -> str | None:
+    """Backfill ``use_flow_default: True`` on harness-capable steps with no explicit harness/model/effort.
+
+    Returns the updated JSON string if any step changed, else ``None``.
+    """
+    if not raw or not raw.strip():
+        return None
+    try:
+        steps = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(steps, list):
+        return None
+    from .store_flows import HARNESS_STEP_KINDS
+    changed = False
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if step.get("kind") not in HARNESS_STEP_KINDS:
+            continue
+        cfg = step.get("config")
+        if not isinstance(cfg, dict):
+            cfg = {}
+            step["config"] = cfg
+        if "use_flow_default" in cfg:
+            continue
+        if any(str(cfg.get(k) or "").strip() for k in ("harness", "model", "effort")):
+            continue
+        cfg["use_flow_default"] = True
+        changed = True
+    return json.dumps(steps) if changed else None
+
+
+def _migrate_flow_step_defaults(conn) -> None:
+    """Issue #227: backfill ``use_flow_default: True`` on existing flow steps without explicit harness/model/effort.
+
+    Idempotent: steps that already carry ``use_flow_default`` or any explicit
+    harness/model/effort are untouched.
+    """
+    tcols = {r[1] for r in conn.execute("PRAGMA table_info(flow_templates)")}
+    if "steps" in tcols:
+        for row_id, raw in conn.execute("SELECT id, steps FROM flow_templates").fetchall():
+            updated = _backfill_steps_flow_default(str(raw or ""))
+            if updated is not None:
+                conn.execute("UPDATE flow_templates SET steps = ? WHERE id = ?", (updated, row_id))
+    fcols = {r[1] for r in conn.execute("PRAGMA table_info(flows)")}
+    if "effective_steps" in fcols:
+        for row_id, raw in conn.execute("SELECT id, effective_steps FROM flows WHERE effective_steps != ''").fetchall():
+            updated = _backfill_steps_flow_default(str(raw or ""))
+            if updated is not None:
+                conn.execute("UPDATE flows SET effective_steps = ? WHERE id = ?", (updated, row_id))
+
+
 def _migrate_run_immediately(conn) -> None:
     """Schema v20: custom_actions/flow_templates gain run_immediately.
 
@@ -2219,6 +2272,7 @@ def init_db(path: Path, defer_backfill: bool = False) -> Path:
                 _migrate_run_immediately(conn)
                 _migrate_flow_template_icon(conn)
                 _migrate_flow_template_harness_defaults(conn)
+                _migrate_flow_step_defaults(conn)
                 migrate_sessions_into_runs(conn, path.parent)
                 _migrate_prodtest_cols(conn)
                 _migrate_runs_worktree_fk(conn)
