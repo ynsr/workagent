@@ -284,7 +284,8 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                 eprint(f"warning: model {model!r} does not support --effort {effort!r} "
                        f"(supported: {', '.join(supported_efforts)}); omitting --effort")
                 effort = None
-    if no_tty and is_exec and not terminal:
+    needs_judge = getattr(harness, "need_judgment", lambda: True)()
+    if no_tty and is_exec and not terminal and needs_judge:
         prompt += backend.VERDICT_SUFFIX
     action = _session_action(result)
     branch0 = str(result.get("branch", "") or "")
@@ -633,7 +634,6 @@ def _run_harness(harness_name: str, prompt: str, worktree: str, fallback_dir: st
                         raise RuntimeError(f"judge failed (exit {code}) or produced no transcript")
                     return harness.extract_last_assistant_text(str(target), max_chars=None)
 
-            needs_judge = getattr(harness, "need_judgment", lambda: True)()
             validation = _cv.validate_headless(
                 worktree=worktree or fallback_dir, branch=branch, prompt=prompt,
                 session_type=stype, run_once=run_once,

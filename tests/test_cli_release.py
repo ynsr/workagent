@@ -1056,7 +1056,7 @@ def test_fix_default_rebase_remote_fail_falls_back_to_harness_prompt(
     assert "rebase" in out["harness_prompt"].lower()
     assert _DEFAULT_SHA[:8] in out["harness_prompt"]
     assert _RELEASE_SHA[:8] in out["harness_prompt"]
-    assert len(calls) == 1 and calls[0]["prompt"] == out["harness_prompt"] + backend.VERDICT_SUFFIX
+    assert len(calls) == 1 and calls[0]["prompt"] == out["harness_prompt"]
     assert calls[0]["no_tty"] is True
 
 
