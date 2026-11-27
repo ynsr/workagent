@@ -28,6 +28,12 @@ export const STEP_KINDS = [
   "release",
 ] as const
 
+export interface FlowDefaults {
+  harness?: string
+  model?: string
+  effort?: string
+}
+
 export interface ChainEditorProps {
   mode: "edit" | "launch"
   steps: FlowStep[]
@@ -38,6 +44,27 @@ export interface ChainEditorProps {
   /** Show the per-step Parallel/Sequential toggle (multi-worktree runs).
    * Hidden for single-worktree runs — the mode is not applicable there. */
   showExecutionMode?: boolean
+  /** Active flow-level harness/model/effort shown as context on "Flow Default". */
+  flowDefaults?: FlowDefaults
+}
+
+/** True when a step inherits harness, model, and effort from the flow level.
+ * Explicit `use_flow_default` wins; otherwise a step with none of harness/model/effort
+ * explicitly set defaults to Flow Default (matches backend `is_flow_default_step`). */
+export function isStepFlowDefault(config?: Record<string, unknown>): boolean {
+  if (!config) return true
+  if ("use_flow_default" in config) return Boolean(config.use_flow_default)
+  return !["harness", "model", "effort"].some(
+    (k) => typeof config[k] === "string" && String(config[k]).trim().length > 0,
+  )
+}
+
+function formatFlowDefaultHint(flowDefaults?: FlowDefaults): string | undefined {
+  if (!flowDefaults) return undefined
+  const parts = [flowDefaults.harness, flowDefaults.model, flowDefaults.effort].filter(
+    (v): v is string => Boolean(v && v.trim()),
+  )
+  return parts.length > 0 ? parts.join(" · ") : undefined
 }
 
 /** Backend rule order (mirrors store_flows.validate_template):
@@ -164,6 +191,7 @@ function StepConfigForm({
   idPrefix,
   hints,
   requiredRepo,
+  flowDefaults,
 }: {
   kind: string
   config: Record<string, unknown>
@@ -171,6 +199,7 @@ function StepConfigForm({
   idPrefix: string
   hints?: Record<string, unknown>
   requiredRepo?: boolean
+  flowDefaults?: FlowDefaults
 }) {
   const [advanced, setAdvanced] = useState(false)
   const hintRunMode = typeof hints?.run_mode === "string" ? String(hints.run_mode) : "headless"
@@ -387,27 +416,68 @@ function StepConfigForm({
           </select>
         </div>
       ) : null}
-      {showHarness ? (
-        <div className="sm:col-span-2">
-          <HarnessPicker
-            idPrefix={idPrefix}
-            allowDefault
-            harness={harness || hintHarness}
-            model={String(config.model ?? "")}
-            effort={String(config.effort ?? "")}
-            onHarnessChange={(v) => {
-              const next = { ...config }
-              if (v) next.harness = v
-              else delete next.harness
-              delete next.model
-              delete next.effort
-              onChange(next)
-            }}
-            onModelChange={(v) => patch("model", v)}
-            onEffortChange={(v) => patch("effort", v)}
-          />
-        </div>
-      ) : null}
+      {showHarness ? (() => {
+        const useFlowDefault = isStepFlowDefault(config)
+        return (
+          <div className="sm:col-span-2">
+            <HarnessPicker
+              idPrefix={idPrefix}
+              allowDefault
+              allowFlowDefault
+              useFlowDefault={useFlowDefault}
+              flowDefaultHint={formatFlowDefaultHint(flowDefaults)}
+              onFlowDefaultChange={(enabled) => {
+                if (!enabled) return
+                const next: Record<string, unknown> = { ...config, use_flow_default: true }
+                delete next.harness
+                delete next.model
+                delete next.effort
+                onChange(next)
+              }}
+              harness={useFlowDefault ? "" : (harness || hintHarness)}
+              model={useFlowDefault ? "" : String(config.model ?? "")}
+              effort={useFlowDefault ? "" : String(config.effort ?? "")}
+              onHarnessChange={(v) => {
+                const next = { ...config }
+                if (v) {
+                  next.harness = v
+                  delete next.use_flow_default
+                } else {
+                  delete next.harness
+                  next.use_flow_default = false
+                }
+                delete next.model
+                delete next.effort
+                onChange(next)
+              }}
+              onModelChange={(v) => {
+                const next = { ...config }
+                if (v) {
+                  next.model = v
+                  delete next.use_flow_default
+                } else {
+                  delete next.model
+                  if (next.harness || next.effort) delete next.use_flow_default
+                  else next.use_flow_default = false
+                }
+                onChange(next)
+              }}
+              onEffortChange={(v) => {
+                const next = { ...config }
+                if (v) {
+                  next.effort = v
+                  delete next.use_flow_default
+                } else {
+                  delete next.effort
+                  if (next.harness || next.model) delete next.use_flow_default
+                  else next.use_flow_default = false
+                }
+                onChange(next)
+              }}
+            />
+          </div>
+        )
+      })() : null}
       <div className="sm:col-span-2">
         <button
           type="button"
@@ -540,6 +610,7 @@ export function ChainEditor({
   onOverridesChange,
   knownActions,
   showExecutionMode = true,
+  flowDefaults,
 }: ChainEditorProps) {
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const errors = mode === "edit" ? validateChain(steps) : []
@@ -550,7 +621,7 @@ export function ChainEditor({
   }
   function addStep() {
     if (!onChange) return
-    onChange([...steps, { kind: "sync", config: {} }])
+    onChange([...steps, { kind: "sync", config: { use_flow_default: true } }])
   }
   function removeStep(i: number) {
     if (!onChange) return
@@ -713,6 +784,7 @@ export function ChainEditor({
                 onChange={(config) => mode === "edit" && onOverridesChange ? setOverride(i, config) : setStep(i, { ...step, config })}
                 idPrefix={`chain-step-${i}`}
                 requiredRepo={mode === "edit" && onOverridesChange ? step.kind === "start" : undefined}
+                flowDefaults={flowDefaults}
               />
             </li>
           ))}

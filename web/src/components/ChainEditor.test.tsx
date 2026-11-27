@@ -339,7 +339,7 @@ describe("ChainEditor step harness", () => {
     expect(trigger).toHaveTextContent("omp")
     await user.click(trigger)
     await user.click(screen.getByRole("radio", { name: /^Default/ }))
-    expect(next[0]?.config).toEqual({})
+    expect(next[0]?.config).toEqual({ use_flow_default: false })
   })
 
   it("defaults sync step strategy to Rebase and toggles Merge locally", async () => {
@@ -362,5 +362,46 @@ describe("ChainEditor step harness", () => {
 
     await user.selectOptions(select, "rebase")
     expect(next[0]?.config?.merge).toBeUndefined()
+  })
+
+  it("defaults newly added steps to Flow Default and allows reverting explicit steps to Flow Default", async () => {
+    cleanup()
+    const user = userEvent.setup()
+    let steps: FlowStep[] = [{ kind: "review", config: { harness: "omp", model: "claude-sonnet-5.5", effort: "high" } }]
+    const { container, rerender } = render(
+      <ChainEditor
+        mode="edit"
+        steps={steps}
+        onChange={(s) => { steps = s }}
+        knownActions={[]}
+        flowDefaults={{ harness: "agy", model: "gemini-4-hydrogen", effort: "medium" }}
+      />,
+    )
+
+    // Add a new step -> defaults to use_flow_default: true
+    await user.click(within(container).getByRole("button", { name: "Add step" }))
+    expect(steps).toHaveLength(2)
+    expect(steps[1]?.config).toEqual({ use_flow_default: true })
+
+    rerender(
+      <ChainEditor
+        mode="edit"
+        steps={steps}
+        onChange={(s) => { steps = s }}
+        knownActions={[]}
+        flowDefaults={{ harness: "agy", model: "gemini-4-hydrogen", effort: "medium" }}
+      />,
+    )
+
+    const triggers = within(container).getAllByRole("button", { name: /^Harness, model, and effort/ })
+    expect(triggers[0]).toHaveTextContent("omp")
+    expect(triggers[1]).toHaveTextContent("Flow Default")
+
+    // Revert step 0 to Flow Default -> clears harness/model/effort and sets use_flow_default: true
+    await user.click(triggers[0]!)
+    const fdOpt = screen.getByRole("option", { name: /Flow Default/ })
+    expect(fdOpt).toHaveTextContent("agy · gemini-4-hydrogen · medium")
+    await user.click(fdOpt)
+    expect(steps[0]?.config).toEqual({ use_flow_default: true })
   })
 })

@@ -196,4 +196,26 @@ describe("FlowWizard start step constraints", () => {
     expect(trigger).toHaveTextContent("omp · m1 · high")
     unmount()
   })
+
+  it("shows Flow Default on steps and updates its hint when flow-level harness changes", async () => {
+    cleanup()
+    const user = userEvent.setup()
+    const tpl = {
+      ...TEMPLATE,
+      default_harness: "omp",
+      default_model: "m1",
+      default_effort: "high",
+      steps: [{ kind: "sync", config: { use_flow_default: true } }],
+    } as unknown as FlowTemplateRow
+    const { unmount } = renderWizard(tpl)
+    const triggers = screen.getAllByRole("button", { name: /^Harness, model, and effort/ })
+    expect(triggers[0]).toHaveTextContent("omp · m1 · high")
+    expect(triggers[1]).toHaveTextContent("Flow Default")
+
+    await user.click(triggers[1]!)
+    const fdOpt = screen.getByRole("option", { name: /Flow Default/ })
+    expect(fdOpt).toHaveAttribute("aria-selected", "true")
+    expect(fdOpt).toHaveTextContent("omp · m1 · high")
+    unmount()
+  })
 })

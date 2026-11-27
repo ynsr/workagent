@@ -21,6 +21,22 @@ def default_execution_mode(kind: str) -> str:
 
 STEP_KINDS = ("start", "review", "fix_comments", "sync", "action",
               "prodtest_plan", "cleanup", "release")
+#: Step kinds that support harness/model/effort configuration.
+HARNESS_STEP_KINDS = ("start", "review", "fix_comments", "sync", "action",
+                      "prodtest_plan")
+
+
+def is_flow_default_step(config: dict | None) -> bool:
+    """True when a step inherits harness/model/effort from the flow level.
+
+    Explicit ``use_flow_default`` wins (True -> inherit, False -> keep step's
+    own selection). When omitted, a step with none of harness/model/effort
+    explicitly set inherits from the flow level.
+    """
+    cfg = config if isinstance(config, dict) else {}
+    if "use_flow_default" in cfg:
+        return bool(cfg.get("use_flow_default"))
+    return not any(str(cfg.get(k) or "").strip() for k in ("harness", "model", "effort"))
 FLOW_STATUSES = ("pending", "running", "paused", "failed", "done")
 
 #: Banned substrings in any step config (then-fix-comments shortcut).

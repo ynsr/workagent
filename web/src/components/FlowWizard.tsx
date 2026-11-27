@@ -242,6 +242,7 @@ export function FlowWizard({
         onChange={setWorking}
         knownActions={knownActions}
         showExecutionMode={sorted.length > 1}
+        flowDefaults={{ harness, model, effort }}
       />
     </ActionDialog>
   )

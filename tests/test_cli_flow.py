@@ -1131,18 +1131,23 @@ def test_flow_review_step_explicit_repo_wins(isolated_config, monkeypatch):
     assert calls and calls[0][1].get("repo") == "/repos/other"
 
 
-def test_flow_run_harness_cli_overrides_step_config(tmp_path, monkeypatch):
+def test_flow_run_harness_cli_applies_to_flow_default_and_preserves_explicit_step(tmp_path, monkeypatch):
+    """Issue #227: --harness applies to Flow Default steps; explicit step harness is preserved."""
     import json as _json
     from typer.testing import CliRunner
     from workagent import cli_flow as cli_mod
     tpl = {"label": "t1", "name": "T1",
-           "steps": [{"kind": "start", "config": {"harness": "agy"}}]}
+           "steps": [
+               {"kind": "start", "config": {"harness": "agy"}},
+               {"kind": "review", "config": {"use_flow_default": True}},
+           ]}
     monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
     runner = CliRunner()
     res = runner.invoke(cli_mod.app, ["flow", "run", "t1", "jira:X-1", "--dry-run", "--json", "--harness", "omp"])
     assert res.exit_code == 0, res.output
     body = _json.loads(res.stdout)
-    assert body["chain"][0]["config"]["harness"] == "omp"
+    assert body["chain"][0]["config"]["harness"] == "agy"
+    assert body["chain"][1]["config"]["harness"] == "omp"
 
 
 def test_flow_run_unknown_harness(tmp_path, monkeypatch):
@@ -1155,8 +1160,8 @@ def test_flow_run_unknown_harness(tmp_path, monkeypatch):
     assert res.exit_code == 2
 
 
-def test_flow_run_model_skips_step_with_different_harness(tmp_path, monkeypatch):
-    """Issue #130: --model without --harness must not leak default-harness model into an omp step."""
+def test_flow_run_model_skips_step_with_explicit_harness(tmp_path, monkeypatch):
+    """Issues #130 / #227: flow-level --harness/--model/--effort apply only to Flow Default steps."""
     import json as _json
     from typer.testing import CliRunner
     from workagent import cli_flow as cli_mod
@@ -1182,8 +1187,9 @@ def test_flow_run_model_skips_step_with_different_harness(tmp_path, monkeypatch)
     assert "effort" not in chain[0]["config"]
     assert chain[1]["config"]["model"] == "gemini-4-hydrogen-medium"
     assert chain[1]["config"]["effort"] == "medium"
-    assert chain[2]["config"]["model"] == "gemini-4-hydrogen-medium"
-    # Explicit --harness overrides step harness and cascades --model/--effort.
+    assert chain[2]["config"]["harness"] == "agy"
+    assert "model" not in chain[2]["config"]
+    # Explicit --harness + --model apply to Flow Default steps while preserving explicit step configs.
     res2 = runner.invoke(cli_mod.app, [
         "flow", "run", "t1", "jira:X-1", "--dry-run", "--json",
         "--harness", "omp", "--model", "m1", "--steps", steps_json,
@@ -1191,9 +1197,11 @@ def test_flow_run_model_skips_step_with_different_harness(tmp_path, monkeypatch)
     assert res2.exit_code == 0, res2.output
     chain2 = _json.loads(res2.stdout)["chain"]
     assert chain2[0]["config"]["harness"] == "omp"
-    assert chain2[0]["config"]["model"] == "m1"
-    assert chain2[2]["config"]["harness"] == "omp"
-    assert chain2[2]["config"]["model"] == "m1"
+    assert "model" not in chain2[0]["config"]
+    assert chain2[1]["config"]["harness"] == "omp"
+    assert chain2[1]["config"]["model"] == "m1"
+    assert chain2[2]["config"]["harness"] == "agy"
+    assert "model" not in chain2[2]["config"]
 
 
 def test_flow_run_resume_model_skips_step_with_different_harness(tmp_path, monkeypatch):
@@ -1537,3 +1545,107 @@ def test_flow_run_harness_override_clears_template_model_effort(monkeypatch):
 
 
 
+
+
+def test_flow_run_flow_default_step_inherits_and_explicit_step_preserved(monkeypatch):
+    """Issue #227: Flow Default steps inherit flow-level harness/model/effort; explicit steps keep theirs."""
+    import json as _json
+    from typer.testing import CliRunner
+    from workagent import cli_flow as cli_mod
+
+    tpl = {
+        "label": "t227",
+        "name": "T227",
+        "default_harness": "omp",
+        "default_model": "claude-sonnet",
+        "default_effort": "high",
+        "steps": [
+            {"kind": "start", "config": {"use_flow_default": True, "repo": "proj"}},
+            {"kind": "review", "config": {"harness": "agy", "model": "gemini-4-hydrogen", "effort": "low"}},
+            {"kind": "sync", "config": {"use_flow_default": False}},
+            {"kind": "fix_comments", "config": {}},
+        ],
+    }
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.default_harness", lambda: "agy")
+    runner = CliRunner()
+
+    # 1) Template defaults apply only to Flow Default steps (use_flow_default=True or legacy empty).
+    res = runner.invoke(cli_mod.app, ["flow", "run", "t227", "jira:X-1", "--dry-run", "--json"])
+    assert res.exit_code == 0, res.output
+    chain = _json.loads(res.stdout)["chain"]
+    assert chain[0]["config"]["harness"] == "omp"
+    assert chain[0]["config"]["model"] == "claude-sonnet"
+    assert chain[0]["config"]["effort"] == "high"
+    # Explicit step keeps its exact harness/model/effort.
+    assert chain[1]["config"]["harness"] == "agy"
+    assert chain[1]["config"]["model"] == "gemini-4-hydrogen"
+    assert chain[1]["config"]["effort"] == "low"
+    # Explicit global-default step (use_flow_default=False) does NOT inherit flow defaults.
+    assert "harness" not in chain[2]["config"]
+    assert "model" not in chain[2]["config"]
+    assert "effort" not in chain[2]["config"]
+    # Legacy empty step inherits flow defaults.
+    assert chain[3]["config"]["harness"] == "omp"
+    assert chain[3]["config"]["model"] == "claude-sonnet"
+    assert chain[3]["config"]["effort"] == "high"
+
+    # 2) Flow-run CLI overrides (--harness/--model/--effort) apply to Flow Default steps,
+    #    NOT to steps with an explicit step-level selection; --acp still cascades to all.
+    res2 = runner.invoke(cli_mod.app, [
+        "flow", "run", "t227", "jira:X-1", "--dry-run", "--json",
+        "--harness", "agy", "--model", "m-run", "--effort", "medium", "--acp",
+    ])
+    assert res2.exit_code == 0, res2.output
+    chain2 = _json.loads(res2.stdout)["chain"]
+    assert chain2[0]["config"]["harness"] == "agy"
+    assert chain2[0]["config"]["model"] == "m-run"
+    assert chain2[0]["config"]["effort"] == "medium"
+    assert chain2[0]["config"]["acp"] is True
+    # Explicit step keeps its exact model/effort AND gets --acp.
+    assert chain2[1]["config"]["harness"] == "agy"
+    assert chain2[1]["config"]["model"] == "gemini-4-hydrogen"
+    assert chain2[1]["config"]["effort"] == "low"
+    assert chain2[1]["config"]["acp"] is True
+    # Explicit global-default step does NOT inherit flow-run harness/model/effort, still gets --acp.
+    assert "harness" not in chain2[2]["config"]
+    assert "model" not in chain2[2]["config"]
+    assert "effort" not in chain2[2]["config"]
+    assert chain2[2]["config"]["acp"] is True
+
+
+def test_flow_run_execution_does_not_overwrite_explicit_step_harness(monkeypatch):
+    """Issue #227: flow_run loop must not clobber an explicit step harness with CLI --harness."""
+    from typer.testing import CliRunner
+    from workagent import cli_flow as cli_mod
+
+    tpl = {
+        "label": "t227exec",
+        "name": "T227Exec",
+        "steps": [
+            {"kind": "review", "config": {"harness": "agy", "model": "gemini-4-hydrogen", "effort": "low"}},
+            {"kind": "sync", "config": {"use_flow_default": True}},
+        ],
+    }
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.default_harness", lambda: "agy")
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [])
+    monkeypatch.setattr("workagent.store.create_flow", lambda **f: {"id": 88, "current_step": 0, "step_results": [], **f})
+    monkeypatch.setattr("workagent.store.update_flow", lambda fid, **f: {"id": fid, **f})
+    monkeypatch.setattr(cli_mod, "_resolve_ref", lambda ref: ("jira:X-1", {"repo": "projectx"}, None))
+    seen = {}
+    monkeypatch.setattr(cli_mod, "_run_review_step", lambda wt, cfg, fix, jo: seen.setdefault("review", dict(cfg)) and {"status": "ok"} or {"status": "ok"})
+    monkeypatch.setattr(cli_mod, "_run_sync_step", lambda wt, cfg, jo: seen.setdefault("sync", dict(cfg)) and {"status": "ok"} or {"status": "ok"})
+
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, [
+        "flow", "run", "t227exec", "jira:X-1", "--yes",
+        "--harness", "omp", "--model", "claude-sonnet", "--effort", "high",
+    ])
+    assert res.exit_code == 0, res.output
+    assert seen["review"]["harness"] == "agy"
+    assert seen["review"]["model"] == "gemini-4-hydrogen"
+    assert seen["review"]["effort"] == "low"
+    assert seen["sync"]["harness"] == "omp"
+    assert seen["sync"]["model"] == "claude-sonnet"
+    assert seen["sync"]["effort"] == "high"

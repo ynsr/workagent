@@ -246,28 +246,29 @@ def _find_resumable(template_label: str, ref: str,
     return None
 
 
-def _apply_cascade(steps: list[dict], cascade: dict, default_harness: str) -> None:
-    """Apply top-level flow CLI overrides to each step's config.
+_HARNESS_CASCADE_KEYS = ("harness", "model", "effort")
 
-    When ``--harness`` is omitted, ``--model`` and ``--effort`` belong to
-    *default_harness* — do not overwrite steps that explicitly target a
-    different harness (e.g. an ``omp`` start step inside a flow whose
-    top-level model was picked for ``agy``).
+
+def _apply_cascade(steps: list[dict], cascade: dict, default_harness: str) -> None:
+    """Apply top-level flow defaults/CLI overrides to each step's config.
+
+    Steps set to Flow Default (``use_flow_default: True``, or legacy empty
+    steps with no explicit harness/model/effort) inherit flow-level
+    ``harness``, ``model``, and ``effort``. Steps with an explicit step-level
+    selection (or ``use_flow_default: False``) keep their exact
+    harness/model/effort untouched. Non-harness flags (``acp``, ``run_mode``)
+    still cascade to every step.
     """
     if not cascade:
         return
-    explicit_top_harness = "harness" in cascade
+    non_harness = {k: v for k, v in cascade.items()
+                   if k not in _HARNESS_CASCADE_KEYS}
     for s in steps:
         cfg = s.setdefault("config", {})
-        step_harness = str(cfg.get("harness") or "").strip()
-        if (not explicit_top_harness
-                and step_harness
-                and step_harness != default_harness
-                and ("model" in cascade or "effort" in cascade)):
-            cfg.update({k: v for k, v in cascade.items()
-                        if k not in ("model", "effort")})
-        else:
+        if sf.is_flow_default_step(cfg):
             cfg.update(cascade)
+        elif non_harness:
+            cfg.update(non_harness)
 
 
 @flow_app.command("run")
@@ -525,9 +526,7 @@ def flow_run(
                         f"acquired sequential execution lock ({sc})"),
                 )
             config = step.get("config") or {}
-            if harness:
-                config = {**config, "harness": harness}
-            step_harness = harness or config.get("harness") or store.default_harness()
+            step_harness = str(config.get("harness") or "") or store.default_harness()
             label = str(step.get("action_label") or "")
             child_key = _flow_child_key(key, ref, entry)
             banner = _step_title(idx, kind, label)
