@@ -1124,3 +1124,121 @@ def test_run_harness_passes_none_run_judge_when_need_judgment_false(isolated_con
                              no_tty=True, launch=True, result={},
                              json_output=False, run_mode="headless")
     assert seen["run_judge"] is None
+
+
+def test_run_harness_skips_verdict_suffix_when_need_judgment_false(isolated_config, tmp_path, monkeypatch):
+    """Issue #225: _run_harness omits VERDICT_SUFFIX when need_judgment() is False."""
+    from workagent import cli_harness, cli_validate, backend
+    seen = {}
+
+    class _FakeAgy:
+        name = "agy"
+        watches_headless = False
+
+        def need_judgment(self):
+            return False
+
+        def command_argv(self, prompt, *a, **k):
+            seen["cmd_prompt"] = prompt
+            return ["agy-guard", f"-p={prompt}"]
+
+        def session_file_flag(self, *a, **k):
+            return []
+
+        def extract_last_assistant_text(self, *a, **k):
+            return "done"
+
+    monkeypatch.setattr(backend, "get_harness", lambda name=None: _FakeAgy())
+    monkeypatch.setattr(cli_validate, "validate_headless",
+                        lambda **kw: (seen.update(kw), {"verdict": "JOB_DONE", "runs": []})[1])
+    cli_harness._run_harness("agy", "Fix the bug", str(tmp_path), str(tmp_path),
+                             no_tty=True, launch=True, result={},
+                             json_output=False, run_mode="headless")
+    assert seen["prompt"] == "Fix the bug"
+    assert backend.VERDICT_SUFFIX.strip() not in seen["prompt"]
+    assert "JOB_DONE" not in seen["cmd_prompt"]
+
+
+def test_run_harness_acp_skips_verdict_suffix_when_need_judgment_false(isolated_config, tmp_path, monkeypatch):
+    """Issue #225: _run_harness(acp=True, no_tty=True) omits VERDICT_SUFFIX when need_judgment() is False."""
+    from workagent import cli_harness, cli_validate, backend
+    seen = {}
+    h = backend.get_harness("agy")
+
+    def fake_launch_acp(prompt, workdir, **kw):
+        seen["acp_prompt"] = prompt
+        return 0
+
+    monkeypatch.setattr(h, "launch_acp", fake_launch_acp)
+    monkeypatch.setattr(cli_validate, "validate_headless",
+                        lambda **kw: (seen.update(kw),
+                                      {"verdict": "JOB_DONE", "attempts": 1,
+                                       "runs": [kw["run_once"](kw["prompt"])]})[1])
+    cli_harness._run_harness("agy", "Fix bug", str(tmp_path), str(tmp_path),
+                             no_tty=True, launch=False,
+                             result={"command": "start", "branch": "feat/225", "key": "github:o/r#225"},
+                             json_output=True, acp=True)
+    assert seen["acp_prompt"] == "Fix bug"
+    assert backend.VERDICT_SUFFIX.strip() not in seen["acp_prompt"]
+
+
+def test_continue_prompt_gates_verdict_instructions():
+    """Issue #225: continue_prompt omits verdict-token instructions when need_judgment=False."""
+    from workagent import cli_validate as cv
+    with_judge = cv.continue_prompt(" M foo.py", "feat/x")
+    assert "INTENTIONALLY_UNCOMMITTED_CHANGES" in with_judge
+    assert "JOB_DONE" in with_judge
+
+    without_judge = cv.continue_prompt(" M foo.py", "feat/x", need_judgment=False)
+    assert "M foo.py" in without_judge
+    assert "origin/feat/x" in without_judge
+    assert "INTENTIONALLY_UNCOMMITTED_CHANGES" not in without_judge
+    assert "JOB_DONE" not in without_judge
+
+
+def test_validate_headless_retry_prompts_omit_verdict_when_no_judgment(monkeypatch):
+    """Issue #225: validate_headless retry/dirty prompts omit JOB_DONE/INTENTIONALLY_UNCOMMITTED_CHANGES when need_judgment=False."""
+    from workagent import cli_validate as cv
+
+    # 1. Dirty worktree continuation prompt
+    dirty_calls = iter([{"dirty": True, "porcelain": " M a.py"}, {"dirty": False, "porcelain": ""}])
+    monkeypatch.setattr(cv, "dirty_gate", lambda *a, **k: next(dirty_calls))
+    monkeypatch.setattr(cv, "run_deterministic_gates",
+                        lambda *a, **k: {"passed": True, "checks": {}, "reasons": []})
+    prompts_dirty = []
+    res = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do work",
+        session_type="start",
+        run_once=lambda p: (prompts_dirty.append(p), {"exit_code": 0, "transcript": "ok"})[1],
+        run_judge=None,
+        harness_name="agy")
+    assert res["verdict"] == "JOB_DONE"
+    assert len(prompts_dirty) == 2
+    assert "JOB_DONE" not in prompts_dirty[1]
+    assert "INTENTIONALLY_UNCOMMITTED_CHANGES" not in prompts_dirty[1]
+
+    # 2. Non-zero exit code + deterministic gate failure retry prompts
+    monkeypatch.setattr(cv, "dirty_gate", lambda *a, **k: {"dirty": False, "porcelain": ""})
+    gate_results = iter([
+        {"passed": False, "checks": {}, "reasons": ["tests failed"]},
+        {"passed": True, "checks": {}, "reasons": []},
+    ])
+    monkeypatch.setattr(cv, "run_deterministic_gates", lambda *a, **k: next(gate_results))
+    prompts_retry = []
+
+    def run_retry(p):
+        prompts_retry.append(p)
+        if len(prompts_retry) == 1:
+            return {"exit_code": 1, "transcript": "boom"}
+        return {"exit_code": 0, "transcript": "ok"}
+
+    res2 = cv.validate_headless(
+        worktree="/wt", branch="feat/x", prompt="do work",
+        session_type="start",
+        run_once=run_retry,
+        run_judge=None,
+        harness_name="agy")
+    assert res2["verdict"] == "JOB_DONE"
+    assert len(prompts_retry) == 3
+    assert "JOB_DONE" not in prompts_retry[1]
+    assert "JOB_DONE" not in prompts_retry[2]
