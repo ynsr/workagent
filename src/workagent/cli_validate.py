@@ -533,13 +533,23 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
 
     needs_judgment = _harness_needs_judgment(harness_name)
 
+    def _verdict_tail(*, inline: bool = False) -> str:
+        if not needs_judgment:
+            return "." if inline else ""
+        return (", then end your reply with only JOB_DONE as the last line."
+                if inline else "\nEnd your reply with only JOB_DONE as the last line.")
+
+    def _dirty_error_prompt(err: object) -> str:
+        return (
+            f"Continue the unfinished job. The validation could not "
+            f"read the worktree state ({err}). "
+            f"Fix the git/worktree problem{_verdict_tail(inline=True)}"
+        )
+
     def _exit_prompt(code: int, transcript: str) -> str:
-        msg = (f"Continue the unfinished job. The previous run "
-               f"exited with code {code}. Stderr/output tail:\n"
-               f"{transcript[-2000:]}")
-        if needs_judgment:
-            msg += "\nEnd your reply with only JOB_DONE as the last line."
-        return msg
+        return (f"Continue the unfinished job. The previous run "
+                f"exited with code {code}. Stderr/output tail:\n"
+                f"{transcript[-2000:]}{_verdict_tail()}")
     def _unfinish_waiting(verdict: str) -> dict:
         """WAITING exits without consuming retry budget: the count was
         already incremented for this run, so step it back before
@@ -580,12 +590,7 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                               [f"git error: {dirty['error']}"[-500:]])
                 if done is not None:
                     return done
-                current_prompt = (
-                    f"Continue the unfinished job. The validation could not "
-                    f"read the worktree state ({dirty['error']}). "
-                    f"Fix the git/worktree problem"
-                    + (", then end your reply with only JOB_DONE as the last line."
-                       if needs_judgment else "."))
+                current_prompt = _dirty_error_prompt(dirty["error"])
                 continue
             if dirty.get("dirty"):
                 porcelain = str(dirty.get("porcelain", "") or "")
@@ -615,12 +620,7 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                                   [f"git error: {recheck['error']}"[-500:]])
                     if done is not None:
                         return done
-                    current_prompt = (
-                        f"Continue the unfinished job. The validation could not "
-                        f"read the worktree state ({recheck['error']}). "
-                        f"Fix the git/worktree problem"
-                        + (", then end your reply with only JOB_DONE as the last line."
-                           if needs_judgment else "."))
+                    current_prompt = _dirty_error_prompt(recheck["error"])
                     continue
                 if recheck.get("dirty"):
                     remaining = str(recheck.get("porcelain", "") or "")
@@ -632,8 +632,7 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                         f"Continue the unfinished job. Uncommitted changes "
                         f"remain:\n{remaining[-2000:]}\n"
                         f"Commit and push to origin/{branch}"
-                        + (", then end your reply with only JOB_DONE as the last line."
-                           if needs_judgment else "."))
+                        f"{_verdict_tail(inline=True)}")
                     continue
         try:
             import inspect as _inspect
@@ -678,9 +677,7 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                 return done
             current_prompt = (
                 f"Continue the unfinished job. Deterministic gates failed: "
-                f"{'; '.join(reasons)[:2000]}"
-                + ("\nEnd your reply with only JOB_DONE as the last line."
-                   if needs_judgment else ""))
+                f"{'; '.join(reasons)[:2000]}{_verdict_tail()}")
             continue
         if not needs_judgment or run_judge is None:
             if token == "INCOMPLETE_OR_FAILED_JOB":
@@ -690,9 +687,7 @@ def validate_headless(*, worktree: str, branch: str, prompt: str,
                     return done
                 current_prompt = (
                     "Continue the unfinished job. You previously reported "
-                    "INCOMPLETE_OR_FAILED_JOB."
-                    + ("\nEnd your reply with only JOB_DONE as the last line."
-                       if needs_judgment else ""))
+                    f"INCOMPLETE_OR_FAILED_JOB.{_verdict_tail()}")
                 continue
             _decide("judge-skipped", token or "JOB_DONE", mode, transcript)
             return _finish(token or "JOB_DONE")
