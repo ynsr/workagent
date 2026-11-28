@@ -266,6 +266,10 @@ def _apply_cascade(steps: list[dict], cascade: dict, default_harness: str) -> No
     for s in steps:
         cfg = s.setdefault("config", {})
         if sf.is_flow_default_step(cfg):
+            if ("harness" in cascade
+                    and str(cfg.get("harness") or "").strip() != str(cascade["harness"]).strip()):
+                cfg.pop("model", None)
+                cfg.pop("effort", None)
             cfg.update(cascade)
         elif non_harness:
             cfg.update(non_harness)

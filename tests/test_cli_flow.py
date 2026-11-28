@@ -1649,3 +1649,62 @@ def test_flow_run_execution_does_not_overwrite_explicit_step_harness(monkeypatch
     assert seen["sync"]["harness"] == "omp"
     assert seen["sync"]["model"] == "claude-sonnet"
     assert seen["sync"]["effort"] == "high"
+
+
+def test_flow_run_resume_harness_change_clears_stale_flow_default_model_effort(monkeypatch):
+    """Issue #227: resuming with a different --harness clears stale model/effort on Flow Default steps."""
+    from typer.testing import CliRunner
+    from workagent import cli_flow as cli_mod
+
+    tpl = {
+        "label": "t227resume",
+        "name": "T227Resume",
+        "default_harness": "omp",
+        "default_model": "claude-sonnet",
+        "default_effort": "high",
+        "steps": [
+            {"kind": "review", "config": {"use_flow_default": True}},
+            {"kind": "sync", "config": {"harness": "omp", "model": "claude-opus", "effort": "high"}},
+        ],
+    }
+    existing = {
+        "id": 91,
+        "template_label": "t227resume",
+        "worktree_ref": "jira:X-1",
+        "repo_snapshot": {"repo": "projectx"},
+        "status": "paused",
+        "current_step": 0,
+        "step_results": [],
+        "effective_steps": [
+            {
+                "kind": "review",
+                "execution_mode": "sequential",
+                "config": {"use_flow_default": True, "harness": "omp", "model": "claude-sonnet", "effort": "high"},
+            },
+            {
+                "kind": "sync",
+                "execution_mode": "sequential",
+                "config": {"harness": "omp", "model": "claude-opus", "effort": "high"},
+            },
+        ],
+    }
+    monkeypatch.setattr("workagent.store.get_template", lambda l: tpl)
+    monkeypatch.setattr("workagent.store.default_harness", lambda: "agy")
+    monkeypatch.setattr("workagent.store.list_flows", lambda **k: [existing])
+    monkeypatch.setattr("workagent.store.update_flow", lambda fid, **f: {**existing, **f})
+    monkeypatch.setattr(cli_mod, "_resolve_ref", lambda ref: ("jira:X-1", {"repo": "projectx"}, None))
+    seen = {}
+    monkeypatch.setattr(cli_mod, "_run_review_step", lambda wt, cfg, fix, jo: seen.setdefault("review", dict(cfg)) and {"status": "ok"} or {"status": "ok"})
+    monkeypatch.setattr(cli_mod, "_run_sync_step", lambda wt, cfg, jo: seen.setdefault("sync", dict(cfg)) and {"status": "ok"} or {"status": "ok"})
+
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["flow", "run", "t227resume", "jira:X-1", "--yes", "--harness", "agy"])
+    assert res.exit_code == 0, res.output
+    # Flow Default step switched to agy and dropped stale omp model/effort.
+    assert seen["review"]["harness"] == "agy"
+    assert "model" not in seen["review"]
+    assert "effort" not in seen["review"]
+    # Explicit step kept its exact omp model/effort.
+    assert seen["sync"]["harness"] == "omp"
+    assert seen["sync"]["model"] == "claude-opus"
+    assert seen["sync"]["effort"] == "high"

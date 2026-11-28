@@ -266,7 +266,7 @@ export function HarnessPicker({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 max-w-[calc(100vw-2rem)] p-0">
         {allowFlowDefault ? (
-          <div className="border-b border-border">
+          <div role="listbox" aria-label="Flow default" className="border-b border-border">
             <Pressable
               role="option"
               aria-selected={flowDefaultActive}

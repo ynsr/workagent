@@ -295,7 +295,6 @@ def test_template_rename_retargets_and_delete_prunes_overlay_keys(tmp_path, monk
     assert st.load_repos(db)["r"]["overlay_buttons"] == {}
 
 def test_template_display_columns(tmp_path):
-    from workagent import store_flows as sf
     from workagent import store_flows as sf, store_sqlite as sq
     db = tmp_path / "state.db"
     sq.init_db(db)
